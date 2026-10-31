@@ -1389,7 +1389,7 @@ int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
                                   request->replacement_protected_segments[row] != 0;
       operation.replacement_segments.push_back(segment);
     }
-    TetPeriodicIdentity periodic_identity;
+    std::optional<TetPeriodicIdentity> target_periodic_identity;
     if (request->periodic != nullptr) {
       const phx_mc_tet_periodic_edit_view& periodic = *request->periodic;
       operation.periodic_members.reserve(
@@ -1451,14 +1451,16 @@ int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
         operation.replacement_quotient_cells.push_back(std::move(cell));
       }
       if (periodic.target_identity_map != nullptr) {
-        periodic_identity = periodic_identity_from_view(*periodic.target_identity_map);
+        target_periodic_identity = periodic_identity_from_view(*periodic.target_identity_map);
         operation.replacement_periodic_entity_maps =
             periodic_entity_maps_from_view(*periodic.target_identity_map);
       }
     }
     TetEditBatch batch;
     batch.expected_generation = request->expected_generation;
-    batch.periodic_identity = periodic_identity;
+    // The request names the target identity; staleness is the generation's.
+    batch.periodic_identity = mesh->state.periodic_identity();
+    batch.target_periodic_identity = std::move(target_periodic_identity);
     batch.identity_bound = request->identity_bound != 0;
     if (batch.identity_bound) {
       auto assign_identity = [](std::string& destination, const char* bytes,

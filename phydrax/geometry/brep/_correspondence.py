@@ -28,6 +28,7 @@ from ...linalg._exact import determinant_exact, solve_exact
 from .._rational import rational_vector
 from ._carrier_pieces import carrier_payload
 from ._intersection_curve import (
+    exact_curve_parameter_point,
     IntersectionCurve,
     IntersectionPCurve,
     SurfaceRegion,
@@ -65,6 +66,7 @@ from ._source_correspondence import (
 
 if TYPE_CHECKING:
     from ._intersection import ConicParameterEndpoint
+    from ._trim_helpers import PeriodOffset
 
 
 def _same_source_definition(first: StrictModule, second: StrictModule, /) -> bool:
@@ -214,12 +216,38 @@ def _exact_brep_pole_collapse(
         )
         return mapped == point
 
-    if not isinstance(source_patch, RevolutionSurface):
+    # A normal offset of a source sphere revolution shares its chart; its pole is
+    # the radial image of the rooted source pole at the exact offset radius.
+    offset_pole = isinstance(source_patch, OffsetSurface) and isinstance(
+        source_patch.base, RevolutionSurface
+    )
+    revolution = source_patch.base if offset_pole else source_patch
+    if not isinstance(revolution, RevolutionSurface):
         return False
-    if conic_root is not None and (
-        not _same_source_definition(conic_root.conic, source_patch.curve)
-        or conic_root.exact_point() != point
+    if conic_root is not None and not _same_source_definition(
+        conic_root.conic, revolution.curve
     ):
+        return False
+    source_pole = point
+    if offset_pole:
+        witness = source_patch.exact_sphere_revolution_witness()
+        if conic_root is None or witness is None:
+            return False
+        center, radius, _, frame_sign = witness
+        offset_radius = radius + frame_sign * source_patch.distance_exact
+        source_pole = conic_root.exact_point()
+        if (
+            radius <= 0
+            or offset_radius <= 0
+            or len(source_pole) != 3
+            or point
+            != tuple(
+                center[axis] + offset_radius * (source_pole[axis] - center[axis]) / radius
+                for axis in range(3)
+            )
+        ):
+            return False
+    elif conic_root is not None and conic_root.exact_point() != point:
         return False
     from ._intersection import NativePeriodEndpoint
 
@@ -242,7 +270,7 @@ def _exact_brep_pole_collapse(
         or not _same_source_definition(last_root.curve, pcurve)
     ):
         return False
-    period = source_patch.periods[0]
+    period = revolution.periods[0]
     if period is None or last - first != period:
         return False
     affine = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
@@ -260,7 +288,7 @@ def _exact_brep_pole_collapse(
             return False
     else:
         profile = _affine_curve_coefficients(
-            source_patch.curve, (Fraction(0), Fraction(0), Fraction(0))
+            revolution.curve, (Fraction(0), Fraction(0), Fraction(0))
         )
         if profile is None:
             return False
@@ -269,13 +297,13 @@ def _exact_brep_pole_collapse(
             profile_origin[axis] + chart_start[1] * profile_direction[axis]
             for axis in range(3)
         )
-        if profile_point != point:
+        if profile_point != source_pole:
             return False
-    axis_origin = rational_vector(np.asarray(source_patch.axis_origin, dtype=np.float64))
+    axis_origin = rational_vector(np.asarray(revolution.axis_origin, dtype=np.float64))
     axis_direction = rational_vector(
-        np.asarray(source_patch.axis_direction, dtype=np.float64)
+        np.asarray(revolution.axis_direction, dtype=np.float64)
     )
-    relative = tuple(value - axis_origin[axis] for axis, value in enumerate(point))
+    relative = tuple(value - axis_origin[axis] for axis, value in enumerate(source_pole))
     cross = (
         relative[1] * axis_direction[2] - relative[2] * axis_direction[1],
         relative[2] * axis_direction[0] - relative[0] * axis_direction[2],
@@ -387,7 +415,12 @@ def native_edge_pcurve(
             frame, tuple(coefficients[0][i] - plane_origin[i] for i in range(3))
         )
         uv_direction = _plane_parameter_vector(frame, coefficients[1])
-        if uv_origin is None or uv_direction is None:
+        if (
+            uv_origin is None
+            or uv_direction is None
+            # A line normal to the plane projects to a point and has no lift.
+            or all(value == 0 for value in uv_direction)
+        ):
             return None
         candidate = _affine_pcurve_carrier(curve, uv_origin, uv_direction)
         return candidate if _same_plane_line_lift(curve, candidate, frame) else None
@@ -431,6 +464,65 @@ def _cylinder_section_pcurve(
         origin_exact=(Fraction(0), height),
         direction_exact=(Fraction(1), Fraction(0)),
     )
+
+
+def torus_circle_pcurve(curve: CircleCurve, patch: TorusPatch, /) -> LineCurve | None:
+    """Propose the torus coordinate line of a latitude or meridian circle.
+
+    The angles are binary64 roundings (a quarter-turn phase or an irrational
+    latitude has no exact chart value), so the candidate is never an exact
+    lift: the face-gap certificate bounds its distance to the source circle.
+    Full turns keep the chart's natural orientation: a forward line starts in
+    ``[0, 2pi)`` and a reversed one in ``(0, 2pi]``.
+    """
+    if curve.ambient_dimension != 3:
+        return None
+    center = np.asarray(patch.center, dtype=np.float64)
+    first_axis = np.asarray(patch.first_axis, dtype=np.float64)
+    second_axis = np.asarray(patch.second_axis, dtype=np.float64)
+    axis = np.asarray(patch.axis, dtype=np.float64)
+    major, minor = float(patch.major_radius), float(patch.minor_radius)
+    circle_center = np.asarray(curve.center, dtype=np.float64)
+    radius = float(curve.radius)
+    cosine = radius * np.asarray(curve.first_axis, dtype=np.float64)
+    sine = radius * np.asarray(curve.second_axis, dtype=np.float64)
+    relative = circle_center - center
+    height = float(relative @ axis)
+    planar = relative - height * axis
+    scale = major + minor + float(np.max(np.abs(center)))
+    resolution = 1.0e-9 * scale
+    tau = 2.0 * np.pi
+
+    def turn(angle: float, sense: float, /) -> float:
+        angle = float(np.mod(angle, tau))
+        return tau if sense < 0.0 and angle == 0.0 else angle
+
+    if (
+        abs(float(cosine @ axis)) <= resolution
+        and abs(float(sine @ axis)) <= resolution
+        and float(np.linalg.norm(planar)) <= resolution
+    ):
+        tube = np.arctan2(height / minor, (radius - major) / minor)
+        longitude = np.arctan2(float(cosine @ second_axis), float(cosine @ first_axis))
+        tangent = -np.sin(longitude) * first_axis + np.cos(longitude) * second_axis
+        sense = 1.0 if float(sine @ tangent) > 0.0 else -1.0
+        return LineCurve((turn(longitude, sense), float(np.mod(tube, tau))), (sense, 0.0))
+    distance = float(np.linalg.norm(planar))
+    if distance == 0.0:
+        return None
+    radial = planar / distance
+    if (
+        abs(height) > resolution
+        or abs(distance - major) > resolution
+        or abs(float(cosine @ np.cross(axis, radial))) > resolution
+        or abs(float(sine @ np.cross(axis, radial))) > resolution
+    ):
+        return None
+    longitude = np.arctan2(float(radial @ second_axis), float(radial @ first_axis))
+    tube = np.arctan2(float(cosine @ axis), float(cosine @ radial))
+    tangent = -np.sin(tube) * radial + np.cos(tube) * axis
+    sense = 1.0 if float(sine @ tangent) > 0.0 else -1.0
+    return LineCurve((float(np.mod(longitude, tau)), turn(tube, sense)), (0.0, sense))
 
 
 def _revolution_circle_pcurve_candidate(
@@ -619,10 +711,39 @@ def _same_cylinder_generator_line_lift(
     return source == (expected_origin, expected_direction)
 
 
+def _affine_bspline_space_line(
+    curve: BSplineCurve, first: float, last: float, /
+) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]] | None:
+    """Return the exact affine map of a clamped two-control linear B-spline on a range."""
+    knots, weights = curve.exact_knots, curve.exact_weights
+    controls = curve.exact_control_points
+    if curve.degree != 1 or len(controls) != 2 or weights[0] != weights[1]:
+        return None
+    lower, upper = knots[1], knots[2]
+    if (
+        not isinstance(lower, Fraction)
+        or not isinstance(upper, Fraction)
+        or not lower < upper
+        or not lower <= Fraction.from_float(first) <= Fraction.from_float(last) <= upper
+        or any(not isinstance(value, Fraction) for point in controls for value in point)
+    ):
+        return None
+    direction = tuple(
+        (end - start) / (upper - lower)
+        for start, end in zip(controls[0], controls[1], strict=True)
+    )
+    origin = tuple(
+        start - lower * slope for start, slope in zip(controls[0], direction, strict=True)
+    )
+    return origin, direction
+
+
 def _same_extrusion_profile_line_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
     patch: ExtrusionSurface,
+    first: float,
+    last: float,
     /,
 ) -> bool:
     chart = _affine_curve_coefficients(pcurve, (Fraction(0),) * pcurve.ambient_dimension)
@@ -634,11 +755,15 @@ def _same_extrusion_profile_line_lift(
     )
     base = patch.curve
     if isinstance(curve, (LineCurve, ExactLineCurve)) and isinstance(
-        base, (LineCurve, ExactLineCurve)
+        base, (LineCurve, ExactLineCurve, BSplineCurve)
     ):
-        source, origin = (
-            _affine_curve_coefficients(curve, (Fraction(0),) * curve.ambient_dimension),
-            _affine_curve_coefficients(base, (Fraction(0),) * base.ambient_dimension),
+        source = _affine_curve_coefficients(
+            curve, (Fraction(0),) * curve.ambient_dimension
+        )
+        origin = (
+            _affine_bspline_space_line(base, first, last)
+            if isinstance(base, BSplineCurve)
+            else _affine_curve_coefficients(base, (Fraction(0),) * base.ambient_dimension)
         )
         if source is None or origin is None:
             return False
@@ -678,6 +803,37 @@ def _same_extrusion_profile_line_lift(
             for source, original in zip(source_controls, base_controls, strict=True)
         )
     return False
+
+
+def _same_extrusion_generator_line_lift(
+    curve: AbstractCurve,
+    pcurve: AbstractCurve,
+    patch: ExtrusionSurface,
+    /,
+) -> bool:
+    """Prove an affine edge is the extrusion generator through an exact profile point."""
+    chart = _affine_curve_coefficients(pcurve, (Fraction(0),) * pcurve.ambient_dimension)
+    if chart is None or chart[1][0] != 0 or chart[1][1] == 0:
+        return False
+    (profile_parameter, height), (_, rate) = chart
+    if not isinstance(profile_parameter, Fraction) or not isinstance(height, Fraction):
+        return False
+    domain = patch.curve.parameter_domain
+    if domain is not None and not (
+        Fraction.from_float(domain[0])
+        <= profile_parameter
+        <= Fraction.from_float(domain[1])
+    ):
+        return False
+    base = exact_curve_parameter_point(patch.curve, profile_parameter)
+    source = _affine_curve_coefficients(curve, (Fraction(0),) * curve.ambient_dimension)
+    if base is None or source is None or len(base) != 3:
+        return False
+    direction = rational_vector(np.asarray(patch.direction))
+    return source == (
+        tuple(a + height * b for a, b in zip(base, direction, strict=True)),
+        tuple(rate * value for value in direction),
+    )
 
 
 def _same_conic_root_extrusion_line_lift(
@@ -918,6 +1074,105 @@ def _surface_chart_coefficients(
         (direction[0], direction[1]),
         exact_box,
     )
+
+
+type _PeriodScalar = Fraction | PeriodOffset
+type _PeriodLineChart = tuple[
+    tuple[_PeriodScalar, _PeriodScalar], tuple[Fraction, Fraction]
+]
+
+
+def _composed_period_line(
+    curve: AbstractCurve, patch: AbstractSurfacePatch, /
+) -> _PeriodLineChart | None:
+    from ._boolean_core import AffinePCurve, PeriodicPCurve
+    from ._trim_helpers import period_offset
+
+    if isinstance(curve, (LineCurve, ExactLineCurve)):
+        coefficients = _affine_curve_coefficients(curve, (Fraction(0), Fraction(0)))
+        if coefficients is None:
+            return None
+        values = (*coefficients[0], *coefficients[1])
+        if len(values) != 4 or not all(isinstance(value, Fraction) for value in values):
+            return None
+        u0, v0, du, dv = cast(tuple[Fraction, Fraction, Fraction, Fraction], values)
+        return (u0, v0), (du, dv)
+    if isinstance(curve, PeriodicPCurve):
+        symbols = patch.native_period_symbols()
+        if curve.patch is not patch or any(
+            shift and symbols[axis] != "two_pi"
+            for axis, shift in enumerate(curve.period_shifts)
+        ):
+            return None
+        inner = _composed_period_line(curve.source_curve, patch)
+        if inner is None:
+            return None
+        (u0, v0), direction = inner
+        shifts = curve.period_shifts
+        return (
+            u0 + period_offset(Fraction(0), Fraction(shifts[0])),
+            v0 + period_offset(Fraction(0), Fraction(shifts[1])),
+        ), direction
+    if isinstance(curve, AffinePCurve):
+        inner = _composed_period_line(curve.curve, patch)
+        if inner is None:
+            return None
+        origin, direction = inner
+        matrix, offset = curve.matrix, curve.offset
+        return (
+            offset[0] + matrix[0][0] * origin[0] + matrix[0][1] * origin[1],
+            offset[1] + matrix[1][0] * origin[0] + matrix[1][1] * origin[1],
+        ), (
+            matrix[0][0] * direction[0] + matrix[0][1] * direction[1],
+            matrix[1][0] * direction[0] + matrix[1][1] * direction[1],
+        )
+    return None
+
+
+def periodic_affine_line_chart(
+    pcurve: AbstractCurve, region: SurfaceRegion, first: float, last: float, /
+) -> _PeriodLineChart | None:
+    """Compose native-period shifts and rational chart maps of one exact line.
+
+    Each origin coordinate is exact in ``Q + Q*(2*pi)``: a rational map of a
+    native period keeps its irrational atom instead of rounding the transported
+    phase. Coordinates must stay inside the region box, except along a
+    ``two_pi`` axis whose box spans at least one binary period, where every
+    angle has a representative in the region.
+    """
+    from ._boolean_core import _pcurve_execution_shadows_match
+    from ._trim_helpers import period_scalar_bounds
+
+    if pcurve.ambient_dimension != 2 or not _pcurve_execution_shadows_match(pcurve):
+        return None
+    domain = pcurve.parameter_domain
+    if domain is not None and (first < domain[0] or last > domain[1]):
+        return None
+    exact_box = _revolution_region_box(region)
+    chart = _composed_period_line(pcurve, region.patch)
+    if chart is None or exact_box is None:
+        return None
+    origin, direction = chart
+    symbols = region.patch.native_period_symbols()
+    periods = region.patch.periods
+    for axis in range(2):
+        period = periods[axis]
+        if (
+            symbols[axis] == "two_pi"
+            and period is not None
+            and exact_box[1][axis] - exact_box[0][axis]
+            >= Fraction.from_float(float(period))
+        ):
+            continue
+        for parameter in (first, last):
+            value = origin[axis] + Fraction.from_float(float(parameter)) * direction[axis]
+            lower, upper = period_scalar_bounds(value)
+            if (
+                Fraction.from_float(float(lower)) < exact_box[0][axis]
+                or Fraction.from_float(float(upper)) > exact_box[1][axis]
+            ):
+                return None
+    return origin, direction
 
 
 def _revolution_profile_curve_lift(
@@ -1251,6 +1506,16 @@ def _revolution_angular_circle_lift(
             ),
         )
         return _revolution_circle_profile_point_lift(curve, profile_point, patch)
+    if isinstance(profile, BSplineCurve) and isinstance(profile_parameter, Fraction):
+        # A rational spline profile parameter has an exact profile point.
+        spline_point = exact_curve_parameter_point(profile, profile_parameter)
+        if spline_point is None or len(spline_point) != 3:
+            return False
+        return _revolution_circle_profile_point_lift(
+            curve,
+            (spline_point[0], spline_point[1], spline_point[2]),
+            patch,
+        )
 
     witness = patch.exact_quadric_witness(profile_interval)
     if (
@@ -1645,6 +1910,63 @@ def _same_ruled_rail_surface_lift(
     box = np.asarray(region.parameter_box, dtype=np.float64)
     lower = tuple(Fraction.from_float(float(value)) for value in box[0])
     upper = tuple(Fraction.from_float(float(value)) for value in box[1])
+    return all(
+        lower[axis]
+        <= origin[axis] + Fraction.from_float(parameter) * direction[axis]
+        <= upper[axis]
+        for axis in range(2)
+        for parameter in (first, last)
+    )
+
+
+def _bilinear_ruled_line_lift(
+    curve: AbstractCurve,
+    pcurve: AbstractCurve,
+    region: SurfaceRegion,
+    first: float,
+    last: float,
+    /,
+) -> bool:
+    """Prove an affine chart line on a ruled surface between two affine rails.
+
+    With rails ``o_k + u d_k`` the surface is the bilinear map
+    ``o1 + u d1 + v (o2 - o1) + u v (d2 - d1)``. Composed with the chart line
+    ``(a + b t, c + e t)`` it is a quadratic in ``t`` whose exact coefficients
+    must equal the affine source curve's.
+    """
+    patch = region.patch
+    if not isinstance(patch, RuledSurface) or curve.ambient_dimension != 3:
+        return False
+    first_rail = _affine_curve_coefficients(patch.first, (Fraction(0),) * 3)
+    second_rail = _affine_curve_coefficients(patch.second, (Fraction(0),) * 3)
+    chart = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
+    source = _affine_curve_coefficients(curve, (Fraction(0),) * 3)
+    if first_rail is None or second_rail is None or chart is None or source is None:
+        return False
+    first_origin, first_direction = first_rail
+    second_origin, second_direction = second_rail
+    (a, c), (b, e) = chart
+    source_origin, source_direction = source
+    for axis in range(3):
+        rung = second_origin[axis] - first_origin[axis]
+        twist = second_direction[axis] - first_direction[axis]
+        constant = (
+            first_origin[axis] + a * first_direction[axis] + c * rung + a * c * twist
+        )
+        linear = b * first_direction[axis] + e * rung + (a * e + b * c) * twist
+        if (
+            b * e * twist != 0
+            or constant != source_origin[axis]
+            or linear != source_direction[axis]
+        ):
+            return False
+    domain = curve.parameter_domain
+    if domain is not None and (first < domain[0] or last > domain[1]):
+        return False
+    box = np.asarray(region.parameter_box, dtype=np.float64)
+    lower = tuple(Fraction.from_float(float(value)) for value in box[0])
+    upper = tuple(Fraction.from_float(float(value)) for value in box[1])
+    origin, direction = (a, c), (b, e)
     return all(
         lower[axis]
         <= origin[axis] + Fraction.from_float(parameter) * direction[axis]
@@ -2598,6 +2920,27 @@ def _same_mapped_surface_chart_lift(
     )
 
 
+def _same_revolution_ring(
+    patch: AbstractSurfacePatch, first: ExactScalar, second: ExactScalar, /
+) -> bool:
+    """Prove two profile parameters revolve the same exact ring point."""
+    from ._root_bindings import revolution_offset_conic_frame
+
+    if isinstance(patch, OffsetSurface):
+        first_frame = revolution_offset_conic_frame(patch, first)
+        return first_frame is not None and first_frame == revolution_offset_conic_frame(
+            patch, second
+        )
+    if not isinstance(patch, RevolutionSurface):
+        return False
+    if not isinstance(first, Fraction) or not isinstance(second, Fraction):
+        return False
+    first_point = exact_curve_parameter_point(patch.curve, first)
+    return first_point is not None and first_point == exact_curve_parameter_point(
+        patch.curve, second
+    )
+
+
 def exact_source_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
@@ -2659,7 +3002,10 @@ def exact_source_lift(
     if (
         isinstance(region.patch, ExtrusionSurface)
         and isinstance(pcurve, (LineCurve, ExactLineCurve))
-        and _same_extrusion_profile_line_lift(curve, pcurve, region.patch)
+        and (
+            _same_extrusion_profile_line_lift(curve, pcurve, region.patch, first, last)
+            or _same_extrusion_generator_line_lift(curve, pcurve, region.patch)
+        )
     ):
         return True
     if isinstance(curve, IntersectionCurve) and isinstance(pcurve, IntersectionPCurve):
@@ -2688,8 +3034,9 @@ def exact_source_lift(
         return True
     if _exact_spline_boundary_lift(curve, pcurve, region, first, last):
         return True
-    if isinstance(region.patch, RuledSurface) and _same_ruled_rail_surface_lift(
-        curve, pcurve, region, first, last
+    if isinstance(region.patch, RuledSurface) and (
+        _same_ruled_rail_surface_lift(curve, pcurve, region, first, last)
+        or _bilinear_ruled_line_lift(curve, pcurve, region, first, last)
     ):
         return True
 
@@ -2706,10 +3053,11 @@ def exact_source_lift(
         )
     ):
         return True
-    if isinstance(region.patch, TorusPatch):
-        return _torus_coordinate_circle_lift(
-            curve, pcurve, region.patch, region, first, last
-        ) or _torus_rooted_circle_lift(curve, pcurve, region.patch, region, first, last)
+    if isinstance(region.patch, TorusPatch) and (
+        _torus_coordinate_circle_lift(curve, pcurve, region.patch, region, first, last)
+        or _torus_rooted_circle_lift(curve, pcurve, region.patch, region, first, last)
+    ):
+        return True
     if isinstance(region.patch, (PlanePatch, CylinderPatch)):
         section_source = _periodic_pcurve_source(pcurve, region.patch)
         if section_source is None:
@@ -2726,10 +3074,31 @@ def exact_source_lift(
             return _ruled_first_circle_rail_lift(curve, pcurve, region, first, last)
 
     frame = _affine_surface_frame(region.patch)
-    if frame is not None and _same_plane_line_lift(curve, pcurve, frame):
-        return True
-    if isinstance(curve, SurfaceIsoparametricCurve) and isinstance(pcurve, LineCurve):
+    if frame is not None:
+        # Zero native-period shifts leave the wrapped chart line unchanged.
+        periodic_source = _periodic_pcurve_source(pcurve, region.patch)
+        chart_line = (
+            periodic_source[0]
+            if periodic_source is not None and periodic_source[1] == (0, 0)
+            else pcurve
+        )
+        if _same_plane_line_lift(curve, chart_line, frame):
+            return True
+    if isinstance(curve, SurfaceIsoparametricCurve):
         if not _same_patch(curve.surface, region.patch) or pcurve.ambient_dimension != 2:
+            return False
+        # A whole native turn of the fixed coordinate names the same isoline.
+        periodic_source = _periodic_pcurve_source(pcurve, region.patch)
+        if periodic_source is None:
+            return False
+        pcurve, shifts = periodic_source
+        exact_box = _revolution_region_box(region)
+        if (
+            not isinstance(pcurve, LineCurve)
+            or shifts[1 - curve.fixed_axis]
+            or exact_box is None
+            or not _periodic_region_admits_shifts(region.patch, shifts, exact_box)
+        ):
             return False
         parameter_domain = curve.parameter_domain
         if parameter_domain is not None and (
@@ -2745,7 +3114,13 @@ def exact_source_lift(
             expected_origin = (fixed, Fraction(0))
             expected_direction = (Fraction(0), Fraction(1))
         else:
-            expected_origin = (Fraction(0), fixed)
+            chart_fixed = pcurve.origin_exact[1]
+            # A closed meridian revolves one exact ring from both of its ends.
+            if chart_fixed != fixed and not _same_revolution_ring(
+                region.patch, fixed, chart_fixed
+            ):
+                return False
+            expected_origin = (Fraction(0), chart_fixed)
             expected_direction = (Fraction(1), Fraction(0))
         if (
             pcurve.origin_exact != expected_origin

@@ -114,6 +114,27 @@ bool has_id(std::span<const std::uint64_t> ids, std::uint64_t value) {
   return std::find(ids.begin(), ids.end(), value) != ids.end();
 }
 
+// True if the two child triangles exactly tile the parent triangle.
+bool exact_split_coverage(const TetMesh& mesh, const std::int32_t* parent_face,
+                          const std::array<std::int32_t, 3>& first_child,
+                          const std::array<std::int32_t, 3>& second_child) {
+  double subject[9];
+  double children[18];
+  for (int corner = 0; corner < 3; ++corner) {
+    std::copy_n(mesh.point(parent_face[corner]), 3, subject + 3 * corner);
+    std::copy_n(mesh.point(first_child[static_cast<std::size_t>(corner)]), 3,
+                children + 3 * corner);
+    std::copy_n(mesh.point(second_child[static_cast<std::size_t>(corner)]), 3,
+                children + 9 + 3 * corner);
+  }
+  const std::array<std::array<std::int32_t, 4>, 2> faces{{{0, 1, 2, 0}, {3, 4, 5, 1}}};
+  const std::array<std::int32_t, 2> rows{0, 1};
+  std::vector<std::int32_t> contributors;
+  if (!exact_facet_coverage(subject, children, faces, rows, contributors)) return false;
+  std::sort(contributors.begin(), contributors.end());
+  return contributors.size() == 2 && contributors[0] == 0 && contributors[1] == 1;
+}
+
 bool full_link_condition(const TetMesh& mesh, std::int32_t remove,
                          std::int32_t keep) {
   std::set<SortedFace> remove_faces, keep_faces;
@@ -251,6 +272,18 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
       results.clear();
       return TetEditStatus::kApplied;
     }
+    // An edit keeps whether the state is identity-bound; a bound state is
+    // rebound to the bound target identity of the state the edit produces.
+    if (batch.target_periodic_identity.has_value() &&
+        (batch.target_periodic_identity->bound != periodic_identity_.bound ||
+         std::any_of(batch.target_periodic_identity->ids.begin(),
+                     batch.target_periodic_identity->ids.end(),
+                     [&](const std::string& id) {
+                       return batch.target_periodic_identity->bound && id.empty();
+                     }))) {
+      results.assign(batch.operations.size(), TetEditResult{});
+      return TetEditStatus::kRejectedTopology;
+    }
     TetMesh staged(policy_);
     copy_state_to(staged);
     std::vector<TetEditResult> staged_results;
@@ -286,6 +319,9 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
       return TetEditStatus::kRejectedTopology;
     }
     staged.generation_ = generation_ + 1;
+    if (batch.target_periodic_identity.has_value()) {
+      staged.periodic_identity_ = *batch.target_periodic_identity;
+    }
     swap_state(staged);
     unmet_records_.clear();
     results.swap(staged_results);
@@ -317,7 +353,8 @@ TetEditStatus TetMesh::split_edge(
   operation.replacement_facets.assign(replacement_facets.begin(), replacement_facets.end());
   operation.replacement_segments.assign(replacement_segments.begin(), replacement_segments.end());
   TetEditBatch batch{generation_, source_revision_, frame_id_, identity_bound_,
-                     {std::move(operation)}, source_id_, source_map_id_, periodic_identity_};
+                     {std::move(operation)}, source_id_, source_map_id_, periodic_identity_,
+                     std::nullopt};
   std::vector<TetEditResult> result;
   const TetEditStatus status = apply_edit_batch(batch, result);
   return status == TetEditStatus::kApplied ? result.front().status : status;
@@ -336,7 +373,8 @@ TetEditStatus TetMesh::reconnect(
   operation.replacement_facets.assign(replacement_facets.begin(), replacement_facets.end());
   operation.replacement_segments.assign(replacement_segments.begin(), replacement_segments.end());
   TetEditBatch batch{generation_, source_revision_, frame_id_, identity_bound_,
-                     {std::move(operation)}, source_id_, source_map_id_, periodic_identity_};
+                     {std::move(operation)}, source_id_, source_map_id_, periodic_identity_,
+                     std::nullopt};
   std::vector<TetEditResult> result;
   const TetEditStatus status = apply_edit_batch(batch, result);
   return status == TetEditStatus::kApplied ? result.front().status : status;
@@ -1042,6 +1080,460 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
   }
 }
 
+// A constrained edge split at a new vertex m on its source carrier. The edge
+// ring (its finite cells and, on the hull, the ghost cells around it) is
+// replaced by two children per ring cell, each with one edge endpoint replaced
+// by m. Children inherit the ring cell's region and face constraints; the two
+// children of a cell share the unconstrained face through m opposite the
+// edge. Each constrained face through the edge is split into two halves that
+// lie on its source (source_face_valid) and keep its source, orientation and
+// side regions, so no other face changes its source or sides. A hull face's
+// halves must tile it exactly (exact coverage): its ghost children are not
+// orientation-checked, so the domain boundary may not move. An interface
+// face may bend within its source tolerance; the finite children on both of
+// its sides are orientation-checked. CavityEdit proves that the children
+// conform to the unchanged outside cells and that every finite child is
+// exactly positive (the chain argument of replace_local_cavity). The children
+// keep every ring edge except the split edge, so only its segment is replaced.
+// All allocation precedes the first topology write; staged records and the
+// cleared split-face constraints are restored if the commit cannot start.
+TetEditStatus TetMesh::split_local_edge(std::int32_t first, std::int32_t second,
+                                        const TetEditVertex& vertex,
+                                        std::span<const std::int32_t> edge_cells,
+                                        std::span<const std::size_t> facet_rows,
+                                        std::span<const std::size_t> segment_rows,
+                                        std::vector<std::uint64_t>& created_cells) {
+  created_cells.clear();
+  try {
+    if (policy_ == BoundaryPolicy::kFixed) return TetEditStatus::kRejectedProtected;
+    if (periodic_identity_.bound || !periodic_orbits_.empty() || !quotient_cells_.empty() ||
+        edge_cells.empty() || facet_rows.empty() || segment_rows.size() > 1 ||
+        !live_vertex(first) || !live_vertex(second) || first == second) {
+      return TetEditStatus::kRejectedTopology;
+    }
+    if (vertex.id == std::numeric_limits<std::uint64_t>::max() ||
+        used_vertex_ids_.contains(vertex.id) || vertex.protected_vertex ||
+        vertex.protection_radius != 0.0 || vertex.has_edge_parameter ||
+        vertex.witness.stratum == SourceStratum::kNone) {
+      return TetEditStatus::kRejectedTopology;
+    }
+    if (vertex_ids_.size() >= static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+      return TetEditStatus::kIndexOverflow;
+    }
+    int dominant = 0;
+    for (int axis = 1; axis < 3; ++axis) {
+      if (std::abs(point(second)[axis] - point(first)[axis]) >
+          std::abs(point(second)[dominant] - point(first)[dominant])) {
+        dominant = axis;
+      }
+    }
+    const double low = std::min(point(first)[dominant], point(second)[dominant]);
+    const double high = std::max(point(first)[dominant], point(second)[dominant]);
+    const double along = vertex.carrier[static_cast<std::size_t>(dominant)];
+    if (!(low < along && along < high) || !source_carrier_valid(vertex)) {
+      return TetEditStatus::kInvalidGeometry;
+    }
+
+    // Walk the ring across the faces through the edge; it closes because the
+    // hull is closed by ghost cells.
+    std::vector<std::int32_t> ring;
+    ring.reserve(edge_cells.size() + 2);
+    std::int32_t previous = -1;
+    std::int32_t current = edge_cells.front();
+    do {
+      if (!complex_.live(current) || ring.size() >= complex_.tets.size()) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      const Tetrahedron& cell = tet(current);
+      if (phx::mc::vertex_slot(cell, first) < 0 || phx::mc::vertex_slot(cell, second) < 0) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      ring.push_back(current);
+      std::int32_t next = -1;
+      for (int corner = 0; corner < 4 && next < 0; ++corner) {
+        if (cell.v[corner] == first || cell.v[corner] == second) continue;
+        if (cell.n[corner] != previous) next = cell.n[corner];
+      }
+      if (next < 0) return TetEditStatus::kRejectedTopology;
+      previous = current;
+      current = next;
+    } while (current != ring.front());
+    // Finite ring cells in slot order; their children receive IDs in it.
+    std::vector<std::int32_t> finite;
+    std::vector<std::int32_t> ghosts;
+    finite.reserve(ring.size());
+    for (std::int32_t slot : ring) {
+      (is_ghost(tet(slot)) ? ghosts : finite).push_back(slot);
+    }
+    std::sort(finite.begin(), finite.end());
+    {
+      std::vector<std::int32_t> sorted_ring = ring;
+      std::sort(sorted_ring.begin(), sorted_ring.end());
+      std::vector<std::int32_t> expected(edge_cells.begin(), edge_cells.end());
+      std::sort(expected.begin(), expected.end());
+      if (std::adjacent_find(sorted_ring.begin(), sorted_ring.end()) != sorted_ring.end() ||
+          finite != expected) {
+        return TetEditStatus::kRejectedTopology;
+      }
+    }
+
+    // Constrained faces through the edge, each seen from its ring cell.
+    struct SplitFace {
+      std::int32_t cell = -1;
+      int face = -1;
+      std::int32_t third = -1;
+      std::int32_t source = kNoConstraint;
+      bool hull = false;
+      bool matched = false;
+    };
+    std::vector<SplitFace> split_faces;
+    for (std::size_t index = 0; index < ring.size(); ++index) {
+      const std::int32_t slot = ring[index];
+      const Tetrahedron& cell = tet(slot);
+      const std::int32_t neighbor = ring[(index + 1) % ring.size()];
+      const int face = neighbor_slot(cell, neighbor);
+      if (face < 0) return TetEditStatus::kRejectedTopology;
+      const std::int32_t source = complex_.constraint(slot, face);
+      if (source == kNoConstraint) continue;
+      std::int32_t third = -1;
+      for (int corner = 0; corner < 4; ++corner) {
+        if (corner != face && cell.v[corner] != first && cell.v[corner] != second) {
+          third = cell.v[corner];
+        }
+      }
+      if (third < 0) return TetEditStatus::kRejectedTopology;
+      split_faces.push_back(
+          {slot, face, third, source, is_ghost(cell) || is_ghost(tet(neighbor)), false});
+    }
+    if (split_faces.size() != facet_rows.size()) return TetEditStatus::kRejectedTopology;
+
+    const std::int32_t center = static_cast<std::int32_t>(vertex_ids_.size());
+    struct FacetSplit {
+      std::array<std::int32_t, 3> parent{};
+      std::array<std::int32_t, 3> first_child{};
+      std::array<std::int32_t, 3> second_child{};
+      bool hull = false;
+    };
+    std::vector<FacetSplit> facet_splits;
+    facet_splits.reserve(facet_rows.size());
+    for (std::size_t row : facet_rows) {
+      if (row >= facets_.size()) return TetEditStatus::kRejectedTopology;
+      const TetSnapshotFacet& facet = facets_[row];
+      if (facet.protected_facet) return TetEditStatus::kRejectedProtected;
+      FacetSplit split;
+      for (int corner = 0; corner < 3; ++corner) {
+        split.parent[static_cast<std::size_t>(corner)] =
+            vertex_slot(facet.vertices[static_cast<std::size_t>(corner)]);
+      }
+      int offset = 0;
+      while (offset < 3 &&
+             !((split.parent[static_cast<std::size_t>(offset)] == first &&
+                split.parent[static_cast<std::size_t>((offset + 1) % 3)] == second) ||
+               (split.parent[static_cast<std::size_t>(offset)] == second &&
+                split.parent[static_cast<std::size_t>((offset + 1) % 3)] == first))) {
+        ++offset;
+      }
+      if (offset == 3) return TetEditStatus::kRejectedTopology;
+      const std::int32_t start = split.parent[static_cast<std::size_t>(offset)];
+      const std::int32_t end = split.parent[static_cast<std::size_t>((offset + 1) % 3)];
+      const std::int32_t third = split.parent[static_cast<std::size_t>((offset + 2) % 3)];
+      const auto face = std::find_if(split_faces.begin(), split_faces.end(),
+                                     [&](const SplitFace& candidate) {
+                                       return !candidate.matched && candidate.third == third &&
+                                              candidate.source == facet.source;
+                                     });
+      if (face == split_faces.end()) return TetEditStatus::kRejectedTopology;
+      face->matched = true;
+      split.hull = face->hull;
+      split.first_child = {start, center, third};
+      split.second_child = {center, end, third};
+      facet_splits.push_back(split);
+    }
+
+    std::int32_t segment_source = kNoConstraint;
+    if (!segment_rows.empty()) {
+      const std::size_t row = segment_rows.front();
+      if (row >= segments_.size()) return TetEditStatus::kRejectedTopology;
+      const TetSnapshotSegment& segment = segments_[row];
+      const std::int32_t a = vertex_slot(segment.vertices[0]);
+      const std::int32_t b = vertex_slot(segment.vertices[1]);
+      if (!((a == first && b == second) || (a == second && b == first))) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      if (segment.protected_segment) return TetEditStatus::kRejectedProtected;
+      segment_source = segment.source;
+      const SourceWitness& witness = vertex.witness;
+      if (witness.stratum != SourceStratum::kSegment || witness.entity < 0 ||
+          static_cast<std::size_t>(witness.entity) >= source_segment_groups_.size() ||
+          source_segment_groups_[static_cast<std::size_t>(witness.entity)] != segment_source) {
+        return TetEditStatus::kInvalidGeometry;
+      }
+      const SourceWitness& wa = this->witness(first);
+      const SourceWitness& wb = this->witness(second);
+      if (wa.stratum == SourceStratum::kSegment && wb.stratum == SourceStratum::kSegment &&
+          wa.entity == witness.entity && wb.entity == witness.entity) {
+        const double parameter_low = std::min(wa.parameters[0], wb.parameters[0]);
+        const double parameter_high = std::max(wa.parameters[0], wb.parameters[0]);
+        if (!(parameter_low < witness.parameters[0] && witness.parameters[0] < parameter_high)) {
+          return TetEditStatus::kInvalidGeometry;
+        }
+      }
+    } else if (vertex_dimension(first) <= 1 && vertex_dimension(second) <= 1) {
+      const std::uint64_t id_a = vertex_id(first);
+      const std::uint64_t id_b = vertex_id(second);
+      if (std::any_of(segments_.begin(), segments_.end(), [&](const TetSnapshotSegment& segment) {
+            return (segment.vertices[0] == id_a && segment.vertices[1] == id_b) ||
+                   (segment.vertices[0] == id_b && segment.vertices[1] == id_a);
+          })) {
+        return TetEditStatus::kRejectedTopology;
+      }
+    }
+
+    const std::uint64_t max_id = std::numeric_limits<std::uint64_t>::max();
+    if (2 * finite.size() > max_id - next_cell_id_ ||
+        2 * facet_rows.size() > max_id - next_facet_id_ ||
+        2 * segment_rows.size() > max_id - next_segment_id_ ||
+        generation_ == max_id) {
+      return TetEditStatus::kIndexOverflow;
+    }
+    for (std::size_t row = 0; row < 2 * finite.size(); ++row) {
+      if (used_cell_ids_.contains(next_cell_id_ + row)) return TetEditStatus::kRejectedTopology;
+    }
+    for (std::size_t row = 0; row < 2 * facet_rows.size(); ++row) {
+      if (used_facet_ids_.contains(next_facet_id_ + row)) return TetEditStatus::kRejectedTopology;
+    }
+    for (std::size_t row = 0; row < 2 * segment_rows.size(); ++row) {
+      if (used_segment_ids_.contains(next_segment_id_ + row)) {
+        return TetEditStatus::kRejectedTopology;
+      }
+    }
+
+    // Stage the vertex record so exact predicates and source checks can
+    // address it; every staged record is removed again unless the split
+    // commits.
+    const std::size_t vertex_count = vertex_ids_.size();
+    const std::size_t cell_id_count = cell_ids_.size();
+    const std::size_t facet_count = facets_.size();
+    const std::size_t segment_count = segments_.size();
+    std::size_t staged_cells = 0;
+    std::size_t staged_facets = 0;
+    std::size_t staged_segments = 0;
+    bool vertex_staged = false;
+    bool ancestry_staged = false;
+    std::vector<std::pair<std::int32_t, int>> cleared_faces;
+    const auto unstage = [&]() noexcept {
+      for (const auto& [slot, face] : cleared_faces) {
+        const auto found = std::find_if(split_faces.begin(), split_faces.end(),
+                                        [&](const SplitFace& split) {
+                                          return split.cell == slot && split.face == face;
+                                        });
+        complex_.set_facet_constraint(slot, face, found->source);
+      }
+      cleared_faces.clear();
+      for (std::size_t row = 0; row < staged_cells; ++row) {
+        const std::uint64_t id = next_cell_id_ + row;
+        used_cell_ids_.erase(id);
+        cell_slots_.erase(id);
+        cell_ancestry_.erase(id);
+      }
+      for (std::size_t row = 0; row < staged_facets; ++row) {
+        used_facet_ids_.erase(next_facet_id_ + row);
+      }
+      for (std::size_t row = 0; row < staged_segments; ++row) {
+        used_segment_ids_.erase(next_segment_id_ + row);
+      }
+      cell_ids_.resize(cell_id_count);
+      facets_.resize(facet_count);
+      segments_.resize(segment_count);
+      if (ancestry_staged) vertex_ancestry_.erase(vertex.id);
+      if (vertex_staged) {
+        vertex_slots_.erase(vertex.id);
+        used_vertex_ids_.erase(vertex.id);
+      }
+      points_.resize(3 * vertex_count);
+      vertex_ids_.resize(vertex_count);
+      vertex_live_.resize(vertex_count);
+      vertex_dimension_.resize(vertex_count);
+      protection_radii_.resize(vertex_count);
+      protected_vertices_.resize(vertex_count);
+      witnesses_.resize(vertex_count);
+      vertex_has_edge_parameter_.resize(vertex_count);
+      vertex_edge_endpoints_.resize(vertex_count);
+      vertex_edge_parameters_.resize(vertex_count);
+    };
+    const auto reject = [&](TetEditStatus status) {
+      edit_.rollback();
+      unstage();
+      return status;
+    };
+    try {
+      points_.insert(points_.end(), vertex.carrier.begin(), vertex.carrier.end());
+      vertex_ids_.push_back(vertex.id);
+      vertex_live_.push_back(1);
+      vertex_dimension_.push_back(segment_rows.empty() ? 2 : 1);
+      protection_radii_.push_back(0.0);
+      protected_vertices_.push_back(0);
+      witnesses_.push_back(vertex.witness);
+      vertex_has_edge_parameter_.push_back(0);
+      vertex_edge_endpoints_.push_back({});
+      vertex_edge_parameters_.push_back(0.0);
+      vertex_staged = true;
+      vertex_slots_.emplace(vertex.id, center);
+      used_vertex_ids_.insert(vertex.id);
+
+      for (std::size_t index = 0; index < facet_rows.size(); ++index) {
+        const FacetSplit& split = facet_splits[index];
+        const TetSnapshotFacet& parent = facets_[facet_rows[index]];
+        for (const std::array<std::int32_t, 3>* child : {&split.first_child, &split.second_child}) {
+          TetEditFacet record;
+          for (int corner = 0; corner < 3; ++corner) {
+            record.vertices[static_cast<std::size_t>(corner)] =
+                vertex_id((*child)[static_cast<std::size_t>(corner)]);
+          }
+          record.source = parent.source;
+          record.orientation = parent.orientation;
+          if (!source_face_valid(record)) return reject(TetEditStatus::kUncertainPredicate);
+        }
+        if (split.hull && !exact_split_coverage(*this, split.parent.data(), split.first_child,
+                                                split.second_child)) {
+          return reject(TetEditStatus::kRejectedTopology);
+        }
+      }
+      if (!segment_rows.empty()) {
+        for (int half = 0; half < 2; ++half) {
+          TetEditSegment record;
+          record.vertices = {half == 0 ? vertex_id(first) : vertex.id,
+                             half == 0 ? vertex.id : vertex_id(second)};
+          record.source = segment_source;
+          if (!source_segment_valid(record)) return reject(TetEditStatus::kUncertainPredicate);
+        }
+      }
+
+      edit_.begin();
+      for (std::int32_t slot : finite) {
+        const EditStatus status = edit_.remove(slot);
+        if (status != EditStatus::kOk) return reject(translate_edit_status(status));
+      }
+      for (std::int32_t slot : ghosts) {
+        const EditStatus status = edit_.remove(slot);
+        if (status != EditStatus::kOk) return reject(translate_edit_status(status));
+      }
+      // Finite children first: created()[row] for row < 2 * finite.size()
+      // receives the cell ID next_cell_id_ + row.
+      for (const std::vector<std::int32_t>* cells : {&finite, &ghosts}) {
+        for (std::int32_t slot : *cells) {
+          const Tetrahedron& cell = tet(slot);
+          const int at_first = phx::mc::vertex_slot(cell, first);
+          const int at_second = phx::mc::vertex_slot(cell, second);
+          for (const int replaced : {at_second, at_first}) {
+            const int kept = replaced == at_second ? at_first : at_second;
+            std::int32_t vertices[4];
+            std::int32_t constraints[4];
+            for (int corner = 0; corner < 4; ++corner) {
+              vertices[corner] = corner == replaced ? center : cell.v[corner];
+              constraints[corner] =
+                  corner == kept ? kNoConstraint : complex_.constraint(slot, corner);
+            }
+            const EditStatus status = edit_.add(vertices, constraints, complex_.region(slot));
+            if (status != EditStatus::kOk) return reject(translate_edit_status(status));
+          }
+        }
+      }
+      // The split faces are interior to the ring; their halves carry the
+      // constraint in the children.
+      cleared_faces.reserve(split_faces.size());
+      for (const SplitFace& split : split_faces) {
+        cleared_faces.emplace_back(split.cell, split.face);
+        complex_.set_facet_constraint(split.cell, split.face, kNoConstraint);
+      }
+      const EditStatus validated =
+          edit_.validate([this](const std::int32_t* vertices) { return positive(vertices); });
+      if (validated != EditStatus::kOk) return reject(translate_edit_status(validated));
+
+      const std::size_t fresh = ring.size() - std::min(ring.size(), complex_.free_slots.size());
+      cell_ids_.resize(complex_.tets.size() + fresh, max_id);
+      facets_.reserve(facet_count + facet_rows.size());
+      segments_.reserve(segment_count + segment_rows.size());
+      if (!vertex.ancestry.empty()) {
+        vertex_ancestry_.emplace(vertex.id, vertex.ancestry);
+        ancestry_staged = true;
+      }
+      while (staged_facets < 2 * facet_rows.size()) {
+        used_facet_ids_.insert(next_facet_id_ + staged_facets++);
+      }
+      while (staged_segments < 2 * segment_rows.size()) {
+        used_segment_ids_.insert(next_segment_id_ + staged_segments++);
+      }
+      created_cells.reserve(2 * finite.size());
+      while (staged_cells < 2 * finite.size()) {
+        const std::uint64_t id = next_cell_id_ + staged_cells;
+        const std::int32_t parent = finite[staged_cells / 2];
+        ++staged_cells;
+        used_cell_ids_.insert(id);
+        cell_slots_.emplace(id, -1);
+        cell_ancestry_.emplace(
+            id, TetCellAncestryRecord{static_cast<std::int32_t>(TetEditKind::kSplit),
+                                      {cell_id(parent)}});
+      }
+      const EditStatus committed = edit_.commit();
+      if (committed != EditStatus::kOk) return reject(translate_edit_status(committed));
+    } catch (...) {
+      edit_.rollback();
+      unstage();
+      throw;
+    }
+
+    for (std::int32_t slot : finite) cell_slots_.erase(cell_id(slot));
+    for (std::int32_t slot : ring) cell_ids_[static_cast<std::size_t>(slot)] = max_id;
+    const std::span<const std::int32_t> created_slots = edit_.created();
+    for (std::size_t row = 0; row < created_slots.size(); ++row) {
+      const std::int32_t slot = created_slots[row];
+      if (row >= 2 * finite.size()) {
+        cell_ids_[static_cast<std::size_t>(slot)] = max_id;
+        continue;
+      }
+      const std::uint64_t id = next_cell_id_ + row;
+      cell_ids_[static_cast<std::size_t>(slot)] = id;
+      cell_slots_.find(id)->second = slot;
+      created_cells.push_back(id);
+    }
+    next_cell_id_ += 2 * finite.size();
+    for (std::size_t index = 0; index < facet_rows.size(); ++index) {
+      TetSnapshotFacet& parent = facets_[facet_rows[index]];
+      const FacetSplit& split = facet_splits[index];
+      TetSnapshotFacet second_half = parent;
+      parent.id = next_facet_id_ + 2 * index;
+      second_half.id = next_facet_id_ + 2 * index + 1;
+      for (int corner = 0; corner < 3; ++corner) {
+        parent.vertices[static_cast<std::size_t>(corner)] =
+            vertex_id(split.first_child[static_cast<std::size_t>(corner)]);
+        second_half.vertices[static_cast<std::size_t>(corner)] =
+            vertex_id(split.second_child[static_cast<std::size_t>(corner)]);
+      }
+      facets_.push_back(second_half);
+    }
+    next_facet_id_ += 2 * facet_rows.size();
+    if (!segment_rows.empty()) {
+      TetSnapshotSegment& parent = segments_[segment_rows.front()];
+      TetSnapshotSegment second_half = parent;
+      parent.id = next_segment_id_;
+      second_half.id = next_segment_id_ + 1;
+      parent.vertices = {vertex_id(first), vertex.id};
+      second_half.vertices = {vertex.id, vertex_id(second)};
+      segments_.push_back(second_half);
+      next_segment_id_ += 2;
+    }
+    if (vertex.id >= next_vertex_id_) next_vertex_id_ = vertex.id + 1;
+    ++generation_;
+    unmet_records_.clear();
+    return TetEditStatus::kApplied;
+  } catch (const std::bad_alloc&) {
+    return TetEditStatus::kAllocationFailure;
+  } catch (const std::length_error&) {
+    return TetEditStatus::kIndexOverflow;
+  }
+}
+
 // Visibility walk from `start` to `point` without crossing a constrained or
 // hull face, Bowyer-Watson growth across unconstrained faces by exact
 // insphere (seeded with the walked cells of the root's region when
@@ -1217,29 +1709,6 @@ bool TetMesh::validate_regions_and_constraints(
     }
     return found;
   };
-  const auto exact_split_coverage = [&](const std::int32_t* parent_face,
-                                        const std::array<std::int32_t, 3>& first_child,
-                                        const std::array<std::int32_t, 3>& second_child) {
-    double subject[9];
-    double children[18];
-    for (int corner = 0; corner < 3; ++corner) {
-      std::copy_n(point(parent_face[corner]), 3, subject + 3 * corner);
-      std::copy_n(point(first_child[static_cast<std::size_t>(corner)]), 3,
-                  children + 3 * corner);
-      std::copy_n(point(second_child[static_cast<std::size_t>(corner)]), 3,
-                  children + 9 + 3 * corner);
-    }
-    const std::array<std::array<std::int32_t, 4>, 2> faces{{
-        {0, 1, 2, 0}, {3, 4, 5, 1}}};
-    const std::array<std::int32_t, 2> rows{0, 1};
-    std::vector<std::int32_t> contributors;
-    if (!exact_facet_coverage(subject, children, faces, rows, contributors)) {
-      return false;
-    }
-    std::sort(contributors.begin(), contributors.end());
-    return contributors.size() == 2 && contributors[0] == 0 &&
-           contributors[1] == 1;
-  };
   const auto replacement_oriented_face =
       [&](const std::array<std::int32_t, 3>& expected,
           std::int32_t expected_region) {
@@ -1311,7 +1780,7 @@ bool TetMesh::validate_regions_and_constraints(
           break;
         }
         if (!directed_edge_found ||
-            !exact_split_coverage(face, first_child, second_child)) {
+            !exact_split_coverage(*this, face, first_child, second_child)) {
           return false;
         }
         return replacement_oriented_face(first_child, region) &&
@@ -1514,6 +1983,28 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   }
 
 
+  // Relocations of lifted periodic orbits revalidate cover facets modulo the
+  // lattice action: a seam facet stays valid when its deck partner does.
+  const PeriodicMemberIndex seam_members =
+      relocation ? mesh.periodic_member_index() : PeriodicMemberIndex{};
+  // A boundary vertex without a source witness may move only as a whole orbit
+  // member that lies on no constrained segment and only on periodic seams; in
+  // the quotient it is interior.
+  const auto periodic_seam_vertex = [&](std::uint64_t id) {
+    if (!seam_members.contains(id)) return false;
+    for (const TetSnapshotSegment& segment : mesh.segments_) {
+      if (segment.vertices[0] == id || segment.vertices[1] == id) return false;
+    }
+    bool incident = false;
+    for (const TetSnapshotFacet& facet : mesh.facets_) {
+      if (std::find(facet.vertices.begin(), facet.vertices.end(), id) == facet.vertices.end()) {
+        continue;
+      }
+      if (!mesh.periodic_seam_facet(facet, seam_members)) return false;
+      incident = true;
+    }
+    return incident;
+  };
   std::unordered_set<std::uint64_t> changed_vertex_ids;
   std::vector<std::int32_t> moved_vertex_slots;
   std::size_t new_count = 0;
@@ -1533,7 +2024,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         return TetEditStatus::kRejectedProtected;
       }
       if (mesh.vertex_dimension(current_slot) < 3 &&
-          mesh.witness(current_slot).stratum == SourceStratum::kNone) {
+          mesh.witness(current_slot).stratum == SourceStratum::kNone &&
+          !periodic_seam_vertex(vertex.id)) {
         return TetEditStatus::kUncertainPredicate;
       }
       if (vertex.protected_vertex != mesh.protected_vertex(current_slot) ||
@@ -1847,7 +2339,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       check.vertices = facet.vertices;
       check.source = facet.source;
       check.orientation = facet.orientation;
-      if (!mesh.source_face_valid(check)) return TetEditStatus::kUncertainPredicate;
+      if (!mesh.periodic_seam_facet(facet, seam_members) && !mesh.source_face_valid(check)) {
+        return TetEditStatus::kUncertainPredicate;
+      }
     }
     for (const TetSnapshotSegment& segment : mesh.segments_) {
       const bool affected = std::any_of(

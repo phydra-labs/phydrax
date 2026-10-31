@@ -335,20 +335,22 @@ def normalize_analytic_implicit_source(
     policy: AdaptiveImplicitSurfacePolicy | None,
     coordinate_contract: SpatialCoordinateContract,
     /,
+    *,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec | None = None,
 ) -> NativeImplicitSource:
     """Bind an exact analytic profile to the existing adaptive implicit route.
 
     The profile is the source of identity and coordinate semantics. Its signed
     compiled geometry remains the discovery authority; a padded analytic
     boundary box supplies the finite search domain without inferring source
-    identity from coordinates.
+    identity from coordinates. With a ``specification``, discovery runs at the
+    policy the route resolves for it, so the route reuses this discovery.
     """
     if not isinstance(profile, AnalyticImplicitProfile):
         raise TypeError("profile must be an AnalyticImplicitProfile.")
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
-    selected_policy = AdaptiveImplicitSurfacePolicy() if policy is None else policy
-    if not isinstance(selected_policy, AdaptiveImplicitSurfacePolicy):
+    if policy is not None and not isinstance(policy, AdaptiveImplicitSurfacePolicy):
         raise TypeError("policy must be an AdaptiveImplicitSurfacePolicy or None.")
     try:
         profile.require_bound(profile.geometry, coordinate_contract)
@@ -398,6 +400,11 @@ def normalize_analytic_implicit_source(
             provider_code="native_implicit_profile",
             stage="source_inspection",
         )
+    selected_policy = (
+        (AdaptiveImplicitSurfacePolicy() if policy is None else policy)
+        if specification is None
+        else _effective_policy(policy, specification, domain)
+    )
     try:
         discovery = discover_adaptive_implicit_surface(
             profile.geometry,
@@ -467,11 +474,18 @@ def _grid_domain(source: NativeImplicitSource, /) -> np.ndarray:
 
 
 def _effective_policy(
-    policy: AdaptiveImplicitSurfacePolicy,
+    policy: AdaptiveImplicitSurfacePolicy | None,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     domain: np.ndarray,
     /,
 ) -> AdaptiveImplicitSurfacePolicy:
+    """Discovery policy for ``specification`` on the declared ``domain``.
+
+    An explicit policy is only tightened by the specification's deviation and
+    hard size allowances. Without one, the specification's deviation and uniform
+    size targets set the resolution; the policy default applies only when the
+    specification declares neither.
+    """
     diagonal = float(np.linalg.norm(domain[1] - domain[0]))
     if not math.isfinite(diagonal) or diagonal <= 0.0:
         raise _failure(
@@ -480,8 +494,9 @@ def _effective_policy(
             provider_code="native_implicit_domain",
             stage="source_inspection",
         )
-    relative_diameter = policy.relative_cell_diameter
-    root_tolerance = policy.root_tolerance
+    selected = AdaptiveImplicitSurfacePolicy() if policy is None else policy
+    resolutions: list[float] = [] if policy is None else [policy.relative_cell_diameter]
+    root_tolerance = selected.root_tolerance
     maximum_deviation = specification.maximum_deviation
     if maximum_deviation is not None:
         if maximum_deviation <= 0.0:
@@ -492,10 +507,7 @@ def _effective_policy(
                 stage="source_inspection",
             )
         root_tolerance = min(root_tolerance, maximum_deviation * 0.25)
-        relative_diameter = min(
-            relative_diameter,
-            0.5 * maximum_deviation / diagonal,
-        )
+        resolutions.append(0.5 * maximum_deviation / diagonal)
     for control in specification.size_controls:
         if not isinstance(control, UniformSizeControl):
             continue
@@ -512,10 +524,12 @@ def _effective_policy(
                     + specification.size_compliance.relative_tolerance
                     * control.maximum_size,
                 )
-            relative_diameter = min(relative_diameter, allowance / diagonal)
+            resolutions.append(allowance / diagonal)
+        elif policy is None:
+            resolutions.append(control.target_size / diagonal)
     return replace(
-        policy,
-        relative_cell_diameter=relative_diameter,
+        selected,
+        relative_cell_diameter=min(resolutions, default=selected.relative_cell_diameter),
         root_tolerance=root_tolerance,
     )
 
@@ -646,20 +660,21 @@ def _discover(
 def _resolve_discovery(
     source: NativeImplicitSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
-    policy: AdaptiveImplicitSurfacePolicy,
+    policy: AdaptiveImplicitSurfacePolicy | None,
     /,
 ) -> AdaptiveImplicitSurface:
     if source.discovery is not None:
         _validate_discovery(source, source.discovery)
-        cover = source.discovery.cover
-        if cover is None:
+        if source.discovery.cover is None:
             raise _failure(
                 MeshingFailureCategory.INVALID_SOURCE,
                 "A retained implicit discovery must retain its complete domain cover.",
                 provider_code="native_implicit_discovery_incomplete",
                 stage="source_inspection",
             )
-        domain = np.asarray(cover.domain, dtype=np.float64)
+        # The cover spans the discovery lattice; the policy is declared on the
+        # caller's domain, which a re-anchored lattice extends.
+        domain = np.asarray(source.discovery.evidence.declared_domain, dtype=np.float64)
     else:
         domain = _grid_domain(source)
     effective_policy = _effective_policy(policy, specification, domain)
@@ -2752,7 +2767,7 @@ def prepare_native_implicit(
                 stage="source_inspection",
             )
         source = normalize_analytic_implicit_source(
-            source, adaptive_policy, coordinate_contract
+            source, adaptive_policy, coordinate_contract, specification=specification
         )
     if isinstance(specification, SurfaceMeshingSpec):
         unsupported = implicit_support_issues(source, specification, options)
@@ -2763,19 +2778,16 @@ def prepare_native_implicit(
                 provider_code="native_implicit_preflight",
                 stage="source_inspection",
             )
-        policy = (
-            AdaptiveImplicitSurfacePolicy()
-            if options.implicit_policy is None
-            else options.implicit_policy
-        )
-        if not isinstance(policy, AdaptiveImplicitSurfacePolicy):
+        if options.implicit_policy is not None and not isinstance(
+            options.implicit_policy, AdaptiveImplicitSurfacePolicy
+        ):
             raise _failure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                 "The implicit_surface route requires AdaptiveImplicitSurfacePolicy.",
                 provider_code="native_implicit_preflight",
                 stage="source_inspection",
             )
-        discovery = _resolve_discovery(source, specification, policy)
+        discovery = _resolve_discovery(source, specification, options.implicit_policy)
         return _PreparedImplicitRoute(
             source,
             specification,
@@ -2791,15 +2803,12 @@ def prepare_native_implicit(
                 provider_code="native_implicit_volume_preflight",
                 stage="source_inspection",
             )
-        if source.discovery is not None and options.implicit_policy is None:
-            policy = source.discovery.policy
-        else:
-            policy = (
-                AdaptiveImplicitSurfacePolicy()
-                if options.implicit_policy is None
-                else options.implicit_policy
-            )
-        if not isinstance(policy, AdaptiveImplicitSurfacePolicy):
+        policy = (
+            source.discovery.policy
+            if source.discovery is not None and options.implicit_policy is None
+            else options.implicit_policy
+        )
+        if policy is not None and not isinstance(policy, AdaptiveImplicitSurfacePolicy):
             raise _failure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                 "Implicit volume generation requires AdaptiveImplicitSurfacePolicy.",

@@ -51,6 +51,7 @@ from ..discretization._coordinate_enclosure import (
     ExpressionInput,
     linear_combinations,
 )
+from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._nested_reference import (
     coarsen_reference_cell_maps,
     compose_reference_cell_maps,
@@ -157,6 +158,7 @@ from ._mixed_adaptation import (
 )
 from ._organization import MeshLabel, MeshPatch, MeshZone, RegionBoundaryEvidence
 from ._periodic import (
+    periodic_quotient_facet_cell_classes,
     periodic_topology_after_edit,
     PeriodicRefinementEdgeLock,
     stage_periodic_refinement_candidate,
@@ -750,18 +752,23 @@ def _edge_classes(
 
     Boundary edges, region interfaces, and edges of any edge organization are
     features; distinct incident region pairs or memberships are distinct classes.
+    Periodic meshes decide boundary and interface status on the quotient: the
+    outer boundary of a lifted cover is a representation artifact.
     """
 
     count = mesh.entity_set(1).count
-    relation = mesh.topology.incidences[1].relation
-    valid = np.asarray(relation.valid, dtype=np.bool_)
-    edges = np.asarray(relation.source_indices)[valid]
-    cells = cell_classes[np.asarray(relation.target_indices)[valid]]
-    incident = np.bincount(edges, minlength=count)
-    low = np.full((count,), np.iinfo(np.int64).max, dtype=np.int64)
-    high = np.full((count,), -1, dtype=np.int64)
-    np.minimum.at(low, edges, cells)
-    np.maximum.at(high, edges, cells)
+    if mesh.periodic_topology is not None:
+        incident, low, high = periodic_quotient_facet_cell_classes(mesh, cell_classes)
+    else:
+        relation = mesh.topology.incidences[1].relation
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        edges = np.asarray(relation.source_indices)[valid]
+        cells = cell_classes[np.asarray(relation.target_indices)[valid]]
+        incident = np.bincount(edges, minlength=count)
+        low = np.full((count,), np.iinfo(np.int64).max, dtype=np.int64)
+        high = np.full((count,), -1, dtype=np.int64)
+        np.minimum.at(low, edges, cells)
+        np.maximum.at(high, edges, cells)
     member = _membership(mesh, scopes, 1)
     feature = (incident != 2) | (low != high) | np.any(member, axis=1)
     classes = np.zeros((count,), dtype=np.int64)
@@ -2692,6 +2699,52 @@ def _coarsened_corner_coordinates(
     return result
 
 
+def _quotient_chart_bank(
+    source: CellMeshingResult,
+    target: CellMesh,
+    exact_rows: tuple[tuple[Any, ...], ...] | None,
+    /,
+) -> ExactPlcCellGeometrySource | None:
+    """Exact vertex bank of a periodic P1 target whose vertices are not binary64.
+
+    Every exact row is a quotient-chart point (exact root position translated
+    exactly by its winding); the target carries the canonical roundings. Without
+    such a row the binary64 carrier is itself exact and needs no bank.
+    """
+    if exact_rows is None or all(
+        Fraction(float(value)) == value for row in exact_rows for value in row
+    ):
+        return None
+    vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
+    return ExactPlcCellGeometrySource(
+        "periodic-quotient-chart",
+        source.mesh.mesh_id,
+        vertex_ids,
+        exact_rows,
+        vertex_source_entity_ids=(None,) * vertex_ids.size,
+        vertex_occurrence_paths=((),) * vertex_ids.size,
+    )
+
+
+def _quotient_chart_target_geometry(
+    target: CellMesh, bank: ExactPlcCellGeometrySource | None, /
+) -> CellGeometrySpec:
+    """Publish a periodic P1 target on its lifted vertex-indexed carrier."""
+    affine = CellGeometrySpec.affine(target)
+    if bank is None:
+        return affine
+    return CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        {
+            name: np.asarray(route)
+            for name, route in zip(affine.block_names, affine.geometry_dofs, strict=True)
+        },
+        target.coordinates,
+        source_map=bank,
+        source_mesh=target,
+    )
+
+
 def _restricted_target_geometry(
     source: CellMeshingResult,
     target: CellMesh,
@@ -2699,8 +2752,18 @@ def _restricted_target_geometry(
     /,
     *,
     coarsening: NestedReferenceWitnesses | None = None,
-) -> tuple[CellMesh, CellGeometrySpec, tuple[ReferenceCellMapWitnesses, ...]]:
-    """Restrict an exact source coordinate map through target→source cell maps."""
+) -> tuple[
+    CellMesh,
+    CellGeometrySpec,
+    tuple[ReferenceCellMapWitnesses, ...],
+    tuple[tuple[Any, ...], ...] | None,
+]:
+    """Restrict an exact source coordinate map through target→source cell maps.
+
+    The last item is the exact target vertex bank (target vertex order) of a
+    periodic P1 source, whose target is published on its lifted vertex-indexed
+    carrier once the caller binds the quotient; it is ``None`` otherwise.
+    """
     if (
         coarsening is None
         and source.mesh.topology_id == target.topology_id
@@ -2725,9 +2788,9 @@ def _restricted_target_geometry(
             not np.any(stencil_valid[stencil_rows[int(identifier)]])
             for identifier in target_vertex_ids
         ):
-            return target, CellGeometrySpec.affine(target), ()
+            return target, CellGeometrySpec.affine(target), (), None
         reference_maps = _identity_reference_maps_for_transition(source.mesh, target)
-        return target, CellGeometrySpec.affine(target), reference_maps
+        return target, CellGeometrySpec.affine(target), reference_maps, None
     try:
         reference_maps = reference_cell_maps_from_edit(source.mesh, target, edit)
     except ValueError:
@@ -2735,7 +2798,7 @@ def _restricted_target_geometry(
             reference_maps = _available_reference_maps(source.mesh, target, edit)
         except ValueError:
             if _piecewise_linear_geometry(source.mesh, source.geometry):
-                return target, CellGeometrySpec.affine(target), ()
+                return target, CellGeometrySpec.affine(target), (), None
             raise ValueError(
                 "A non-P1 source map needs exact reference ancestry for every target cell."
             ) from None
@@ -2751,7 +2814,7 @@ def _restricted_target_geometry(
     ):
         # A restored P1 parent is affine on its own exact corners; its children are
         # distinct roots, so no single root chart exists or is needed.
-        return target, CellGeometrySpec.affine(target), reference_maps
+        return target, CellGeometrySpec.affine(target), reference_maps, None
     roots = _source_root_parents(source)
     coarse = (
         {}
@@ -2773,7 +2836,7 @@ def _restricted_target_geometry(
     }
     if set(records) | set(coarse) != target_ids:
         if _piecewise_linear_geometry(source.mesh, source.geometry):
-            return target, CellGeometrySpec.affine(target), reference_maps
+            return target, CellGeometrySpec.affine(target), reference_maps, None
         raise ValueError("A non-P1 source map needs an exact map for every target cell.")
     source_cell_rows = {
         int(identifier): (block_index, row)
@@ -2958,6 +3021,13 @@ def _restricted_target_geometry(
             numeric_version=target.numeric_version,
             periodic_topology=target.periodic_topology,
         )
+    if source.mesh.periodic_topology is not None and _piecewise_linear_geometry(
+        source.mesh, source.geometry
+    ):
+        exact_rows = tuple(
+            exact_vertex_coordinates[int(identifier)] for identifier in target_vertex_ids
+        )
+        return target, CellGeometrySpec.affine(target), reference_maps, exact_rows
     named_source_blocks = (
         None
         if any(name is None for name in target_source_blocks.values())
@@ -2990,7 +3060,7 @@ def _restricted_target_geometry(
         source.geometry.coordinates,
         restriction_source=restriction,
     )
-    return target, geometry, reference_maps
+    return target, geometry, reference_maps, None
 
 
 def _transition_geometry_record(
@@ -5165,6 +5235,7 @@ def _finalize_native(
             )
         if hierarchy is not None:
             coarsening = _bisection_coarsening_witness(source.mesh, mesh, edit, hierarchy)
+    quotient_rows = None
     if polyhedral_outcome is not None:
         geometry = polyhedral_outcome.target_geometry
         geometry.resolve(mesh)
@@ -5177,11 +5248,12 @@ def _finalize_native(
         geometry = CellGeometrySpec.affine(mesh)
         reference_maps = surface_metric_outcome.geometry.reference_maps
     else:
-        mesh, geometry, reference_maps = _restricted_target_geometry(
+        mesh, geometry, reference_maps, quotient_rows = _restricted_target_geometry(
             source, mesh, edit, coarsening=coarsening
         )
     if periodic_source:
         edit = edit._replace(coordinates=np.asarray(mesh.coordinates, dtype=np.float64))
+        quotient_bank = _quotient_chart_bank(source, mesh, quotient_rows)
         if periodic_edge_lock is not None:
             if (
                 refinement_parent_cell_ids is None
@@ -5199,6 +5271,7 @@ def _finalize_native(
                 np.asarray(refinement_parent_cell_ids, dtype=np.int64),
                 np.asarray(refinement_source_edge_ids, dtype=np.int64),
                 np.asarray(refinement_edge_vertex_ids, dtype=np.int64),
+                exact_coordinate_source=quotient_bank,
             )
             mesh, lineage, stencil = bind_periodic_topology_edit(
                 source.mesh,
@@ -5206,6 +5279,7 @@ def _finalize_native(
                 stencil,
                 edit,
                 candidate.target.periodic_topology,
+                exact_coordinate_source=quotient_bank,
             )
             if mesh.mesh_id != candidate.target.mesh_id:
                 raise ValueError(
@@ -5215,7 +5289,9 @@ def _finalize_native(
             if source.mesh.topological_dimension == 2 and all(
                 block.cell_kind == "triangle" for block in mesh.blocks
             ):
-                periodic_candidate = stage_periodic_topology_edit(source.mesh, edit)
+                periodic_candidate = stage_periodic_topology_edit(
+                    source.mesh, edit, exact_coordinate_source=quotient_bank
+                )
                 periodic_topology = (
                     None
                     if periodic_candidate is None
@@ -5223,15 +5299,22 @@ def _finalize_native(
                 )
             else:
                 periodic_topology = periodic_topology_after_edit(
-                    source.mesh, mesh, stencil
+                    source.mesh, mesh, stencil, exact_coordinate_source=quotient_bank
                 )
             if periodic_topology is None:
                 raise ValueError(
                     "Periodic topology transition did not retain its quotient descriptor."
                 )
             mesh, lineage, stencil = bind_periodic_topology_edit(
-                source.mesh, mesh, stencil, edit, periodic_topology
+                source.mesh,
+                mesh,
+                stencil,
+                edit,
+                periodic_topology,
+                exact_coordinate_source=quotient_bank,
             )
+        if quotient_rows is not None:
+            geometry = _quotient_chart_target_geometry(mesh, quotient_bank)
     transition_geometry = None
     surface_chart_witness = None
     if surface_metric_outcome is not None:

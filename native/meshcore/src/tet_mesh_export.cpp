@@ -639,4 +639,124 @@ bool TetMesh::validate_periodic_closure(const TetEdit& operation) const {
   return true;
 }
 
+TetMesh::PeriodicMemberIndex TetMesh::periodic_member_index() const {
+  PeriodicMemberIndex index;
+  for (std::size_t orbit = 0; orbit < periodic_orbits_.size(); ++orbit) {
+    const std::vector<TetPeriodicVertexMember>& members = periodic_orbits_[orbit].members;
+    for (std::size_t member = 0; member < members.size(); ++member) {
+      index.emplace(members[member].vertex_id, std::pair{orbit, member});
+    }
+  }
+  return index;
+}
+
+// A constrained facet of the lifted fundamental cover is a periodic seam when
+// one nonzero lattice winding maps it onto another constrained cover facet:
+// every vertex pair belongs to one orbit, the member windings differ by the
+// same shift, and both members are the exact deck images of their orbit
+// representative. The quotient identifies the two facets into one interior
+// face, so the facet is not a physical boundary and its source group does not
+// constrain the motion of a whole orbit. A deck image of the facet's own cell
+// that bounds the partner from the same side would make the pair a periodic
+// copy of one physical wall instead; that pair is refused.
+bool TetMesh::periodic_seam_facet(const TetSnapshotFacet& facet,
+                                  const PeriodicMemberIndex& members) const {
+  using Winding = std::array<std::int64_t, 3>;
+  const auto member_at = [&](std::uint64_t id) -> const TetPeriodicVertexMember* {
+    const auto found = members.find(id);
+    return found == members.end()
+               ? nullptr
+               : &periodic_orbits_[found->second.first].members[found->second.second];
+  };
+  const auto orbit_of = [&](std::uint64_t id) -> std::size_t {
+    const auto found = members.find(id);
+    return found == members.end() ? periodic_orbits_.size() : found->second.first;
+  };
+  const auto shift_between = [](const Winding& from, const Winding& to) {
+    return Winding{to[0] - from[0], to[1] - from[1], to[2] - from[2]};
+  };
+  const auto deck_image = [&](std::size_t orbit, const TetPeriodicVertexMember& member) {
+    const std::int32_t representative =
+        vertex_slot(periodic_orbits_[orbit].representative_vertex_id);
+    const std::int32_t slot = vertex_slot(member.vertex_id);
+    if (!live_vertex(representative) || !live_vertex(slot)) return false;
+    double expected[3];
+    if (!affine_image(member.representative_to_member, point(representative), expected)) {
+      return false;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      if (!same_bits(expected[axis], point(slot)[axis])) return false;
+    }
+    return true;
+  };
+  // The apex of the only live cell incident to a cover facet, or -1.
+  const auto single_apex = [&](const std::array<std::uint64_t, 3>& face) -> std::int32_t {
+    std::int32_t slots[3];
+    for (int k = 0; k < 3; ++k) {
+      slots[k] = vertex_slot(face[static_cast<std::size_t>(k)]);
+      if (!live_vertex(slots[k])) return -1;
+    }
+    std::int32_t apex = -1;
+    for (std::size_t row = 0; row < complex_.tets.size(); ++row) {
+      const std::int32_t cell = static_cast<std::int32_t>(row);
+      if (!complex_.live(cell) || is_ghost(complex_.tets[row])) continue;
+      const Tetrahedron& tet = complex_.tets[row];
+      if (phx::mc::vertex_slot(tet, slots[0]) < 0 || phx::mc::vertex_slot(tet, slots[1]) < 0 ||
+          phx::mc::vertex_slot(tet, slots[2]) < 0) continue;
+      if (apex >= 0) return -1;
+      for (std::int32_t vertex : tet.v) {
+        if (vertex != slots[0] && vertex != slots[1] && vertex != slots[2]) apex = vertex;
+      }
+    }
+    return apex;
+  };
+
+  std::array<std::size_t, 3> orbits{};
+  std::array<const TetPeriodicVertexMember*, 3> own{};
+  for (std::size_t k = 0; k < 3; ++k) {
+    own[k] = member_at(facet.vertices[k]);
+    if (own[k] == nullptr) return false;
+    orbits[k] = orbit_of(facet.vertices[k]);
+    for (std::size_t j = 0; j < k; ++j) {
+      if (orbits[j] == orbits[k]) return false;
+    }
+  }
+  for (const TetSnapshotFacet& partner : facets_) {
+    if (partner.id == facet.id) continue;
+    std::array<const TetPeriodicVertexMember*, 3> image{};
+    bool paired = true;
+    for (std::size_t k = 0; k < 3 && paired; ++k) {
+      paired = false;
+      for (std::uint64_t id : partner.vertices) {
+        if (orbit_of(id) != orbits[k]) continue;
+        image[k] = member_at(id);
+        paired = true;
+        break;
+      }
+    }
+    if (!paired) continue;
+    const Winding shift = shift_between(own[0]->winding, image[0]->winding);
+    if (shift == Winding{} ||
+        shift_between(own[1]->winding, image[1]->winding) != shift ||
+        shift_between(own[2]->winding, image[2]->winding) != shift) {
+      continue;
+    }
+    for (std::size_t k = 0; k < 3; ++k) {
+      if (!deck_image(orbits[k], *own[k]) || !deck_image(orbits[k], *image[k])) return false;
+    }
+    const std::int32_t own_apex = single_apex(facet.vertices);
+    const std::int32_t partner_apex = single_apex(partner.vertices);
+    if (own_apex < 0 || partner_apex < 0) return false;
+    const TetPeriodicVertexMember* own_apex_member = member_at(vertex_id(own_apex));
+    const TetPeriodicVertexMember* partner_apex_member = member_at(vertex_id(partner_apex));
+    if (own_apex_member != nullptr && partner_apex_member != nullptr &&
+        orbit_of(vertex_id(own_apex)) == orbit_of(vertex_id(partner_apex)) &&
+        shift_between(own_apex_member->winding, partner_apex_member->winding) == shift) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 }  // namespace phx::mc

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <vector>
 
@@ -179,6 +180,21 @@ void source_tetrahedron_envelope() {
     PHX_CHECK(surface_vertices[i] == volume_vertices[i]);
   }
   for (int8_t used : referenced) PHX_CHECK(used != 0);
+  // The source tetrahedron puts grid vertices at distance exactly 1.5 (the
+  // offset) from its faces, e.g. (-1.5, 0.5, 0.5). Their sampled values round
+  // next to the offset and used to collapse ~10 roots within 4e-14 of each
+  // such vertex. Separated grid values keep every root at least
+  // band / (L + 2 band) of its edge (band = spacing / 8 here) from the grid
+  // vertices, so distinct surface vertices stay far apart.
+  double closest = std::numeric_limits<double>::infinity();
+  for (int64_t first = 0; first < sizes[0]; ++first) {
+    for (int64_t second = first + 1; second < sizes[0]; ++second) {
+      const double* p = surface_vertices.data() + 3 * first;
+      const double* q = surface_vertices.data() + 3 * second;
+      closest = std::min(closest, std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
+    }
+  }
+  PHX_CHECK(closest >= request.spacing / 64);
 
   const auto determinant = [](const double* a, const double* b,
                               const double* c, const double* d) {

@@ -135,6 +135,33 @@ class Triangulation3D {
     }
     return true;
   }
+  // insert_point_slot for a caller that knows every live cell holding a
+  // vertex at or after `slot` (`cells`, each listed once): only those cells
+  // are renumbered.
+  bool insert_point_slot(std::size_t slot, std::size_t expected_count,
+                         std::span<const int32_t> cells) {
+    if (expected_count != vertex_stamp_.size() ||
+        points_.size() / 3 != expected_count || !weights_.empty() ||
+        slot > expected_count) {
+      return false;
+    }
+    for (int32_t cell : cells) {
+      if (!complex_.live(cell)) return false;
+      for (int32_t vertex : complex_.tets[static_cast<std::size_t>(cell)].v) {
+        if (vertex >= 0 && static_cast<std::size_t>(vertex) >= expected_count) return false;
+      }
+    }
+    vertex_stamp_.insert(
+        vertex_stamp_.begin() +
+            static_cast<std::vector<std::uint32_t>::difference_type>(slot),
+        0U);
+    for (int32_t cell : cells) {
+      for (int32_t& vertex : complex_.tets[static_cast<std::size_t>(cell)].v) {
+        if (vertex >= 0 && static_cast<std::size_t>(vertex) >= slot) ++vertex;
+      }
+    }
+    return true;
+  }
 
   TetrahedralComplex& complex() { return complex_; }
   const TetrahedralComplex& complex() const { return complex_; }
@@ -313,7 +340,8 @@ class Triangulation3D {
     return points_.data() + 3 * static_cast<int64_t>(vertex);
   }
   ExactPointRef ref(int32_t vertex) const {
-    return {point(vertex), exact_ == nullptr ? nullptr : exact_->position(vertex)};
+    return exact_ == nullptr ? ExactPointRef{point(vertex)}
+                             : exact_->reference(points_.data(), vertex);
   }
   int32_t coincident_vertex(int32_t t, const ExactPointRef& p) const {
     for (int32_t vertex : tet(t).v) {

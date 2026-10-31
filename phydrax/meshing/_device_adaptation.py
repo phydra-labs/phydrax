@@ -4692,9 +4692,9 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
 
         The supplied plan is the one whose partition labels drove the migration
         (the caller binds those labels to it), so it replaces the stored plan as
-        the current placement request. An adaptation placed without an explicit
-        plan has none stored. The owner group itself cannot change: the plan
-        must address the current owner directory's part count.
+        the current placement request. The owner group itself cannot change:
+        both plans must address the current owner directory's part count. An
+        adaptation placed without an explicit plan records the supplied plan.
 
         Only the target view identities are rebound. The rank-local transition
         rows (lineage, vertex stencil, cell ancestry) stay the adaptation's
@@ -4721,19 +4721,15 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
                 refinement_passes=plan.refinement_passes,
             )
 
-        stored_plan = (
-            None
-            if self.graph_partition_plan is None
-            else rebuilt_plan(self.graph_partition_plan)
-        )
         supplied_plan = rebuilt_plan(graph_partition_plan)
+        stored = self.graph_partition_plan
+        stored_plan = None if stored is None else rebuilt_plan(stored)
         if (
             (
-                stored_plan is not None
+                stored is not None
+                and stored_plan is not None
                 and (
-                    not _owner_local_periodic_values_equal(
-                        self.graph_partition_plan, stored_plan
-                    )
+                    not _owner_local_periodic_values_equal(stored, stored_plan)
                     or stored_plan.part_count != supplied_plan.part_count
                 )
             )

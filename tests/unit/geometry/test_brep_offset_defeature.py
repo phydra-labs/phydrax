@@ -42,6 +42,7 @@ from phydrax.geometry.brep._patches import (
     ExtrusionSurface,
     LineCurve,
     OffsetSurface,
+    PlanePatch,
     RevolutionSurface,
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
@@ -310,10 +311,14 @@ def test_planar_concave_extrusion_offset_preserves_every_face_image() -> None:
 def test_line_bspline_extrusion_offset_uses_analytic_plane_recognition() -> None:
     base = _box()
     patches = list(base.patches)
+    # Box side walls are unit-chart planes; re-author one on its affine-spline generator.
     face = next(
         index
         for index, patch in enumerate(patches)
-        if isinstance(patch, ExtrusionSurface)
+        if isinstance(patch, PlanePatch)
+        and np.array_equal(
+            np.asarray(base.parameter_bounds[index]), ((0.0, 0.0), (1.0, 1.0))
+        )
     )
     plane = planar_carrier(patches[face])
     assert plane is not None
@@ -466,7 +471,10 @@ def test_cylindrical_through_hole_defeature_restores_the_capped_solid() -> None:
     face = next(
         index
         for index, patch in enumerate(source.patches)
-        if isinstance(patch, CylinderPatch) and float(patch.radius) == 0.5
+        if isinstance(patch, RevolutionSurface)
+        and (wall := _hole_wall_data(source, index)) is not None
+        and wall.family == "revolved-cylinder"
+        and wall.reference_radius == Fraction(1, 2)
     )
     before = _snapshot(source)
 

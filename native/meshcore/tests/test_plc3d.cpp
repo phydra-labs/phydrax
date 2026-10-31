@@ -22,6 +22,7 @@
 #include "cavity.hpp"
 #include "check.hpp"
 #include "intersections.hpp"
+#include "phydrax_meshcore.h"
 #include "plc3d.hpp"
 #include "predicates.hpp"
 #include "triangulation3d.hpp"
@@ -2367,6 +2368,224 @@ void test_suppression_wedge_without_delaunay_fill_is_searched() {
   }
 }
 
+// A 26-triangle patch of the scale-2 torus reconstruction envelope (nearly
+// flat offset faces), as an internal sheet of region 0 inside a box hull.
+// Under FIXED the split point of the segment (15, 21) is suppressed last;
+// vertices 15, 21, 20, 22 are coplanar up to an orientation of ~4e-22, so
+// the star of the split point holds a sliver over a subface. Its wedge has
+// no Steiner-free fill (the exhaustive search fails) and its kernel is
+// pinched to the sliver's plane, so no binary64 cone point exists either;
+// the point is removed only once the wedge is merged with the cells beyond
+// its link faces. Before that the recovery refused FIXED_SEGMENT.
+void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
+  const std::vector<double> points{
+      -0x1.321f529b7e48dp-2, 0x1.64ab155864700p-9, -0x1.9f044e4d6d58ep-4,
+      -0x1.321f529b7e48dp-2, 0x1.44e4bff842afcp-8, -0x1.9f6d8f547cb34p-4,
+      -0x1.1da47153d0345p-2, 0x1.64ab155864700p-9, -0x1.8b6cffe486f86p-4,
+      -0x1.2ea4bfb8f9dcap-2, 0x1.90fa434d4d438p-8, -0x1.9aac371f2c0a0p-4,
+      -0x1.1da47153d0345p-2, 0x1.3ff164bc0b59bp-7, -0x1.8bbdaebc7f731p-4,
+      -0x1.1da47153d0345p-2, 0x1.74437725edd60p-6, -0x1.8d0ed94a2f94fp-4,
+      -0x1.10a41fc60deb2p-2, -0x1.2c4e63cec09e0p-8, -0x1.74953c7234962p-4,
+      -0x1.0929900c221fdp-2, 0x1.64ab155864700p-9, -0x1.62b433c85e1cdp-4,
+      -0x1.0ec37ed33496ep-2, 0x1.64ab155864700p-9, -0x1.6d12b8a6cf44ep-4,
+      -0x1.0ec37ed33496ep-2, 0x1.1aa48ab4c6656p-6, -0x1.6d12b8a6cf44ep-4,
+      -0x1.0929900c221fdp-2, 0x1.74437725edd60p-6, -0x1.628a696721414p-4,
+      -0x1.0f0ee6494c799p-2, 0x1.74437725edd60p-6, -0x1.6e40567f2ecfap-4,
+      -0x1.0929900c221fdp-2, 0x1.417243acd1c5cp-5, -0x1.64ee3e9c504d6p-4,
+      -0x1.015ee75c92b0dp-2, -0x1.1b18b1cfd4ba0p-6, -0x1.56aafd8a8568cp-4,
+      -0x1.e95d5d88e816cp-3, -0x1.1b18b1cfd4ba0p-6, -0x1.21510e2381767p-4,
+      -0x1.0574b7b52e89ap-2, 0x1.64ab155864700p-9, -0x1.56aafd8a8568cp-4,
+      -0x1.02b3867e68436p-2, -0x1.677031e86de53p-7, -0x1.56aafd8a8568cp-4,
+      -0x1.e95d5d88e816cp-3, -0x1.df29744103290p-10, -0x1.176176e794470p-4,
+      -0x1.e95d5d88e816cp-3, 0x1.64ab155864700p-9, -0x1.1392d9c79b6fbp-4,
+      -0x1.04f3d3509a726p-2, 0x1.74437725edd60p-6, -0x1.56aafd8a8568cp-4,
+      -0x1.04f3d3509a726p-2, 0x1.bfc4b98e1d95ep-8, -0x1.56aafd8a8568cp-4,
+      -0x1.e95d5d88e816cp-3, 0x1.38f5f1b6b472bp-6, -0x1.1392d9c79b6fbp-4,
+      -0x1.e95d5d88e816cp-3, 0x1.74437725edd60p-6, -0x1.15966b59ebcccp-4,
+      -0x1.03a2bd51870c3p-2, 0x1.5df8c5d0678f0p-5, -0x1.56aafd8a8568cp-4,
+      -0x1.04787c2539657p-2, 0x1.bf54b594797cap-6, -0x1.56aafd8a8568cp-4,
+      -0x1.e95d5d88e816cp-3, 0x1.31b0aedaec2bep-5, -0x1.1ae383e68ac86p-4,
+      -0x1.e95d5d88e816cp-3, 0x1.5df8c5d0678f0p-5, -0x1.1d31d8f539a98p-4,
+      -0x1.e3597df5eb8f7p-3, 0x1.64ab155864700p-9, -0x1.04bf786bcd16ep-4,
+      -0x1.df9945c0d3287p-3, -0x1.99efe71e5a8f4p-7, -0x1.04bf786bcd16ep-4,
+      -0x1.dd706f156eafdp-3, 0x1.64ab155864700p-9, -0x1.d9cb3709b4922p-5,
+      -0x1.d75168e158446p-3, 0x1.79ea0fcf1641ap-7, -0x1.c14f1e395ae47p-5,
+      -0x1.af239e16ec059p-3, -0x1.1925a596238cep-3, -0x1.56aafd8a8568cp-4,
+      -0x1.9771d86a2fc4cp-3, -0x1.1925a596238cep-3, -0x1.31cbeca73419bp-4,
+      -0x1.ba125575f3db9p-3, -0x1.e05fc60d8ec80p-4, -0x1.56aafd8a8568cp-4,
+      -0x1.b5a8494b81df2p-3, -0x1.0e6653e8197e5p-3, -0x1.56aafd8a8568cp-4,
+      -0x1.a55a6d67c1e75p-3, -0x1.fc30f008b30d0p-4, -0x1.2090a266f15bfp-4,
+      -0x1.9771d86a2fc4cp-3, -0x1.f3995d29258fap-4, -0x1.04bf786bcd16ep-4,
+      -0x1.abecb9b1ddd94p-3, -0x1.e05fc60d8ec80p-4, -0x1.2db53afb293fcp-4,
+      -0x1.9e36039523d1fp-3, -0x1.e05fc60d8ec80p-4, -0x1.04bf786bcd16ep-4,
+      -0x1.855338a25fc2cp-3, -0x1.070705ce538aep-3, -0x1.04bf786bcd16ep-4,
+      -0x1.6e7c15dad39bep-3, 0x1.64ab155864700p-9, -0x1.6ca7e7babe988p-3,
+      -0x1.6e7c15dad39bep-3, 0x1.74437725edd60p-6, -0x1.6a3af6febb231p-3,
+      -0x1.4586534b7772ep-3, -0x1.23c7f85239018p-7, -0x1.4f2c8902b3584p-3,
+      -0x1.4586534b7772ep-3, 0x1.64ab155864700p-9, -0x1.445f7bcd67b41p-3,
+      -0x1.4dc7a8e49a5e7p-3, 0x1.74437725edd60p-6, -0x1.4f2c8902b3584p-3,
+      -0x1.4df6ad2ca323fp-3, 0x1.30c0a81c904d6p-6, -0x1.4f2c8902b3584p-3,
+      -0x1.4586534b7772ep-3, 0x1.f45c51d48132cp-8, -0x1.451c52c970e07p-3,
+      -0x1.4586534b7772ep-3, 0x1.0f2944f072564p-5, -0x1.4f2c8902b3584p-3,
+      -0x1.408b17954aecfp-3, -0x1.e67da83ce114ep-7, -0x1.4f2c8902b3584p-3,
+      -0x1.38bcb8a748624p-3, -0x1.6997b95cb86a0p-7, -0x1.4262ee5e8447ap-3,
+      -0x1.2b6881200b218p-3, 0x1.64ab155864700p-9, -0x1.2636c673572f4p-3,
+      -0x1.28ea30b684b4bp-3, 0x1.74437725edd60p-6, -0x1.2636c673572f4p-3,
+      -0x1.29bfa1850a6bep-3, 0x1.0acaf0de74c60p-6, -0x1.2636c673572f4p-3,
+      -0x1.1c9090bc1b49ep-3, 0x1.74437725edd60p-6, -0x1.17dd188567644p-3,
+      -0x1.c763460d6e7e7p-2, -0x1.798ea1a81a302p-3, -0x1.10f8a60720728p-2,
+      -0x1.c763460d6e7e7p-2, -0x1.798ea1a81a302p-3, 0x1.f9610c74592c0p-4,
+      -0x1.c763460d6e7e7p-2, 0x1.a68a73b273dabp-3, -0x1.10f8a60720728p-2,
+      -0x1.c763460d6e7e7p-2, 0x1.a68a73b273dabp-3, 0x1.f9610c74592c0p-4,
+      -0x1.ac1ec529c9fa7p-5, -0x1.798ea1a81a302p-3, -0x1.10f8a60720728p-2,
+      -0x1.ac1ec529c9fa7p-5, -0x1.798ea1a81a302p-3, 0x1.f9610c74592c0p-4,
+      -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, -0x1.10f8a60720728p-2,
+      -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, 0x1.f9610c74592c0p-4,  };
+  const std::vector<int32_t> triangles{
+      0, 3, 1, 6, 7, 8, 4, 11, 5, 2, 8, 9,
+      13, 18, 16, 16, 18, 15, 15, 21, 22, 15, 22, 20,
+      15, 18, 21, 20, 22, 19, 10, 23, 12, 19, 26, 24,
+      19, 22, 25, 14, 27, 17, 14, 28, 27, 27, 29, 30,
+      31, 36, 35, 33, 34, 35, 35, 38, 37, 32, 39, 36,
+      40, 44, 45, 41, 47, 44, 42, 49, 48, 43, 51, 52,
+      43, 46, 51, 50, 52, 53, 54, 55, 57, 54, 57, 56,
+      58, 60, 61, 58, 61, 59, 54, 58, 59, 54, 59, 55,
+      56, 57, 61, 56, 61, 60, 54, 56, 60, 54, 60, 58,
+      55, 59, 61, 55, 61, 57,  };
+  const std::size_t point_count = points.size() / 3;
+  const std::size_t faces = triangles.size() / 3;
+  constexpr std::size_t kSheetFaces = 26;
+  std::vector<int64_t> offsets(faces + 1);
+  std::vector<int32_t> facets(faces);
+  std::vector<int32_t> regions(2 * faces);
+  std::set<std::pair<int32_t, int32_t>> edge_set;
+  for (std::size_t row = 0; row <= faces; ++row) offsets[row] = static_cast<int64_t>(3 * row);
+  for (std::size_t row = 0; row < faces; ++row) {
+    facets[row] = static_cast<int32_t>(row);
+    regions[2 * row] = row < kSheetFaces ? 0 : -1;
+    regions[2 * row + 1] = 0;
+    for (int k = 0; k < 3; ++k) {
+      const int32_t a = triangles[3 * row + static_cast<std::size_t>(k)];
+      const int32_t b = triangles[3 * row + static_cast<std::size_t>((k + 1) % 3)];
+      edge_set.insert({std::min(a, b), std::max(a, b)});
+    }
+  }
+  std::vector<int32_t> segments;
+  for (const auto& [a, b] : edge_set) segments.insert(segments.end(), {a, b});
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(point_count);
+  input.points = points.data();
+  input.polygon_count = static_cast<int64_t>(faces);
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = triangles.data();
+  input.polygon_facets = facets.data();
+  input.facet_count = static_cast<int64_t>(faces);
+  input.facet_regions = regions.data();
+  input.segment_count = static_cast<int64_t>(edge_set.size());
+  input.segments = segments.data();
+  input.policy = BoundaryPolicy::kFixed;
+  PlcRecovery result;
+  const int32_t status = recover_plc(input, result);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  check_conforming_recovery(result, point_count, faces);
+  check_fixed_boundary(result, point_count);
+  PHX_CHECK(result.suppression_search.searches > 0);
+}
+
+// The distance envelope of the unit tetrahedron at offset 1.5 has grid
+// vertices such as (-1.5, 0.5, 0.5) at exactly the offset from a face. Its
+// marching-tetrahedra surface used to carry clusters of ~10 vertices within
+// 4e-14 of each such vertex, with needle facets whose split points no dyadic
+// parameter reached (the reconstruction envelopes failed NONREPRESENTABLE at
+// such facets). With the kernel's separated field the surface is a closed,
+// well-spaced triangle PLC with one facet per triangle; its recovery splits
+// many segments and facets, inserts most of the split points into star-shaped
+// parts of non-Delaunay conflict cavities, and must succeed under both
+// boundary policies.
+void test_offset_tie_envelope_recovers_under_both_policies() {
+  constexpr double source[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  constexpr int64_t source_faces[] = {0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+  void* handle = nullptr;
+  std::array<double, 4> bounds{};
+  const phx_mc_surface_envelope_create_request request{
+      .vertices = source,
+      .vertex_count = 4,
+      .faces = source_faces,
+      .face_count = 4,
+      .offset = 1.5,
+      .spacing = 0.5,
+      .certificate_spacing = 0.4,
+      .result = &handle,
+      .bounds = bounds.data(),
+  };
+  if (phx_mc_surface_envelope_create(&request) != PHX_MC_OK || handle == nullptr) {
+    PHX_CHECK(false);
+    return;
+  }
+  std::array<int64_t, 4> sizes{};
+  PHX_CHECK(phx_mc_surface_envelope_sizes(handle, sizes.data()) == PHX_MC_OK);
+  std::vector<double> points(static_cast<std::size_t>(3 * sizes[0]));
+  std::vector<int64_t> triangles(static_cast<std::size_t>(3 * sizes[1]));
+  std::vector<double> volume_points(static_cast<std::size_t>(3 * sizes[2]));
+  std::vector<int64_t> cells(static_cast<std::size_t>(4 * sizes[3]));
+  const int32_t arrays_status = phx_mc_surface_envelope_arrays(
+      handle, sizes[0], sizes[1], sizes[2], sizes[3], points.data(), triangles.data(),
+      volume_points.data(), cells.data());
+  phx_mc_surface_envelope_free(handle);
+  PHX_CHECK(arrays_status == PHX_MC_OK);
+  if (arrays_status != PHX_MC_OK) return;
+  const std::size_t triangle_count = static_cast<std::size_t>(sizes[1]);
+  std::vector<int64_t> offsets(triangle_count + 1);
+  std::vector<int32_t> vertices(3 * triangle_count);
+  std::vector<int32_t> polygon_facets(triangle_count);
+  std::vector<int32_t> facet_regions(2 * triangle_count);
+  for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
+    offsets[triangle + 1] = static_cast<int64_t>(3 * (triangle + 1));
+    for (int corner = 0; corner < 3; ++corner) {
+      vertices[3 * triangle + static_cast<std::size_t>(corner)] =
+          static_cast<int32_t>(triangles[3 * triangle + static_cast<std::size_t>(corner)]);
+    }
+    polygon_facets[triangle] = static_cast<int32_t>(triangle);
+    facet_regions[2 * triangle] = -1;
+    facet_regions[2 * triangle + 1] = 1;
+  }
+  for (BoundaryPolicy policy : {BoundaryPolicy::kFixed, BoundaryPolicy::kConforming}) {
+    PlcInput input;
+    input.point_count = sizes[0];
+    input.points = points.data();
+    input.polygon_count = static_cast<int64_t>(triangle_count);
+    input.polygon_offsets = offsets.data();
+    input.polygon_vertices = vertices.data();
+    input.polygon_facets = polygon_facets.data();
+    input.facet_count = static_cast<int64_t>(triangle_count);
+    input.facet_regions = facet_regions.data();
+    input.policy = policy;
+    PlcRecovery result;
+    const int32_t status = recover_plc(input, result);
+    if (status != PHX_MC_OK) {
+      std::fprintf(stderr, "offset-tie envelope recovery failed: policy=%d status=%d\n",
+                   static_cast<int>(policy), status);
+      PHX_CHECK(status == PHX_MC_OK);
+      continue;
+    }
+    PHX_CHECK(!result.tets.empty());
+    PHX_CHECK(std::all_of(result.tet_regions.begin(), result.tet_regions.end(),
+                          [](int32_t region) { return region == 1; }));
+    // Recovery keeps the source points as the prefix of its point bank.
+    PHX_CHECK(result.points.size() >= points.size() &&
+              std::equal(points.begin(), points.end(), result.points.begin()));
+    std::vector<char> covered(triangle_count, 0);
+    for (int32_t facet : result.face_sources) {
+      PHX_CHECK(facet >= 0 && static_cast<std::size_t>(facet) < triangle_count);
+      if (facet >= 0 && static_cast<std::size_t>(facet) < triangle_count) {
+        covered[static_cast<std::size_t>(facet)] = 1;
+      }
+    }
+    PHX_CHECK(std::all_of(covered.begin(), covered.end(), [](char used) { return used != 0; }));
+  }
+}
+
 }  // namespace
 
 
@@ -2397,6 +2616,8 @@ int main() {
   test_recover_plc_nonconvex_prism();
   test_recover_plc_removes_a_closed_cavity();
   test_recover_plc_corner_scaffold_tracks_inserted_points_and_region_interface();
+  test_offset_tie_envelope_recovers_under_both_policies();
   test_suppression_wedge_without_delaunay_fill_is_searched();
+  test_suppression_merges_a_sliver_wedge_with_its_neighbours();
   return phx::mc::test::finish("test_plc3d");
 }

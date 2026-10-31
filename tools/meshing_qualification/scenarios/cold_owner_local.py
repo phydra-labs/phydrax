@@ -13,16 +13,20 @@ import numpy as np
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _AXIS_NAME = "cold_owner_local_fe"
+# The base periodic Delaunay mesh of the eight input points has quotient edge
+# median ~0.377, so with the loose 0.8 relative p50 band [0.2 h, 1.8 h] the base
+# mesh is size-compliant (and adaptation is a no-op) unless h < 0.21. Both
+# profiles target sizes below that, so the adaptation really changes topology.
 _PROFILE_PARAMETERS = {
     "routine": (
         "native-distributed-routine",
-        0.43,
+        0.2,
         "routine-periodic-generation-adaptation-repartition",
         (0.5, 0.5, 0.0),
     ),
     "larger": (
         "native-distributed-larger",
-        0.28,
+        0.14,
         "larger-periodic-generation-adaptation-repartition",
         (0.75, 0.25, 0.0),
     ),
@@ -746,7 +750,14 @@ def _solve_physical_problem(
     if any(count == 0 for count in local_dof_counts):
         raise ValueError("The physical FE solve has only a subset of P1/P0 rows.")
     operator, rhs = compiled.linear_system()
-    solved = phx.linalg.solve(operator, rhs)
+    # The residual oracle below allows 2e-9 * max(1, |rhs|), tighter than the
+    # default iterative tolerance (1e-8 relative). The owner-local block mass
+    # system is small, so a dense LU solve meets it without an SPD certificate.
+    solved = phx.linalg.solve(
+        operator,
+        rhs,
+        policy=phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU()),
+    )
     expanded = compiled.expand(solved.value)
     residual = compiled.residual(solved.value)
     if (
@@ -786,7 +797,10 @@ def _solve_physical_problem(
         or residual_norm > tolerance * max(1.0, rhs_norm)
     ):
         raise RuntimeError(
-            "The mixed P1/P0 physical solve failed its positivity or residual oracle."
+            "The mixed P1/P0 physical solve failed its positivity or residual oracle: "
+            f"successful={successful}, minimum={minimum_value!r}, "
+            f"residual_norm={residual_norm!r}, rhs_norm={rhs_norm!r}, "
+            f"rows={tuple(local_dof_counts)!r}."
         )
     return {
         "values": values[0],
@@ -1089,7 +1103,7 @@ def _source_composition(
         entry_id="mesh/source",
         role="topology",
         owner_id="phydrax.meshing",
-        structure_id=source_view.source_topology_id,
+        structure_id=source_view.source_mesh_id,
         revision_id=source_view.source_revision,
         semantics_id=source_value.binding_id,
     )
@@ -1260,7 +1274,7 @@ def _source_composition(
                 owner_id="phydrax.solver",
                 structure_id=layout.layout_id,
                 revision_id=restart_manifest.manifest_id,
-                semantics_id=layout.layout_id,
+                semantics_id=layout.semantics_id,
                 dependencies=(state_entry.binding("structure"),),
             )
         )
@@ -1281,7 +1295,7 @@ def _source_composition(
                 owner_id="phydrax.solver",
                 structure_id=layout.layout_id,
                 revision_id=restart_manifest.manifest_id,
-                semantics_id=layout.layout_id,
+                semantics_id=layout.semantics_id,
                 dependencies=(state_entry.binding("structure"),),
             )
         )
@@ -2121,7 +2135,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     if (
         archived_source_entry.value is not source_view.source_value
         or archived_source_entry.entry_id != "mesh/source"
-        or archived_source_entry.structure_id != source_view.source_topology_id
+        or archived_source_entry.structure_id != source_view.source_mesh_id
         or archived_source_entry.revision_id != source_view.source_revision
         or archived_source_entry.semantics_id != source_view.source_value.binding_id
         or specification.scope.source_id != source_view.source_id

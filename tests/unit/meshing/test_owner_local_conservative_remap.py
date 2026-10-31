@@ -513,7 +513,7 @@ def _curved_distributed_owner_view(
     record = {
         "part_name": name,
         "part_id": part.part_id,
-        "distribution_id": distribution.distribution_id,
+        "distribution_id": directory.directory_id,
         "source_id": source_map.source_id,
         "source_revision": source_map.source_revision,
         "source_mesh_id": source_mesh_id,
@@ -559,7 +559,9 @@ def _curved_distributed_owner_view(
         "source_owned": source_owned,
         "vertex_owner_ranks": vertex_owner_ranks,
         "vertex_absolute_windings": np.zeros((vertex_ids.size, 0), dtype=np.int64),
-        "candidate_revision_id": None,
+        # A non-serial owner-local view names the candidate revision it was cut
+        # from; the fixture's candidate is the accepted partition itself.
+        "candidate_revision_id": part.part_id,
         "certified_periodic_margin": None,
         "periodic_shell_certificate": None,
         "adaptive_result": None,
@@ -760,20 +762,28 @@ def test_owner_local_curved_root_remap_routes_exact_remote_maps() -> None:
         tuple(Fraction.from_float(float(value)) for value in row)
         for row in root_coordinate_values
     )
-    root_source_map = _exact_coordinate_bank_source_map(
-        base_mesh,
-        root_part.name,
-        root_part.part_id,
-        (
-            "curved-root-coordinate-bank",
-            root_part.part_id,
-            cell_geometry_id(base_geometry),
-        ),
-        root_exact_coordinates,
-        root_coordinate_values,
-    )
 
-    def with_root_source_map(geometry: CellGeometrySpec, /) -> CellGeometrySpec:
+    def with_root_coordinate_bank(
+        mesh: CellMesh, geometry: CellGeometrySpec, /
+    ) -> CellGeometrySpec:
+        # Each restriction routes into the root's coordinate DOF bank, so its
+        # exact map carries that bank while binding the restricted mesh epoch.
+        if not np.array_equal(
+            np.asarray(geometry.coordinates, dtype=np.float64), root_coordinate_values
+        ):
+            raise ValueError("A root restriction must keep the root coordinate bank.")
+        source_map = _exact_coordinate_bank_source_map(
+            mesh,
+            root_part.name,
+            root_part.part_id,
+            (
+                "curved-root-coordinate-bank",
+                root_part.part_id,
+                cell_geometry_id(base_geometry),
+            ),
+            root_exact_coordinates,
+            root_coordinate_values,
+        )
         return CellGeometrySpec(
             dict(zip(geometry.block_names, geometry.elements, strict=True)),
             {
@@ -782,14 +792,14 @@ def test_owner_local_curved_root_remap_routes_exact_remote_maps() -> None:
                     geometry.block_names, geometry.geometry_dofs, strict=True
                 )
             },
-            np.asarray(geometry.coordinates, dtype=np.float64),
-            source_map=root_source_map,
-            source_mesh=base_mesh,
+            root_coordinate_values,
+            source_map=source_map,
+            source_mesh=mesh,
             restriction_source=geometry.restriction_source,
         )
 
-    source_geometry = with_root_source_map(source_geometry)
-    target_geometry = with_root_source_map(target_geometry)
+    source_geometry = with_root_coordinate_bank(source_mesh, source_geometry)
+    target_geometry = with_root_coordinate_bank(target_mesh, target_geometry)
     source_result = phx.meshing.certify_cell_mesh(
         source_mesh, coordinate_contract, geometry=source_geometry
     )
@@ -832,8 +842,8 @@ def test_owner_local_curved_root_remap_routes_exact_remote_maps() -> None:
         np.asarray((0, 1), dtype=np.int32),
         group,
         rank,
-        root_source_map,
-        base_mesh.mesh_id,
+        source_geometry.source_map,
+        source_mesh.mesh_id,
     )
     target_view = _curved_distributed_owner_view(
         "curved-remap-target",
@@ -841,8 +851,8 @@ def test_owner_local_curved_root_remap_routes_exact_remote_maps() -> None:
         np.asarray((1, 0), dtype=np.int32),
         group,
         rank,
-        root_source_map,
-        base_mesh.mesh_id,
+        target_geometry.source_map,
+        target_mesh.mesh_id,
     )
     plan = phx.discretization.finite_volume.prepare_owner_local_conservative_remap(
         source_view, target_view, group, transition=transition
@@ -956,7 +966,7 @@ def test_owner_local_curved_root_remap_routes_exact_remote_maps() -> None:
         atol=2.0e-12,
     )
     replayed = phx.discretization.finite_volume.PreparedOwnerLocalConservativeRemap.from_stored_fields(
-        plan, source_view, target_view, group
+        plan, source_view, target_view, group, transition=transition
     )
     assert replayed.remap_id == plan.remap_id
 
@@ -1221,25 +1231,9 @@ def test_owner_local_physical_remap_has_independent_periodic_mass_oracle(
     }
     assert np.array_equal(np.sum(gathered_valid, axis=1), owner_counts)
     assert len(values_by_id) == int(np.sum(owner_counts))
-    ghost_rows = np.flatnonzero(~np.asarray(target_view.owned, dtype=np.bool_))
-    target_local_ids = np.asarray(target_view.cell_ids, dtype=np.int64)
-    ghost_expected = np.asarray(
-        [values_by_id[int(target_local_ids[row])] for row in ghost_rows],
-        dtype=np.float64,
-    )
-    np.testing.assert_allclose(
-        np.asarray(jax.device_get(probe_result.local_values), dtype=np.float64)[
-            ghost_rows
-        ],
-        ghost_expected,
-        rtol=2.0e-10,
-        atol=2.0e-12,
-    )
-    ghost_counts = np.asarray(
-        multihost_utils.process_allgather(np.asarray(ghost_rows.size, dtype=np.int32))
-    ).reshape((-1,))
-    if owner_count > 1:
-        assert np.sum(ghost_counts) > 0
+    # Laguerre cells are resident only on their site owner: power views carry no
+    # ghost rows, so the owned target cells above partition the group exactly.
+    assert np.all(np.asarray(target_view.owned, dtype=np.bool_))
 
     def group_sum(value: float, /) -> float:
         gathered = multihost_utils.process_allgather(np.asarray(value, dtype=np.float64))

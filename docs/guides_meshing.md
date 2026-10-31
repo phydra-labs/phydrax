@@ -508,9 +508,13 @@ refused with the colliding wall vertices and their locations, so choose
 thicknesses that are small relative to the surface size. Source fidelity covers
 every exterior facet: the grown cells keep their charts, and fixed cells and
 layer side strips take the closest-point charts of their source face. A column
-shared by two faces lies exactly on their common trim. Refinement that cannot
-reach its targets because of the fixed boundary is reported as evidence;
-improvement that leaves unmet quality criteria fails compliance.
+shared by two faces lies exactly on their common trim. The `wall` patch is only
+the exterior layer faces that lie on the wall. A side strip rising from rim edge
+`(a, b)` joins the `facet:` patch of the fixed core polygon holding the tops of
+the columns of `a` and `b`. Strips without such a unique polygon form the
+`layer-side` patch. Refinement that cannot reach its targets because of the fixed
+boundary is reported as evidence; improvement that leaves unmet quality criteria
+fails compliance.
 
 `prepare_periodic_layer_core_source(source, core_vertex_representatives,
 core_vertex_shifts, core_seam_polygon_pairs)` binds source-authored PLC orbits
@@ -644,27 +648,47 @@ contracts:
 - **Refinement.** Circumcenters of cells violating the radius-edge bound or
   their size target are inserted through a checked cavity; an encroached
   splittable boundary face is split instead. No point is inserted closer than
-  min(shortest initial edge, h(x)/2) to an existing vertex, h(x) the target
-  interpolated at the point. Since refinement removes no vertex, the inserted
-  points are packed at a positive spacing in a bounded domain, so finitely
-  many are inserted. A cell the guard blocks is reported as `REFUSED`; one
-  whose circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
+  min(lfs(x), h(x))/2 to an existing vertex, h(x) the target interpolated at
+  the point and lfs(x) the local feature size: each vertex entering the pass
+  measures its distance to the nearest constrained vertex, segment, facet edge
+  or facet not incident to it, and lfs grows from the point's neighbors by the
+  distance to them. Next to a thin fixed face the spacing floor is that face's
+  own scale, not the shortest edge anywhere in the mesh. Since refinement
+  removes no vertex, the inserted points are packed at a positive spacing in a
+  bounded domain, so finitely many are inserted, and densely only near small
+  features. A cell the guard blocks is reported as `REFUSED`; one whose
+  circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
   interior vertex insertion, collapse, and relocation is accepted only if the
   cells it creates pass the hard gates (relative determinant above its floor,
   source constraints preserved) and the size gate, and the affected cells'
-  worst-first sorted scores strictly improve.
-- **Precedence.** The size gate (circumradius within the size target) binds
-  every edit except one that removes a degenerate cell: a cell below the
-  determinant floor or scoring 0 (a ratio beyond 2^20 times its target).
-  Repairing degeneracy takes precedence over size; any other edit, collapses
-  included, can never grow a cell beyond its size target. The whole-mesh
-  fixed-boundary retessellation never takes this exemption.
+  worst-first sorted scores strictly improve. An interior insertion either
+  cones a circumsphere cavity to a candidate point or, for a cell whose edits
+  are otherwise exhausted, cones the closed ring of one of its unconstrained
+  edges to a point in the ring's kernel. The latter removes a flat cell whose
+  four vertices lie on a fixed boundary (two constrained faces splitting a
+  planar quad) without moving the boundary: no flip can remove such a cell and
+  no circumsphere cavity contains it. A relocation must also make sufficient
+  progress: at the first position where its star's sorted scores change, the
+  new score meets the target or closes at least an eighth of that score's gap
+  to the target (at least one quantum). A cell's gap therefore shrinks
+  geometrically rather than one quantum per move.
+- **Precedence.** The determinant floor binds every edit. The size gate is
+  relative to the cells an edit removes: no created cell may exceed its target
+  by more than the largest excess (circumradius over target) among them, or at
+  all where they were all within target. Edits therefore never create a size
+  violation where none existed and never grow the mesh's largest excess, while
+  cells refinement left beyond size (at a fixed boundary, or refused by the
+  separation guard) can still be repaired. An edit that removes a degenerate
+  cell (below the determinant floor or scoring 0, a ratio beyond 2^20 times
+  its target) is not size-bound: repairing degeneracy takes precedence. The
+  whole-mesh fixed-boundary retessellation must keep every cell within target.
 - **Termination.** Every accepted edit strictly improves the whole mesh's
   sorted score vector, and over the finite score alphabet that order admits no
-  infinite improving sequence. Improvement therefore ends without pass,
+  infinite improving sequence. The gates above only discard edits, so they do
+  not affect this argument. Improvement therefore ends without pass,
   candidate, or time limits, although insertion and collapse change the vertex
   set; no complexity bound is claimed.
 - **Unmet evidence.** Targets the edits cannot reach end valid but unmet: the
@@ -765,6 +789,23 @@ Their target geometry is the exact per-cell restriction of the root map, so a
 request without `maximum_deviation` is certified at zero source deviation; an
 explicit bound is honored as requested.
 
+On a curved PLC source, `plc_hex_dominant` and `plc_balanced_grid_hex` both
+restrict one curved tetrahedral fill. Every output cell keeps an exact chart
+into its fill tetrahedron, and that tetrahedron keeps its affine chart into the
+curved root.
+Global embedding reuses the fill's own proof through these child-in-fill maps
+(a forward reference chain) rather than proving curved cell pairs apart one by
+one. Source fidelity carries the fill's boundary chart witness onto the output
+faces. A quadrilateral face that is a twisted bilinear patch of its fill face
+is split into straight pieces until the correspondence error stays within half
+the tolerance; that error is bounded with the fill map's exact Bernstein
+Lipschitz constant. Parallelogram faces keep two pieces. Curved transition
+pyramids are per-cell restrictions with rational charts. Such a chart is
+accepted only when its `1 - z` pole cancels in collapsed-cube form, the
+remaining denominator has a strict sign, and the apex has one image. Evaluating
+the gradient exactly at the apex is still refused when it depends on the
+direction of approach.
+
 Every accepted family still passes the common continuous whole-cell validity,
 embedding, coverage, and source-fidelity checks. Quality samples are
 observations only; they cannot prove those claims or authorize a different
@@ -815,6 +856,16 @@ edge orbits flip across the seam. When the route stalls it refuses with
 `COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
 `MeshingFailureEvidence` holds each remaining edge's metric length and refusal
 reasons.
+
+Exact periodic proofs use the quotient chart: a lifted vertex's exact position
+is its root's exact position translated exactly by its deck winding, and the
+binary64 carrier holds the canonical rounding of that translate. Orbit-locked
+bisection on a non-dyadic lattice can create midpoints that are not binary64;
+its target is then published on the lifted vertex-indexed P1 carrier with an
+`ExactPlcCellGeometrySource` bank of the exact midpoints, which the target's
+`PeriodicMeshTopology` accepts as its exact coordinate witness. Certify or
+distribute the adaptation result itself: re-certifying the bare target mesh
+drops that bank.
 
 Every owner-local periodic view retains the exact `specification_id`, including
 nonadaptive periodic-power views. Cold reattachment requires the archived typed

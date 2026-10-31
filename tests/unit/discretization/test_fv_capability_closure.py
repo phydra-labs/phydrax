@@ -175,6 +175,142 @@ def test_fv_capability_closure_scenario_1() -> None:
         np.testing.assert_allclose(prepared.residual(state), 0.0)
 
 
+def _surface_volume(coordinates: np.ndarray, cell: tuple) -> float:
+    """Origin-based divergence volume of a cell's faces triangulated about
+    their vertex centroids (quadrilaterals) or as given (triangles)."""
+    volume = 0.0
+    for loop in cell:
+        polygon = coordinates[np.asarray(loop)]
+        if polygon.shape[0] == 3:
+            fan = (polygon,)
+        else:
+            apex = np.mean(polygon, axis=0)
+            fan = tuple(
+                np.stack((apex, polygon[i], polygon[(i + 1) % polygon.shape[0]]))
+                for i in range(polygon.shape[0])
+            )
+        volume += sum(float(np.dot(t[0], np.cross(t[1], t[2]))) / 6.0 for t in fan)
+    return volume
+
+
+def test_polyhedral_warped_faces_close_and_match_their_triangulated_volume() -> None:
+    lift = 0.3
+    # Two stacked unit hexahedra; raising one corner of the shared face makes it
+    # a bilinear (warped) quadrilateral while every side face stays planar.
+    coordinates = np.asarray(
+        [
+            (0, 0, 0),
+            (1, 0, 0),
+            (1, 1, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 0, 1),
+            (1, 1, 1 + lift),
+            (0, 1, 1),
+            (0, 0, 2),
+            (1, 0, 2),
+            (1, 1, 2),
+            (0, 1, 2),
+        ],
+        dtype="float64",
+    )
+    cells = (
+        (
+            (0, 3, 2, 1),
+            (4, 5, 6, 7),
+            (0, 1, 5, 4),
+            (1, 2, 6, 5),
+            (2, 3, 7, 6),
+            (3, 0, 4, 7),
+        ),
+        (
+            (4, 7, 6, 5),
+            (8, 9, 10, 11),
+            (4, 5, 9, 8),
+            (5, 6, 10, 9),
+            (6, 7, 11, 10),
+            (7, 4, 8, 11),
+        ),
+    )
+    mesh = CellMesh.from_polyhedra(coordinates, cells)
+    geometry = prepare_polyhedral_finite_volume_geometry(mesh)
+
+    # The vertex-centroid fan of a bilinear graph face integrates its height
+    # exactly, so the cell volumes equal the exact trilinear volumes.
+    np.testing.assert_allclose(
+        geometry.cell_volumes, (1.0 + lift / 4.0, 1.0 - lift / 4.0), rtol=0, atol=1e-15
+    )
+    np.testing.assert_allclose(
+        geometry.cell_volumes,
+        [_surface_volume(coordinates, cell) for cell in cells],
+        rtol=0,
+        atol=1e-15,
+    )
+    np.testing.assert_allclose(geometry.closure_residual, 0.0, atol=1e-15)
+    area_vectors = np.asarray(geometry.face_area_vectors)
+    measures = np.asarray(geometry.face_measures)
+    weights = np.asarray(geometry.face_quadrature_weights)
+    valid = np.asarray(geometry.face_quadrature_valid)
+    # Planar quadrilaterals keep two fan slots; the warped one uses four.
+    assert weights.shape[1] == 4
+    assert sorted(np.count_nonzero(valid, axis=1).tolist()) == [2] * 10 + [4]
+    np.testing.assert_allclose(np.sum(weights, axis=1), measures, rtol=1e-15)
+    warped = int(np.flatnonzero(np.count_nonzero(valid, axis=1) == 4)[0])
+    shared = coordinates[[4, 5, 6, 7]]
+    newell = 0.5 * np.sum(np.cross(shared, np.roll(shared, -1, axis=0)), axis=0)
+    np.testing.assert_allclose(
+        np.abs(area_vectors[warped]), np.abs(newell), rtol=0, atol=1e-15
+    )
+
+    finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
+    np.testing.assert_allclose(np.sum(finite_volume.cell_volumes), 2.0, atol=1e-15)
+    owner = np.asarray(finite_volume.owner_cells)
+    neighbor = np.asarray(finite_volume.neighbor_cells)
+    interior = neighbor >= 0
+    outward = np.asarray(finite_volume.area_vectors)
+    closure = np.zeros((finite_volume.cell_count, 3))
+    np.add.at(closure, owner, outward)
+    np.add.at(closure, neighbor[interior], -outward[interior])
+    np.testing.assert_allclose(closure, 0.0, atol=1e-15)
+
+
+def test_polyhedral_twisted_prism_uses_one_shared_warped_side_triangulation() -> None:
+    angle = 0.2
+    base = np.asarray([(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)])
+    center = np.mean(base, axis=0)
+    rotation = np.asarray(
+        [(np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle))]
+    )
+    top = (base - center) @ rotation.T + center
+    coordinates = np.concatenate(
+        (
+            np.column_stack((base, np.zeros(3))),
+            np.column_stack((top, np.full(3, 0.5))),
+        )
+    )
+    cells = (((0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)),)
+    mesh = CellMesh.from_polyhedra(coordinates, cells)
+    geometry = prepare_polyhedral_finite_volume_geometry(mesh)
+
+    valid = np.asarray(geometry.face_quadrature_valid)
+    assert sorted(np.count_nonzero(valid, axis=1).tolist()) == [1, 1, 4, 4, 4]
+    np.testing.assert_allclose(
+        geometry.cell_volumes,
+        (_surface_volume(coordinates, cells[0]),),
+        rtol=0,
+        atol=1e-15,
+    )
+    # A single cell owns every face, so its outward area vectors close exactly.
+    finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
+    np.testing.assert_allclose(
+        np.sum(finite_volume.area_vectors, axis=0), 0.0, atol=1e-15
+    )
+    np.testing.assert_allclose(geometry.closure_residual, 0.0, atol=1e-15)
+    np.testing.assert_allclose(
+        np.sum(geometry.cell_quadrature_weights), geometry.cell_volumes[0], atol=1e-15
+    )
+
+
 def test_fv_capability_closure_scenario_2() -> None:
     system = ShallowWaterSystem(2)
     plan = ShallowWaterHydrostaticHLLPlan()

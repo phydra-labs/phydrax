@@ -447,9 +447,8 @@ def _prism_section(
         )
     from ._intersection_curve import SurfaceRegion
 
-    source_region = SurfaceRegion(
-        patch, np.asarray(model.parameter_bounds[cap], dtype=np.float64)
-    )
+    cap_loop, cap_box = _merged_cap_loop(model, cap)
+    source_region = SurfaceRegion(patch, cap_box)
     x_axis, y_axis = (
         rational_vector(np.asarray(patch.first_axis)),
         rational_vector(np.asarray(patch.second_axis)),
@@ -467,7 +466,7 @@ def _prism_section(
     indices: list[int] = []
     source_segments: list[ProfileSegment] = []
     edge_ranges = np.asarray(geometry.edge_ranges)
-    for coedge in geometry.face_loops[cap][0]:
+    for coedge in cap_loop:
         edge = geometry.coedge_edges[coedge]
         curve_index = geometry.edge_curves[edge]
         if curve_index < 0:
@@ -557,6 +556,102 @@ def _prism_section(
         y_axis,
         tuple(source_segments),
     )
+
+
+def _merged_cap_loop(model: BRepModel, cap: int, /) -> tuple[tuple[int, ...], np.ndarray]:
+    """Merge coplanar cap fragments that share one plane chart into one loop.
+
+    Boolean arrangements split a source cap into coplanar cells. Fragments with
+    the identical plane carrier and orientation, connected through shared
+    edges, form the section; edges used by two fragments are interior and drop.
+    """
+    geometry = model.geometry
+    orientation = np.asarray(model.orientation)
+    patch = model.patches[cap]
+    if not isinstance(patch, PlanePatch):
+        raise RuntimeError("brep_fillet.cap must retain its plane carrier.")
+
+    def same_chart(face: int, /) -> bool:
+        other = model.patches[face]
+        return (
+            isinstance(other, PlanePatch)
+            and len(geometry.face_loops[face]) == 1
+            and int(orientation[face]) == int(orientation[cap])
+            and all(
+                np.array_equal(np.asarray(getattr(other, name)), np.asarray(getattr(patch, name)))
+                for name in ("origin", "first_axis", "second_axis")
+            )
+        )
+
+    fragments = {cap}
+    pending = [cap]
+    while pending:
+        face = pending.pop()
+        for coedge in geometry.face_loops[face][0]:
+            for other in model.topology.edge_faces[geometry.coedge_edges[coedge]]:
+                if other not in fragments and same_chart(other):
+                    fragments.add(other)
+                    pending.append(other)
+    if len(fragments) == 1:
+        return tuple(geometry.face_loops[cap][0]), np.asarray(
+            model.parameter_bounds[cap], dtype=np.float64
+        )
+    uses: dict[int, list[int]] = {}
+    for face in fragments:
+        for coedge in geometry.face_loops[face][0]:
+            uses.setdefault(geometry.coedge_edges[coedge], []).append(coedge)
+    boundary: dict[int, int] = {}
+    for coedges in uses.values():
+        if len(coedges) == 2:
+            first, second = coedges
+            if geometry.coedge_senses[first] == geometry.coedge_senses[second]:
+                raise BRepBlendUnsupported(
+                    "planar blend unsupported: coplanar cap fragments disagree in orientation"
+                )
+            continue
+        if len(coedges) != 1:
+            raise BRepBlendUnsupported(
+                "planar blend unsupported: nonmanifold coplanar cap fragments"
+            )
+        coedge = coedges[0]
+        start, end = geometry.edge_vertices[geometry.coedge_edges[coedge]]
+        if geometry.coedge_senses[coedge] < 0:
+            start, end = end, start
+        if start in boundary:
+            raise BRepBlendUnsupported(
+                "planar blend unsupported: merged cap fragments do not form one simple loop"
+            )
+        boundary[start] = coedge
+    outer = set(boundary.values())
+    first_coedge = next(
+        (coedge for coedge in geometry.face_loops[cap][0] if coedge in outer), None
+    )
+    if first_coedge is None:
+        raise BRepBlendUnsupported(
+            "planar blend unsupported: merged cap fragments do not form one simple loop"
+        )
+    loop = [first_coedge]
+    while True:
+        start, end = geometry.edge_vertices[geometry.coedge_edges[loop[-1]]]
+        tail = end if geometry.coedge_senses[loop[-1]] > 0 else start
+        following = boundary.get(tail)
+        if following is None:
+            raise BRepBlendUnsupported(
+                "planar blend unsupported: merged cap fragments do not form one simple loop"
+            )
+        if following == loop[0]:
+            break
+        loop.append(following)
+        if len(loop) > len(boundary):
+            break
+    if len(loop) != len(boundary):
+        raise BRepBlendUnsupported(
+            "planar blend unsupported: merged cap fragments do not form one simple loop"
+        )
+    boxes = np.stack(
+        [np.asarray(model.parameter_bounds[face], dtype=np.float64) for face in fragments]
+    )
+    return tuple(loop), np.stack((boxes[:, 0].min(axis=0), boxes[:, 1].max(axis=0)))
 
 
 def _certified_profile_junctions(

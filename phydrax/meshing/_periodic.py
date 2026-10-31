@@ -29,6 +29,7 @@ from ..discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
 )
 from ..discretization._cell_mesh import CellBlock, CellMesh
+from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._partition import CellAdjacency
 from ..discretization._periodic_cell import PeriodicCell
 from ..discretization._periodic_exact import (
@@ -1053,6 +1054,45 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
     )
 
 
+def periodic_quotient_facet_cell_classes(
+    mesh: CellMesh, cell_classes: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Quotient incidence of every lifted facet: count, lowest and highest cell class.
+
+    A lifted cover cuts the quotient along its outer boundary, where a facet has
+    one incident lifted cell although its orbit is interior. Each quotient cell is
+    counted once through its representative lift, so every facet orbit reports its
+    quotient incidences (a cell meeting one facet orbit through two of its own
+    facets counts twice). Values are returned per lifted facet row.
+    """
+    dimension = mesh.topological_dimension
+    facet_map = periodic_entity_orbit_map(mesh, dimension - 1)
+    facet_orbits = np.asarray(facet_map.lifted_to_quotient, dtype=np.int64)
+    cell_representatives = np.asarray(
+        periodic_entity_orbit_map(mesh, dimension).representative_lifted_rows,
+        dtype=np.int64,
+    )
+    classes = np.asarray(cell_classes, dtype=np.int64)
+    if classes.shape != (mesh.entity_set(dimension).count,):
+        raise ValueError("cell_classes must align with the lifted cell rows.")
+    relation = mesh.topology.incidences[dimension - 1].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    facets = np.asarray(relation.source_indices, dtype=np.int64)[valid]
+    cells = np.asarray(relation.target_indices, dtype=np.int64)[valid]
+    representative = np.zeros((classes.size,), dtype=np.bool_)
+    representative[cell_representatives] = True
+    selected = representative[cells]
+    orbit_rows = facet_orbits[facets[selected]]
+    incident_classes = classes[cells[selected]]
+    orbit_count = int(facet_map.quotient_entity_ids.size)
+    incident = np.bincount(orbit_rows, minlength=orbit_count)
+    lowest = np.full((orbit_count,), np.iinfo(np.int64).max, dtype=np.int64)
+    highest = np.full((orbit_count,), -1, dtype=np.int64)
+    np.minimum.at(lowest, orbit_rows, incident_classes)
+    np.maximum.at(highest, orbit_rows, incident_classes)
+    return incident[facet_orbits], lowest[facet_orbits], highest[facet_orbits]
+
+
 def transfer_periodic_p1_vertices(
     source: CellMesh,
     target: CellMesh,
@@ -1649,6 +1689,7 @@ def periodic_topology_after_edit(
     vertex_orbit_keys: ArrayLike | None = None,
     vertex_windings: ArrayLike | None = None,
     source_entity_degree: int | None = None,
+    exact_coordinate_source: ExactPlcCellGeometrySource | None = None,
 ) -> PeriodicMeshTopology | None:
     """Rebuild a quotient descriptor for an unbound lifted topology edit target.
 
@@ -1667,7 +1708,10 @@ def periodic_topology_after_edit(
     Equal keys then form one vertex orbit and windings are the absolute deck
     exponents of each member; located interpolation stencils are not orbit
     evidence in this mode. Coordinates validate the resulting identity bit for
-    bit through the canonical PeriodicMeshTopology constructor in every mode.
+    bit through the canonical PeriodicMeshTopology constructor in every mode;
+    ``exact_coordinate_source`` is the target's exact vertex bank when new
+    vertices are canonical roundings of exact quotient-chart translates rather
+    than translates of their rounded roots.
     """
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
         raise TypeError(
@@ -1885,6 +1929,7 @@ def periodic_topology_after_edit(
         target_representatives,
         target_shifts,
         entity_allocator_next_ids=allocator or None,
+        exact_coordinate_source=exact_coordinate_source,
     )
 
 
@@ -2018,6 +2063,7 @@ def stage_periodic_refinement_candidate(
     vertex_orbit_keys: ArrayLike | None = None,
     vertex_windings: ArrayLike | None = None,
     source_entity_degree: int | None = None,
+    exact_coordinate_source: ExactPlcCellGeometrySource | None = None,
 ) -> PeriodicCellEditCandidate:
     """Stage a full orbit of marked and conformity-closure bisections.
 
@@ -2115,6 +2161,7 @@ def stage_periodic_refinement_candidate(
         vertex_orbit_keys=vertex_orbit_keys,
         vertex_windings=vertex_windings,
         source_entity_degree=source_entity_degree,
+        exact_coordinate_source=exact_coordinate_source,
     )
     if descriptor is None:
         raise ValueError("A periodic refinement candidate requires a periodic source.")
@@ -2167,14 +2214,19 @@ def stage_periodic_refinement_candidate(
 
 
 def stage_periodic_topology_edit(
-    source: CellMesh, edit: CellTopologyEdit, /
+    source: CellMesh,
+    edit: CellTopologyEdit,
+    /,
+    *,
+    exact_coordinate_source: ExactPlcCellGeometrySource | None = None,
 ) -> CellMesh | None:
     """Build and validate a periodic target before any topology edit is published.
 
     Relation signatures are compared over every source entity orbit at each
     dimension. Thus split, collapse, flip, and relocation records either cover
     every lifted image with the same quotient operation or reject the entire
-    immutable candidate.
+    immutable candidate. ``exact_coordinate_source`` is the target's exact
+    quotient-chart vertex bank when generated vertices are not binary64.
     """
     if not isinstance(source, CellMesh):
         raise TypeError("source must be a CellMesh.")
@@ -2233,6 +2285,7 @@ def stage_periodic_topology_edit(
         vertex_orbit_keys=edit.vertex_orbit_keys,
         vertex_windings=edit.vertex_windings,
         source_entity_degree=edit.source_entity_degree,
+        exact_coordinate_source=exact_coordinate_source,
     )
     if descriptor is None:
         raise ValueError(

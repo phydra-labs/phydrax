@@ -51,7 +51,9 @@ _VertexKey = tuple[object, ...]
 class SourceCoverageUnavailable(ValueError):
     """A source boundary route lacks premises for its coverage theorem."""
 
-    def __init__(self, message: str, /, *, status: Literal["violated", "unresolved"]) -> None:
+    def __init__(
+        self, message: str, /, *, status: Literal["violated", "unresolved"]
+    ) -> None:
         super().__init__(message)
         self.status = status
 
@@ -99,39 +101,55 @@ class SourceCoverageAttempt:
 
 def _point2(values: tuple[object, ...], /) -> _Point2:
     if len(values) != 2:
-        raise SourceCoverageUnavailable("A source chart point does not have two exact coordinates.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "A source chart point does not have two exact coordinates.",
+            status="unresolved",
+        )
     first, second = values
     if not isinstance(first, Fraction) or not isinstance(second, Fraction):
-        raise SourceCoverageUnavailable("A source chart point is not exactly rational.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "A source chart point is not exactly rational.", status="unresolved"
+        )
     return first, second
 
 
 def _point3(values: tuple[object, ...], /) -> _Point3:
     if len(values) != 3:
-        raise SourceCoverageUnavailable("A source boundary point does not have three exact coordinates.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "A source boundary point does not have three exact coordinates.",
+            status="unresolved",
+        )
     first, second, third = values
     if (
         not isinstance(first, Fraction)
         or not isinstance(second, Fraction)
         or not isinstance(third, Fraction)
     ):
-        raise SourceCoverageUnavailable("A source boundary point is not exactly rational.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "A source boundary point is not exactly rational.", status="unresolved"
+        )
     return first, second, third
 
 
 def _triangle2(values: tuple[tuple[Fraction, ...], ...], /) -> _Triangle2:
     if len(values) != 3:
-        raise SourceCoverageUnavailable("A source chart piece is not triangular.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "A source chart piece is not triangular.", status="unresolved"
+        )
     return (_point2(values[0]), _point2(values[1]), _point2(values[2]))
 
 
 def _triangle3(values: tuple[tuple[Fraction, ...], ...], /) -> _Triangle3:
     if len(values) != 3:
-        raise SourceCoverageUnavailable("A source boundary piece is not triangular.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "A source boundary piece is not triangular.", status="unresolved"
+        )
     return (_point3(values[0]), _point3(values[1]), _point3(values[2]))
 
 
-def _surface_point(surface: object, uv: tuple[Fraction, Fraction], /) -> tuple[Fraction, Fraction, Fraction]:
+def _surface_point(
+    surface: object, uv: tuple[Fraction, Fraction], /
+) -> tuple[Fraction, Fraction, Fraction]:
     from ._meshing_domain import _PlacedSurfacePatch
     from ._rational import rational_vector
     from .brep._patches import ExactLineCurve, ExtrusionSurface, LineCurve, PlanePatch
@@ -144,14 +162,17 @@ def _surface_point(surface: object, uv: tuple[Fraction, Fraction], /) -> tuple[F
         first = rational_vector(np.asarray(surface.first_axis))
         second = rational_vector(np.asarray(surface.second_axis))
         point = tuple(
-            origin[axis] + uv[0] * first[axis] + uv[1] * second[axis]
-            for axis in range(3)
+            origin[axis] + uv[0] * first[axis] + uv[1] * second[axis] for axis in range(3)
         )
-    elif isinstance(surface, ExtrusionSurface) and isinstance(surface.curve, ExactLineCurve):
+    elif isinstance(surface, ExtrusionSurface) and isinstance(
+        surface.curve, ExactLineCurve
+    ):
         origin = surface.curve.first_exact
         profile = tuple(
             last - first
-            for first, last in zip(surface.curve.first_exact, surface.curve.last_exact, strict=True)
+            for first, last in zip(
+                surface.curve.first_exact, surface.curve.last_exact, strict=True
+            )
         )
         direction = rational_vector(np.asarray(surface.direction))
         point = tuple(
@@ -205,7 +226,9 @@ def _validate_cad_authority(domain: MeshingDomain, /) -> None:
                 )
             )
         )
-        actual_regions = tuple((region.name, region.boundary) for region in domain.regions)
+        actual_regions = tuple(
+            (region.name, region.boundary) for region in domain.regions
+        )
         if actual_regions != expected_regions:
             raise SourceCoverageUnavailable(
                 "MeshingDomain region boundaries omit or reorient retained BRepGeometry solids.",
@@ -282,7 +305,9 @@ def exact_planar_cad_boundary(domain: MeshingDomain, /) -> ExactCadSourceBoundar
         raise TypeError("domain must be MeshingDomain.")
     domain.require_current(domain.source_id, domain.source_revision)
     if not domain.regions:
-        raise SourceCoverageUnavailable("CAD source has no material regions.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "CAD source has no material regions.", status="unresolved"
+        )
     if domain.accuracy != "exact_represented":
         raise SourceCoverageUnavailable(
             "Exact CAD chain extraction requires exact-represented source accuracy.",
@@ -313,13 +338,18 @@ def exact_planar_cad_boundary(domain: MeshingDomain, /) -> ExactCadSourceBoundar
     for patch, triangles in patch_triangles:
         pair = pairs[patch]
         for triangle_row, triangle in enumerate(triangles):
-            physical = tuple(_surface_point(domain.patches[patch].surface, uv) for uv in triangle)
+            physical = tuple(
+                _surface_point(domain.patches[patch].surface, uv) for uv in triangle
+            )
             rows: list[int] = []
             for point in physical:
                 row = vertex_rows.get(point)
                 if row is None:
                     represented = tuple(float(value) for value in point)
-                    if any(Fraction(value) != exact for value, exact in zip(represented, point, strict=True)):
+                    if any(
+                        Fraction(value) != exact
+                        for value, exact in zip(represented, point, strict=True)
+                    ):
                         raise SourceCoverageUnavailable(
                             "A CAD trim vertex is not exactly representable for affine target overlap.",
                             status="unresolved",
@@ -334,7 +364,10 @@ def exact_planar_cad_boundary(domain: MeshingDomain, /) -> ExactCadSourceBoundar
             ancestry.append((patch, triangle_row))
     try:
         chain = PiecewiseLinearDomain(
-            np.asarray([[float(value) for value in point] for point in exact_vertices], dtype=np.float64),
+            np.asarray(
+                [[float(value) for value in point] for point in exact_vertices],
+                dtype=np.float64,
+            ),
             np.asarray(facets, dtype=np.int64),
             np.asarray(facet_regions, dtype=np.int64),
             tuple(region.name for region in domain.regions),
@@ -367,26 +400,43 @@ def _fraction(value: float, /) -> Fraction:
 def _area2(points: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
     if len(points) < 3:
         return Fraction(0)
-    return sum(
-        (first[0] * second[1] - first[1] * second[0]
-         for first, second in zip(points, (*points[1:], points[0]), strict=True)),
-        Fraction(0),
-    ) / 2
+    return (
+        sum(
+            (
+                first[0] * second[1] - first[1] * second[0]
+                for first, second in zip(points, (*points[1:], points[0]), strict=True)
+            ),
+            Fraction(0),
+        )
+        / 2
+    )
 
 
-def _cross2(first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction], point: tuple[Fraction, Fraction], /) -> Fraction:
-    return (second[0] - first[0]) * (point[1] - first[1]) - (second[1] - first[1]) * (point[0] - first[0])
+def _cross2(
+    first: tuple[Fraction, Fraction],
+    second: tuple[Fraction, Fraction],
+    point: tuple[Fraction, Fraction],
+    /,
+) -> Fraction:
+    return (second[0] - first[0]) * (point[1] - first[1]) - (second[1] - first[1]) * (
+        point[0] - first[0]
+    )
 
 
 def _line_intersection(
-    first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction],
-    line_first: tuple[Fraction, Fraction], line_second: tuple[Fraction, Fraction], /
+    first: tuple[Fraction, Fraction],
+    second: tuple[Fraction, Fraction],
+    line_first: tuple[Fraction, Fraction],
+    line_second: tuple[Fraction, Fraction],
+    /,
 ) -> tuple[Fraction, Fraction]:
     direction = (second[0] - first[0], second[1] - first[1])
     line = (line_second[0] - line_first[0], line_second[1] - line_first[1])
     denominator = line[0] * direction[1] - line[1] * direction[0]
     if denominator == 0:
-        raise SourceCoverageUnavailable("Exact source-chart clipping is singular.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "Exact source-chart clipping is singular.", status="unresolved"
+        )
     offset = (line_first[0] - first[0], line_first[1] - first[1])
     parameter = (line[0] * offset[1] - line[1] * offset[0]) / denominator
     return (first[0] + parameter * direction[0], first[1] + parameter * direction[1])
@@ -394,7 +444,8 @@ def _line_intersection(
 
 def _intersection_area(
     subject: tuple[tuple[Fraction, Fraction], ...],
-    clip: tuple[tuple[Fraction, Fraction], ...], /
+    clip: tuple[tuple[Fraction, Fraction], ...],
+    /,
 ) -> Fraction:
     polygon = subject
     for line_first, line_second in zip(clip, (*clip[1:], clip[0]), strict=True):
@@ -407,10 +458,14 @@ def _intersection_area(
             current_inside = _cross2(line_first, line_second, current) >= 0
             if current_inside:
                 if not previous_inside:
-                    output.append(_line_intersection(previous, current, line_first, line_second))
+                    output.append(
+                        _line_intersection(previous, current, line_first, line_second)
+                    )
                 output.append(current)
             elif previous_inside:
-                output.append(_line_intersection(previous, current, line_first, line_second))
+                output.append(
+                    _line_intersection(previous, current, line_first, line_second)
+                )
             previous, previous_inside = current, current_inside
         compact: list[tuple[Fraction, Fraction]] = []
         for point in output:
@@ -439,7 +494,9 @@ def _volume_face_owners(
     for block in mesh.blocks:
         reference = reference_cell_topology(block.cell_kind)
         if reference.dimension != 3:
-            raise SourceCoverageUnavailable("Source coverage requires volume target cells.", status="unresolved")
+            raise SourceCoverageUnavailable(
+                "Source coverage requires volume target cells.", status="unresolved"
+            )
         values = np.asarray(block.vertices, dtype=np.int64)
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
         reference_vertices: tuple[_Point3, ...] = tuple(
@@ -447,21 +504,29 @@ def _volume_face_owners(
             for point in reference.vertices
         )
         cell_center: _Point3 = (
-            sum((point[0] for point in reference_vertices), Fraction(0)) / len(reference_vertices),
-            sum((point[1] for point in reference_vertices), Fraction(0)) / len(reference_vertices),
-            sum((point[2] for point in reference_vertices), Fraction(0)) / len(reference_vertices),
+            sum((point[0] for point in reference_vertices), Fraction(0))
+            / len(reference_vertices),
+            sum((point[1] for point in reference_vertices), Fraction(0))
+            / len(reference_vertices),
+            sum((point[2] for point in reference_vertices), Fraction(0))
+            / len(reference_vertices),
         )
         for row in range(block.cell_count):
             cell_id = int(identifiers[row])
             region = int(cell_regions[global_cell])
             for local_face, face in enumerate(reference.entities[2]):
                 slots = tuple(int(value) for value in face)
-                key = tuple(sorted(int(vertex_ids[int(values[row, slot])]) for slot in slots))
+                key = tuple(
+                    sorted(int(vertex_ids[int(values[row, slot])]) for slot in slots)
+                )
                 grouped.setdefault(key, []).append((cell_id, region, local_face))
                 by_cell_face[(cell_id, local_face)] = key
                 points = tuple(reference_vertices[slot] for slot in slots)
                 if len(points) < 3:
-                    raise SourceCoverageUnavailable("Target reference face has fewer than three vertices.", status="unresolved")
+                    raise SourceCoverageUnavailable(
+                        "Target reference face has fewer than three vertices.",
+                        status="unresolved",
+                    )
                 normal = _cross3((points[0], points[1], points[2]))
                 center = (
                     sum((point[0] for point in points), Fraction(0)) / len(points),
@@ -477,20 +542,29 @@ def _volume_face_owners(
                     ),
                 )
                 if outward == 0:
-                    raise SourceCoverageUnavailable("Target reference face has no oriented outward normal.", status="unresolved")
+                    raise SourceCoverageUnavailable(
+                        "Target reference face has no oriented outward normal.",
+                        status="unresolved",
+                    )
                 face_outward_sign[(cell_id, local_face)] = 1 if outward > 0 else -1
             global_cell += 1
     if global_cell != cell_regions.size:
-        raise SourceCoverageUnavailable("Target region assignments do not align with volume cells.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Target region assignments do not align with volume cells.", status="violated"
+        )
     compact: dict[tuple[int, ...], tuple[tuple[int, int, int], ...]] = {}
     for key, owners in grouped.items():
         if len(owners) > 2:
-            raise SourceCoverageUnavailable("Target volume has a nonmanifold face.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Target volume has a nonmanifold face.", status="violated"
+            )
         compact[key] = tuple(owners)
     return compact, by_cell_face, face_outward_sign
 
 
-def _cad_pcurve_parameter(use: object, point: tuple[Fraction, Fraction], /) -> Fraction | None:
+def _cad_pcurve_parameter(
+    use: object, point: tuple[Fraction, Fraction], /
+) -> Fraction | None:
     from ._meshing_domain import PatchCurveUse
     from .brep._patches import ExactLineCurve, LineCurve
 
@@ -499,7 +573,10 @@ def _cad_pcurve_parameter(use: object, point: tuple[Fraction, Fraction], /) -> F
     pcurve = use.pcurve
     if isinstance(pcurve, ExactLineCurve):
         origin = pcurve.first_exact
-        direction = tuple(last - first for first, last in zip(pcurve.first_exact, pcurve.last_exact, strict=True))
+        direction = tuple(
+            last - first
+            for first, last in zip(pcurve.first_exact, pcurve.last_exact, strict=True)
+        )
     elif isinstance(pcurve, LineCurve):
         origin = pcurve.origin_exact
         direction = pcurve.direction_exact
@@ -525,8 +602,12 @@ def _cad_pcurve_parameter(use: object, point: tuple[Fraction, Fraction], /) -> F
             break
     if parameter is None:
         return None
-    lower = min(Fraction.from_float(float(use.first)), Fraction.from_float(float(use.last)))
-    upper = max(Fraction.from_float(float(use.first)), Fraction.from_float(float(use.last)))
+    lower = min(
+        Fraction.from_float(float(use.first)), Fraction.from_float(float(use.last))
+    )
+    upper = max(
+        Fraction.from_float(float(use.first)), Fraction.from_float(float(use.last))
+    )
     if not lower <= parameter <= upper:
         return None
     try:
@@ -557,10 +638,22 @@ def _cad_chart_vertex_key(
             occurrence = domain.source_occurrences[1][curve_row]
             if parameter == Fraction.from_float(float(use.first)):
                 corner = domain.curves[curve_row].start
-                labels.add(("corner", domain.entity_id(0, corner), domain.source_occurrences[0][corner]))
+                labels.add(
+                    (
+                        "corner",
+                        domain.entity_id(0, corner),
+                        domain.source_occurrences[0][corner],
+                    )
+                )
             elif parameter == Fraction.from_float(float(use.last)):
                 corner = domain.curves[curve_row].end
-                labels.add(("corner", domain.entity_id(0, corner), domain.source_occurrences[0][corner]))
+                labels.add(
+                    (
+                        "corner",
+                        domain.entity_id(0, corner),
+                        domain.source_occurrences[0][corner],
+                    )
+                )
             else:
                 labels.add(("curve", curve_id, occurrence, parameter))
     if len(labels) > 1:
@@ -570,7 +663,12 @@ def _cad_chart_vertex_key(
         )
     if labels:
         return next(iter(labels))
-    return ("patch", domain.entity_id(2, patch), domain.source_occurrences[2][patch], point)
+    return (
+        "patch",
+        domain.entity_id(2, patch),
+        domain.source_occurrences[2][patch],
+        point,
+    )
 
 
 def _cad_chart_curve_use(
@@ -582,17 +680,26 @@ def _cad_chart_curve_use(
 ) -> tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse]:
     from ._meshing_domain import PatchCurveUse
 
-    matches: list[tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse]] = []
+    matches: list[
+        tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse]
+    ] = []
     for loop in domain.patches[patch].loops:
         for use in loop:
             if not isinstance(use, PatchCurveUse):
                 continue
             first_parameter = _cad_pcurve_parameter(use, first)
             second_parameter = _cad_pcurve_parameter(use, second)
-            if first_parameter is None or second_parameter is None or first_parameter == second_parameter:
+            if (
+                first_parameter is None
+                or second_parameter is None
+                or first_parameter == second_parameter
+            ):
                 continue
             curve_row = int(use.curve)
-            key = (domain.entity_id(1, curve_row), domain.source_occurrences[1][curve_row])
+            key = (
+                domain.entity_id(1, curve_row),
+                domain.source_occurrences[1][curve_row],
+            )
             matches.append((key, first_parameter, second_parameter, use))
     if len(matches) != 1:
         raise SourceCoverageUnavailable(
@@ -627,39 +734,63 @@ def _cad_chart_topology_degree(
     row_uv: list[_Triangle2] = []
     row_labels: list[tuple[_VertexKey, _VertexKey, _VertexKey]] = []
     for row, (cell_raw, local_raw, patch) in enumerate(
-        zip(witness.cell_global_ids, witness.local_entity_indices, patch_rows, strict=True)
+        zip(
+            witness.cell_global_ids, witness.local_entity_indices, patch_rows, strict=True
+        )
     ):
         cell_id, local_face = int(cell_raw), int(local_raw)
         found = cell_rows.get(cell_id)
         face_key = by_cell_face.get((cell_id, local_face))
         if found is None or face_key is None:
-            raise SourceCoverageUnavailable("A CAD chart triangle names an absent target face.", status="violated")
+            raise SourceCoverageUnavailable(
+                "A CAD chart triangle names an absent target face.", status="violated"
+            )
         block, cell_row = found
         reference = reference_cell_topology(block.cell_kind)
         faces = reference.entities[2]
         if local_face < 0 or local_face >= len(faces):
-            raise SourceCoverageUnavailable("A CAD chart triangle names an invalid target face.", status="violated")
+            raise SourceCoverageUnavailable(
+                "A CAD chart triangle names an invalid target face.", status="violated"
+            )
         face_slots = {int(value) for value in faces[local_face]}
         reference_vertices = tuple(
-            tuple(_fraction(float(value)) for value in point) for point in reference.vertices
+            tuple(_fraction(float(value)) for value in point)
+            for point in reference.vertices
         )
         ids = []
         target_chart = _triangle3(witness.target_reference_chart(row))
         for exact_point in target_chart:
             matches = tuple(
-                slot for slot, corner in enumerate(reference_vertices) if corner == exact_point
+                slot
+                for slot, corner in enumerate(reference_vertices)
+                if corner == exact_point
             )
             if len(matches) != 1 or matches[0] not in face_slots:
                 raise SourceCoverageUnavailable(
                     "CAD seam proof currently requires target chart corners at stable volume-mesh vertices.",
                     status="unresolved",
                 )
-            ids.append(int(vertex_ids[int(np.asarray(block.vertices, dtype=np.int64)[cell_row, matches[0]])]))
+            ids.append(
+                int(
+                    vertex_ids[
+                        int(
+                            np.asarray(block.vertices, dtype=np.int64)[
+                                cell_row, matches[0]
+                            ]
+                        )
+                    ]
+                )
+            )
         if len(ids) != 3 or len(set(ids)) != 3 or not set(ids) <= set(face_key):
-            raise SourceCoverageUnavailable("A CAD chart triangle changes its target face vertex ancestry.", status="violated")
+            raise SourceCoverageUnavailable(
+                "A CAD chart triangle changes its target face vertex ancestry.",
+                status="violated",
+            )
         uv = _triangle2(witness.source_parameter_chart(row))
         if _area2(uv) == 0:
-            raise SourceCoverageUnavailable("A CAD source chart triangle is degenerate.", status="violated")
+            raise SourceCoverageUnavailable(
+                "A CAD source chart triangle is degenerate.", status="violated"
+            )
         row_targets.append((ids[0], ids[1], ids[2]))
         row_uv.append(uv)
         row_labels.append(
@@ -671,14 +802,17 @@ def _cad_chart_topology_degree(
         )
 
     target_edges: dict[tuple[int, tuple[int, int]], list[int]] = {}
-    source_edges: dict[tuple[int, tuple[_VertexKey, _VertexKey]], list[tuple[int, int]]] = {}
+    source_edges: dict[
+        tuple[int, tuple[_VertexKey, _VertexKey]], list[tuple[int, int]]
+    ] = {}
     source_edge_for_target: dict[
         tuple[int, tuple[int, int]], tuple[_VertexKey, _VertexKey]
     ] = {}
     target_to_source: dict[int, dict[int, _VertexKey]] = {}
     source_to_target: dict[int, dict[_VertexKey, int]] = {}
     row_degree_signs: dict[int, dict[int, int]] = {}
-    for row, (patch, pair) in enumerate(zip(patch_rows, pairs, strict=True)):
+    for row, patch in enumerate(patch_rows):
+        pair = pairs[patch]
         uv = row_uv[row]
         targets = row_targets[row]
         labels = row_labels[row]
@@ -689,17 +823,36 @@ def _cad_chart_topology_degree(
         parent_region = cell_region.get(cell_id)
         target_outward = face_outward_sign.get((cell_id, local_face), 0)
         if parent_region is None or target_outward not in (-1, 1):
-            raise SourceCoverageUnavailable("CAD chart row has no bound target material-side orientation.", status="violated")
+            raise SourceCoverageUnavailable(
+                "CAD chart row has no bound target material-side orientation.",
+                status="violated",
+            )
         for region in (value for value in pair if value >= 0):
             region_sign = patch_signs.get(region, 0)
             if region_sign not in (-1, 1):
-                raise SourceCoverageUnavailable("CAD source chart omits its material-side orientation.", status="violated")
-            target_side_sign = 1 if parent_region == region else -1 if parent_region in pair else 0
+                raise SourceCoverageUnavailable(
+                    "CAD source chart omits its material-side orientation.",
+                    status="violated",
+                )
+            target_side_sign = (
+                1 if parent_region == region else -1 if parent_region in pair else 0
+            )
             if target_side_sign == 0:
-                raise SourceCoverageUnavailable("CAD chart row does not bind one of its target material regions.", status="violated")
-            local_degree = int(witness.orientations[row]) * target_outward * target_side_sign * region_sign
+                raise SourceCoverageUnavailable(
+                    "CAD chart row does not bind one of its target material regions.",
+                    status="violated",
+                )
+            local_degree = (
+                int(witness.orientations[row])
+                * target_outward
+                * target_side_sign
+                * region_sign
+            )
             if local_degree != 1:
-                raise SourceCoverageUnavailable("CAD source-to-target chart map has nonpositive material degree.", status="violated")
+                raise SourceCoverageUnavailable(
+                    "CAD source-to-target chart map has nonpositive material degree.",
+                    status="violated",
+                )
             row_degree_signs.setdefault(region, {})[row] = local_degree
             by_target = target_to_source.setdefault(region, {})
             by_source = source_to_target.setdefault(region, {})
@@ -717,17 +870,28 @@ def _cad_chart_topology_degree(
                 first_id, second_id = targets[edge], targets[next_edge]
                 first_key, second_key = labels[edge], labels[next_edge]
                 if first_id == second_id or first_key == second_key:
-                    raise SourceCoverageUnavailable("CAD chart maps a nondegenerate edge to one source vertex.", status="violated")
+                    raise SourceCoverageUnavailable(
+                        "CAD chart maps a nondegenerate edge to one source vertex.",
+                        status="violated",
+                    )
                 target_edge = (min(first_id, second_id), max(first_id, second_id))
                 ordered_source_edge = tuple(sorted((first_key, second_key), key=repr))
                 source_edge = (ordered_source_edge[0], ordered_source_edge[1])
                 target_edges.setdefault((region, target_edge), []).append(row)
                 source_edges.setdefault((region, source_edge), []).append(
-                    (row, (1 if repr(first_key) < repr(second_key) else -1) * oriented_sign)
+                    (
+                        row,
+                        (1 if repr(first_key) < repr(second_key) else -1) * oriented_sign,
+                    )
                 )
-                previous_edge = source_edge_for_target.setdefault((region, target_edge), source_edge)
+                previous_edge = source_edge_for_target.setdefault(
+                    (region, target_edge), source_edge
+                )
                 if previous_edge != source_edge:
-                    raise SourceCoverageUnavailable("Adjacent CAD chart faces disagree on their common source edge.", status="violated")
+                    raise SourceCoverageUnavailable(
+                        "Adjacent CAD chart faces disagree on their common source edge.",
+                        status="violated",
+                    )
 
     topology: list[tuple[tuple[int, ...], int, int, int, int, int]] = []
     for region in range(len(domain.regions)):
@@ -738,21 +902,33 @@ def _cad_chart_topology_degree(
             edge: rows for (owner, edge), rows in source_edges.items() if owner == region
         }
         if not region_target_edges or not region_source_edges:
-            raise SourceCoverageUnavailable("A CAD material region has no charted target boundary.", status="violated")
+            raise SourceCoverageUnavailable(
+                "A CAD material region has no charted target boundary.", status="violated"
+            )
         for edge, rows in region_target_edges.items():
             if len(rows) != 2:
-                raise SourceCoverageUnavailable("Target CAD chart boundary is not a closed two-manifold per material region.", status="violated")
+                raise SourceCoverageUnavailable(
+                    "Target CAD chart boundary is not a closed two-manifold per material region.",
+                    status="violated",
+                )
             first_row, second_row = rows
             first_targets = row_targets[first_row]
             second_targets = row_targets[second_row]
             first_labels = dict(zip(first_targets, row_labels[first_row], strict=True))
             second_labels = dict(zip(second_targets, row_labels[second_row], strict=True))
             endpoints = edge
-            if any(first_labels.get(value) != second_labels.get(value) for value in endpoints):
-                raise SourceCoverageUnavailable("Target faces reglue to different source chart points along a shared edge.", status="violated")
+            if any(
+                first_labels.get(value) != second_labels.get(value) for value in endpoints
+            ):
+                raise SourceCoverageUnavailable(
+                    "Target faces reglue to different source chart points along a shared edge.",
+                    status="violated",
+                )
             first_source_edge = source_edge_for_target[(region, edge)]
             if first_source_edge not in region_source_edges:
-                raise SourceCoverageUnavailable("Target CAD edge has no paired source chart edge.", status="violated")
+                raise SourceCoverageUnavailable(
+                    "Target CAD edge has no paired source chart edge.", status="violated"
+                )
             if patch_rows[first_row] != patch_rows[second_row]:
                 first_patch, second_patch = patch_rows[first_row], patch_rows[second_row]
                 first_uv = dict(zip(first_targets, row_uv[first_row], strict=True))
@@ -764,7 +940,8 @@ def _cad_chart_topology_degree(
                     domain, second_patch, second_uv[endpoints[0]], second_uv[endpoints[1]]
                 )
                 if first_use[0] != second_use[0] or (first_use[1], first_use[2]) != (
-                    second_use[1], second_use[2]
+                    second_use[1],
+                    second_use[2],
                 ):
                     raise SourceCoverageUnavailable(
                         "Adjacent CAD charts do not map their shared target edge to the same authored coedge occurrence and traversal.",
@@ -772,33 +949,57 @@ def _cad_chart_topology_degree(
                     )
                 first_region_sign = dict(signs_by_patch[first_patch]).get(region, 0)
                 second_region_sign = dict(signs_by_patch[second_patch]).get(region, 0)
-                if first_region_sign * first_use[3].sense + second_region_sign * second_use[3].sense != 0:
+                if (
+                    first_region_sign * first_use[3].sense
+                    + second_region_sign * second_use[3].sense
+                    != 0
+                ):
                     raise SourceCoverageUnavailable(
                         "Adjacent CAD chart coedges do not have opposite material-region traversal.",
                         status="violated",
                     )
         for edge, owners in region_source_edges.items():
             if len(owners) != 2 or sum(sign for _, sign in owners) != 0:
-                raise SourceCoverageUnavailable("Mapped CAD chart triangles do not form a closed oriented source-region 2-chain.", status="violated")
+                raise SourceCoverageUnavailable(
+                    "Mapped CAD chart triangles do not form a closed oriented source-region 2-chain.",
+                    status="violated",
+                )
         reverse_edges: dict[tuple[_VertexKey, _VertexKey], tuple[int, int]] = {}
         for target_edge, source_edge in (
-            (edge, source_edge_for_target[(region, edge)])
-            for edge in region_target_edges
+            (edge, source_edge_for_target[(region, edge)]) for edge in region_target_edges
         ):
             previous = reverse_edges.setdefault(source_edge, target_edge)
             if previous != target_edge:
-                raise SourceCoverageUnavailable("Distinct target edges map to one authored CAD chart edge.", status="violated")
-        if set(reverse_edges) != set(region_source_edges) or len(reverse_edges) != len(region_target_edges):
-            raise SourceCoverageUnavailable("Target/source CAD edge correspondence is not bijective.", status="violated")
+                raise SourceCoverageUnavailable(
+                    "Distinct target edges map to one authored CAD chart edge.",
+                    status="violated",
+                )
+        if set(reverse_edges) != set(region_source_edges) or len(reverse_edges) != len(
+            region_target_edges
+        ):
+            raise SourceCoverageUnavailable(
+                "Target/source CAD edge correspondence is not bijective.",
+                status="violated",
+            )
         target_vertices = target_to_source.get(region, {})
         source_vertices = source_to_target.get(region, {})
-        if len(target_vertices) != len(source_vertices) or len(target_vertices) != len(set(target_vertices)):
-            raise SourceCoverageUnavailable("Target/source CAD vertex correspondence is not bijective.", status="violated")
-        face_rows = tuple(row for row, pair in enumerate(pairs) if region in pair)
+        if len(target_vertices) != len(source_vertices) or len(target_vertices) != len(
+            set(target_vertices)
+        ):
+            raise SourceCoverageUnavailable(
+                "Target/source CAD vertex correspondence is not bijective.",
+                status="violated",
+            )
+        face_rows = tuple(
+            row for row, patch in enumerate(patch_rows) if region in pairs[patch]
+        )
         target_euler = len(target_vertices) - len(region_target_edges) + len(face_rows)
         source_euler = len(source_vertices) - len(region_source_edges) + len(face_rows)
         if target_euler != source_euler:
-            raise SourceCoverageUnavailable("Target and authored CAD chart complexes have different Euler characteristics.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Target and authored CAD chart complexes have different Euler characteristics.",
+                status="violated",
+            )
         target_neighbors = {row: set() for row in face_rows}
         source_neighbors = {row: set() for row in face_rows}
         for rows in region_target_edges.values():
@@ -826,14 +1027,22 @@ def _cad_chart_topology_degree(
         target_components = components(target_neighbors)
         source_components = components(source_neighbors)
         if target_neighbors != source_neighbors or target_components != source_components:
-            raise SourceCoverageUnavailable("Target and authored CAD chart components or edge incidence do not correspond.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Target and authored CAD chart components or edge incidence do not correspond.",
+                status="violated",
+            )
         if set(row_degree_signs.get(region, {})) != set(face_rows):
-            raise SourceCoverageUnavailable("CAD material-region degree omits a target chart face.", status="violated")
+            raise SourceCoverageUnavailable(
+                "CAD material-region degree omits a target chart face.", status="violated"
+            )
         component_degrees = tuple(
             row_degree_signs[region][component[0]] for component in target_components
         )
         if any(value != 1 for value in component_degrees):
-            raise SourceCoverageUnavailable("CAD target/source boundary component degree is not one.", status="violated")
+            raise SourceCoverageUnavailable(
+                "CAD target/source boundary component degree is not one.",
+                status="violated",
+            )
         topology.append(
             (
                 component_degrees,
@@ -857,7 +1066,9 @@ def _cad_chart_partition(
 ) -> tuple[int, tuple[str, ...]]:
     from ._domain_boundary import MeshingDomainBoundarySource
 
-    if not isinstance(source, MeshingDomainBoundarySource) or not _same_domain(source.domain, domain):
+    if not isinstance(source, MeshingDomainBoundarySource) or not _same_domain(
+        source.domain, domain
+    ):
         raise SourceCoverageUnavailable(
             "CAD approximate coverage requires the actual revision-bound MeshingDomain boundary query.",
             status="unresolved",
@@ -869,50 +1080,107 @@ def _cad_chart_partition(
             status="unresolved",
         )
     if set(source.patches) != set(range(len(domain.patches))):
-        raise SourceCoverageUnavailable("CAD coverage query omits source patches.", status="violated")
+        raise SourceCoverageUnavailable(
+            "CAD coverage query omits source patches.", status="violated"
+        )
     if witness.chart_dimension != 2 or witness.reference_dimension != 3:
-        raise SourceCoverageUnavailable("CAD volume chart witness has the wrong dimensions.", status="unresolved")
-    if witness.source_id != domain.source_id or witness.source_revision != domain.source_revision:
-        raise SourceCoverageUnavailable("CAD chart witness binds another source revision.", status="violated")
+        raise SourceCoverageUnavailable(
+            "CAD volume chart witness has the wrong dimensions.", status="unresolved"
+        )
+    if (
+        witness.source_id != domain.source_id
+        or witness.source_revision != domain.source_revision
+    ):
+        raise SourceCoverageUnavailable(
+            "CAD chart witness binds another source revision.", status="violated"
+        )
     if witness.source_query_id != source.source_scope_id:
-        raise SourceCoverageUnavailable("CAD chart witness binds another source-boundary query scope.", status="violated")
+        raise SourceCoverageUnavailable(
+            "CAD chart witness binds another source-boundary query scope.",
+            status="violated",
+        )
     pairs, signs_by_patch = cad_material_sides(domain)
     declared_by_patch = dict(source.boundary_parameter_triangles())
     targets_by_patch: dict[int, list[_Triangle2]] = {}
     patch_rows: list[int] = []
     for row, (source_chart_id, source_entity_id, occurrence) in enumerate(
-        zip(witness.source_chart_ids, witness.source_entity_ids, witness.occurrence_paths, strict=True)
+        zip(
+            witness.source_chart_ids,
+            witness.source_entity_ids,
+            witness.occurrence_paths,
+            strict=True,
+        )
     ):
         if source_chart_id != source_entity_id:
-            raise SourceCoverageUnavailable("CAD source chart and authored face identity differ.", status="violated")
+            raise SourceCoverageUnavailable(
+                "CAD source chart and authored face identity differ.", status="violated"
+            )
         try:
-            patch = domain.resolve_entity_id(2, source_entity_id, occurrence_path=occurrence)
+            patch = domain.resolve_entity_id(
+                2, source_entity_id, occurrence_path=occurrence
+            )
         except (TypeError, ValueError) as error:
-            raise SourceCoverageUnavailable(f"CAD chart witness names an invalid source face: {error}", status="violated") from error
+            raise SourceCoverageUnavailable(
+                f"CAD chart witness names an invalid source face: {error}",
+                status="violated",
+            ) from error
         patch_rows.append(patch)
         triangle = _triangle2(witness.source_parameter_chart(row))
         targets_by_patch.setdefault(patch, []).append(triangle)
     if set(targets_by_patch) != set(source.patches):
-        raise SourceCoverageUnavailable("CAD boundary chart witness omits or adds an authored source patch.", status="violated")
+        raise SourceCoverageUnavailable(
+            "CAD boundary chart witness omits or adds an authored source patch.",
+            status="violated",
+        )
     for patch in source.patches:
         declared = tuple(declared_by_patch[patch])
         target = tuple(targets_by_patch.get(patch, ()))
         if not declared or not target:
-            raise SourceCoverageUnavailable(f"CAD patch {patch} lacks a complete chart partition.", status="violated")
+            raise SourceCoverageUnavailable(
+                f"CAD patch {patch} lacks a complete chart partition.", status="violated"
+            )
         source_area = sum((abs(_area2(triangle)) for triangle in declared), Fraction(0))
         target_area = sum((abs(_area2(triangle)) for triangle in target), Fraction(0))
         if target_area != source_area:
-            raise SourceCoverageUnavailable(f"CAD source chart area differs on patch {patch}.", status="violated")
+            raise SourceCoverageUnavailable(
+                f"CAD source chart area differs on patch {patch}.", status="violated"
+            )
         for index, first in enumerate(target):
             if abs(_area2(first)) == 0:
-                raise SourceCoverageUnavailable(f"CAD source chart is degenerate on patch {patch}.", status="violated")
-            if sum((_intersection_area(first, value) for value in declared), Fraction(0)) != abs(_area2(first)):
-                raise SourceCoverageUnavailable(f"CAD target chart leaves the authored trim on patch {patch}.", status="violated")
+                raise SourceCoverageUnavailable(
+                    f"CAD source chart is degenerate on patch {patch}.", status="violated"
+                )
+            if sum(
+                (_intersection_area(first, value) for value in declared), Fraction(0)
+            ) != abs(_area2(first)):
+                raise SourceCoverageUnavailable(
+                    f"CAD target chart leaves the authored trim on patch {patch}.",
+                    status="violated",
+                )
             for second in target[index + 1 :]:
                 if _intersection_area(first, second) > 0:
-                    raise SourceCoverageUnavailable(f"CAD target charts overlap on patch {patch}.", status="violated")
-        if sum((sum((_intersection_area(chart, source_triangle) for source_triangle in declared), Fraction(0)) for chart in target), Fraction(0)) != source_area:
-            raise SourceCoverageUnavailable(f"CAD chart partition does not cover patch {patch}.", status="violated")
+                    raise SourceCoverageUnavailable(
+                        f"CAD target charts overlap on patch {patch}.", status="violated"
+                    )
+        if (
+            sum(
+                (
+                    sum(
+                        (
+                            _intersection_area(chart, source_triangle)
+                            for source_triangle in declared
+                        ),
+                        Fraction(0),
+                    )
+                    for chart in target
+                ),
+                Fraction(0),
+            )
+            != source_area
+        ):
+            raise SourceCoverageUnavailable(
+                f"CAD chart partition does not cover patch {patch}.", status="violated"
+            )
 
     owners, by_cell_face, face_outward_sign = _volume_face_owners(mesh, cell_regions)
     required_keys = {
@@ -921,26 +1189,46 @@ def _cad_chart_partition(
         if len(adjacent) == 1 or adjacent[0][1] != adjacent[1][1]
     }
     witnessed_keys: list[tuple[int, ...]] = []
-    cell_region = {cell_id: region for adjacent in owners.values() for cell_id, region, _ in adjacent}
-    for row, (cell_id_raw, local_face_raw, patch) in enumerate(zip(witness.cell_global_ids, witness.local_entity_indices, patch_rows, strict=True)):
+    cell_region = {
+        cell_id: region for adjacent in owners.values() for cell_id, region, _ in adjacent
+    }
+    for row, (cell_id_raw, local_face_raw, patch) in enumerate(
+        zip(
+            witness.cell_global_ids, witness.local_entity_indices, patch_rows, strict=True
+        )
+    ):
         cell_id, local_face = int(cell_id_raw), int(local_face_raw)
         key = by_cell_face.get((cell_id, local_face))
         if key is None or key not in required_keys:
-            raise SourceCoverageUnavailable("CAD witness row is not a target boundary/interface face.", status="violated")
+            raise SourceCoverageUnavailable(
+                "CAD witness row is not a target boundary/interface face.",
+                status="violated",
+            )
         witnessed_keys.append(key)
         pair = pairs[patch]
         adjacent = owners[key]
         actual_regions = {region for _, region, _ in adjacent}
         expected_regions = {region for region in pair if region >= 0}
         if actual_regions != expected_regions or (-1 in pair) != (len(adjacent) == 1):
-            raise SourceCoverageUnavailable("CAD target face has wrong source material sides.", status="violated")
+            raise SourceCoverageUnavailable(
+                "CAD target face has wrong source material sides.", status="violated"
+            )
         parent_region = cell_region[cell_id]
         source_orientation = dict(signs_by_patch[patch]).get(parent_region, 0)
         target_outward_sign = face_outward_sign[(cell_id, local_face)]
-        if source_orientation == 0 or int(witness.orientations[row]) * target_outward_sign != source_orientation:
-            raise SourceCoverageUnavailable("CAD chart orientation disagrees with the authored region boundary.", status="violated")
+        if (
+            source_orientation == 0
+            or int(witness.orientations[row]) * target_outward_sign != source_orientation
+        ):
+            raise SourceCoverageUnavailable(
+                "CAD chart orientation disagrees with the authored region boundary.",
+                status="violated",
+            )
     if set(witnessed_keys) != required_keys:
-        raise SourceCoverageUnavailable("CAD chart witness does not cover every target boundary/interface face.", status="violated")
+        raise SourceCoverageUnavailable(
+            "CAD chart witness does not cover every target boundary/interface face.",
+            status="violated",
+        )
     topology = _cad_chart_topology_degree(
         domain,
         mesh,
@@ -991,15 +1279,23 @@ def _same_domain(first: MeshingDomain, second: MeshingDomain, /) -> bool:
     return first.domain_id == second.domain_id and _same_tree_content(first, second)
 
 
-def _interval_product(first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction], /) -> tuple[Fraction, Fraction]:
-    values = (first[0] * second[0], first[0] * second[1], first[1] * second[0], first[1] * second[1])
+def _interval_product(
+    first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction], /
+) -> tuple[Fraction, Fraction]:
+    values = (
+        first[0] * second[0],
+        first[0] * second[1],
+        first[1] * second[0],
+        first[1] * second[1],
+    )
     return min(values), max(values)
 
 
 def _interval_dot(
     gradient_lower: np.ndarray,
     gradient_upper: np.ndarray,
-    direction: tuple[Fraction, Fraction, Fraction], /
+    direction: tuple[Fraction, Fraction, Fraction],
+    /,
 ) -> tuple[Fraction, Fraction]:
     lower = Fraction(0)
     upper = Fraction(0)
@@ -1015,6 +1311,7 @@ def _interval_dot(
 
 def _strict_sign(interval: tuple[Fraction, Fraction], /) -> int:
     return 1 if interval[0] > 0 else -1 if interval[1] < 0 else 0
+
 
 def _interval_subtract(
     first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction], /
@@ -1059,7 +1356,9 @@ def _root_triangle_projected_area(
     second = _interval_subtract(points[1][1], points[0][1])
     third = _interval_subtract(points[2][0], points[0][0])
     fourth = _interval_subtract(points[2][1], points[0][1])
-    return _interval_subtract(_interval_product(first, fourth), _interval_product(third, second))
+    return _interval_subtract(
+        _interval_product(first, fourth), _interval_product(third, second)
+    )
 
 
 def _root_edge_side_interval(
@@ -1089,12 +1388,17 @@ def _root_edge_side_interval(
     first_y = _interval_subtract(second_point[1], first_point[1])
     second_x = _interval_subtract(test_point[0], first_point[0])
     second_y = _interval_subtract(test_point[1], first_point[1])
-    return _interval_subtract(_interval_product(first_x, second_y), _interval_product(first_y, second_x))
+    return _interval_subtract(
+        _interval_product(first_x, second_y), _interval_product(first_y, second_x)
+    )
+
 
 def _validate_oriented_triangle_complex(faces: np.ndarray, /) -> None:
     face_rows = np.asarray(faces, dtype=np.int64)
     if face_rows.ndim != 2 or face_rows.shape[1] != 3:
-        raise SourceCoverageUnavailable("Implicit source boundary is not triangular.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "Implicit source boundary is not triangular.", status="unresolved"
+        )
     edge_incidence: dict[tuple[int, int], tuple[int, int]] = {}
     triangle_keys: set[tuple[int, int, int]] = set()
     for row in range(face_rows.shape[0]):
@@ -1103,14 +1407,24 @@ def _validate_oriented_triangle_complex(faces: np.ndarray, /) -> None:
         ordered = sorted(triangle)
         key = (ordered[0], ordered[1], ordered[2])
         if len(set(triangle)) != 3 or key in triangle_keys:
-            raise SourceCoverageUnavailable("Implicit source boundary repeats or degenerates a triangle.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit source boundary repeats or degenerates a triangle.",
+                status="violated",
+            )
         triangle_keys.add(key)
-        for first, second in zip(triangle, (triangle[1], triangle[2], triangle[0]), strict=True):
+        for first, second in zip(
+            triangle, (triangle[1], triangle[2], triangle[0]), strict=True
+        ):
             edge = (min(first, second), max(first, second))
             count, balance = edge_incidence.get(edge, (0, 0))
             edge_incidence[edge] = (count + 1, balance + (1 if first < second else -1))
-    if not edge_incidence or any(count != 2 or balance != 0 for count, balance in edge_incidence.values()):
-        raise SourceCoverageUnavailable("Implicit source root triangles are not a closed oriented 2-chain.", status="violated")
+    if not edge_incidence or any(
+        count != 2 or balance != 0 for count, balance in edge_incidence.values()
+    ):
+        raise SourceCoverageUnavailable(
+            "Implicit source root triangles are not a closed oriented 2-chain.",
+            status="violated",
+        )
 
 
 def _implicit_root_derivation(
@@ -1126,14 +1440,19 @@ def _implicit_root_derivation(
     from .implicit._adaptive_discovery import discover_adaptive_implicit_surface
 
     if not isinstance(surface, AdaptiveImplicitSurface):
-        raise SourceCoverageUnavailable("Implicit coverage requires AdaptiveImplicitSurface.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "Implicit coverage requires AdaptiveImplicitSurface.", status="unresolved"
+        )
 
     if (
         surface.geometry.kind is not GeometryKind.REGION
         or surface.policy.allow_nonsmooth_field
         or surface.geometry.field_certificate.regularity is not FieldRegularity.SMOOTH
     ):
-        raise SourceCoverageUnavailable("Implicit coverage requires a smooth region-valued source.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "Implicit coverage requires a smooth region-valued source.",
+            status="unresolved",
+        )
     recipe = surface.archive_recipe
     fresh = discover_adaptive_implicit_surface(
         recipe.geometry,
@@ -1152,13 +1471,17 @@ def _implicit_root_derivation(
         or surface_cover is None
         or fresh_cover.cover_id != surface_cover.cover_id
         or fresh.volume.query_id != surface.volume.query_id
-        or array_tree_fingerprint(fresh.scaffold) != array_tree_fingerprint(surface.scaffold)
+        or array_tree_fingerprint(fresh.scaffold)
+        != array_tree_fingerprint(surface.scaffold)
         or fresh_mesh is None
         or surface_mesh is None
         or array_tree_fingerprint((fresh_mesh.vertices, fresh_mesh.faces))
         != array_tree_fingerprint((surface_mesh.vertices, surface_mesh.faces))
     ):
-        raise SourceCoverageUnavailable("Implicit discovery does not cold-reproduce its retained roots and intervals.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit discovery does not cold-reproduce its retained roots and intervals.",
+            status="violated",
+        )
     cover = surface_cover
     scaffold = surface.scaffold
     source_mesh = fresh_mesh
@@ -1168,7 +1491,10 @@ def _implicit_root_derivation(
         or not bounds.gradient_rigorous
         or fresh.evidence.unresolved_issues.size
     ):
-        raise SourceCoverageUnavailable("Implicit source has unresolved value, gradient, root, or topology premises.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "Implicit source has unresolved value, gradient, root, or topology premises.",
+            status="unresolved",
+        )
     _validate_oriented_triangle_complex(np.asarray(source_mesh.faces, dtype=np.int64))
     if (
         scaffold.cell_indices.shape[0] != scaffold.cell_boxes.shape[0]
@@ -1179,21 +1505,31 @@ def _implicit_root_derivation(
         or np.any(scaffold.corner_signs == 0)
         or np.any(scaffold.root_errors < 0.0)
     ):
-        raise SourceCoverageUnavailable("Implicit source root ancestry contains unresolved strata.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "Implicit source root ancestry contains unresolved strata.",
+            status="unresolved",
+        )
 
     # Reprove a nonoverlapping cover of the full source box and its value enclosures.
     boxes = np.asarray(cover.boxes, dtype=np.float64)
     if boxes.shape[0] == 0:
-        raise SourceCoverageUnavailable("Implicit source has no interval cover leaves.", status="unresolved")
+        raise SourceCoverageUnavailable(
+            "Implicit source has no interval cover leaves.", status="unresolved"
+        )
     domain_box = np.asarray(cover.domain, dtype=np.float64)
     exact_domain_volume = math.prod(
-        _fraction(domain_box[1, axis]) - _fraction(domain_box[0, axis]) for axis in range(3)
+        _fraction(domain_box[1, axis]) - _fraction(domain_box[0, axis])
+        for axis in range(3)
     )
     cover_volume = Fraction(0)
     for lower, upper in boxes:
         if np.any(lower < domain_box[0]) or np.any(upper > domain_box[1]):
-            raise SourceCoverageUnavailable("Implicit cover leaves escape the declared source box.", status="violated")
-        cover_volume += math.prod(_fraction(upper[axis]) - _fraction(lower[axis]) for axis in range(3))
+            raise SourceCoverageUnavailable(
+                "Implicit cover leaves escape the declared source box.", status="violated"
+            )
+        cover_volume += math.prod(
+            _fraction(upper[axis]) - _fraction(lower[axis]) for axis in range(3)
+        )
     order = np.argsort(boxes[:, 0, 0], kind="stable")
     active: list[int] = []
     for raw_row in order:
@@ -1202,22 +1538,30 @@ def _implicit_root_derivation(
         active = [other for other in active if boxes[other, 1, 0] > lower[0]]
         for other in active:
             other_lower, other_upper = boxes[other]
-            if (
-                min(upper[1], other_upper[1]) > max(lower[1], other_lower[1])
-                and min(upper[2], other_upper[2]) > max(lower[2], other_lower[2])
-            ):
-                raise SourceCoverageUnavailable("Implicit interval cover has overlapping leaf interiors.", status="violated")
+            if min(upper[1], other_upper[1]) > max(lower[1], other_lower[1]) and min(
+                upper[2], other_upper[2]
+            ) > max(lower[2], other_lower[2]):
+                raise SourceCoverageUnavailable(
+                    "Implicit interval cover has overlapping leaf interiors.",
+                    status="violated",
+                )
         active.append(row)
     if cover_volume != exact_domain_volume:
-        raise SourceCoverageUnavailable("Implicit interval leaves do not cover the full source box.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit interval leaves do not cover the full source box.",
+            status="violated",
+        )
     for start in range(0, boxes.shape[0], 256):
         stop = min(start + 256, boxes.shape[0])
         evaluated = bounds.boxes(boxes[start:stop, 0], boxes[start:stop, 1])
-        if (
-            np.any(cover.value_lower[start:stop] > evaluated.value_lower)
-            or np.any(cover.value_upper[start:stop] < evaluated.value_upper)
+        if np.any(cover.value_lower[start:stop] > evaluated.value_lower) or np.any(
+            cover.value_upper[start:stop] < evaluated.value_upper
         ):
-            raise SourceCoverageUnavailable("Implicit cover does not retain valid source value enclosures.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit cover does not retain valid source value enclosures.",
+                status="violated",
+            )
+
     def box_key(box: np.ndarray, /) -> tuple[_Point3, _Point3]:
         return (
             _point3(tuple(_fraction(value) for value in box[0])),
@@ -1238,7 +1582,9 @@ def _implicit_root_derivation(
 
     corner_rows_array = np.asarray(scaffold.corner_ids, dtype=np.int64)
     if corner_rows_array.ndim != 2 or corner_rows_array.shape[1] != 3:
-        raise SourceCoverageUnavailable("Implicit grid corner IDs are not three-dimensional.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit grid corner IDs are not three-dimensional.", status="violated"
+        )
     corner_ids: tuple[_GridPoint, ...] = tuple(
         (int(row[0]), int(row[1]), int(row[2])) for row in corner_rows_array
     )
@@ -1247,27 +1593,36 @@ def _implicit_root_derivation(
     }
     root_edge_rows = np.asarray(scaffold.root_edge_ids, dtype=np.int64)
     if root_edge_rows.ndim != 3 or root_edge_rows.shape[1:] != (2, 3):
-        raise SourceCoverageUnavailable("Implicit root edge IDs omit endpoint coordinates.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit root edge IDs omit endpoint coordinates.", status="violated"
+        )
     root_keys_list: list[tuple[_GridPoint, _GridPoint]] = []
     for row in range(root_edge_rows.shape[0]):
         edge = root_edge_rows[row]
         first = (int(edge[0, 0]), int(edge[0, 1]), int(edge[0, 2]))
         second = (int(edge[1, 0]), int(edge[1, 1]), int(edge[1, 2]))
         if first == second:
-            raise SourceCoverageUnavailable("Implicit root edge has identical grid endpoints.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit root edge has identical grid endpoints.", status="violated"
+            )
         root_keys_list.append((first, second) if first < second else (second, first))
     root_keys = tuple(root_keys_list)
     root_by_key: dict[tuple[_GridPoint, _GridPoint], int] = {
         key: row for row, key in enumerate(root_keys)
     }
     if len(root_by_key) != len(root_keys):
-        raise SourceCoverageUnavailable("Implicit scaffold repeats a source root edge.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit scaffold repeats a source root edge.", status="violated"
+        )
     root_by_vertex: dict[_Point3, int] = {}
     root_point_rows = np.asarray(scaffold.root_points, dtype=np.float64)
     for root_row in range(root_point_rows.shape[0]):
         key = _point3(tuple(_fraction(value) for value in root_point_rows[root_row]))
         if key in root_by_vertex:
-            raise SourceCoverageUnavailable("Implicit scaffold merges distinct source root identities.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit scaffold merges distinct source root identities.",
+                status="violated",
+            )
         root_by_vertex[key] = root_row
 
     def certify_zero_free_segment(first: np.ndarray, second: np.ndarray, /) -> bool:
@@ -1280,7 +1635,9 @@ def _implicit_root_derivation(
             if enclosure.value_lower[0] > 0.0 or enclosure.value_upper[0] < 0.0:
                 continue
             midpoint = low_point + 0.5 * (high_point - low_point)
-            if np.array_equal(midpoint, low_point) or np.array_equal(midpoint, high_point):
+            if np.array_equal(midpoint, low_point) or np.array_equal(
+                midpoint, high_point
+            ):
                 return False
             stack.append((midpoint, high_point))
             stack.append((low_point, midpoint))
@@ -1289,24 +1646,51 @@ def _implicit_root_derivation(
     # Each retained root is the unique simple root on its complete source edge.
     for root_row, edge in enumerate(root_keys):
         if edge[0] not in corner_rows or edge[1] not in corner_rows:
-            raise SourceCoverageUnavailable("Implicit root ancestry references absent grid corners.", status="violated")
-        first = np.asarray(scaffold.corner_coordinates[corner_rows[edge[0]]], dtype=np.float64)
-        second = np.asarray(scaffold.corner_coordinates[corner_rows[edge[1]]], dtype=np.float64)
+            raise SourceCoverageUnavailable(
+                "Implicit root ancestry references absent grid corners.",
+                status="violated",
+            )
+        first = np.asarray(
+            scaffold.corner_coordinates[corner_rows[edge[0]]], dtype=np.float64
+        )
+        second = np.asarray(
+            scaffold.corner_coordinates[corner_rows[edge[1]]], dtype=np.float64
+        )
         bracket = np.asarray(scaffold.root_brackets[root_row], dtype=np.float64)
         point = np.asarray(scaffold.root_points[root_row], dtype=np.float64)
         bracket_lower = np.minimum(bracket[0], bracket[1])
         bracket_upper = np.maximum(bracket[0], bracket[1])
         if np.any(point < bracket_lower) or np.any(point > bracket_upper):
-            raise SourceCoverageUnavailable("Implicit root point escapes its retained bracket.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit root point escapes its retained bracket.", status="violated"
+            )
         first_value = bounds.point_values(first[None, :])
         second_value = bounds.point_values(second[None, :])
-        sign_first = -1 if first_value[1][0] < 0.0 else 1 if first_value[0][0] > 0.0 else 0
-        sign_second = -1 if second_value[1][0] < 0.0 else 1 if second_value[0][0] > 0.0 else 0
+        sign_first = (
+            -1 if first_value[1][0] < 0.0 else 1 if first_value[0][0] > 0.0 else 0
+        )
+        sign_second = (
+            -1 if second_value[1][0] < 0.0 else 1 if second_value[0][0] > 0.0 else 0
+        )
         bracket_values = bounds.point_values(bracket)
-        sign_low = -1 if bracket_values[1][0] < 0.0 else 1 if bracket_values[0][0] > 0.0 else 0
-        sign_high = -1 if bracket_values[1][1] < 0.0 else 1 if bracket_values[0][1] > 0.0 else 0
-        if not sign_first or not sign_second or sign_first == sign_second or not sign_low or not sign_high or sign_low == sign_high:
-            raise SourceCoverageUnavailable("Implicit root endpoints lack opposite strict interval signs.", status="unresolved")
+        sign_low = (
+            -1 if bracket_values[1][0] < 0.0 else 1 if bracket_values[0][0] > 0.0 else 0
+        )
+        sign_high = (
+            -1 if bracket_values[1][1] < 0.0 else 1 if bracket_values[0][1] > 0.0 else 0
+        )
+        if (
+            not sign_first
+            or not sign_second
+            or sign_first == sign_second
+            or not sign_low
+            or not sign_high
+            or sign_low == sign_high
+        ):
+            raise SourceCoverageUnavailable(
+                "Implicit root endpoints lack opposite strict interval signs.",
+                status="unresolved",
+            )
         lower_box = np.minimum(bracket[0], bracket[1])[None, :]
         upper_box = np.maximum(bracket[0], bracket[1])[None, :]
         derivative = bounds.boxes(lower_box, upper_box)
@@ -1321,9 +1705,17 @@ def _implicit_root_derivation(
             )
         )
         if derivative_sign == 0:
-            raise SourceCoverageUnavailable("Implicit root bracket is not proven simple and unique.", status="unresolved")
-        if not certify_zero_free_segment(first, bracket[0]) or not certify_zero_free_segment(bracket[1], second):
-            raise SourceCoverageUnavailable("Implicit root edge has unexcluded additional zero roots.", status="unresolved")
+            raise SourceCoverageUnavailable(
+                "Implicit root bracket is not proven simple and unique.",
+                status="unresolved",
+            )
+        if not certify_zero_free_segment(
+            first, bracket[0]
+        ) or not certify_zero_free_segment(bracket[1], second):
+            raise SourceCoverageUnavailable(
+                "Implicit root edge has unexcluded additional zero roots.",
+                status="unresolved",
+            )
 
     # Every zero-bearing cell/tetrahedron is a regular graph and every face
     # restriction has only the root arcs retained by the tetrahedral ancestry.
@@ -1339,11 +1731,16 @@ def _implicit_root_derivation(
         upper = cell_boxes[cell_row, 1]
         enclosure = bounds.boxes(lower[None, :], upper[None, :])
         axes = tuple(
-            axis for axis in range(3)
-            if enclosure.gradient_lower[0, axis] > 0.0 or enclosure.gradient_upper[0, axis] < 0.0
+            axis
+            for axis in range(3)
+            if enclosure.gradient_lower[0, axis] > 0.0
+            or enclosure.gradient_upper[0, axis] < 0.0
         )
         if not axes:
-            raise SourceCoverageUnavailable("Implicit surface cell has no certified monotone chart direction.", status="unresolved")
+            raise SourceCoverageUnavailable(
+                "Implicit surface cell has no certified monotone chart direction.",
+                status="unresolved",
+            )
         cell_gradient_axes[cell_row] = axes[0]
 
     assigned_triangle_rows: set[int] = set()
@@ -1395,12 +1792,18 @@ def _implicit_root_derivation(
                     key = tuple(sorted((grid_ids[first_index], grid_ids[second_index])))
                     root_row = root_by_key.get(key)
                     if root_row is None:
-                        raise SourceCoverageUnavailable("Implicit tetrahedron crossing lacks a retained edge root.", status="violated")
+                        raise SourceCoverageUnavailable(
+                            "Implicit tetrahedron crossing lacks a retained edge root.",
+                            status="violated",
+                        )
                     crossing_roots.add(root_row)
         if not crossing_roots:
             continue
         if len(crossing_roots) not in (3, 4):
-            raise SourceCoverageUnavailable("Implicit tetrahedron has an unresolved root polygon.", status="unresolved")
+            raise SourceCoverageUnavailable(
+                "Implicit tetrahedron has an unresolved root polygon.",
+                status="unresolved",
+            )
         candidates = [
             row
             for row in range(triangle_roots.shape[0])
@@ -1409,18 +1812,36 @@ def _implicit_root_derivation(
         ]
         expected_count = 1 if len(crossing_roots) == 3 else 2
         if len(candidates) != expected_count:
-            raise SourceCoverageUnavailable("Implicit root polygon does not have its complete source triangle ancestry.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit root polygon does not have its complete source triangle ancestry.",
+                status="violated",
+            )
         for row in candidates:
             if row in assigned_triangle_rows:
-                raise SourceCoverageUnavailable("Implicit source triangle is multiply assigned to tetrahedra.", status="violated")
+                raise SourceCoverageUnavailable(
+                    "Implicit source triangle is multiply assigned to tetrahedra.",
+                    status="violated",
+                )
             assigned_triangle_rows.add(row)
-        if {value for row in candidates for value in triangle_root_ids(row)} != crossing_roots:
-            raise SourceCoverageUnavailable("Implicit source triangles omit a tetrahedral edge root.", status="violated")
-        if len(candidates) == 2 and len(
-            set(triangle_root_ids(candidates[0]))
-            & set(triangle_root_ids(candidates[1]))
-        ) != 2:
-            raise SourceCoverageUnavailable("Implicit quadrilateral source chart has no shared diagonal.", status="violated")
+        if {
+            value for row in candidates for value in triangle_root_ids(row)
+        } != crossing_roots:
+            raise SourceCoverageUnavailable(
+                "Implicit source triangles omit a tetrahedral edge root.",
+                status="violated",
+            )
+        if (
+            len(candidates) == 2
+            and len(
+                set(triangle_root_ids(candidates[0]))
+                & set(triangle_root_ids(candidates[1]))
+            )
+            != 2
+        ):
+            raise SourceCoverageUnavailable(
+                "Implicit quadrilateral source chart has no shared diagonal.",
+                status="violated",
+            )
         graph_axis = cell_gradient_axes[cell_row]
         triangle_rows: tuple[tuple[int, int, int], ...] = tuple(
             triangle_root_ids(row) for row in candidates
@@ -1430,34 +1851,55 @@ def _implicit_root_derivation(
             for triangle in triangle_rows
         )
         if any(sign == 0 for sign in projected_signs) or len(set(projected_signs)) != 1:
-            raise SourceCoverageUnavailable("Implicit root triangles are not a regular graph in the certified cell chart.", status="unresolved")
+            raise SourceCoverageUnavailable(
+                "Implicit root triangles are not a regular graph in the certified cell chart.",
+                status="unresolved",
+            )
         if len(triangle_rows) == 2:
             shared = tuple(set(triangle_rows[0]) & set(triangle_rows[1]))
             first_only = tuple(set(triangle_rows[0]) - set(shared))
             second_only = tuple(set(triangle_rows[1]) - set(shared))
             if len(shared) != 2 or len(first_only) != 1 or len(second_only) != 1:
-                raise SourceCoverageUnavailable("Implicit root quadrilateral is not a two-triangle disk.", status="violated")
+                raise SourceCoverageUnavailable(
+                    "Implicit root quadrilateral is not a two-triangle disk.",
+                    status="violated",
+                )
             first_side = _strict_sign(
-                _root_edge_side_interval(scaffold, shared[0], shared[1], first_only[0], graph_axis)
+                _root_edge_side_interval(
+                    scaffold, shared[0], shared[1], first_only[0], graph_axis
+                )
             )
             second_side = _strict_sign(
-                _root_edge_side_interval(scaffold, shared[0], shared[1], second_only[0], graph_axis)
+                _root_edge_side_interval(
+                    scaffold, shared[0], shared[1], second_only[0], graph_axis
+                )
             )
             if first_side == 0 or second_side != -first_side:
-                raise SourceCoverageUnavailable("Implicit root quadrilateral triangles overlap or fold.", status="unresolved")
+                raise SourceCoverageUnavailable(
+                    "Implicit root quadrilateral triangles overlap or fold.",
+                    status="unresolved",
+                )
 
         # The source field is monotone in a fixed cell direction. Restrict every
         # crossed tetrahedron face to a verified monotone tangential direction.
         for face in combinations(range(4), 3):
             face_signs = tuple(tet_signs[index] for index in face)
-            crossings = sum(face_signs[index] != face_signs[(index + 1) % 3] for index in range(3))
-            face_points = np.asarray([scaffold.corner_coordinates[corner_rows_tet[index]] for index in face], dtype=np.float64)
+            crossings = sum(
+                face_signs[index] != face_signs[(index + 1) % 3] for index in range(3)
+            )
+            face_points = np.asarray(
+                [scaffold.corner_coordinates[corner_rows_tet[index]] for index in face],
+                dtype=np.float64,
+            )
             face_lower = np.min(face_points, axis=0)[None, :]
             face_upper = np.max(face_points, axis=0)[None, :]
             face_enclosure = bounds.boxes(face_lower, face_upper)
             if crossings == 0:
                 if face_enclosure.value_lower[0] <= 0.0 <= face_enclosure.value_upper[0]:
-                    raise SourceCoverageUnavailable("Implicit tetrahedral face may contain an untracked zero loop.", status="unresolved")
+                    raise SourceCoverageUnavailable(
+                        "Implicit tetrahedral face may contain an untracked zero loop.",
+                        status="unresolved",
+                    )
             elif crossings == 2:
                 tangents = (
                     (
@@ -1481,11 +1923,20 @@ def _implicit_root_derivation(
                     )
                     for tangent in tangents
                 ):
-                    raise SourceCoverageUnavailable("Implicit face root arc is not stratifiably regular.", status="unresolved")
+                    raise SourceCoverageUnavailable(
+                        "Implicit face root arc is not stratifiably regular.",
+                        status="unresolved",
+                    )
             else:
-                raise SourceCoverageUnavailable("Implicit tetrahedral face has ambiguous root incidence.", status="unresolved")
+                raise SourceCoverageUnavailable(
+                    "Implicit tetrahedral face has ambiguous root incidence.",
+                    status="unresolved",
+                )
     if assigned_triangle_rows != set(range(source_mesh.faces.shape[0])):
-        raise SourceCoverageUnavailable("Implicit source triangles are not all bound to unique root tetrahedra.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit source triangles are not all bound to unique root tetrahedra.",
+            status="violated",
+        )
 
     # The root-point carrier must be an embedded, oriented subdivision of the
     # independently reconstructed source scaffold. Exact coordinates and root
@@ -1522,7 +1973,10 @@ def _implicit_root_derivation(
         )
         first_root, second_root, third_root = rows
         if first_root is None or second_root is None or third_root is None:
-            raise SourceCoverageUnavailable("Implicit triangle ancestry does not reproduce its source root-edge vertices.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit triangle ancestry does not reproduce its source root-edge vertices.",
+                status="violated",
+            )
         actual_rows = (first_root, second_root, third_root)
         expected_rows = (
             int(triangle_roots[triangle_row, 0]),
@@ -1530,7 +1984,10 @@ def _implicit_root_derivation(
             int(triangle_roots[triangle_row, 2]),
         )
         if actual_rows != expected_rows:
-            raise SourceCoverageUnavailable("Implicit triangle ancestry does not reproduce its source root-edge vertices.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit triangle ancestry does not reproduce its source root-edge vertices.",
+                status="violated",
+            )
     target_faces, issues = _target_facets(mesh, geometry, cell_regions)
     if issues:
         raise SourceCoverageUnavailable(issues[0], status="unresolved")
@@ -1546,7 +2003,10 @@ def _implicit_root_derivation(
         ordered = sorted(triangle)
         key = (ordered[0], ordered[1], ordered[2])
         if key in source_by_key:
-            raise SourceCoverageUnavailable("Implicit source scaffold repeats a target boundary triangle.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit source scaffold repeats a target boundary triangle.",
+                status="violated",
+            )
         source_by_key[key] = row
     target_by_key: dict[_Triangle3, OrientedFacet] = {}
     for facet in target_faces:
@@ -1554,14 +2014,20 @@ def _implicit_root_derivation(
         ordered = sorted(triangle)
         key = (ordered[0], ordered[1], ordered[2])
         if key in target_by_key:
-            raise SourceCoverageUnavailable("Implicit target repeats a boundary triangle.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit target repeats a boundary triangle.", status="violated"
+            )
         target_by_key[key] = facet
     if set(target_by_key) != set(source_by_key):
-        raise SourceCoverageUnavailable("Implicit target boundary is not an exact conforming subdivision of the source-root scaffold.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit target boundary is not an exact conforming subdivision of the source-root scaffold.",
+            status="violated",
+        )
 
     face_owners, face_by_cell, face_outward_sign = _volume_face_owners(mesh, cell_regions)
     required_face_keys = {
-        key for key, adjacent in face_owners.items()
+        key
+        for key, adjacent in face_owners.items()
         if len(adjacent) == 1 or adjacent[0][1] != adjacent[1][1]
     }
     face_chart_keys = _target_face_chart_keys(mesh, geometry)
@@ -1569,47 +2035,87 @@ def _implicit_root_derivation(
     witnessed_triangles: set[int] = set()
     if (
         witness.implicit_cell_keys.shape != (witness.cell_global_ids.size, 4)
-        or witness.implicit_root_edge_keys.shape != (witness.cell_global_ids.size, 3, 2, 3)
+        or witness.implicit_root_edge_keys.shape
+        != (witness.cell_global_ids.size, 3, 2, 3)
         or witness.cell_global_ids.size != len(required_face_keys)
     ):
-        raise SourceCoverageUnavailable("Implicit witness omits target faces or retained root ancestry.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Implicit witness omits target faces or retained root ancestry.",
+            status="violated",
+        )
     for witness_row, (cell_id_raw, local_face_raw) in enumerate(
         zip(witness.cell_global_ids, witness.local_entity_indices, strict=True)
     ):
         cell_id, local_face = int(cell_id_raw), int(local_face_raw)
         face_key = face_by_cell.get((cell_id, local_face))
-        if face_key is None or face_key not in required_face_keys or face_key in witnessed_face_keys:
-            raise SourceCoverageUnavailable("Implicit witness repeats or omits a target boundary facet.", status="violated")
+        if (
+            face_key is None
+            or face_key not in required_face_keys
+            or face_key in witnessed_face_keys
+        ):
+            raise SourceCoverageUnavailable(
+                "Implicit witness repeats or omits a target boundary facet.",
+                status="violated",
+            )
         witnessed_face_keys.add(face_key)
         target_triangle_key = face_chart_keys.get((cell_id, local_face))
         if target_triangle_key is None:
-            raise SourceCoverageUnavailable("Implicit target face has no retained exact chart key.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit target face has no retained exact chart key.", status="violated"
+            )
         source_row = source_by_key.get(target_triangle_key)
         if source_row is None or source_row in witnessed_triangles:
-            raise SourceCoverageUnavailable("Implicit target facet has no unique source root triangle.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit target facet has no unique source root triangle.",
+                status="violated",
+            )
         witnessed_triangles.add(source_row)
         source_cell = int(triangle_cells[source_row])
-        expected_cell_key = tuple(int(value) for value in scaffold.cell_indices[source_cell])
-        if tuple(int(value) for value in witness.implicit_cell_keys[witness_row]) != expected_cell_key:
-            raise SourceCoverageUnavailable("Implicit witness changes its source root-cell ancestry.", status="violated")
+        expected_cell_key = tuple(
+            int(value) for value in scaffold.cell_indices[source_cell]
+        )
+        if (
+            tuple(int(value) for value in witness.implicit_cell_keys[witness_row])
+            != expected_cell_key
+        ):
+            raise SourceCoverageUnavailable(
+                "Implicit witness changes its source root-cell ancestry.",
+                status="violated",
+            )
         expected_edge_keys = (
             root_keys[int(triangle_roots[source_row, 0])],
             root_keys[int(triangle_roots[source_row, 1])],
             root_keys[int(triangle_roots[source_row, 2])],
         )
-        actual_edge_rows = np.asarray(witness.implicit_root_edge_keys[witness_row], dtype=np.int64)
+        actual_edge_rows = np.asarray(
+            witness.implicit_root_edge_keys[witness_row], dtype=np.int64
+        )
         if actual_edge_rows.shape != (3, 2, 3):
-            raise SourceCoverageUnavailable("Implicit witness root edges omit endpoint ancestry.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit witness root edges omit endpoint ancestry.", status="violated"
+            )
         actual_edge_keys_list: list[tuple[_GridPoint, _GridPoint]] = []
         for edge_row in range(3):
             edge = actual_edge_rows[edge_row]
             first = (int(edge[0, 0]), int(edge[0, 1]), int(edge[0, 2]))
             second = (int(edge[1, 0]), int(edge[1, 1]), int(edge[1, 2]))
-            actual_edge_keys_list.append((first, second) if first < second else (second, first))
+            actual_edge_keys_list.append(
+                (first, second) if first < second else (second, first)
+            )
         if set(actual_edge_keys_list) != set(expected_edge_keys):
-            raise SourceCoverageUnavailable("Implicit witness changes its source root-edge ancestry.", status="violated")
-        if int(witness.orientations[witness_row]) * face_outward_sign[(cell_id, local_face)] != 1:
-            raise SourceCoverageUnavailable("Implicit boundary chart reverses the source outward orientation.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit witness changes its source root-edge ancestry.",
+                status="violated",
+            )
+        if (
+            int(witness.orientations[witness_row])
+            * face_outward_sign[(cell_id, local_face)]
+            != 1
+        ):
+            raise SourceCoverageUnavailable(
+                "Implicit boundary chart reverses the source outward orientation.",
+                status="violated",
+            )
         source_order = _triangle3(
             tuple(
                 tuple(_fraction(value) for value in source_triangles[source_row, vertex])
@@ -1621,16 +2127,29 @@ def _implicit_root_derivation(
         source_normal = _cross3(source_order)
         target_normal = _cross3(target_order)
         if _dot3(source_normal, target_normal) <= 0:
-            raise SourceCoverageUnavailable("Implicit target boundary winding reverses a source root triangle.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit target boundary winding reverses a source root triangle.",
+                status="violated",
+            )
         gradient = bounds.boxes(
             np.min(np.asarray(target_order, dtype=np.float64), axis=0)[None, :],
             np.max(np.asarray(target_order, dtype=np.float64), axis=0)[None, :],
         )
-        normal_interval = _interval_dot(gradient.gradient_lower[0], gradient.gradient_upper[0], target_normal)
+        normal_interval = _interval_dot(
+            gradient.gradient_lower[0], gradient.gradient_upper[0], target_normal
+        )
         if _strict_sign(normal_interval) <= 0:
-            raise SourceCoverageUnavailable("Implicit source boundary normal is not certified outward on a root triangle.", status="unresolved")
-    if witnessed_face_keys != required_face_keys or witnessed_triangles != set(range(source_mesh.faces.shape[0])):
-        raise SourceCoverageUnavailable("Implicit root chart witness does not cover the complete oriented boundary.", status="violated")
+            raise SourceCoverageUnavailable(
+                "Implicit source boundary normal is not certified outward on a root triangle.",
+                status="unresolved",
+            )
+    if witnessed_face_keys != required_face_keys or witnessed_triangles != set(
+        range(source_mesh.faces.shape[0])
+    ):
+        raise SourceCoverageUnavailable(
+            "Implicit root chart witness does not cover the complete oriented boundary.",
+            status="violated",
+        )
 
     degree = canonical_fingerprint(
         {
@@ -1638,9 +2157,20 @@ def _implicit_root_derivation(
             "domain": surface.domain_id,
             "source": (surface.source_id, fresh.volume.query_id),
             "region_id": surface.region_ids[0],
-            "root_cells": array_tree_fingerprint((scaffold.cell_indices, scaffold.tetrahedra)),
-            "root_intervals": array_tree_fingerprint((scaffold.root_edge_ids, scaffold.root_brackets, scaffold.root_endpoint_value_lower, scaffold.root_endpoint_value_upper)),
-            "triangle_ancestry": array_tree_fingerprint((scaffold.triangle_cell_rows, scaffold.triangle_root_edge_rows)),
+            "root_cells": array_tree_fingerprint(
+                (scaffold.cell_indices, scaffold.tetrahedra)
+            ),
+            "root_intervals": array_tree_fingerprint(
+                (
+                    scaffold.root_edge_ids,
+                    scaffold.root_brackets,
+                    scaffold.root_endpoint_value_lower,
+                    scaffold.root_endpoint_value_upper,
+                )
+            ),
+            "triangle_ancestry": array_tree_fingerprint(
+                (scaffold.triangle_cell_rows, scaffold.triangle_root_edge_rows)
+            ),
             "witness": witness.witness_id,
             "orientation": "gradient-outward-negative-interior",
         }
@@ -1672,7 +2202,13 @@ def _adaptive_implicit_root_chart_degree(
             tolerance=fidelity.tolerance,
             maximum_normal_deviation=fidelity.maximum_normal_deviation,
         )
-    except (TypeError, ValueError, IndexError, ArithmeticError, FloatingPointError) as error:
+    except (
+        TypeError,
+        ValueError,
+        IndexError,
+        ArithmeticError,
+        FloatingPointError,
+    ) as error:
         raise SourceCoverageUnavailable(
             f"Adaptive implicit whole-face root chart is unresolved: {error}",
             status="unresolved",
@@ -1685,12 +2221,15 @@ def _adaptive_implicit_root_chart_degree(
             status="unresolved",
         )
     source_count = int(np.asarray(scaffold_mesh.faces).shape[0])
-    scaffold_triangle_cells = np.asarray(domain.scaffold.triangle_cell_rows, dtype=np.int64)
-    scaffold_triangle_edges = np.asarray(domain.scaffold.triangle_root_edge_rows, dtype=np.int64)
-    if (
-        scaffold_triangle_cells.shape != (source_count,)
-        or scaffold_triangle_edges.shape != (source_count, 3)
-    ):
+    scaffold_triangle_cells = np.asarray(
+        domain.scaffold.triangle_cell_rows, dtype=np.int64
+    )
+    scaffold_triangle_edges = np.asarray(
+        domain.scaffold.triangle_root_edge_rows, dtype=np.int64
+    )
+    if scaffold_triangle_cells.shape != (
+        source_count,
+    ) or scaffold_triangle_edges.shape != (source_count, 3):
         raise SourceCoverageUnavailable(
             "Adaptive implicit source scaffold omits triangle-to-root ancestry.",
             status="violated",
@@ -1723,25 +2262,58 @@ def _adaptive_implicit_root_chart_degree(
         )
     witness_cells = np.asarray(witness.implicit_cell_keys, dtype=np.int64)
     witness_edges = np.asarray(witness.implicit_root_edge_keys, dtype=np.int64)
-    if witness_cells.shape != (witness_count, 4) or witness_edges.shape != (witness_count, 3, 2, 3):
+    if witness_cells.shape != (witness_count, 4) or witness_edges.shape != (
+        witness_count,
+        3,
+        2,
+        3,
+    ):
         raise SourceCoverageUnavailable(
             "Adaptive implicit chart witness omits exact scaffold cell or root-edge ancestry.",
             status="violated",
         )
     chart_rows = []
     for row, chart in enumerate(evidence):
-        expected_edges: tuple[tuple[_GridPoint, _GridPoint], tuple[_GridPoint, _GridPoint], tuple[_GridPoint, _GridPoint]] = (
+        expected_edges: tuple[
+            tuple[_GridPoint, _GridPoint],
+            tuple[_GridPoint, _GridPoint],
+            tuple[_GridPoint, _GridPoint],
+        ] = (
             (
-                (int(witness_edges[row, 0, 0, 0]), int(witness_edges[row, 0, 0, 1]), int(witness_edges[row, 0, 0, 2])),
-                (int(witness_edges[row, 0, 1, 0]), int(witness_edges[row, 0, 1, 1]), int(witness_edges[row, 0, 1, 2])),
+                (
+                    int(witness_edges[row, 0, 0, 0]),
+                    int(witness_edges[row, 0, 0, 1]),
+                    int(witness_edges[row, 0, 0, 2]),
+                ),
+                (
+                    int(witness_edges[row, 0, 1, 0]),
+                    int(witness_edges[row, 0, 1, 1]),
+                    int(witness_edges[row, 0, 1, 2]),
+                ),
             ),
             (
-                (int(witness_edges[row, 1, 0, 0]), int(witness_edges[row, 1, 0, 1]), int(witness_edges[row, 1, 0, 2])),
-                (int(witness_edges[row, 1, 1, 0]), int(witness_edges[row, 1, 1, 1]), int(witness_edges[row, 1, 1, 2])),
+                (
+                    int(witness_edges[row, 1, 0, 0]),
+                    int(witness_edges[row, 1, 0, 1]),
+                    int(witness_edges[row, 1, 0, 2]),
+                ),
+                (
+                    int(witness_edges[row, 1, 1, 0]),
+                    int(witness_edges[row, 1, 1, 1]),
+                    int(witness_edges[row, 1, 1, 2]),
+                ),
             ),
             (
-                (int(witness_edges[row, 2, 0, 0]), int(witness_edges[row, 2, 0, 1]), int(witness_edges[row, 2, 0, 2])),
-                (int(witness_edges[row, 2, 1, 0]), int(witness_edges[row, 2, 1, 1]), int(witness_edges[row, 2, 1, 2])),
+                (
+                    int(witness_edges[row, 2, 0, 0]),
+                    int(witness_edges[row, 2, 0, 1]),
+                    int(witness_edges[row, 2, 0, 2]),
+                ),
+                (
+                    int(witness_edges[row, 2, 1, 0]),
+                    int(witness_edges[row, 2, 1, 1]),
+                    int(witness_edges[row, 2, 1, 2]),
+                ),
             ),
         )
         source_cell_key = (
@@ -1784,7 +2356,10 @@ def _adaptive_implicit_root_chart_degree(
             or not math.isfinite(chart.source_gradient_lower)
             or chart.source_gradient_lower <= 0.0
         ):
-            detail = chart.detail or "Adaptive implicit chart lacks finite positive whole-face proof bounds."
+            detail = (
+                chart.detail
+                or "Adaptive implicit chart lacks finite positive whole-face proof bounds."
+            )
             raise SourceCoverageUnavailable(detail, status="unresolved")
         chart_rows.append(
             (
@@ -1840,7 +2415,11 @@ def _cross3(points: _Triangle3, /) -> _Point3:
     )
 
 
-def _dot3(first: tuple[Fraction, Fraction, Fraction], second: tuple[Fraction, Fraction, Fraction], /) -> Fraction:
+def _dot3(
+    first: tuple[Fraction, Fraction, Fraction],
+    second: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> Fraction:
     return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
 
 
@@ -1861,32 +2440,45 @@ def _target_face_chart_keys(
             )
         reference = reference_cell_topology(block.cell_kind)
         if reference.dimension != 3:
-            raise SourceCoverageUnavailable("Implicit boundary ancestry requires volume cells.", status="unresolved")
+            raise SourceCoverageUnavailable(
+                "Implicit boundary ancestry requires volume cells.", status="unresolved"
+            )
         vertices = tuple(
-            tuple(_fraction(float(value)) for value in point) for point in reference.vertices
+            tuple(_fraction(float(value)) for value in point)
+            for point in reference.vertices
         )
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
         for row in range(block.cell_count):
             cell_id = int(identifiers[row])
             expressions = maps[cell_row]
             if expressions is None:
-                raise SourceCoverageUnavailable("Implicit target face has no exact represented coordinate map.", status="unresolved")
+                raise SourceCoverageUnavailable(
+                    "Implicit target face has no exact represented coordinate map.",
+                    status="unresolved",
+                )
             for local_face, face in enumerate(reference.entities[2]):
                 points = tuple(
                     _point3(tuple(evaluate_map(expressions, vertices[int(slot)])))
                     for slot in face
                 )
                 if len(points) != 3:
-                    raise SourceCoverageUnavailable("Implicit root charts currently require triangular target faces.", status="unresolved")
+                    raise SourceCoverageUnavailable(
+                        "Implicit root charts currently require triangular target faces.",
+                        status="unresolved",
+                    )
                 triangle = (points[0], points[1], points[2])
                 ordered = sorted(triangle)
                 key = (cell_id, local_face)
                 if key in result:
-                    raise SourceCoverageUnavailable("Target cell identities are not unique.", status="violated")
+                    raise SourceCoverageUnavailable(
+                        "Target cell identities are not unique.", status="violated"
+                    )
                 result[key] = (ordered[0], ordered[1], ordered[2])
             cell_row += 1
     if cell_row != len(maps):
-        raise SourceCoverageUnavailable("Target coordinate maps do not align with volume cells.", status="violated")
+        raise SourceCoverageUnavailable(
+            "Target coordinate maps do not align with volume cells.", status="violated"
+        )
     return result
 
 
@@ -1898,7 +2490,9 @@ def _target_facets(
 
     try:
         maps = cell_coordinate_expressions(mesh, geometry)
-        facets, issues = oriented_target_facets(mesh, cell_regions, maps, geometry=geometry)
+        facets, issues = oriented_target_facets(
+            mesh, cell_regions, maps, geometry=geometry
+        )
     except (TypeError, ValueError, IndexError, ArithmeticError) as error:
         return (), (f"Target boundary extraction failed: {error}",)
     return facets, tuple(issue.detail for issue in issues)
@@ -1939,24 +2533,57 @@ def approximate_source_coverage(
             "source_boundary_homotopy",
             "Bounded source coverage requires both the actual source query and its current continuous fidelity certificate.",
         )
-    if not isinstance(source, SourceBoundaryQuery) or not isinstance(fidelity, SourceFidelityCertificate):
-        return fail("source_boundary_homotopy", "Source coverage premises have the wrong runtime types.", "violated")
+    if not isinstance(source, SourceBoundaryQuery) or not isinstance(
+        fidelity, SourceFidelityCertificate
+    ):
+        return fail(
+            "source_boundary_homotopy",
+            "Source coverage premises have the wrong runtime types.",
+            "violated",
+        )
     if not isinstance(embedding, GlobalEmbeddingCertificate):
-        return fail("source_boundary_embedding", "A current global embedding certificate is required.", "violated")
+        return fail(
+            "source_boundary_embedding",
+            "A current global embedding certificate is required.",
+            "violated",
+        )
     if embedding.status != "certified":
-        return fail("source_boundary_embedding", "A current certified global embedding is required.", "violated" if embedding.status == "violated" else "unresolved")
+        return fail(
+            "source_boundary_embedding",
+            "A current certified global embedding is required.",
+            "violated" if embedding.status == "violated" else "unresolved",
+        )
     try:
         embedding.binding.require(mesh, geometry)
         if revalidate_fidelity:
             fidelity.require_current(mesh, geometry, source)
     except (TypeError, ValueError, ArithmeticError) as error:
-        return fail("source_boundary_premise", f"Source or embedding premises do not revalidate: {error}", "violated")
+        return fail(
+            "source_boundary_premise",
+            f"Source or embedding premises do not revalidate: {error}",
+            "violated",
+        )
     if fidelity.status != "certified":
-        return fail("source_boundary_fidelity", "A certified whole-boundary two-directed fidelity certificate is required.")
-    if (fidelity.binding.source_id, fidelity.binding.source_revision) != (source.source_id, source.source_revision):
-        return fail("source_boundary_identity", "Fidelity and source query bind different source revisions.", "violated")
-    if not math.isfinite(max(fidelity.mesh_to_source_upper, fidelity.source_to_mesh_upper)):
-        return fail("source_boundary_distance", "Source fidelity does not provide finite directed boundary bounds.")
+        return fail(
+            "source_boundary_fidelity",
+            "A certified whole-boundary two-directed fidelity certificate is required.",
+        )
+    if (fidelity.binding.source_id, fidelity.binding.source_revision) != (
+        source.source_id,
+        source.source_revision,
+    ):
+        return fail(
+            "source_boundary_identity",
+            "Fidelity and source query bind different source revisions.",
+            "violated",
+        )
+    if not math.isfinite(
+        max(fidelity.mesh_to_source_upper, fidelity.source_to_mesh_upper)
+    ):
+        return fail(
+            "source_boundary_distance",
+            "Source fidelity does not provide finite directed boundary bounds.",
+        )
 
     adaptive_query: AdaptiveImplicitSourceQuery | None = None
     source_frame_id: str | None = None
@@ -1984,12 +2611,13 @@ def approximate_source_coverage(
         expected_source = domain.boundary_source
         from ._mesh_certificates import _same_tree_content
 
+        # A native carrier republishes the discovery under its own revision; it
+        # binds the domain through the discovery's adaptive boundary query.
         if (
             (adaptive_source.source_id, adaptive_source.source_revision)
             != (expected_source.source_id, expected_source.source_revision)
             or not _same_tree_content(adaptive_source.surface, domain)
-            or (source.source_id, source.source_revision)
-            != (adaptive_source.source_id, adaptive_source.source_revision)
+            or source.source_id != adaptive_source.source_id
         ):
             return fail(
                 "implicit_source_identity",
@@ -1998,73 +2626,150 @@ def approximate_source_coverage(
             )
         if cover is not None and (
             (cover.source_id, cover.source_revision)
-            not in {(source.source_id, source.source_revision), (adaptive_source.source_id, adaptive_source.source_revision)}
+            not in {
+                (source.source_id, source.source_revision),
+                (adaptive_source.source_id, adaptive_source.source_revision),
+            }
             or not cover.complete
             or cover.semantics != "certified"
             or cover.findings
         ):
-            return fail("implicit_source_cover", "An optional implicit chart cover conflicts with its revalidated source revision.", "violated")
+            return fail(
+                "implicit_source_cover",
+                "An optional implicit chart cover conflicts with its revalidated source revision.",
+                "violated",
+            )
     elif (
         cover is None
         or not cover.complete
         or cover.semantics != "certified"
         or cover.findings
-        or (cover.source_id, cover.source_revision) != (source.source_id, source.source_revision)
+        or (cover.source_id, cover.source_revision)
+        != (source.source_id, source.source_revision)
     ):
-        return fail("source_boundary_cover", "The revalidated complete source chart cover is not certified.")
+        return fail(
+            "source_boundary_cover",
+            "The revalidated complete source chart cover is not certified.",
+        )
     witness = fidelity.witness
     if not isinstance(witness, SourceBoundaryChartWitness):
-        return fail("source_boundary_chart_witness", "Bounded source coverage requires a current complete boundary-chart witness.")
-    if witness.source_id != source.source_id or witness.source_revision != source.source_revision:
-        return fail("source_boundary_chart_identity", "Boundary chart witness binds another source revision.", "violated")
+        return fail(
+            "source_boundary_chart_witness",
+            "Bounded source coverage requires a current complete boundary-chart witness.",
+        )
+    if (
+        witness.source_id != source.source_id
+        or witness.source_revision != source.source_revision
+    ):
+        return fail(
+            "source_boundary_chart_identity",
+            "Boundary chart witness binds another source revision.",
+            "violated",
+        )
     try:
         validate_source_fidelity_witness(mesh, geometry, source, witness)
     except (TypeError, ValueError, ArithmeticError) as error:
-        return fail("source_boundary_chart_witness", f"Boundary chart witness does not revalidate: {error}", "violated")
+        return fail(
+            "source_boundary_chart_witness",
+            f"Boundary chart witness does not revalidate: {error}",
+            "violated",
+        )
     regions = np.asarray(cell_regions)
     if isinstance(domain, MeshingDomain):
         region_ids = tuple(region.name for region in domain.regions)
         domain_id = domain.domain_id
     else:
         if not isinstance(domain, AdaptiveImplicitSurface):
-            return fail("source_boundary_domain", "No source-authoritative bounded coverage proof is implemented for this domain type.")
+            return fail(
+                "source_boundary_domain",
+                "No source-authoritative bounded coverage proof is implemented for this domain type.",
+            )
         region_ids = domain.region_ids
         domain_id = domain.domain_id
     from ._domain_certification import coverage_region_occurrence_paths
 
     region_occurrence_paths = coverage_region_occurrence_paths(domain)
-    if regions.ndim != 1 or regions.dtype.kind not in "iu" or regions.size != sum(block.cell_count for block in mesh.blocks):
-        return fail("source_boundary_region_assignment", "Dense material assignments do not align with target volume cells.", "violated")
+    if (
+        regions.ndim != 1
+        or regions.dtype.kind not in "iu"
+        or regions.size != sum(block.cell_count for block in mesh.blocks)
+    ):
+        return fail(
+            "source_boundary_region_assignment",
+            "Dense material assignments do not align with target volume cells.",
+            "violated",
+        )
     if not region_ids or np.any(regions < 0) or np.any(regions >= len(region_ids)):
-        return fail("source_boundary_region_assignment", "Every target volume cell must have an explicit source material region.", "unresolved")
+        return fail(
+            "source_boundary_region_assignment",
+            "Every target volume cell must have an explicit source material region.",
+            "unresolved",
+        )
     try:
         if isinstance(domain, MeshingDomain):
-            if (source.source_id, source.source_revision) != (domain.source_id, domain.source_revision):
-                return fail("source_boundary_identity", "CAD source query does not bind the retained MeshingDomain.", "violated")
-            source_count, degrees = _cad_chart_partition(domain, source, witness, mesh, regions)
+            if (source.source_id, source.source_revision) != (
+                domain.source_id,
+                domain.source_revision,
+            ):
+                return fail(
+                    "source_boundary_identity",
+                    "CAD source query does not bind the retained MeshingDomain.",
+                    "violated",
+                )
+            source_count, degrees = _cad_chart_partition(
+                domain, source, witness, mesh, regions
+            )
             target_count = witness.cell_global_ids.size
         else:
             if not isinstance(domain, AdaptiveImplicitSurface):
-                return fail("source_boundary_domain", "No source-authoritative bounded coverage proof is implemented for this domain type.")
+                return fail(
+                    "source_boundary_domain",
+                    "No source-authoritative bounded coverage proof is implemented for this domain type.",
+                )
             if adaptive_query is None:
                 return fail(
                     "implicit_source_identity",
                     "Adaptive root coverage has no narrowed native source query.",
                     "violated",
                 )
-            if source.source_id != domain.source_id or region_ids != domain.region_ids or len(region_ids) != 1 or np.any(regions != 0):
-                return fail("implicit_material_identity", "Implicit source material identity or per-cell assignments differ from its one declared region.", "violated")
+            if (
+                source.source_id != domain.source_id
+                or region_ids != domain.region_ids
+                or len(region_ids) != 1
+                or np.any(regions != 0)
+            ):
+                return fail(
+                    "implicit_material_identity",
+                    "Implicit source material identity or per-cell assignments differ from its one declared region.",
+                    "violated",
+                )
             if witness.chart_dimension != 2 or witness.reference_dimension != 3:
-                return fail("implicit_chart_dimension", "Implicit volume chart witness has the wrong dimensions.")
+                return fail(
+                    "implicit_chart_dimension",
+                    "Implicit volume chart witness has the wrong dimensions.",
+                )
             scaffold_mesh = domain.mesh
             if scaffold_mesh is None:
-                return fail("implicit_source_scaffold", "Adaptive implicit source has no retained scaffold triangles.")
+                return fail(
+                    "implicit_source_scaffold",
+                    "Adaptive implicit source has no retained scaffold triangles.",
+                )
             source_count = int(np.asarray(scaffold_mesh.faces).shape[0])
             if source_count == 0:
-                return fail("implicit_source_scaffold", "Adaptive implicit source scaffold is empty.")
+                return fail(
+                    "implicit_source_scaffold",
+                    "Adaptive implicit source scaffold is empty.",
+                )
             try:
                 degree, source_count, target_count = _adaptive_implicit_root_chart_degree(
-                    domain, mesh, geometry, regions, adaptive_query, fidelity, embedding, witness
+                    domain,
+                    mesh,
+                    geometry,
+                    regions,
+                    adaptive_query,
+                    fidelity,
+                    embedding,
+                    witness,
                 )
             except SourceCoverageUnavailable as chart_error:
                 if chart_error.status != "unresolved":
@@ -2085,9 +2790,7 @@ def approximate_source_coverage(
                     exact_affine = False
                 if not exact_affine:
                     raise chart_error
-                target_facets, target_issues = _target_facets(
-                    mesh, geometry, regions
-                )
+                target_facets, target_issues = _target_facets(mesh, geometry, regions)
                 if target_issues:
                     raise chart_error
                 source_triangles = np.asarray(scaffold_mesh.vertices)[
@@ -2130,12 +2833,24 @@ def approximate_source_coverage(
                     }
                 )
             if target_count != source_count:
-                return fail("implicit_chart_coverage", "Implicit witness rows do not cover every root scaffold triangle.", "violated")
+                return fail(
+                    "implicit_chart_coverage",
+                    "Implicit witness rows do not cover every root scaffold triangle.",
+                    "violated",
+                )
             degrees = (degree,)
     except SourceCoverageUnavailable as error:
         return fail("source_boundary_homotopy", str(error), error.status)
-    except (TypeError, ValueError, IndexError, ArithmeticError, FloatingPointError) as error:
-        return fail("source_boundary_homotopy", f"Source boundary homotopy is unresolved: {error}")
+    except (
+        TypeError,
+        ValueError,
+        IndexError,
+        ArithmeticError,
+        FloatingPointError,
+    ) as error:
+        return fail(
+            "source_boundary_homotopy", f"Source boundary homotopy is unresolved: {error}"
+        )
     distance = max(fidelity.mesh_to_source_upper, fidelity.source_to_mesh_upper)
     witness_id = canonical_fingerprint(
         {

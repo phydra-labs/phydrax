@@ -115,11 +115,19 @@ class _Seam(StrictModule):
     curved_profile_affine: tuple[ExactScalar, ExactScalar] | None = eqx.field(static=True)
     curved_profile_circle: CircleCurve | None
     cone_slope_exact: ExactScalar | None = eqx.field(static=True)
-    axis_origin_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(static=True)
+    axis_origin_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(
+        static=True
+    )
     axis_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(static=True)
-    first_axis_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(static=True)
-    second_axis_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(static=True)
-    seam_center_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(static=True)
+    first_axis_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(
+        static=True
+    )
+    second_axis_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(
+        static=True
+    )
+    seam_center_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = eqx.field(
+        static=True
+    )
     seam_radius_exact: ExactScalar = eqx.field(static=True)
     quadric_radius_exact: ExactScalar = eqx.field(static=True)
     z_exact: ExactScalar = eqx.field(static=True)
@@ -137,14 +145,14 @@ class _Seam(StrictModule):
     axial_sense: int = eqx.field(static=True)
 
 
-def _revolution_witness(model: BRepModel, face: int, /) -> RevolutionQuadricWitness | None:
+def _revolution_witness(
+    model: BRepModel, face: int, /
+) -> RevolutionQuadricWitness | None:
     patch = model.patches[face]
     if not isinstance(patch, RevolutionSurface):
         return None
     bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
-    return patch.exact_quadric_witness(
-        (float(bounds[0, 1]), float(bounds[1, 1]))
-    )
+    return patch.exact_quadric_witness((float(bounds[0, 1]), float(bounds[1, 1])))
 
 
 def _face_family(model: BRepModel, face: int, /) -> str | None:
@@ -171,9 +179,13 @@ def _witness_carrier(
     )
     if witness.family == "sphere":
         if witness.center_exact is None or witness.radius_exact is None:
-            raise BRepBlendUnsupported("closed seam witness lacks exact sphere coefficients")
+            raise BRepBlendUnsupported(
+                "closed seam witness lacks exact sphere coefficients"
+            )
         center = np.asarray(tuple(float(value) for value in witness.center_exact))
-        return SpherePatch(center, first_axis, second_axis, axis, float(witness.radius_exact))
+        return SpherePatch(
+            center, first_axis, second_axis, axis, float(witness.radius_exact)
+        )
     if witness.origin_exact is None or witness.axial_origin_exact is None:
         raise BRepBlendUnsupported("closed seam witness lacks an axial source origin")
     origin_exact = tuple(
@@ -201,7 +213,9 @@ def _witness_carrier(
         )
     if witness.family == "cone":
         if witness.radial_origin_exact is None or witness.dr_dz_exact is None:
-            raise BRepBlendUnsupported("closed seam witness lacks exact cone coefficients")
+            raise BRepBlendUnsupported(
+                "closed seam witness lacks exact cone coefficients"
+            )
         return ConePatch(
             origin,
             first_axis,
@@ -243,9 +257,11 @@ def _exact_dot3(
         Fraction(0),
     )
 
+
 def _exact_scalar_bounds(value: ExactScalar, /) -> tuple[float, float]:
     lower, upper = coefficient_interval(value, bits=128)
     return fraction_down(lower), fraction_up(upper)
+
 
 def _revolution_profile_chart_root(
     ring_pcurve: AbstractCurve, parameter_bounds: tuple[float, float], /
@@ -275,6 +291,7 @@ def _revolution_profile_chart_root(
             dtype=np.float64,
         ),
     )
+
 
 def _ruled_chart_endpoint_root(
     ring_pcurve: LineCurve,
@@ -341,6 +358,8 @@ def _mapped_profile_parameter(
     if affine is None:
         return value
     return float(affine[0]) * value + float(affine[1])
+
+
 def _canonical_profile_parameter(
     affine: tuple[ExactScalar, ExactScalar] | None,
     parameter: Array | float,
@@ -350,8 +369,6 @@ def _canonical_profile_parameter(
     if affine is None:
         return value
     return (value - float(affine[1])) / float(affine[0])
-
-
 
 
 @final
@@ -381,6 +398,8 @@ def _isoline(
     if coefficients is None or coefficients[1] != (Fraction(1), Fraction(0)):
         return None
     return coefficients[0][0], coefficients[0][1]
+
+
 def _isoparametric_pcurve(curve: SurfaceIsoparametricCurve, /) -> LineCurve:
     fixed = (
         curve.fixed_value_exact
@@ -400,8 +419,6 @@ def _isoparametric_pcurve(curve: SurfaceIsoparametricCurve, /) -> LineCurve:
         origin_exact=(Fraction(0), fixed),
         direction_exact=(Fraction(1), Fraction(0)),
     )
-
-
 
 
 def _require_shared_frame(
@@ -558,9 +575,7 @@ def _seam(model: BRepModel, edge: int, /) -> _Seam:
             "closed seam blend: exactly two distinct incident faces are required"
         )
     plane_uses = [
-        (face, coedge)
-        for face, coedge in uses
-        if _face_family(model, face) == "plane"
+        (face, coedge) for face, coedge in uses if _face_family(model, face) == "plane"
     ]
     if len(plane_uses) != 1:
         raise BRepBlendUnsupported("closed seam blend: one analytic plane is required")
@@ -580,19 +595,27 @@ def _seam(model: BRepModel, edge: int, /) -> _Seam:
     elif isinstance(plane_source, RevolutionSurface) and plane_witness is not None:
         plane_carrier = _witness_carrier(plane_witness)
         if not isinstance(plane_carrier, PlanePatch):
-            raise BRepBlendUnsupported("closed seam blend: source cap witness is not planar")
+            raise BRepBlendUnsupported(
+                "closed seam blend: source cap witness is not planar"
+            )
         plane = plane_carrier
     else:
-        raise BRepBlendUnsupported("closed seam blend: exact source plane witness is unavailable")
+        raise BRepBlendUnsupported(
+            "closed seam blend: exact source plane witness is unavailable"
+        )
     if isinstance(curved_source, (CylinderPatch, ConePatch, SpherePatch)):
         curved = curved_source
     elif isinstance(curved_source, RevolutionSurface) and curved_witness is not None:
         curved_carrier = _witness_carrier(curved_witness)
         if not isinstance(curved_carrier, (CylinderPatch, ConePatch, SpherePatch)):
-            raise BRepBlendUnsupported("closed seam blend: source witness is not a curved quadric")
+            raise BRepBlendUnsupported(
+                "closed seam blend: source witness is not a curved quadric"
+            )
         curved = curved_carrier
     else:
-        raise BRepBlendUnsupported("closed seam blend: exact source quadric witness is unavailable")
+        raise BRepBlendUnsupported(
+            "closed seam blend: exact source quadric witness is unavailable"
+        )
     _require_shared_frame(plane, curved)
     _require_native_turn(geometry, edge)
     source_seam_curve = geometry.curves[geometry.edge_curves[edge]]
@@ -601,7 +624,10 @@ def _seam(model: BRepModel, edge: int, /) -> _Seam:
             "closed seam blend: exact circular source carrier is unavailable"
         )
     parameter, seam_edge, curved_endpoint = _require_rectangular_chart(
-        geometry, plane_face, curved_face, curved_coedge,
+        geometry,
+        plane_face,
+        curved_face,
+        curved_coedge,
         SurfaceRegion(curved_source, np.asarray(model.parameter_bounds[curved_face])),
     )
     plane_origin = _source_axis_point(plane_source, plane_witness)
@@ -794,11 +820,13 @@ def _cone_slope(seam: _Seam, /) -> Array:
         raise RuntimeError("A cone slope requires a cone carrier.")
     return jnp.tan(seam.curved.semi_angle)
 
+
 def _cone_slope_bounds(seam: _Seam, /) -> tuple[float, float] | None:
     if seam.cone_slope_exact is None:
         return None
     lower, upper = coefficient_interval(seam.cone_slope_exact, bits=128)
     return float(fraction_down(lower)), float(fraction_up(upper))
+
 
 def _cone_slope_value(seam: _Seam, /) -> float:
     slope = seam.cone_slope_exact
@@ -807,11 +835,7 @@ def _cone_slope_value(seam: _Seam, /) -> float:
     return float(slope)
 
 
-
-
-def _fillet_values(
-    seam: _Seam, radius: Array, slope: Array | None = None, /
-) -> Array:
+def _fillet_values(seam: _Seam, radius: Array, slope: Array | None = None, /) -> Array:
     """(center radial, center axial, contact radial, axial, chart parameter)."""
     q, d, z = seam.radial_sense, seam.axial_sense, seam.z
     zc = z - d * radius
@@ -855,9 +879,7 @@ def _fillet(seam: _Seam, radius: float, /) -> _Meridian:
         slope_low, slope_high = slope_bounds
         input_low = np.asarray(((radius, slope_low),), dtype=np.float64)
         input_high = np.asarray(((radius, slope_high),), dtype=np.float64)
-        input_host = np.asarray(
-            ((radius, _cone_slope_value(seam)),), dtype=np.float64
-        )
+        input_host = np.asarray(((radius, _cone_slope_value(seam)),), dtype=np.float64)
     low, high = prepared.evaluate(input_low, input_high)
     if (
         not np.all(np.isfinite(low))
@@ -904,8 +926,7 @@ def _fillet(seam: _Seam, radius: float, /) -> _Meridian:
                 - seam.radial_sense * radius_exact * slope_exact / length_exact
             )
             curved_radius_exact = (
-                plane_radius_exact
-                + seam.radial_sense * radius_exact / length_exact
+                plane_radius_exact + seam.radial_sense * radius_exact / length_exact
             )
     elif isinstance(seam.curved, SpherePatch):
         inner_exact = seam.quadric_radius_exact - seam.radial_sense * radius_exact
@@ -1120,9 +1141,7 @@ def _chamfer(seam: _Seam, setbacks: tuple[float, float], /) -> _Meridian:
         slope_low, slope_high = slope_bounds
         inputs_low = np.asarray(((a, b, slope_low),), dtype=np.float64)
         inputs_high = np.asarray(((a, b, slope_high),), dtype=np.float64)
-        inputs_host = np.asarray(
-            ((a, b, _cone_slope_value(seam)),), dtype=np.float64
-        )
+        inputs_host = np.asarray(((a, b, _cone_slope_value(seam)),), dtype=np.float64)
     low, high = plan.evaluate(inputs_low, inputs_high)
     if (
         not np.all(np.isfinite(low))
@@ -1393,7 +1412,10 @@ def _require_clearance(model: BRepModel, seam: _Seam, meridian: _Meridian) -> No
                 other = 0.0
             elif isinstance(seam.plane_source, RevolutionSurface):
                 curve = geometry.curves[curve_index]
-                if not isinstance(curve, CircleCurve) or curve.center_exact != seam.seam_center_exact:
+                if (
+                    not isinstance(curve, CircleCurve)
+                    or curve.center_exact != seam.seam_center_exact
+                ):
                     raise BRepBlendUnsupported(
                         "closed seam blend: a Revolution cap trim is not an exact concentric circle"
                     )
@@ -1431,9 +1453,7 @@ def _stage_boundaries(
                 "closed seam chamfer: ruled plane rail is not a native circle"
             )
     else:
-        plane_curve = _circle(
-            seam, meridian.plane_radius, meridian.plane_radius_exact
-        )
+        plane_curve = _circle(seam, meridian.plane_radius, meridian.plane_radius_exact)
     builder.curves[builder.edge_curves[seam.edge]] = plane_curve
     vertex = builder.edge_vertices[seam.edge][0]
     plane_point_exact: tuple[ExactScalar, ExactScalar, ExactScalar] = (
@@ -1504,12 +1524,8 @@ def _stage_boundaries(
             direction_exact=(Fraction(1), Fraction(0)),
         )
         plane_coedge_roots = (
-            NativePeriodEndpoint(
-                plane_pcurve, seam.plane_source, 0, rational=0, turns=0
-            ),
-            NativePeriodEndpoint(
-                plane_pcurve, seam.plane_source, 0, rational=0, turns=1
-            ),
+            NativePeriodEndpoint(plane_pcurve, seam.plane_source, 0, rational=0, turns=0),
+            NativePeriodEndpoint(plane_pcurve, seam.plane_source, 0, rational=0, turns=1),
         )
     builder.pcurves[seam.plane_coedge] = plane_pcurve
     plane_roots = (
@@ -1591,10 +1607,7 @@ def _stage_boundaries(
             source_edge_lifts=(plane_source_lift, plane_lift),
         )
     if isinstance(seam.plane_source, RevolutionSurface):
-        if (
-            seam.plane_profile_affine is None
-            or plane_profile_parameter_exact is None
-        ):
+        if seam.plane_profile_affine is None or plane_profile_parameter_exact is None:
             raise BRepBlendUnsupported(
                 "closed seam blend: Revolution cap has no exact radial trim map"
             )
@@ -1615,9 +1628,9 @@ def _stage_boundaries(
                 None if radial_curve_index < 0 else builder.curves[radial_curve_index]
             )
             radial_start, radial_end = builder.edge_vertices[radial_edge]
-            if (
-                not isinstance(radial_curve, LineCurve)
-                or vertex not in (radial_start, radial_end)
+            if not isinstance(radial_curve, LineCurve) or vertex not in (
+                radial_start,
+                radial_end,
             ):
                 raise BRepBlendUnsupported(
                     "closed seam blend: Revolution cap radial edge is not an exact line"
@@ -1667,12 +1680,19 @@ def _stage_boundaries(
                 if geometry.coedge_edges[coedge] != radial_edge:
                     continue
                 original_pcurve = builder.pcurves[coedge]
-                if not isinstance(original_pcurve, LineCurve):
+                # The forward seam use lives on the closing native-period sheet; the
+                # radial remap acts on its source line and keeps the period gauge.
+                original_line = (
+                    original_pcurve.source_curve
+                    if isinstance(original_pcurve, PeriodicPCurve)
+                    else original_pcurve
+                )
+                if not isinstance(original_line, LineCurve):
                     raise BRepBlendUnsupported(
                         "closed seam blend: Revolution cap seam p-curve is not linear"
                     )
-                pcurve_origin_exact = original_pcurve.origin_exact
-                pcurve_direction_exact = original_pcurve.direction_exact
+                pcurve_origin_exact = original_line.origin_exact
+                pcurve_direction_exact = original_line.direction_exact
                 pcurve_end_exact = tuple(
                     first + delta
                     for first, delta in zip(
@@ -1707,11 +1727,18 @@ def _stage_boundaries(
                     raise BRepBlendUnsupported(
                         "closed seam blend: Revolution cap seam p-curve has an unknown radial map"
                     )
-                new_pcurve = LineCurve(
+                new_line = LineCurve(
                     np.asarray(tuple(float(value) for value in new_pcurve_origin)),
                     np.asarray(tuple(float(value) for value in new_pcurve_direction)),
                     origin_exact=new_pcurve_origin,
                     direction_exact=new_pcurve_direction,
+                )
+                new_pcurve = (
+                    PeriodicPCurve(
+                        new_line, original_pcurve.patch, original_pcurve.period_shifts
+                    )
+                    if isinstance(original_pcurve, PeriodicPCurve)
+                    else new_line
                 )
                 builder.pcurves[coedge] = new_pcurve
                 coedge_roots = list(builder.coedge_endpoint_roots[coedge])
@@ -1864,13 +1891,9 @@ def _stage_boundaries(
         )
         original = geometry.pcurves[seam.curved_coedge]
         shifts = (
-            original.period_shifts
-            if isinstance(original, PeriodicPCurve)
-            else (0, 0)
+            original.period_shifts if isinstance(original, PeriodicPCurve) else (0, 0)
         )
-        curved_pcurve = PeriodicPCurve(
-            sphere_ring_pcurve, seam.curved_source, shifts
-        )
+        curved_pcurve = PeriodicPCurve(sphere_ring_pcurve, seam.curved_source, shifts)
         source_sphere_region = SurfaceRegion(
             seam.curved_source,
             np.asarray(builder.faces[seam.curved_face].bounds),
@@ -1908,12 +1931,8 @@ def _stage_boundaries(
         )
         curved_pcurve = _isoparametric_pcurve(curved_curve)
     curved_roots = (
-        NativePeriodEndpoint(
-            curved_curve, seam.curved_source, 0, rational=0, turns=0
-        ),
-        NativePeriodEndpoint(
-            curved_curve, seam.curved_source, 0, rational=0, turns=1
-        ),
+        NativePeriodEndpoint(curved_curve, seam.curved_source, 0, rational=0, turns=0),
+        NativePeriodEndpoint(curved_curve, seam.curved_source, 0, rational=0, turns=1),
     )
     if contact_chart_root is None:
         curved_coedge_roots = (
@@ -1978,9 +1997,7 @@ def _stage_boundaries(
     box[endpoint, 1] = contact_chart_bounds[endpoint]
     face.bounds = box
     start, end = builder.edge_vertices[seam.seam_edge]
-    builder.edge_vertices[seam.seam_edge] = (
-        (cv, end) if endpoint == 0 else (start, cv)
-    )
+    builder.edge_vertices[seam.seam_edge] = (cv, end) if endpoint == 0 else (start, cv)
     if isinstance(seam.curved_source, RevolutionSurface):
         profile_curve = seam.curved_source.curve
         original_edge_roots = geometry.edge_endpoint_roots[seam.seam_edge]
@@ -1993,7 +2010,10 @@ def _stage_boundaries(
             for index, root in enumerate(original_edge_roots):
                 if index == endpoint:
                     profile_parameters.append(curved_profile_parameter_exact)
-                elif isinstance(root, ConicParameterEndpoint) and root.parameter_exact is not None:
+                elif (
+                    isinstance(root, ConicParameterEndpoint)
+                    and root.parameter_exact is not None
+                ):
                     profile_parameters.append(root.parameter_exact)
                 else:
                     profile_parameters.append(
@@ -2147,10 +2167,7 @@ def _stage_boundaries(
                     else:
                         coedge_roots.append(root)
                 builder.coedge_endpoint_roots[coedge] = (coedge_roots[0], coedge_roots[1])
-        elif (
-            isinstance(profile_curve, CircleCurve)
-            and contact_chart_root is not None
-        ):
+        elif isinstance(profile_curve, CircleCurve) and contact_chart_root is not None:
             seam_curve = profile_curve
             builder.curves[builder.edge_curves[seam.seam_edge]] = seam_curve
             builder.edge_ranges[seam.seam_edge] = (
@@ -2160,9 +2177,7 @@ def _stage_boundaries(
             edge_roots = []
             for index, root in enumerate(original_edge_roots):
                 if index == endpoint:
-                    edge_roots.append(
-                        TrimRootEndpoint(contact_chart_root, "second")
-                    )
+                    edge_roots.append(TrimRootEndpoint(contact_chart_root, "second"))
                 elif isinstance(root, ConicParameterEndpoint):
                     edge_roots.append(
                         ConicParameterEndpoint(
@@ -2200,9 +2215,7 @@ def _stage_boundaries(
                     np.asarray(builder.faces[seam.curved_face].bounds),
                 )
                 coedge_roots = []
-                for index, root in enumerate(
-                    geometry.coedge_endpoint_roots[coedge]
-                ):
+                for index, root in enumerate(geometry.coedge_endpoint_roots[coedge]):
                     if index == endpoint:
                         coedge_roots.append(
                             TrimRootEndpoint(
@@ -2255,14 +2268,13 @@ def _stage_boundaries(
                 builder.coedge_endpoint_roots[coedge] = (None, None)
     return seam.edge, ce
 
+
 def _ruled_alias_root(
     vertex_root: BRepVertexRoot | None, patch: RuledSurface, /
 ) -> TrimIntersectionRoot:
     if vertex_root is not None:
         for support in vertex_root.aliases:
-            if support.patch is patch and isinstance(
-                support.root, TrimIntersectionRoot
-            ):
+            if support.patch is patch and isinstance(support.root, TrimIntersectionRoot):
                 return support.root
     raise BRepBlendUnsupported(
         "closed seam chamfer: ruled endpoint lacks its exact source-root alias"
@@ -2403,18 +2415,14 @@ def _stage_blend(
             ConicParameterEndpoint(start_root, right_carrier, None, start_point),
             ConicParameterEndpoint(end_root, right_carrier, None, end_point),
         )
-        right = builder.coedge(
-            edge, 1, right_carrier, endpoint_roots=right_roots
-        )
+        right = builder.coedge(edge, 1, right_carrier, endpoint_roots=right_roots)
         high = builder.coedge(upper_edge, -1, high_pcurve, endpoint_roots=high_roots)
         left_carrier = PeriodicPCurve(right_pcurve, patch, (0, 0))
         left_roots = (
             ConicParameterEndpoint(start_root, left_carrier, None, start_point),
             ConicParameterEndpoint(end_root, left_carrier, None, end_point),
         )
-        left = builder.coedge(
-            edge, -1, left_carrier, endpoint_roots=left_roots
-        )
+        left = builder.coedge(edge, -1, left_carrier, endpoint_roots=left_roots)
     elif isinstance(patch, RuledSurface):
         lower_face, upper_face = (
             (seam.plane_face, seam.curved_face)
@@ -2462,9 +2470,7 @@ def _stage_blend(
             origin_exact=(Fraction(0), Fraction(0)),
             direction_exact=(Fraction(0), Fraction(1)),
         )
-        ruled_region = SurfaceRegion(
-            patch, np.asarray(((0.0, 0.0), (2 * pi, 1.0)))
-        )
+        ruled_region = SurfaceRegion(patch, np.asarray(((0.0, 0.0), (2 * pi, 1.0))))
 
         def root_endpoint(
             root: TrimIntersectionRoot,
@@ -2495,51 +2501,31 @@ def _stage_blend(
             ),
         )
         plane_ring_roots = (
-            root_endpoint(
-                plane_root, "first", 0.0, plane_ring
-            ),
-            root_endpoint(
-                plane_root, "first", 2 * pi, plane_ring
-            ),
+            root_endpoint(plane_root, "first", 0.0, plane_ring),
+            root_endpoint(plane_root, "first", 2 * pi, plane_ring),
         )
         sphere_ring_roots = (
-            root_endpoint(
-                sphere_root, "first", 0.0, sphere_ring
-            ),
-            root_endpoint(
-                sphere_root, "first", 2 * pi, sphere_ring
-            ),
+            root_endpoint(sphere_root, "first", 0.0, sphere_ring),
+            root_endpoint(sphere_root, "first", 2 * pi, sphere_ring),
         )
         low = builder.coedge(
             lower_edge, lower_sense, plane_ring, endpoint_roots=plane_ring_roots
         )
         right_pcurve = PeriodicPCurve(generator, patch, (1, 0))
         right_roots = (
-            root_endpoint(
-                plane_root, "second", 0.0, right_pcurve
-            ),
-            root_endpoint(
-                sphere_root, "second", 1.0, right_pcurve
-            ),
+            root_endpoint(plane_root, "second", 0.0, right_pcurve),
+            root_endpoint(sphere_root, "second", 1.0, right_pcurve),
         )
-        right = builder.coedge(
-            edge, 1, right_pcurve, endpoint_roots=right_roots
-        )
+        right = builder.coedge(edge, 1, right_pcurve, endpoint_roots=right_roots)
         high = builder.coedge(
             upper_edge, upper_sense, sphere_ring, endpoint_roots=sphere_ring_roots
         )
         left_pcurve = PeriodicPCurve(generator, patch, (0, 0))
         left_roots = (
-            root_endpoint(
-                plane_root, "second", 0.0, left_pcurve
-            ),
-            root_endpoint(
-                sphere_root, "second", 1.0, left_pcurve
-            ),
+            root_endpoint(plane_root, "second", 0.0, left_pcurve),
+            root_endpoint(sphere_root, "second", 1.0, left_pcurve),
         )
-        left = builder.coedge(
-            edge, -1, left_pcurve, endpoint_roots=left_roots
-        )
+        left = builder.coedge(edge, -1, left_pcurve, endpoint_roots=left_roots)
         face_bounds = np.asarray(((0.0, 0.0), (2 * pi, 1.0)))
         return builder.face(
             patch,
@@ -2898,12 +2884,10 @@ class _BoundClosedSeamRadiusMap(AbstractBoundBRepParameterMap):
             )
         fixed = fixed_curve.curve.angle
         lower, upper = jnp.minimum(angle, fixed), jnp.maximum(angle, fixed)
-        bounds = model.parameter_bounds.at[
-            seam.curved_face, self.endpoint, 1
-        ].set(source_parameter)
-        plane_source_parameter = _mapped_profile_parameter(
-            seam.plane_profile_affine, rc
+        bounds = model.parameter_bounds.at[seam.curved_face, self.endpoint, 1].set(
+            source_parameter
         )
+        plane_source_parameter = _mapped_profile_parameter(seam.plane_profile_affine, rc)
         if seam.plane_profile_affine is not None:
             if not isinstance(seam.plane_source, RevolutionSurface):
                 raise RuntimeError("The dynamic cap chart lost its revolution source.")
@@ -2987,7 +2971,9 @@ class _BoundClosedSeamRadiusMap(AbstractBoundBRepParameterMap):
             curves[geometry.edge_curves[edge]] = _RealizedTrimEdge(
                 patches[face], pcurves[coedge]
             )
-        ranges = geometry.edge_ranges.at[seam.seam_edge, self.endpoint].set(source_parameter)
+        ranges = geometry.edge_ranges.at[seam.seam_edge, self.endpoint].set(
+            source_parameter
+        )
         blend_edge = geometry.coedge_edges[blend_loop[1]]
         ranges = ranges.at[blend_edge].set(jnp.stack((lower, upper)))
         vertices = geometry.vertex_points
@@ -3020,9 +3006,7 @@ def _radius_limit(
     """Outward lower bound of the first meridian/chart collision radius."""
     far_source = float(source.parameter_bounds[seam.curved_face, 1 - endpoint, 1])
     far = float(
-        np.asarray(
-            _canonical_profile_parameter(seam.curved_profile_affine, far_source)
-        )
+        np.asarray(_canonical_profile_parameter(seam.curved_profile_affine, far_source))
     )
     q, d, z = seam.radial_sense, seam.axial_sense, seam.z
     sphere_pole = isinstance(seam.curved, SpherePatch) and far == -d * pi / 2 and q == -1
@@ -3094,9 +3078,7 @@ def _chamfer_scale_limit(
     a, b = setbacks
     far_source = float(source.parameter_bounds[seam.curved_face, 1 - endpoint, 1])
     far = float(
-        np.asarray(
-            _canonical_profile_parameter(seam.curved_profile_affine, far_source)
-        )
+        np.asarray(_canonical_profile_parameter(seam.curved_profile_affine, far_source))
     )
     q, d = seam.radial_sense, seam.axial_sense
     seam_parameter = float(

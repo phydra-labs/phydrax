@@ -28,7 +28,10 @@ from ..discretization._nested_reference_types import (
     validate_nested_reference_witnesses,
     validate_reference_cell_map_witnesses,
 )
-from ..discretization._periodic_topology import PeriodicMeshTopology
+from ..discretization._periodic_topology import (
+    ExactPeriodicCoordinateSource,
+    PeriodicMeshTopology,
+)
 from ..discretization._reference_cell import (
     facet_orientation_between,
     reference_cell_topology,
@@ -1077,9 +1080,23 @@ def _entity_lineage(
 
 
 def _rebind_periodic_topology(
-    mesh: CellMesh, periodic_topology: PeriodicMeshTopology, /
+    mesh: CellMesh,
+    periodic_topology: PeriodicMeshTopology,
+    /,
+    *,
+    exact_coordinate_source: ExactPeriodicCoordinateSource | None = None,
 ) -> CellMesh:
-    """Rebuild the quotient against this exact lifted mesh and vertex order."""
+    """Rebuild the quotient against this exact lifted mesh and vertex order.
+
+    The descriptor stores only its exact coordinate witness identity, so a
+    witness not carried by its bound geometry is supplied again here.
+    """
+    if (
+        exact_coordinate_source is not None
+        and exact_coordinate_source.source_map_id
+        != periodic_topology.coordinate_source_map_id
+    ):
+        raise ValueError("Periodic rebinding received another exact coordinate witness.")
     entity_ids = {
         dimension: np.asarray(mesh.entity_set(dimension).entity_ids, dtype=np.int64)
         for dimension in range(1, mesh.topological_dimension + 1)
@@ -1150,6 +1167,7 @@ def _rebind_periodic_topology(
         entity_global_ids=quotient_ids,
         entity_allocator_next_ids=allocator or None,
         actual_geometry=periodic_topology._actual_geometry,
+        exact_coordinate_source=exact_coordinate_source,
     )
     return CellMesh(
         lifted.coordinates,
@@ -1169,6 +1187,8 @@ def bind_periodic_topology_edit(
     edit: CellTopologyEdit,
     periodic_topology: object,
     /,
+    *,
+    exact_coordinate_source: ExactPeriodicCoordinateSource | None = None,
 ) -> tuple[CellMesh, MeshLineage, VertexInterpolationStencil]:
     """Bind a fully constructed exact-coordinate target and rebuild its lineage."""
     if source.periodic_topology is None or target.periodic_topology is not None:
@@ -1183,7 +1203,9 @@ def bind_periodic_topology_edit(
         )
     if not isinstance(periodic_topology, PeriodicMeshTopology):
         raise TypeError("periodic_topology must be PeriodicMeshTopology.")
-    bound = _rebind_periodic_topology(target, periodic_topology)
+    bound = _rebind_periodic_topology(
+        target, periodic_topology, exact_coordinate_source=exact_coordinate_source
+    )
     rebound_stencil = VertexInterpolationStencil(
         source.entity_set(0).entity_set_id,
         bound.entity_set(0).entity_set_id,

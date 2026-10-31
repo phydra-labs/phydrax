@@ -17,6 +17,7 @@ from phydrax.geometry._domain_boundary import _patch_chart_polygon
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep._constructors import brep_box
 from phydrax.meshing import NativeMeshingOptions
+from phydrax.meshing._canonical import _entity_vertex_keys
 from phydrax.meshing._contracts import MeshingFailure
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._trace import MeshingStageKind
@@ -274,9 +275,79 @@ def test_box_whole_boundary_wall_grows_certified_layers_around_a_tetrahedral_cor
     assert _finite_element_volume(result.mesh) == pytest.approx(1.0, abs=1.0e-12)
     assert _enclosed_volume(result.mesh) == pytest.approx(1.0, abs=1.0e-12)
     # Columns diverge at the sharp edges, so their side faces are bilinear;
-    # polyhedral FV refuses them instead of approximating a planar face.
-    with pytest.raises(ValueError, match="planarity certificate"):
-        prepare_polyhedral_finite_volume_geometry(result.mesh)
+    # polyhedral FV decomposes those warped faces about their vertex centroids
+    # and both neighbors integrate over the same triangles.
+    finite_volume = prepare_polyhedral_finite_volume_geometry(result.mesh)
+    warped = np.count_nonzero(finite_volume.face_quadrature_valid, axis=1) == 4
+    assert np.any(warped)
+    cell_volumes = np.asarray(finite_volume.cell_volumes, dtype=np.float64)
+    assert np.all(cell_volumes > 0.0)
+    assert float(np.sum(cell_volumes)) == pytest.approx(1.0, abs=1.0e-12)
+    assert float(np.max(finite_volume.closure_residual)) <= 1.0e-14
+
+
+def test_box_bottom_wall_layers_slide_along_fixed_sides_with_exact_charts() -> None:
+    model = _box()
+    wall = _faces(model, lambda point: point[2] == 0.0)
+    assert wall.entity_ids.size == 1
+    result = _execute(
+        model,
+        _specification(model, wall, size=0.34, deviation=0.05, schedule=SCHEDULE),
+    )
+
+    _assert_certified_core(result)
+    _assert_layered(result, lambda corners: corners[..., 2] == 0.0, tolerance=1.0e-12)
+    prisms = _blocks(result.mesh, "prism")
+    heights = np.asarray(result.mesh.coordinates)[prisms.reshape(-1), 2]
+    np.testing.assert_allclose(
+        np.unique(np.round(heights, 12)), LEVELS, rtol=0.0, atol=1.0e-12
+    )
+    # Layer side strips belong to the patch of the side face they lie on.
+    points = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    row_of_vertex = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(result.mesh.vertex_global_ids))
+    }
+    face_vertices = dict(
+        zip(
+            np.asarray(result.mesh.entity_set(2).entity_ids).tolist(),
+            _entity_vertex_keys(result.mesh, 2),
+            strict=True,
+        )
+    )
+    patches = {patch.name: patch for patch in result.patches}
+    assert "layer-side" not in patches
+    strips = 0
+    for name, patch in patches.items():
+        if not name.startswith("facet:"):
+            continue
+        corners = [
+            points[[row_of_vertex[vertex] for vertex in face_vertices[face]]]
+            for face in np.asarray(patch.scope.entity_ids).tolist()
+        ]
+        stacked = np.concatenate(corners)
+        # Source faces are exact planes; the cap sits at the summed schedule.
+        planes = [
+            axis
+            for axis in range(3)
+            if (
+                np.all(stacked[:, axis] == stacked[0, axis])
+                and stacked[0, axis] in (0.0, 1.0)
+            )
+            or np.all(np.abs(stacked[:, axis] - LEVELS[-1]) <= 1.0e-12)
+        ]
+        assert len(planes) == 1, name
+        strips += sum(
+            bool(np.any((face[:, 2] > 0.0) & (face[:, 2] < LEVELS[-1])))
+            for face in corners
+        )
+    assert strips > 0
+    finite_volume = prepare_polyhedral_finite_volume_geometry(result.mesh)
+    cell_volumes = np.asarray(finite_volume.cell_volumes, dtype=np.float64)
+    assert np.all(cell_volumes > 0.0)
+    assert float(np.sum(cell_volumes)) == pytest.approx(1.0, abs=1.0e-12)
+    assert _finite_element_volume(result.mesh) == pytest.approx(1.0, abs=1.0e-12)
+    assert _enclosed_volume(result.mesh) == pytest.approx(1.0, abs=1.0e-12)
 
 
 def test_box_bottom_wall_refuses_a_schedule_that_meets_the_adjacent_sides() -> None:

@@ -76,6 +76,17 @@ checked before publication; source CAD identity remains unchanged, and
 unresolved or unsupported carriers refuse with an explicit reason rather than
 returning sampled triangles as certified.
 
+For B-spline and T-spline carriers, each triangle's normal bound comes from the
+exact Bernstein form of the normal direction `N_u x N_v` over every knot span
+the triangle meets (`N_u`, `N_v` are the derivative numerators over the positive
+denominator). Every source normal on a span sub-box is a convex combination of
+the restricted control vectors, so the largest angle between a control vector
+and the triangle normal bounds the deviation when all of them are acute. This
+keeps the tangent components coupled; the componentwise Jacobian-box product is
+retained as a second enclosure and the smaller upper bound is reported. The
+span enclosures of one cell are computed once and shared by its chord and
+normal bounds.
+
 For volume-boundary fidelity, source UV remains two-dimensional while target
 corners retain the full three-dimensional parent-reference coordinates and
 cell-local face index. Revalidation maps those exact corners through the
@@ -175,21 +186,28 @@ convenience, not an independent certificate. Unsupported or unresolved source
 integration retains an infinite enclosure and a NaN midpoint rather than
 substituting a sampled or tessellated volume.
 
+`brep_shell_volume_sign(model, shell)` certifies the orientation of one closed
+shell from the divergence-theorem integrand `x . (S_u x S_v) / 3` over each
+face's trimmed chart. Cells use a centered (gradient) enclosure, partial sums
+are exact rationals, and a cell whose interior lies wholly inside or outside the
+trim is classified once and inherits that status under refinement; trim curves
+running along cell edges carry no area. A shell whose sign stays unresolved is
+refused rather than oriented from a sample.
+
 ## Native interval evaluation for source charts
 
-`prepare_interval_function(function, dimension)` defaults to `execution="auto"`.
-Supported batched jaxprs lower once to the native meshcore interval executor;
-the prepared function then evaluates each batch without Python interpretation
-of its jaxpr equations. `PreparedIntervalFunction.execution` reports whether
-that preparation selected `"native"` or `"host"`. The host evaluator remains
-available with `execution="host"` as an independent enclosure reference.
+`prepare_interval_function(function, dimension)` defaults to `execution="host"`,
+the independent host enclosure reference. With `execution="native"`, supported
+batched jaxprs lower once to the native meshcore interval executor, and the
+prepared function then evaluates each batch without Python interpretation of
+its jaxpr equations; `PreparedIntervalFunction.native_program` holds the
+lowered program and `execution_reason` records the selection.
 
-Use `execution="native"` to require a complete native lowering. Unsupported
-JAX primitives raise `IntervalExtensionError` during preparation rather than
-silently running through the host interpreter. `auto` retains the host route
-for jaxprs that contain primitives without native interval extensions. Native
-polynomial, sine/cosine, square-root, and derivative programs use outward
-rounding and are checked against the host enclosure contract.
+`execution="native"` requires a complete native lowering. Unsupported JAX
+primitives raise `IntervalExtensionError` during preparation rather than
+silently running through the host interpreter. Native polynomial, sine/cosine,
+square-root, and derivative programs use outward rounding and are checked
+against the host enclosure contract.
 
 One local cylinder-chart map measurement evaluated 4,096 interval boxes with
 `CylinderPatch.evaluate` at `batch_capacity=64`. After two warm-ups, the median
@@ -197,7 +215,10 @@ of seven timed passes measured 0.681 microseconds per box on the native route
 and 3.356 microseconds per box on the host route (about 4.9 times lower in this
 sample). This measures the chart map's interval execution used by certification,
 not end-to-end certification; it excludes tracing and preparation and is not a
-benchmark claim or a performance guarantee.
+benchmark claim or a performance guarantee. End to end, the source-fidelity,
+domain-coverage, implicit-chart, and interval tests that use these enclosures
+ran at parity in one local comparison (76 tests: 78.0 s host, 80.1 s native
+with a warm compilation cache), so host remains the default.
 
 ## Placement evidence, normal ranges, and fitted intersections
 
@@ -250,3 +271,11 @@ the isoline `(t, h)`. A circle in a plane exactly parallel to a planar face maps
 to its orthogonal chart circle. Its normal offset is not hidden: publication
 certifies it as a face gap that must lie within the import tolerance. Other
 combinations are refused rather than fitted.
+
+Torus faces recover latitude and meridian circles. A circle whose rounded
+center, axis, and radius match a coordinate line of the torus maps to that
+affine isoline, including rotated or shifted chart phases at exact quarter
+turns; publication then certifies the face gap of the recovered p-curve, so
+decimal rounding in the file is bounded rather than assumed away. Torus seam
+edges lift exactly onto the closing sheet, and p-curves that differ from their
+source chart by whole native periods are accepted as the same image.

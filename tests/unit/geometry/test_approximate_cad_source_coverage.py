@@ -1,3 +1,4 @@
+import dataclasses
 from collections.abc import Sequence
 from fractions import Fraction
 
@@ -30,7 +31,7 @@ from phydrax.geometry._source_fidelity import (
     _volume_boundary_facet_lookup,
     certify_source_fidelity,
 )
-from phydrax.geometry.brep import brep_box
+from phydrax.geometry.brep import boolean_brep, brep_box, BRepGeometry, BRepModel
 from phydrax.units import MILLIMETER
 
 
@@ -60,6 +61,61 @@ def _dot(first: _Point3, second: _Point3, /) -> Fraction:
     )
 
 
+def _two_lump_slab_model() -> BRepModel:
+    """One material region bounded by two disjoint thin slabs.
+
+    Each slab's bottom (and top) face carries the same planar chart with the same
+    material-side sign, and the slabs are 0.0015 mm apart, so an exchanged chart
+    stays inside the fidelity tolerance while its seams no longer match.
+    """
+    contract = SpatialCoordinateContract(MILLIMETER)
+    lower = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 0.001),
+        coordinate_contract=contract,
+        source_id="lower-slab",
+    )
+    upper = brep_box(
+        (0.0, 0.0, 0.0015),
+        (1.0, 1.0, 0.0025),
+        coordinate_contract=contract,
+        source_id="upper-slab",
+    )
+    union = boolean_brep(lower, upper, "union").model
+    original = union.geometry
+    assert original.solid_shells == ((0,), (1,))
+    geometry = BRepGeometry(
+        vertex_points=original.vertex_points,
+        vertex_exact_points=original.vertex_exact_points,
+        vertex_roots=original.vertex_roots,
+        curves=original.curves,
+        edge_curves=original.edge_curves,
+        edge_ranges=original.edge_ranges,
+        edge_vertices=original.edge_vertices,
+        edge_endpoint_roots=original.edge_endpoint_roots,
+        edge_vertex_gap_bounds=original.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=original.edge_face_gap_bounds,
+        pcurves=original.pcurves,
+        coedge_edges=original.coedge_edges,
+        coedge_senses=original.coedge_senses,
+        coedge_endpoint_roots=original.coedge_endpoint_roots,
+        face_loops=original.face_loops,
+        shell_faces=original.shell_faces,
+        shell_orientations=original.shell_orientations,
+        solid_shells=((0, 1),),
+    )
+    return BRepModel(
+        geometry=geometry,
+        patches=union.patches,
+        parameter_bounds=union.parameter_bounds,
+        orientation=union.orientation,
+        trim_domains=union.trim_domains,
+        physical_tags=union.physical_tags,
+        coordinate_contract=union.coordinate_contract,
+        report=dataclasses.replace(union.report, num_solids=1),
+    )
+
+
 def _cad_tetra_star_inputs() -> tuple[
     MeshingDomain,
     CellMesh,
@@ -69,13 +125,14 @@ def _cad_tetra_star_inputs() -> tuple[
     tuple[tuple[tuple[int, int], ...], ...],
     list[_CadFaceRow],
 ]:
-    domain = MeshingDomain.from_brep(
-        brep_box(
-            (0.0, 0.0, 0.0),
-            (1.0, 1.0, 0.001),
-            coordinate_contract=SpatialCoordinateContract(MILLIMETER),
-        )
-    )
+    model = _two_lump_slab_model()
+    domain = MeshingDomain.from_brep(model)
+    assert len(domain.regions) == 1
+    shell_of_patch = {
+        face: shell
+        for shell, faces in enumerate(model.geometry.shell_faces)
+        for face in faces
+    }
     source = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
     triangle_rows: tuple[tuple[int, _Triangle2, _PhysicalTriangle3], ...] = tuple(
         (
@@ -94,17 +151,25 @@ def _cad_tetra_star_inputs() -> tuple[
         sorted({point for _, _, points in triangle_rows for point in points})
     )
     vertex_row = {point: row for row, point in enumerate(physical_vertices)}
-    center: _Point3 = (
-        sum((point[0] for point in physical_vertices), Fraction(0))
-        / len(physical_vertices),
-        sum((point[1] for point in physical_vertices), Fraction(0))
-        / len(physical_vertices),
-        sum((point[2] for point in physical_vertices), Fraction(0))
-        / len(physical_vertices),
-    )
-    center_row = len(physical_vertices)
+    shell_points: dict[int, set[_Point3]] = {}
+    for patch, _, points in triangle_rows:
+        shell_points.setdefault(shell_of_patch[patch], set()).update(points)
+    centers: dict[int, _Point3] = {
+        shell: (
+            sum((point[0] for point in points), Fraction(0)) / len(points),
+            sum((point[1] for point in points), Fraction(0)) / len(points),
+            sum((point[2] for point in points), Fraction(0)) / len(points),
+        )
+        for shell, points in sorted(shell_points.items())
+    }
+    center_rows = {
+        shell: len(physical_vertices) + offset
+        for offset, shell in enumerate(sorted(centers))
+    }
     connectivity: list[tuple[int, int, int, int]] = []
-    for _, _, points in triangle_rows:
+    for patch, _, points in triangle_rows:
+        shell = shell_of_patch[patch]
+        center = centers[shell]
         rows = [vertex_row[point] for point in points]
         edge_first: _Point3 = (
             points[1][0] - points[0][0],
@@ -123,9 +188,15 @@ def _cad_tetra_star_inputs() -> tuple[
         )
         if _dot(_cross(edge_first, edge_second), inward) < 0:
             rows[1], rows[2] = rows[2], rows[1]
-        connectivity.append((rows[0], rows[1], rows[2], center_row))
+        connectivity.append((rows[0], rows[1], rows[2], center_rows[shell]))
     coordinates = np.asarray(
-        [[float(value) for value in point] for point in (*physical_vertices, center)],
+        [
+            [float(value) for value in point]
+            for point in (
+                *physical_vertices,
+                *(centers[shell] for shell in sorted(centers)),
+            )
+        ],
         dtype=np.float64,
     )
     cell_ids = tuple(811 + row for row in range(len(connectivity)))
@@ -139,7 +210,7 @@ def _cad_tetra_star_inputs() -> tuple[
                 global_ids=cell_ids,
             ),
         ),
-        vertex_global_ids=np.arange(len(physical_vertices) + 1, dtype=np.int64) + 101,
+        vertex_global_ids=np.arange(len(coordinates), dtype=np.int64) + 101,
     )
     geometry = CellGeometrySpec.affine(mesh)
     regions = np.zeros((len(connectivity),), dtype=np.int64)
@@ -178,7 +249,7 @@ def _cad_tetra_star_inputs() -> tuple[
             ),
         )
         face_rows.append((patch, triangle, target_reference, cell_id, local_face))
-    assert len(face_rows) == 12
+    assert len(face_rows) == 24
     return domain, mesh, geometry, source, regions, signs_by_patch, face_rows
 
 
@@ -342,3 +413,5 @@ def test_cad_chart_degree_requires_authored_seam_correspondence() -> None:
     )
     assert attempt.bounded is None
     assert attempt.failures and attempt.failures[0].status == "violated"
+    assert attempt.failures[0].check == "source_boundary_homotopy"
+    assert "correspondence" in attempt.failures[0].detail

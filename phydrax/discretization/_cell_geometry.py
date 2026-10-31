@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
 from itertools import product
 from math import comb
@@ -24,6 +24,7 @@ from ..exterior._form_type import FormType, FormValueSpec
 from ..typing import ConvertibleToArray
 from ._cell_mesh import CellMesh
 from ._coordinate_enclosure import (
+    _divide_by_one_minus_w,
     add,
     axes,
     compose_expression,
@@ -39,6 +40,7 @@ from ._coordinate_enclosure import (
     normalize_pyramid_reference_expression,
     Polynomial,
     power as polynomial_power,
+    PyramidApexNormalization,
     RationalPolynomial,
     scale,
     sum_polynomials,
@@ -225,6 +227,83 @@ def _capture_exact_coordinate_bank(
                 "Exact source coordinates do not match the execution coefficient shadows."
             )
     return bank
+
+
+def _quotient_chart_lift(
+    geometry: CellGeometrySpec,
+    mesh: CellMesh,
+    routes: Sequence[ArrayLike],
+    /,
+) -> Callable[[ArrayLike], CoordinateSourceBank] | None:
+    """Exact lifted-vertex rows of a periodic vertex-indexed carrier, or ``None``.
+
+    Without an admitted exact bank, a periodic quotient's exact vertex is its
+    root's binary64 position translated exactly by its winding (the quotient
+    chart). Each lifted binary64 row must be the canonical rounding of that
+    translate, so exact maps never mix independently rounded deck images.
+    """
+    topology = mesh.periodic_topology
+    if (
+        topology is None
+        or geometry.exact_coordinate_bank is not None
+        or topology.coordinate_source_map_id is not None
+    ):
+        return None
+    points = np.asarray(geometry.coordinates, dtype=np.float64)
+    if points.shape != tuple(mesh.coordinates.shape) or not np.array_equal(
+        points, np.asarray(mesh.coordinates, dtype=np.float64)
+    ):
+        return None
+    if len(routes) != len(mesh.blocks) or any(
+        not np.array_equal(np.asarray(route), np.asarray(block.vertices))
+        for route, block in zip(routes, mesh.blocks, strict=True)
+    ):
+        return None
+    from ._periodic_exact import exact_periodic_element
+
+    roots = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    transforms: dict[tuple[int, ...], Any] = {}
+    lifted: dict[int, tuple[Fraction, ...]] = {}
+
+    def lift(indices: ArrayLike, /) -> CoordinateSourceBank:
+        rows = np.asarray(indices, dtype=np.int64)
+        if rows.ndim != 1 or np.any(rows < 0) or np.any(rows >= points.shape[0]):
+            raise IndexError("Quotient-chart coordinate rows lie outside the carrier.")
+        result = []
+        for value in rows.tolist():
+            row = int(value)
+            exact = lifted.get(row)
+            if exact is None:
+                key = tuple(int(item) for item in shifts[row])
+                matrix = transforms.get(key)
+                if matrix is None:
+                    matrix = exact_periodic_element(topology.cell, shifts[row])
+                    transforms[key] = matrix
+                base = tuple(Fraction(float(item)) for item in points[int(roots[row])])
+                base = base + (Fraction(1),)
+                exact = tuple(
+                    sum(
+                        (
+                            matrix[axis][column] * base[column]
+                            for column in range(len(base))
+                        ),
+                        Fraction(0),
+                    )
+                    for axis in range(points.shape[1])
+                )
+                if tuple(float(item) for item in exact) != tuple(
+                    float(item) for item in points[row]
+                ):
+                    raise ValueError(
+                        "Periodic lifted coordinates are not canonical roundings of their "
+                        "quotient-chart translates."
+                    )
+                lifted[row] = exact
+            result.append(exact)
+        return tuple(result)
+
+    return lift
 
 
 class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
@@ -628,23 +707,95 @@ def _evaluate_expression_values(
     return values, jnp.zeros((points.shape[0],), dtype=jnp.bool_)
 
 
+_PYRAMID_APEX = (Fraction(1, 2), Fraction(1, 2), Fraction(1))
+
+
+def _pyramid_apex_factorization(
+    normalized: PyramidApexNormalization, /
+) -> tuple[ExactScalar, Polynomial, Polynomial] | None:
+    """Split a collapsed-cube chart exactly as ``apex + (1-w) * H / D``.
+
+    ``D`` is the strictly signed residual denominator after exact apex
+    cancellation. Rounding ``H`` and ``D`` keeps the collapsed apex image a
+    single point, so runtime values and their binary64 shadow stay C0 there.
+    """
+    apex = normalized.apex_value
+    if apex is None:
+        return None
+    expression = normalized.expression
+    if isinstance(expression, RationalPolynomial):
+        numerator = dict(expression.numerator)
+        denominator = dict(expression.denominator)
+    else:
+        numerator = dict(expression)
+        denominator = {(0, 0, 0): Fraction(1)}
+    if not reference_chart_arguments_have_nonvanishing_denominators(
+        "hexahedron", (RationalPolynomial({(0, 0, 0): Fraction(1)}, denominator),)
+    ):
+        return None
+    quotient = _divide_by_one_minus_w(add(numerator, scale(denominator, -apex)))
+    if quotient is None:
+        return None
+    return apex, quotient, denominator
+
+
+def _evaluate_pyramid_apex_values(
+    value: RationalPolynomial, box_points: Array, apex: Array, /
+) -> tuple[Array, Array]:
+    normalized = normalize_pyramid_reference_expression(value)
+    factor = _pyramid_apex_factorization(normalized)
+    if factor is None:
+        values, failed = _evaluate_expression_values(normalized.expression, box_points)
+        return jnp.where(apex, 0.0, values), failed | apex
+    apex_value, quotient, denominator = factor
+    quotient_values = _evaluate_polynomial_values(quotient, box_points)
+    denominator_values = _evaluate_polynomial_values(denominator, box_points)
+    failed = denominator_values == 0.0
+    safe_denominator = jnp.where(failed, 1.0, denominator_values)
+    values = float(apex_value) + (1.0 - box_points[:, 2]) * (
+        quotient_values / safe_denominator
+    )
+    return jnp.where(apex, float(apex_value), values), failed
+
+
+def _pyramid_apex_execution_shadow(value: RationalPolynomial, /) -> Expression | None:
+    """Return the binary64 shadow of the factored collapsed-cube evaluation."""
+    factor = _pyramid_apex_factorization(normalize_pyramid_reference_expression(value))
+    if factor is None:
+        return None
+    apex_value, quotient, denominator = factor
+    rounded_denominator = _binary64_polynomial(denominator)
+    complement: Polynomial = {(0, 0, 0): Fraction(1), (0, 0, 1): Fraction(-1)}
+    cube_numerator = add(
+        scale(rounded_denominator, _binary64_shadow(apex_value)),
+        multiply(complement, _binary64_polynomial(quotient)),
+    )
+    x, y, z = axes(3)
+    width = add(constant(1, 3), scale(z, -1))
+    half_height = scale(z, Fraction(1, 2))
+    inverse_collapse = (
+        RationalPolynomial(add(x, scale(half_height, -1)), width),
+        RationalPolynomial(add(y, scale(half_height, -1)), width),
+        z,
+    )
+    shadow = compose_expression(cube_numerator, inverse_collapse)
+    if rounded_denominator == {(0, 0, 0): Fraction(1)}:
+        return shadow
+    divisor = compose_expression(rounded_denominator, inverse_collapse)
+    if isinstance(divisor, RationalPolynomial):
+        reciprocal = RationalPolynomial(
+            dict(divisor.denominator), dict(divisor.numerator)
+        )
+    else:
+        reciprocal = RationalPolynomial({(0, 0, 0): Fraction(1)}, dict(divisor))
+    return multiply(shadow, reciprocal)
+
+
 def _evaluate_pyramid_rational_values(
     value: RationalPolynomial, points: Array, /
 ) -> tuple[Array, Array]:
     box_points, apex, invalid_apex_coordinates = _pyramid_box_evaluation_points(points)
-    normalized = normalize_pyramid_reference_expression(value)
-    values, failed = _evaluate_expression_values(normalized.expression, box_points)
-    if normalized.apex_value is None:
-        failed = failed | apex
-        apex_value = 0.0
-    elif not reference_chart_arguments_have_nonvanishing_denominators(
-        "hexahedron", (normalized.expression,)
-    ):
-        failed = failed | apex
-        apex_value = 0.0
-    else:
-        apex_value = float(normalized.apex_value)
-    values = jnp.where(apex, apex_value, values)
+    values, failed = _evaluate_pyramid_apex_values(value, box_points, apex)
     failed = failed | invalid_apex_coordinates
     return values, jnp.any(failed)
 
@@ -652,13 +803,7 @@ def _evaluate_pyramid_rational_values(
 def _evaluate_rational_values(
     value: RationalPolynomial, points: Array, /, *, pyramid_target: bool
 ) -> tuple[Array, Array]:
-    if (
-        pyramid_target
-        and evaluate_expression(
-            value.denominator, (Fraction(1, 2), Fraction(1, 2), Fraction(1))
-        )
-        == 0
-    ):
+    if pyramid_target and evaluate_expression(value.denominator, _PYRAMID_APEX) == 0:
         return _evaluate_pyramid_rational_values(value, points)
     values, failed = _evaluate_expression_values(value, points)
     return values, jnp.any(failed)
@@ -742,19 +887,7 @@ def _evaluate_pyramid_rational_polynomial(
     value: RationalPolynomial, points: Array, /
 ) -> tuple[Array, Array, Array]:
     box_points, apex, invalid_apex_coordinates = _pyramid_box_evaluation_points(points)
-    normalized = normalize_pyramid_reference_expression(value)
-    values, failed = _evaluate_expression_values(normalized.expression, box_points)
-    if normalized.apex_value is None:
-        failed = failed | apex
-        apex_value = 0.0
-    elif not reference_chart_arguments_have_nonvanishing_denominators(
-        "hexahedron", (normalized.expression,)
-    ):
-        failed = failed | apex
-        apex_value = 0.0
-    else:
-        apex_value = float(normalized.apex_value)
-    values = jnp.where(apex, apex_value, values)
+    values, failed = _evaluate_pyramid_apex_values(value, box_points, apex)
     failed = failed | invalid_apex_coordinates
 
     gradients: list[Array] = []
@@ -781,13 +914,7 @@ def _evaluate_pyramid_rational_polynomial(
 def _evaluate_rational_polynomial(
     value: RationalPolynomial, points: Array, /, *, pyramid_target: bool = False
 ) -> tuple[Array, Array, Array]:
-    if (
-        pyramid_target
-        and evaluate_expression(
-            value.denominator, (Fraction(1, 2), Fraction(1, 2), Fraction(1))
-        )
-        == 0
-    ):
+    if pyramid_target and evaluate_expression(value.denominator, _PYRAMID_APEX) == 0:
         return _evaluate_pyramid_rational_polynomial(value, points)
     numerator, numerator_gradient = _evaluate_polynomial(dict(value.numerator), points)
     denominator, denominator_gradient = _evaluate_polynomial(
@@ -1496,6 +1623,21 @@ class LayerColumnCellGeometryElement(StrictModule, NonTrainableState):
         )
 
 
+def _pyramid_apex_removable_argument(argument: RationalPolynomial, /) -> bool:
+    """Prove a pyramid chart's ``1-w`` pole cancels in collapsed-cube form.
+
+    The cube pullback divides numerator and denominator by exactly the same
+    powers of ``1-w``, so the pulled denominator is ``(1-w)**j`` times the
+    residual one. A strictly signed residual (Bernstein controls on the closed
+    cube) proves the source denominator nonzero on the open cell ``w < 1`` and
+    the collapsed form a continuous extension; the apex image must be unique.
+    """
+    return (
+        _pyramid_apex_factorization(normalize_pyramid_reference_expression(argument))
+        is not None
+    )
+
+
 class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
     """Compose a basis through exact per-cell polynomial or rational charts.
 
@@ -1545,9 +1687,10 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
         ):
             raise ValueError("Per-cell restriction IDs and exact charts must align.")
         zero_exponent = (0,) * target_dimension
+        pyramid_target = reference_cell_topology(target_cell_kind).name == "pyramid"
         checked_denominators = set()
         for chart in charts:
-            for _, denominator in chart:
+            for numerator, denominator in chart:
                 if (
                     len(denominator) == 1
                     and denominator[0][0] == zero_exponent
@@ -1560,16 +1703,21 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
                 )
                 if identity in checked_denominators:
                     continue
-                checked_denominators.add(identity)
                 probe = RationalPolynomial(
                     {zero_exponent: Fraction(1)}, dict(denominator)
                 )
-                if not reference_chart_arguments_have_nonvanishing_denominators(
+                if reference_chart_arguments_have_nonvanishing_denominators(
                     target_cell_kind, (probe,)
                 ):
-                    raise ValueError(
-                        "A per-cell rational chart denominator is not proved nonzero over its target cell."
-                    )
+                    checked_denominators.add(identity)
+                    continue
+                if pyramid_target and _pyramid_apex_removable_argument(
+                    RationalPolynomial(dict(numerator), dict(denominator))
+                ):
+                    continue
+                raise ValueError(
+                    "A per-cell rational chart denominator is not proved nonzero over its target cell."
+                )
         self.source_element = source_element
         self.target_cell_ids = targets
         self.source_cell_ids = sources
@@ -2706,7 +2854,18 @@ def _execution_reference_arguments(
     arguments = coordinate_reference_arguments(element, cell_row=cell_row)
     if arguments is None:
         return None
-    return tuple(_binary64_expression(value) for value in arguments)
+    if reference_cell_topology(element.cell_kind).name != "pyramid":
+        return tuple(_binary64_expression(value) for value in arguments)
+    shadows: list[Expression] = []
+    for value in arguments:
+        shadow = (
+            _pyramid_apex_execution_shadow(value)
+            if isinstance(value, RationalPolynomial)
+            and evaluate_expression(value.denominator, _PYRAMID_APEX) == 0
+            else None
+        )
+        shadows.append(_binary64_expression(value) if shadow is None else shadow)
+    return tuple(shadows)
 
 
 def coordinate_execution_basis(
@@ -3162,7 +3321,8 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             raise TypeError("cell_global_ids must be an integer vector.")
         if len(reference_points) != identifiers.size:
             raise ValueError("Exact reference point rows must align with cell IDs.")
-        source_bank = self.source_coordinates()
+        lift = _quotient_chart_lift(self, mesh, routes)
+        source_bank = self.source_coordinates() if lift is None else ()
         row_by_cell: dict[int, tuple[int, int]] = {}
         for block_index, block in enumerate(mesh.blocks):
             for local_row, identifier in enumerate(
@@ -3226,7 +3386,11 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 )
             pyramid_target = reference_cell_topology(element.cell_kind).name == "pyramid"
             route = np.asarray(routes[block_index], dtype=np.int64)[local_row]
-            coefficients = tuple(source_bank[int(index)] for index in route)
+            coefficients = (
+                tuple(source_bank[int(index)] for index in route)
+                if lift is None
+                else lift(route)
+            )
             basis = coordinate_effective_basis(element, cell_row=local_row)
             if len(basis) != len(coefficients):
                 raise ValueError(

@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from collections.abc import Callable
 from fractions import Fraction
-from typing import final
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -271,7 +272,13 @@ def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Poi
 
 
 def _patch_chart_polygon(
-    domain: MeshingDomain, patch: int, /
+    domain: MeshingDomain,
+    patch: int,
+    /,
+    curved_chain: Callable[
+        [PatchCurveUse | PatchPoleUse, _Point2, _Point2], tuple[_Point2, ...]
+    ]
+    | None = None,
 ) -> (
     tuple[
         tuple[_Point2, ...],
@@ -298,6 +305,10 @@ def _patch_chart_polygon(
                     "Source trim loop is not an exact connected chart chain."
                 )
             loop_points.append(first)
+            if curved_chain is not None and not isinstance(
+                use.pcurve, (ExactLineCurve, LineCurve)
+            ):
+                loop_points.extend(curved_chain(use, first, last))
             previous_end = last
         if not loop_points or loop_start is None or previous_end != loop_start:
             raise ValueError("Source trim loop does not close in its exact chart.")
@@ -311,6 +322,298 @@ def _patch_chart_polygon(
     if not loops:
         return None
     return tuple(points), tuple(segments), tuple(loops)
+
+
+def _exact_trim_triangles(
+    uv_points: tuple[_Point2, ...],
+    segments: tuple[tuple[int, int], ...],
+    loops: tuple[tuple[_Point2, ...], ...],
+    /,
+) -> tuple[_Triangle2, ...]:
+    """Triangulate one exact oriented chart trim polygon without new vertices."""
+    if _signed_area2(loops[0]) <= 0 or any(
+        _signed_area2(loop) >= 0 for loop in loops[1:]
+    ):
+        raise ValueError("Source trim loops do not have the required orientation.")
+    hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
+    points = np.asarray(
+        [[float(value) for value in point] for point in uv_points],
+        dtype=np.float64,
+    )
+    segments_array = np.asarray(segments, dtype=np.int64)
+    holes = (
+        None
+        if not hole_seeds
+        else np.asarray(
+            [[float(value) for value in point] for point in hole_seeds],
+            dtype=np.float64,
+        )
+    )
+    triangulation = ConstrainedDelaunayTriangulation(
+        points,
+        segments_array,
+        holes=holes,
+        keep_convex_hull=False,
+    )
+    triangulation_points = np.asarray(triangulation.points, dtype=np.float64)
+    if triangulation_points.shape != points.shape or not np.array_equal(
+        triangulation_points, points
+    ):
+        raise ValueError(
+            "Exact source trim triangulation changed its parameter vertices."
+        )
+    triangle_rows = np.asarray(triangulation.triangles, dtype=np.int64)
+    if triangle_rows.ndim != 2 or triangle_rows.shape[1] != 3:
+        raise ValueError("Source trim triangulation must return triangle rows.")
+    edge_counts: Counter[tuple[int, int]] = Counter()
+    triangle_area = Fraction(0)
+    exact_triangles: list[_Triangle2] = []
+    for triangle_row in range(triangle_rows.shape[0]):
+        indices = (
+            int(triangle_rows[triangle_row, 0]),
+            int(triangle_rows[triangle_row, 1]),
+            int(triangle_rows[triangle_row, 2]),
+        )
+        values = (uv_points[indices[0]], uv_points[indices[1]], uv_points[indices[2]])
+        area = _cross2(values[0], values[1], values[2])
+        if area <= 0:
+            raise ValueError("Source parameter triangles must be positively oriented.")
+        triangle_area += area
+        exact_triangles.append(values)
+        for first, second in (
+            (indices[0], indices[1]),
+            (indices[1], indices[2]),
+            (indices[2], indices[0]),
+        ):
+            edge_counts[(min(first, second), max(first, second))] += 1
+    boundary = {edge for edge, count in edge_counts.items() if count == 1}
+    expected = {
+        (min(int(first), int(second)), max(int(first), int(second)))
+        for first, second in segments_array
+    }
+    source_area = sum((_signed_area2(loop) for loop in loops), Fraction(0))
+    if boundary != expected or triangle_area != source_area:
+        raise ValueError(
+            "Source parameter triangles do not cover the oriented trim chain."
+        )
+    return tuple(exact_triangles)
+
+
+class CurvedTrimLens(NamedTuple):
+    """Chart region between one target chord of a curved trim and its source arc.
+
+    Every chart point enclosed by the chord, the arc, and the connections from the
+    chord ends to their located arc points lies in the parameter box
+    ``lower``–``upper`` and within ``parameter_bound`` of both the chord and the
+    arc. Each straight segment realizing those distances stays inside the box.
+    """
+
+    chord: tuple[_Point2, _Point2]
+    lower: _Point2
+    upper: _Point2
+    parameter_bound: Fraction
+
+
+_CHAIN_PARAMETER_REFINEMENTS = 14
+
+
+def _target_boundary_successors(
+    triangles: tuple[_Triangle2, ...], /
+) -> dict[_Point2, list[_Point2]]:
+    """Directed target boundary edges with the target interior on their left."""
+    counts: Counter[frozenset[_Point2]] = Counter()
+    oriented: list[_Triangle2] = []
+    for triangle in triangles:
+        area = _cross2(*triangle)
+        if area == 0:
+            raise ValueError("Target chart triangles must have nonzero chart area.")
+        oriented.append(triangle if area > 0 else (triangle[0], triangle[2], triangle[1]))
+        for index in range(3):
+            counts[frozenset((triangle[index], triangle[(index + 1) % 3]))] += 1
+    successors: dict[_Point2, list[_Point2]] = {}
+    for triangle in oriented:
+        for index in range(3):
+            start, stop = triangle[index], triangle[(index + 1) % 3]
+            if counts[frozenset((start, stop))] == 1:
+                successors.setdefault(start, []).append(stop)
+    return successors
+
+
+def _target_boundary_chain(
+    successors: dict[_Point2, list[_Point2]],
+    first: _Point2,
+    last: _Point2,
+    /,
+) -> tuple[_Point2, ...]:
+    chain = [first]
+    while chain[-1] != last:
+        following = successors.get(chain[-1], ())
+        if len(following) != 1 or len(chain) > len(successors):
+            raise ValueError(
+                "Target charts have no unique boundary chain along a curved source trim."
+            )
+        chain.append(following[0])
+    return tuple(chain)
+
+
+def _use_parameter_range(use: PatchCurveUse | PatchPoleUse, /) -> tuple[float, float]:
+    """Return the p-curve parameters at the chart start and end of one loop use."""
+    if use.sense < 0:
+        return float(use.last), float(use.first)
+    return float(use.first), float(use.last)
+
+
+def _chain_parameters(
+    use: PatchCurveUse | PatchPoleUse, chain: tuple[_Point2, ...], /
+) -> tuple[float, ...]:
+    """Locate interior chain points on the p-curve by nested nearest-sample search.
+
+    The located parameters only select which arc piece each chord is compared
+    with; every claim drawn from them is certified by p-curve enclosures.
+    """
+    start, stop = _use_parameter_range(use)
+    if len(chain) == 2:
+        return start, stop
+    targets = np.asarray(
+        [[float(value) for value in point] for point in chain[1:-1]],
+        dtype=np.float64,
+    )
+    low, high = min(start, stop), max(start, stop)
+
+    def evaluate(parameters: np.ndarray, /) -> np.ndarray:
+        values = np.asarray(
+            use.pcurve.evaluate(jnp.asarray(parameters.reshape(-1), dtype=jnp.float64)),
+            dtype=np.float64,
+        )
+        if values.shape != (parameters.size, 2) or np.any(~np.isfinite(values)):
+            raise ValueError("Curved trim p-curve evaluation must remain finite.")
+        return values.reshape((*parameters.shape, 2))
+
+    count = 8 * len(chain)
+    grid = np.linspace(start, stop, count + 1, dtype=np.float64)
+    distance = np.sum((evaluate(grid)[None] - targets[:, None]) ** 2, axis=-1)
+    parameters = grid[np.argmin(distance, axis=1)]
+    width = (high - low) / count
+    offsets = np.linspace(-1.0, 1.0, 17, dtype=np.float64)
+    rows = np.arange(targets.shape[0])
+    for _ in range(_CHAIN_PARAMETER_REFINEMENTS):
+        candidates = np.clip(parameters[:, None] + width * offsets[None], low, high)
+        distance = np.sum((evaluate(candidates) - targets[:, None]) ** 2, axis=-1)
+        parameters = candidates[rows, np.argmin(distance, axis=1)]
+        width /= 8.0
+    return start, *(float(value) for value in parameters), stop
+
+
+def _chart_box_corners(bounds: ArrayLike, /) -> tuple[_Point2, ...]:
+    box = np.asarray(bounds, dtype=np.float64)
+    if box.shape != (2, 2) or np.any(~np.isfinite(box)) or np.any(box[0] > box[1]):
+        raise ValueError("Curved trim p-curve has no finite ordered chart enclosure.")
+    lower = (Fraction.from_float(float(box[0, 0])), Fraction.from_float(float(box[0, 1])))
+    upper = (Fraction.from_float(float(box[1, 0])), Fraction.from_float(float(box[1, 1])))
+    return (
+        lower,
+        (upper[0], lower[1]),
+        upper,
+        (lower[0], upper[1]),
+    )
+
+
+def _curved_trim_lens(
+    use: PatchCurveUse | PatchPoleUse,
+    first: _Point2,
+    second: _Point2,
+    first_parameter: float,
+    second_parameter: float,
+    /,
+) -> CurvedTrimLens:
+    """Certify the lens between one target chord and the arc between its ends.
+
+    With ``n`` normal and ``d`` parallel to the chord, every arc point has a
+    certified normal offset (from the arc box, or from the end boxes plus the
+    derivative range of ``n·c'``) and a certified overshoot past the chord ends.
+    The closed curve formed by chord, connections and arc therefore stays in the
+    convex tube of radius ``r`` around the chord, and so does every point it
+    encloses. A line normal to the chord through an enclosed point meets the
+    chord at most once, so it meets the arc or a connection within ``2 r``.
+    """
+    low, high = (
+        min(first_parameter, second_parameter),
+        max(first_parameter, second_parameter),
+    )
+    if not low < high:
+        raise ValueError(
+            "Target chart points do not advance along their curved source trim."
+        )
+    pcurve = use.pcurve
+    arc = _chart_box_corners(pcurve.bounding_box(low, high))
+    ends = (
+        (
+            first,
+            _chart_box_corners(pcurve.bounding_box(first_parameter, first_parameter)),
+        ),
+        (
+            second,
+            _chart_box_corners(pcurve.bounding_box(second_parameter, second_parameter)),
+        ),
+    )
+    direction = (second[0] - first[0], second[1] - first[1])
+    length_squared = direction[0] ** 2 + direction[1] ** 2
+    if length_squared == 0:
+        raise ValueError("A target chord of a curved source trim is degenerate.")
+
+    def across(point: _Point2, /) -> Fraction:
+        return (point[1] - first[1]) * direction[0] - (point[0] - first[0]) * direction[1]
+
+    def along(point: _Point2, /) -> Fraction:
+        return (point[0] - first[0]) * direction[0] + (point[1] - first[1]) * direction[1]
+
+    across_bound = max(abs(across(corner)) for corner in arc)
+    try:
+        rate_lower, rate_upper = pcurve.derivative_bounds(low, high)
+    except (ArithmeticError, NotImplementedError, TypeError, ValueError):
+        pass
+    else:
+        rates = np.stack(
+            (
+                np.asarray(rate_lower, dtype=np.float64),
+                np.asarray(rate_upper, dtype=np.float64),
+            )
+        )
+        if rates.shape == (2, 2) and np.all(np.isfinite(rates)):
+            normal = (-direction[1], direction[0])
+            rate_terms = tuple(
+                sorted(
+                    normal[axis] * Fraction.from_float(float(rates[row, axis]))
+                    for row in range(2)
+                )
+                for axis in range(2)
+            )
+            rate_width = sum((terms[1] - terms[0] for terms in rate_terms), Fraction(0))
+            end_across = max(
+                abs(across(corner)) for _, corners in ends for corner in corners
+            )
+            span = Fraction.from_float(high) - Fraction.from_float(low)
+            across_bound = min(across_bound, end_across + span * rate_width / 4)
+    overshoot = max(
+        Fraction(0),
+        *(-along(corner) for corner in arc),
+        *(along(corner) - length_squared for corner in arc),
+    )
+    length_lower = fraction_sqrt_interval(length_squared)[0]
+    radius = fraction_sqrt_interval(across_bound**2 + overshoot**2)[1] / length_lower
+    gap = max(
+        fraction_sqrt_interval((corner[0] - point[0]) ** 2 + (corner[1] - point[1]) ** 2)[
+            1
+        ]
+        for point, corners in ends
+        for corner in corners
+    )
+    return CurvedTrimLens(
+        (first, second),
+        (min(first[0], second[0]) - radius, min(first[1], second[1]) - radius),
+        (max(first[0], second[0]) + radius, max(first[1], second[1]) + radius),
+        2 * radius + gap,
+    )
 
 
 def _trim_enclosure_triangles(
@@ -543,82 +846,184 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Source trim has no supported exact parameter triangulation."
                 )
-            uv_points, segments, loops = chart
-            if _signed_area2(loops[0]) <= 0 or any(
-                _signed_area2(loop) >= 0 for loop in loops[1:]
-            ):
-                raise ValueError(
-                    "Source trim loops do not have the required orientation."
-                )
-            hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
-            points = np.asarray(
-                [[float(value) for value in point] for point in uv_points],
-                dtype=np.float64,
-            )
-            segments_array = np.asarray(segments, dtype=np.int64)
-            holes = (
-                None
-                if not hole_seeds
-                else np.asarray(
-                    [[float(value) for value in point] for point in hole_seeds],
-                    dtype=np.float64,
-                )
-            )
-            triangulation = ConstrainedDelaunayTriangulation(
-                points,
-                segments_array,
-                holes=holes,
-                keep_convex_hull=False,
-            )
-            triangulation_points = np.asarray(triangulation.points, dtype=np.float64)
-            if triangulation_points.shape != points.shape or not np.array_equal(
-                triangulation_points, points
-            ):
-                raise ValueError(
-                    "Exact source trim triangulation changed its parameter vertices."
-                )
-            triangle_rows = np.asarray(triangulation.triangles, dtype=np.int64)
-            if triangle_rows.ndim != 2 or triangle_rows.shape[1] != 3:
-                raise ValueError("Source trim triangulation must return triangle rows.")
-            edge_counts: Counter[tuple[int, int]] = Counter()
-            triangle_area = Fraction(0)
-            exact_triangles: list[_Triangle2] = []
-            for triangle_row in range(triangle_rows.shape[0]):
-                indices = (
-                    int(triangle_rows[triangle_row, 0]),
-                    int(triangle_rows[triangle_row, 1]),
-                    int(triangle_rows[triangle_row, 2]),
-                )
-                values = (
-                    uv_points[indices[0]],
-                    uv_points[indices[1]],
-                    uv_points[indices[2]],
-                )
-                area = _cross2(values[0], values[1], values[2])
-                if area <= 0:
-                    raise ValueError(
-                        "Source parameter triangles must be positively oriented."
-                    )
-                triangle_area += area
-                exact_triangles.append(values)
-                for first, second in (
-                    (indices[0], indices[1]),
-                    (indices[1], indices[2]),
-                    (indices[2], indices[0]),
-                ):
-                    edge_counts[(min(first, second), max(first, second))] += 1
-            boundary = {edge for edge, count in edge_counts.items() if count == 1}
-            expected = {
-                (min(int(first), int(second)), max(int(first), int(second)))
-                for first, second in segments_array
-            }
-            source_area = sum((_signed_area2(loop) for loop in loops), Fraction(0))
-            if boundary != expected or triangle_area != source_area:
-                raise ValueError(
-                    "Source parameter triangles do not cover the oriented trim chain."
-                )
-            result.append((patch, tuple(exact_triangles)))
+            result.append((patch, _exact_trim_triangles(*chart)))
         return tuple(result)
+
+    def trim_partition_reference(
+        self, patch: int, triangles: tuple[_Triangle2, ...], /
+    ) -> tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]]:
+        """Return the exact reference partition of one trim for target chart triangles.
+
+        Straight trims are exact chart segments. Along a curved trim the reference
+        follows the target's boundary chain between the trim's chart endpoints once
+        every chain point is located in order on the source arc; each chord then
+        carries the certified lens separating it from the exact curved trim.
+        """
+        self.require_current()
+        return self._trim_partition_reference_unchecked(patch, triangles)
+
+    def _trim_partition_reference_unchecked(
+        self, patch: int, triangles: tuple[_Triangle2, ...], /
+    ) -> tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]]:
+        # Per-patch callers validate currentness once before their loop: the
+        # check fingerprints the whole domain, so it must not run per patch.
+        successors = _target_boundary_successors(triangles)
+        lenses: list[CurvedTrimLens] = []
+
+        def curved_chain(
+            use: PatchCurveUse | PatchPoleUse, first: _Point2, last: _Point2, /
+        ) -> tuple[_Point2, ...]:
+            chain = _target_boundary_chain(successors, first, last)
+            parameters = _chain_parameters(use, chain)
+            lenses.extend(
+                _curved_trim_lens(
+                    use, chain[row], chain[row + 1], parameters[row], parameters[row + 1]
+                )
+                for row in range(len(chain) - 1)
+            )
+            return chain[1:-1]
+
+        chart = _patch_chart_polygon(self.domain, patch, curved_chain)
+        if chart is None:
+            raise ValueError(
+                "Source trim has no supported exact parameter triangulation."
+            )
+        return _exact_trim_triangles(*chart), tuple(lenses)
+
+    def collapsed_pole_slivers(
+        self, patch: int, triangles: tuple[_Triangle2, ...], /
+    ) -> tuple[tuple[int, _Triangle2], ...]:
+        """Chart slivers that a target pole fan collapses onto one source corner.
+
+        A collapsed pole trim side maps to one physical corner. Between consecutive
+        chart points ``p, q`` of that side that share no target triangle, a pole fan
+        leaves the chart triangle ``(p, q, w)`` whose image degenerates to the mesh
+        edge from the pole to the fan apex ``w``. Its two other sides are target
+        boundary edges or source trim sides. Each sliver is returned with the target
+        row holding a pole-side edge to ``w``: that cell's chart preimage is its
+        affine triangle together with the sliver.
+        """
+        chart = _patch_chart_polygon(self.domain, patch)
+        if chart is None:
+            return ()
+        _, _, loops = chart
+        trim_sides = tuple(
+            (first, last)
+            for loop in loops
+            for first, last in zip(loop, (*loop[1:], loop[0]), strict=True)
+        )
+        edge_rows: dict[frozenset[_Point2], list[int]] = {}
+        neighbors: dict[_Point2, set[_Point2]] = {}
+        for row, triangle in enumerate(triangles):
+            for first, second in ((0, 1), (1, 2), (2, 0)):
+                start, stop = triangle[first], triangle[second]
+                edge_rows.setdefault(frozenset((start, stop)), []).append(row)
+                neighbors.setdefault(start, set()).add(stop)
+                neighbors.setdefault(stop, set()).add(start)
+
+        def on_segment(point: _Point2, start: _Point2, stop: _Point2, /) -> bool:
+            direction = (stop[0] - start[0], stop[1] - start[1])
+            offset = (point[0] - start[0], point[1] - start[1])
+            along = offset[0] * direction[0] + offset[1] * direction[1]
+            return (
+                offset[0] * direction[1] == offset[1] * direction[0]
+                and 0 <= along <= direction[0] ** 2 + direction[1] ** 2
+            )
+
+        def sliver_side(start: _Point2, stop: _Point2, /) -> bool:
+            rows = edge_rows.get(frozenset((start, stop)))
+            if rows is not None:
+                return len(rows) == 1
+            return any(
+                on_segment(start, first, last) and on_segment(stop, first, last)
+                for first, last in trim_sides
+            )
+
+        orientation = int(self.domain.patches[patch].orientation)
+        slivers: list[tuple[int, _Triangle2]] = []
+        for loop in self.domain.patches[patch].loops:
+            for use in loop:
+                if not isinstance(use, PatchPoleUse) or not isinstance(
+                    use.pcurve, (ExactLineCurve, LineCurve)
+                ):
+                    continue
+                start, stop = _line_endpoints(use)
+                direction = (stop[0] - start[0], stop[1] - start[1])
+                side = sorted(
+                    {
+                        point
+                        for point in (start, stop, *neighbors)
+                        if on_segment(point, start, stop)
+                    },
+                    key=lambda point: (
+                        (point[0] - start[0]) * direction[0]
+                        + (point[1] - start[1]) * direction[1]
+                    ),
+                )
+                side_points = set(side)
+                for first, second in zip(side[:-1], side[1:], strict=True):
+                    if frozenset((first, second)) in edge_rows:
+                        continue
+                    apexes = [
+                        apex
+                        for apex in neighbors.get(first, set())
+                        | neighbors.get(second, set())
+                        if apex not in side_points
+                        and sliver_side(first, apex)
+                        and sliver_side(second, apex)
+                    ]
+                    if len(apexes) != 1:
+                        continue
+                    apex = apexes[0]
+                    owners = edge_rows.get(frozenset((first, apex))) or edge_rows.get(
+                        frozenset((second, apex))
+                    )
+                    area = _signed_area2((first, second, apex))
+                    if not owners or not area:
+                        continue
+                    sliver = (
+                        (first, second, apex)
+                        if orientation * area > 0
+                        else (second, first, apex)
+                    )
+                    slivers.append((owners[0], sliver))
+        return tuple(slivers)
+
+    def pole_sliver_cap_bound(self, patch: int, sliver: _Triangle2, /) -> Fraction:
+        """Upper bound on the source-image diameter of one collapsed pole sliver.
+
+        The sliver contains its owner's pole chart corner, so every source point of
+        the sliver lies within this bound of that corner's exact source point.
+        """
+        from ._meshing_domain import _outward_surface_parameter_box
+        from ._source_interpolation import _fraction_float_interval
+
+        surface = self.domain.patches[patch].surface
+        lower = tuple(
+            _fraction_float_interval(min(point[axis] for point in sliver))[0]
+            for axis in range(2)
+        )
+        upper = tuple(
+            _fraction_float_interval(max(point[axis] for point in sliver))[1]
+            for axis in range(2)
+        )
+        bounds = np.asarray(
+            surface.bounding_box(_outward_surface_parameter_box(surface, lower, upper)),
+            dtype=np.float64,
+        )
+        if (
+            bounds.shape != (2, 3)
+            or np.any(~np.isfinite(bounds))
+            or np.any(bounds[0] > bounds[1])
+        ):
+            raise ValueError("Collapsed pole sliver has no finite ordered source box.")
+        widths = tuple(
+            Fraction(float(bounds[1, axis])) - Fraction(float(bounds[0, axis]))
+            for axis in range(3)
+        )
+        return fraction_sqrt_interval(
+            sum((width * width for width in widths), Fraction(0))
+        )[1]
 
     def boundary_chart_cover(self, /) -> SourceBoundaryChartCover:
         images: list[np.ndarray] = []

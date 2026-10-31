@@ -1026,6 +1026,41 @@ finally:
     assert "refine-result:UNRESOLVED:" in completed.stdout
 
 
+def test_fixed_refinement_next_to_thin_pole_fans_is_bounded() -> None:
+    # A recovered FIXED unit-sphere PLC whose poles are fans of thin
+    # triangles (ring edges ~2.6e-3 fanned to vertices 0.1-0.3 away) and whose
+    # recovery left vertices 1.5e-4 apart. A spacing guard of the shortest
+    # initial edge let refinement insert past 240k vertices (>3 GB); the local
+    # feature-size guard bounds the insertions and records what stays unmet.
+    data = np.load(
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "meshing"
+        / "thin_pole_fan_sphere.npz"
+    )
+    points = data["points"]
+    tetrahedra = data["tetrahedra"]
+    faces = data["faces"]
+    segments = data["segments"]
+    with TetMesh3D(
+        points,
+        tetrahedra,
+        np.zeros((tetrahedra.shape[0],), dtype=np.int32),
+        faces,
+        np.zeros((faces.shape[0],), dtype=np.int32),
+        segments,
+        np.arange(segments.shape[0], dtype=np.int32),
+        boundary_policy=PlcBoundaryPolicy.FIXED,
+        face_orientations=data["face_orientations"],
+    ) as state:
+        run = state.refine(radius_edge_bound=2.0)
+        assert run.edit_status is TetMeshEditStatus.APPLIED
+        assert run.status is MeshcoreStatus.UNRESOLVED
+        assert 0 < run.inserted_vertices <= 4 * points.shape[0]
+        assert state.arrays().points.shape[0] == points.shape[0] + run.inserted_vertices
+        assert run.unmet_cells == np.unique(np.asarray(state.unmet().cell_ids)).size
+
+
 def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
     triangles = np.asarray(
         ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
@@ -1053,3 +1088,18 @@ def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
     assert np.all(result.surface_triangles < result.surface_vertices.shape[0])
     assert np.all(result.tetrahedra < result.volume_vertices.shape[0])
     assert not result.bounds.flags.writeable
+
+
+def test_surface_envelope_names_the_offset_domination_contract() -> None:
+    triangles = np.asarray(
+        ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
+        dtype=np.int64,
+    )
+    # sqrt(3) * 0.1 + 0.1 exceeds the offset 0.2: the kernel refuses with
+    # RANGE_ERROR, and the message names the certified-error contract rather
+    # than the coordinate domain.
+    with pytest.raises(
+        ValueError, match="does not dominate the certified envelope"
+    ) as error:
+        surface_envelope(UNIT_TET, triangles, 0.2, 0.1, 0.1)
+    assert "2**-120" not in str(error.value)

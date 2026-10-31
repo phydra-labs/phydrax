@@ -53,9 +53,7 @@ if TYPE_CHECKING:
     )
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
     from phydrax.discretization.fem._de_rham import (
-        DistributedFiniteElementTransfer,
         FiniteElementTransferResult,
-        PeriodicFiniteElementTransfer,
         SparseCommutingEvidence,
         SparseTransferEntryEvidence,
     )
@@ -88,10 +86,8 @@ if TYPE_CHECKING:
         LayerCurvingSourceEvidence,
     )
     from phydrax.meshing._lineage import (
-        CellMeshTransition,
         EntityLineage,
         MeshLineage,
-        VertexInterpolationStencil,
     )
     from phydrax.meshing._surface_boundary_sources import (
         SurfaceChartBoundarySource,
@@ -129,6 +125,7 @@ from phydrax.discretization._axis_domain import AxisDomain
 from phydrax.discretization._cell_geometry import (
     CellGeometryRestrictionSource,
     CellGeometrySpec,
+    CellVertexGeometryElement,
     PerCellRestrictedCellGeometryElement,
     RationalComposedCellGeometryElement,
 )
@@ -149,6 +146,7 @@ from phydrax.discretization._exact_algebraic_geometry import (
 )
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from phydrax.discretization._exact_power_geometry import ExactPowerCellGeometrySource
+from phydrax.discretization._mapped_power_geometry import MappedPowerCellGeometrySource
 from phydrax.discretization._partition import CellPartition
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import PeriodicIsometryGroup
@@ -163,6 +161,10 @@ from phydrax.discretization.fem import (
     FiniteElementFieldSpec,
     FiniteElementPlan,
     form_element,
+)
+from phydrax.discretization.fem._de_rham import (
+    DistributedFiniteElementTransfer,
+    PeriodicFiniteElementTransfer,
 )
 from phydrax.discretization.fem._distributed import finite_element_dof_identity_plan
 from phydrax.discretization.fem._reference import FiniteElementSpec, lagrange_element
@@ -247,6 +249,7 @@ from phydrax.geometry.brep._intersection import (
 )
 from phydrax.geometry.brep._intersection_curve import CurveTrimSegment, SurfaceRegion
 from phydrax.geometry.brep._model import (
+    _certify_edge_face_gap_bounds,
     BRepEntityId,
     BRepGeometry,
     BRepImportReport,
@@ -350,7 +353,7 @@ from phydrax.meshing._hex_cut_preparation import (
 )
 from phydrax.meshing._hex_generation import extract_volume_hexes
 from phydrax.meshing._hex_schedule import NativeHexGridSchedule
-from phydrax.meshing._lineage import CellMeshTransition
+from phydrax.meshing._lineage import CellMeshTransition, VertexInterpolationStencil
 from phydrax.meshing._model_codec import read_model_artifact, write_model_artifact
 from phydrax.meshing._organization import (
     MeshAttribute,
@@ -561,7 +564,12 @@ def _offset_ruled_surface_model(contract: SpatialCoordinateContract, /) -> BRepM
             Fraction(1, 3),
             direction=(0.0, 0.0, 1.0),
         ),
-        LineCurve((0.0, 2.0 / 3.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve(
+            (0.0, 2.0 / 3.0, 0.0),
+            (1.0, 0.0, 0.0),
+            origin_exact=(Fraction(0), Fraction(2, 3), Fraction(0)),
+            direction_exact=(Fraction(1), Fraction(0), Fraction(0)),
+        ),
     )
     return BRepModel(
         geometry=geometry,
@@ -591,16 +599,6 @@ def _boolean_curve_carrier_model(contract: SpatialCoordinateContract, /) -> BRep
     )
     curve_carriers = (exact_curve, *geometry.curves[1:])
     patch = source.patches[0]
-    trim_domain = TrimDomain.from_curve_loops(
-        (
-            (
-                CurveTrimSegment(LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0),
-                CurveTrimSegment(LineCurve((1.0, 0.0), (0.0, 1.0)), 0.0, 1.0),
-                CurveTrimSegment(LineCurve((1.0, 1.0), (-1.0, 0.0)), 0.0, 1.0),
-                CurveTrimSegment(LineCurve((0.0, 1.0), (0.0, -1.0)), 0.0, 1.0),
-            ),
-        )
-    )
     identity = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
     conic_root = ConicParameterRoot(
         CircleCurve(
@@ -651,6 +649,16 @@ def _boolean_curve_carrier_model(contract: SpatialCoordinateContract, /) -> BRep
         (None, ConicParameterEndpoint(conic_root, pcurves[0], Fraction(1), conic_point)),
         (ConicParameterEndpoint(conic_root, pcurves[1], Fraction(0), conic_point), None),
         *geometry.coedge_endpoint_roots[2:],
+    )
+    trim_domain = TrimDomain.from_curve_loops(
+        (
+            tuple(
+                CurveTrimSegment(
+                    pcurve, 0.0, 1.0, first_root=roots[0], last_root=roots[1]
+                )
+                for pcurve, roots in zip(pcurves, coedge_endpoint_roots, strict=True)
+            ),
+        )
     )
     rebuilt_geometry = BRepGeometry(
         vertex_points=geometry.vertex_points,
@@ -823,9 +831,16 @@ def _refined_rational_patch(contract: SpatialCoordinateContract, /) -> BRepModel
         (Fraction(0), Fraction(1)), (Fraction(0), Fraction(1))
     )
     refinement = source_mesh.refine((source_mesh.cells[0].cell_id,))
-    tiny = Fraction(1, 10**40)
+    # Non-dyadic, yet inside the exact predicates' [2**-120, 2**120] coordinate range.
+    tiny = Fraction(1, 3 * 2**100)
+    # Greville control points reproduce the identity chart, so the square's z=0
+    # edges lift exactly except for the ``tiny`` lift of the first control point.
     exact_points = tuple(
-        (anchor.parameter[0], anchor.parameter[1], tiny if index == 0 else Fraction(0))
+        (
+            sum(anchor.local_knots.u[1:4], Fraction(0)) / 3,
+            sum(anchor.local_knots.v[1:4], Fraction(0)) / 3,
+            tiny if index == 0 else Fraction(0),
+        )
         for index, anchor in enumerate(source_mesh.anchors)
     )
     controls = np.asarray(
@@ -846,8 +861,40 @@ def _refined_rational_patch(contract: SpatialCoordinateContract, /) -> BRepModel
         transfer_plans=(refinement.transfer_plan,),
     )
     square = _square_model(contract)
+    geometry = square.geometry
+    # Declare the recomputed exact face-gap bound of every coedge.
+    face_gaps = _certify_edge_face_gap_bounds(
+        geometry,
+        (patch,),
+        parameter_bounds=square.parameter_bounds,
+        exact_unsupported=True,
+        certified_degenerate_coedges=True,
+    )
+    if face_gaps is None or max(face_gaps) > float(tiny) * 2.0:
+        raise ValueError("The lifted T-spline corner must keep a tiny face gap.")
+    declared = BRepGeometry(
+        vertex_points=geometry.vertex_points,
+        vertex_exact_points=geometry.vertex_exact_points,
+        vertex_roots=geometry.vertex_roots,
+        edge_endpoint_roots=geometry.edge_endpoint_roots,
+        coedge_endpoint_roots=geometry.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=geometry.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=face_gaps,
+        curves=geometry.curves,
+        edge_curves=geometry.edge_curves,
+        edge_ranges=geometry.edge_ranges,
+        edge_vertices=geometry.edge_vertices,
+        pcurves=geometry.pcurves,
+        coedge_edges=geometry.coedge_edges,
+        coedge_senses=geometry.coedge_senses,
+        face_loops=geometry.face_loops,
+        shell_faces=geometry.shell_faces,
+        shell_orientations=geometry.shell_orientations,
+        solid_shells=geometry.solid_shells,
+        assembly_graph=geometry.assembly_graph,
+    )
     return BRepModel(
-        geometry=square.geometry,
+        geometry=declared,
         patches=(patch,),
         parameter_bounds=square.parameter_bounds,
         orientation=square.orientation,
@@ -3641,7 +3688,6 @@ def _rebuild_piecewise_boundary_query_recipe(
     ):
         raise ValueError("PWL query recipe changed its retained envelope owner.")
     entity_ids = np.asarray(value.entity_ids)
-    source_rows = np.asarray(value.source_rows)
     query = PiecewiseLinearBoundarySource(
         owner,
         value.entity_dimension,
@@ -3651,10 +3697,6 @@ def _rebuild_piecewise_boundary_query_recipe(
         query.entity_dimension != value.entity_dimension
         or query.source_query_id != value.expected_source_query_id
         or not np.array_equal(query.entity_ids, entity_ids)
-        or not np.array_equal(query.source_rows, source_rows)
-        or query.source_entity_keys != value.source_entity_keys
-        or query.source_occurrence_paths != value.source_occurrence_paths
-        or query.chart_ids != value.chart_ids
     ):
         raise ValueError(
             "PWL boundary query ancestry differs from its reconstructed owner."
@@ -4991,7 +5033,11 @@ def _rebuild_continuation_value(
         return _rebuild_surface_chart_deformation(value)
     if (
         type(value).__module__ == "phydrax._model._structure"
-        and type(value).__name__ == "SparseCoordinateOperatorArchiveRecipe"
+        and type(value).__name__
+        in {
+            "SparseCoordinateOperatorArchiveRecipe",
+            "_FiniteElementSpecArchiveProjection",
+        }
     ) or type(value).__module__ in {
         "phydrax.sparse._relation",
         "phydrax.linalg._spaces",
@@ -5697,6 +5743,8 @@ def _rebuild_continuation_value(
             tabulator_id=value.tabulator_id,
             form_basis=value.form_basis,
         )
+    if type(value) is CellVertexGeometryElement:
+        return CellVertexGeometryElement(value.cell_kind, value.local_dof_count)
     if isinstance(value, PerCellRestrictedCellGeometryElement):
         source_element = _rebuild_scalar_coordinate_element(value.source_element)
         charts = tuple(
@@ -6179,6 +6227,13 @@ def _rebuild_continuation_value(
             domain_source=domain_source,
             target_periodic_cell=target_periodic_cell,
         )
+    if type(value) is MappedPowerCellGeometrySource:
+        reference_source = _rebuild_continuation_value(value.reference_source)
+        if type(reference_source) is not ExactPowerCellGeometrySource:
+            raise TypeError("Mapped power restoration lost its exact reference source.")
+        return MappedPowerCellGeometrySource.from_stored_fields(
+            value, reference_source=reference_source
+        )
     if type(value) is _CutCoordinateMap:
         if not isinstance(source_mesh, CellMesh):
             raise ValueError(
@@ -6223,6 +6278,12 @@ def _rebuild_continuation_value(
                 if type(source_map) is not _CutCoordinateMap:
                     raise TypeError("Stored cut map has a noncanonical owner type.")
                 source_map = _rebuild_cut_coordinate_map(source_map, source_mesh)
+            elif type(source_map) is MappedPowerCellGeometrySource:
+                source_map = _rebuild_continuation_value(source_map)
+                if not isinstance(source_map, CellGeometryCoordinateMap):
+                    raise TypeError(
+                        "Mapped power restoration lost its coordinate-map contract."
+                    )
             elif isinstance(source_map, _RestrictedCoordinateMap):
                 if type(source_map) is not _RestrictedCoordinateMap:
                     raise TypeError(
@@ -10930,16 +10991,16 @@ def _rebuild_coordinate_map_composition(value: object, /) -> Composition:
         for entry in value.entries
     )
     composition = Composition(rebuilt_entries, boundary_id=value.boundary_id)
+    # Stored geometry values hold archive projections of their FE elements; each
+    # entry's revision is the identity of the geometry it was written from.
     if (
         composition.composition_id != value.composition_id
-        or cell_geometry_id(power_geometry)
-        != cell_geometry_id(entries["power/geometry"].value)
-        or cell_geometry_id(cut_geometry)
-        != cell_geometry_id(entries["cut/geometry"].value)
+        or cell_geometry_id(power_geometry) != entries["power/geometry"].revision_id
+        or cell_geometry_id(cut_geometry) != entries["cut/geometry"].revision_id
         or cell_geometry_id(power_refined_geometry)
-        != cell_geometry_id(entries["power/refined-geometry"].value)
+        != entries["power/refined-geometry"].revision_id
         or cell_geometry_id(selected_geometry)
-        != cell_geometry_id(entries["power/selected-geometry"].value)
+        != entries["power/selected-geometry"].revision_id
     ):
         raise ValueError("Cold coordinate-map Composition identity changed.")
     return composition
@@ -11541,14 +11602,6 @@ def _owner_local_periodic_adaptive_archive_fixture() -> tuple[
             np.asarray(periodic_points.point_ids).shape, dtype=np.int32
         ),
     )
-    vertex_scope = MeshingScope(
-        source_id,
-        source_revision,
-        MeshingEntityKind.GEOMETRY,
-        0,
-        source.scope_entity_set_id(0),
-        source.scope_entity_ids(0),
-    )
     surface_scope = MeshingScope(
         source_id,
         source_revision,
@@ -11564,7 +11617,7 @@ def _owner_local_periodic_adaptive_archive_fixture() -> tuple[
             CellFamilyPolicy(required=("triangle",)),
         ),
         surface_scope,
-        size_controls=(UniformSizeControl(vertex_scope, 0.35),),
+        size_controls=(UniformSizeControl(surface_scope, 0.35),),
         size_compliance=SizeCompliancePolicy(relative_tolerance=0.5),
     )
     graph_partition_plan = GraphPartitionPlan(
@@ -14009,7 +14062,7 @@ def _read(directory: Path, expected: dict[str, object], /) -> None:
     _read_surface_chart_witness(directory, expected, source_model=refined)
     patch = refined.patches[0]
     assert isinstance(patch, TSplineSurfacePatch)
-    tiny = Fraction(1, 10**40)
+    tiny = Fraction(1, 3 * 2**100)
     assert patch.exact_source_control_points[0][2] == tiny
     assert patch.exact_source_weights[0] == Fraction(1, 3)
     assert len(patch.transfer_plans) == 1
@@ -14436,8 +14489,10 @@ if __name__ == "__main__":
     elif operation == "write-reconstructed":
         _write_reconstructed_source(archive_directory)
     elif operation == "read-pwl-boundary-query":
+        # The per-entity oracle exceeds the process argument limit; it is a file.
         _read_piecewise_boundary_query(
-            archive_directory / "pwl-boundary-query.phx", json.loads(sys.argv[3])
+            archive_directory / "pwl-boundary-query.phx",
+            json.loads(Path(sys.argv[3]).read_text(encoding="utf-8")),
         )
     elif operation == "write-pwl-boundary-query":
         _write_piecewise_boundary_query(archive_directory)

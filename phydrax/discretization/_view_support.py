@@ -90,84 +90,6 @@ class OwnerLocalCellBlock(StrictModule, NonTrainableState):
     polyhedron_face_signs: tuple[Array, ...] | None
     cell_vertex_shifts: Array | None
 
-    def construction_record(self) -> dict[str, Any]:
-        """The constructor record that rebuilds exactly this block.
-
-        A block restored from a model archive carries its executable element
-        as the archive's canonical element projection; the record decodes it.
-        """
-        from .._model._structure import _FiniteElementSpecArchiveProjection
-
-        element = self.element
-        if type(element) is _FiniteElementSpecArchiveProjection:
-            element = element.rebuild()
-        record: dict[str, Any] = {
-            "name": self.name,
-            "cell_kind": self.cell_kind,
-            "cell_rows": self.cell_rows,
-            "cell_ids": self.cell_ids,
-            "vertices": self.vertices,
-            "vertex_valid": self.vertex_valid,
-            "coordinate_routes": self.coordinate_routes,
-            "element": element,
-            "element_rows": self.element_rows,
-            "source_cell_ids": self.source_cell_ids,
-            "chart_arguments": self.chart_arguments,
-            "cell_measures": self.cell_measures,
-            "cell_vertex_shifts": self.cell_vertex_shifts,
-        }
-        if self.cell_kind == "polyhedron":
-            if (
-                self.polyhedron_face_ids is None
-                or self.polyhedron_face_vertex_loops is None
-                or self.polyhedron_faces is None
-                or self.polyhedron_face_signs is None
-            ):
-                raise ValueError(
-                    "A polyhedral owner-local block lost its face incidence."
-                )
-            loops = tuple(
-                tuple(int(value) for value in np.asarray(loop).tolist())
-                for loop in self.polyhedron_face_vertex_loops
-            )
-            face_of_loop = {loop: face for face, loop in enumerate(loops)}
-            cell_faces = [
-                face_of_loop[tuple(int(value) for value in np.asarray(face).tolist())]
-                for faces in self.polyhedron_faces
-                for face in faces
-            ]
-            record.update(
-                {
-                    "face_ids": self.polyhedron_face_ids,
-                    "cell_face_offsets": np.concatenate(
-                        (
-                            np.zeros((1,), dtype=np.int64),
-                            np.cumsum(
-                                [len(faces) for faces in self.polyhedron_faces],
-                                dtype=np.int64,
-                            ),
-                        )
-                    ),
-                    "cell_face_values": np.asarray(cell_faces, dtype=np.int64),
-                    "cell_face_signs": np.concatenate(
-                        [
-                            np.asarray(signs, dtype=np.int8)
-                            for signs in self.polyhedron_face_signs
-                        ]
-                    ),
-                    "face_vertex_offsets": np.concatenate(
-                        (
-                            np.zeros((1,), dtype=np.int64),
-                            np.cumsum([len(loop) for loop in loops], dtype=np.int64),
-                        )
-                    ),
-                    "face_vertex_values": np.asarray(
-                        [value for loop in loops for value in loop], dtype=np.int32
-                    ),
-                }
-            )
-        return record
-
     def __init__(self, record: Mapping[str, Any], /) -> None:
         from ._nested_reference_types import reference_chart_arguments_identity
 
@@ -342,6 +264,83 @@ class OwnerLocalCellBlock(StrictModule, NonTrainableState):
             polyhedron_faces,
             polyhedron_face_signs,
         )
+
+    def stored_record(self, /) -> dict[str, Any]:
+        """Constructor record of this block; polyhedron faces become CSR incidence.
+
+        A stored executable FE coordinate element is decoded from its archive
+        projection through its canonical element recipe.
+        """
+        from .._model._structure import _FiniteElementSpecArchiveProjection
+
+        element = self.element
+        if type(element) is _FiniteElementSpecArchiveProjection:
+            element = element.rebuild()
+        record: dict[str, Any] = {
+            "name": self.name,
+            "cell_kind": self.cell_kind,
+            "cell_rows": np.asarray(self.cell_rows, dtype=np.int64),
+            "cell_ids": np.asarray(self.cell_ids, dtype=np.int64),
+            "vertices": np.asarray(self.vertices, dtype=np.int32),
+            "vertex_valid": np.asarray(self.vertex_valid, dtype=np.bool_),
+            "coordinate_routes": np.asarray(self.coordinate_routes, dtype=np.int32),
+            "element": element,
+            "element_rows": np.asarray(self.element_rows, dtype=np.int32),
+            "source_cell_ids": np.asarray(self.source_cell_ids, dtype=np.int64),
+            "chart_arguments": self.chart_arguments,
+            "cell_measures": np.asarray(self.cell_measures, dtype=np.float64),
+            "cell_vertex_shifts": (
+                None
+                if self.cell_vertex_shifts is None
+                else np.asarray(self.cell_vertex_shifts, dtype=np.int64)
+            ),
+        }
+        if self.cell_kind != "polyhedron":
+            return record
+        if (
+            self.polyhedron_face_ids is None
+            or self.polyhedron_face_vertex_loops is None
+            or self.polyhedron_faces is None
+            or self.polyhedron_face_signs is None
+        ):
+            raise ValueError("Owner-local polyhedron lacks canonical face incidence.")
+        face_loops = tuple(
+            np.asarray(loop, dtype=np.int32) for loop in self.polyhedron_face_vertex_loops
+        )
+        face_index = {
+            tuple(int(value) for value in loop): index
+            for index, loop in enumerate(face_loops)
+        }
+        cell_face_values: list[int] = []
+        cell_face_signs: list[int] = []
+        cell_face_offsets = [0]
+        for faces, signs in zip(
+            self.polyhedron_faces, self.polyhedron_face_signs, strict=True
+        ):
+            for face in faces:
+                index = face_index.get(tuple(int(value) for value in np.asarray(face)))
+                if index is None:
+                    raise ValueError(
+                        "Owner-local polyhedron face is not an authored face."
+                    )
+                cell_face_values.append(index)
+            cell_face_signs.extend(int(value) for value in np.asarray(signs))
+            cell_face_offsets.append(len(cell_face_values))
+        record.update(
+            face_ids=np.asarray(self.polyhedron_face_ids, dtype=np.int64),
+            cell_face_offsets=np.asarray(cell_face_offsets, dtype=np.int64),
+            cell_face_values=np.asarray(cell_face_values, dtype=np.int64),
+            cell_face_signs=np.asarray(cell_face_signs, dtype=np.int8),
+            face_vertex_offsets=np.cumsum(
+                [0, *(loop.size for loop in face_loops)], dtype=np.int64
+            ),
+            face_vertex_values=(
+                np.concatenate(face_loops)
+                if face_loops
+                else np.empty((0,), dtype=np.int32)
+            ),
+        )
+        return record
 
 
 def _reconstruct_owner_local_geometry(
@@ -2548,7 +2547,7 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
             "coordinates_are_lifted": value.coordinates_are_lifted,
             "support_fractional_lower": value.support_fractional_lower,
             "support_fractional_upper": value.support_fractional_upper,
-            "blocks": tuple(block.construction_record() for block in value.blocks),
+            "blocks": tuple(block.stored_record() for block in value.blocks),
             "rank": local_rank,
             "serial_source_view": value.serial_source_view,
             "source_value": source_value,

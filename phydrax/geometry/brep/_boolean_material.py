@@ -771,7 +771,7 @@ def _coorientations(
         if proof is None:
             continue
         if face not in known_faces:
-            trim_domain = model.trim_domains[face]
+            trim_domain = boolean_arrangement_owner.native_chart_trim_domain(model, face)
             if trim_domain is None:
                 return None
             decision = boolean_arrangement_owner.trim_box_status(
