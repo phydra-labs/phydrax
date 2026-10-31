@@ -143,6 +143,10 @@ def test_ssprk_ale_carries_accepted_volume_and_preserves_constant_state() -> Non
         mapping_id="accepted-volume-carry",
         consistency_policy=policy,
     )
+    # A prior effective volume off its coordinate volume (an earlier remap, a
+    # restart) is carried through the swept-volume recurrence, not amplified.
+    initial = _initial_cell_volumes(plan)
+    prior = initial * (1.0 + 1.0e-3 * jnp.arange(1, initial.size + 1))
     first = motion.prepare_ssprk33_step(
         0.0,
         0.4,
@@ -150,7 +154,7 @@ def test_ssprk_ale_carries_accepted_volume_and_preserves_constant_state() -> Non
         0,
         0,
         0.5,
-        prior_effective_cell_volumes=_initial_cell_volumes(plan),
+        prior_effective_cell_volumes=prior,
     )
     second = motion.prepare_ssprk33_step(
         0.4,
@@ -172,7 +176,7 @@ def test_ssprk_ale_carries_accepted_volume_and_preserves_constant_state() -> Non
         first.accepted_geometry.effective_cell_volumes
         - second.stage_1.coordinate_effective_cell_volumes
     )
-    assert jnp.max(expected_defect) > 1.0e-12
+    np.testing.assert_allclose(expected_defect, prior - initial, rtol=1e-12)
     np.testing.assert_allclose(
         second.stage_1.evidence.coordinate_effective_volume_defect,
         expected_defect,
@@ -254,13 +258,15 @@ def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence() ->
         minimum_reduction_factor=1.0e-8,
     )
 
-    def oscillatory_compression(time: Any, vertices: Any, amplitude: Any) -> Any:
-        scale = 1.0 - amplitude * jnp.sin(jnp.pi * time)
+    def folding_compression(time: Any, vertices: Any, rate: Any) -> Any:
+        # The end positions fold every cell through x = 0: the swept-volume
+        # trial volume is the folded (negative) coordinate volume.
+        scale = 1.0 - rate * time
         return vertices.at[:, 0].set(scale * vertices[:, 0])
 
     motion = phx.discretization.FixedConnectivityMotionPlan(
         plan,
-        oscillatory_compression,
+        folding_compression,
         mapping_id="negative-retry",
         consistency_policy=policy,
     )
@@ -270,7 +276,7 @@ def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence() ->
         "negative-epoch",
         0,
         0,
-        0.8,
+        1.5,
         prior_effective_cell_volumes=_initial_cell_volumes(plan),
     )
 
@@ -316,24 +322,29 @@ def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence() ->
     )
 
 
-def test_ssprk_ale_exact_identities_still_reject_intermediate_coordinate_defect() -> None:
+@pytest.mark.parametrize("exponent", (1, 5))
+def test_ssprk_ale_stage_volumes_are_the_coordinate_volumes_of_any_trajectory(
+    exponent: int,
+) -> None:
+    """Swept-volume stage rates leave no intermediate or final coordinate defect.
+
+    A linear expansion has quadratic cell volumes and a fifth-order deformation
+    quintic ones; instantaneous stage rates would miss both at intermediate
+    stages (and the latter at the end). Every stage passes a 1e-13 policy.
+    """
     plan = _quad_plan(2, 2)
-    rate = 0.4
     policy = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
         absolute_tolerance=1.0e-13,
         relative_tolerance=1.0e-13,
-        reduction_safety_factor=0.8,
-        minimum_reduction_factor=1.0e-8,
     )
 
-    def expansion(time: Any, vertices: Any, args: Any) -> Any:
-        del args
-        return (1.0 + rate * time) * vertices
+    def deformation(time: Any, vertices: Any, rate: Any) -> Any:
+        return (1.0 + rate * time**exponent) * vertices
 
     motion = phx.discretization.FixedConnectivityMotionPlan(
         plan,
-        expansion,
-        mapping_id="linear-scale-nonlinear-volume",
+        deformation,
+        mapping_id=f"power-{exponent}-expansion",
         consistency_policy=policy,
     )
     step = motion.prepare_ssprk33_step(
@@ -342,48 +353,25 @@ def test_ssprk_ale_exact_identities_still_reject_intermediate_coordinate_defect(
         "expansion-epoch",
         0,
         0,
-        None,
+        0.4,
         prior_effective_cell_volumes=_initial_cell_volumes(plan),
     )
 
-    assert not bool(step.passed)
-    assert int(step.status) == int(
-        phx.discretization.finite_volume.FiniteVolumeGeometryStatus.FAILED
-    )
-    assert bool(step.stage_1.evidence.passed)
-    assert not bool(step.stage_2.evidence.passed)
-    assert not bool(step.stage_3.evidence.passed)
-    assert bool(step.accepted_geometry.evidence.passed)
-    for evidence in (
-        step.stage_1.evidence,
-        step.stage_2.evidence,
-        step.stage_3.evidence,
-        step.accepted_geometry.evidence,
+    assert bool(step.passed)
+    for stage, time in (
+        (step.stage_1, 0.0),
+        (step.stage_2, 0.5),
+        (step.stage_3, 0.25),
+        (step.accepted_geometry, 0.5),
     ):
-        np.testing.assert_allclose(evidence.gcl_identity_defect, 0.0, atol=2e-15)
-
-    stage_evidence = step.stage_2.evidence
-    stage_ratio = jnp.max(
-        jnp.concatenate(
-            (
-                stage_evidence.coordinate_effective_volume_defect
-                / stage_evidence.coordinate_effective_volume_tolerance,
-                stage_evidence.face_closure_defect
-                / stage_evidence.face_closure_tolerance,
-                stage_evidence.gcl_identity_defect
-                / stage_evidence.gcl_identity_tolerance,
-            )
+        expected = _initial_cell_volumes(plan) * (1.0 + 0.4 * time**exponent) ** 2
+        np.testing.assert_allclose(
+            stage.effective_cell_volumes, expected, rtol=1e-14, atol=0.0
         )
-    )
-    expected_stage_factor = jnp.maximum(
-        policy.minimum_reduction_factor,
-        policy.reduction_safety_factor * stage_ratio ** (-0.5),
-    )
-    np.testing.assert_allclose(
-        stage_evidence.proposed_reduction_factor,
-        expected_stage_factor,
-        rtol=2e-13,
-    )
+        np.testing.assert_allclose(
+            stage.coordinate_effective_cell_volumes, expected, rtol=1e-14, atol=0.0
+        )
+        np.testing.assert_allclose(stage.evidence.gcl_identity_defect, 0.0, atol=2e-15)
 
 
 def test_ssprk_ale_final_defect_uses_fourth_order_reduction() -> None:
@@ -404,6 +392,9 @@ def test_ssprk_ale_final_defect_uses_fourth_order_reduction() -> None:
         mapping_id="fifth-order-coordinate-deformation",
         consistency_policy=policy,
     )
+    # The prior volume is off its coordinates; the recurrence carries the
+    # offset to the accepted geometry, whose check uses the order-4 factor.
+    initial = _initial_cell_volumes(motion.base_plan)
     step = motion.prepare_ssprk33_step(
         0.0,
         0.5,
@@ -411,7 +402,7 @@ def test_ssprk_ale_final_defect_uses_fourth_order_reduction() -> None:
         0,
         0,
         1.0,
-        prior_effective_cell_volumes=_initial_cell_volumes(motion.base_plan),
+        prior_effective_cell_volumes=initial * (1.0 + 1.0e-9),
     )
     evidence = step.accepted_geometry.evidence
 
