@@ -6527,10 +6527,21 @@ def _require_owner_local_periodic_adaptive_target_current(
         axis_name,
         "stored adaptive target exact mesh",
     )
+    # The halo closure replays over the view's resident source bank (owned and
+    # halo sites), exactly as the accepted target was published.
+    resident_source, _ = _owner_local_periodic_source_from_view(view)
+    resident_domain = resident_source.domain
+    if (
+        not isinstance(resident_domain, PeriodicPointOrbits)
+        or resident_source.point_owner_ranks is None
+    ):
+        raise TypeError("Adaptive target view lacks its resident point-orbit bank.")
+    resident_owners = np.asarray(resident_source.point_owner_ranks, dtype=np.int32)
     candidate = {
-        "point_ids": np.asarray(view.source_point_ids, dtype=np.int64),
-        "point_owner_ranks": np.asarray(view.source_owner_ranks, dtype=np.int32),
-        "source_owned": np.asarray(view.source_owned, dtype=np.bool_),
+        "points": np.asarray(resident_domain.points, dtype=np.float64),
+        "point_ids": np.asarray(resident_domain.point_ids, dtype=np.int64),
+        "point_owner_ranks": resident_owners,
+        "source_owned": resident_owners == local_rank,
     }
     mesh_authority = _owner_local_periodic_mesh_authority(
         mesh_data,

@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from ..typing import parse
 
@@ -142,6 +143,14 @@ class OperatorProperties(StrictModule):
             raise ValueError(f"Unknown operator property {property_name!r}.")
         return claims[property_name] and self.evidence_for(property_name) != "unknown"
 
+
+for _artifact_value in (OperatorCapabilities, OperatorProperties):
+    register_artifact_value(
+        f"phydrax.linalg:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 __all__ = [
     "LinearCapabilityError",

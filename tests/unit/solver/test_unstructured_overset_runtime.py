@@ -2981,13 +2981,12 @@ def _finite_volume_archive_rebuild_context_views(
     target_plan = GraphPartitionPlan.from_stored_fields(
         context.target_graph_partition_plan
     )
-    target_view = OwnerLocalCellGeometry.from_stored_fields(
-        context.target_view,
-        execution_group,
-        current_specification=target_specification,
-        graph_partition_plan=target_plan,
-        axis_name=f"{context.owner_local_axis_name}_archive_target",
-    )
+    # The stored target view is the expected result of the graph repartition,
+    # which the context build replays from the restored source views and the
+    # stored plan; the replayed view must reproduce its exact local identity.
+    target_view = context.target_view
+    if type(target_view) is not OwnerLocalCellGeometry:
+        raise TypeError("FV archive target view must be a canonical owner-local view.")
     return context._replace(
         source_views=source_views,
         source_specifications=source_specifications,
@@ -3464,6 +3463,7 @@ def _finite_volume_archive_build_context(
     if validate_expected and (
         target_view.distribution_id != context.expected_target_distribution_id
         or context.target_view.distribution_id != replayed_target_view.distribution_id
+        or context.target_view.local_view_id != replayed_target_view.local_view_id
         or not np.array_equal(
             np.asarray(context.target_view.cell_ids, dtype=np.int64),
             np.asarray(replayed_target_view.cell_ids, dtype=np.int64),
@@ -3507,7 +3507,7 @@ def _finite_volume_archive_build_context(
         source_epoch.index + 1,
         source_epoch.geometry_id,
         source_epoch.topology_id,
-        target_view.distribution_id,
+        target_coupling.composite.distribution_id,
     )
     target_artifacts = FiniteVolumeTopologyArtifacts(
         target_epoch,
@@ -4021,7 +4021,7 @@ def _read_native_owner_local_fv_repartition_archive(
             or stored_history_entry.revision_id
             != _finite_volume_cell_state_bank_revision(bank_spec, history_values)
             or stored_history_entry.structure_id
-            != bundle["source_runtime"].owner_local_geometry.geometry_layout_id
+            != bundle["source_runtime"].geometry_layout_id
             or stored_history_entry.semantics_id != "stable-cell-id-history"
             or entries["finite-volume/cell-state-bank-layouts"].revision_id
             != schema_revision
@@ -4130,7 +4130,9 @@ def _read_native_owner_local_fv_repartition_archive(
         )
     ).reshape((-1,))
     if not np.all(accepted_flags == 1):
-        raise ValueError("Cold accepted FV graph repartition was refused.")
+        raise ValueError(
+            f"Cold accepted FV graph repartition was refused: {repartitioned.refusal}"
+        )
     if (
         repartitioned.successor_runtime is None
         or repartitioned.repartition_receipt is None

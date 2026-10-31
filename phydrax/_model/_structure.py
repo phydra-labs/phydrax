@@ -1426,6 +1426,17 @@ def deserialize_model_leaf(file: BinaryIO, value: Any, /) -> Any:
     return eqx.default_deserialise_filter_spec(file, value)
 
 
+def _registered_type_id(value_type: type, path: str, /) -> str:
+    """Return a structured value type's artifact identity, naming it if absent."""
+    try:
+        return artifact_value_id(value_type)
+    except TypeError as error:
+        raise TypeError(
+            f"{value_type.__module__}.{value_type.__qualname__} at {path} has no "
+            "canonical artifact registration."
+        ) from error
+
+
 def model_structure_recipe(
     value: Any,
     /,
@@ -1535,7 +1546,7 @@ def model_structure_recipe(
     if isinstance(value, tuple) and "_fields" in vars(type(value)):
         return {
             "kind": "namedtuple",
-            "type": artifact_value_id(type(value)),
+            "type": _registered_type_id(type(value), path),
             "items": [
                 model_structure_recipe(item, path=f"{path}[{index}]")
                 for index, item in enumerate(value)
@@ -1547,7 +1558,7 @@ def model_structure_recipe(
     if dataclasses.is_dataclass(value) and not isinstance(value, frozendict):
         return {
             "kind": "dataclass",
-            "type": artifact_value_id(type(value)),
+            "type": _registered_type_id(type(value), path),
             "fields": {
                 field.name: model_structure_recipe(
                     object.__getattribute__(value, field.name),

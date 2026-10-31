@@ -1041,6 +1041,7 @@ class FiniteVolumeOwnerLocalRepartitionResult(StrictModule):
     event_status: Array = fixed_field()
     successor_runtime: PreparedFiniteVolumeRuntime | None = None
     repartition_receipt: CompositionRebindReceipt | None = fixed_field(default=None)
+    refusal: str | None = eqx.field(static=True, default=None)
 
 
 class FiniteVolumeScheduledAdvanceResult(StrictModule):
@@ -5311,12 +5312,14 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             journal: FiniteVolumeTopologyEventJournal,
             content: FiniteVolumeConservativeContentState,
             event_status: TopologyEventStatus,
+            reason: str,
             /,
         ) -> FiniteVolumeOwnerLocalRepartitionResult:
             return FiniteVolumeOwnerLocalRepartitionResult(
                 with_journal(journal, content),
                 jnp.asarray(False),
                 jnp.asarray(int(event_status), dtype=jnp.int32),
+                refusal=reason,
             )
 
         def fail(
@@ -5352,7 +5355,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 evidence=evidence,
                 status=status,
             )
-            return rollback_result(transaction.journal, transaction.content_state, status)
+            return rollback_result(
+                transaction.journal, transaction.content_state, status, reason
+            )
 
         def collective_error(
             error: Exception | None,
@@ -6119,18 +6124,37 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 if target_runtime.sliding_initial_coupling is None
                 else target_runtime.sliding_initial_coupling.coupling_id
             )
-            if (
-                target_runtime.owner_local_owned_cell_mask is None
-                or not np.array_equal(
-                    np.asarray(target_runtime.owner_local_owned_cell_mask),
-                    target_owned_mask,
+            # The owner-local geometry family is the rank-local carrier, which a
+            # graph repartition changes by definition; the global source geometry
+            # and topology are bound by the candidate epoch above.
+            changed = tuple(
+                name
+                for name, differs in (
+                    (
+                        "owned_cell_mask",
+                        target_runtime.owner_local_owned_cell_mask is None
+                        or not np.array_equal(
+                            np.asarray(target_runtime.owner_local_owned_cell_mask),
+                            target_owned_mask,
+                        ),
+                    ),
+                    (
+                        "evidence_policy",
+                        target_runtime.evidence_policy_id
+                        != source_content.evidence_policy_id,
+                    ),
+                    ("sliding_plan", runtime_sliding_plan_id != source_sliding_plan_id),
+                    (
+                        "sliding_coupling",
+                        runtime_sliding_coupling_id != target_sliding_coupling_id,
+                    ),
                 )
-                or target_runtime.geometry_family_id != source_content.geometry_family_id
-                or target_runtime.evidence_policy_id != source_content.evidence_policy_id
-                or runtime_sliding_plan_id != source_sliding_plan_id
-                or runtime_sliding_coupling_id != target_sliding_coupling_id
-            ):
-                raise ValueError("Target runtime changes preserved FV state semantics.")
+                if differs
+            )
+            if changed:
+                raise ValueError(
+                    f"Target runtime changes preserved FV state semantics: {changed}."
+                )
         except Exception as error:
             target_runtime_error = error
         target_runtime_error_text = collective_error(
@@ -6206,6 +6230,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             *,
             content: FiniteVolumeConservativeContentState = source_content,
         ) -> _OwnerLocalRepartitionTransfer:
+            transfer_holder["refusal"] = reason
             rejected_root = canonical_fingerprint(
                 {
                     "kind": "rejected-owner-local-fv-cell-transfer",
@@ -6668,6 +6693,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 local_error, f"{self.owner_local_axis_name}_repartition_rebind"
             )
             if error_text is not None or next_state is None or receipt is None:
+                commit_holder["refusal"] = (
+                    error_text or "Owner-local FV state rebind returned no state."
+                )
                 return False
             commit_holder["state"] = next_state
             commit_holder["receipt"] = receipt
@@ -6695,6 +6723,13 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 result_id=candidate_epoch.epoch_id,
                 payload_ids=(route_identity_id,),
                 commit_action=commit_rebind,
+                migration_partition_ids=(
+                    (source_view.distribution_id, target_view.distribution_id)
+                    if isinstance(
+                        self.owner_local_geometry, OwnerLocalCompositeCellGeometry
+                    )
+                    else None
+                ),
             )
         except Exception as error:
             transaction_error = error
@@ -6716,10 +6751,19 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             commit_error, f"{self.owner_local_axis_name}_repartition_commit"
         )
         if commit_error_text is not None:
+            failure = transaction.failure
             return rollback_result(
                 transaction.journal,
                 source_content,
                 transaction.event_status,
+                "Owner-local FV graph repartition did not commit ("
+                + ("no failure status" if failure is None else failure.name)
+                + "): "
+                + str(
+                    transfer_holder.get("refusal")
+                    or commit_holder.get("refusal")
+                    or commit_error_text
+                ),
             )
         next_state = commit_holder.get("state")
         receipt = commit_holder.get("receipt")
@@ -6738,6 +6782,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 transaction.journal,
                 source_content,
                 transaction.event_status,
+                receipt_error_text,
             )
         if (
             not isinstance(next_state, FiniteVolumeRuntimeState)
@@ -6748,6 +6793,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 transaction.journal,
                 source_content,
                 TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "Owner-local FV repartition lost its typed committed outputs.",
             )
         return FiniteVolumeOwnerLocalRepartitionResult(
             next_state,

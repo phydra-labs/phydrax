@@ -5371,14 +5371,22 @@ def _owner_local_keyed_target_owners(
     owners = np.full((source_keys.shape[0],), -1, dtype=np.int32)
     local_error = None
     try:
+        # Remote request rows index their sender's source keys, so validity is
+        # checked per (sender, row); only local rows index this rank's owners.
+        answered: set[tuple[int, int]] = set()
         for key, requests in source_queries.items():
             owner = target_owners[key]
             for source_rank, source_row in requests:
-                if not 0 <= source_row < owners.size or owners[source_row] >= 0:
+                if source_row < 0 or (source_rank, source_row) in answered:
                     raise ValueError(
                         "Keyed target owner query rows are duplicated or invalid."
                     )
+                answered.add((source_rank, source_row))
                 if source_rank == rank:
+                    if source_row >= owners.size:
+                        raise ValueError(
+                            "Keyed target owner query rows are duplicated or invalid."
+                        )
                     owners[source_row] = owner
                 else:
                     reply_rows[source_rank].append(
