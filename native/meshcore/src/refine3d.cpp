@@ -23,6 +23,18 @@
 #include "exact_scalar.hpp"
 
 namespace phx::mc {
+double cell_size_target(const std::array<double, 4>& corner_sizes) noexcept {
+  double scale = 0.0;
+  for (double size : corner_sizes) {
+    if (!(size > 0.0)) return std::numeric_limits<double>::infinity();
+    scale = std::max(scale, size);
+  }
+  // Normalized by the largest target so the sum cannot overflow.
+  double normalized_sum = 0.0;
+  for (double size : corner_sizes) normalized_sum += size / scale;
+  return std::min(scale, scale * (0.25 * normalized_sum));
+}
+
 namespace {
 
 bool tetrahedron_geometry(const TetMesh& mesh, const TetSnapshotCell& cell,
@@ -41,17 +53,13 @@ bool mean_target_size(const std::array<std::uint64_t, 4>& vertices,
                       const std::unordered_map<std::uint64_t, double>& sizes,
                       double& target) {
   std::array<double, 4> values{};
-  double scale = 0.0;
   for (std::size_t corner = 0; corner < vertices.size(); ++corner) {
     const auto found = sizes.find(vertices[corner]);
-    if (found == sizes.end() || found->second == 0.0) return false;
+    if (found == sizes.end()) return false;
     values[corner] = found->second;
-    scale = std::max(scale, found->second);
   }
-  double normalized_sum = 0.0;
-  for (double value : values) normalized_sum += value / scale;
-  target = std::min(scale, scale * (0.25 * normalized_sum));
-  return true;
+  target = cell_size_target(values);
+  return std::isfinite(target);
 }
 
 bool violates(const TetMesh& mesh, const TetSnapshotCell& cell,
@@ -120,16 +128,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
 
   TetMeshSnapshot initial;
   if (mesh.snapshot(initial) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
-  if (!vertex_sizes.empty() && vertex_sizes.size() != initial.vertices.size()) {
-    return PHX_MC_INVALID_ARGUMENT;
-  }
-  std::unordered_map<std::uint64_t, double> sizes;
-  sizes.reserve(vertex_sizes.size());
-  for (std::size_t row = 0; row < vertex_sizes.size(); ++row) {
-    const double size = vertex_sizes[row];
-    if (!std::isfinite(size) || size < 0.0) return PHX_MC_INVALID_INPUT;
-    sizes.emplace(initial.vertices[row].id, size);
-  }
+  const std::int32_t installed = mesh.install_vertex_sizes(initial, vertex_sizes);
+  if (installed != PHX_MC_OK) return installed;
+  std::unordered_map<std::uint64_t, double>& sizes = mesh.vertex_sizes_;
 
   using EdgeKey = std::array<std::uint64_t, 2>;
   using FaceKey = std::array<std::uint64_t, 3>;
@@ -583,15 +584,23 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // FIXED_BOUNDARY. Shewchuk's guarantee needs B > 2 and input dihedral angles
   // of at least 90 degrees; smaller input angles are not excluded but may
   // leave cells unmet.
-  // Termination: no point is inserted closer than `separation` to an existing
-  // vertex, where `separation` is the shortest edge entering this pass or the
-  // smallest positive circumradius size target if smaller. Inserted points are
-  // therefore separation-packed in a bounded domain and finitely many. For a
-  // Delaunay cavity the circumcenter's nearest vertex lies at the circumradius,
-  // above B times the cell's shortest edge, so the guard binds only near small
-  // input features; there a cell is reported unmet with reason REFUSED.
+  // Termination: a point x is inserted only at distance at least
+  // g(x) = min(e0, c * h(x)) from every vertex present, where e0 is the
+  // shortest edge entering this pass, h(x) the circumradius size target
+  // interpolated at x (the target of the cell or edge being split; g = e0
+  // where no target applies), and c = 1/2. Packing: refinement never removes
+  // a vertex, so any two vertices of which at least one was inserted are at
+  // least g_min = min(e0, c * h_min) > 0 apart, h_min the smallest positive
+  // target. Balls of radius g_min / 2 around them are disjoint and lie in the
+  // g_min / 2-neighborhood of the bounded domain, so at most
+  // vol(domain + B(g_min / 2)) / vol(B(g_min / 2)) points are inserted. For a
+  // Delaunay cavity the circumcenter's nearest vertex lies at the
+  // circumradius, which exceeds h when the cell violates its size target and
+  // exceeds B times the cell's shortest edge when it violates the
+  // radius-edge bound, so the guard binds only near small input features;
+  // there a cell is reported unmet with reason REFUSED.
   std::unordered_map<std::uint64_t, std::int32_t> unmet_reasons;
-  double separation = std::numeric_limits<double>::infinity();
+  double shortest_initial_edge = std::numeric_limits<double>::infinity();
   for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
     const std::int32_t cell = static_cast<std::int32_t>(row);
     if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
@@ -600,14 +609,27 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       for (int second = first + 1; second < 4; ++second) {
         const double* a = mesh.point(tetrahedron.v[first]);
         const double* b = mesh.point(tetrahedron.v[second]);
-        separation = std::min(
-            separation, std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]));
+        shortest_initial_edge = std::min(
+            shortest_initial_edge,
+            std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]));
       }
     }
   }
+  if (!(shortest_initial_edge > 0.0) || !std::isfinite(shortest_initial_edge)) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  constexpr double kSizeGuardFraction = 0.5;
+  const auto spacing_guard = [&](double target_size) {
+    return target_size > 0.0
+               ? std::min(shortest_initial_edge, kSizeGuardFraction * target_size)
+               : shortest_initial_edge;
+  };
+  // Grid cells of the smallest guard; a query searches the cell rings that
+  // cover its own guard radius.
+  double separation = shortest_initial_edge;
   for (const auto& [vertex_id, size] : sizes) {
     (void)vertex_id;
-    if (size > 0.0) separation = std::min(separation, size);
+    separation = std::min(separation, spacing_guard(size));
   }
   if (!(separation > 0.0) || !std::isfinite(separation)) return PHX_MC_INVALID_INPUT;
 
@@ -639,21 +661,35 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     grid[key].push_back(vertex);
     return true;
   };
-  const auto separated = [&](const double* point) {
+  const auto separated = [&](const double* point, double target_size) {
+    const double guard = spacing_guard(target_size);
+    const auto clear_of = [&](const std::vector<std::int32_t>& vertices) {
+      for (std::int32_t vertex : vertices) {
+        const double* other = mesh.point(vertex);
+        const double distance = std::hypot(
+            std::hypot(point[0] - other[0], point[1] - other[1]), point[2] - other[2]);
+        if (distance < guard) return false;
+      }
+      return true;
+    };
     GridKey center;
     if (!grid_key(point, center)) return false;
-    for (std::int64_t dx = -1; dx <= 1; ++dx) {
-      for (std::int64_t dy = -1; dy <= 1; ++dy) {
-        for (std::int64_t dz = -1; dz <= 1; ++dz) {
+    const double ring = std::ceil(guard / separation);
+    const double span = 2.0 * ring + 1.0;
+    if (span * span * span > static_cast<double>(grid.size())) {
+      for (const auto& [key, vertices] : grid) {
+        (void)key;
+        if (!clear_of(vertices)) return false;
+      }
+      return true;
+    }
+    const std::int64_t cells = static_cast<std::int64_t>(ring);
+    for (std::int64_t dx = -cells; dx <= cells; ++dx) {
+      for (std::int64_t dy = -cells; dy <= cells; ++dy) {
+        for (std::int64_t dz = -cells; dz <= cells; ++dz) {
           GridKey key{{center.cell[0] + dx, center.cell[1] + dy, center.cell[2] + dz}};
           const auto found = grid.find(key);
-          if (found == grid.end()) continue;
-          for (std::int32_t vertex : found->second) {
-            const double* other = mesh.point(vertex);
-            const double distance = std::hypot(
-                std::hypot(point[0] - other[0], point[1] - other[1]), point[2] - other[2]);
-            if (distance < separation) return false;
-          }
+          if (found != grid.end() && !clear_of(found->second)) return false;
         }
       }
     }
@@ -723,15 +759,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         }
       }
     }
-    if (!separated(midpoint.data())) return PHX_MC_OK;
+    double mean_size = 0.0;
+    double edge_target = 0.0;
+    const bool has_size = boundary_target(longest, mean_size, edge_target);
+    if (!separated(midpoint.data(), has_size ? mean_size : 0.0)) return PHX_MC_OK;
     std::uint64_t inserted_id = 0;
     const TetEditStatus status = split_boundary_edge(longest, inserted_id);
     const std::int32_t error = edit_error(status);
     if (error != PHX_MC_OK) return error;
     if (status != TetEditStatus::kApplied) return PHX_MC_OK;
-    double mean_size = 0.0;
-    double edge_target = 0.0;
-    if (boundary_target(longest, mean_size, edge_target)) sizes.emplace(inserted_id, mean_size);
+    if (has_size) sizes.emplace(inserted_id, mean_size);
     if (!grid_insert(mesh.vertex_slot(inserted_id))) return PHX_MC_UNRESOLVED;
     for (std::uint64_t id : split_cells) enqueue(id);
     ++inserted_vertices;
@@ -811,7 +848,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       continue;
     }
-    if (!separated(center)) {
+    double center_size = 0.0;
+    const bool has_center_size = mean_target_size(parent.vertices, sizes, center_size);
+    if (!separated(center, has_center_size ? center_size : 0.0)) {
       unmet_reasons[cell_id] = PHX_MC_TET_UNMET_REFUSED;
       continue;
     }
@@ -852,8 +891,6 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     TetEditVertex inserted;
     inserted.id = mesh.next_vertex_id_;
     std::copy(shape.circumcenter.begin(), shape.circumcenter.end(), inserted.carrier.begin());
-    double center_size = 0.0;
-    const bool has_center_size = mean_target_size(parent.vertices, sizes, center_size);
     const TetEditStatus status = mesh.insert_local_cone(inserted, cavity.cells, created_cells);
     const std::int32_t error = edit_error(status);
     if (error != PHX_MC_OK) return error;

@@ -2521,7 +2521,7 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
     domain_archive = tmp_path / "reconstructed-meshing-domain.phx"
-    domain_manifest, domain_arrays = read_array_archive(domain_archive)
+    domain_manifest, domain_arrays = read_array_archive(domain_archive, limits=None)
     domain_manifest.pop("arrays")
 
     def find_reconstructed_patch(node: object) -> dict[str, Any] | None:
@@ -2553,6 +2553,7 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
         corrupted_domain_directory / "reconstructed-meshing-domain.phx",
         manifest=domain_manifest,
         arrays=domain_arrays,
+        limits=None,
     )
     refused_corners = subprocess.run(
         [
