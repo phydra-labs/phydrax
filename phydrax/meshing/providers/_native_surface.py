@@ -2801,28 +2801,53 @@ def _refine_charts(
         if not np.any(bad):
             break
 
-        split_edges: set[tuple[object, ...]] = set()
-        cell_offset = 0
+        # Bisect along the longest-edge propagation path of every bad cell:
+        # the split edge is the longest edge of each cell sharing it, so no
+        # cell is bisected across a shorter edge and refinement never creates
+        # thinner cells than it splits. A trim edge is identified through its
+        # canonical curve identity, so every chart using that curve interval
+        # receives the same exact midpoint parameter.
+        identities: list[tuple[_LocalEdgeIdentity, ...]] = []
         for chart in charts:
-            for local_cell, triangle in enumerate(chart.triangles):
-                global_cell = cell_offset + local_cell
-                if not bad[global_cell]:
-                    continue
-                local_edges = (
-                    (triangle[0], triangle[1]),
-                    (triangle[1], triangle[2]),
-                    (triangle[2], triangle[0]),
+            identities.extend(
+                tuple(
+                    _local_edge_identity(chart, first, last)
+                    for first, last in (
+                        (triangle[0], triangle[1]),
+                        (triangle[1], triangle[2]),
+                        (triangle[2], triangle[0]),
+                    )
                 )
-                # Bisect the longest edge. A trim edge is split through its
-                # canonical curve identity, so every chart using that curve
-                # interval receives the same exact midpoint parameter; cells
-                # along a long trim edge otherwise keep its chart extent and
-                # their source bound cannot decrease.
-                longest_index = max(
-                    range(3), key=lambda index: edge_lengths[global_cell, index]
+                for triangle in chart.triangles
+            )
+        cells_by_edge: dict[_LocalEdgeIdentity, list[int]] = {}
+        for cell, cell_identities in enumerate(identities):
+            for identity in cell_identities:
+                cells_by_edge.setdefault(identity, []).append(cell)
+
+        def longest_identity(cell: int, /) -> _LocalEdgeIdentity:
+            index = max(
+                range(3),
+                key=lambda index: (edge_lengths[cell, index], identities[cell][index]),
+            )
+            return identities[cell][index]
+
+        split_edges: set[_LocalEdgeIdentity] = set()
+        for cell in np.flatnonzero(bad).tolist():
+            while True:
+                identity = longest_identity(cell)
+                onward = next(
+                    (
+                        other
+                        for other in cells_by_edge[identity]
+                        if other != cell and longest_identity(other) != identity
+                    ),
+                    None,
                 )
-                split_edges.add(_local_edge_identity(chart, *local_edges[longest_index]))
-            cell_offset += len(chart.triangles)
+                if onward is None:
+                    split_edges.add(identity)
+                    break
+                cell = onward
 
         changed = False
         for chart, mapping in zip(charts, local_rows, strict=True):
