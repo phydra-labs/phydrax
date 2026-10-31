@@ -138,8 +138,8 @@ channel=...)` prepares one labeled interior channel as a
 projection of scalar `ConformingH1` fields and `"l2-projection"` the (enhanced)
 L2 projection of every family, vector valued for H(div) and H(curl). The
 reconstruction's `approximation` is the channel, so projected interior values
-stay distinguishable from exact edge traces. Points are located in the
-star-kernel witness fans of the cells; the route is linear in the DOFs
+stay distinguishable from exact edge traces. Points are located in exact
+ear-clipped triangulations of the simple cells; the route is linear in the DOFs
 (projection coefficients, oriented local DOFs, scaled monomials) and is reused
 for every coefficient refresh. Projections are discontinuous across cells, so
 points on shared edges need a bound trace side.
