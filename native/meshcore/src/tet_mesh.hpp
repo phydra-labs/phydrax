@@ -326,6 +326,10 @@ class TetMesh {
   TetEditStatus apply_edit_batch(const TetEditBatch& batch,
                                  std::vector<TetEditResult>& results);
 
+  // Retained circumradius size targets by vertex ID (see vertex_sizes_).
+  const std::unordered_map<std::uint64_t, double>& vertex_sizes() const noexcept {
+    return vertex_sizes_;
+  }
   const std::vector<TetUnmetRecord>& unmet_records() const noexcept {
     return unmet_records_;
   }
@@ -378,8 +382,8 @@ class TetMesh {
   friend std::int32_t refine_mesh(TetMesh&, double, std::span<const double>,
                                   std::int64_t&, std::int64_t&);
   friend std::int32_t improve_mesh(TetMesh&, const TetQualityRequest&,
-                                   std::int64_t&, std::int64_t&, std::int64_t&,
-                                   std::int64_t&);
+                                   std::span<const double>, std::int64_t&,
+                                   std::int64_t&, std::int64_t&, std::int64_t&);
   friend class detail::LocalIncidence;
 
   // Proposed carrier/witness records for read-only relocation validation.
@@ -415,6 +419,10 @@ class TetMesh {
   // reached by walking from cell slot `start`.
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,
                                    bool keep_walk, TetInsertionCavity& cavity) const;
+  // Replaces the retained size field by `sizes` (one value per vertex of
+  // `current`, in snapshot order; 0 leaves a vertex unconstrained) unless
+  // `sizes` is empty, which keeps the retained field.
+  int32_t install_vertex_sizes(const TetMeshSnapshot& current, std::span<const double> sizes);
   // True if an edge of `removed_slots` absent from `kept_edges` (local edge
   // keys) is a constrained segment.
   bool removes_constrained_segment(std::span<const std::int32_t> removed_slots,
@@ -482,6 +490,10 @@ class TetMesh {
   std::vector<TetPeriodicQuotientCell> quotient_cells_;
   std::vector<TetPeriodicEntityOrbitMap> periodic_entity_maps_;
   std::vector<TetUnmetRecord> unmet_records_;
+  // Hard circumradius size targets by vertex ID, installed by the `sizes` of
+  // refinement/improvement and interpolated to the vertices they insert; a
+  // vertex without an entry is unconstrained.
+  std::unordered_map<std::uint64_t, double> vertex_sizes_;
   std::unordered_map<std::uint64_t, std::int32_t> vertex_slots_;
   std::unordered_map<std::uint64_t, std::int32_t> cell_slots_;
   std::unordered_set<std::uint64_t> used_vertex_ids_;

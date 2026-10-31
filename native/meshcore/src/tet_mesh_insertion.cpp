@@ -810,6 +810,7 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation) {
       vertex_live_[static_cast<std::size_t>(removed_vertex)] = 0;
       vertex_slots_.erase(id);
       vertex_ancestry_.erase(id);
+      vertex_sizes_.erase(id);
     }
     ++generation_;
     unmet_records_.clear();
@@ -1813,6 +1814,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     mesh.vertex_live_[static_cast<std::size_t>(slot)] = 0;
     mesh.vertex_slots_.erase(mesh.vertex_id(slot));
     mesh.vertex_ancestry_.erase(mesh.vertex_id(slot));
+    mesh.vertex_sizes_.erase(mesh.vertex_id(slot));
   }
   if (relocation) {
     for (const TetEditVertex& vertex : operation.changed_vertices) {
