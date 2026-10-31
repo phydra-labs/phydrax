@@ -1659,6 +1659,54 @@ void test_external_cavity_replacement_reseeds_incremental_locate() {
   PHX_CHECK(triangulation.locate(points.data() + 15) >= 0);
 }
 
+// A constrained face around the short edge ab (between the cells abcd and
+// abec of its three-cell ring) blocks the cavity of a point next to ab, but
+// the cavity reaches the other side around ab: the cone would erase the
+// constrained face (its star link fails after the topology write). The
+// insertion is refused before any write and leaves the complex unchanged.
+void test_insertion_refuses_a_cavity_around_a_constrained_face() {
+  const std::array<double, 18> points{
+      0.0, 0.0, -0.1, 0.0, 0.0, 0.1, 1.0, 0.0, 0.0,
+      -0.5, 0.85, 0.0, -0.5, -0.85, 0.0, 0.001, 0.0005, 0.0};
+  const std::array<int32_t, 5> order{0, 1, 2, 3, 4};
+  std::array<char, 6> alive{1, 1, 1, 1, 1, 1};
+  Triangulation3D triangulation(points.data(), nullptr, 6);
+  PHX_CHECK(triangulation.build(order, alive) == PHX_MC_OK);
+  TetrahedralComplex& complex = triangulation.complex();
+  complex.enable_labels();
+  int sides = 0;
+  for (std::size_t row = 0; row < complex.tets.size(); ++row) {
+    const auto cell = static_cast<int32_t>(row);
+    const Tetrahedron& tet = complex.tets[row];
+    if (!complex.live(cell) || is_ghost(tet) || vertex_slot(tet, 0) < 0 ||
+        vertex_slot(tet, 1) < 0 || vertex_slot(tet, 2) < 0) {
+      continue;
+    }
+    for (int slot = 0; slot < 4; ++slot) {
+      if (tet.v[slot] > 2) complex.set_facet_constraint(cell, slot, 0);
+    }
+    ++sides;
+  }
+  PHX_CHECK(sides == 2);
+  PHX_CHECK(complex.finite_count == 3);
+  PHX_CHECK(complex.audit());
+  const std::vector<Tetrahedron> before_tets = complex.tets;
+  const std::vector<int32_t> before_free = complex.free_slots;
+  const std::vector<int32_t> before_labels = labels_of(complex);
+  const int32_t status = triangulation.insert(5, alive);
+  PHX_CHECK(status == PHX_MC_CONSTRAINT_INTERSECTION);
+  PHX_CHECK(complex.audit());
+  PHX_CHECK(complex.tets.size() == before_tets.size() && complex.free_slots == before_free &&
+            labels_of(complex) == before_labels && complex.finite_count == 3);
+  for (std::size_t row = 0; row < before_tets.size(); ++row) {
+    for (int k = 0; k < 4; ++k) {
+      PHX_CHECK(complex.tets[row].v[k] == before_tets[row].v[k] &&
+                complex.tets[row].n[k] == before_tets[row].n[k]);
+    }
+  }
+  PHX_CHECK(alive[5] != 0);
+}
+
 void test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons() {
   const std::array<int64_t, 2> offsets{0, 4};
   const std::array<int32_t, 4> loop{0, 1, 2, 3};
@@ -2674,6 +2722,7 @@ int main() {
   test_conforming_representable_segment_prefers_vertex_cavity();
   test_incremental_point_slot_reindexes_corners_and_rolls_back();
   test_external_cavity_replacement_reseeds_incremental_locate();
+  test_insertion_refuses_a_cavity_around_a_constrained_face();
   test_recover_plc_publishes_a_single_region_tetrahedron();
   test_declared_facet_plane_groups_rounded_triangles();
   test_recover_fixed_triangulated_planar_facets();
