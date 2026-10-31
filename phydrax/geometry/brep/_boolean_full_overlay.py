@@ -93,6 +93,7 @@ from ._boolean_material import (
 from ._carrier_pieces import carrier_payload
 from ._correspondence import exact_source_lift, native_edge_pcurve
 from ._intersection import (
+    _straight_revolution,
     exact_surface_point_parameters,
     intersect_surface_regions,
     SurfaceIntersectionResult,
@@ -958,6 +959,123 @@ def _plane_rectangle_line_segment(
     return min(projections), max(projections)
 
 
+def _coaxial_faces_meet_on_shared_circle(
+    model: BRepModel,
+    faces: tuple[int, int],
+    regions: tuple[SurfaceRegion, SurfaceRegion],
+    /,
+) -> bool:
+    """Prove two coaxial straight revolution faces meet only on their shared circles.
+
+    Along the common axis each face has a squared radius quadratic in the
+    axial height, so their surfaces meet exactly at the real roots of the
+    difference. Every root inside both faces' height ranges must be the exact
+    height and radius of a circle edge the two faces share; branches on a
+    third face then meet only at that edge's roots with it, which spatial
+    events already cut into each branch at one vertex.
+    """
+    from ...discretization._exact_algebraic_geometry import (
+        coefficient_interval,
+        RadicalElement,
+        rational_coefficient,
+    )
+    from .._rational import rational_cross, rational_dot
+    from ._patches import CircleCurve
+
+    frames = [_straight_revolution(region.patch) for region in regions]
+    if frames[0] is None or frames[1] is None:
+        return False
+    first, second = frames[0], frames[1]
+    offset = tuple(second.origin[i] - first.origin[i] for i in range(3))
+    if any(rational_cross(first.axis, second.axis)) or any(
+        rational_cross(offset, first.axis)
+    ):
+        return False
+    quadratics = []
+    ranges = []
+    for frame, region in zip(frames, regions, strict=True):
+        assert frame is not None
+        # Height h along the first axis: h = c + e (a0 + a1 v), so the scale
+        # s = 1 + slope v is affine in h: s = p + q h.
+        shift = rational_dot(
+            tuple(frame.origin[i] - first.origin[i] for i in range(3)), first.axis
+        )
+        sense = rational_dot(frame.axis, first.axis)
+        rate = frame.slope / (sense * frame.axial_rate)
+        constant = 1 - rate * (shift + sense * frame.axial_origin)
+        squared = rational_dot(frame.radial, frame.radial)
+        quadratics.append(
+            (squared * rate * rate, 2 * squared * constant * rate, squared * constant**2)
+        )
+        heights = [
+            shift + sense * (frame.axial_origin + frame.axial_rate * v)
+            for v in (
+                Fraction.from_float(float(region.parameter_box[edge, 1]))
+                for edge in range(2)
+            )
+        ]
+        ranges.append((min(heights), max(heights)))
+    difference = tuple(a - b for a, b in zip(quadratics[0], quadratics[1], strict=True))
+    if all(value == 0 for value in difference):
+        return False
+    lower = max(ranges[0][0], ranges[1][0])
+    upper = min(ranges[0][1], ranges[1][1])
+    geometry = model.geometry
+    assert geometry is not None
+    circles = []
+    for edge, edge_faces in enumerate(geometry.topology.edge_faces):
+        if set(edge_faces) != set(faces) or geometry.edge_curves[edge] < 0:
+            continue
+        curve = geometry.curves[geometry.edge_curves[edge]]
+        if not isinstance(curve, CircleCurve) or not all(
+            isinstance(value, Fraction)
+            for value in (*curve.center_exact, curve.radius_exact)
+        ):
+            continue
+        center = cast(tuple[Fraction, ...], curve.center_exact)
+        relative = tuple(center[i] - first.origin[i] for i in range(3))
+        if any(rational_cross(relative, first.axis)):
+            continue
+        circles.append(
+            (rational_dot(relative, first.axis), cast(Fraction, curve.radius_exact) ** 2)
+        )
+
+    def shared(height: Fraction, /) -> bool:
+        squared = (
+            quadratics[0][0] * height * height
+            + quadratics[0][1] * height
+            + quadratics[0][2]
+        )
+        return any(height == h and squared == r for h, r in circles)
+
+    a, b, c = difference
+    if a == 0:
+        root = -c / b
+        return not (lower <= root <= upper) or shared(root)
+    discriminant = b * b - 4 * a * c
+    if discriminant < 0:
+        return True
+    if discriminant == 0:
+        root = -b / (2 * a)
+        return not (lower <= root <= upper) or shared(root)
+    radical = RadicalElement.sqrt(discriminant)
+    for side in (-1, 1):
+        root_value = (-b + side * radical) / (2 * a)
+        try:
+            rational = rational_coefficient(root_value, role="common height")
+        except ValueError:
+            rational = None
+        if rational is not None:
+            if lower <= rational <= upper and not shared(rational):
+                return False
+            continue
+        root_lower, root_upper = coefficient_interval(root_value, bits=128)
+        if not (root_upper < lower or root_lower > upper):
+            # An irrational common height is no rational shared circle.
+            return False
+    return True
+
+
 def _branches_meet_on_shared_edge(
     state: Arrangement, owner: FaceOwner, first: Arc, second: Arc, /
 ) -> bool:
@@ -987,6 +1105,10 @@ def _branches_meet_on_shared_edge(
     regions = state.face_region(other_a), state.face_region(other_b)
     if geometry is None:
         return False
+    if all(_straight_revolution(region.patch) is not None for region in regions):
+        return _coaxial_faces_meet_on_shared_circle(
+            model, (other_a[1], other_b[1]), regions
+        )
     normals = []
     offsets = []
     for region in regions:
