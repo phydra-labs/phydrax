@@ -37,6 +37,7 @@ from phydrax.geometry.brep._intersection_curve import (
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import (
     AbstractCurve,
+    ConicRootLinePCurve,
     CylinderPatch,
     LineCurve,
     PlanePatch,
@@ -623,6 +624,58 @@ def test_notch_edge_touching_the_cap_circle_from_inside_is_an_exact_double_root(
             for root in restored.vertex_roots
         )
         == 2
+    )
+
+
+def test_notch_corner_on_the_cap_circle_shares_its_generator_edge(
+    tmp_path: Path,
+) -> None:
+    # The notch corner (3/4, 1) lies on the cap circle of radius 5/4, so its
+    # vertical edge lies on a cylinder generator: the notch faces x = 3/4 and
+    # y = 1 meet the cylinder exactly along that edge, and the cap arcs end at
+    # the notch's corner vertices.
+    cylinder = brep_cylinder(1.25, 2.0, coordinate_contract=_COORDINATES)
+    notch = brep_box((0.75, 0.0, 0.5), (2.0, 1.0, 1.5), coordinate_contract=_COORDINATES)
+    corners = {
+        (Fraction(3, 4), Fraction(1), Fraction(1, 2)),
+        (Fraction(3, 4), Fraction(1), Fraction(3, 2)),
+    }
+    for operation, faces in (("difference", 7), ("union", 8)):
+        result = boolean_brep(cylinder, notch, operation)
+        assert result.model.topology.num_solids == 1
+        geometry = result.model.geometry
+        assert geometry is not None
+        assert len(geometry.face_loops) == faces
+        _assert_exhaustive_oriented_lineage(result)
+        # The generator is the notch's own edge, shared with the cylinder face
+        # through its exact lift; no branch runs along it.
+        lifted = [
+            (face, coedge)
+            for face, loops in enumerate(geometry.face_loops)
+            for loop in loops
+            for coedge in loop
+            if isinstance(geometry.pcurves[coedge], ConicRootLinePCurve)
+        ]
+        assert len(lifted) == 1
+        assert not isinstance(result.model.patches[lifted[0][0]], PlanePatch)
+        edge = geometry.coedge_edges[lifted[0][1]]
+        assert isinstance(geometry.curves[geometry.edge_curves[edge]], LineCurve)
+        assert list(geometry.coedge_edges).count(edge) == 2
+        assert {
+            geometry.vertex_exact_points[vertex]
+            for vertex in geometry.edge_vertices[edge]
+        } == corners
+        branches = [
+            curve for curve in geometry.curves if isinstance(curve, IntersectionCurve)
+        ]
+        assert len(branches) == 3
+    archive = tmp_path / "corner-notch.phx"
+    save_brep_archive(result.model, archive)
+    restored = load_brep_archive(archive).geometry
+    assert restored is not None
+    assert restored.vertex_exact_points == geometry.vertex_exact_points
+    assert tuple(type(pcurve).__name__ for pcurve in restored.pcurves) == tuple(
+        type(pcurve).__name__ for pcurve in geometry.pcurves
     )
 
 

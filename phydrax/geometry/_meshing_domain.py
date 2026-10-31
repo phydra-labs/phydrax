@@ -21,7 +21,6 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation._bspline_extraction import (
     _rational_bernstein_surface_span,
-    rational_bspline_surface_spans,
     RationalBSplineSurfaceHessianEnclosure,
     RationalBSplineSurfaceSpan,
 )
@@ -181,6 +180,18 @@ class PatchCurveUse(StrictModule, NonTrainableState):
             and period is not None
             and self.last == self.first + period
         )
+
+    def closes_chart_loop(self) -> bool:
+        """Whether this use returns exactly to its start chart point.
+
+        One whole native turn does by construction; a nonperiodic closed
+        p-curve does when its binary64 end evaluations coincide. Either way the
+        end shares the start's chart point and records the start parameter.
+        """
+        if self.closes_native_turn():
+            return True
+        ends = self.charts((self.first, self.last))
+        return bool(np.array_equal(ends[0], ends[1]))
 
 
 class PatchPoleUse(StrictModule, NonTrainableState):
@@ -512,6 +523,36 @@ class _PlacedSurfacePatch(AbstractSurfacePatch):
         points = self.source.evaluate(parameters)
         return points @ self.linear.T + self.offset
 
+    def bounding_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
+        """Place the source's own enclosure through the exact affine placement."""
+        from ..discretization._exact_algebraic_geometry import coefficient_interval
+
+        source_box = np.asarray(self.source.bounding_box(parameter_box), np.float64)
+        if source_box.shape != (2, 3) or not np.all(np.isfinite(source_box)):
+            raise ValueError("Placed source patch needs a finite source enclosure.")
+        source_bounds = tuple(
+            (
+                Fraction.from_float(float(source_box[0, axis])),
+                Fraction.from_float(float(source_box[1, axis])),
+            )
+            for axis in range(3)
+        )
+        matrix = self.placement.matrix
+        lower: list[float] = []
+        upper: list[float] = []
+        for row in range(3):
+            row_lower, row_upper = coefficient_interval(matrix[row][3])
+            for column in range(3):
+                entry = coefficient_interval(matrix[row][column])
+                products = tuple(
+                    factor * bound for factor in entry for bound in source_bounds[column]
+                )
+                row_lower += min(products)
+                row_upper += max(products)
+            lower.append(fraction_endpoint(row_lower, upper=False))
+            upper.append(fraction_endpoint(row_upper, upper=True))
+        return np.asarray((lower, upper), dtype=np.float64)
+
 
 def _placed_homogeneous_surface_coefficients(
     coefficients: tuple[tuple[tuple[ExactScalar, ...], ...], ...],
@@ -570,62 +611,49 @@ def _placed_rational_surface_span(
 def _exact_rational_surface_spans(
     surface: AbstractSurfacePatch, /
 ) -> tuple[RationalBSplineSurfaceSpan, ...] | None:
-    placements: list[BRepAffinePlacement] = []
-    source: AbstractSurfacePatch = surface
-    while isinstance(source, _PlacedSurfacePatch):
-        placements.append(source.placement)
-        source = source.source
-    if isinstance(source, BSplineSurfacePatch):
-        spans = rational_bspline_surface_spans(
-            np.asarray(source.control_points, dtype=np.float64).tolist(),
-            np.asarray(source.weights, dtype=np.float64).tolist(),
-            np.asarray(source.u_knots, dtype=np.float64).tolist(),
-            np.asarray(source.v_knots, dtype=np.float64).tolist(),
-            source.u_degree,
-            source.v_degree,
-            exact_control_points=source.exact_control_points,
-            exact_weights=source.exact_weights,
-            exact_u_knots=source.exact_u_knots,
-            exact_v_knots=source.exact_v_knots,
-            include_hessian=True,
-        )
-    else:
-        from .brep._tspline import TSplineSurfacePatch
-
-        if not isinstance(source, TSplineSurfacePatch):
+    if isinstance(surface, _PlacedSurfacePatch):
+        source_spans = _exact_rational_surface_spans(surface.source)
+        if source_spans is None:
             return None
-        source.validate_source_bank()
-        source.validate_exact_transfer_chain()
-        realization = source.realization
-        spans_list: list[RationalBSplineSurfaceSpan] = []
-        for extraction in realization.extractions:
-            homogeneous_controls = realization.exact_homogeneous_piece(
-                extraction.piece_id, source.exact_target_homogeneous
+        return tuple(
+            _placed_rational_surface_span(span, surface.placement)
+            for span in source_spans
+        )
+    if isinstance(surface, BSplineSurfacePatch):
+        return surface.rational_spans()
+    from .brep._tspline import TSplineSurfacePatch
+
+    if not isinstance(surface, TSplineSurfacePatch):
+        return None
+    surface.validate_source_bank()
+    surface.validate_exact_transfer_chain()
+    realization = surface.realization
+    spans: list[RationalBSplineSurfaceSpan] = []
+    for extraction in realization.extractions:
+        homogeneous_controls = realization.exact_homogeneous_piece(
+            extraction.piece_id, surface.exact_target_homogeneous
+        )
+        if len(homogeneous_controls) != 16:
+            raise ValueError(
+                "A bicubic T-spline extraction must retain sixteen homogeneous controls."
             )
-            if len(homogeneous_controls) != 16:
-                raise ValueError(
-                    "A bicubic T-spline extraction must retain sixteen homogeneous controls."
-                )
-            homogeneous_net = tuple(
-                tuple(homogeneous_controls[u_index * 4 + v_index] for v_index in range(4))
-                for u_index in range(4)
+        homogeneous_net = tuple(
+            tuple(homogeneous_controls[u_index * 4 + v_index] for v_index in range(4))
+            for u_index in range(4)
+        )
+        u0, u1, v0, v1 = extraction.parameter_bounds
+        spans.append(
+            _rational_bernstein_surface_span(
+                surface.source_definition_id,
+                (extraction.cell_id, extraction.piece_id),
+                (3, 3),
+                extraction.coefficient_row_ids,
+                ((u0, u1), (v0, v1)),
+                homogeneous_net,
+                include_hessian=True,
             )
-            u0, u1, v0, v1 = extraction.parameter_bounds
-            spans_list.append(
-                _rational_bernstein_surface_span(
-                    source.source_definition_id,
-                    (extraction.cell_id, extraction.piece_id),
-                    (3, 3),
-                    extraction.coefficient_row_ids,
-                    ((u0, u1), (v0, v1)),
-                    homogeneous_net,
-                    include_hessian=True,
-                )
-            )
-        spans = tuple(spans_list)
-    for placement in reversed(placements):
-        spans = tuple(_placed_rational_surface_span(span, placement) for span in spans)
-    return spans
+        )
+    return tuple(spans)
 
 
 def _clip_parameter_polygon(

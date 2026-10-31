@@ -3896,6 +3896,84 @@ def _line_cylinder_quadratic(
     )
 
 
+def exact_surface_point_parameters(
+    region: SurfaceRegion, point: Sequence[Fraction], /
+) -> tuple[np.ndarray, tuple[Fraction | None, Fraction | None]] | None:
+    """Enclose the chart parameters of an exact point proved to lie on a surface.
+
+    A plane point has exact chart coordinates; a straight cylinder point has
+    an exact profile parameter and an angle enclosed from its exact rational
+    radial direction, mapped into the region's angle window. Returns the
+    outward ``(2, 2)`` box and the exact coordinates (None for the angle), or
+    None when the point is off the surface or the carrier is unsupported.
+    """
+    from .._rational import fraction_down, fraction_up
+
+    patch = region.patch
+    exact: tuple[Fraction | None, Fraction | None]
+    if isinstance(patch, PlanePatch):
+        axes = tuple(
+            rational_vector(np.asarray(value))
+            for value in (patch.origin, patch.first_axis, patch.second_axis)
+        )
+        chart = _plane_chart_coordinates(patch, tuple(point), point=True)
+        if chart is None or not all(isinstance(value, Fraction) for value in chart):
+            return None
+        u, v = cast(tuple[Fraction, Fraction], chart)
+        if any(
+            axes[0][index] + u * axes[1][index] + v * axes[2][index] != point[index]
+            for index in range(3)
+        ):
+            return None
+        exact = u, v
+        return (
+            np.asarray(
+                ((fraction_down(u), fraction_down(v)), (fraction_up(u), fraction_up(v))),
+                dtype=np.float64,
+            ),
+            exact,
+        )
+    view = _revolution_cylinder_view(region)
+    if view is None or not isinstance(view[0].patch, CylinderPatch):
+        return None
+    cylinder, slope = view[0].patch, view[1]
+    vectors = (cylinder.origin_exact, cylinder.axis_exact)
+    if not all(isinstance(value, Fraction) for vector in vectors for value in vector):
+        return None
+    origin, axis = cast(tuple[tuple[Fraction, ...], tuple[Fraction, ...]], vectors)
+    relative = tuple(point[index] - origin[index] for index in range(3))
+    axial = rational_dot(relative, axis)
+    radial = tuple(relative[index] - axial * axis[index] for index in range(3))
+    radius = cylinder.radius_exact
+    if not isinstance(radius, Fraction) or rational_dot(radial, radial) != radius**2:
+        return None
+    cosine = _exact_dot(cylinder.first_axis_exact, radial) / radius
+    sine = _exact_dot(cylinder.second_axis_exact, radial) / radius
+    if not isinstance(cosine, Fraction) or not isinstance(sine, Fraction):
+        return None
+    context = interval_context(80)
+
+    def scalar(value: Fraction, /) -> Any:
+        return context.mpf(value.numerator) / context.mpf(value.denominator)
+
+    angle = context.atan2(scalar(sine), scalar(cosine))
+    window = float(region.parameter_box[0, 0])
+    middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+    angle = angle + math.ceil((window - middle) / math.tau) * 2 * context.pi
+    profile = axial / slope
+    exact = None, profile
+    return (
+        np.asarray(
+            (
+                (float(np.nextafter(float(angle.a), -np.inf)), fraction_down(profile)),
+                (float(np.nextafter(float(angle.b), np.inf)), fraction_up(profile)),
+            ),
+            dtype=np.float64,
+        ),
+        exact,
+    )
+
+
 class ExactLineCylinderTangency(StrictModule):
     """An edge tangent to a straight cylinder: a double root with exact evidence.
 
@@ -7172,6 +7250,42 @@ def _isoline_rectangle_arcs(
             return None
         return angle
 
+    # A circle through a rectangle corner crosses both edges there at one
+    # angle: the corner is one event, found exactly where (cos t, sin t)
+    # solved from the corner is a rational unit vector.
+    corners: list[tuple[Any, int, float]] = []
+    coefficients = (*center, *cosine, *sine)
+    if all(isinstance(value, Fraction) for value in coefficients):
+        c0, c1, a0, a1, b0, b1 = cast(tuple[Fraction, ...], coefficients)
+        determinant = a0 * b1 - a1 * b0
+        if determinant == 0:
+            return None
+        for corner_u in (bounds[0, 0], bounds[1, 0]):
+            for corner_v in (bounds[0, 1], bounds[1, 1]):
+                du = Fraction.from_float(float(corner_u)) - c0
+                dv = Fraction.from_float(float(corner_v)) - c1
+                corner_cosine = (du * b1 - dv * b0) / determinant
+                corner_sine = (a0 * dv - a1 * du) / determinant
+                if corner_cosine**2 + corner_sine**2 != 1:
+                    continue
+                rates = (
+                    b0 * corner_cosine - a0 * corner_sine,
+                    b1 * corner_cosine - a1 * corner_sine,
+                )
+                # The node fixes the coordinate the circle crosses faster.
+                fixed = 0 if abs(rates[0]) >= abs(rates[1]) else 1
+                corner_angle = in_window(
+                    context.atan2(interval(corner_sine), interval(corner_cosine))
+                )
+                if rates[fixed] == 0 or corner_angle is None:
+                    return None
+                corners.append((corner_angle, fixed, float((corner_u, corner_v)[fixed])))
+
+    def at_corner(angle: Any, /) -> bool:
+        return any(
+            not (angle.b < corner[0].a or corner[0].b < angle.a) for corner in corners
+        )
+
     for axis in range(2):
         amplitude = context.sqrt(cosines[axis] ** 2 + sines[axis] ** 2)
         if not amplitude.a > 0:
@@ -7201,7 +7315,9 @@ def _isoline_rectangle_arcs(
                 angle = in_window(angle)
                 if angle is None:
                     return None
-                events.append((angle, axis, value))
+                if not at_corner(angle):
+                    events.append((angle, axis, value))
+    events.extend(corners)
     if not events:
         state = side(window + context.pi)
         if state is None or touches:
@@ -7625,6 +7741,45 @@ def _revolution_plane_line_circle(
     return SurfaceIntersectionResult(curves=(branch,))
 
 
+def _generator_on_chart_edge(
+    line: tuple[ExactScalar, ExactScalar, ExactScalar],
+    cylinder: tuple[Fraction, Fraction, Fraction],
+    value: float,
+    angle: Any,
+    context: Any,
+    /,
+) -> bool:
+    """Prove the generator at ``angle`` lies exactly on a plane chart edge.
+
+    The generator's chart coordinate ``base + r cos t + s sin t`` equals the
+    edge value and the plane equation ``a cos t + b sin t = h`` holds: two
+    linear equations in ``(cos t, sin t)``. Their exact solution must be a
+    unit vector whose angle is the generator's enclosed angle.
+    """
+    if not all(isinstance(item, Fraction) for item in line):
+        return False
+    base, radial, tangent = cast(tuple[Fraction, Fraction, Fraction], line)
+    cosine_coefficient, sine_coefficient, offset = cylinder
+    determinant = radial * sine_coefficient - tangent * cosine_coefficient
+    if determinant == 0:
+        return False
+    target = Fraction.from_float(value) - base
+    cosine = (target * sine_coefficient - tangent * offset) / determinant
+    sine = (radial * offset - target * cosine_coefficient) / determinant
+    if cosine * cosine + sine * sine != 1:
+        return False
+
+    def scalar(item: Fraction, /) -> Any:
+        return context.mpf(item.numerator) / context.mpf(item.denominator)
+
+    exact_angle = context.atan2(scalar(sine), scalar(cosine))
+    turns = round(
+        (0.5 * float(angle.a) + 0.5 * float(angle.b) - float(exact_angle.a)) / math.tau
+    )
+    exact_angle = exact_angle + turns * 2 * context.pi
+    return bool(not (exact_angle.b < angle.a or angle.b < exact_angle.a))
+
+
 def _revolution_plane_generator_lines(
     first: SurfaceRegion,
     second: SurfaceRegion,
@@ -7869,6 +8024,8 @@ def _revolution_plane_generator_lines(
             (exact(profile_upper), chart_axis, profile_upper)
         ]
         outside = False
+        # Chart coordinates the generator holds exactly on a trim edge value.
+        on_edge: dict[int, float] = {}
         for index in range(2):
             rate = uv_rate[index]
             for edge in range(2):
@@ -7876,6 +8033,16 @@ def _revolution_plane_generator_lines(
                 if rate == 0:
                     gap = line_base[index] - exact(value)
                     if gap.a <= 0 <= gap.b:
+                        if _generator_on_chart_edge(
+                            (uv_base[index], uv_radial[index], uv_tangent[index]),
+                            (cosine_coefficient, sine_coefficient, offset),
+                            value,
+                            angle,
+                            context,
+                        ):
+                            # The generator is this trim edge: no constraint.
+                            on_edge[index] = value
+                            continue
                         return _unresolved_surface(first, second, "continuation")
                     if (gap.a > 0) == (edge == 1):
                         outside = True
@@ -7929,7 +8096,8 @@ def _revolution_plane_generator_lines(
         ]
         rates = [float(uv_rate[index]) for index in range(2)]
         line_point: tuple[float, ...] = tuple(
-            0.5 * (low + high) for low, high in base_bounds
+            on_edge.get(index, 0.5 * (low + high))
+            for index, (low, high) in enumerate(base_bounds)
         )
 
         def point_at(parameter: float, /) -> np.ndarray:

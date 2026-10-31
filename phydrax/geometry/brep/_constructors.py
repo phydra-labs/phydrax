@@ -2174,7 +2174,7 @@ def assemble_brep_model(
         return model
     from ._tessellation import tessellate_brep_model
 
-    realization = tessellate_brep_model(model, tessellation)
+    realization, certificate = tessellate_brep_model(model, tessellation)
     return BRepModel(
         geometry=geometry,
         patches=patches,
@@ -2185,6 +2185,7 @@ def assemble_brep_model(
         coordinate_contract=coordinate_contract,
         report=report,
         tessellation=realization,
+        tessellation_certificate=certificate,
     )
 
 

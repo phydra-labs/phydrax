@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from scipy.optimize import linear_sum_assignment
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -128,6 +127,9 @@ def compare_general_eigen_resolutions(
     policy_ = GeneralEigenResolutionPolicy() if policy is None else policy
     if not isinstance(policy_, GeneralEigenResolutionPolicy):
         raise TypeError("policy must be a GeneralEigenResolutionPolicy or None.")
+    # Assignment is resolved on first use: importing scipy.optimize loads
+    # scipy.spatial (Qhull), which must stay out of the import of the package.
+    from scipy.optimize import linear_sum_assignment
 
     coarse_alpha = np.asarray(coarse.alpha, dtype=np.complex128).reshape((-1,))
     coarse_beta = np.asarray(coarse.beta, dtype=np.complex128).reshape((-1,))

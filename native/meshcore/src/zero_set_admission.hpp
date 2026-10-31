@@ -73,6 +73,13 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   // Interval Newton along the gradient line through `position`; returns the
   // position unchanged when no root is isolated (a proposal only).
   Point project(const Point& position) const override;
+  // Gradient-enclosure cone over bbox(T) widened by the tolerance, widened by
+  // the tilt a triangle within the tolerance of Z may have.
+  NormalCone normal_cone(const Point& a, const Point& b, const Point& c,
+                         const std::array<VertexEvidence, 3>& evidence) const override;
+  // The tilt term every cone carries.
+  double normal_cone_floor(const Point& a, const Point& b, const Point& c,
+                           const std::array<VertexEvidence, 3>& evidence) const override;
 
   // Certified upper bound on max_{x in T} dist(x, Z), +inf when undecided.
   double distance_bound(const Point& a, const Point& b, const Point& c,

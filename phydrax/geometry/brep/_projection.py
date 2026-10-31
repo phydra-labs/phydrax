@@ -130,6 +130,18 @@ def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, f
     )
 
 
+def _map_frame(frame: np.ndarray, matrix: np.ndarray, /) -> np.ndarray:
+    """Map each defined frame vector by ``matrix``; undefined vectors stay NaN.
+
+    Frames are partially defined by contract: an edge hit carries its curve
+    tangent and an undefined second slot, so definedness is per vector.
+    """
+    mapped = np.full((*frame.shape[:-1], matrix.shape[1]), np.nan, dtype=np.float64)
+    defined = np.all(np.isfinite(frame), axis=-1)
+    mapped[defined] = frame[defined] @ matrix
+    return mapped
+
+
 def _unresolved(dimension: int, index: int, path: tuple[str, ...] = ()) -> _Hit:
     return _Hit(
         dimension,
@@ -2037,153 +2049,408 @@ def _ray_cylinder_crossings(
     return crossings
 
 
-def _closed_revolution_cylinder(
-    model: BRepModel, solid: int, /
-) -> (
-    tuple[
-        tuple[ExactScalar, ExactScalar, ExactScalar],
-        tuple[ExactScalar, ExactScalar, ExactScalar],
-        ExactScalar,
-        ExactScalar,
-        ExactScalar,
+_ExactVector = tuple[ExactScalar, ExactScalar, ExactScalar]
+
+
+def _exact_dot(
+    first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
+) -> ExactScalar:
+    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+
+def _exact_cross(
+    first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
+) -> _ExactVector:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _exact_sign(value: ExactScalar, /) -> int:
+    return int(value > 0) - int(value < 0)
+
+
+def _sign_of_root_sum(terms: tuple[tuple[ExactScalar, ExactScalar], ...], /) -> int:
+    """Exact sign of ``sum(c * sqrt(p))`` over at most three ``(c, p)``, ``p >= 0``."""
+    active = tuple((c, p) for c, p in terms if c != 0 and p != 0)
+    if not active:
+        return 0
+    if len(active) == 1:
+        return _exact_sign(active[0][0])
+    if len(active) == 2:
+        (c1, p1), (c2, p2) = active
+        first, second = _exact_sign(c1), _exact_sign(c2)
+        if first == second:
+            return first
+        return first * _exact_sign(c1 * c1 * p1 - c2 * c2 * p2)
+    if len(active) != 3:
+        raise ValueError("Root-sum signs take at most three terms.")
+    (c1, p1), (c2, p2), (c3, p3) = active
+    head = _sign_of_root_sum(((c1, p1), (c2, p2)))
+    tail = _exact_sign(c3)
+    if head == 0:
+        return tail
+    if head == tail:
+        return head
+    # sign(S + t) = sign(S) sign(S^2 - t^2) for opposite signs, with
+    # S^2 - t^2 = (c1^2 p1 + c2^2 p2 - c3^2 p3) + 2 c1 c2 sqrt(p1 p2).
+    return head * _sign_of_root_sum(
+        (
+            (c1 * c1 * p1 + c2 * c2 * p2 - c3 * c3 * p3, Fraction(1)),
+            (2 * c1 * c2, p1 * p2),
+        )
+    )
+
+
+@dataclass(frozen=True)
+class _ProfileLine:
+    """Profile segment in meridian form: exact end heights and radial vectors.
+
+    Heights and radial vectors are affine along the segment; the radial vectors
+    are parallel and point to one side of the axis.
+    """
+
+    heights: tuple[ExactScalar, ExactScalar]
+    radials: tuple[_ExactVector, _ExactVector]
+
+
+@dataclass(frozen=True)
+class _ArcEnd:
+    """End of a height-monotone circle piece.
+
+    ``exact`` is the exact height of a turning point (top or bottom of the
+    profile circle); a trim end carries only its binary64 ``height``.
+    """
+
+    height: float
+    exact: ExactScalar | None
+
+
+@dataclass(frozen=True)
+class _ProfileArc:
+    """Height-monotone piece of a profile circle in the meridian half-plane.
+
+    At height ``h`` its distance from the axis is
+    ``sqrt(center_radial_squared) + side * sqrt(radius_squared - (h - center_height)^2)``.
+    """
+
+    center_height: ExactScalar
+    center_radial_squared: ExactScalar
+    radius_squared: ExactScalar
+    side: int
+    ends: tuple[_ArcEnd, _ArcEnd]
+    tolerance: float
+
+
+@dataclass(frozen=True)
+class _RevolutionProfile:
+    """Meridian profile of a solid bounded only by full-turn revolution faces."""
+
+    origin: _ExactVector
+    axis: _ExactVector
+    lines: tuple[_ProfileLine, ...]
+    arcs: tuple[_ProfileArc, ...]
+
+
+def _profile_line(
+    curve: LineCurve | ExactLineCurve,
+    bounds: np.ndarray,
+    origin: _ExactVector,
+    axis: _ExactVector,
+    /,
+) -> _ProfileLine | None:
+    if isinstance(curve, LineCurve):
+        start, direction = curve.origin_exact, curve.direction_exact
+    else:
+        start = curve.first_exact
+        direction = tuple(
+            last - first
+            for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
+        )
+    ends = tuple(
+        tuple(
+            start[index] + parameter * direction[index] - origin[index]
+            for index in range(3)
+        )
+        for parameter in (Fraction(float(value)) for value in bounds[:, 1])
+    )
+    heights = (_exact_dot(ends[0], axis), _exact_dot(ends[1], axis))
+    radials = tuple(
+        (
+            end[0] - height * axis[0],
+            end[1] - height * axis[1],
+            end[2] - height * axis[2],
+        )
+        for end, height in zip(ends, heights, strict=True)
+    )
+    # A profile segment lies in one meridian half-plane.
+    if any(value != 0 for value in _exact_cross(radials[0], radials[1])) or (
+        _exact_dot(radials[0], radials[1]) < 0
+    ):
+        return None
+    return _ProfileLine(heights, (radials[0], radials[1]))
+
+
+def _profile_arcs(
+    patch: RevolutionSurface,
+    curve: CircleCurve,
+    bounds: np.ndarray,
+    origin: _ExactVector,
+    axis: _ExactVector,
+    /,
+) -> tuple[_ProfileArc, ...] | None:
+    """Split a profile circle (arc) into height-monotone meridian pieces.
+
+    The circle plane must contain the axis exactly. In the meridian frame
+    ``(m, a)`` a circle point sits at angle ``theta = turn t + phase`` from the
+    center; turning points ``theta = pi/2 + k pi`` have exact heights, trim
+    ends of a partial arc binary64 ones.
+    """
+    center = tuple(
+        value - base for value, base in zip(curve.center_exact, origin, strict=True)
+    )
+    normal = _exact_cross(curve.first_axis_exact, curve.second_axis_exact)
+    if _exact_dot(normal, axis) != 0 or _exact_dot(normal, center) != 0:
+        return None
+    center_height = _exact_dot(center, axis)
+    center_radial = tuple(
+        center[index] - center_height * axis[index] for index in range(3)
+    )
+    center_radial_squared = _exact_dot(center_radial, center_radial)
+    radius = float(curve.radius_exact)
+    axis_ = np.asarray([float(value) for value in axis], dtype=np.float64)
+    first = np.asarray(
+        [float(value) for value in curve.first_axis_exact], dtype=np.float64
+    )
+    second = np.asarray(
+        [float(value) for value in curve.second_axis_exact], dtype=np.float64
+    )
+    start, stop = (float(value) for value in bounds[:, 1])
+    period = patch.periods[1]
+    whole = period is not None and Fraction(stop) - Fraction(start) == Fraction(
+        float(period)
+    )
+    if center_radial_squared != 0:
+        meridian = np.asarray([float(value) for value in center_radial], dtype=np.float64)
+    else:
+        middle = 0.5 * (start + stop)
+        offset = np.cos(middle) * first + np.sin(middle) * second
+        meridian = offset - float(offset @ axis_) * axis_
+    length = float(np.linalg.norm(meridian))
+    if not length > 1.0e-6 * max(1.0, radius):
+        return None
+    meridian /= length
+    orientation = float(
+        (first @ meridian) * (second @ axis_) - (second @ meridian) * (first @ axis_)
+    )
+    if abs(abs(orientation) - 1.0) > 1.0e-9:
+        return None
+    turn = 1.0 if orientation > 0.0 else -1.0
+    phase = float(np.arctan2(first @ axis_, first @ meridian))
+    if whole:
+        low, high = -0.5 * pi, 1.5 * pi
+    else:
+        low, high = sorted((phase + turn * start, phase + turn * stop))
+    snap = 64.0 * np.finfo(np.float64).eps * max(1.0, abs(low), abs(high))
+    turns = [
+        0.5 * pi + k * pi
+        for k in range(
+            ceil((low - snap - 0.5 * pi) / pi),
+            floor((high + snap - 0.5 * pi) / pi) + 1,
+        )
     ]
-    | None
-):
+    angles: list[tuple[float, int | None]] = []
+    if not turns or abs(turns[0] - low) > snap:
+        angles.append((low, None))
+    angles.extend((angle, round((angle - 0.5 * pi) / pi)) for angle in turns)
+    if not turns or abs(turns[-1] - high) > snap:
+        angles.append((high, None))
+    center_height_ = float(center_height)
+    center_distance = sqrt(float(center_radial_squared))
+    tolerance = (
+        64.0
+        * np.finfo(np.float64).eps
+        * max(1.0, abs(center_height_), center_distance, radius)
+    )
+    # The arc must stay in the half-plane of its meridian direction.
+    lowest = min(float(np.cos(angle)) for angle, _ in angles)
+    if any(low < pi + 2.0 * k * pi < high for k in range(-2, 3)):
+        lowest = -1.0
+    if center_distance + radius * lowest < -tolerance:
+        return None
+    radius_exact = curve.radius_exact
+
+    def end(angle: float, k: int | None, /) -> _ArcEnd:
+        if k is None:
+            return _ArcEnd(center_height_ + radius * float(np.sin(angle)), None)
+        exact = center_height + (radius_exact if k % 2 == 0 else -radius_exact)
+        return _ArcEnd(float(exact), exact)
+
+    pieces: list[_ProfileArc] = []
+    for (first_angle, first_k), (last_angle, last_k) in zip(
+        angles, angles[1:], strict=False
+    ):
+        cosine = float(np.cos(0.5 * (first_angle + last_angle)))
+        if abs(cosine) < 1.0e-12:
+            return None
+        pieces.append(
+            _ProfileArc(
+                center_height,
+                center_radial_squared,
+                radius_exact * radius_exact,
+                1 if cosine > 0.0 else -1,
+                (end(first_angle, first_k), end(last_angle, last_k)),
+                tolerance,
+            )
+        )
+    return tuple(pieces)
+
+
+def _closed_revolution_profile(
+    model: BRepModel, solid: int, /
+) -> _RevolutionProfile | None:
+    """Meridian profile of a solid whose faces all turn a line or circle fully.
+
+    Every face must be a full-turn revolution about one exact unit axis of a
+    line or circle profile lying in a plane through the axis.
+    """
     from .._rational import rational_vector
 
-    faces = model.topology.solid_faces[solid]
-    if len(faces) != 3:
-        return None
-
-    def dot(
-        first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
-    ) -> ExactScalar:
-        return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
-
-    side: (
-        tuple[
-            tuple[ExactScalar, ExactScalar, ExactScalar],
-            tuple[ExactScalar, ExactScalar, ExactScalar],
-            ExactScalar,
-            ExactScalar,
-            ExactScalar,
-        ]
-        | None
-    ) = None
-    cap_rows: list[tuple[ExactScalar, ExactScalar]] = []
-    for face in faces:
+    origin: _ExactVector | None = None
+    axis: _ExactVector | None = None
+    lines: list[_ProfileLine] = []
+    arcs: list[_ProfileArc] = []
+    for face in model.topology.solid_faces[solid]:
         patch = model.patches[face]
-        if not isinstance(patch, RevolutionSurface) or not isinstance(
-            patch.curve, (LineCurve, ExactLineCurve)
+        if (
+            not isinstance(patch, RevolutionSurface)
+            or patch.native_period_symbols()[0] != "two_pi"
         ):
-            return None
-        if patch.native_period_symbols()[0] != "two_pi":
             return None
         bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
         period = patch.periods[0]
-        if period is None or not np.isfinite(period) or period <= 0.0:
-            return None
-        if Fraction.from_float(float(bounds[1, 0])) - Fraction.from_float(
-            float(bounds[0, 0])
-        ) != Fraction.from_float(float(period)):
-            return None
-        axis_values = rational_vector(np.asarray(patch.axis_direction))
-        origin_values = rational_vector(np.asarray(patch.axis_origin))
-        if len(axis_values) != 3 or len(origin_values) != 3:
-            return None
-        axis = (axis_values[0], axis_values[1], axis_values[2])
-        origin = (origin_values[0], origin_values[1], origin_values[2])
-        if dot(axis, axis) != 1:
-            return None
-        if isinstance(patch.curve, LineCurve):
-            line_origin = patch.curve.origin_exact
-            line_direction = patch.curve.direction_exact
-        else:
-            line_origin = patch.curve.first_exact
-            line_direction = tuple(
-                last - first
-                for first, last in zip(
-                    patch.curve.first_exact, patch.curve.last_exact, strict=True
-                )
-            )
-        first, last = (Fraction.from_float(float(value)) for value in bounds[:, 1])
-
-        def point(parameter: Fraction, /) -> tuple[ExactScalar, ...]:
-            return tuple(
-                line_origin[index] + parameter * line_direction[index]
-                for index in range(3)
-            )
-
-        def axial(relative: tuple[ExactScalar, ...], /) -> ExactScalar:
-            return dot(relative, axis)
-
-        def radial(
-            relative: tuple[ExactScalar, ...], height: ExactScalar, /
-        ) -> tuple[ExactScalar, ...]:
-            return tuple(relative[index] - height * axis[index] for index in range(3))
-
-        relative_first = tuple(
-            value - base for value, base in zip(point(first), origin, strict=True)
-        )
-        relative_last = tuple(
-            value - base for value, base in zip(point(last), origin, strict=True)
-        )
-        z_first, z_last = axial(relative_first), axial(relative_last)
-        r_first, r_last = radial(relative_first, z_first), radial(relative_last, z_last)
-        radius_first, radius_last = dot(r_first, r_first), dot(r_last, r_last)
-        direction_height = dot(line_direction, axis)
-        radial_direction = tuple(
-            line_direction[index] - direction_height * axis[index] for index in range(3)
-        )
-        start_radial = radial(
-            tuple(value - base for value, base in zip(line_origin, origin, strict=True)),
-            axial(
-                tuple(
-                    value - base for value, base in zip(line_origin, origin, strict=True)
-                )
-            ),
-        )
-        cross = (
-            start_radial[1] * radial_direction[2] - start_radial[2] * radial_direction[1],
-            start_radial[2] * radial_direction[0] - start_radial[0] * radial_direction[2],
-            start_radial[0] * radial_direction[1] - start_radial[1] * radial_direction[0],
-        )
-        if any(value != 0 for value in cross):
-            return None
         if (
-            radial_direction == (Fraction(0), Fraction(0), Fraction(0))
-            and direction_height != 0
-            and radius_first > 0
-            and radius_first == radius_last
-            and z_first != z_last
+            period is None
+            or not np.isfinite(period)
+            or Fraction(float(bounds[1, 0])) - Fraction(float(bounds[0, 0]))
+            != Fraction(float(period))
         ):
-            if side is not None:
+            return None
+        face_origin = rational_vector(np.asarray(patch.axis_origin, dtype=np.float64))
+        face_axis = rational_vector(np.asarray(patch.axis_direction, dtype=np.float64))
+        if len(face_origin) != 3 or len(face_axis) != 3:
+            return None
+        face_origin_ = (face_origin[0], face_origin[1], face_origin[2])
+        face_axis_ = (face_axis[0], face_axis[1], face_axis[2])
+        if origin is None or axis is None:
+            if _exact_dot(face_axis_, face_axis_) != 1:
                 return None
-            side = (
-                origin,
-                axis,
-                radius_first,
-                min(z_first, z_last),
-                max(z_first, z_last),
+            origin, axis = face_origin_, face_axis_
+        elif face_axis_ != axis or any(
+            value != 0
+            for value in _exact_cross(
+                tuple(a - b for a, b in zip(face_origin_, origin, strict=True)), axis
             )
-        elif z_first == z_last and (
-            (radius_first == 0 and radius_last > 0)
-            or (radius_last == 0 and radius_first > 0)
         ):
-            cap_rows.append((z_first, max(radius_first, radius_last)))
+            return None
+        curve = patch.curve
+        if isinstance(curve, (LineCurve, ExactLineCurve)):
+            line = _profile_line(curve, bounds, origin, axis)
+            if line is None:
+                return None
+            lines.append(line)
+        elif isinstance(curve, CircleCurve):
+            pieces = _profile_arcs(patch, curve, bounds, origin, axis)
+            if pieces is None:
+                return None
+            arcs.extend(pieces)
         else:
             return None
-    if side is None or len(cap_rows) != 2:
+    if origin is None or axis is None:
         return None
-    origin, axis, radius_squared, z_start, z_end = side
-    if (
-        cap_rows[0][0] == cap_rows[1][0]
-        or cap_rows[0][1] != radius_squared
-        or cap_rows[1][1] != radius_squared
-        or {cap_rows[0][0], cap_rows[1][0]} != {z_start, z_end}
-    ):
-        return None
-    return origin, axis, radius_squared, min(z_start, z_end), max(z_start, z_end)
+    return _RevolutionProfile(origin, axis, tuple(lines), tuple(arcs))
+
+
+def _revolution_profile_contains(
+    profile: _RevolutionProfile, point: np.ndarray, /
+) -> bool | None:
+    """Whether ``point`` lies inside a closed revolution solid; ``None`` on its boundary.
+
+    The point is inside iff its meridian image ``(rho, h)`` lies inside the
+    profile region: the ray ``{(r, h) : r > rho}`` crosses the profile curves an
+    odd number of times (half-open rule at piece ends). Distances compare
+    exactly through their squares and square-root sums; a query within the
+    binary64 tolerance of a trimmed arc end height is unresolved.
+    """
+    from .._rational import rational_vector
+
+    values = rational_vector(np.asarray(point, dtype=np.float64))
+    relative = tuple(
+        value - base for value, base in zip(values, profile.origin, strict=True)
+    )
+    height = _exact_dot(relative, profile.axis)
+    radial_squared = _exact_dot(relative, relative) - height * height
+    crossings = 0
+    for line in profile.lines:
+        (first, last), (start, stop) = line.heights, line.radials
+        squared = (_exact_dot(start, start), _exact_dot(stop, stop))
+        if (first == height and squared[0] == radial_squared) or (
+            last == height and squared[1] == radial_squared
+        ):
+            return None
+        if first == last:
+            if first == height and min(squared) <= radial_squared <= max(squared):
+                return None
+            continue
+        if (first > height) == (last > height):
+            continue
+        fraction = (height - first) / (last - first)
+        hit = tuple(
+            start[index] + fraction * (stop[index] - start[index]) for index in range(3)
+        )
+        hit_squared = _exact_dot(hit, hit)
+        if hit_squared == radial_squared:
+            return None
+        crossings += int(hit_squared > radial_squared)
+    approximate = float(height)
+    for arc in profile.arcs:
+        above: list[bool] = []
+        for end in arc.ends:
+            if end.exact is None:
+                if abs(end.height - approximate) <= arc.tolerance:
+                    return None
+                above.append(end.height > approximate)
+                continue
+            if end.exact == height and (
+                _sign_of_root_sum(
+                    (
+                        (Fraction(1), arc.center_radial_squared),
+                        (Fraction(-1), radial_squared),
+                    )
+                )
+                == 0
+            ):
+                return None
+            above.append(end.exact > height)
+        if above[0] == above[1]:
+            continue
+        offset = height - arc.center_height
+        discriminant = arc.radius_squared - offset * offset
+        if discriminant < 0:
+            return None
+        sign = _sign_of_root_sum(
+            (
+                (Fraction(1), arc.center_radial_squared),
+                (Fraction(arc.side), discriminant),
+                (Fraction(-1), radial_squared),
+            )
+        )
+        if sign == 0:
+            return None
+        crossings += int(sign > 0)
+    return bool(crossings % 2)
 
 
 @final
@@ -2645,11 +2912,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     if np.all(np.isfinite(hit.normal))
                     else hit.normal
                 )
-                tangents = (
-                    hit.tangents @ rotation.T
-                    if np.all(np.isfinite(hit.tangents))
-                    else hit.tangents
-                )
+                tangents = _map_frame(hit.tangents, rotation.T)
                 hit = _Hit(
                     hit.dimension,
                     hit.index,
@@ -2737,11 +3000,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             if np.any(finite_points):
                 points[finite_points] = self.embedding.to_planar(points_3d[finite_points])
             normals = np.full((len(hits), 2), np.nan, dtype=np.float64)
-            tangents = np.full((len(hits), 2, 2), np.nan, dtype=np.float64)
-            finite_tangents = np.all(np.isfinite(tangents_3d), axis=(1, 2))
-            if np.any(finite_tangents):
-                basis = np.stack((self.embedding.x_axis, self.embedding.y_axis), axis=1)
-                tangents[finite_tangents] = tangents_3d[finite_tangents] @ basis
+            tangents = _map_frame(
+                tangents_3d,
+                np.stack((self.embedding.x_axis, self.embedding.y_axis), axis=1),
+            )
         occurrence_paths = tuple(hit.path for hit in hits)
         return BRepProjectionResult(
             self.source_id,
@@ -3181,31 +3443,9 @@ class NativeBRepProjection(AbstractBRepProjection):
         return self._result(queries, hits)
 
     def _contains_solid(self, point: np.ndarray, solid: int, /) -> bool | None:
-        cylinder = _closed_revolution_cylinder(self.model, solid)
-        if cylinder is not None:
-            from .._rational import rational_vector
-
-            origin, axis, radius_squared, lower, upper = cylinder
-            query_values = rational_vector(np.asarray(point, dtype=np.float64))
-            query = (query_values[0], query_values[1], query_values[2])
-            relative = (
-                query[0] - origin[0],
-                query[1] - origin[1],
-                query[2] - origin[2],
-            )
-            height = sum(
-                (
-                    value * direction
-                    for value, direction in zip(relative, axis, strict=True)
-                ),
-                Fraction(0),
-            )
-            radial_squared = (
-                sum((value * value for value in relative), Fraction(0)) - height * height
-            )
-            if radial_squared == radius_squared or height in (lower, upper):
-                return None
-            return radial_squared < radius_squared and lower < height < upper
+        profile = _closed_revolution_profile(self.model, solid)
+        if profile is not None:
+            return _revolution_profile_contains(profile, point)
         direction = np.asarray((1.0, sqrt(2.0), sqrt(3.0)), dtype=np.float64)
         direction /= np.linalg.norm(direction)
         from .._rational import rational_cross, rational_vector
