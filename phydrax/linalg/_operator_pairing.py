@@ -26,6 +26,7 @@ class OperatorPairingArchiveRecipe(NamedTuple):
     solve_policy: object
     pairing_id: str
     operator_id: str
+    operator_content_fingerprint: str
     solve_policy_fingerprint: str
 
     def rebuild(
@@ -41,6 +42,10 @@ class OperatorPairingArchiveRecipe(NamedTuple):
             raise TypeError("Stored Riesz operator recipe lost its operator.")
         if operator.operator_id != self.operator_id:
             raise ValueError("Stored Riesz operator identity changed.")
+        # Sparse operator IDs name structure, not coefficients; the archived
+        # pairing binds the operator's exact array content separately.
+        if _operator_content_fingerprint(operator) != self.operator_content_fingerprint:
+            raise ValueError("Stored Riesz operator content changed.")
         if type(solve_policy) is not LinearSolvePolicy:
             raise TypeError("Stored Riesz recipe requires LinearSolvePolicy.")
         if (
@@ -179,10 +184,23 @@ class OperatorPairing(AbstractPairing):
             self.prepared_inverse.template.plan.policy,
             self.pairing_id,
             self.operator.operator_id,
+            _operator_content_fingerprint(self.operator),
             canonical_fingerprint(
                 array_tree_fingerprint(self.prepared_inverse.template.plan.policy)
             ),
         )
+
+
+def _operator_content_fingerprint(operator: AbstractLinearOperator, /) -> str:
+    """Content of the operator's archive form, independent of query caches."""
+    from .._model._structure import model_archive_projection
+
+    return canonical_fingerprint(
+        {
+            "kind": "operator-pairing-content",
+            "state": array_tree_fingerprint(model_archive_projection(operator)),
+        }
+    )
 
 
 def _nonempty(value: str, /) -> str:

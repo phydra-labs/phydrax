@@ -4145,13 +4145,11 @@ class OversetConnectivity(StrictModule, NonTrainableState):
                     role="topology",
                     owner_id=_OWNER,
                     structure_id=_owner_local_manifest_binding(item)[0],
+                    # The manifest revision carries the moved geometry; a part's
+                    # semantics are its role in the overset, stable across motion.
                     revision_id=item.manifest_id,
                     semantics_id=canonical_fingerprint(
-                        {
-                            "kind": "overset-owner-local-part",
-                            "name": item.name,
-                            "geometry": _owner_local_manifest_binding(item)[1],
-                        }
+                        {"kind": "overset-owner-local-part", "name": item.name}
                     ),
                 )
                 for item in self.assembly.part_manifest

@@ -41,9 +41,78 @@ Triple sorted_triple(const int32_t* vertices) {
   return key;
 }
 
+// Hash of the vertex ids of a face or cell key.
+template <std::size_t N>
+struct IdTupleHash {
+  std::size_t operator()(const std::array<int32_t, N>& ids) const {
+    std::uint64_t mixed = 0x9E3779B97F4A7C15ULL;
+    for (int32_t id : ids) {
+      mixed = (mixed ^ static_cast<std::uint32_t>(id)) * 0xC2B2AE3D27D4EB4FULL;
+      mixed ^= mixed >> 29;
+    }
+    return static_cast<std::size_t>(mixed);
+  }
+};
+
 bool legal_contact(int8_t kind) {
   return kind == PHX_MC_DISJOINT || kind == PHX_MC_SHARED_VERTEX ||
          kind == PHX_MC_SHARED_EDGE;
+}
+
+// The exact normal of a declared plane row (origin, first axis, second axis):
+// the cross product of its axes.
+std::array<Expansion, 3> declared_plane_normal(const double* plane) {
+  const double* u = plane + 3;
+  const double* v = plane + 6;
+  return {Expansion::product(u[1], v[2]) - Expansion::product(u[2], v[1]),
+          Expansion::product(u[2], v[0]) - Expansion::product(u[0], v[2]),
+          Expansion::product(u[0], v[1]) - Expansion::product(u[1], v[0])};
+}
+
+// Whether the declared plane row `plane` with exact normal `normal` admits
+// the binary64 carrier x, exactly: the plane meets the closed box of the
+// reals that round to x (per axis, between the midpoints with the adjacent
+// binary64 values), so x is a correct rounding of a point of the plane, or
+// lies within `tolerance` of x. `distance` receives an upper bound of the
+// distance from x to the plane.
+bool declared_plane_admits(const double* plane, const std::array<Expansion, 3>& normal,
+                           double tolerance, const double* x, double& distance) {
+  const double* origin = plane;
+  // Twice the signed offset n . (c - o) at the corners c of the box, from
+  // the exact doubled bounds x + next(x) of each axis.
+  std::array<Expansion, 3> lower;
+  std::array<Expansion, 3> upper;
+  for (int axis = 0; axis < 3; ++axis) {
+    const Expansion doubled_origin = Expansion::sum(origin[axis], origin[axis]);
+    lower[static_cast<std::size_t>(axis)] =
+        Expansion::sum(x[axis], std::nextafter(x[axis], -std::numeric_limits<double>::infinity())) -
+        doubled_origin;
+    upper[static_cast<std::size_t>(axis)] =
+        Expansion::sum(x[axis], std::nextafter(x[axis], std::numeric_limits<double>::infinity())) -
+        doubled_origin;
+  }
+  bool below = false;
+  bool above = false;
+  for (int corner = 0; corner < 8; ++corner) {
+    Expansion offset;
+    for (int axis = 0; axis < 3; ++axis) {
+      const std::size_t row = static_cast<std::size_t>(axis);
+      offset = offset + normal[row] * ((corner >> axis) & 1 ? upper[row] : lower[row]);
+    }
+    below = below || offset.sign() <= 0;
+    above = above || offset.sign() >= 0;
+  }
+  Expansion offset;
+  for (int axis = 0; axis < 3; ++axis) {
+    offset = offset + normal[static_cast<std::size_t>(axis)] *
+                          Expansion::difference(x[axis], origin[axis]);
+  }
+  const Expansion length = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+  distance = std::nextafter(std::fabs(offset.estimate()) / std::sqrt(length.estimate()) *
+                                (1.0 + 0x1p-40),
+                            std::numeric_limits<double>::infinity());
+  if (below && above) return true;
+  return (length * Expansion::product(tolerance, tolerance) - offset * offset).sign() >= 0;
 }
 
 struct Box {
@@ -313,6 +382,8 @@ class SourcePreparer {
     if (seeds != PHX_MC_OK) return seeds;
     const int32_t polygons = triangulate_polygons();
     if (polygons != PHX_MC_OK) return polygons;
+    const int32_t planes = check_planes();
+    if (planes != PHX_MC_OK) return planes;
     build_groups();
     const int32_t edges = build_edges();
     if (edges != PHX_MC_OK) return edges;
@@ -492,16 +563,10 @@ class SourcePreparer {
     return PHX_MC_OK;
   }
 
-  bool coplanar_and_opposed(int32_t first, int32_t second) const {
+  // Whether the two triangles share an edge traversed in opposite directions.
+  bool opposed(int32_t first, int32_t second) const {
     const Triple& a = triangles_[static_cast<std::size_t>(first)];
     const Triple& b = triangles_[static_cast<std::size_t>(second)];
-    int32_t apex = -1;
-    for (int32_t vertex : b) {
-      if (std::find(a.begin(), a.end(), vertex) == a.end()) apex = vertex;
-    }
-    if (apex < 0 || orient3d(point(a[0]), point(a[1]), point(a[2]), point(apex)) != 0) {
-      return false;
-    }
     for (int r = 0; r < 3; ++r) {
       for (int q = 0; q < 3; ++q) {
         if (a[static_cast<std::size_t>(r)] == b[static_cast<std::size_t>((q + 1) % 3)] &&
@@ -509,6 +574,70 @@ class SourcePreparer {
       }
     }
     return false;
+  }
+
+  bool coplanar(int32_t first, int32_t second) const {
+    const Triple& a = triangles_[static_cast<std::size_t>(first)];
+    const Triple& b = triangles_[static_cast<std::size_t>(second)];
+    int32_t apex = -1;
+    for (int32_t vertex : b) {
+      if (std::find(a.begin(), a.end(), vertex) == a.end()) apex = vertex;
+    }
+    return apex >= 0 && orient3d(point(a[0]), point(a[1]), point(a[2]), point(apex)) == 0;
+  }
+
+  // A facet declares a plane when its row of facet_planes is not all NaN.
+  // The row must then be finite with exactly independent axes and its
+  // tolerance finite and nonnegative, else the facet is refused
+  // (SOURCE_DEVIATION, FACET). Every vertex of the facet's polygons must be
+  // admitted by the plane (declared_plane_admits), else the facet and the
+  // first vertex refused, with that vertex's certified distance to the plane
+  // and the tolerance as evidence.
+  int32_t check_planes() {
+    if (input_.facet_planes == nullptr) {
+      return input_.facet_plane_tolerances == nullptr ? PHX_MC_OK : PHX_MC_INVALID_ARGUMENT;
+    }
+    const auto facets = static_cast<std::size_t>(input_.facet_count);
+    declared_.assign(facets, 0);
+    std::vector<std::array<Expansion, 3>> normals(facets);
+    for (std::size_t facet = 0; facet < facets; ++facet) {
+      const double* row = input_.facet_planes + 9 * facet;
+      if (std::all_of(row, row + 9, [](double value) { return std::isnan(value); })) continue;
+      const double tolerance =
+          input_.facet_plane_tolerances == nullptr ? 0.0 : input_.facet_plane_tolerances[facet];
+      std::array<Expansion, 3> normal = declared_plane_normal(row);
+      if (!std::all_of(row, row + 9, [](double value) { return std::isfinite(value); }) ||
+          !std::isfinite(tolerance) || tolerance < 0.0 ||
+          std::all_of(normal.begin(), normal.end(),
+                      [](const Expansion& component) { return component.is_zero(); })) {
+        return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcFacet,
+                    static_cast<int64_t>(facet));
+      }
+      declared_[facet] = 1;
+      normals[facet] = std::move(normal);
+    }
+    for (int64_t polygon = 0; polygon < input_.polygon_count; ++polygon) {
+      const auto facet = static_cast<std::size_t>(input_.polygon_facets[polygon]);
+      if (declared_[facet] == 0) continue;
+      const double tolerance =
+          input_.facet_plane_tolerances == nullptr ? 0.0 : input_.facet_plane_tolerances[facet];
+      for (int64_t corner = input_.polygon_offsets[polygon];
+           corner < input_.polygon_offsets[polygon + 1]; ++corner) {
+        const int32_t vertex = input_.polygon_vertices[corner];
+        double distance = 0.0;
+        if (!declared_plane_admits(input_.facet_planes + 9 * facet, normals[facet], tolerance,
+                                   point(vertex), distance)) {
+          output_.source_refusal = {distance, tolerance};
+          return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcFacet,
+                      static_cast<int64_t>(facet), kPlcPoint, vertex);
+        }
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  bool declared(int32_t facet) const {
+    return !declared_.empty() && declared_[static_cast<std::size_t>(facet)] != 0;
   }
 
   void build_groups() {
@@ -528,8 +657,11 @@ class SourcePreparer {
       while (end < uses.size() && uses[end].first == uses[begin].first) ++end;
       if (end - begin == 2) {
         const int32_t a = uses[begin].second, b = uses[begin + 1].second;
-        if (triangle_facet_[static_cast<std::size_t>(a)] == triangle_facet_[static_cast<std::size_t>(b)] &&
-            coplanar_and_opposed(a, b)) {
+        const int32_t facet = triangle_facet_[static_cast<std::size_t>(a)];
+        // A declared facet groups across every shared edge; an undeclared
+        // one only where the two triangles are exactly coplanar.
+        if (facet == triangle_facet_[static_cast<std::size_t>(b)] && opposed(a, b) &&
+            (declared(facet) || coplanar(a, b))) {
           parent[static_cast<std::size_t>(topology::find_root(parent, a))] =
               topology::find_root(parent, b);
         }
@@ -774,6 +906,7 @@ class SourcePreparer {
   std::vector<int32_t> triangle_polygon_;
   std::vector<int32_t> triangle_facet_;
   std::vector<int32_t> triangle_group_;
+  std::vector<char> declared_;
   std::vector<std::pair<uint64_t, int32_t>> edge_uses_;
   std::vector<int32_t> edges_;
   std::unordered_map<uint64_t, int32_t> edge_ids_;
@@ -4246,6 +4379,38 @@ class PlcRecoveryBuilder {
     std::array<int32_t, 4> constraints;
   };
 
+  // Visibility facts of the fills of one suppressed point, shared by its
+  // targets, wedges, layers and options (wrap_cavity). Keys are vertex ids,
+  // whose exact positions are fixed while the point is suppressed, so the
+  // facts hold whatever the complex becomes. A positive cell whose interior
+  // meets a closed wall (`blocked`, keyed by its sorted vertices) is blocked
+  // in every cavity bounded by that wall. A lineage is the sequence of
+  // cavities of one kind (the wedge, or the wedge merged with layers of
+  // cells) of one target and wedge; each fill registers its walls as the
+  // lineage's next generation, `since` holding the generation from which
+  // each current wall has been present without a gap. A cell found visible
+  // at generation g (`visible`) missed every wall present then, so later it
+  // is tested only against the walls present since after g: a repeated
+  // cavity costs no wall test, and a layer tests only its new walls against
+  // the cells its previous layer saw. Verdicts are those of a full scan.
+  struct SuppressionMemo {
+    using CellKey = std::array<int32_t, 4>;
+    struct Lineage {
+      uint32_t generation = 0;
+      std::unordered_map<Triple, uint32_t, IdTupleHash<3>> since;
+      std::unordered_map<CellKey, uint32_t, IdTupleHash<4>> visible;
+      std::unordered_map<CellKey, Triple, IdTupleHash<4>>* blocked = nullptr;
+    };
+    std::unordered_map<CellKey, Triple, IdTupleHash<4>> blocked;
+    std::map<std::array<int64_t, 3>, Lineage> lineages;
+
+    Lineage* lineage(int64_t target, int64_t wedge, int64_t kind) {
+      Lineage& found = lineages[{target, wedge, kind}];
+      found.blocked = &blocked;
+      return &found;
+    }
+  };
+
   // Steiner-free fill of a closed cavity. Each boundary cell carries
   // `placeholder` in one slot: the face opposite it is a boundary face (a
   // wall) and a cavity vertex x lies on its inner side exactly when the cell
@@ -4268,8 +4433,12 @@ class PlcRecoveryBuilder {
   // I", DCG 39, 2008). When that tetrahedralization exists (unique under the
   // perturbation) every step adds one of its cells in any side order, so a
   // failure means the cavity has none. Each step closes its side for good,
-  // so the fill takes at most one step per cell, each costing
-  // O(candidates * walls) predicates.
+  // so the fill takes at most one step per cell. Only the first apex of a
+  // side is used, the candidate whose sphere through the side holds no
+  // other: a linear scan for the pencil minimum, confirmed by one more
+  // linear pass, costs O(candidates) insphere tests instead of the
+  // O(candidates^2) of a full ranking, and its visibility O(candidates *
+  // walls) separation tests, fewer with `lineage` (SuppressionMemo).
   //
   // With `exhaustive`, the search branches over every apex of the open side
   // with the fewest apices and backtracks, so it finds a Steiner-free fill
@@ -4286,7 +4455,8 @@ class PlcRecoveryBuilder {
   bool wrap_cavity(const std::vector<SuppressionCell>& boundary, int32_t placeholder,
                    const std::vector<int32_t>& interior, bool exhaustive,
                    std::vector<SuppressionCell>& filled, std::size_t& nodes,
-                   std::vector<SuppressionCell>* remainder = nullptr) const {
+                   std::vector<SuppressionCell>* remainder = nullptr,
+                   SuppressionMemo::Lineage* lineage = nullptr) const {
     struct Open {
       std::array<int32_t, 4> cell;
       int slot;
@@ -4362,6 +4532,23 @@ class PlcRecoveryBuilder {
     for (std::size_t row = 0; row < walls.size(); ++row) {
       wall_boxes.push_back({row, box_of(walls[row].data(), 3)});
     }
+    // The distinct closed walls (a slit is one wall seen from both sides),
+    // registered as the lineage's next generation, newest first.
+    std::vector<std::pair<uint32_t, std::size_t>> recent;
+    if (lineage != nullptr) {
+      const uint32_t generation = ++lineage->generation;
+      std::unordered_map<Triple, uint32_t, IdTupleHash<3>> since;
+      since.reserve(walls.size());
+      for (std::size_t row = 0; row < walls.size(); ++row) {
+        const Triple key = sorted_triple(walls[row].data());
+        const auto known = lineage->since.find(key);
+        const uint32_t first = known == lineage->since.end() ? generation : known->second;
+        if (since.emplace(key, first).second) recent.push_back({first, row});
+      }
+      lineage->since = std::move(since);
+      std::stable_sort(recent.begin(), recent.end(),
+                       [](const auto& a, const auto& b) { return a.first > b.first; });
+    }
     // The interior of the positive cell `tet` misses the closed wall exactly
     // when a plane separates them; the facets of the Minkowski difference
     // of two polytopes are parallel to a face of either or to an edge of
@@ -4416,34 +4603,97 @@ class PlcRecoveryBuilder {
       }
       return false;
     };
+    // Whether the interior of the positive cell `tet` misses every wall.
+    // With a lineage, a cell blocked by a current wall is rejected without a
+    // test and a cell visible at generation g is tested only against the
+    // walls present since after g (SuppressionMemo); the verdict is that of
+    // the full scan, which runs without one.
+    const auto clear = [&](const std::array<int32_t, 4>& tet) {
+      const Box box = box_of(tet.data(), 4);
+      const auto meets = [&](std::size_t row) {
+        return !disjoint(box, wall_boxes[row].second) && !separated(tet, walls[row]);
+      };
+      if (lineage == nullptr) {
+        return std::none_of(wall_boxes.begin(), wall_boxes.end(),
+                            [&](const auto& entry) { return meets(entry.first); });
+      }
+      SuppressionMemo::CellKey key = tet;
+      std::sort(key.begin(), key.end());
+      auto& blocked = *lineage->blocked;
+      const auto blocker = blocked.find(key);
+      if (blocker != blocked.end() && lineage->since.contains(blocker->second)) return false;
+      const auto known = lineage->visible.find(key);
+      const uint32_t seen = known == lineage->visible.end() ? 0U : known->second;
+      for (const auto& [first, row] : recent) {
+        if (first <= seen) break;
+        if (meets(row)) {
+          blocked[key] = sorted_triple(walls[row].data());
+          if (known != lineage->visible.end()) lineage->visible.erase(known);
+          return false;
+        }
+      }
+      lineage->visible[key] = lineage->generation;
+      return true;
+    };
     // Apices of an open side: the vertices on its inner side whose cell is
     // visible, in pencil order (number of rivals inside the sphere through
-    // the side). Both depend only on the oriented side and are kept per fill.
+    // the side). The perturbed insphere test is antisymmetric and orders
+    // the inner vertices totally, so the first apex is the only visible
+    // vertex whose sphere holds no visible rival. Without `exhaustive` only
+    // that one is kept: the pencil minimum of the inner vertices is taken
+    // by a linear scan and dropped while its cell is not visible, and the
+    // apex found is confirmed against every vertex not dropped (a superset
+    // of the visible ones), O(inner vertices) insphere tests per vertex
+    // dropped plus one visibility test each, instead of a visibility test
+    // for every inner vertex and O(candidates^2) insphere tests. Both depend
+    // only on the oriented side and are kept per fill.
     std::map<FacetKey, std::vector<int32_t>> apices;
     const auto apices_of = [&](const FacetKey& side, const Open& open) -> const std::vector<int32_t>& {
       const auto known = apices.find(side);
       if (known != apices.end()) return known->second;
-      std::vector<int32_t> candidates;
+      std::vector<int32_t> inner;
       for (int32_t vertex : vertices) {
         if (vertex == side.a || vertex == side.b || vertex == side.c) continue;
-        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
-        if (!positive(tet)) continue;
-        Box box = box_of(tet.data(), 4);
-        if (std::all_of(wall_boxes.begin(), wall_boxes.end(), [&](const auto& entry) {
-              return disjoint(box, entry.second) || separated(tet, walls[entry.first]);
-            })) {
-          candidates.push_back(vertex);
+        if (positive(with(open.cell, open.slot, vertex))) inner.push_back(vertex);
+      }
+      // Whether `rival` lies inside the sphere through the side and `apex`.
+      const auto holds = [&](int32_t apex, int32_t rival) {
+        const std::array<int32_t, 4> tet = with(open.cell, open.slot, apex);
+        return insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
+                            tet[0], tet[1], tet[2], tet[3], rival) > 0;
+      };
+      if (!exhaustive) {
+        std::vector<int32_t> remaining = inner;
+        while (!remaining.empty()) {
+          std::size_t best = 0;
+          for (std::size_t row = 1; row < remaining.size(); ++row) {
+            if (holds(remaining[best], remaining[row])) best = row;
+          }
+          const int32_t first = remaining[best];
+          if (!clear(with(open.cell, open.slot, first))) {
+            remaining[best] = remaining.back();
+            remaining.pop_back();
+            continue;
+          }
+          if (std::none_of(remaining.begin(), remaining.end(), [&](int32_t rival) {
+                return rival != first && holds(first, rival);
+              })) {
+            return apices.emplace(side, std::vector<int32_t>{first}).first->second;
+          }
+          break;
         }
+        if (remaining.empty()) return apices.emplace(side, std::vector<int32_t>{}).first->second;
+      }
+      std::vector<int32_t> candidates;
+      for (int32_t vertex : inner) {
+        if (clear(with(open.cell, open.slot, vertex))) candidates.push_back(vertex);
       }
       std::vector<std::pair<int, int32_t>> ranked;
       ranked.reserve(candidates.size());
       for (int32_t vertex : candidates) {
-        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
         int inside = 0;
         for (int32_t rival : candidates) {
-          if (rival == vertex) continue;
-          inside += insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
-                                 tet[0], tet[1], tet[2], tet[3], rival) > 0 ? 1 : 0;
+          if (rival != vertex && holds(vertex, rival)) ++inside;
         }
         ranked.push_back({inside, vertex});
       }
@@ -4509,9 +4759,33 @@ class PlcRecoveryBuilder {
       // once a side was stuck); `filled` then holds the partial fill and
       // `remainder` the open sides left (oriented walls with the
       // placeholder bounding the unfilled part, empty when the stuck sides
-      // were closed from their other cells). Each step closes a side or
-      // marks one stuck, so this ends.
+      // were closed from their other cells). Past a stuck side the
+      // tetrahedralization the steps follow does not exist, so a cell is
+      // also refused (its side stuck) when its interior meets a face the
+      // wrap opened: the partial fill bounds the cells placed so far by the
+      // walls and those faces, so its cells stay interior-disjoint inside
+      // the cavity, as the cells of any fill completing it must be (positive
+      // cells pairing every face cover each point once). Each step closes a
+      // side for good or marks one stuck, so this ends after at most two
+      // steps per oriented triangle of cavity vertices.
       std::set<FacetKey> stuck;
+      std::set<FacetKey> walls_of_front;
+      if (remainder != nullptr) {
+        for (const auto& [side, open] : front) {
+          (void)open;
+          walls_of_front.insert(side);
+        }
+      }
+      const auto overlaps = [&](const std::array<int32_t, 4>& tet) {
+        const Box box = box_of(tet.data(), 4);
+        for (const auto& [side, open] : front) {
+          (void)open;
+          if (walls_of_front.contains(side)) continue;
+          const Triple face{side.a, side.b, side.c};
+          if (!disjoint(box, box_of(face.data(), 3)) && !separated(tet, face)) return true;
+        }
+        return false;
+      };
       for (;;) {
         auto next = front.begin();
         while (next != front.end() && stuck.contains(next->first)) ++next;
@@ -4520,7 +4794,8 @@ class PlcRecoveryBuilder {
         const Open open = next->second;
         const std::vector<int32_t>& order = apices_of(key, open);
         Step step;
-        if (order.empty() || !plan(open, order.front(), step)) {
+        if (order.empty() || !plan(open, order.front(), step) ||
+            (remainder != nullptr && overlaps(step.cell.v))) {
           if (remainder == nullptr) return false;
           stuck.insert(key);
           continue;
@@ -4639,7 +4914,9 @@ class PlcRecoveryBuilder {
   // options more room). Then the wedge and the merged cavity get the
   // partial constrained Delaunay wrap (every side it can close) with cones
   // from one binary64 point over the sides it leaves open. `extended`
-  // reports a failed attempt whose region can still grow. Merging removes
+  // reports a failed attempt whose region can still grow. `memo` holds the
+  // visibility facts of the point's earlier fills (SuppressionMemo), one
+  // lineage per target, wedge and kind of cavity. Merging removes
   // no vertex but s and moves no subface, so the termination argument of
   // the pass is unchanged; ordinary passes are as without merging. Every
   // finite proposed cell is exactly positive on exact positions and the
@@ -4647,7 +4924,7 @@ class PlcRecoveryBuilder {
   // removed cells with its marks, so the proposal tiles them. Otherwise
   // nothing changes.
   int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, int layers,
-                                  bool& removed, bool& extended) {
+                                  SuppressionMemo& memo, bool& removed, bool& extended) {
     removed = false;
     extended = false;
     TetrahedralComplex& complex = triangulation_->complex();
@@ -4781,19 +5058,30 @@ class PlcRecoveryBuilder {
     // centroids may serve as Steiner apices; `search` admits the exhaustive
     // Steiner-free search; `size` is the cell count reported as its
     // evidence. With `partial`, only options 1 and 6 run (the fallback after
-    // every cavity of an attempt failed options 1 to 5).
+    // every cavity of an attempt failed options 1 to 5). `lineage` carries
+    // the visibility facts of earlier fills of this cavity's lineage.
     const auto fill_wedge = [&](std::vector<Proposal> cavity,
                                 const std::vector<std::size_t>& blocked,
                                 const std::vector<std::array<double, 3>>& normals, double reach,
                                 bool search, bool partial_only, std::size_t size,
-                                bool& done) -> int32_t {
+                                SuppressionMemo::Lineage* lineage, bool& done) -> int32_t {
       done = false;
-      // 1. The constrained Delaunay fill. When it is stuck, the partial
-      // wrap past its stuck sides and the open remainder are kept for 6.
+      // 1. The constrained Delaunay fill. Only for 6 (`partial_only`) does a
+      // stuck wrap go on past its stuck sides, keeping the partial fill and
+      // the open remainder; elsewhere it stops at its first stuck side.
       std::vector<Proposal> wrapped;
       std::vector<Proposal> remainder;
       std::size_t nodes = 0;
-      if (wrap_cavity(cavity, kPlaceholder, {}, false, wrapped, nodes, &remainder)) {
+      const auto count_wrap = [&]() {
+        PlcSuppressionSearch& evidence = candidate_.suppression_search;
+        ++evidence.wraps;
+        evidence.wrap_cells += static_cast<int64_t>(nodes);
+        evidence.max_wrap_cells = std::max(evidence.max_wrap_cells, static_cast<int64_t>(nodes));
+      };
+      const bool wrap_ok = wrap_cavity(cavity, kPlaceholder, {}, false, wrapped, nodes,
+                                       partial_only ? &remainder : nullptr, lineage);
+      count_wrap();
+      if (wrap_ok) {
         proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
         done = true;
         return PHX_MC_OK;
@@ -4913,7 +5201,12 @@ class PlcRecoveryBuilder {
         added.push_back(vertex);
         extra.push_back(vertex);
       }
-      if (!extra.empty() && wrap_cavity(cavity, kPlaceholder, extra, false, wrapped, nodes)) {
+      nodes = 0;
+      const bool extra_ok =
+          !extra.empty() &&
+          wrap_cavity(cavity, kPlaceholder, extra, false, wrapped, nodes, nullptr, lineage);
+      if (!extra.empty()) count_wrap();
+      if (extra_ok) {
         proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
         done = true;
         return PHX_MC_OK;
@@ -4930,7 +5223,8 @@ class PlcRecoveryBuilder {
       // fills more room.
       if (search) {
         nodes = 0;
-        const bool searched = wrap_cavity(cavity, kPlaceholder, {}, true, wrapped, nodes);
+        const bool searched =
+            wrap_cavity(cavity, kPlaceholder, {}, true, wrapped, nodes, nullptr, lineage);
         PlcSuppressionSearch& evidence = candidate_.suppression_search;
         ++evidence.searches;
         evidence.nodes += static_cast<int64_t>(nodes);
@@ -5043,8 +5337,10 @@ class PlcRecoveryBuilder {
       }
       return PHX_MC_OK;
     };
+    int64_t ordinal = -1;
     for (const auto& [unused, rows] : wedges) {
       (void)unused;
+      ++ordinal;
       bool ghost = false;
       std::vector<std::size_t> blocked;
       for (std::size_t row : rows) {
@@ -5130,8 +5426,9 @@ class PlcRecoveryBuilder {
         }
       }
       bool done = false;
+      SuppressionMemo::Lineage* own = memo.lineage(t, ordinal, 0);
       int32_t status =
-          fill_wedge(cavity, blocked, normals, reach, layers <= 1, false, rows.size(), done);
+          fill_wedge(cavity, blocked, normals, reach, layers <= 1, false, rows.size(), own, done);
       if (status != PHX_MC_OK) return status;
       // 7. With layers > 0, the wedge merged with that many layers of cells
       // around it (grow_wedge), filled by options 1 to 5 (the exhaustive
@@ -5146,16 +5443,18 @@ class PlcRecoveryBuilder {
         status = grow_wedge(rows, layers, grown, walls, reached);
         if (status != PHX_MC_OK) return status;
         const std::size_t size = rows.size() + grown.size();
+        SuppressionMemo::Lineage* wider = memo.lineage(t, ordinal, 1);
         if (!grown.empty()) {
-          status = fill_wedge(walls, blocked, normals, reach, layers == 1, false, size, merged);
+          status = fill_wedge(walls, blocked, normals, reach, layers == 1, false, size, wider,
+                              merged);
           if (status != PHX_MC_OK) return status;
         }
         if (!merged) {
-          status = fill_wedge(cavity, blocked, normals, reach, false, true, rows.size(), done);
+          status = fill_wedge(cavity, blocked, normals, reach, false, true, rows.size(), own, done);
           if (status != PHX_MC_OK) return status;
         }
         if (!done && !merged && !grown.empty()) {
-          status = fill_wedge(walls, blocked, normals, reach, false, true, size, merged);
+          status = fill_wedge(walls, blocked, normals, reach, false, true, size, wider, merged);
           if (status != PHX_MC_OK) return status;
         }
         done = done || merged;
@@ -5294,6 +5593,25 @@ class PlcRecoveryBuilder {
   // the rotation once its unfillable wedge has exhausted its region (layer
   // `layers` admitted no cell). A layer is a breadth-first level, and no
   // region has more levels than the complex has cells, so this ends.
+  //
+  // Work bound, with no cap: let n be the cells of the region a target's
+  // wedge grows into (its constraint-delimited region, at most the
+  // complex), so its cavities have O(n) vertices and walls. The target
+  // takes at most n + 1 layers. A layer rebuilds its merged cavity
+  // breadth first in O(n) cells and runs a fixed number of wraps (options
+  // 1, 3 and 6 on the wedge and on the merged cavity): a wrap takes at most
+  // two steps per oriented triangle of its vertices, O(n^3) (one per cell
+  // of the fill, O(n^2), when the wrap completes; its partial fill keeps
+  // its cells interior-disjoint), and a step O(n) apex extractions of O(n)
+  // insphere tests, O(n) visibility tests of O(n) separation tests, and
+  // one overlap test per open side, O(n^3); so the target's work is
+  // polynomial in n, O(n^7) predicates at worst. Visibility facts persist
+  // across the layers, targets and options of the point (SuppressionMemo):
+  // a repeated cavity tests no wall again and a grown one tests its new
+  // walls only against the cells its previous layer saw. Only the
+  // exhaustive search (option 5; Steiner-free fill existence is
+  // NP-complete) is not polynomial, and it runs on the wedge and its first
+  // layer only, never on the region beyond.
   int32_t suppress_vertex(int32_t s, bool grow, bool& removed) {
     removed = false;
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
@@ -5334,9 +5652,11 @@ class PlcRecoveryBuilder {
       return PHX_MC_OK;
     };
     bool extended = false;
+    SuppressionMemo memo;
     if (!grow) {
       for (int32_t target : targets) {
-        const int32_t status = remove_witnessed_vertex(s, target, p, q, 0, removed, extended);
+        const int32_t status =
+            remove_witnessed_vertex(s, target, p, q, 0, memo, removed, extended);
         if (status != PHX_MC_OK) return status;
         if (removed) return committed();
       }
@@ -5347,7 +5667,7 @@ class PlcRecoveryBuilder {
       for (std::size_t row = 0; row < targets.size(); ++row) {
         if (open[row] == 0) continue;
         const int32_t status =
-            remove_witnessed_vertex(s, targets[row], p, q, layers, removed, extended);
+            remove_witnessed_vertex(s, targets[row], p, q, layers, memo, removed, extended);
         if (status != PHX_MC_OK) return status;
         if (removed) return committed();
         if (!extended) open[row] = 0;
@@ -5689,6 +6009,7 @@ int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
     const int32_t source_status = prepare_plc_source(input, prepared);
     if (source_status != PHX_MC_OK) {
       result.failure = prepared.failure;
+      result.source_refusal = prepared.source_refusal;
       return source_status;
     }
     PlcRecoveryBuilder builder(input, prepared);
