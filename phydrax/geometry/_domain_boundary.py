@@ -217,10 +217,10 @@ def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Poi
                 "Source p-curve endpoints are not exactly represented in binary64."
             )
     else:
-        # One whole native turn returns to its start chart point exactly.
+        # A closed chart loop returns to its start chart point exactly.
         last = (
             use.first
-            if isinstance(use, PatchCurveUse) and use.closes_native_turn()
+            if isinstance(use, PatchCurveUse) and use.closes_chart_loop()
             else use.last
         )
         values = np.asarray(

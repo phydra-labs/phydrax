@@ -182,6 +182,18 @@ class PatchCurveUse(StrictModule, NonTrainableState):
             and self.last == self.first + period
         )
 
+    def closes_chart_loop(self) -> bool:
+        """Whether this use returns exactly to its start chart point.
+
+        One whole native turn does by construction; a nonperiodic closed
+        p-curve does when its binary64 end evaluations coincide. Either way the
+        end shares the start's chart point and records the start parameter.
+        """
+        if self.closes_native_turn():
+            return True
+        ends = self.charts((self.first, self.last))
+        return bool(np.array_equal(ends[0], ends[1]))
+
 
 class PatchPoleUse(StrictModule, NonTrainableState):
     """A source trim side collapsed to a declared physical corner."""

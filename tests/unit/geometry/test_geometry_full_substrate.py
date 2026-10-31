@@ -15,6 +15,7 @@ import OCP.BRepAdaptor as _ocp_brep_adaptor
 import OCP.BRepPrimAPI as _ocp_brep_prim_api
 import OCP.gp as _ocp_gp
 import pytest
+from OCP.TopoDS import TopoDS_Shape
 from scipy.interpolate import BSpline as SciPyBSpline
 
 
@@ -735,7 +736,7 @@ def test_occt_bspline_import_matches_native_surface_differential() -> None:
     assert np.all(np.asarray(frame.jacobian) > 0.0)
 
 
-def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch() -> None:
+def _three_section_loft() -> TopoDS_Shape:
     wires = [
         bd.Wire.make_circle(
             1.0,
@@ -750,8 +751,43 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch() -> None:
             plane=bd.Plane(origin=(-0.1, 0.1, 1.7)),
         ),
     ]
+    return bd.Solid.make_loft(wires).wrapped
+
+
+def test_loft_cap_chart_closure_is_declared_import_repair_evidence() -> None:
+    from phydrax.interchange._cad import CadImportPolicy
+    from phydrax.interchange._cad_brep_text import decode_brep_text_bytes
+    from phydrax.interchange._cad_occt import _canonical_brep_text, _occt_modules
+
+    result = decode_brep_text_bytes(
+        _canonical_brep_text(_three_section_loft(), _occt_modules()),
+        CadImportPolicy(_SI_COORDINATES),
+        source_length_unit=_SI_COORDINATES.length_unit,
+        source_path="three-section-loft",
+    )
+    repairs = [
+        loss
+        for loss in result.report.losses
+        if loss.path.startswith("geometry.chart-closure:")
+    ]
+    assert repairs
+    for loss in repairs:
+        assert loss.direction == "import"
+        assert loss.category == "transformed"
+        assert not loss.changes_interpretation
+        fields = dict(
+            field.split("=", 1)
+            for field in loss.rationale.split(";")[0].split(", ")
+            if "=" in field and not field.startswith(("previous", "moved"))
+        )
+        assert int(fields["pole"]) >= 0
+        assert 0.0 < float(fields["chart-displacement"]) <= 1.0e-12
+        assert float(fields["certified-face-gap"]) <= float(fields["import-tolerance"])
+
+
+def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch() -> None:
     model = model_from_occt_shape(
-        bd.Solid.make_loft(wires).wrapped,
+        _three_section_loft(),
         coordinate_contract=_SI_COORDINATES,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1,

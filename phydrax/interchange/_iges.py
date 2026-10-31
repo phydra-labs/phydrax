@@ -83,7 +83,7 @@ from ..typing import checked, ConvertibleToArray
 from ._cad import (
     build_cad_export_report,
     cad_export_assembly_identifier_losses,
-    cad_import_synthesis_losses,
+    cad_import_stage_losses,
     CadExportPolicy,
     CadExportResult,
     CadImportPolicy,
@@ -2351,7 +2351,7 @@ def _import(resource: CadResource, policy: CadImportPolicy, /) -> CadImportResul
         )
         for entity_type, count in sorted(dropped.items())
     ]
-    losses.extend(cad_import_synthesis_losses(stage))
+    losses.extend(cad_import_stage_losses(stage))
     unit_name = _UNITS[file.unit_flag][0]
     resolution_qualifiers: dict[str, str] = {}
     if file.minimum_resolution is not None:
