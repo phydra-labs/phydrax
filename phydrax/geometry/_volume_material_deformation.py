@@ -12,7 +12,6 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
-from ..discretization._cell_geometry_transition_types import MaterialChartDeformation
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_enclosure import axes
@@ -354,8 +353,13 @@ def declare_material_reference(
     )
 
 
-class VolumeMaterialDeformation(MaterialChartDeformation, NonTrainableState):
-    """Endpoint-bound material deformation over one declared reference chart."""
+class VolumeMaterialDeformation(StrictModule, NonTrainableState):
+    """Endpoint-bound material deformation over one declared reference chart.
+
+    Structurally satisfies the runtime-checkable ``MaterialChartDeformation``
+    protocol; as a strict dataclass its exact field recipe is archived and cold
+    restores rebuild it through ``revalidate``.
+    """
 
     reference: MaterialReferenceDeclaration
     source_mesh: CellMesh
