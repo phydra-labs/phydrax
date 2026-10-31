@@ -9,7 +9,10 @@ import pytest
 import phydrax as phx
 from phydrax.discretization._cell_complex import PolygonalConnectivity
 from phydrax.discretization._cell_mesh import SimplicialConnectivity
-from phydrax.geometry._approximate_source_coverage import cad_material_sides
+from phydrax.geometry._approximate_source_coverage import (
+    _cad_chart_vertex_key,
+    cad_material_sides,
+)
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._meshing_domain import MeshingDomain
@@ -18,7 +21,11 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundaryPointWitness,
 )
 from phydrax.geometry._surface_source_support import SurfaceSourceCharts
-from phydrax.geometry.brep._constructors import brep_box, BRepTessellationPolicy
+from phydrax.geometry.brep._constructors import (
+    brep_box,
+    brep_sphere,
+    BRepTessellationPolicy,
+)
 from phydrax.geometry.brep._projection_contracts import brep_entity_id
 from phydrax.meshing._association import (
     GeometryAssociation,
@@ -825,3 +832,56 @@ def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnes
                 face_interior_vertices += 1
     # Refinement split the declared faces inside their planes.
     assert face_interior_vertices > 0
+
+
+def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> None:
+    # The sphere's chart has two collapsed pole sides and a seam whose u = 2*pi
+    # use is a native-period gauge of the u = 0 line. Pole fans leave chart
+    # slivers between their apex chart points; every pole chart point names the
+    # one pole corner, and seam points on either side name one curve point.
+    contract = phx.SpatialCoordinateContract.si()
+    model = brep_sphere(0.5, coordinate_contract=contract, source_id="cad-volume-sphere")
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.3),),
+        maximum_deviation=0.05,
+    )
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            NativeMeshingOptions(
+                "cad_tetrahedral",
+                volume_schedule=NativeVolumeSchedule(
+                    radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+                ),
+            )
+        )
+        .plan(model, specification)
+        .execute()
+    )
+
+    assert result.certification is not None and result.certification.passed
+    witness = result.certification.inputs.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    domain = MeshingDomain.from_brep(model)
+    (patch,) = range(len(domain.patches))
+    pole = Fraction.from_float(np.pi / 2.0)
+    two_pi = Fraction.from_float(2.0 * np.pi)
+    points = {
+        (point[0], point[1])
+        for row in range(witness.cell_global_ids.size)
+        for point in witness.source_parameter_chart(row)
+    }
+    for side in (-pole, pole):
+        pole_points = {point for point in points if point[1] == side}
+        assert len(pole_points) > 1
+        (label,) = {_cad_chart_vertex_key(domain, patch, point) for point in pole_points}
+        assert label[0] == "corner"
+    seam = [point for point in points if point[0] == two_pi and abs(point[1]) < pole]
+    assert seam
+    for point in seam:
+        label = _cad_chart_vertex_key(domain, patch, point)
+        assert label[0] == "curve"
+        assert label == _cad_chart_vertex_key(domain, patch, (Fraction(0), point[1]))
