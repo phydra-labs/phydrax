@@ -74,6 +74,8 @@ from .brep._patches import AbstractSurfacePatch, PlanePatch
 
 
 if TYPE_CHECKING:
+    from scipy.spatial import cKDTree
+
     from .._interpolation._bspline_extraction import (
         RationalBSplineSurfaceHessianEnclosure,
         RationalBSplineSurfaceSpan,
@@ -3099,6 +3101,12 @@ def _nearest_triangle_distance_upper(
     triangles: tuple[Triangle3, ...],
     center_values: np.ndarray,
     radius_values: np.ndarray,
+    center_tree: cKDTree,
+    center_scale: float,
+    radius_bound: float,
+    box_lower: np.ndarray,
+    box_upper: np.ndarray,
+    vertex_values: np.ndarray,
     /,
 ) -> Fraction:
     """Return ``min_T sqrt_up(d_T^2)`` over every triangle, pruning provable losers.
@@ -3112,14 +3120,39 @@ def _nearest_triangle_distance_upper(
     nearest-offset, and also of the few-ulp gap between ``sqrt_up`` and the
     exact minimum. A pruned triangle's ``sqrt_up`` therefore exceeds the
     survivors' minimum, which is the minimum over all triangles exactly.
+
+    Only centroids within ``m + slack + max_T r_T`` can survive; the centroid
+    tree returns that ball, widened by a relative ``1e-6`` that covers the few
+    ulps between its distances and the offsets. The same argument then prunes
+    with sharper bounds: the distance to a triangle's outward-rounded bounding
+    box bounds ``d_T`` below, and the nearest triangle vertex bounds the minimum
+    above, so far points keep only the triangles facing them.
     """
     from ..geometry._domain_boundary import _point_triangle_squared
 
-    offsets = np.linalg.norm(center_values - point_value, axis=1)
+    tree_nearest = float(center_tree.query(point_value)[0])
+    scale = center_scale + float(np.max(np.abs(point_value)))
+    reach = (
+        tree_nearest + 1.0e-9 * (tree_nearest + radius_bound + scale) + radius_bound
+    ) * (1.0 + 1.0e-6)
+    rows = np.sort(
+        np.asarray(center_tree.query_ball_point(point_value, reach), dtype=np.int64)
+    )
+    offsets = np.linalg.norm(center_values[rows] - point_value, axis=1)
     nearest = float(np.min(offsets))
-    scale = float(np.max(np.abs(center_values))) + float(np.max(np.abs(point_value)))
-    slack = 1.0e-9 * (nearest + float(np.max(radius_values)) + scale)
-    candidates = np.flatnonzero(offsets - radius_values <= nearest + slack)
+    slack = 1.0e-9 * (nearest + radius_bound + scale)
+    candidates = rows[offsets - radius_values[rows] <= nearest + slack]
+    vertex_nearest = float(
+        np.min(np.linalg.norm(vertex_values[candidates] - point_value, axis=2))
+    )
+    upper = min(nearest, vertex_nearest)
+    gaps = np.maximum(
+        np.maximum(
+            box_lower[candidates] - point_value, point_value - box_upper[candidates]
+        ),
+        0.0,
+    )
+    candidates = candidates[np.linalg.norm(gaps, axis=1) <= upper + slack]
     return min(
         fraction_sqrt_interval(_point_triangle_squared(point, triangles[row]))[1]
         for row in candidates.tolist()
@@ -3233,6 +3266,20 @@ def _analytic_profile_distance_evidence(
             "Analytic profile source samples do not reproduce a complete certified boundary cover."
         )
     radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
+    from scipy.spatial import cKDTree
+
+    center_tree = cKDTree(center_values)
+    center_scale = float(np.max(np.abs(center_values)))
+    radius_bound = float(np.max(radius_values))
+    vertex_values = np.asarray(
+        [
+            [[float(value) for value in vertex] for vertex in triangle]
+            for triangle in target_triangles
+        ],
+        dtype=np.float64,
+    )
+    box_lower = np.nextafter(np.min(vertex_values, axis=1), -np.inf)
+    box_upper = np.nextafter(np.max(vertex_values, axis=1), np.inf)
     reverse_upper = Fraction(0)
     for sample_row in range(sample_points.shape[0]):
         point = (
@@ -3248,6 +3295,12 @@ def _analytic_profile_distance_evidence(
             target_triangles,
             center_values,
             radius_values,
+            center_tree,
+            center_scale,
+            radius_bound,
+            box_lower,
+            box_upper,
+            vertex_values,
         )
         reverse_upper = max(
             reverse_upper,
