@@ -303,13 +303,13 @@ def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
     # From the axis point (0, 0, 1) the first ray direction meets the cylinder
     # exactly on the top rim (height 1 + sqrt(2) * sqrt(3) / sqrt(6) = 2); that
     # ray is not decisive, the next transversal direction decides containment.
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape(),
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1, angular_deflection=0.3
         ),
-    )
+    ).model
     projection = phx.geometry.prepare_brep_projection(model)
 
     def contains(points: Any) -> list[bool | None]:
