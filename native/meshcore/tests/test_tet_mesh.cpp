@@ -2615,6 +2615,238 @@ void declared_plane_admission_refuses_and_records_vertices() {
   phx_mc_tet_mesh_free(mesh);
 }
 
+// Vertices 101 and 211 are two copies of one orbit (211 = 101 + e_x). The edit
+// retriangulates the one cell that holds copy 101 but not copy 211, as a split
+// next to one face of a fundamental-domain lift does: the outside copy needs no
+// change, but it must still carry its exact edit member.
+void periodic_closure_accepts_edit_touching_one_orbit_copy() {
+  constexpr std::array<double, 15> points{
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+      0.0, 0.0, 1.0, 0.25, 0.25, 0.25};
+  constexpr std::array<int32_t, 16> tetrahedra{
+      1, 3, 2, 4, 0, 2, 3, 4, 0, 3, 1, 4, 0, 1, 2, 4};
+  constexpr std::array<int32_t, 12> faces{
+      1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  constexpr std::array<int32_t, 4> face_sources{0, 1, 2, 3};
+  constexpr std::array<int32_t, 4> regions{0, 0, 0, 0};
+  constexpr std::array<uint64_t, 5> vertex_ids{101, 211, 307, 409, 500};
+  constexpr std::array<uint64_t, 4> cell_ids{9001, 9002, 9003, 9004};
+  constexpr std::array<uint64_t, 4> facet_ids{5101, 5102, 5103, 5104};
+  constexpr std::array<int64_t, 4> lifted_counts{5, 10, 10, 4};
+  constexpr std::array<int64_t, 4> quotient_counts{4, 10, 10, 4};
+  constexpr std::array<int64_t, 5> vertex_windings{0, 1, 0, 0, 0};
+  constexpr std::array<int32_t, 5> vertex_orbits{0, 0, 1, 2, 3};
+  constexpr std::array<int32_t, 4> vertex_representatives{0, 2, 3, 4};
+  constexpr char text[] = "periodic-copy";
+
+  struct Bank {
+    std::array<uint64_t, 29> lifted_ids{};
+    std::array<uint64_t, 28> quotient_ids{};
+    std::array<int32_t, 29> lifted_to_quotient{};
+    std::array<int32_t, 29> orientation_signs{};
+    std::array<int64_t, 29> winding_shifts{};
+    std::array<int32_t, 71> corner_permutations{};
+    std::array<int32_t, 28> representative_rows{};
+    std::array<phx_mc_tet_periodic_entity_orbit_map, 4> maps{};
+    phx_mc_tet_periodic_identity_map_view view{};
+  };
+  const auto fill = [&](Bank& bank, const std::array<uint64_t, 4>& cells,
+                        const std::array<uint64_t, 4>& quotient_cell_ids) {
+    std::size_t lifted = 0, quotient = 0, corner = 0;
+    for (std::size_t dimension = 0; dimension < 4; ++dimension) {
+      phx_mc_tet_periodic_entity_orbit_map& map = bank.maps[dimension];
+      const std::size_t count = static_cast<std::size_t>(lifted_counts[dimension]);
+      const std::size_t arity = dimension + 1;
+      map.dimension = static_cast<int32_t>(dimension);
+      map.arity = static_cast<int32_t>(arity);
+      map.rank = 1;
+      map.lifted_offset = static_cast<int64_t>(lifted);
+      map.lifted_count = static_cast<int64_t>(count);
+      map.quotient_offset = static_cast<int64_t>(quotient);
+      map.quotient_count = quotient_counts[dimension];
+      map.winding_offset = static_cast<int64_t>(lifted);
+      map.corner_permutation_offset = static_cast<int64_t>(corner);
+      map.representative_offset = static_cast<int64_t>(quotient);
+      for (std::size_t row = 0; row < count; ++row) {
+        const bool vertex = dimension == 0;
+        bank.lifted_ids[lifted + row] = vertex ? vertex_ids[row]
+            : dimension == 3 ? cells[row] : 11001 + 100 * dimension + row;
+        bank.lifted_to_quotient[lifted + row] =
+            vertex ? vertex_orbits[row] : static_cast<int32_t>(row);
+        bank.orientation_signs[lifted + row] = 1;
+        bank.winding_shifts[lifted + row] = vertex ? vertex_windings[row] : 0;
+        for (std::size_t local = 0; local < arity; ++local) {
+          bank.corner_permutations[corner + row * arity + local] =
+              static_cast<int32_t>(local);
+        }
+      }
+      for (std::size_t row = 0; row < static_cast<std::size_t>(quotient_counts[dimension]);
+           ++row) {
+        bank.quotient_ids[quotient + row] = dimension == 3
+            ? quotient_cell_ids[row] : 30001 + 100 * dimension + row;
+        bank.representative_rows[quotient + row] =
+            dimension == 0 ? vertex_representatives[row] : static_cast<int32_t>(row);
+      }
+      lifted += count;
+      quotient += static_cast<std::size_t>(quotient_counts[dimension]);
+      corner += count * arity;
+    }
+    phx_mc_tet_periodic_identity_map_view& view = bank.view;
+    view.identity_bound = 1;
+    view.source_mesh_id = view.source_topology_id = view.lifted_topology_id = text;
+    view.periodic_topology_id = view.cell_entity_set_id = view.edge_entity_set_id = text;
+    view.source_mesh_id_length = view.source_topology_id_length =
+        view.lifted_topology_id_length = view.periodic_topology_id_length =
+            view.cell_entity_set_id_length = view.edge_entity_set_id_length =
+                sizeof(text) - 1;
+    view.entity_map_count = 4;
+    view.entity_maps = bank.maps.data();
+    view.entity_lifted_count = static_cast<int64_t>(bank.lifted_ids.size());
+    view.entity_lifted_ids = bank.lifted_ids.data();
+    view.entity_lifted_to_quotient = bank.lifted_to_quotient.data();
+    view.entity_orientation_signs = bank.orientation_signs.data();
+    view.entity_quotient_count = static_cast<int64_t>(bank.quotient_ids.size());
+    view.entity_quotient_ids = bank.quotient_ids.data();
+    view.entity_winding_count = static_cast<int64_t>(bank.winding_shifts.size());
+    view.entity_winding_shifts = bank.winding_shifts.data();
+    view.entity_corner_count = static_cast<int64_t>(bank.corner_permutations.size());
+    view.entity_corner_permutations = bank.corner_permutations.data();
+    view.entity_representative_count =
+        static_cast<int64_t>(bank.representative_rows.size());
+    view.entity_representative_rows = bank.representative_rows.data();
+  };
+  Bank source;
+  fill(source, cell_ids, {50001, 50002, 50003, 50004});
+
+  constexpr std::array<double, 12> identity{
+      1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0};
+  std::array<phx_mc_tet_periodic_vertex_member, 5> members{};
+  for (std::size_t row = 0; row < members.size(); ++row) {
+    members[row].vertex_id = vertex_ids[row];
+    members[row].winding[0] = vertex_windings[row];
+    for (std::size_t value = 0; value < identity.size(); ++value) {
+      members[row].representative_to_member[value] = identity[value];
+    }
+  }
+  members[1].representative_to_member[3] = 1.0;
+  std::array<phx_mc_tet_periodic_orbit, 4> orbits{};
+  for (std::size_t row = 0; row < orbits.size(); ++row) {
+    orbits[row].id = 20001 + row;
+    orbits[row].representative_vertex_id = vertex_ids[vertex_representatives[row]];
+    orbits[row].member_offset = row == 0 ? 0 : static_cast<int64_t>(row + 1);
+    orbits[row].member_count = row == 0 ? 2 : 1;
+  }
+  std::array<phx_mc_tet_periodic_quotient_cell, 4> quotient_cells{};
+  for (std::size_t row = 0; row < quotient_cells.size(); ++row) {
+    quotient_cells[row].orbit_id = quotient_cells[row].id = 50001 + row;
+    quotient_cells[row].region = regions[row];
+    quotient_cells[row].lifted_cell_offset = static_cast<int64_t>(row);
+    quotient_cells[row].lifted_cell_count = 1;
+    for (std::size_t corner = 0; corner < 4; ++corner) {
+      const std::size_t vertex = static_cast<std::size_t>(tetrahedra[4 * row + corner]);
+      quotient_cells[row].representative_vertices[corner] =
+          vertex_ids[vertex_representatives[vertex_orbits[vertex]]];
+      quotient_cells[row].winding[3 * corner] = vertex_windings[vertex];
+    }
+  }
+  phx_mc_tet_periodic_state_view state{};
+  state.identity_map = source.view;
+  state.periodic_orbit_count = static_cast<int64_t>(orbits.size());
+  state.periodic_orbits = orbits.data();
+  state.periodic_member_count = static_cast<int64_t>(members.size());
+  state.periodic_members = members.data();
+  state.periodic_quotient_cell_count = static_cast<int64_t>(quotient_cells.size());
+  state.periodic_quotient_cells = quotient_cells.data();
+  state.periodic_quotient_lifted_count = static_cast<int64_t>(cell_ids.size());
+  state.periodic_quotient_lifted_cell_ids = cell_ids.data();
+
+  phx_mc_tet_mesh* mesh = nullptr;
+  phx_mc_tet_mesh_create_request create{};
+  create.point_count = static_cast<int64_t>(points.size() / 3);
+  create.points = points.data();
+  create.vertex_ids = vertex_ids.data();
+  create.tetrahedron_count = static_cast<int64_t>(tetrahedra.size() / 4);
+  create.tetrahedra = tetrahedra.data();
+  create.tetrahedron_regions = regions.data();
+  create.cell_ids = cell_ids.data();
+  create.face_count = static_cast<int64_t>(faces.size() / 3);
+  create.faces = faces.data();
+  create.face_sources = face_sources.data();
+  create.facet_ids = facet_ids.data();
+  create.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_CONFORMING;
+  create.periodic_state = &state;
+  create.result = &mesh;
+  PHX_CHECK(phx_mc_tet_mesh_create(&create) == PHX_MC_OK);
+  PHX_CHECK(mesh != nullptr);
+  if (mesh == nullptr) return;
+
+  // Cell 9002 = (101, 307, 409, 500) is retriangulated under a fresh cell and
+  // quotient-cell identity; copy 211 lies outside the cavity.
+  Bank target;
+  fill(target, {9001, 9005, 9003, 9004}, {50001, 50005, 50003, 50004});
+  constexpr uint64_t removed_cell = 9002;
+  constexpr uint64_t removed_quotient = 50002;
+  constexpr uint64_t replacement_cell = 9005;
+  constexpr std::array<uint64_t, 4> replacement_vertices{101, 307, 409, 500};
+  constexpr std::array<int32_t, 4> replacement_sources{-1, -1, -1, 1};
+  constexpr int32_t replacement_region = 0;
+  constexpr std::array<int64_t, 2> ancestry_offsets{0, 1};
+  phx_mc_tet_periodic_quotient_cell replacement_quotient = quotient_cells[1];
+  replacement_quotient.orbit_id = replacement_quotient.id = 50005;
+  replacement_quotient.lifted_cell_offset = 0;
+  phx_mc_tet_periodic_edit_view periodic{};
+  periodic.periodic_member_count = static_cast<int64_t>(members.size());
+  periodic.periodic_members = members.data();
+  periodic.removed_quotient_cell_count = 1;
+  periodic.removed_quotient_cell_ids = &removed_quotient;
+  periodic.replacement_quotient_cell_count = 1;
+  periodic.replacement_quotient_cells = &replacement_quotient;
+  periodic.replacement_quotient_lifted_count = 1;
+  periodic.replacement_quotient_lifted_cell_ids = &replacement_cell;
+  periodic.target_identity_map = &target.view;
+  phx_mc_tet_mesh_edit_request edit{};
+  edit.expected_generation = 0;
+  edit.kind = PHX_MC_TET_EDIT_RECONNECT;
+  edit.periodic = &periodic;
+  edit.removed_cell_count = 1;
+  edit.removed_cell_ids = &removed_cell;
+  edit.replacement_cell_count = 1;
+  edit.replacement_cell_ids = &replacement_cell;
+  edit.replacement_cell_vertices = replacement_vertices.data();
+  edit.replacement_cell_facet_sources = replacement_sources.data();
+  edit.replacement_regions = &replacement_region;
+  edit.replacement_cell_ancestry_count = 1;
+  edit.replacement_cell_ancestry_offsets = ancestry_offsets.data();
+  edit.replacement_cell_ancestor_ids = &removed_cell;
+  int32_t edit_status = -1;
+
+  // The outside copy keeps its winding and exact image checks.
+  std::array<phx_mc_tet_periodic_vertex_member, 5> wrong_winding = members;
+  wrong_winding[1].winding[0] = 0;
+  periodic.periodic_members = wrong_winding.data();
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &edit, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_REJECTED_TOPOLOGY);
+  periodic.periodic_member_count = 4;
+  std::array<phx_mc_tet_periodic_vertex_member, 4> missing_copy{
+      members[0], members[2], members[3], members[4]};
+  periodic.periodic_members = missing_copy.data();
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &edit, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_REJECTED_TOPOLOGY);
+
+  periodic.periodic_member_count = static_cast<int64_t>(members.size());
+  periodic.periodic_members = members.data();
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &edit, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
+  uint64_t generation = 99;
+  int32_t identity_bound = -1;
+  int64_t ignored_lengths[4]{};
+  PHX_CHECK(phx_mc_tet_mesh_identity_sizes(
+                mesh, &generation, &identity_bound, &ignored_lengths[0],
+                &ignored_lengths[1], &ignored_lengths[2], &ignored_lengths[3]) == PHX_MC_OK);
+  PHX_CHECK(generation == 1);
+  phx_mc_tet_mesh_free(mesh);
+}
+
 }  // namespace
 
 int main() {
@@ -2632,5 +2864,6 @@ int main() {
   relocation_checks_incident_source_facets_atomically();
   exact_boundary_subface_coverage_rejects_gap_reversal_and_overlap();
   declared_plane_admission_refuses_and_records_vertices();
+  periodic_closure_accepts_edit_touching_one_orbit_copy();
   return phx::mc::test::finish("test_tet_mesh");
 }
