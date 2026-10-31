@@ -508,3 +508,27 @@ def test_interval_argmin_encloses_possible_first_minimum_indices() -> None:
 
     np.testing.assert_array_equal(lower, (1.0, 0.0, 0.0, 2.0))
     np.testing.assert_array_equal(upper, (1.0, 1.0, 0.0, 2.0))
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_interval_scan_unrolls_carry_and_stacked_outputs(reverse: bool) -> None:
+    def function(point: jax.Array) -> jax.Array:
+        def step(carry: jax.Array, scale: jax.Array) -> tuple[jax.Array, jax.Array]:
+            updated = carry * scale + point[1]
+            return updated, updated * updated
+
+        final, stacked = jax.lax.scan(
+            step, point[0], jnp.asarray((1.0, -2.0, 0.5)), reverse=reverse
+        )
+        return jnp.concatenate((final[None], stacked))
+
+    prepared = prepare_interval_function(function, 2, execution="host")
+    lower = np.asarray(((0.5, -0.25),), dtype=np.float64)
+    upper = np.asarray(((1.0, 0.25),), dtype=np.float64)
+    bounds = prepared.evaluate(lower, upper)
+    grid = np.stack(
+        np.meshgrid(np.linspace(0.5, 1.0, 9), np.linspace(-0.25, 0.25, 9)), -1
+    ).reshape(-1, 2)
+    values = np.asarray(jax.vmap(function)(jnp.asarray(grid)), dtype=np.float64)
+    assert np.all(bounds[0][0] <= values.min(axis=0))
+    assert np.all(bounds[1][0] >= values.max(axis=0))

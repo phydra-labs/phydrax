@@ -3308,6 +3308,26 @@ def _endpoint_binds_carrier(endpoint: object, carrier: AbstractCurve, /) -> bool
                     )
                 except (TypeError, ValueError, NotImplementedError):
                     return False
+            operand = (
+                endpoint.root.first
+                if endpoint.operand == "first"
+                else endpoint.root.second
+            )
+            if (
+                isinstance(operand, CurveTrimSegment)
+                and not operand.reversed
+                and not endpoint.affine_transforms
+                and _same_carrier_source(operand.curve, source)
+            ):
+                # A window-local root binds its carrier through the window's
+                # exact forward chart map, carried by the endpoint itself.
+                return Fraction.from_float(
+                    endpoint.affine_parameter_offset
+                ) == Fraction.from_float(operand.first) and Fraction.from_float(
+                    endpoint.affine_parameter_scale
+                ) == Fraction.from_float(operand.last) - Fraction.from_float(
+                    operand.first
+                )
             return _same_carrier_source(
                 endpoint.root.first, source
             ) or _same_carrier_source(endpoint.root.second, source)

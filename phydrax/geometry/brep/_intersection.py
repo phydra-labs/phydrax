@@ -801,6 +801,8 @@ class TrimIntersectionRoot(StrictModule):
     parameter_lower: Array
     parameter_upper: Array
     parameters: Array
+    enclosure_lower: Array
+    enclosure_upper: Array
     preconditioner: Array
     endpoint_witness: ConicRootLineEndpointWitness | None
     contraction: float = eqx.field(static=True)
@@ -879,8 +881,8 @@ class TrimIntersectionRoot(StrictModule):
                 _LinearTrimSourceBounds(first, second, True) if affine_sources else None
             ),
         )
-        params, _, _, preconditioner, contraction = _root_witness(
-            system, lower_input, upper_input
+        params, contracted_lower, contracted_upper, preconditioner, contraction = (
+            _root_witness(system, lower_input, upper_input)
         )
         self.first, self.second = first, second
         self.parameter_lower, self.parameter_upper = (
@@ -890,6 +892,10 @@ class TrimIntersectionRoot(StrictModule):
         self.parameters, self.preconditioner = (
             jnp.asarray(params),
             jnp.asarray(preconditioner),
+        )
+        self.enclosure_lower, self.enclosure_upper = (
+            jnp.asarray(contracted_lower),
+            jnp.asarray(contracted_upper),
         )
         self.endpoint_witness = endpoint_witness
         self.contraction = contraction
@@ -909,8 +915,14 @@ class TrimIntersectionRoot(StrictModule):
         )
 
     def parameter_enclosure(self) -> np.ndarray:
+        """Return the Krawczyk-contracted enclosure of the unique root.
+
+        ``parameter_lower``/``parameter_upper`` remain the authored isolation
+        box that proves uniqueness and names the root; the contracted box is a
+        deterministic function of that definition.
+        """
         return np.stack(
-            (np.asarray(self.parameter_lower), np.asarray(self.parameter_upper))
+            (np.asarray(self.enclosure_lower), np.asarray(self.enclosure_upper))
         )
 
 
@@ -1417,8 +1429,8 @@ def _joint_root_parameter_image(
             if not _curve_surface_root_images(root, images, regions, source_edge_lifts):
                 return None
         case TrimIntersectionRoot():
-            lower = np.asarray(root.parameter_lower, dtype=np.float64)
-            upper = np.asarray(root.parameter_upper, dtype=np.float64)
+            enclosure = root.parameter_enclosure()
+            lower, upper = enclosure[0], enclosure[1]
             if lower.shape != (2,) or upper.shape != (2,):
                 return None
             if not _trim_operand_surface_images(
@@ -2440,8 +2452,9 @@ class TrimRootEndpoint(StrictModule):
             lower = upper = self.root.parameter
         elif isinstance(self.root, TrimIntersectionRoot):
             column = 0 if self.operand == "first" else 1
-            lower = float(self.root.parameter_lower[column])
-            upper = float(self.root.parameter_upper[column])
+            enclosure = self.root.parameter_enclosure()
+            lower = float(enclosure[0, column])
+            upper = float(enclosure[1, column])
         elif isinstance(self.root, CurveSurfaceIntersectionRoot):
             if self.operand != "first":
                 raise ValueError(
