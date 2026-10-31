@@ -172,28 +172,34 @@ def interval_subtract(first: Interval, second: Interval, /) -> Interval:
         )
 
 
+def _zero_times_unbounded(left: HostArray, right: HostArray, /) -> NDArray:
+    left_, right_ = np.asarray(left), np.asarray(right)
+    return ((left_ == 0.0) & np.isinf(right_)) | (np.isinf(left_) & (right_ == 0.0))
+
+
 def interval_multiply(first: Interval, second: Interval, /) -> Interval:
+    # Interval endpoints bound real numbers; an infinite endpoint marks an
+    # unbounded side, never a member. An exact zero endpoint times it therefore
+    # contributes 0, as in IEEE 1788 set-based multiplication.
+    pairs = (
+        (first[0], second[0]),
+        (first[0], second[1]),
+        (first[1], second[0]),
+        (first[1], second[1]),
+    )
+    zero_unbounded = tuple(_zero_times_unbounded(left, right) for left, right in pairs)
     with np.errstate(invalid="ignore", over="ignore"):
-        products = (
-            np.multiply(first[0], second[0]),
-            np.multiply(first[0], second[1]),
-            np.multiply(first[1], second[0]),
-            np.multiply(first[1], second[1]),
+        products = tuple(
+            np.where(zero, 0.0, np.multiply(left, right))
+            for (left, right), zero in zip(pairs, zero_unbounded, strict=True)
         )
         lower = np.minimum.reduce(products)
         upper = np.maximum.reduce(products)
     invalid = np.logical_or.reduce(tuple(np.isnan(value) for value in products))
     exact = tuple(
-        _product_is_exact(left, right, product)
-        for (left, right), product in zip(
-            (
-                (first[0], second[0]),
-                (first[0], second[1]),
-                (first[1], second[0]),
-                (first[1], second[1]),
-            ),
-            products,
-            strict=True,
+        zero | _product_is_exact(left, right, product)
+        for (left, right), product, zero in zip(
+            pairs, products, zero_unbounded, strict=True
         )
     )
     lower_exact = ~invalid & np.logical_or.reduce(
