@@ -90,6 +90,23 @@ def test_pca_normals_are_oriented_and_reported_on_a_planar_cloud() -> None:
     assert not normals.normals.flags.writeable
 
 
+def test_terrain_of_three_samples_extrudes_one_closed_prism() -> None:
+    from phydrax.geometry.reconstruction import reconstruct_dem_region
+    from phydrax.geometry.simplicial._regions import MeshRegion
+
+    samples = np.asarray(((0.02, 0.04, 0.03), (0.05, 0.09, 0.06), (0.01, 0.03, 0.02)))
+    terrain = reconstruct_dem_region(
+        samples, recenter=False, tolerance=0.0, extrude_depth=0.75
+    )
+    assert isinstance(terrain.source, MeshRegion)
+    faces = np.asarray(terrain.source.faces)
+    assert faces.shape == (8, 3)
+    assert terrain.report.watertight and terrain.report.euler_characteristic == 2
+
+    with pytest.raises(ValueError, match="at least three samples"):
+        reconstruct_dem_region(samples[:2], recenter=False, extrude_depth=0.75)
+
+
 def test_open_cloud_completion_is_reported_as_inferred_not_observed() -> None:
     from phydrax.geometry.reconstruction import (
         reconstruct_surface_region,

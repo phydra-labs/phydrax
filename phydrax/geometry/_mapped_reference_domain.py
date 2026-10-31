@@ -240,6 +240,10 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
             "hexahedron",
             "prism",
             "pyramid",
+            "simplex:2",
+            "simplex:3",
+            "tensor:2",
+            "tensor:3",
         }
         elements, routes, _ = source_geometry.resolve(reference_mesh)
         coefficients = source_geometry.source_coordinates()

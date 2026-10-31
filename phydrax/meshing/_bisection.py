@@ -32,6 +32,7 @@ barycentric subdivision, whose simplices are pairwise reflected neighbors.
 from __future__ import annotations
 
 from enum import StrEnum
+from fractions import Fraction
 from itertools import combinations
 from typing import Any, final, NamedTuple
 
@@ -1495,6 +1496,49 @@ def _resolved_stencil(growth: _Growth, vertex_base: int, dimension: int, /) -> A
     return sources, weights
 
 
+def _exact_resolved_weights(
+    growth: _Growth, vertex_base: int, sources: np.ndarray, /
+) -> tuple[tuple[Fraction, ...], ...] | None:
+    """Exact rational stencil rows aligned with ``_resolved_stencil`` sources.
+
+    Every growth row is the average of its parents (edge midpoints, face or cell
+    centroids). Binary64 weights are exact only for power-of-two parent counts, so
+    exact rows are composed only when a barycentric centroid of three parents
+    occurs; otherwise ``None`` keeps the binary64 weights as the exact record.
+    """
+    parent_counts = np.sum(growth.parents >= 0, axis=1)
+    if np.all((parent_counts & (parent_counts - 1)) == 0):
+        return None
+    resolved: list[dict[int, Fraction]] = [{} for _ in range(growth.levels.size)]
+    for row in np.argsort(growth.levels, kind="stable").tolist():
+        parents = tuple(int(value) for value in growth.parents[row] if value >= 0)
+        share = Fraction(1, len(parents))
+        if any(
+            float(growth.weights[row, column]) != float(share)
+            for column in range(len(parents))
+        ):
+            raise ValueError("A bisection growth vertex is not its parents' average.")
+        combined: dict[int, Fraction] = {}
+        for parent in parents:
+            ancestry = (
+                resolved[parent - vertex_base]
+                if parent >= vertex_base
+                else {parent: Fraction(1)}
+            )
+            for source_vertex, weight in ancestry.items():
+                combined[source_vertex] = (
+                    combined.get(source_vertex, Fraction(0)) + share * weight
+                )
+        resolved[row] = combined
+    return tuple(
+        tuple(
+            Fraction(0) if int(source_vertex) < 0 else ancestry[int(source_vertex)]
+            for source_vertex in row_sources
+        )
+        for ancestry, row_sources in zip(resolved, sources, strict=True)
+    )
+
+
 def _global_vertices(compact: np.ndarray, source: _Source, next_vertex: int, /) -> Any:
     count = source.vertex_ids.size
     return np.where(
@@ -1750,6 +1794,16 @@ def _edit(
     # Removed new vertices keep their stencil for composition but relate nothing.
     stencil = (np.where(alive[count:, None], stencil[0], -1), stencil[1])
     coordinates, sources, weights, valid = _target_stencil(source, stencil, ordered)
+    exact_new = _exact_resolved_weights(growth, count, stencil[0])
+    source_row = (Fraction(1),) + (Fraction(0),) * dimension
+    exact_weights = (
+        None
+        if exact_new is None
+        else tuple(
+            source_row if row < count else exact_new[row - count]
+            for row in ordered.tolist()
+        )
+    )
     entity_tables = tuple(
         (
             np.searchsorted(source.vertex_ids, entity_keys(source.mesh, degree)),
@@ -1774,6 +1828,7 @@ def _edit(
         valid,
         _relations(source, start, cells, stencil, coarsening, entity_tables),
         prescribed,
+        stencil_exact_weights=exact_weights,
     )
     return edit, retired
 

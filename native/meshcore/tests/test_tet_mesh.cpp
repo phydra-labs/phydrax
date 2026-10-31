@@ -580,12 +580,15 @@ void persistent_create_snapshot_and_rejection() {
   }
   int64_t collapsed_vertices = 0;
   int64_t relocated_vertices = 0;
+  double score_quantum = 0.0;
   PHX_CHECK(phx_mc_tet_mesh_improve_quality(
                 mesh, refined_generation, identity_bound, source_id, sizeof(source_id) - 1,
                 source_revision, sizeof(source_revision) - 1, source_map_id,
                 sizeof(source_map_id) - 1, frame_id, sizeof(frame_id) - 1,
-                2.0, 0.0, 0.0, &edit_status, &run_status, &collapsed_vertices,
-                &relocated_vertices, &remaining_cells) == PHX_MC_OK);
+                2.0, 0.0, 0.0, 0, nullptr, &edit_status, &run_status, &inserted_vertices,
+                &collapsed_vertices, &relocated_vertices, &remaining_cells,
+                &score_quantum) == PHX_MC_OK);
+  PHX_CHECK(score_quantum == 0x1p-20);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   // Status and per-cell records agree: success exactly when no cell is unmet.
   PHX_CHECK((run_status == PHX_MC_OK && remaining_cells == 0) ||
@@ -1274,11 +1277,14 @@ void persistent_joint_quality_transition_preserves_identity() {
   int64_t collapsed = 0;
   int64_t relocated = 0;
   int64_t improve_unmet = 0;
+  double score_quantum = 0.0;
+  // No `sizes`: refinement's retained size field gates every improvement edit.
   PHX_CHECK(phx_mc_tet_mesh_improve_quality(
                 mesh, generation_before_quality, identity_bound, nullptr, 0,
-                nullptr, 0, nullptr, 0, nullptr, 0, 2.0, 10.0, 1.0e-12,
-                &edit_status, &run_status, &collapsed, &relocated,
-                &improve_unmet) == PHX_MC_OK);
+                nullptr, 0, nullptr, 0, nullptr, 0, 2.0, 10.0, 1.0e-12, 0, nullptr,
+                &edit_status, &run_status, &inserted, &collapsed, &relocated,
+                &improve_unmet, &score_quantum) == PHX_MC_OK);
+  PHX_CHECK(score_quantum == 0x1p-20);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   PHX_CHECK(run_status == PHX_MC_OK && improve_unmet == 0);
   std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> after_sizes{};

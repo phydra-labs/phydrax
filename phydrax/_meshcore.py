@@ -1038,6 +1038,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _F64,
             _F64,
             _F64,
+            _I64,
+            _P,
+            _P,
+            _P,
             _P,
             _P,
             _P,
@@ -2670,6 +2674,9 @@ class TetMeshRun(NamedTuple):
     collapsed_vertices: int
     relocated_vertices: int
     unmet_cells: int
+    # Improvement scores are floored to multiples of this quantum (2^-20), the
+    # acceptance grid that bounds accepted edits; None for refinement runs.
+    score_quantum: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -7507,9 +7514,30 @@ class TetMesh3D:
             )
             return TetMeshEditStatus(edit_status.value)
 
+    def _vertex_size_array(self, sizes: object | None) -> np.ndarray:
+        """Validated per-vertex size targets (snapshot order); empty for None."""
+        if sizes is None:
+            return np.empty((0,), dtype=np.float64)
+        size_array = _real_array(sizes, "sizes")
+        expected = np.empty((PHX_MC_TET_MESH_SNAPSHOT_SIZES,), dtype=np.int64)
+        _raise_for_call(
+            self._library["phx_mc_tet_mesh_snapshot_sizes"](
+                self._live(), expected.ctypes.data
+            ),
+            "tet_mesh_snapshot_sizes",
+        )
+        if size_array.shape != (int(expected[0]),):
+            raise ValueError("sizes must have one value per current mesh vertex.")
+        return size_array
+
     def refine(
         self, *, radius_edge_bound: float, sizes: object | None = None
     ) -> TetMeshRun:
+        """Circumcenter refinement to the radius-edge bound and size targets.
+
+        ``sizes`` (one circumradius target per current vertex, 0 for none) becomes
+        the mesh's retained size field; ``None`` keeps the retained field.
+        """
         radius_edge = finite_real_scalar(radius_edge_bound, "radius_edge_bound")
         with self._lock:
             identity = self._identity()
@@ -7519,19 +7547,7 @@ class TetMesh3D:
                 identity.source_map_id if identity.identity_bound else None,
                 identity.frame_id if identity.identity_bound else None,
             )
-            if sizes is None:
-                size_array = np.empty((0,), dtype=np.float64)
-            else:
-                size_array = _real_array(sizes, "sizes")
-                expected = np.empty((PHX_MC_TET_MESH_SNAPSHOT_SIZES,), dtype=np.int64)
-                _raise_for_call(
-                    self._library["phx_mc_tet_mesh_snapshot_sizes"](
-                        self._live(), expected.ctypes.data
-                    ),
-                    "tet_mesh_snapshot_sizes",
-                )
-                if size_array.shape != (int(expected[0]),):
-                    raise ValueError("sizes must have one value per current mesh vertex.")
+            size_array = self._vertex_size_array(sizes)
             edit_status, run_status = _I32(), _I32()
             inserted, unmet = _I64(), _I64()
             _raise_for_call(
@@ -7567,7 +7583,13 @@ class TetMesh3D:
         radius_edge_bound: float,
         min_dihedral_degrees: float,
         minimum_relative_determinant: float = 0.0,
+        sizes: object | None = None,
     ) -> TetMeshRun:
+        """Quality improvement with the size field as a hard gate for every edit.
+
+        ``sizes`` follows :meth:`refine` (``None`` keeps the retained field, e.g.
+        refinement's). The run reports its score quantum.
+        """
         radius_edge = finite_real_scalar(radius_edge_bound, "radius_edge_bound")
         minimum_angle = finite_real_scalar(min_dihedral_degrees, "min_dihedral_degrees")
         determinant_floor = finite_real_scalar(
@@ -7581,8 +7603,10 @@ class TetMesh3D:
                 identity.source_map_id if identity.identity_bound else None,
                 identity.frame_id if identity.identity_bound else None,
             )
+            size_array = self._vertex_size_array(sizes)
             edit_status, run_status = _I32(), _I32()
-            collapsed, relocated, unmet = _I64(), _I64(), _I64()
+            inserted, collapsed, relocated, unmet = _I64(), _I64(), _I64(), _I64()
+            score_quantum = _F64()
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_improve_quality"](
                     self._live(),
@@ -7594,21 +7618,26 @@ class TetMesh3D:
                     radius_edge,
                     minimum_angle,
                     determinant_floor,
+                    size_array.size,
+                    _tet_mesh_pointer(size_array),
                     ctypes.addressof(edit_status),
                     ctypes.addressof(run_status),
+                    ctypes.addressof(inserted),
                     ctypes.addressof(collapsed),
                     ctypes.addressof(relocated),
                     ctypes.addressof(unmet),
+                    ctypes.addressof(score_quantum),
                 ),
                 "tet_mesh_improve_quality",
             )
             return TetMeshRun(
                 TetMeshEditStatus(edit_status.value),
                 MeshcoreStatus(run_status.value),
-                0,
+                int(inserted.value),
                 int(collapsed.value),
                 int(relocated.value),
                 int(unmet.value),
+                float(score_quantum.value),
             )
 
     def close(self) -> None:

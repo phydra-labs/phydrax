@@ -17,6 +17,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                          std::int64_t& inserted_vertices,
                          std::int64_t& unmet_cells);
 
+// Circumradius size target of a cell from its corners' targets: their mean,
+// or +inf when any corner is unconstrained (target <= 0). Refinement and
+// improvement share this rule.
+double cell_size_target(const std::array<double, 4>& corner_sizes) noexcept;
+
 namespace geometry {
 struct TetrahedronShape {
   std::array<double, 3> circumcenter{};

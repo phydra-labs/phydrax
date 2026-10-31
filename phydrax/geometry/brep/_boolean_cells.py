@@ -44,6 +44,7 @@ from ._boolean_arrangement import (
 from ._boolean_coincidence import CoincidentFaceArc, CoincidentFaceOverlay
 from ._boolean_core import (
     affine_root_endpoint,
+    affine_transport_source,
     BRepBooleanFailure,
     chart_add,
     chart_parts,
@@ -961,9 +962,10 @@ def _arc_scalar_map(arc: Arc) -> tuple[ChartScalar, ChartScalar] | None:
             case NativePeriodEndpoint():
                 endpoints.append(root.exact_parameter)
             case ConicParameterEndpoint():
+                # A proved affine chart transport keeps its source parameter.
                 if root.parameter_exact is None or carrier_payload(
                     root.carrier
-                ) != carrier_payload(arc.trim.curve):
+                ) != carrier_payload(affine_transport_source(arc.trim.curve)):
                     return None
                 endpoints.append(root.parameter_exact)
             case TrimRootEndpoint() as endpoint:
@@ -1558,7 +1560,42 @@ def _exact_line_crossing(
         ):
             return False
         return s, t
-    return None
+    return _collinear_line_contact(rows, first, second)
+
+
+def _collinear_line_contact(
+    rows: list[tuple[Fraction, Fraction, Fraction]], first: Arc, second: Arc
+) -> tuple[Fraction, Fraction] | Literal[False] | None:
+    """Resolve rank-one line systems ``x * s - y * t == r`` exactly.
+
+    Parallel distinct carriers never meet. On one carrier the second parameter
+    maps affinely onto the first; disjoint ranges do not meet and ranges
+    touching at one parameter meet at that single endpoint. A positive-length
+    overlap is a coincident segment and stays with its owner.
+    """
+    pivot = next((row for row in rows if row[0]), None)
+    if pivot is None:
+        return None
+    pivot_x, pivot_y, pivot_r = pivot
+    if not pivot_y:
+        return None
+    if any(value * pivot_x != x * pivot_r for x, _y, value in rows):
+        return False
+    bounds = (
+        *_curve_parameter_interval(first.trim),
+        *_curve_parameter_interval(second.trim),
+    )
+    if not all(np.isfinite(bounds)):
+        return None
+    a_first, a_last, b_first, b_last = (Fraction(value) for value in bounds)
+    mapped = tuple((pivot_r + pivot_y * t) / pivot_x for t in (b_first, b_last))
+    lower = max(a_first, min(mapped))
+    upper = min(a_last, max(mapped))
+    if lower > upper:
+        return False
+    if lower < upper:
+        return None
+    return lower, (pivot_x * lower - pivot_r) / pivot_y
 
 
 def _add_exact_line_crossing(
@@ -1752,7 +1789,7 @@ def _transport_phase_cut(
                     raw_scale != 1
                     or raw_offset != 0
                     or carrier_payload(endpoint.carrier)
-                    != carrier_payload(target.trim.curve)
+                    != carrier_payload(affine_transport_source(target.trim.curve))
                 ):
                     return FaceCellUnresolved(
                         "conic overlap endpoint has no exact scalar parameter transport",
@@ -1765,9 +1802,10 @@ def _transport_phase_cut(
                 source_upper = Fraction.from_float(float(target.trim.last))
                 if not source_lower <= exact_parameter <= source_upper:
                     return None
+                # An affine chart transport keeps its source carrier's parameter.
                 endpoint = ConicParameterEndpoint(
                     endpoint.root,
-                    target.trim.curve,
+                    affine_transport_source(target.trim.curve),
                     exact_parameter,
                     endpoint.point_exact,
                 )
@@ -1860,6 +1898,9 @@ def _transport_phase_endpoints(
                     == resolve_node(cut.node, aliases)
                 ]
                 if same_node:
+                    _bind_same_node_cut(
+                        source, target, cut, factor, shift, same_node, cuts
+                    )
                     continue
                 transported = _transport_phase_cut(source, target, cut, factor, shift)
                 if transported is None:
@@ -1881,6 +1922,32 @@ def _transport_phase_endpoints(
                 cuts[target.token].append(transported)
     aliases = {node: resolve_node(node, aliases) for node in tuple(aliases)}
     return _PhaseCutTransport(aliases=aliases)
+
+
+def _bind_same_node_cut(
+    source: Arc,
+    target: Arc,
+    cut: Cut,
+    factor: Fraction,
+    shift: Fraction,
+    same_node: list[Cut],
+    cuts: dict[str, list[Cut]],
+) -> None:
+    """Attach a transported source root to an unbound cut at the same node.
+
+    A fixed chart crossing can reach a scalar-phase partner's root node before
+    phase transport; the transported root then binds that existing cut instead
+    of leaving a source-root vertex without its edge binding.
+    """
+    if cut.endpoint is None or any(other.endpoint is not None for other in same_node):
+        return
+    transported = _transport_phase_cut(source, target, cut, factor, shift)
+    if not isinstance(transported, Cut) or transported.endpoint is None:
+        return
+    target_cuts = cuts[target.token]
+    for index, other in enumerate(target_cuts):
+        if other in same_node and other.parameter == transported.parameter:
+            target_cuts[index] = replace(other, endpoint=transported.endpoint)
 
 
 def _quotient_workset(

@@ -1288,6 +1288,8 @@ def generate_plc_volume(
                 "tet_mesh_refine could not complete its native pass.",
             )
         refinement_unmet = _unmet_rows(state)
+        # Refinement retained `sizes` (interpolated to its inserted vertices) on
+        # the mesh; improvement gates every edit by that field.
         improvement = state.improve(
             radius_edge_bound=schedule.radius_edge_bound,
             min_dihedral_degrees=schedule.minimum_dihedral_degrees,

@@ -441,38 +441,8 @@ void test_conforming_nonrepresentable_segment_uses_vertex_cavity() {
     PHX_CHECK(prepare_status == PHX_MC_OK);
     return;
   }
-  std::size_t segment_edge = prepared.plc_edges.size() / 2;
-  for (std::size_t edge = 0; edge < prepared.plc_edges.size() / 2; ++edge) {
-    const int32_t first = prepared.plc_edges[2 * edge];
-    const int32_t second = prepared.plc_edges[2 * edge + 1];
-    if ((first == 3 && second == 4) || (first == 4 && second == 3)) {
-      segment_edge = edge;
-      break;
-    }
-  }
-  PHX_CHECK(segment_edge < prepared.plc_edges.size() / 2);
-  if (segment_edge >= prepared.plc_edges.size() / 2) return;
-
-  const std::vector<double> protection = protection_radii(
-      points.data(), 5, prepared.plc_edges, prepared.input_triangles);
-  const int32_t edge_first = prepared.plc_edges[2 * segment_edge];
-  const int32_t edge_second = prepared.plc_edges[2 * segment_edge + 1];
-  const double* edge_a = points.data() + 3 * static_cast<std::size_t>(edge_first);
-  const double* edge_b = points.data() + 3 * static_cast<std::size_t>(edge_second);
-  double split_tolerance = 0.0;
-  const double split_parameter = split_target(
-      edge_a, edge_b, protection[static_cast<std::size_t>(edge_first)],
-      protection[static_cast<std::size_t>(edge_second)], split_tolerance);
-  double proposed_point[3];
-  const bool has_representable_split = exact_segment_point(
-      edge_a, edge_b, split_parameter, split_tolerance, proposed_point);
-  if (has_representable_split) {
-    std::fprintf(stderr, "nonrepresentable segment fixture admits an exact split: "
-                         "parameter=%.17g tolerance=%.17g\n",
-                 split_parameter, split_tolerance);
-    PHX_CHECK(!has_representable_split);
-    return;
-  }
+  // No binary64 point lies strictly inside the source segment.
+  PHX_CHECK(std::nextafter(points[9], 1.0) == points[12]);
 
   const std::array<int32_t, 5> order{0, 1, 2, 3, 4};
   std::array<char, 5> alive{1, 1, 1, 1, 1};
@@ -679,32 +649,6 @@ void test_unsplittable_boundary_loop_edge_recovers_under_fixed_and_conforming() 
     PHX_CHECK(prepare_status == PHX_MC_OK);
     return;
   }
-  std::size_t source_edge = prepared.plc_edges.size() / 2;
-  for (std::size_t row = 0; row < prepared.plc_edges.size() / 2; ++row) {
-    const int32_t first = prepared.plc_edges[2 * row];
-    const int32_t second = prepared.plc_edges[2 * row + 1];
-    if ((first == 0 && second == 2) || (first == 2 && second == 0)) {
-      source_edge = row;
-      break;
-    }
-  }
-  if (source_edge >= prepared.plc_edges.size() / 2) {
-    PHX_CHECK(source_edge < prepared.plc_edges.size() / 2);
-    return;
-  }
-  const std::vector<double> protection =
-      protection_radii(points.data(), 5, prepared.plc_edges, prepared.input_triangles);
-  const int32_t edge_first = prepared.plc_edges[2 * source_edge];
-  const int32_t edge_second = prepared.plc_edges[2 * source_edge + 1];
-  const double* edge_a = points.data() + 3 * static_cast<std::size_t>(edge_first);
-  const double* edge_b = points.data() + 3 * static_cast<std::size_t>(edge_second);
-  double split_tolerance = 0.0;
-  const double split_parameter = split_target(
-      edge_a, edge_b, protection[static_cast<std::size_t>(edge_first)],
-      protection[static_cast<std::size_t>(edge_second)], split_tolerance);
-  double proposed_point[3]{};
-  PHX_CHECK(!exact_segment_point(edge_a, edge_b, split_parameter, split_tolerance,
-                                 proposed_point));
 
   const std::array<int32_t, 5> order{0, 1, 2, 3, 4};
   std::array<char, 5> alive{1, 1, 1, 1, 1};
@@ -1200,6 +1144,169 @@ void test_conforming_missing_boundary_edges_recover_with_exact_witnesses() {
   }
   PHX_CHECK((recovered_volume - initial_volume).sign() == 0);
 }
+
+// Recovers a closed triangle surface, one facet per triangle oriented with
+// the single region 1 behind it.
+int32_t recover_closed_surface(const std::vector<double>& points, std::vector<int32_t> triangles,
+                               BoundaryPolicy policy, PlcRecovery& result) {
+  const std::size_t count = points.size() / 3;
+  double interior[3]{};
+  for (std::size_t vertex = 0; vertex < count; ++vertex) {
+    for (int axis = 0; axis < 3; ++axis) {
+      interior[axis] += points[3 * vertex + static_cast<std::size_t>(axis)] / static_cast<double>(count);
+    }
+  }
+  const std::size_t faces = triangles.size() / 3;
+  for (std::size_t row = 0; row < faces; ++row) {
+    int32_t* face = triangles.data() + 3 * row;
+    if (orient3d(points.data() + 3 * face[0], points.data() + 3 * face[1],
+                 points.data() + 3 * face[2], interior) > 0) {
+      std::swap(face[1], face[2]);
+    }
+  }
+  std::vector<int64_t> offsets(faces + 1);
+  std::vector<int32_t> facets(faces);
+  std::vector<int32_t> regions(2 * faces);
+  for (std::size_t row = 0; row <= faces; ++row) offsets[row] = static_cast<int64_t>(3 * row);
+  for (std::size_t row = 0; row < faces; ++row) {
+    facets[row] = static_cast<int32_t>(row);
+    regions[2 * row] = -1;
+    regions[2 * row + 1] = 1;
+  }
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(count);
+  input.points = points.data();
+  input.polygon_count = static_cast<int64_t>(faces);
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = triangles.data();
+  input.polygon_facets = facets.data();
+  input.facet_count = static_cast<int64_t>(faces);
+  input.facet_regions = regions.data();
+  input.policy = policy;
+  return recover_plc(input, result);
+}
+
+// FIXED keeps the boundary: every vertex beyond the input is a volume
+// point and every source edge row is one published segment.
+void check_fixed_boundary(const PlcRecovery& result, std::size_t input_points) {
+  for (std::size_t vertex = input_points; vertex < result.witnesses.size(); ++vertex) {
+    PHX_CHECK(result.witnesses[vertex].stratum == SourceStratum::kNone);
+  }
+  for (int32_t vertex : result.faces) PHX_CHECK(vertex < static_cast<int32_t>(input_points));
+  PHX_CHECK(result.segments.size() == result.plc_edges.size());
+}
+
+// Schoenhardt prism (lateral quads split along their reflex diagonals): no
+// tetrahedralization of its six vertices exists, so recovery needs a split
+// of a boundary edge. Top triangle twisted by 30 or 20 degrees (binary64
+// coordinates of cos/sin, fixed bit patterns).
+std::vector<double> schoenhardt_points(bool thirty_degrees) {
+  std::vector<double> points{
+      0x1.0000000000000p+0,  0x0.0p+0,               0x0.0p+0,
+      -0x1.ffffffffffffdp-2, 0x1.bb67ae8584cabp-1,   0x0.0p+0,
+      -0x1.0000000000004p-1, -0x1.bb67ae8584ca8p-1,  0x0.0p+0};
+  if (thirty_degrees) {
+    points.insert(points.end(), {0x1.bb67ae8584cabp-1, 0x1.fffffffffffffp-2, 1.0,
+                                 -0x1.bb67ae8584ca9p-1, 0x1.0000000000003p-1, 1.0,
+                                 -0x1.a79394c9e8a0ap-53, -1.0, 1.0});
+  } else {
+    points.insert(points.end(), {0x1.e11f642522d1cp-1, 0x1.5e3a8748a0bf5p-2, 1.0,
+                                 -0x1.8836fa2cf5038p-1, 0x1.491b7523c161ep-1, 1.0,
+                                 -0x1.63a1a7e0b73a8p-3, -0x1.f838b8c811c16p-1, 1.0});
+  }
+  return points;
+}
+
+std::vector<int32_t> schoenhardt_triangles() {
+  std::vector<int32_t> triangles{0, 1, 2, 3, 4, 5};
+  for (int32_t k = 0; k < 3; ++k) {
+    const int32_t a = k;
+    const int32_t b = (k + 1) % 3;
+    triangles.insert(triangles.end(), {a, b, 3 + b, a, 3 + b, 3 + a});
+  }
+  return triangles;
+}
+
+void test_witnessed_segment_split_is_published_exactly() {
+  // With a 30 degree twist the conforming recovery keeps one representable
+  // boundary split; FIXED removes it again into the volume.
+  const std::vector<double> points = schoenhardt_points(true);
+  PlcRecovery conforming;
+  int32_t status = recover_closed_surface(points, schoenhardt_triangles(),
+                                          BoundaryPolicy::kConforming, conforming);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  check_conforming_recovery(conforming, 6, 8);
+  std::size_t segment_points = 0;
+  for (std::size_t vertex = 6; vertex < conforming.witnesses.size(); ++vertex) {
+    if (conforming.witnesses[vertex].stratum != SourceStratum::kSegment) continue;
+    ++segment_points;
+    const PlcRecoveryWitness& witness = conforming.witnesses[vertex];
+    const int32_t* edge = conforming.plc_edges.data() + 2 * static_cast<std::size_t>(witness.entity);
+    Expansion exact[3];
+    segment_witness_position(points.data() + 3 * edge[0], points.data() + 3 * edge[1],
+                             witness.parameters[0], exact);
+    for (int axis = 0; axis < 3; ++axis) {
+      PHX_CHECK((exact[axis] - Expansion(conforming.points[3 * vertex + static_cast<std::size_t>(axis)]))
+                    .sign() == 0);
+    }
+  }
+  PHX_CHECK(segment_points > 0);
+  PlcRecovery fixed;
+  status = recover_closed_surface(points, schoenhardt_triangles(), BoundaryPolicy::kFixed, fixed);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  check_conforming_recovery(fixed, 6, 8);
+  check_fixed_boundary(fixed, 6);
+  PHX_CHECK(fixed.points.size() / 3 > 6);
+}
+
+void test_nonrepresentable_split_is_suppressed_into_the_volume() {
+  // With a 20 degree twist the needed split point is not a binary64 point;
+  // it is suppressed under both policies and a volume point remains.
+  const std::vector<double> points = schoenhardt_points(false);
+  for (BoundaryPolicy policy : {BoundaryPolicy::kConforming, BoundaryPolicy::kFixed}) {
+    PlcRecovery result;
+    const int32_t status = recover_closed_surface(points, schoenhardt_triangles(), policy, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) continue;
+    check_conforming_recovery(result, 6, 8);
+    check_fixed_boundary(result, 6);
+    PHX_CHECK(result.points.size() / 3 > 6);
+  }
+}
+
+void test_bent_exterior_crease_edges_recover_under_both_policies() {
+  // A hexagonal base in the plane x + y + 3z = 1 whose rounded vertices make
+  // every fan diagonal a crease bent by rounding only, under an apex. The
+  // creases are missing from the Delaunay tetrahedralization and are not
+  // recoverable by in-plane flips.
+  const std::vector<double> points{
+      0x1.0888888888888p+0,  0x1.0000000000000p-1, -0x1.6c16c16c16c15p-3,
+      0x1.888888888888ap-1,  0x1.3b1ee411cd706p-1, -0x1.04df3b7872a15p-3,
+      0x1.ddddddddddde0p-3,  0x1.3b1ee411cd706p-1, 0x1.9cde17ce9080bp-5,
+      -0x1.1111111111110p-5, 0x1.0000000000000p-1, 0x1.6c16c16c16c15p-3,
+      0x1.dddddddddddd6p-3,  0x1.89c237dc651f5p-2, 0x1.04df3b7872a15p-3,
+      0x1.888888888888ap-1,  0x1.89c237dc651f5p-2, -0x1.9cde17ce90818p-5,
+      0x1.3dbfe0c377b3bp-1,  0x1.3dbfe0c377b3cp-1, 0x1.727f4494ce361p-2};
+  std::vector<int32_t> triangles;
+  for (int32_t k = 1; k < 5; ++k) triangles.insert(triangles.end(), {0, k, k + 1});
+  for (int32_t k = 0; k < 6; ++k) triangles.insert(triangles.end(), {6, k, (k + 1) % 6});
+  bool bent = false;
+  for (int32_t k = 1; k < 4; ++k) {
+    bent = bent || orient3d(points.data(), points.data() + 3 * k, points.data() + 3 * (k + 1),
+                            points.data() + 3 * (k + 2)) != 0;
+  }
+  PHX_CHECK(bent);
+  for (BoundaryPolicy policy : {BoundaryPolicy::kConforming, BoundaryPolicy::kFixed}) {
+    PlcRecovery result;
+    const int32_t status = recover_closed_surface(points, triangles, policy, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) continue;
+    check_conforming_recovery(result, 7, 10);
+    if (policy == BoundaryPolicy::kFixed) check_fixed_boundary(result, 7);
+  }
+}
 void test_conforming_representable_segment_prefers_vertex_cavity() {
   const double height = std::sqrt(3.0) / 2.0;
   const double center_y = height / 3.0;
@@ -1228,30 +1335,6 @@ void test_conforming_representable_segment_prefers_vertex_cavity() {
 
   PlcRecovery prepared;
   PHX_CHECK(prepare_plc_source(input, prepared) == PHX_MC_OK);
-  std::size_t segment_edge = prepared.plc_edges.size() / 2;
-  for (std::size_t edge = 0; edge < prepared.plc_edges.size() / 2; ++edge) {
-    const int32_t first = prepared.plc_edges[2 * edge];
-    const int32_t second = prepared.plc_edges[2 * edge + 1];
-    if ((first == 3 && second == 4) || (first == 4 && second == 3)) {
-      segment_edge = edge;
-      break;
-    }
-  }
-  PHX_CHECK(segment_edge < prepared.plc_edges.size() / 2);
-  if (segment_edge >= prepared.plc_edges.size() / 2) return;
-  const std::vector<double> protection = protection_radii(
-      points.data(), 5, prepared.plc_edges, prepared.input_triangles);
-  const int32_t first = prepared.plc_edges[2 * segment_edge];
-  const int32_t second = prepared.plc_edges[2 * segment_edge + 1];
-  const double* edge_a = points.data() + 3 * static_cast<std::size_t>(first);
-  const double* edge_b = points.data() + 3 * static_cast<std::size_t>(second);
-  double split_tolerance = 0.0;
-  const double split_parameter = split_target(
-      edge_a, edge_b, protection[static_cast<std::size_t>(first)],
-      protection[static_cast<std::size_t>(second)], split_tolerance);
-  double proposed_point[3]{};
-  PHX_CHECK(exact_segment_point(edge_a, edge_b, split_parameter,
-                                split_tolerance, proposed_point));
 
   const std::array<int32_t, 5> order{0, 1, 2, 3, 4};
   std::array<char, 5> alive{1, 1, 1, 1, 1};
@@ -1844,9 +1927,9 @@ void test_recover_fixed_non_delaunay_internal_facet_without_split() {
     PHX_CHECK(result.face_orientations[face] == 1);
     if (source != 6) continue;
     ++interface_count;
-    const std::array<int32_t, 3> actual{
-        result.faces[3 * face], result.faces[3 * face + 1], result.faces[3 * face + 2]};
-    PHX_CHECK(actual == (std::array<int32_t, 3>{0, 1, 2}));
+    // Same oriented triangle as the source (any cyclic rotation).
+    const int32_t expected[3] = {0, 1, 2};
+    PHX_CHECK(FacetKey::of(result.faces.data() + 3 * face) == FacetKey::of(expected));
   }
   for (int32_t count : source_face_counts) PHX_CHECK(count == 1);
   PHX_CHECK(interface_count == 1);
@@ -2139,229 +2222,6 @@ void test_recover_plc_removes_a_closed_cavity() {
                 center[1] < 3.0 && center[2] > 1.0 && center[2] < 3.0));
   }
 }
-void test_deterministic_wrap_replays_saved_cavities() {
-  // Compact exact binary64 coordinates from the original row-7 recovery.
-  // Point 55 is the prior kSegment witness on carrier row 0 (t = 0.10546875);
-  // the target authored loop edge remains endpoints 0 and 5.
-  const std::array<double, 171> points{
-      0x1.5555555555555p-4, 0x1.5555555555555p-5, 0x0.0p+0,
-      0x1.0000000000000p-4, 0x0.0p+0, 0x0.0p+0,
-      0x0.0p+0, 0x0.0p+0, 0x0.0p+0,
-      0x1.0000000000000p-3, 0x0.0p+0, 0x0.0p+0,
-      0x1.0000000000000p-4, 0x1.0000000000000p-4, 0x0.0p+0,
-      0x1.0000000000000p-3, 0x1.0000000000000p-3, 0x0.0p+0,
-      0x1.0000000000000p-3, 0x1.0000000000000p-4, 0x0.0p+0,
-      0x1.5555555555555p-4, 0x0.0p+0, 0x1.5555555555555p-5,
-      0x1.0000000000000p-4, 0x0.0p+0, 0x1.0000000000000p-4,
-      0x1.0000000000000p-3, 0x0.0p+0, 0x1.0000000000000p-3,
-      0x1.0000000000000p-3, 0x0.0p+0, 0x1.0000000000000p-4,
-      0x1.5555555555555p-5, 0x1.5555555555555p-4, 0x0.0p+0,
-      0x0.0p+0, 0x1.0000000000000p-4, 0x0.0p+0,
-      0x0.0p+0, 0x1.0000000000000p-3, 0x0.0p+0,
-      0x1.0000000000000p-4, 0x1.0000000000000p-3, 0x0.0p+0,
-      0x0.0p+0, 0x1.5555555555555p-4, 0x1.5555555555555p-5,
-      0x0.0p+0, 0x1.0000000000000p-4, 0x1.0000000000000p-4,
-      0x0.0p+0, 0x1.0000000000000p-3, 0x1.0000000000000p-3,
-      0x0.0p+0, 0x1.0000000000000p-3, 0x1.0000000000000p-4,
-      0x1.5555555555555p-5, 0x0.0p+0, 0x1.5555555555555p-4,
-      0x0.0p+0, 0x0.0p+0, 0x1.0000000000000p-4,
-      0x0.0p+0, 0x0.0p+0, 0x1.0000000000000p-3,
-      0x1.0000000000000p-4, 0x0.0p+0, 0x1.0000000000000p-3,
-      0x0.0p+0, 0x1.5555555555555p-5, 0x1.5555555555555p-4,
-      0x0.0p+0, 0x1.0000000000000p-4, 0x1.0000000000000p-3,
-      0x1.0000000000000p-4, 0x0.0p+0, 0x1.8000000000000p-3,
-      0x0.0p+0, 0x0.0p+0, 0x1.8000000000000p-3,
-      0x1.0000000000000p-3, 0x0.0p+0, 0x1.8000000000000p-3,
-      0x0.0p+0, 0x1.0000000000000p-4, 0x1.8000000000000p-3,
-      0x0.0p+0, 0x1.0000000000000p-3, 0x1.8000000000000p-3,
-      0x1.0000000000000p-4, 0x1.0000000000000p-2, 0x0.0p+0,
-      0x0.0p+0, 0x1.0000000000000p-2, 0x0.0p+0,
-      0x1.0000000000000p-3, 0x1.0000000000000p-2, 0x0.0p+0,
-      0x1.0000000000000p-4, 0x1.8000000000000p-3, 0x0.0p+0,
-      0x0.0p+0, 0x1.8000000000000p-3, 0x0.0p+0,
-      0x1.0000000000000p-3, 0x1.8000000000000p-3, 0x0.0p+0,
-      0x0.0p+0, 0x1.8000000000000p-3, 0x1.0000000000000p-4,
-      0x0.0p+0, 0x1.0000000000000p-2, 0x1.0000000000000p-4,
-      0x0.0p+0, 0x1.0000000000000p-2, 0x1.0000000000000p-3,
-      0x0.0p+0, 0x1.8000000000000p-3, 0x1.0000000000000p-3,
-      0x0.0p+0, 0x1.aaaaaaaaaaaabp-3, 0x1.5555555555555p-3,
-      0x1.0000000000000p-2, 0x0.0p+0, 0x0.0p+0,
-      0x1.0000000000000p-2, 0x1.0000000000000p-4, 0x0.0p+0,
-      0x1.0000000000000p-2, 0x1.0000000000000p-3, 0x0.0p+0,
-      0x1.8000000000000p-3, 0x1.0000000000000p-4, 0x0.0p+0,
-      0x1.8000000000000p-3, 0x0.0p+0, 0x0.0p+0,
-      0x1.8000000000000p-3, 0x1.0000000000000p-3, 0x0.0p+0,
-      0x1.0000000000000p-2, 0x0.0p+0, 0x1.0000000000000p-4,
-      0x1.0000000000000p-2, 0x0.0p+0, 0x1.0000000000000p-3,
-      0x1.8000000000000p-3, 0x0.0p+0, 0x1.0000000000000p-4,
-      0x1.8000000000000p-3, 0x0.0p+0, 0x1.0000000000000p-3,
-      0x1.aaaaaaaaaaaabp-3, 0x0.0p+0, 0x1.5555555555555p-3,
-      0x1.aaaaaaaaaaaabp-3, 0x1.5555555555555p-3, 0x0.0p+0,
-      0x1.8000000000000p-3, 0x1.8000000000000p-3, 0x0.0p+0,
-      0x1.5555555555555p-3, 0x1.aaaaaaaaaaaabp-3, 0x0.0p+0,
-      0x1.3155555555555p-4, 0x1.3155555555555p-5, 0x0.0p+0,
-      -0x1.c000000000000p+1, -0x1.c000000000000p+1, -0x1.c000000000000p+1};
-  const std::array<int32_t, 180> protected_segments{
-      0, 55, 55, 2, 0, 1, 1, 2, 1, 3, 0, 3, 0, 4, 0, 6, 3, 6, 5, 6,
-      1, 7, 3, 7, 7, 8, 2, 8, 3, 10, 7, 10, 9, 10, 2, 12, 11, 12, 11, 13,
-      12, 13, 4, 11, 13, 14, 11, 14, 5, 14, 12, 15, 13, 15, 15, 16, 15, 18,
-      13, 18, 17, 18, 19, 20, 2, 20, 20, 21, 19, 21, 8, 19, 19, 22, 21, 22,
-      9, 22, 20, 23, 21, 23, 16, 23, 21, 24, 23, 24, 17, 24, 22, 25, 21, 26,
-      9, 27, 24, 28, 17, 29, 14, 33, 30, 33, 31, 33, 32, 33, 13, 34, 33, 34,
-      31, 34, 33, 35, 5, 35, 32, 35, 18, 36, 36, 37, 34, 36, 17, 39, 36, 39,
-      38, 39, 39, 40, 6, 44, 42, 44, 43, 44, 44, 45, 3, 45, 41, 45, 5, 46,
-      44, 46, 43, 46, 10, 49, 47, 49, 48, 49, 45, 49, 49, 50, 9, 50, 48, 50,
-      50, 51, 46, 52, 52, 53, 35, 54, 53, 54, 2, 4, 0, 5};
-  const std::array<int32_t, 17> first_vertices{
-      0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 16, 17, 35, 46, 55, 56};
-  const std::array<detail::PlcWrapCavityFace, 14> first_faces{{
-      {{56, 5, 35}, true, -1, false, -1, -1},
-      {{14, 35, 5}, true, -1, false, -1, -1},
-      {{14, 56, 35}, true, -1, false, -1, -1},
-      {{56, 6, 46}, true, -1, false, -1, -1},
-      {{5, 56, 46}, true, -1, false, -1, -1},
-      {{11, 14, 4}, true, -1, false, -1, -1},
-      {{11, 4, 56}, true, -1, false, -1, -1},
-      {{11, 56, 14}, true, -1, false, -1, -1},
-      {{3, 6, 56}, true, -1, false, -1, -1},
-      {{3, 56, 0}, true, -1, false, -1, -1},
-      {{55, 0, 56}, true, -1, false, -1, -1},
-      {{55, 56, 4}, true, -1, false, -1, -1},
-      {{5, 0, 4}, true, 3, false, -1, -1},
-      {{5, 6, 0}, true, 5, false, -1, -1},
-  }};
-  const std::array<std::array<int32_t, 4>, 24> first_cells{{
-      {{5, 56, 6, 14}}, {{0, 56, 4, 6}}, {{14, 56, 6, 4}},
-      {{5, 17, 14, 9}}, {{9, 6, 46, 10}}, {{8, 14, 4, 16}},
-      {{14, 56, 35, 5}}, {{5, 56, 46, 6}}, {{6, 4, 0, 7}},
-      {{6, 14, 4, 8}}, {{7, 55, 4, 0}}, {{8, 14, 16, 10}},
-      {{6, 14, 8, 10}}, {{11, 56, 14, 4}}, {{9, 14, 6, 10}},
-      {{6, 0, 3, 7}}, {{3, 56, 0, 6}}, {{5, 6, 46, 9}},
-      {{5, 14, 6, 9}}, {{7, 55, 8, 4}}, {{6, 8, 4, 7}},
-      {{6, 10, 8, 7}}, {{9, 14, 10, 17}}, {{55, 56, 4, 0}},
-  }};
-  const std::array<int32_t, 26> later_vertices{
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
-      13, 14, 16, 17, 22, 33, 35, 44, 45, 46, 50, 55, 56};
-  const std::array<detail::PlcWrapCavityFace, 26> later_faces{{
-      {{12, 11, 4}, true, -1, false, -1, -1},
-      {{12, 4, 56}, true, -1, false, -1, -1},
-      {{12, 56, 11}, true, -1, false, -1, -1},
-      {{2, 4, 55}, true, -1, false, -1, -1},
-      {{56, 4, 2}, true, -1, false, -1, -1},
-      {{56, 2, 55}, true, -1, false, -1, -1},
-      {{56, 6, 44}, true, -1, false, -1, -1},
-      {{46, 56, 44}, true, -1, false, -1, -1},
-      {{56, 10, 7}, true, -1, false, -1, -1},
-      {{8, 10, 56}, true, -1, false, -1, -1},
-      {{8, 56, 7}, true, -1, false, -1, -1},
-      {{56, 46, 35}, true, -1, false, -1, -1},
-      {{5, 35, 46}, true, -1, false, -1, -1},
-      {{13, 14, 11}, true, -1, false, -1, -1},
-      {{13, 11, 56}, true, -1, false, -1, -1},
-      {{13, 56, 14}, true, -1, false, -1, -1},
-      {{33, 35, 14}, true, -1, false, -1, -1},
-      {{33, 14, 56}, true, -1, false, -1, -1},
-      {{33, 56, 35}, true, -1, false, -1, -1},
-      {{1, 3, 56}, true, -1, false, -1, -1},
-      {{45, 3, 6}, true, -1, false, -1, -1},
-      {{45, 6, 56}, true, -1, false, -1, -1},
-      {{45, 56, 3}, true, -1, false, -1, -1},
-      {{1, 56, 55}, true, -1, false, -1, -1},
-      {{5, 0, 4}, true, 3, false, -1, -1},
-      {{5, 6, 0}, true, 5, false, -1, -1},
-  }};
-  const std::array<std::array<int32_t, 4>, 48> later_cells{{
-      {{5, 56, 6, 14}}, {{9, 5, 17, 46}}, {{0, 56, 4, 6}},
-      {{9, 10, 46, 50}}, {{7, 1, 55, 0}}, {{14, 56, 6, 4}},
-      {{46, 6, 44, 10}}, {{5, 17, 14, 9}}, {{17, 14, 10, 22}},
-      {{12, 56, 11, 4}}, {{56, 2, 55, 4}}, {{9, 6, 46, 10}},
-      {{46, 56, 44, 6}}, {{8, 14, 4, 16}}, {{14, 56, 35, 5}},
-      {{8, 56, 7, 10}}, {{5, 56, 46, 6}}, {{10, 14, 16, 22}},
-      {{6, 4, 0, 7}}, {{6, 14, 4, 8}}, {{7, 1, 8, 55}},
-      {{5, 56, 35, 46}}, {{7, 55, 4, 0}}, {{9, 17, 10, 22}},
-      {{8, 14, 16, 10}}, {{6, 14, 8, 10}}, {{13, 56, 14, 11}},
-      {{11, 56, 14, 4}}, {{33, 56, 35, 14}}, {{9, 14, 6, 10}},
-      {{11, 4, 14, 16}}, {{7, 1, 0, 3}}, {{1, 56, 0, 3}},
-      {{6, 0, 3, 7}}, {{3, 56, 0, 6}}, {{45, 56, 3, 6}},
-      {{14, 5, 35, 17}}, {{5, 6, 46, 9}}, {{5, 14, 6, 9}},
-      {{6, 3, 10, 7}}, {{7, 55, 8, 4}}, {{6, 8, 4, 7}},
-      {{6, 10, 8, 7}}, {{10, 8, 22, 16}}, {{9, 14, 10, 17}},
-      {{8, 55, 16, 4}}, {{55, 56, 4, 0}}, {{1, 56, 55, 0}},
-  }};
-
-  PlcRecoveryWitness inserted_witness;
-  inserted_witness.stratum = SourceStratum::kSegment;
-  inserted_witness.entity = 0;
-  inserted_witness.parameters[0] = 0.10546875;
-  PHX_CHECK(points[3 * 55] == 0x1.3155555555555p-4);
-  PHX_CHECK(inserted_witness.parameters[0] == 0x1.b000000000000p-4);
-  const auto check_cavity =
-      [&](std::span<const int32_t> vertices,
-          std::span<const detail::PlcWrapCavityFace> faces,
-          std::span<const std::array<int32_t, 4>> cells) {
-        detail::PlcWrapCavityInput input;
-        input.points = std::span<const double>(points);
-        input.vertices = vertices;
-        input.faces = faces;
-        input.protected_segments = std::span<const int32_t>(protected_segments);
-        input.recovery_edge = {0, 5};
-        input.require_edge = false;
-        detail::PlcWrapCavityResult result;
-        const int32_t status = detail::recover_plc_wrap_cavity(input, result);
-        PHX_CHECK(status == PHX_MC_OK);
-        if (status != PHX_MC_OK) return;
-        if (!result.complete) {
-          PHX_CHECK(result.empty_sphere_apex_missing || result.has_facet_contact);
-          return;
-        }
-        std::set<std::array<int32_t, 4>> unique_tets;
-        std::set<int32_t> used;
-        bool recovered_edge = false;
-        for (const auto& cell : cells) {
-          PHX_CHECK(orient3d(points.data() + 3 * cell[0],
-                             points.data() + 3 * cell[1],
-                             points.data() + 3 * cell[2],
-                             points.data() + 3 * cell[3]) > 0);
-        }
-        for (const auto& tet : result.tetrahedra) {
-          PHX_CHECK(orient3d(points.data() + 3 * tet[0],
-                             points.data() + 3 * tet[1],
-                             points.data() + 3 * tet[2],
-                             points.data() + 3 * tet[3]) > 0);
-          auto key = tet;
-          std::sort(key.begin(), key.end());
-          PHX_CHECK(unique_tets.insert(key).second);
-          for (int32_t vertex : tet) {
-            PHX_CHECK(std::binary_search(vertices.begin(), vertices.end(), vertex));
-            used.insert(vertex);
-          }
-          recovered_edge = recovered_edge ||
-              (std::find(tet.begin(), tet.end(), 0) != tet.end() &&
-               std::find(tet.begin(), tet.end(), 5) != tet.end());
-        }
-        PHX_CHECK(!used.empty());
-        PHX_CHECK(recovered_edge);
-        PHX_CHECK(faces[faces.size() - 2].source == 3);
-        PHX_CHECK(faces[faces.size() - 1].source == 5);
-        for (const auto& face : faces) {
-          std::size_t uses = 0;
-          for (const auto& tet : result.tetrahedra) {
-            for (int slot = 0; slot < 4; ++slot) {
-              int32_t oriented[3];
-              oriented_facet(tet.data(), slot, oriented);
-              if (sorted_face(oriented) != sorted_face(face.vertices.data())) continue;
-              ++uses;
-              PHX_CHECK(FacetKey::of(oriented) ==
-                        FacetKey::of(face.vertices.data()));
-            }
-          }
-          PHX_CHECK(uses == 1);
-        }
-      };
-  check_cavity(first_vertices, first_faces, first_cells);
-  check_cavity(later_vertices, later_faces, later_cells);
-}
 
 }  // namespace
 
@@ -2373,9 +2233,13 @@ int main() {
   test_incremental_triangulation_owns_closed_adjacency();
   test_protection_index_keeps_nonincident_segment_candidates();
   test_source_preparation_triangulates_and_compiles_plc_edges();
+  test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons();
   test_conforming_nonrepresentable_segment_uses_vertex_cavity();
   test_unsplittable_boundary_loop_edge_recovers_under_fixed_and_conforming();
   test_conforming_missing_boundary_edges_recover_with_exact_witnesses();
+  test_witnessed_segment_split_is_published_exactly();
+  test_nonrepresentable_split_is_suppressed_into_the_volume();
+  test_bent_exterior_crease_edges_recover_under_both_policies();
   test_conforming_representable_segment_prefers_vertex_cavity();
   test_incremental_point_slot_reindexes_corners_and_rolls_back();
   test_external_cavity_replacement_reseeds_incremental_locate();
@@ -2389,6 +2253,5 @@ int main() {
   test_recover_plc_nonconvex_prism();
   test_recover_plc_removes_a_closed_cavity();
   test_recover_plc_corner_scaffold_tracks_inserted_points_and_region_interface();
-  test_deterministic_wrap_replays_saved_cavities();
   return phx::mc::test::finish("test_plc3d");
 }

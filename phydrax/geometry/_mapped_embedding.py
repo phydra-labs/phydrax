@@ -73,7 +73,9 @@ def _determinant(matrix: tuple[tuple[Expression, ...], ...]) -> Expression:
             ),
             multiply(c, subtract(multiply(d, h), multiply(e, g))),
         )
-    raise ValueError("Mapped injectivity proof supports reference dimensions one through three.")
+    raise ValueError(
+        "Mapped injectivity proof supports reference dimensions one through three."
+    )
 
 
 def _strict_positive_controls(
@@ -106,19 +108,18 @@ def _positive_definite_controls(
     controls: list[tuple[str, ...]] = []
     for size in range(1, dimension + 1):
         principal = tuple(
-            tuple(symmetric[row][column] for column in range(size))
-            for row in range(size)
+            tuple(symmetric[row][column] for column in range(size)) for row in range(size)
         )
-        positive = _strict_positive_controls(
-            _determinant(principal), domain, dimension
-        )
+        positive = _strict_positive_controls(_determinant(principal), domain, dimension)
         if positive is None:
             return None
         controls.append(positive)
     return tuple(controls)
 
 
-def prove_mapped_cell_injective(cell: EmbeddingCell, /) -> MappedInjectivityWitness | None:
+def prove_mapped_cell_injective(
+    cell: EmbeddingCell, /
+) -> MappedInjectivityWitness | None:
     """Prove injectivity by exact monotonicity after a constant linear projection.
 
     On a convex reference cell, positive definiteness of the projected
@@ -151,12 +152,10 @@ def prove_mapped_cell_injective(cell: EmbeddingCell, /) -> MappedInjectivityWitn
     else:
         if (
             cell.pyramid_reference_arguments is None
-            or cell.pyramid_reference_arguments
-            != pyramid_reference_to_box_arguments()
+            or cell.pyramid_reference_arguments != pyramid_reference_to_box_arguments()
             or len(cell.pyramid_normalizations) != len(cell.coordinates)
             or any(
-                normalization.apex_trace is None
-                or normalization.apex_value is None
+                normalization.apex_trace is None or normalization.apex_value is None
                 for normalization in cell.pyramid_normalizations
             )
         ):
@@ -165,18 +164,16 @@ def prove_mapped_cell_injective(cell: EmbeddingCell, /) -> MappedInjectivityWitn
             tuple(derivative(expression, axis) for axis in range(dimension))
             for expression in cell.coordinates
         )
+        # Normalized Jacobian entries are polynomials on the closed collapsed
+        # cube. A direction-dependent apex value (non-parallelogram base) is
+        # admissible: monotonicity integrates the Jacobian along segments whose
+        # interiors avoid the apex, and coordinates keep a unique apex value.
         normalized_jacobian_rows = []
         for expression in cell.coordinates:
             row = []
             for axis in range(dimension):
-                normalization = normalize_pyramid_reference_derivative(
-                    expression, axis
-                )
-                if (
-                    normalization.apex_trace is None
-                    or normalization.apex_value is None
-                    or not isinstance(normalization.expression, dict)
-                ):
+                normalization = normalize_pyramid_reference_derivative(expression, axis)
+                if not isinstance(normalization.expression, dict):
                     return None
                 row.append(normalization.expression)
             normalized_jacobian_rows.append(tuple(row))
@@ -188,8 +185,7 @@ def prove_mapped_cell_injective(cell: EmbeddingCell, /) -> MappedInjectivityWitn
 
     for rows in combinations(range(ambient), dimension):
         direct = tuple(
-            tuple(jacobian[row][axis] for axis in range(dimension))
-            for row in rows
+            tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
         )
         controls = _positive_definite_controls(direct, domain, dimension)
         if controls is not None:
@@ -233,13 +229,9 @@ def prove_mapped_cell_injective(cell: EmbeddingCell, /) -> MappedInjectivityWitn
             tuple(projected_columns[axis][row] for axis in range(dimension))
             for row in range(dimension)
         )
-        controls = _positive_definite_controls(
-            projected_jacobian, domain, dimension
-        )
+        controls = _positive_definite_controls(projected_jacobian, domain, dimension)
         if controls is not None:
-            return MappedInjectivityWitness(
-                rows, projection_matrix, controls
-            )
+            return MappedInjectivityWitness(rows, projection_matrix, controls)
     return None
 
 

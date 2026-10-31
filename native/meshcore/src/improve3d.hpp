@@ -1,29 +1,44 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// Source-preserving interior reconnection, collapse, and relocation improvement
-// with unmet-quality reporting.
+// Source-preserving interior reconnection, insertion, collapse, and
+// relocation improvement with unmet-quality reporting.
 #pragma once
 
 #include <array>
 #include <cstdint>
+#include <span>
+#include <vector>
 
+#include "refine3d.hpp"
 #include "tet_mesh.hpp"
 
 namespace phx::mc {
 
-// Each cell scores the worse of its dihedral and radius-edge target fractions.
-// Every edit is accepted only if its affected cells' worst-first sorted scores
-// strictly improve, with determinant validity and source constraints as hard
-// gates; that one order makes the run terminate. Final per-criterion checks,
-// not the score, set status, and unmet cells are reported individually.
+// Each cell scores the worse of its dihedral and radius-edge target fractions,
+// floored to multiples of kTetScoreQuantum. Every edit (reconnection,
+// collapse, relocation, interior vertex insertion) is accepted only if its
+// affected cells' worst-first sorted scores strictly improve, with
+// determinant validity, the circumradius size target, and source constraints
+// as hard gates; that one order makes the run terminate. Final per-criterion
+// checks, not the score, set status, and unmet cells are reported
+// individually.
+inline constexpr double kTetScoreQuantum = 0x1p-20;
+
 struct TetQualityRequest {
   double radius_edge_bound;
   double minimum_dihedral_degrees;
   double minimum_relative_determinant;
+  // Circumradius size target per local vertex slot (0: unconstrained); set by
+  // improve_mesh from the mesh's retained size field.
+  const std::vector<double>* slot_sizes = nullptr;
 };
 
+// `vertex_sizes` (one per current vertex, snapshot order) replaces the mesh's
+// retained size field when nonempty; otherwise the retained field applies.
 std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
+                          std::span<const double> vertex_sizes,
+                          std::int64_t& inserted_vertices,
                           std::int64_t& collapsed_vertices,
                           std::int64_t& relocated_vertices,
                           std::int64_t& unmet_cells);
@@ -46,9 +61,9 @@ struct RelocationMetricCache {
 bool prepare_relocation_metric_cache(const double* const points[4],
                                      std::int32_t moved_corner,
                                      RelocationMetricCache& cache) noexcept;
-bool relocation_radius_edge_ratio(
-    const double* const points[4], const RelocationMetricCache& cache,
-    double& ratio) noexcept;
+bool relocation_tetrahedron_shape(const double* const points[4],
+                                  const RelocationMetricCache& cache,
+                                  TetrahedronShape& shape) noexcept;
 double relocation_minimum_dihedral_degrees(
     const double* const points[4], const RelocationMetricCache& cache) noexcept;
 double relocation_relative_determinant(

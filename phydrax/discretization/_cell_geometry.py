@@ -2098,14 +2098,43 @@ def _finite_element_source_basis(element: FiniteElementSpec, /) -> tuple[Express
     )
 
 
+# Root source bases keyed by element type and content identity; each is formed
+# once per process.
+_SOURCE_BASES: dict[tuple[str, str], tuple[Any, ...]] = {}
+
+
 def coordinate_source_basis(
     element: ScalarCoordinateElement, /, *, cell_row: int | None = None
 ) -> tuple[Any, ...]:
-    """Return exact root basis expressions without applying reference charts/actions."""
+    """Return exact root basis expressions without applying reference charts/actions.
+
+    The basis depends only on the element's content identity, so it is formed
+    once per element; every caller receives its own polynomial dictionaries.
+    """
     if isinstance(element, PerCellRestrictedCellGeometryElement):
         if cell_row is not None and not 0 <= int(cell_row) < len(element.target_cell_ids):
             raise IndexError("Per-cell source basis row is outside the target block.")
         return coordinate_source_basis(element.source_element)
+    if isinstance(
+        element,
+        BarycentricCellGeometryElement
+        | RestrictedCellGeometryElement
+        | PolynomialComposedCellGeometryElement
+        | RationalComposedCellGeometryElement,
+    ):
+        return coordinate_source_basis(element.source_element)
+    identity = getattr(element, "element_id", None)
+    if not isinstance(identity, str):
+        return _root_source_basis(element)
+    key = (type(element).__name__, identity)
+    basis = _SOURCE_BASES.get(key)
+    if basis is None:
+        basis = _root_source_basis(element)
+        _SOURCE_BASES[key] = basis
+    return tuple(dict(value) if isinstance(value, dict) else value for value in basis)
+
+
+def _root_source_basis(element: ScalarCoordinateElement, /) -> tuple[Any, ...]:
     from ._coordinate_enclosure import (
         add,
         axes,
@@ -2117,15 +2146,6 @@ def coordinate_source_basis(
         sum_polynomials,
     )
 
-    if isinstance(
-        element,
-        PerCellRestrictedCellGeometryElement
-        | BarycentricCellGeometryElement
-        | RestrictedCellGeometryElement
-        | PolynomialComposedCellGeometryElement
-        | RationalComposedCellGeometryElement,
-    ):
-        return coordinate_source_basis(element.source_element)
     if isinstance(element, SplineCellGeometryElement):
         variables = axes(2)
         one = constant(Fraction(1), 2)
