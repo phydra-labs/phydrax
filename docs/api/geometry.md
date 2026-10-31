@@ -591,7 +591,7 @@ solid's extent, fit the requested target-length bound. The resulting
 input also requires its declared source length unit.
 
 In-memory `TopoDS_Shape` conversion is a separate optional operation through
-`phydrax.interchange.model_from_occt_shape`; OCP is loaded only when
+`phydrax.interchange.import_occt_shape`; OCP is loaded only when
 that adapter is called. The adapter serializes the exact shape as BRep text and
 uses the native decoder, never an OCCT mesh as source geometry.
 
@@ -682,10 +682,10 @@ per-span Jacobian intervals. Only first-derivative bounds are admitted.
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
 from phydrax.geometry.brep import BRepTessellationPolicy
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 
 coordinate_contract = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
-model = model_from_occt_shape(
+imported = import_occt_shape(
     BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
     coordinate_contract=coordinate_contract,
     tessellation=BRepTessellationPolicy(
@@ -693,14 +693,19 @@ model = model_from_occt_shape(
         angular_deflection=0.1,
     ),
 )
-source = phx.geometry.BRepSource(model)
+print(imported.report.losses)
+source = phx.geometry.BRepSource(imported.model)
 geometry = source.compile()
 print(source.model.report)
 ```
 
-`model_from_occt_shape` is an explicit optional OCCT adapter. It routes source
-carriers through the native BRep-text codec; OCP is loaded only when the adapter
-is called. Native STEP, IGES, and BRep-text file readers do not require OCP.
+`import_occt_shape` is an explicit optional OCCT adapter. It routes source
+carriers through the native BRep-text codec and returns the codec's
+`CadImportResult`: the model together with its adapter report, so dropped
+derived records, synthesized natural boundaries, chart-closure repairs and
+source tolerances reach the caller. `persist_occt_shape` returns the same
+result for the published carrier. OCP is loaded only when the adapter is
+called. Native STEP, IGES, and BRep-text file readers do not require OCP.
 
 `FixedTopologyBRepSource` reevaluates an imported tessellation from trainable
 patch parameters while preserving face topology, boundary entity identity, knot

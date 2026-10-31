@@ -312,7 +312,7 @@ def _hybrid_gmsh_result(destination: Path, *, schedule: Any = None) -> Any:
             linear_deflection=0.03,
             angular_deflection=0.15,
         ),
-    )
+    ).model
     source_face = _hybrid_face_indices(source, 2, 0.0)
     target_face = _hybrid_face_indices(source, 2, 0.3)
     if len(source_face) != 1 or len(target_face) != 1:
@@ -1016,7 +1016,7 @@ def qualify_gmsh_metric() -> dict[str, object]:
                 linear_deflection=0.01,
                 angular_deflection=0.2,
             ),
-        )
+        ).model
         isotropic, isotropic_record = _gmsh_metric_run(
             square,
             controls[phx.meshing.BackgroundMetricMode.ISOTROPIC],
@@ -1447,7 +1447,7 @@ def qualify_gmsh_boundary_layer() -> dict[str, object]:
                 linear_deflection=0.01,
                 angular_deflection=0.1,
             ),
-        )
+        ).model
         routes = {
             "advancing": _gmsh_layered_route(
                 provider,

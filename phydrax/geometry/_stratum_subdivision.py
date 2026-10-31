@@ -44,6 +44,7 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._exact_algebraic_geometry import RadicalElement
 from ._embedding_cells import EmbeddingCell
+from ._mapped_embedding import monotone_preconditioner
 
 
 _Index = tuple[int, ...]
@@ -160,7 +161,8 @@ def _root_piece(
     if (
         cell.kind not in _PIECE_KINDS
         or dimension not in (2, 3)
-        or len(cell.coordinates) != 3
+        or len(cell.coordinates) not in (2, 3)
+        or len(cell.coordinates) < dimension
         or len(cell.vertex_ids) != parts
     ):
         return None
@@ -389,7 +391,9 @@ def _exactly_positive(direction: np.ndarray | None, vectors: list[_Vector], /) -
 
 
 def _hull_separated(first: _Piece, second: _Piece, /) -> bool:
-    differences = (first.points[:, None, :] - second.points[None, :, :]).reshape(-1, 3)
+    differences = (first.points[:, None, :] - second.points[None, :, :]).reshape(
+        -1, first.points.shape[1]
+    )
     direction = _strict_direction(differences)
     if direction is None:
         return False
@@ -496,6 +500,9 @@ _Matrix = tuple[tuple[ExactScalar, ...], ...]
 
 
 def _determinant(matrix: _Matrix, /) -> ExactScalar:
+    if len(matrix) == 2:
+        (a, b), (c, d) = matrix
+        return a * d - b * c
     (a, b, c), (d, e, f), (g, h, i) = matrix
     return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 
@@ -504,58 +511,66 @@ def _inverse(matrix: _Matrix, /) -> _Matrix | None:
     determinant = _determinant(matrix)
     if not _sign(determinant):
         return None
-    (a, b, c), (d, e, f), (g, h, i) = matrix
-    adjugate = (
-        (e * i - f * h, c * h - b * i, b * f - c * e),
-        (f * g - d * i, a * i - c * g, c * d - a * f),
-        (d * h - e * g, b * g - a * h, a * e - b * d),
-    )
+    if len(matrix) == 2:
+        (a, b), (c, d) = matrix
+        adjugate: _Matrix = ((d, -b), (-c, a))
+    else:
+        (a, b, c), (d, e, f), (g, h, i) = matrix
+        adjugate = (
+            (e * i - f * h, c * h - b * i, b * f - c * e),
+            (f * g - d * i, a * i - c * g, c * d - a * f),
+            (d * h - e * g, b * g - a * h, a * e - b * d),
+        )
     return tuple(tuple(value / determinant for value in row) for row in adjugate)
 
 
 def _product(first: _Matrix, second: _Matrix, /) -> _Matrix:
+    size = len(first)
     return tuple(
         tuple(
             sum(
-                (first[row][inner] * second[inner][column] for inner in range(3)),
+                (first[row][inner] * second[inner][column] for inner in range(size)),
                 Fraction(0),
             )
-            for column in range(3)
+            for column in range(size)
         )
-        for row in range(3)
+        for row in range(size)
     )
 
 
 def _positive_definite_symmetric_part(matrix: _Matrix, /) -> bool:
+    """Sylvester's criterion on the leading minors of the symmetric part."""
+    size = len(matrix)
     symmetric = tuple(
-        tuple((matrix[row][column] + matrix[column][row]) / 2 for column in range(3))
-        for row in range(3)
+        tuple((matrix[row][column] + matrix[column][row]) / 2 for column in range(size))
+        for row in range(size)
     )
-    return (
-        _sign(symmetric[0][0]) > 0
-        and _sign(symmetric[0][0] * symmetric[1][1] - symmetric[0][1] * symmetric[1][0])
-        > 0
-        and _sign(_determinant(symmetric)) > 0
-    )
+    if _sign(symmetric[0][0]) <= 0:
+        return False
+    leading = symmetric[0][0] * symmetric[1][1] - symmetric[0][1] * symmetric[1][0]
+    if _sign(leading) <= 0:
+        return False
+    return size == 2 or _sign(_determinant(symmetric)) > 0
 
 
 def _edge_matrix(points: tuple[tuple[ExactScalar, ...], ...], origin: int, /) -> _Matrix:
-    """Columns ``points[k] - points[origin]`` over the other three vertices."""
-    others = [index for index in range(4) if index != origin]
+    """Columns ``points[k] - points[origin]`` over the other simplex vertices."""
+    others = [index for index in range(len(points)) if index != origin]
     return tuple(
         tuple(points[column][row] - points[origin][row] for column in others)
-        for row in range(3)
+        for row in range(len(points) - 1)
     )
 
 
 def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
     """Bernstein controls of the reference Jacobian on the unit reference simplex."""
+    dimension = cell.dimension
     entries: list[list[dict[_Index, ExactScalar]]] = []
     for expression in cell.coordinates:
         if not isinstance(expression, dict):
             return None
         row: list[dict[_Index, ExactScalar]] = []
-        for axis in range(3):
+        for axis in range(dimension):
             derivative: dict[_Index, ExactScalar] = {}
             for exponent, coefficient in expression.items():
                 if exponent[axis]:
@@ -565,20 +580,28 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
                     derivative[lowered] = derivative.get(lowered, Fraction(0)) + (
                         coefficient * exponent[axis]
                     )
-            row.append(derivative or {(0, 0, 0): Fraction(0)})
+            row.append(derivative or {(0,) * dimension: Fraction(0)})
         entries.append(row)
     degree = max(
         1,
-        max(bernstein_degree(entry, "simplex", 3)[0] for row in entries for entry in row),
+        max(
+            bernstein_degree(entry, "simplex", dimension)[0]
+            for row in entries
+            for entry in row
+        ),
     )
     columns = [
-        [bernstein_coefficients(entry, "simplex", 3, degree=(degree,)) for entry in row]
+        [
+            bernstein_coefficients(entry, "simplex", dimension, degree=(degree,))
+            for entry in row
+        ]
         for row in entries
     ]
     count = len(columns[0][0])
     return tuple(
         tuple(
-            tuple(columns[row][column][index] for column in range(3)) for row in range(3)
+            tuple(columns[row][column][index] for column in range(dimension))
+            for row in range(dimension)
         )
         for index in range(count)
     )
@@ -587,6 +610,7 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
 def _glued_monotone(
     first: EmbeddingCell, second: EmbeddingCell, shared: set[int], /
 ) -> bool:
+    dimension = first.dimension
     first_opposite = next(
         index
         for index, identifier in enumerate(first.vertex_ids)
@@ -618,7 +642,7 @@ def _glued_monotone(
     offset = tuple(
         second.corner_images[second_opposite][axis]
         - first.corner_images[first_opposite][axis]
-        for axis in range(3)
+        for axis in range(dimension)
     )
     weights = _apply(first_inverse, _apply(metric, offset))
     total = sum(weights, Fraction(0))
@@ -634,16 +658,16 @@ def _glued_monotone(
     scaled = tuple(value * total / clipped_total for value in clipped)
     glued = tuple(
         first_reference[first_opposite][axis] + _apply(first_edges, scaled)[axis]
-        for axis in range(3)
+        for axis in range(dimension)
     )
     reference_by_id = dict(zip(first.vertex_ids, first_reference, strict=True))
-    second_others = [index for index in range(4) if index != second_opposite]
+    second_others = [index for index in range(dimension + 1) if index != second_opposite]
     images = tuple(
         tuple(
             reference_by_id[second.vertex_ids[column]][row] - glued[row]
             for column in second_others
         )
-        for row in range(3)
+        for row in range(dimension)
     )
     glue = _inverse(_product(images, second_inverse))
     if glue is None:
@@ -652,53 +676,75 @@ def _glued_monotone(
     second_controls = _jacobian_controls(second)
     if first_controls is None or second_controls is None:
         return False
-    return all(
-        _positive_definite_symmetric_part(_product(metric, control))
-        for control in first_controls
-    ) and all(
-        _positive_definite_symmetric_part(_product(metric, _product(control, glue)))
-        for control in second_controls
+    glued_controls = (
+        *first_controls,
+        *(_product(control, glue) for control in second_controls),
     )
+    if all(
+        _positive_definite_symmetric_part(_product(metric, control))
+        for control in glued_controls
+    ):
+        return True
+    # Any constant preconditioner proves monotonicity; search one when the
+    # corner-affine inverse fails on strongly curved cells.
+    return monotone_preconditioner(glued_controls) is not None
 
 
 def _apply(
     matrix: _Matrix, vector: tuple[ExactScalar, ...], /
 ) -> tuple[ExactScalar, ...]:
     return tuple(
-        sum((matrix[row][inner] * vector[inner] for inner in range(3)), Fraction(0))
-        for row in range(3)
+        sum(
+            (matrix[row][inner] * vector[inner] for inner in range(len(vector))),
+            Fraction(0),
+        )
+        for row in range(len(matrix))
     )
+
+
+_STANDARD_SIMPLICES = {
+    2: ((0, 0), (0, 1), (1, 0)),
+    3: ((0, 0, 0), (0, 0, 1), (0, 1, 0), (1, 0, 0)),
+}
 
 
 def glued_face_monotone(
     first: EmbeddingCell, second: EmbeddingCell, shared_ids: tuple[int, ...], /
 ) -> bool:
-    """Prove two face-sharing polynomial tetrahedra meet only in their shared face.
+    """Prove two facet-sharing full-dimensional simplices meet only in their facet.
 
-    One cell's reference is glued to the other's across the shared face by an
-    affine map ``phi`` fixing the face corners and sending the glued cell's
-    opposite corner to a point ``P`` across the face plane whose segment to the
-    other opposite corner crosses the closed face triangle, so the glued
-    reference domain ``D`` is convex (``P`` is the preimage of the opposite
-    corner's image under the corner-affine map ``A``, clipped into that cone).
-    When ``A^{-1} DH`` has a positive definite symmetric part at every Bernstein
+    Applies to tetrahedra in space and triangles in the plane. One cell's
+    reference is glued to the other's across the shared facet by an affine map
+    ``phi`` fixing the facet corners and sending the glued cell's opposite
+    corner to a point ``P`` across the facet hyperplane whose segment to the
+    other opposite corner crosses the closed facet, so the glued reference
+    domain ``D`` is convex (``P`` is the preimage of the opposite corner's image
+    under the corner-affine map ``A``, clipped into that cone). When
+    ``A^{-1} DH`` has a positive definite symmetric part at every Bernstein
     control of the glued map's Jacobian on both cells, then
     ``(x - y) . A^{-1}(H(x) - H(y)) > 0`` along every segment of ``D``; ``H`` is
-    injective and the two images meet exactly in the image of the face. The
-    caller has proved equal face traces; both gluing orders are tried.
+    injective and the two images meet exactly in the image of the facet. The
+    caller has proved equal facet traces; both gluing orders are tried.
     """
     shared = set(shared_ids)
-    if len(shared) != 3 or any(
-        cell.kind not in _SIMPLEX_KINDS
-        or cell.dimension != 3
-        or len(cell.vertex_ids) != 4
-        or len(cell.coordinates) != 3
-        or len(cell.corner_images) != 4
-        or not shared <= set(cell.vertex_ids)
-        for cell in (first, second)
+    dimension = first.dimension
+    kinds = _SIMPLEX_KINDS if dimension == 3 else ("triangle", "simplex:2")
+    if (
+        dimension not in _STANDARD_SIMPLICES
+        or len(shared) != dimension
+        or any(
+            cell.kind not in kinds
+            or cell.dimension != dimension
+            or len(cell.vertex_ids) != dimension + 1
+            or len(cell.coordinates) != dimension
+            or len(cell.corner_images) != dimension + 1
+            or any(len(point) != dimension for point in cell.corner_images)
+            or not shared <= set(cell.vertex_ids)
+            for cell in (first, second)
+        )
     ):
         return False
-    standard = ((0, 0, 0), (0, 0, 1), (0, 1, 0), (1, 0, 0))
+    standard = _STANDARD_SIMPLICES[dimension]
     if any(
         tuple(
             sorted(

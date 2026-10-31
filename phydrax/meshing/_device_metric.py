@@ -56,6 +56,10 @@ from ..discretization._adaptive_simplex import (
     masked_simplex_signature,
     MaskedSimplexMesh,
 )
+from ..discretization._periodic_exact import (
+    identification_orders,
+    reduce_periodic_exponents,
+)
 from ..linalg import hermitian_exp, hermitian_log
 from ..typing import checked
 from ._device_status import DeviceEpoch, require_committed_status
@@ -68,6 +72,7 @@ from ._local_metric import (
     _COLLAPSED,
     _CORNER,
     _CURVE,
+    _DEVIATION_QUANTUM,
     _distinct,
     _IMPROVEMENT,
     _initial_state,
@@ -204,7 +209,19 @@ class DeviceMetricLayout(StrictModule, NonTrainableState):
 
 @final
 class DeviceMetricState(StrictModule, NonTrainableState):
-    """Device epoch arrays plus exact source-bound periodic orbit worksets."""
+    """Device epoch arrays plus exact source-bound periodic orbit worksets.
+
+    ``periodic_vertex_translation`` holds, per vertex slot, the deck translation
+    from its orbit representative and ``periodic_edge_translation``, per half
+    edge, the deck translation from its orbit's representative half; the
+    matching ``*_deck`` masks mark slots whose deck element is a pure translation
+    with representable components, so ``representative + translation`` rounds to
+    the exact deck image. ``periodic_vertex_key`` and ``periodic_vertex_winding``
+    are the producer-owned orbit identity (one key per orbit, absolute deck
+    exponents per member) published with every edit; splits give each new orbit
+    the key of its representative birth and the windings of the split edge
+    members (``periodic_edge_winding``).
+    """
 
     mesh: MaskedSimplexMesh
     layout_signature_id: str = eqx.field(static=True)
@@ -238,6 +255,13 @@ class DeviceMetricState(StrictModule, NonTrainableState):
     periodic_edge_end: Array
     periodic_edge_members: Array
     periodic_cell_orbits: Array
+    periodic_vertex_translation: Array
+    periodic_vertex_deck: Array
+    periodic_edge_translation: Array
+    periodic_edge_deck: Array
+    periodic_vertex_key: Array
+    periodic_vertex_winding: Array
+    periodic_edge_winding: Array
     cursors: Array
     controls: Array
     counters: Array
@@ -274,6 +298,13 @@ class DeviceMetricState(StrictModule, NonTrainableState):
         periodic_edge_end: ArrayLike,
         periodic_edge_members: ArrayLike,
         periodic_cell_orbits: ArrayLike,
+        periodic_vertex_translation: ArrayLike,
+        periodic_vertex_deck: ArrayLike,
+        periodic_edge_translation: ArrayLike,
+        periodic_edge_deck: ArrayLike,
+        periodic_vertex_key: ArrayLike,
+        periodic_vertex_winding: ArrayLike,
+        periodic_edge_winding: ArrayLike,
         cursors: ArrayLike,
         controls: ArrayLike,
         counters: ArrayLike,
@@ -311,6 +342,7 @@ class DeviceMetricState(StrictModule, NonTrainableState):
             int(jnp.asarray(periodic_vertex_members).shape[1]),
             "periodic_orbit_width",
         )
+        rank = int(jnp.asarray(periodic_vertex_winding).shape[1])
         records = jnp.asarray(record_keys).shape[0]
         pairs = jnp.asarray(ancestry).shape[0]
         specification = {
@@ -371,6 +403,29 @@ class DeviceMetricState(StrictModule, NonTrainableState):
             "periodic_cell_orbits": (
                 periodic_cell_orbits,
                 (cells,),
+                jnp.int64,
+            ),
+            "periodic_vertex_translation": (
+                periodic_vertex_translation,
+                (vertices, 2),
+                mesh.coordinates.dtype,
+            ),
+            "periodic_vertex_deck": (periodic_vertex_deck, (vertices,), jnp.bool_),
+            "periodic_edge_translation": (
+                periodic_edge_translation,
+                (3 * cells, 2),
+                mesh.coordinates.dtype,
+            ),
+            "periodic_edge_deck": (periodic_edge_deck, (3 * cells,), jnp.bool_),
+            "periodic_vertex_key": (periodic_vertex_key, (vertices, 2), jnp.int64),
+            "periodic_vertex_winding": (
+                periodic_vertex_winding,
+                (vertices, rank),
+                jnp.int64,
+            ),
+            "periodic_edge_winding": (
+                periodic_edge_winding,
+                (3 * cells, rank),
                 jnp.int64,
             ),
             "cursors": (cursors, (7,), jnp.int64),
@@ -692,6 +747,13 @@ class _Work(NamedTuple):
     periodic_edge_end: Array
     periodic_edge_members: Array
     periodic_cell_orbits: Array
+    periodic_vertex_translation: Array
+    periodic_vertex_deck: Array
+    periodic_edge_translation: Array
+    periodic_edge_deck: Array
+    periodic_vertex_key: Array
+    periodic_vertex_winding: Array
+    periodic_edge_winding: Array
     cursors: Array
     controls: Array
     counters: Array
@@ -731,6 +793,13 @@ def _work(state: DeviceMetricState, /) -> _Work:
         state.periodic_edge_end,
         state.periodic_edge_members,
         state.periodic_cell_orbits,
+        state.periodic_vertex_translation,
+        state.periodic_vertex_deck,
+        state.periodic_edge_translation,
+        state.periodic_edge_deck,
+        state.periodic_vertex_key,
+        state.periodic_vertex_winding,
+        state.periodic_edge_winding,
         state.cursors,
         state.controls,
         state.counters,
@@ -789,6 +858,13 @@ def _state(
         periodic_edge_end=work.periodic_edge_end,
         periodic_edge_members=work.periodic_edge_members,
         periodic_cell_orbits=work.periodic_cell_orbits,
+        periodic_vertex_translation=work.periodic_vertex_translation,
+        periodic_vertex_deck=work.periodic_vertex_deck,
+        periodic_edge_translation=work.periodic_edge_translation,
+        periodic_edge_deck=work.periodic_edge_deck,
+        periodic_vertex_key=work.periodic_vertex_key,
+        periodic_vertex_winding=work.periodic_vertex_winding,
+        periodic_edge_winding=work.periodic_edge_winding,
         cursors=work.cursors,
         controls=work.controls,
         counters=work.counters,
@@ -988,6 +1064,19 @@ def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /)
     return selected
 
 
+def _distinct_count(values: Array, present: Array, /) -> Array:
+    """Number of distinct present values in each row."""
+    width = values.shape[1]
+    earlier = jnp.arange(width)[None, :] < jnp.arange(width)[:, None]
+    repeated = jnp.any(
+        (values[:, :, None] == values[:, None, :])
+        & present[:, None, :]
+        & earlier[None, :, :],
+        axis=2,
+    )
+    return jnp.sum(present & ~repeated, axis=1, dtype=jnp.int32)
+
+
 def _periodic_edge_batch(
     work: _Work,
     topology: _Topology,
@@ -995,9 +1084,14 @@ def _periodic_edge_batch(
     items: Array,
     rank: Array,
     layout: DeviceMetricLayout,
+    guard: Array | None = None,
     /,
 ) -> tuple[Array, Array, Array]:
-    """Select complete edge orbits with disjoint lifted cavities."""
+    """Select complete edge orbits with disjoint lifted cavities.
+
+    ``guard`` (per representative half) adds cells a group's decision read
+    to its independence footprint without counting as member overlap.
+    """
     half_count = 3 * layout.cell_capacity
     halves = jnp.arange(half_count, dtype=jnp.int32)
     representative = work.periodic_edge_representative
@@ -1029,8 +1123,9 @@ def _periodic_edge_batch(
         & (sorted_members[:, 1:] != sorted_members[:, :-1]),
         axis=1,
     )
+    footprint = group_items if guard is None else jnp.concatenate((group_items, guard), 1)
     selected_representatives = _independent(
-        rank, group_valid & ~overlap, group_items, layout.cell_capacity
+        rank, group_valid & ~overlap, footprint, layout.cell_capacity
     )
     selected_members = (
         (representative >= 0)
@@ -1468,6 +1563,9 @@ def _compact_cells(work: _Work, layout: DeviceMetricLayout, /) -> _Work:
         periodic_edge_end=packed_halves(work.periodic_edge_end, -1),
         periodic_edge_members=packed_members,
         periodic_cell_orbits=packed(work.periodic_cell_orbits, -1),
+        periodic_edge_translation=packed_halves(work.periodic_edge_translation, 0.0),
+        periodic_edge_deck=packed_halves(work.periodic_edge_deck, False),
+        periodic_edge_winding=packed_halves(work.periodic_edge_winding, 0),
         cursors=work.cursors.at[_CELLS].set(jnp.sum(active, dtype=jnp.int64)),
     )
 
@@ -1644,7 +1742,13 @@ def _split_round_periodic(work: _Work, done: Array, layout: DeviceMetricLayout, 
         raw_t[jnp.maximum(representative, 0)],
         0.5,
     )
-    middle = points[first] + t[:, None] * (points[second] - points[first])
+    # Every member midpoint is the exact deck image of its representative's.
+    anchored = points[first] + t[:, None] * (points[second] - points[first])
+    middle = jnp.where(
+        (representative >= 0)[:, None],
+        anchored[jnp.maximum(representative, 0)] + work.periodic_edge_translation,
+        anchored,
+    )
     sides = _split_sides(work, topology)
     point = middle[:, None, :]
     checks = jnp.maximum(
@@ -1653,7 +1757,8 @@ def _split_round_periodic(work: _Work, done: Array, layout: DeviceMetricLayout, 
     )
     status = jnp.max(jnp.where(sides.valid, checks, _OK), axis=1)
     counters, bits = _tally(work.counters, status, candidate)
-    valid = candidate & (status == _OK)
+    deck = work.periodic_edge_deck
+    valid = candidate & (status == _OK) & deck
     rank = _ranks(
         representative_mask & valid,
         -topology.lengths,
@@ -1663,9 +1768,9 @@ def _split_round_periodic(work: _Work, done: Array, layout: DeviceMetricLayout, 
     selected_representatives, selected, overlap = _periodic_edge_batch(
         work, topology, valid, items, rank, layout
     )
-    overlap_stop = jnp.any(overlap)
+    unresolved = jnp.any(overlap) | jnp.any(candidate & ~deck)
     bits = bits | jnp.where(
-        overlap_stop,
+        unresolved,
         int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
         0,
     ).astype(jnp.int32)
@@ -1681,6 +1786,21 @@ def _split_round_periodic(work: _Work, done: Array, layout: DeviceMetricLayout, 
         jnp.stack((work.metric[first], work.metric[second]), axis=1),
         jnp.stack((1.0 - t, t), axis=1),
     )
+    # Every member takes its representative's tensor (translations act trivially).
+    tensors = jnp.where(
+        (representative >= 0)[:, None, None],
+        tensors[jnp.maximum(representative, 0)],
+        tensors,
+    )
+    # Producer-owned orbit identity: kind 1 names the representative birth, and
+    # each member carries its split edge member's absolute deck exponents.
+    birth_keys = jnp.stack(
+        (
+            jnp.ones_like(order, dtype=jnp.int64),
+            cursors[_NEXT_VERTEX] + order[jnp.maximum(representative, 0)],
+        ),
+        axis=1,
+    )
     vertex_overflow = cursors[_VERTICES] + count > vertex_capacity
     work = work._replace(
         coordinates=work.coordinates.at[vertex_slot].set(middle, mode="drop"),
@@ -1689,6 +1809,12 @@ def _split_round_periodic(work: _Work, done: Array, layout: DeviceMetricLayout, 
             cursors[_NEXT_VERTEX] + order, mode="drop"
         ),
         vertex_active=work.vertex_active.at[vertex_slot].set(True, mode="drop"),
+        periodic_vertex_key=work.periodic_vertex_key.at[vertex_slot].set(
+            birth_keys, mode="drop"
+        ),
+        periodic_vertex_winding=work.periodic_vertex_winding.at[vertex_slot].set(
+            work.periodic_edge_winding, mode="drop"
+        ),
         cursors=cursors.at[_VERTICES]
         .add(count)
         .at[_NEXT_VERTEX]
@@ -1781,9 +1907,15 @@ class _CollapseCandidates(NamedTuple):
 
 
 def _collapse_candidates(
-    work: _Work, topology: _Topology, layout: DeviceMetricLayout, /
+    work: _Work, topology: _Topology, layout: DeviceMetricLayout, escape: Any, /
 ) -> _CollapseCandidates:
-    """Classification, link condition, moved-ball orientation, and new lengths."""
+    """Classification, link condition, moved-ball orientation, and new lengths.
+
+    Length admission as on the host route: a regular collapse that removes or
+    keeps a birth must keep every new edge at or below the split threshold,
+    other collapses up to ``_COLLAPSE_LIMIT``; the stall escape (``_adapted``)
+    admits every collapse up to ``_COLLAPSE_LIMIT``.
+    """
     vertex_capacity = layout.vertex_capacity
     width = layout.ball_width
     halves = jnp.arange(3 * layout.cell_capacity, dtype=jnp.int32)
@@ -1838,21 +1970,11 @@ def _collapse_candidates(
         ).reshape((-1, 2)),
     ).reshape(link.shape)
     longest = jnp.max(jnp.where(fresh, created, 0.0), axis=1)
+    births = (work.source_rows[removed] < 0) | (work.source_rows[kept] < 0)
+    limit = jnp.where(escape, _COLLAPSE_LIMIT, jnp.where(births, _UPPER, _COLLAPSE_LIMIT))
     geometric = jnp.maximum(
         jnp.maximum(orientation, straight),
-        jnp.where(
-            linked
-            & (
-                longest
-                <= jnp.where(
-                    (work.source_rows[removed] < 0) | (work.source_rows[kept] < 0),
-                    _UPPER,
-                    _COLLAPSE_LIMIT,
-                )
-            ),
-            _OK,
-            _INVALID,
-        ),
+        jnp.where(linked & (longest <= limit), _OK, _INVALID),
     )
     status = jnp.where(
         interior | curve, jnp.where(cavity, _CAVITY, geometric), _INADMISSIBLE
@@ -1936,14 +2058,14 @@ def _collapse_children(
 
 
 def _collapse_round_nonperiodic(
-    work: _Work, done: Array, layout: DeviceMetricLayout, /
+    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any, /
 ) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
     halves_count = 3 * layout.cell_capacity
     short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
-    found = _collapse_candidates(work, topology, layout)
+    found = _collapse_candidates(work, topology, layout, escape)
     counters, bits = _tally(
         work.counters,
         jnp.minimum(found.status[:halves_count], found.status[halves_count:]),
@@ -1990,8 +2112,104 @@ def _collapse_round_nonperiodic(
     return work, done, bits, count
 
 
+class _QuotientLink(NamedTuple):
+    """Quotient link condition of every collapse direction (periodic rounds).
+
+    ``exact``: every vertex involved is a pure-translation deck image, so a
+    lifted edge ``(a, b)`` is the quotient edge ``(orbit a, orbit b, t_b - t_a)``.
+    ``conflict``: the collapse would make a quotient loop or duplicate a
+    quotient edge some other copy of the kept orbit already has. ``guard``: the
+    balls of every kept copy, whose links the decision read.
+    """
+
+    exact: Array
+    conflict: Array
+    guard: Array
+
+
+def _quotient_link(
+    work: _Work,
+    topology: _Topology,
+    found: _CollapseCandidates,
+    layout: DeviceMetricLayout,
+    /,
+) -> _QuotientLink:
+    """Decide the link condition on the quotient, not only on the lifted cover.
+
+    Moving the removed vertex onto lifted kept copy ``k`` turns each fresh link
+    vertex ``x`` into the quotient edge ``(orbit k, orbit x, t_x - t_k)``. It
+    duplicates an existing edge exactly when some kept copy ``p`` has a lifted
+    neighbor ``z`` of orbit ``x`` with ``t_z - t_p = t_x - t_k`` (every quotient
+    edge has a lifted member). Rounded differences of exact translations agree
+    whenever the exact differences do, so a false match only refuses.
+    """
+    vertex_capacity = layout.vertex_capacity
+    removed, kept = found.removed, found.kept
+    orbit = work.periodic_vertex_orbits
+    translation = work.periodic_vertex_translation
+    deck = work.periodic_vertex_deck
+
+    def copies(vertex: Array, /) -> Array:
+        return work.periodic_vertex_members[
+            jnp.maximum(work.periodic_vertex_representative[vertex], 0)
+        ]
+
+    link = topology.link[removed]
+    listed = (link >= 0) & (link != kept[:, None])
+    neighbor = jnp.maximum(link, 0)
+    kept_rows = jnp.broadcast_to(kept[:, None], link.shape)
+    fresh = listed & (_edge_half(topology, kept_rows, neighbor, vertex_capacity) < 0)
+    loop = jnp.any(
+        listed
+        & (
+            (orbit[neighbor] == orbit[kept][:, None])
+            | (orbit[neighbor] == orbit[removed][:, None])
+        ),
+        axis=1,
+    )
+    kept_copies = copies(kept)
+    kept_present = kept_copies >= 0
+    safe_kept = jnp.maximum(kept_copies, 0)
+    neighbor_copies = copies(neighbor)
+    neighbor_present = neighbor_copies >= 0
+    safe_neighbor = jnp.maximum(neighbor_copies, 0)
+    # Axes: [direction, link vertex, kept copy, link vertex copy].
+    offset = translation[neighbor] - translation[kept][:, None, :]
+    relative = (
+        translation[safe_neighbor][:, :, None, :, :]
+        - translation[safe_kept][:, None, :, None, :]
+    )
+    matched = (
+        fresh[:, :, None, None]
+        & kept_present[:, None, :, None]
+        & neighbor_present[:, :, None, :]
+        & jnp.all(relative == offset[:, :, None, None, :], axis=-1)
+    )
+    adjacent = (
+        _edge_half(
+            topology,
+            jnp.broadcast_to(safe_kept[:, None, :, None], matched.shape),
+            jnp.broadcast_to(safe_neighbor[:, :, None, :], matched.shape),
+            vertex_capacity,
+        )
+        >= 0
+    )
+    duplicate = jnp.any(matched & adjacent, axis=(1, 2, 3))
+    exact = (
+        jnp.all(~kept_present | deck[safe_kept], axis=1)
+        & jnp.all(~listed | deck[neighbor], axis=1)
+        & jnp.all(
+            ~(listed[..., None] & neighbor_present) | deck[safe_neighbor], axis=(1, 2)
+        )
+    )
+    guard = jnp.where(kept_present[..., None], topology.ball[safe_kept], -1).reshape(
+        (kept.shape[0], -1)
+    )
+    return _QuotientLink(exact, loop | duplicate, guard)
+
+
 def _collapse_round_periodic(
-    work: _Work, done: Array, layout: DeviceMetricLayout, /
+    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any, /
 ) -> Any:
     """Collapse only when every lifted member of one quotient edge is valid."""
     work = _compact_cells(work, layout)
@@ -1999,7 +2217,8 @@ def _collapse_round_periodic(
     vertex_capacity = layout.vertex_capacity
     edge_count = 3 * layout.cell_capacity
     halves = jnp.arange(edge_count, dtype=jnp.int32)
-    found = _collapse_candidates(work, topology, layout)
+    found = _collapse_candidates(work, topology, layout, escape)
+    quotient = _quotient_link(work, topology, found, layout)
     short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
     counters, bits = _tally(
         work.counters,
@@ -2018,16 +2237,50 @@ def _collapse_round_periodic(
     members = work.periodic_edge_members
     present = members >= 0
     safe_members = jnp.maximum(members, 0)
-    start_all = (
+    vertex_orbit_size = jnp.sum(
+        work.periodic_vertex_members[jnp.maximum(work.periodic_vertex_representative, 0)]
+        >= 0,
+        axis=1,
+        dtype=jnp.int32,
+    )
+
+    def covers_vertex_orbits(direction: Array, /) -> Array:
+        # The edge orbit's lifted members must remove every lifted copy of the
+        # removed vertex, otherwise the collapse is a cover collapse that only
+        # the host route performs. Landing on only some copies of the kept
+        # vertex needs the exact quotient link condition; every exactly
+        # decided collapse must pass it.
+        removed = found.removed[direction][safe_members]
+        kept = found.kept[direction][safe_members]
+        exact = jnp.all(~present | quotient.exact[direction][safe_members], axis=1)
+        clear = jnp.all(~present | ~quotient.conflict[direction][safe_members], axis=1)
+        kept_cover = _distinct_count(kept, present) == vertex_orbit_size[kept[:, 0]]
+        return (
+            (_distinct_count(removed, present) == vertex_orbit_size[removed[:, 0]])
+            & (kept_cover | exact)
+            & (clear | ~exact)
+        )
+
+    start_members = (
         group_representative
         & jnp.any(present, axis=1)
         & jnp.all(~present | start_valid[safe_members], axis=1)
     )
-    end_all = (
+    end_members = (
         group_representative
         & jnp.any(present, axis=1)
         & jnp.all(~present | end_valid[safe_members], axis=1)
     )
+    start_vertex = work.periodic_edge_start
+    end_vertex = work.periodic_edge_end
+    start_orbit = work.periodic_vertex_orbits[jnp.maximum(start_vertex, 0)]
+    end_orbit = work.periodic_vertex_orbits[jnp.maximum(end_vertex, 0)]
+    # An edge joining a vertex to its own deck image is a quotient loop; it
+    # cannot be collapsed without changing the quotient topology.
+    loop = start_orbit == end_orbit
+    start_all = start_members & ~loop & covers_vertex_orbits(start_direction)
+    end_all = end_members & ~loop & covers_vertex_orbits(end_direction)
+    cover_only = (start_members | end_members) & ~loop & ~start_all & ~end_all
     start_longest = jnp.max(
         jnp.where(present, found.longest[start_direction[safe_members]], 0.0),
         axis=1,
@@ -2036,10 +2289,6 @@ def _collapse_round_periodic(
         jnp.where(present, found.longest[end_direction[safe_members]], 0.0),
         axis=1,
     )
-    start_vertex = work.periodic_edge_start
-    end_vertex = work.periodic_edge_end
-    start_orbit = work.periodic_vertex_orbits[jnp.maximum(start_vertex, 0)]
-    end_orbit = work.periodic_vertex_orbits[jnp.maximum(end_vertex, 0)]
     stable_start = (start_orbit < end_orbit) | (
         (start_orbit == end_orbit)
         & (
@@ -2055,7 +2304,10 @@ def _collapse_round_periodic(
     group_valid = start_all | end_all
     choose_member_start = choose_start[jnp.maximum(representative, 0)]
     chosen_direction = jnp.where(choose_member_start, start_direction, end_direction)
-    chosen_valid = jnp.where(choose_member_start, start_valid, end_valid)
+    chosen_valid = (
+        jnp.where(choose_member_start, start_valid, end_valid)
+        & group_valid[jnp.maximum(representative, 0)]
+    )
     start_items = jnp.concatenate(
         (
             found.ball[start_direction],
@@ -2081,10 +2333,16 @@ def _collapse_round_periodic(
         work.periodic_edge_orbits,
     )
     selected_representatives, selected_edges, overlap = _periodic_edge_batch(
-        work, topology, chosen_valid, items, rank, layout
+        work,
+        topology,
+        chosen_valid,
+        items,
+        rank,
+        layout,
+        quotient.guard[chosen_direction],
     )
     bits = bits | jnp.where(
-        jnp.any(overlap),
+        jnp.any(overlap) | jnp.any(cover_only),
         int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
         0,
     ).astype(jnp.int32)
@@ -2122,12 +2380,16 @@ def _collapse_round_periodic(
     return work, done, bits, count
 
 
-def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+def _collapse_round(
+    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any = False, /
+) -> Any:
+    """One collapse round; ``escape`` (traced) selects the stall-escape admission."""
+
     def periodic(operands: Any) -> Any:
-        return _collapse_round_periodic(operands[0], operands[1], layout)
+        return _collapse_round_periodic(operands[0], operands[1], layout, escape)
 
     def ordinary(operands: Any) -> Any:
-        return _collapse_round_nonperiodic(operands[0], operands[1], layout)
+        return _collapse_round_nonperiodic(operands[0], operands[1], layout, escape)
 
     return jax.lax.cond(
         work.periodic_enabled,
@@ -2388,11 +2650,47 @@ def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
 # ------------------------------------------------------------------ relocation
 
 
-def _relocation_targets(work: _Work, topology: _Topology, /) -> Any:
+class _VertexOrbits(NamedTuple):
+    """Lifted members of each vertex's periodic orbit (a vertex outside one is its own).
+
+    ``anchor`` is the orbit representative whose position every member's deck
+    translation is measured from.
+    """
+
+    members: Array
+    present: Array
+    anchor: Array
+
+
+def _vertex_orbits(work: _Work, /) -> _VertexOrbits:
+    representative = work.periodic_vertex_representative
+    slots = jnp.arange(representative.shape[0], dtype=jnp.int32)
+    grouped = work.periodic_enabled & (representative >= 0)
+    own = jnp.full_like(work.periodic_vertex_members, -1).at[:, 0].set(slots)
+    members = jnp.where(
+        grouped[:, None],
+        work.periodic_vertex_members[jnp.maximum(representative, 0)],
+        own,
+    )
+    return _VertexOrbits(members, members >= 0, jnp.where(grouped, representative, slots))
+
+
+def _orbit_values(orbits: _VertexOrbits, values: Array, fill: Any, /) -> Array:
+    """``values`` of every orbit member, ``fill`` in absent member columns."""
+    gathered = values[jnp.maximum(orbits.members, 0)]
+    present = orbits.present.reshape(orbits.present.shape + (1,) * (values.ndim - 1))
+    return jnp.where(present, gathered, fill)
+
+
+def _relocation_targets(
+    work: _Work, topology: _Topology, orbits: _VertexOrbits, /
+) -> Any:
     """Spring displacement toward unit metric lengths and each vertex's badness.
 
     Interior vertices use every neighbor; curve vertices only their two curve
-    neighbors, so the displacement stays on the straight curve line.
+    neighbors, so the displacement stays on the straight curve line. A periodic
+    orbit sums the translation-invariant pulls of all lifted members (its
+    quotient star), so every member moves by one common displacement.
     """
     points = work.coordinates
     link = topology.link
@@ -2410,8 +2708,10 @@ def _relocation_targets(work: _Work, topology: _Topology, /) -> Any:
         * (points[jnp.maximum(link, 0)] - points[:, None, :]),
         0.0,
     )
-    displacement = jnp.sum(pull, axis=1) / jnp.maximum(jnp.sum(use, axis=1), 1)[:, None]
-    return displacement, badness
+    pulls = jnp.sum(_orbit_values(orbits, jnp.sum(pull, axis=1), 0.0), axis=1)
+    uses = jnp.sum(_orbit_values(orbits, jnp.sum(use, axis=1), 0), axis=1)
+    displacement = pulls / jnp.maximum(uses, 1)[:, None]
+    return displacement, jnp.max(_orbit_values(orbits, badness, 0.0), axis=1)
 
 
 def _periodic_vertex_selection(
@@ -2472,27 +2772,62 @@ def _periodic_vertex_selection(
 
 
 def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+    """Move vertices (whole periodic orbits) toward their spring targets.
+
+    A periodic orbit is decided on its quotient star: the representative moves
+    by the orbit displacement, every member lands on the exact deck image of
+    that position and takes one metric proposal, and the move is accepted when
+    the minimum quality over all member balls improves with every member cell
+    certified positive. Orbits whose deck element is not a representable
+    translation are left to the host route.
+    """
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
     cell_capacity = layout.cell_capacity
     points = work.coordinates
+    orbits = _vertex_orbits(work)
+
+    def every(values: Array, /) -> Array:
+        return jnp.all(_orbit_values(orbits, values, True), axis=1)
+
+    def some(values: Array, /) -> Array:
+        return jnp.any(_orbit_values(orbits, values, False), axis=1)
+
     kind = topology.kind
     curve = kind == _CURVE
-    movable = (
+    movable = every(
         (topology.valence > 0)
         & ~done
         & ((kind == _INTERIOR) | (curve & (topology.straight != _INVALID)))
     )
-    cavity = topology.valence > layout.ball_width
-    displacement, badness = _relocation_targets(work, topology)
-    active = movable & ~cavity & jnp.any(displacement != 0.0, axis=1)
+    cavity = some(topology.valence > layout.ball_width)
+    displacement, badness = _relocation_targets(work, topology, orbits)
+    candidate = movable & ~cavity & jnp.any(displacement != 0.0, axis=1)
+    deck = ~work.periodic_enabled | every(work.periodic_vertex_deck)
+    active = candidate & deck
     ball = topology.ball
     present = ball >= 0
     rows = work.cells[jnp.maximum(ball, 0)]
     before = jnp.min(
-        jnp.where(present, topology.quality[jnp.maximum(ball, 0)], jnp.inf),
+        _orbit_values(
+            orbits,
+            jnp.min(
+                jnp.where(present, topology.quality[jnp.maximum(ball, 0)], jnp.inf),
+                axis=1,
+            ),
+            jnp.inf,
+        ),
         axis=1,
     )
+
+    def targets(scale: Array, /) -> Array:
+        step = points + scale * displacement
+        return jnp.where(
+            work.periodic_enabled,
+            step[orbits.anchor] + work.periodic_vertex_translation,
+            step,
+        )
+
     initial_point = points
     initial_metric = work.metric
     initial_scale = jnp.asarray(1.0, dtype=points.dtype)
@@ -2516,7 +2851,7 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
             had_invalid,
             had_uncertain,
         ) = carry
-        target = points + scale * displacement
+        target = targets(scale)
         weights = _barycentric(points[rows], target[:, None, :])
         score = jnp.where(present, jnp.min(weights, axis=-1), -jnp.inf)
         best_cell = jnp.argmax(score, axis=1)
@@ -2529,7 +2864,16 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
             clipped / jnp.sum(clipped, axis=-1, keepdims=True),
             1.0 / 3.0,
         )
-        proposal = _log_euclidean(work.metric[host_rows], normalized)
+        own_proposal = _log_euclidean(work.metric[host_rows], normalized)
+        # One metric per orbit: the member whose ball best contains its target.
+        chosen = jnp.argmax(
+            _orbit_values(orbits, jnp.max(score, axis=1), -jnp.inf), axis=1
+        )
+        proposal = own_proposal[
+            jnp.take_along_axis(jnp.maximum(orbits.members, 0), chosen[:, None], axis=1)[
+                :, 0
+            ]
+        ]
         image = vertex_capacity + jnp.arange(vertex_capacity, dtype=jnp.int32)
         extended_points = jnp.concatenate((points, target), axis=0)
         extended_metric = jnp.concatenate((work.metric, proposal), axis=0)
@@ -2565,6 +2909,8 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
             ),
             axis=1,
         )
+        after = jnp.min(_orbit_values(orbits, after, jnp.inf), axis=1)
+        status = jnp.max(_orbit_values(orbits, status, _OK), axis=1)
         improving = pending & (after > before + _IMPROVEMENT)
         accepted = improving & (status == _OK)
         best_point = jnp.where(accepted[:, None], target, best_point)
@@ -2574,8 +2920,7 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
         had_uncertain = had_uncertain | (improving & (status == _UNCERTAIN))
         pending = pending & ~accepted
         next_scale = scale * jnp.asarray(0.5, dtype=points.dtype)
-        next_target = points + next_scale * displacement
-        pending = pending & jnp.any(next_target != points, axis=1)
+        pending = pending & some(jnp.any(targets(next_scale) != points, axis=1))
         return (
             next_scale,
             pending,
@@ -2616,6 +2961,11 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
         jnp.where(had_uncertain, _UNCERTAIN, _OK),
     )
     counters, bits = _tally(work.counters, rejected, active & ~success)
+    bits = bits | jnp.where(
+        jnp.any(candidate & ~deck),
+        int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
+        0,
+    ).astype(jnp.int32)
     counters, _ = _tally(counters, _CAVITY, movable & cavity)
     rank = _ranks(success, -badness, work.vertex_ids)
     ordinary = _independent(rank, success, ball, cell_capacity)
@@ -2657,8 +3007,49 @@ def _unit(work: _Work, /) -> Array:
     return jnp.all(~measured | inside)
 
 
-def _phase(step: Any, work: _Work, done: Array, bits: Array, layout: Any, /) -> Any:
-    """Exhaust a finite phase batch until no operation applies or status stops it."""
+def _stall_potential(work: _Work, /) -> Array:
+    """Well-founded stall measure ``(out-of-band, quantized band excess)``.
+
+    Counted over the measured half-edges of ``_unit``; both entries are natural
+    numbers, so their lexicographic order admits no infinite strictly
+    decreasing sequence (see ``_adapted``).
+    """
+    lengths = _lengths(work, _half_ends(work.cells))
+    active = jnp.repeat(work.cell_active, 3)
+    unprotected = active & ~work.edge_protected.reshape((-1,))
+    measured = jnp.where(jnp.any(unprotected), unprotected, active)
+    outside = measured & ((lengths < _LOWER) | (lengths > _UPPER))
+    excess = jnp.maximum(
+        jnp.abs(jnp.log(jnp.where(measured, lengths, 1.0))) - np.log(_UPPER), 0.0
+    )
+    return jnp.stack(
+        (
+            jnp.sum(outside, dtype=jnp.int64),
+            jnp.sum(jnp.floor(excess / _DEVIATION_QUANTUM).astype(jnp.int64)),
+        )
+    )
+
+
+def _potential_below(potential: Array, bound: Array, /) -> Array:
+    """Strict lexicographic order of two stall potentials."""
+    return (potential[0] < bound[0]) | (
+        (potential[0] == bound[0]) & (potential[1] < bound[1])
+    )
+
+
+def _phase(
+    step: Any,
+    work: _Work,
+    done: Array,
+    bits: Array,
+    layout: Any,
+    enabled: Any = True,
+    /,
+) -> Any:
+    """Exhaust a finite phase batch until no operation applies or status stops it.
+
+    A disabled (traced ``enabled``) phase runs no round.
+    """
 
     def proceed(carry: Any) -> Any:
         _, _, bits, count, _ = carry
@@ -2672,24 +3063,38 @@ def _phase(step: Any, work: _Work, done: Array, bits: Array, layout: Any, /) -> 
     work, done, bits, _, total = jax.lax.while_loop(
         proceed,
         sub_round,
-        (work, done, bits, jnp.int32(1), jnp.int32(0)),
+        (work, done, bits, jnp.where(enabled, 1, 0).astype(jnp.int32), jnp.int32(0)),
     )
     return work, done, bits, total
 
 
-def _pass(work: _Work, bits: Array, layout: DeviceMetricLayout, /) -> Any:
-    """Split, collapse, and flip phases, then relocation (each vertex once)."""
+def _pass(
+    work: _Work, bits: Array, layout: DeviceMetricLayout, escaping: Array, /
+) -> Any:
+    """Split, collapse, and flip phases, then relocation (each vertex once).
+
+    An escaping pass (``_adapted``) runs only the escape collapse phase; the
+    collapse rounds are compiled once with the traced admission flag.
+    """
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
+    regular = ~escaping
 
     def skipped(operand: Any) -> Any:
         work, bits = operand
         return work, bits, jnp.int32(0)
 
+    def collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+        return _collapse_round(work, done, layout, escaping)
+
     def topological(operand: Any) -> Any:
         work, bits = operand
         total = jnp.int32(0)
-        for step in (_split_round, _collapse_round, _flip_round):
-            work, _, bits, count = _phase(step, work, done, bits, layout)
+        for step, enabled in (
+            (_split_round, regular),
+            (collapse_round, True),
+            (_flip_round, regular),
+        ):
+            work, _, bits, count = _phase(step, work, done, bits, layout, enabled)
             total = total + count
         return work, bits, total
 
@@ -2702,9 +3107,11 @@ def _pass(work: _Work, bits: Array, layout: DeviceMetricLayout, /) -> Any:
         work.controls[_TOPOLOGY] != 0, topological, skipped, (work, bits)
     )
     work, bits, moved = jax.lax.cond(
-        work.controls[_RELOCATION] != 0, relocating, skipped, (work, bits)
+        (work.controls[_RELOCATION] != 0) & regular, relocating, skipped, (work, bits)
     )
-    work = work._replace(counters=work.counters.at[_PASSES].add(1))
+    work = work._replace(
+        counters=work.counters.at[_PASSES].add(jnp.where(escaping, 0, 1))
+    )
     return work, bits, changed + moved
 
 
@@ -2779,7 +3186,11 @@ class _DeviceMetricRound(NamedTuple):
 def _periodic_round(
     layout: DeviceMetricLayout, source: _Work, operation: Array, /
 ) -> _DeviceMetricRound:
-    """Execute one source-bound orbit transaction without host synchronization."""
+    """Execute one source-bound orbit transaction without host synchronization.
+
+    Operations: split, collapse, flip, relocate, and (4) the stall-escape
+    collapse, which shares the collapse branch through its traced flag.
+    """
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
 
     def split(operand: Any) -> Any:
@@ -2789,7 +3200,7 @@ def _periodic_round(
 
     def collapse(operand: Any) -> Any:
         work, done = operand
-        work, _, bits, count = _collapse_round(work, done, layout)
+        work, _, bits, count = _collapse_round(work, done, layout, operation == 4)
         return work, bits, count
 
     def flip(operand: Any) -> Any:
@@ -2803,7 +3214,7 @@ def _periodic_round(
         return work, bits, count
 
     work, bits, _ = jax.lax.switch(
-        operation,
+        jnp.where(operation == 4, 1, operation),
         (split, collapse, flip, relocate),
         (source, done),
     )
@@ -2865,21 +3276,64 @@ def _refused_call(
 
 
 def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate:
-    """Run complete metric phases, rolling back only on actual terminal status."""
+    """Run complete metric phases, rolling back only on actual terminal status.
+
+    Stall escape (the host route's, ``execute_local_metric_adaptation``): at a
+    pass that applies nothing outside the unit criterion, an escape phase runs
+    every collapse up to ``_COLLAPSE_LIMIT`` (births included). It stands when
+    the run reaches the unit criterion or a stall of strictly lower
+    ``_stall_potential``; otherwise the run returns the escaped stall's state
+    and status bits as a stall. Termination: the escaped stalls' potentials
+    strictly decrease in a well-founded order (pairs of natural numbers), each
+    escape phase removes a vertex per collapse, and between escapes the regular
+    passes are unchanged.
+    """
 
     def proceed(carry: Any) -> Any:
-        work, bits, stalled = carry
+        work, bits, stalled = carry[:3]
         return ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
 
     def adaptation_pass(carry: Any) -> Any:
-        work, bits, _ = carry
-        work, bits, applied = _pass(work, bits, layout)
-        return work, bits, applied == 0
+        work, bits, _, escaping, escaped, bound, anchor, anchor_bits = carry
+        work, bits, applied = _pass(work, bits, layout, escaping)
+        quiet = applied == 0
+        potential = _stall_potential(work)
+        stall = (
+            quiet
+            & ~escaping
+            & ((bits & _FAILURES) == 0)
+            & (work.controls[_TOPOLOGY] != 0)
+            & ~_unit(work)
+        )
+        admitted = ~escaped | _potential_below(potential, bound)
+        start = stall & admitted
+        # A stall that does not lower the last escaped stall's potential
+        # returns that stall; an escape phase that applies nothing stalls.
+        restore = stall & ~admitted
+        return (
+            _select(restore, anchor, work),
+            jnp.where(restore, anchor_bits, bits),
+            quiet & ~start,
+            start,
+            escaped | start,
+            jnp.where(start, potential, bound),
+            _select(start, work, anchor),
+            jnp.where(start, bits, anchor_bits),
+        )
 
-    work, bits, stalled = jax.lax.while_loop(
+    work, bits, stalled, *_ = jax.lax.while_loop(
         proceed,
         adaptation_pass,
-        (source, jnp.int32(0), jnp.bool_(False)),
+        (
+            source,
+            jnp.int32(0),
+            jnp.bool_(False),
+            jnp.bool_(False),
+            jnp.bool_(False),
+            jnp.zeros((2,), dtype=jnp.int64),
+            source,
+            jnp.int32(0),
+        ),
     )
     converged = _unit(work)
     stalled = stalled & ~converged
@@ -3063,6 +3517,15 @@ def _resize_device_state(
             layout.periodic_orbit_width,
         ),
         periodic_cell_orbits=padded(work.periodic_cell_orbits, cells, -1),
+        periodic_vertex_translation=padded(
+            work.periodic_vertex_translation, vertices, 0.0
+        ),
+        periodic_vertex_deck=padded(work.periodic_vertex_deck, vertices, False),
+        periodic_edge_translation=padded(work.periodic_edge_translation, 3 * cells, 0.0),
+        periodic_edge_deck=padded(work.periodic_edge_deck, 3 * cells, False),
+        periodic_vertex_key=padded(work.periodic_vertex_key, vertices, 0),
+        periodic_vertex_winding=padded(work.periodic_vertex_winding, vertices, 0),
+        periodic_edge_winding=padded(work.periodic_edge_winding, 3 * cells, 0),
         cursors=work.cursors,
         controls=work.controls,
         counters=work.counters,
@@ -3305,6 +3768,16 @@ def _periodic_device_adaptation(
 
     controls = np.asarray(jax.device_get(current_state.controls), dtype=np.int32)
     stalled = False
+    # The last escaped stall: its layout, state, preparation, and potential.
+    escaped_from: (
+        tuple[
+            DeviceMetricLayout,
+            DeviceMetricState,
+            PreparedDeviceMetricAdaptation,
+            tuple[int, ...],
+        ]
+        | None
+    ) = None
     while True:
         if bool(np.asarray(jax.device_get(_unit(_work(current_state))))):
             break
@@ -3330,9 +3803,29 @@ def _periodic_device_adaptation(
             pass_applied += applied
         if bool(np.asarray(jax.device_get(_unit(_work(current_state))))):
             break
-        if pass_applied == 0:
-            stalled = True
+        if pass_applied != 0:
+            continue
+        stalled = True
+        if not controls[_TOPOLOGY]:
             break
+        # Stall escape and its well-founded potential, as in ``_adapted``.
+        potential = tuple(
+            int(value)
+            for value in np.asarray(
+                jax.device_get(_stall_potential(_work(current_state)))
+            ).tolist()
+        )
+        if escaped_from is not None and potential >= escaped_from[3]:
+            current_layout, current_state, current_prepared, _ = escaped_from
+            break
+        stall = (current_layout, current_state, current_prepared, potential)
+        applied, failure = run_phase(4)
+        if failure:
+            return rollback(failure)
+        if applied == 0:
+            break
+        stalled = False
+        escaped_from = stall
     converged = bool(np.asarray(jax.device_get(_unit(_work(current_state)))))
     stalled = stalled and not converged
     result_work = _work(current_state)
@@ -3456,6 +3949,42 @@ class _PeriodicDeviceTables(NamedTuple):
     orbit_width: int
     target_mesh_id: str
     next_quotient_vertex: int
+    vertex_translation: np.ndarray
+    vertex_deck: np.ndarray
+    edge_translation: np.ndarray
+    edge_deck: np.ndarray
+    vertex_key: np.ndarray
+    vertex_winding: np.ndarray
+    edge_winding: np.ndarray
+
+
+def _deck_offset(
+    isometry: tuple[tuple[Fraction, ...], ...], /
+) -> tuple[Fraction, ...] | None:
+    """Translation of an exact homogeneous deck element, or None if it is not one."""
+    dimension = len(isometry) - 1
+    linear = all(
+        isometry[row][column] == (1 if row == column else 0)
+        for row in range(dimension)
+        for column in range(dimension)
+    )
+    return tuple(isometry[row][dimension] for row in range(dimension)) if linear else None
+
+
+def _deck_translation(
+    member: tuple[Fraction, ...] | None,
+    anchor: tuple[Fraction, ...] | None,
+    /,
+) -> tuple[Fraction, ...] | None:
+    """Exact translation from ``anchor`` to ``member`` when binary64 represents it."""
+    if member is None or anchor is None:
+        return None
+    difference = tuple(
+        first - second for first, second in zip(member, anchor, strict=True)
+    )
+    if any(Fraction(float(value)) != value for value in difference):
+        return None
+    return difference
 
 
 def _periodic_device_tables(
@@ -3492,6 +4021,9 @@ def _periodic_device_tables(
         host_edge_orbits = np.arange(edge_keys.shape[0], dtype=np.int64)
         edge_start_ids, edge_end_ids = edge_keys[:, 0], edge_keys[:, 1]
         host_cell_orbits = np.arange(host.cells.shape[0], dtype=np.int64)
+        rank = int(device.periodic_vertex_winding.shape[1])
+        host_vertex_windings = np.zeros((host_vertex_ids.size, rank), dtype=np.int64)
+        host_edge_windings = np.zeros((edge_keys.shape[0], rank), dtype=np.int64)
     else:
         vertex_orbits = np.asarray(context.vertex_orbits, dtype=np.int64)
         host_vertex_orbits = np.full(host.vertex_ids.shape, -1, dtype=np.int64)
@@ -3512,25 +4044,45 @@ def _periodic_device_tables(
         host_cell_orbits = np.asarray(context.cell_quotient_ids, dtype=np.int64)[
             np.asarray(context.cell_orbits, dtype=np.int64)
         ]
-    edge_data: dict[tuple[int, int], tuple[int, int, int]] = {}
-    for key, orbit, start, end in zip(
-        edge_keys.tolist(),
-        host_edge_orbits.tolist(),
-        edge_start_ids.tolist(),
-        edge_end_ids.tolist(),
-        strict=True,
+        orders = identification_orders(mesh.periodic_topology.cell)
+        host_vertex_windings = reduce_periodic_exponents(
+            np.asarray(context.vertex_windings, dtype=np.int64), orders
+        )
+        host_edge_windings = reduce_periodic_exponents(
+            np.asarray(context.edge_member_windings, dtype=np.int64), orders
+        )
+    edge_data: dict[tuple[int, int], tuple[int, int, int, int]] = {}
+    for row, (key, orbit, start, end) in enumerate(
+        zip(
+            edge_keys.tolist(),
+            host_edge_orbits.tolist(),
+            edge_start_ids.tolist(),
+            edge_end_ids.tolist(),
+            strict=True,
+        )
     ):
         normalized = (int(key[0]), int(key[1]))
-        edge_data[normalized] = (int(orbit), int(start), int(end))
+        edge_data[normalized] = (int(orbit), int(start), int(end), row)
     device_slot_by_id = {
         int(identifier): slot for slot, identifier in enumerate(vertex_ids.tolist())
     }
     vertex_orbits = np.full((vertex_capacity,), -1, dtype=np.int64)
+    # One producer-owned key per current orbit (kind 0: an existing orbit).
+    vertex_key = np.zeros((vertex_capacity, 2), dtype=np.int64)
+    vertex_winding = np.zeros(
+        (vertex_capacity, host_vertex_windings.shape[1]), dtype=np.int64
+    )
     for slot in active_vertices.tolist():
         row = host_vertex_rows.get(int(vertex_ids[slot]))
         if row is None or host_vertex_orbits[row] < 0:
             raise ValueError("A live device vertex lost its exact periodic source orbit.")
         vertex_orbits[slot] = host_vertex_orbits[row]
+        vertex_key[slot] = (0, host_vertex_orbits[row])
+        vertex_winding[slot] = host_vertex_windings[row]
+    # A retired slot keeps a key of its own so it never reads as an orbit member.
+    retired = np.flatnonzero((vertex_ids >= 0) & ~vertex_active)
+    vertex_key[retired, 0] = 2
+    vertex_key[retired, 1] = vertex_ids[retired]
     vertex_groups: dict[int, list[int]] = defaultdict(list)
     for slot in active_vertices.tolist():
         vertex_groups[int(vertex_orbits[slot])].append(slot)
@@ -3550,6 +4102,7 @@ def _periodic_device_tables(
     edge_representative = np.full((half_capacity,), -1, dtype=np.int32)
     edge_start = np.full((half_capacity,), -1, dtype=np.int32)
     edge_end = np.full((half_capacity,), -1, dtype=np.int32)
+    edge_winding = np.zeros((half_capacity, host_edge_windings.shape[1]), dtype=np.int64)
     canonical = np.zeros((half_capacity,), dtype=np.bool_)
     for cell in active_cells.tolist():
         for local in range(3):
@@ -3564,7 +4117,8 @@ def _periodic_device_tables(
                 raise ValueError(
                     "A live device edge lost its exact periodic source orbit."
                 )
-            orbit, start_id, end_id = data
+            orbit, start_id, end_id, edge_row = data
+            edge_winding[half] = host_edge_windings[edge_row]
             start_slot = device_slot_by_id.get(start_id)
             end_slot = device_slot_by_id.get(end_id)
             if start_slot is None or end_slot is None:
@@ -3594,6 +4148,44 @@ def _periodic_device_tables(
             canonical_half = half if canonical[half] else neighbor
             representative = edge_representative[canonical_half]
             edge_representative[half] = representative
+
+    # Deck translations relative to each orbit representative: device kernels
+    # place every lifted member at ``representative + translation``, which
+    # rounds to the exact deck image exactly when the translation is a float.
+    vertex_translation = np.zeros((vertex_capacity, 2), dtype=np.float64)
+    vertex_deck = np.zeros((vertex_capacity,), dtype=np.bool_)
+    edge_translation = np.zeros((half_capacity, 2), dtype=np.float64)
+    edge_deck = np.zeros((half_capacity,), dtype=np.bool_)
+    if context is None:
+        vertex_deck[active_vertices] = True
+        edge_deck[edge_orbits >= 0] = True
+    else:
+        offsets = {
+            slot: _deck_offset(
+                context.vertex_exact_isometries[host_vertex_rows[int(vertex_ids[slot])]]
+            )
+            for slot in active_vertices.tolist()
+        }
+        for slot in active_vertices.tolist():
+            translation = _deck_translation(
+                offsets[slot], offsets[int(vertex_representative[slot])]
+            )
+            if translation is not None:
+                vertex_translation[slot] = np.asarray(translation, dtype=np.float64)
+                vertex_deck[slot] = True
+        for half in np.flatnonzero(edge_orbits >= 0).tolist():
+            representative = int(edge_representative[half])
+            start = _deck_translation(
+                offsets[int(edge_start[half])],
+                offsets[int(edge_start[representative])],
+            )
+            end = _deck_translation(
+                offsets[int(edge_end[half])],
+                offsets[int(edge_end[representative])],
+            )
+            if start is not None and start == end:
+                edge_translation[half] = np.asarray(start, dtype=np.float64)
+                edge_deck[half] = True
 
     cell_orbits = np.full((cell_capacity,), -1, dtype=np.int64)
     if active_cells.size != host_cell_orbits.size:
@@ -3625,6 +4217,13 @@ def _periodic_device_tables(
         orbit_width,
         target_mesh_id,
         next_quotient_vertex,
+        vertex_translation,
+        vertex_deck,
+        edge_translation,
+        edge_deck,
+        vertex_key,
+        vertex_winding,
+        edge_winding,
     )
 
 
@@ -3664,6 +4263,17 @@ def _install_periodic_tables(
         periodic_edge_end=jnp.asarray(tables.edge_end, dtype=jnp.int32),
         periodic_edge_members=members(tables.edge_members, 3 * layout.cell_capacity),
         periodic_cell_orbits=jnp.asarray(tables.cell_orbits, dtype=jnp.int64),
+        periodic_vertex_translation=jnp.asarray(
+            tables.vertex_translation, dtype=state.mesh.coordinates.dtype
+        ),
+        periodic_vertex_deck=jnp.asarray(tables.vertex_deck, dtype=jnp.bool_),
+        periodic_edge_translation=jnp.asarray(
+            tables.edge_translation, dtype=state.mesh.coordinates.dtype
+        ),
+        periodic_edge_deck=jnp.asarray(tables.edge_deck, dtype=jnp.bool_),
+        periodic_vertex_key=jnp.asarray(tables.vertex_key, dtype=jnp.int64),
+        periodic_vertex_winding=jnp.asarray(tables.vertex_winding, dtype=jnp.int64),
+        periodic_edge_winding=jnp.asarray(tables.edge_winding, dtype=jnp.int64),
     )
     cursors = work.cursors
     if tables.next_quotient_vertex >= 0:
@@ -3713,6 +4323,7 @@ def _device_state(
     next_quotient_vertex: int,
     periodic_mesh_id: str,
     periodic_source_identity: tuple[str, str, str, str],
+    periodic_rank: int,
 ) -> DeviceMetricState:
     """Pad source state and initialize exact periodic-workspace rows."""
     vertex_capacity = layout.vertex_capacity
@@ -3779,6 +4390,23 @@ def _device_state(
             (3 * cell_capacity, orbit_width), -1, dtype=jnp.int32
         ),
         periodic_cell_orbits=jnp.full((cell_capacity,), -1, dtype=jnp.int64),
+        periodic_vertex_translation=jnp.zeros((vertex_capacity, 2), dtype=jnp.float64),
+        periodic_vertex_deck=jnp.zeros((vertex_capacity,), dtype=jnp.bool_),
+        periodic_edge_translation=jnp.zeros((3 * cell_capacity, 2), dtype=jnp.float64),
+        periodic_edge_deck=jnp.zeros((3 * cell_capacity,), dtype=jnp.bool_),
+        periodic_vertex_key=(
+            jnp.zeros((vertex_capacity, 2), dtype=jnp.int64)
+            if state.orbit_keys is None
+            else padded(state.orbit_keys[vertex_order], vertex_capacity, 0, np.int64)
+        ),
+        periodic_vertex_winding=(
+            jnp.zeros((vertex_capacity, periodic_rank), dtype=jnp.int64)
+            if state.orbit_windings is None
+            else padded(state.orbit_windings[vertex_order], vertex_capacity, 0, np.int64)
+        ),
+        periodic_edge_winding=jnp.zeros(
+            (3 * cell_capacity, periodic_rank), dtype=jnp.int64
+        ),
         cursors=jnp.asarray(
             np.asarray(
                 (
@@ -3845,7 +4473,9 @@ def _prepared_metric(adaptation: PreparedMeshAdaptation, /) -> Any:
         mode,
     )
     topology = _host_topology(state, mode)
-    _validate_classification(state, topology)
+    _validate_classification(
+        state, topology, _periodic_state_context(mesh, source, state, topology, mode)
+    )
     # ty: ignore[unresolved-attribute]
     vertex_capacity, cell_capacity = policy.device_policy.capacities(
         vertex_count, cell_count
@@ -3895,6 +4525,11 @@ def _prepared_metric(adaptation: PreparedMeshAdaptation, /) -> Any:
         next_quotient_vertex=next_quotient_vertex,
         periodic_mesh_id=mesh.mesh_id if periodic_enabled else "",
         periodic_source_identity=periodic_source_identity,
+        periodic_rank=(
+            len(identification_orders(mesh.periodic_topology.cell))
+            if periodic_enabled
+            else 0
+        ),
     )
     anchor = _Anchor(source, int(np.max(state.cell_ids)) + 1)
     prepared = PreparedDeviceMetricAdaptation(adaptation, layout, device, anchor)
@@ -4006,6 +4641,16 @@ def _host_state(
         lineage_sources=sources[distinct],
         lineage_ranks=ranks[distinct],
         next_vertex_id=int(cursors[_NEXT_VERTEX]),
+        orbit_keys=(
+            np.asarray(host.periodic_vertex_key, dtype=np.int64)[:count]
+            if host.periodic_enabled
+            else None
+        ),
+        orbit_windings=(
+            np.asarray(host.periodic_vertex_winding, dtype=np.int64)[:count]
+            if host.periodic_enabled
+            else None
+        ),
     )
 
 

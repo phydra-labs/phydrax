@@ -1,6 +1,6 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // Source-agnostic surface remesher: the source-relative fold factor of the
-// quality score.
+// quality score and the quality pass's relocation candidates.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -175,9 +175,119 @@ void folded_cluster() {
   PHX_CHECK(maximum_turn(points, remeshed) <= 60);
 }
 
+// Admits a triangle whose corners lie within `width` of the unit sphere and
+// projects onto the sphere; open cones (no fold penalty).
+class SphereBand final : public TriangleAdmission {
+ public:
+  explicit SphereBand(double band) : width(band) {}
+  AdmissionKind kind() const override { return AdmissionKind::kOffsetBand; }
+  VertexEvidence evaluate(const Point& p) const override {
+    const double radius = std::hypot(p[0], p[1], p[2]);
+    return {radius - 1, radius - 1};
+  }
+  bool admits(const Point&, const Point&, const Point&,
+              const std::array<VertexEvidence, 3>& evidence) const override {
+    for (const VertexEvidence& corner : evidence)
+      if (!(std::abs(corner.lower) <= width)) return false;
+    return true;
+  }
+  Point project(const Point& p) const override {
+    const double radius = std::hypot(p[0], p[1], p[2]);
+    return {p[0] / radius, p[1] / radius, p[2] / radius};
+  }
+  NormalCone normal_cone(const Point&, const Point&, const Point&,
+                         const std::array<VertexEvidence, 3>&) const override {
+    return NormalCone{};
+  }
+  double normal_cone_floor(const Point&, const Point&, const Point&,
+                           const std::array<VertexEvidence, 3>&) const override {
+    return NormalCone{}.half_angle;
+  }
+  double width;
+};
+
+double minimum_angle(const std::vector<Point>& points, const std::vector<Triangle>& triangles) {
+  double result = 180;
+  for (const Triangle& t : triangles)
+    for (int k = 0; k < 3; ++k) {
+      const Point& p = points[static_cast<size_t>(t[k])];
+      const Point& a = points[static_cast<size_t>(t[(k + 1) % 3])];
+      const Point& b = points[static_cast<size_t>(t[(k + 2) % 3])];
+      const Point u{a[0] - p[0], a[1] - p[1], a[2] - p[2]};
+      const Point v{b[0] - p[0], b[1] - p[1], b[2] - p[2]};
+      const Point w{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0]};
+      result = std::min(result, std::atan2(std::hypot(w[0], w[1], w[2]),
+                                           u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) *
+                                    180 / std::acos(-1.0));
+    }
+  return result;
+}
+
+// Octahedron subdivided `levels` times onto the unit sphere, each vertex
+// moved radially and tangentially by a deterministic pseudo-random jitter.
+void jittered_sphere(int levels, double jitter, uint64_t seed, std::vector<Point>& points,
+                     std::vector<Triangle>& triangles) {
+  points = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  triangles = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4}, {3, 0, 4},
+               {2, 0, 5}, {1, 2, 5}, {3, 1, 5}, {0, 3, 5}};
+  for (int level = 0; level < levels; ++level) {
+    std::map<std::pair<int64_t, int64_t>, int64_t> middle;
+    auto split = [&](int64_t a, int64_t b) {
+      const auto key = std::minmax(a, b);
+      const auto found = middle.find(key);
+      if (found != middle.end()) return found->second;
+      const Point& p = points[static_cast<size_t>(a)];
+      const Point& q = points[static_cast<size_t>(b)];
+      Point m{(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2};
+      const double r = std::hypot(m[0], m[1], m[2]);
+      points.push_back({m[0] / r, m[1] / r, m[2] / r});
+      return middle[key] = static_cast<int64_t>(points.size()) - 1;
+    };
+    std::vector<Triangle> refined;
+    for (const Triangle& t : triangles) {
+      const int64_t ab = split(t[0], t[1]), bc = split(t[1], t[2]), ca = split(t[2], t[0]);
+      refined.push_back({t[0], ab, ca});
+      refined.push_back({ab, t[1], bc});
+      refined.push_back({ca, bc, t[2]});
+      refined.push_back({ab, bc, ca});
+    }
+    triangles = refined;
+  }
+  uint64_t state = seed;
+  auto uniform = [&]() {
+    state = state * 6364136223846793005ull + 1442695040888963407ull;
+    return static_cast<double>(state >> 11) * 0x1p-53 * 2 - 1;
+  };
+  for (Point& p : points)
+    for (double& value : p) value += jitter * uniform();
+}
+
+// A jittered sphere inside a thin band, remeshed toward a 44 degree minimum
+// angle. Every remaining shortfall is a remesher limit, not the source: moving
+// a corner all the way to its star centroid either fails to lift the worst
+// triangle or pushes another star triangle below it, while a partial move or
+// a move toward the corner's equilateral apex succeeds (only the full moves
+// left 2 to 10 triangles below the target on these seeds).
+void sphere_band_quality() {
+  for (uint64_t seed = 1; seed <= 6; ++seed) {
+    std::vector<Point> points;
+    std::vector<Triangle> triangles;
+    jittered_sphere(3, 0.01, seed, points, triangles);
+    const SphereBand admission(0.02);
+    RemeshCounters counters;
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, triangles, admission, {0.25, 44},
+                                             counters) == PHX_MC_OK);
+    PHX_CHECK(counters.unmet == 0);
+    PHX_CHECK(minimum_angle(points, triangles) > 43.99);
+    for (const Point& p : points) PHX_CHECK(std::abs(std::hypot(p[0], p[1], p[2]) - 1) <= 0.02);
+  }
+}
+
 }  // namespace
 
 int main() {
   folded_cluster();
+  sphere_band_quality();
   return phx::mc::test::finish("test_surface_remesh");
 }

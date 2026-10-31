@@ -121,7 +121,10 @@ def test_mixed_quad_triangle_edit_retains_ids_and_oriented_shared_face() -> None
         source, edit, numeric_version="mixed-face-edit"
     )
 
-    assert {block.cell_kind for block in target.blocks} == {"quadrilateral", "triangle"}
+    assert tuple(block.cell_kind for block in target.blocks) == (
+        "triangle",
+        "quadrilateral",
+    )
     np.testing.assert_array_equal(target.vertex_global_ids, vertex_ids)
     np.testing.assert_array_equal(stencil.target_global_ids, vertex_ids)
     cells = lineage.entities[target.topological_dimension]

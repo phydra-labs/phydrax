@@ -533,7 +533,10 @@ def exact_periodic_element(
     )
     result = _identity(cell.ambient_dimension + 1)
     for matrix, exponent in zip(generators, powers, strict=True):
-        result = _multiply(result, _power(matrix, int(exponent)))
+        # A zero power is the exact identity factor, so skipping it leaves every
+        # Fraction entry of the product unchanged.
+        if exponent:
+            result = _multiply(result, _power(matrix, int(exponent)))
     return result
 
 
@@ -553,10 +556,21 @@ def apply_periodic(
         )
     flat_points = values.reshape((-1, values.shape[-1]))
     flat_shifts = shifts.reshape((-1, rank))
-    output = np.empty_like(flat_points)
-    for row, (point, exponent) in enumerate(zip(flat_points, flat_shifts, strict=True)):
-        matrix = exact_periodic_element(cell, exponent)
-        vector = tuple(_fraction(item) for item in point) + (Fraction(1),)
+    nonfinite = np.flatnonzero(~np.isfinite(flat_points.reshape(-1)))
+    if nonfinite.size:
+        _fraction(flat_points.reshape(-1)[int(nonfinite[0])])
+    # The zero winding is the exact identity: its rows reproduce their binary64 inputs,
+    # with a signed zero normalized as the exact Fraction round trip does.
+    output = flat_points + 0.0
+    elements: dict[tuple[int, ...], ExactIsometry] = {}
+    for row in np.flatnonzero(np.any(flat_shifts != 0, axis=1)).tolist():
+        exponent = flat_shifts[row]
+        key = tuple(int(value) for value in exponent)
+        matrix = elements.get(key)
+        if matrix is None:
+            matrix = exact_periodic_element(cell, exponent)
+            elements[key] = matrix
+        vector = tuple(_fraction(item) for item in flat_points[row]) + (Fraction(1),)
         output[row] = np.asarray(
             [
                 float(

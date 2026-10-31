@@ -3894,6 +3894,84 @@ def _line_cylinder_quadratic(
     )
 
 
+def exact_surface_point_parameters(
+    region: SurfaceRegion, point: Sequence[Fraction], /
+) -> tuple[np.ndarray, tuple[Fraction | None, Fraction | None]] | None:
+    """Enclose the chart parameters of an exact point proved to lie on a surface.
+
+    A plane point has exact chart coordinates; a straight cylinder point has
+    an exact profile parameter and an angle enclosed from its exact rational
+    radial direction, mapped into the region's angle window. Returns the
+    outward ``(2, 2)`` box and the exact coordinates (None for the angle), or
+    None when the point is off the surface or the carrier is unsupported.
+    """
+    from .._rational import fraction_down, fraction_up
+
+    patch = region.patch
+    exact: tuple[Fraction | None, Fraction | None]
+    if isinstance(patch, PlanePatch):
+        axes = tuple(
+            rational_vector(np.asarray(value))
+            for value in (patch.origin, patch.first_axis, patch.second_axis)
+        )
+        chart = _plane_chart_coordinates(patch, tuple(point), point=True)
+        if chart is None or not all(isinstance(value, Fraction) for value in chart):
+            return None
+        u, v = cast(tuple[Fraction, Fraction], chart)
+        if any(
+            axes[0][index] + u * axes[1][index] + v * axes[2][index] != point[index]
+            for index in range(3)
+        ):
+            return None
+        exact = u, v
+        return (
+            np.asarray(
+                ((fraction_down(u), fraction_down(v)), (fraction_up(u), fraction_up(v))),
+                dtype=np.float64,
+            ),
+            exact,
+        )
+    view = _revolution_cylinder_view(region)
+    if view is None or not isinstance(view[0].patch, CylinderPatch):
+        return None
+    cylinder, slope = view[0].patch, view[1]
+    vectors = (cylinder.origin_exact, cylinder.axis_exact)
+    if not all(isinstance(value, Fraction) for vector in vectors for value in vector):
+        return None
+    origin, axis = cast(tuple[tuple[Fraction, ...], tuple[Fraction, ...]], vectors)
+    relative = tuple(point[index] - origin[index] for index in range(3))
+    axial = rational_dot(relative, axis)
+    radial = tuple(relative[index] - axial * axis[index] for index in range(3))
+    radius = cylinder.radius_exact
+    if not isinstance(radius, Fraction) or rational_dot(radial, radial) != radius**2:
+        return None
+    cosine = _exact_dot(cylinder.first_axis_exact, radial) / radius
+    sine = _exact_dot(cylinder.second_axis_exact, radial) / radius
+    if not isinstance(cosine, Fraction) or not isinstance(sine, Fraction):
+        return None
+    context = interval_context(80)
+
+    def scalar(value: Fraction, /) -> Any:
+        return context.mpf(value.numerator) / context.mpf(value.denominator)
+
+    angle = context.atan2(scalar(sine), scalar(cosine))
+    window = float(region.parameter_box[0, 0])
+    middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+    angle = angle + math.ceil((window - middle) / math.tau) * 2 * context.pi
+    profile = axial / slope
+    exact = None, profile
+    return (
+        np.asarray(
+            (
+                (float(np.nextafter(float(angle.a), -np.inf)), fraction_down(profile)),
+                (float(np.nextafter(float(angle.b), np.inf)), fraction_up(profile)),
+            ),
+            dtype=np.float64,
+        ),
+        exact,
+    )
+
+
 class ExactLineCylinderTangency(StrictModule):
     """An edge tangent to a straight cylinder: a double root with exact evidence.
 
@@ -4210,6 +4288,361 @@ def _line_cylinder_region_intersections(
     return CurveIntersectionResult(points=points)
 
 
+@dataclass(frozen=True, slots=True)
+class _StraightRevolution:
+    """Exact frame of a revolution of a meridian line segment.
+
+    ``S(t, v) = origin + (a0 + a1 v) axis + (1 + slope v)(cos t radial + sin t
+    tangent)`` with ``tangent = axis x radial``; ``slope = 0`` is a cylinder.
+    """
+
+    origin: tuple[Fraction, ...]
+    axis: tuple[Fraction, ...]
+    radial: tuple[Fraction, ...]
+    tangent: tuple[Fraction, ...]
+    axial_origin: Fraction
+    axial_rate: Fraction
+    slope: Fraction
+
+
+def _straight_revolution(patch: object, /) -> _StraightRevolution | None:
+    from ._patches import ExactLineCurve, LineCurve, RevolutionSurface
+
+    if not isinstance(patch, RevolutionSurface):
+        return None
+    profile = patch.curve
+    if isinstance(profile, LineCurve):
+        origin_values, direction_values = profile.origin_exact, profile.direction_exact
+    elif isinstance(profile, ExactLineCurve):
+        origin_values = profile.first_exact
+        direction_values = tuple(
+            last - start
+            for start, last in zip(profile.first_exact, profile.last_exact, strict=True)
+        )
+    else:
+        return None
+    if len(origin_values) != 3 or any(
+        not isinstance(value, Fraction) for value in (*origin_values, *direction_values)
+    ):
+        return None
+    origin = cast(tuple[Fraction, ...], tuple(origin_values))
+    direction = cast(tuple[Fraction, ...], tuple(direction_values))
+    axis_origin = rational_vector(np.asarray(patch.axis_origin))
+    axis = rational_vector(np.asarray(patch.axis_direction))
+    if rational_dot(axis, axis) != 1:
+        return None
+    relative = tuple(origin[index] - axis_origin[index] for index in range(3))
+    axial_origin = rational_dot(relative, axis)
+    axial_rate = rational_dot(direction, axis)
+    radial = tuple(relative[index] - axial_origin * axis[index] for index in range(3))
+    radial_rate = tuple(direction[index] - axial_rate * axis[index] for index in range(3))
+    squared = rational_dot(radial, radial)
+    if squared == 0 or axial_rate == 0:
+        return None
+    slope = rational_dot(radial_rate, radial) / squared
+    if any(radial_rate[index] != slope * radial[index] for index in range(3)):
+        return None
+    return _StraightRevolution(
+        axis_origin,
+        axis,
+        radial,
+        rational_cross(axis, radial),
+        axial_origin,
+        axial_rate,
+        slope,
+    )
+
+
+def _line_cone_region_intersections(
+    source: CurveRange,
+    surface: SurfaceRegion,
+    policy: ParametricIntersectionPolicy,
+    /,
+) -> CurveIntersectionResult | None:
+    """Isolate a straight edge against a slanted straight revolution exactly.
+
+    On the line, the profile parameter and the cone scale ``s`` are affine,
+    so ``|radial(t)|^2 = |r|^2 s(t)^2`` is a rational quadratic. Its roots on
+    the cone's own nappe (``s > 0``) are enclosed from their radicals.
+    """
+    from ._patches import ExactLineCurve, LineCurve
+
+    frame = _straight_revolution(surface.patch)
+    curve = source.curve
+    if frame is None or frame.slope == 0:
+        return None
+    if isinstance(curve, LineCurve):
+        line_origin, line_direction = curve.origin_exact, curve.direction_exact
+    elif isinstance(curve, ExactLineCurve):
+        line_origin = curve.first_exact
+        line_direction = tuple(
+            last - first
+            for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
+        )
+    else:
+        return None
+    if not all(isinstance(value, Fraction) for value in (*line_origin, *line_direction)):
+        return None
+    base = cast(tuple[Fraction, ...], tuple(line_origin))
+    rate = cast(tuple[Fraction, ...], tuple(line_direction))
+    relative = tuple(base[index] - frame.origin[index] for index in range(3))
+    axial = (rational_dot(relative, frame.axis), rational_dot(rate, frame.axis))
+    radial_base = tuple(relative[i] - axial[0] * frame.axis[i] for i in range(3))
+    radial_rate = tuple(rate[i] - axial[1] * frame.axis[i] for i in range(3))
+    # v(t) = (axial(t) - a0) / a1 and s(t) = 1 + slope v(t).
+    scale = (
+        1 + frame.slope * (axial[0] - frame.axial_origin) / frame.axial_rate,
+        frame.slope * axial[1] / frame.axial_rate,
+    )
+    squared_radius = rational_dot(frame.radial, frame.radial)
+    quadratic = rational_dot(radial_rate, radial_rate) - squared_radius * scale[1] ** 2
+    linear = 2 * (
+        rational_dot(radial_base, radial_rate) - squared_radius * scale[0] * scale[1]
+    )
+    constant = rational_dot(radial_base, radial_base) - squared_radius * scale[0] ** 2
+    domain_lower = np.asarray((source.first, *np.asarray(surface.parameter_box[0])))
+    domain_upper = np.asarray((source.last, *np.asarray(surface.parameter_box[1])))
+
+    def refused(reason: UnresolvedIntersectionReason, /) -> CurveIntersectionResult:
+        return CurveIntersectionResult(
+            unresolved=(UnresolvedParameterRegion(domain_lower, domain_upper, reason),)
+        )
+
+    roots: list[ExactScalar]
+    if quadratic == 0:
+        if linear == 0:
+            return refused("singular") if constant == 0 else CurveIntersectionResult()
+        roots = [-constant / linear]
+    else:
+        discriminant = linear * linear - 4 * quadratic * constant
+        if discriminant < 0:
+            return CurveIntersectionResult()
+        if discriminant == 0:
+            return refused("singular")
+        radical = RadicalElement.sqrt(discriminant)
+        roots = [
+            (-linear - radical) / (2 * quadratic),
+            (-linear + radical) / (2 * quadratic),
+        ]
+    context = interval_context(100)
+
+    def interval(value: ExactScalar, /) -> Any:
+        lower, upper = coefficient_interval(value, bits=256)
+        first = context.mpf(lower.numerator) / context.mpf(lower.denominator)
+        last = context.mpf(upper.numerator) / context.mpf(upper.denominator)
+        return context.mpf([first.a, last.b])
+
+    box = np.asarray(surface.parameter_box, dtype=np.float64)
+    points: list[ParametricIntersectionPoint] = []
+    for root_value in roots:
+        parameter = interval(root_value)
+        if float(parameter.b) < source.first or float(parameter.a) > source.last:
+            continue
+        if not (source.first < float(parameter.a) and float(parameter.b) < source.last):
+            return refused("continuation")
+        s_value = interval(scale[0] + scale[1] * root_value)
+        if s_value.b < 0:
+            # The mirrored nappe beyond the apex is not this surface.
+            continue
+        if not s_value.a > 0:
+            return refused("singular")
+        profile = interval(
+            (axial[0] + axial[1] * root_value - frame.axial_origin) / frame.axial_rate
+        )
+        if float(profile.b) < box[0, 1] or float(profile.a) > box[1, 1]:
+            continue
+        if not (box[0, 1] < float(profile.a) and float(profile.b) < box[1, 1]):
+            return refused("continuation")
+        radial_point = tuple(
+            radial_base[i] + radial_rate[i] * root_value for i in range(3)
+        )
+        angle = context.atan2(
+            interval(_exact_dot(frame.tangent, radial_point)),
+            interval(_exact_dot(frame.radial, radial_point)),
+        )
+        middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+        angle = angle + math.ceil((box[0, 0] - middle) / math.tau) * 2 * context.pi
+        if not (box[0, 0] < float(angle.a) and float(angle.b) < box[1, 0]):
+            return refused("continuation")
+        padding = policy.relative_resolution
+        values = (parameter, angle, profile)
+        lower = np.asarray(
+            [float(np.nextafter(float(value.a), -np.inf)) - padding for value in values]
+        )
+        upper = np.asarray(
+            [float(np.nextafter(float(value.b), np.inf)) + padding for value in values]
+        )
+        root = CurveSurfaceIntersectionRoot(
+            curve, surface, parameter_lower=lower, parameter_upper=upper
+        )
+        parameters = np.asarray(root.parameters, dtype=np.float64)
+        source_point = np.asarray(curve.evaluate(jnp.asarray(parameters[0])))
+        surface_point = np.asarray(surface.patch.evaluate(jnp.asarray(parameters[1:])))
+        points.append(
+            ParametricIntersectionPoint(
+                kind="crossing",
+                certificate="krawczyk",
+                parameters=parameters,
+                parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
+                parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
+                point=source_point,
+                gap_bound=float(np.linalg.norm(source_point - surface_point)),
+                condition_estimate=1.0,
+                root_id=root.root_id,
+            )
+        )
+    return CurveIntersectionResult(points=points)
+
+
+def _circle_plane_region_intersections(
+    source: CurveRange,
+    surface: SurfaceRegion,
+    policy: ParametricIntersectionPolicy,
+    /,
+) -> CurveIntersectionResult | None:
+    """Isolate an exact circle/plane pair from its harmonic equation.
+
+    ``a cos t + b sin t = c`` with rational coefficients has the radical
+    roots ``cos t = (a c -+ b sqrt(D)) / (a^2 + b^2)`` and ``sin t = (b c +- a
+    sqrt(D)) / (a^2 + b^2)``, ``D = a^2 + b^2 - c^2``. Each root's parameter,
+    chart point and plane coordinates are enclosed from these radicals, so a
+    root on a subdivision plane of the generic search is still isolated.
+    """
+    from ._patches import CircleCurve
+
+    circle, plane = source.curve, surface.patch
+    if not isinstance(circle, CircleCurve) or not isinstance(plane, PlanePatch):
+        return None
+    vectors = (circle.center_exact, circle.first_axis_exact, circle.second_axis_exact)
+    if not all(
+        isinstance(value, Fraction) for vector in vectors for value in vector
+    ) or not isinstance(circle.radius_exact, Fraction):
+        return None
+    center, first_axis, second_axis = cast(tuple[tuple[Fraction, ...], ...], vectors)
+    radius = circle.radius_exact
+    plane_origin = rational_vector(np.asarray(plane.origin))
+    normal = rational_cross(
+        rational_vector(np.asarray(plane.first_axis)),
+        rational_vector(np.asarray(plane.second_axis)),
+    )
+    a = radius * rational_dot(normal, first_axis)
+    b = radius * rational_dot(normal, second_axis)
+    c = rational_dot(
+        normal, tuple(plane_origin[index] - center[index] for index in range(3))
+    )
+    squared = a * a + b * b
+    domain_lower = np.asarray((source.first, *np.asarray(surface.parameter_box[0])))
+    domain_upper = np.asarray((source.last, *np.asarray(surface.parameter_box[1])))
+    if squared == 0:
+        if c == 0:
+            return CurveIntersectionResult(
+                unresolved=(
+                    UnresolvedParameterRegion(domain_lower, domain_upper, "singular"),
+                )
+            )
+        return CurveIntersectionResult()
+    discriminant = squared - c * c
+    if discriminant < 0:
+        return CurveIntersectionResult()
+    if discriminant == 0:
+        return CurveIntersectionResult(
+            unresolved=(
+                UnresolvedParameterRegion(domain_lower, domain_upper, "singular"),
+            )
+        )
+    radical = RadicalElement.sqrt(discriminant)
+    context = interval_context(100)
+
+    def interval(value: ExactScalar, /) -> Any:
+        lower, upper = coefficient_interval(value, bits=256)
+        first = context.mpf(lower.numerator) / context.mpf(lower.denominator)
+        last = context.mpf(upper.numerator) / context.mpf(upper.denominator)
+        return context.mpf([first.a, last.b])
+
+    points: list[ParametricIntersectionPoint] = []
+    period = 2 * context.pi
+    for side in (-1, 1):
+        cosine = (a * c - side * b * radical) / squared
+        sine = (b * c + side * a * radical) / squared
+        angle = context.atan2(interval(sine), interval(cosine))
+        middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+        angle = angle + math.ceil((source.first - middle) / math.tau) * period
+        if float(angle.b) < source.first or float(angle.a) > source.last:
+            continue
+        if not (source.first < float(angle.a) and float(angle.b) < source.last):
+            return CurveIntersectionResult(
+                unresolved=(
+                    UnresolvedParameterRegion(domain_lower, domain_upper, "continuation"),
+                )
+            )
+        point = tuple(
+            center[index]
+            + radius * cosine * first_axis[index]
+            + radius * sine * second_axis[index]
+            for index in range(3)
+        )
+        chart = _plane_chart_coordinates(plane, point, point=True)
+        if chart is None:
+            return None
+        chart_bounds = [interval(value) for value in chart]
+        box = np.asarray(surface.parameter_box, dtype=np.float64)
+        if any(
+            float(chart_bounds[axis].b) < box[0, axis]
+            or float(chart_bounds[axis].a) > box[1, axis]
+            for axis in range(2)
+        ):
+            continue
+        if not all(
+            box[0, axis] < float(chart_bounds[axis].a)
+            and float(chart_bounds[axis].b) < box[1, axis]
+            for axis in range(2)
+        ):
+            return CurveIntersectionResult(
+                unresolved=(
+                    UnresolvedParameterRegion(domain_lower, domain_upper, "continuation"),
+                )
+            )
+        padding = policy.relative_resolution
+        lower = np.asarray(
+            [
+                float(np.nextafter(float(value.a), -np.inf)) - padding
+                for value in (angle, *chart_bounds)
+            ],
+            dtype=np.float64,
+        )
+        upper = np.asarray(
+            [
+                float(np.nextafter(float(value.b), np.inf)) + padding
+                for value in (angle, *chart_bounds)
+            ],
+            dtype=np.float64,
+        )
+        root = CurveSurfaceIntersectionRoot(
+            circle, surface, parameter_lower=lower, parameter_upper=upper
+        )
+        parameters = np.asarray(root.parameters, dtype=np.float64)
+        source_point = np.asarray(
+            circle.evaluate(jnp.asarray(parameters[0])), dtype=np.float64
+        )
+        surface_point = np.asarray(
+            plane.evaluate(jnp.asarray(parameters[1:])), dtype=np.float64
+        )
+        points.append(
+            ParametricIntersectionPoint(
+                kind="crossing",
+                certificate="krawczyk",
+                parameters=parameters,
+                parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
+                parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
+                point=source_point,
+                gap_bound=float(np.linalg.norm(source_point - surface_point)),
+                condition_estimate=1.0,
+                root_id=root.root_id,
+            )
+        )
+    return CurveIntersectionResult(points=points)
+
+
 def intersect_curve_ranges(
     first: CurveRange | AbstractCurve,
     second: CurveRange | AbstractCurve,
@@ -4238,6 +4671,12 @@ def intersect_curve_region(
     line_cylinder = _line_cylinder_region_intersections(source, surface, selected)
     if line_cylinder is not None:
         return line_cylinder
+    circle_plane = _circle_plane_region_intersections(source, surface, selected)
+    if circle_plane is not None:
+        return circle_plane
+    line_cone = _line_cone_region_intersections(source, surface, selected)
+    if line_cone is not None:
+        return line_cone
 
     def residual(parameters: Array) -> Array:
         return source.curve.evaluate(parameters[0]) - surface.patch.evaluate(
@@ -7170,6 +7609,42 @@ def _isoline_rectangle_arcs(
             return None
         return angle
 
+    # A circle through a rectangle corner crosses both edges there at one
+    # angle: the corner is one event, found exactly where (cos t, sin t)
+    # solved from the corner is a rational unit vector.
+    corners: list[tuple[Any, int, float]] = []
+    coefficients = (*center, *cosine, *sine)
+    if all(isinstance(value, Fraction) for value in coefficients):
+        c0, c1, a0, a1, b0, b1 = cast(tuple[Fraction, ...], coefficients)
+        determinant = a0 * b1 - a1 * b0
+        if determinant == 0:
+            return None
+        for corner_u in (bounds[0, 0], bounds[1, 0]):
+            for corner_v in (bounds[0, 1], bounds[1, 1]):
+                du = Fraction.from_float(float(corner_u)) - c0
+                dv = Fraction.from_float(float(corner_v)) - c1
+                corner_cosine = (du * b1 - dv * b0) / determinant
+                corner_sine = (a0 * dv - a1 * du) / determinant
+                if corner_cosine**2 + corner_sine**2 != 1:
+                    continue
+                rates = (
+                    b0 * corner_cosine - a0 * corner_sine,
+                    b1 * corner_cosine - a1 * corner_sine,
+                )
+                # The node fixes the coordinate the circle crosses faster.
+                fixed = 0 if abs(rates[0]) >= abs(rates[1]) else 1
+                corner_angle = in_window(
+                    context.atan2(interval(corner_sine), interval(corner_cosine))
+                )
+                if rates[fixed] == 0 or corner_angle is None:
+                    return None
+                corners.append((corner_angle, fixed, float((corner_u, corner_v)[fixed])))
+
+    def at_corner(angle: Any, /) -> bool:
+        return any(
+            not (angle.b < corner[0].a or corner[0].b < angle.a) for corner in corners
+        )
+
     for axis in range(2):
         amplitude = context.sqrt(cosines[axis] ** 2 + sines[axis] ** 2)
         if not amplitude.a > 0:
@@ -7199,7 +7674,9 @@ def _isoline_rectangle_arcs(
                 angle = in_window(angle)
                 if angle is None:
                     return None
-                events.append((angle, axis, value))
+                if not at_corner(angle):
+                    events.append((angle, axis, value))
+    events.extend(corners)
     if not events:
         state = side(window + context.pi)
         if state is None or touches:
@@ -7623,6 +8100,45 @@ def _revolution_plane_line_circle(
     return SurfaceIntersectionResult(curves=(branch,))
 
 
+def _generator_on_chart_edge(
+    line: tuple[ExactScalar, ExactScalar, ExactScalar],
+    cylinder: tuple[Fraction, Fraction, Fraction],
+    value: float,
+    angle: Any,
+    context: Any,
+    /,
+) -> bool:
+    """Prove the generator at ``angle`` lies exactly on a plane chart edge.
+
+    The generator's chart coordinate ``base + r cos t + s sin t`` equals the
+    edge value and the plane equation ``a cos t + b sin t = h`` holds: two
+    linear equations in ``(cos t, sin t)``. Their exact solution must be a
+    unit vector whose angle is the generator's enclosed angle.
+    """
+    if not all(isinstance(item, Fraction) for item in line):
+        return False
+    base, radial, tangent = cast(tuple[Fraction, Fraction, Fraction], line)
+    cosine_coefficient, sine_coefficient, offset = cylinder
+    determinant = radial * sine_coefficient - tangent * cosine_coefficient
+    if determinant == 0:
+        return False
+    target = Fraction.from_float(value) - base
+    cosine = (target * sine_coefficient - tangent * offset) / determinant
+    sine = (radial * offset - target * cosine_coefficient) / determinant
+    if cosine * cosine + sine * sine != 1:
+        return False
+
+    def scalar(item: Fraction, /) -> Any:
+        return context.mpf(item.numerator) / context.mpf(item.denominator)
+
+    exact_angle = context.atan2(scalar(sine), scalar(cosine))
+    turns = round(
+        (0.5 * float(angle.a) + 0.5 * float(angle.b) - float(exact_angle.a)) / math.tau
+    )
+    exact_angle = exact_angle + turns * 2 * context.pi
+    return bool(not (exact_angle.b < angle.a or angle.b < exact_angle.a))
+
+
 def _revolution_plane_generator_lines(
     first: SurfaceRegion,
     second: SurfaceRegion,
@@ -7867,6 +8383,8 @@ def _revolution_plane_generator_lines(
             (exact(profile_upper), chart_axis, profile_upper)
         ]
         outside = False
+        # Chart coordinates the generator holds exactly on a trim edge value.
+        on_edge: dict[int, float] = {}
         for index in range(2):
             rate = uv_rate[index]
             for edge in range(2):
@@ -7874,6 +8392,16 @@ def _revolution_plane_generator_lines(
                 if rate == 0:
                     gap = line_base[index] - exact(value)
                     if gap.a <= 0 <= gap.b:
+                        if _generator_on_chart_edge(
+                            (uv_base[index], uv_radial[index], uv_tangent[index]),
+                            (cosine_coefficient, sine_coefficient, offset),
+                            value,
+                            angle,
+                            context,
+                        ):
+                            # The generator is this trim edge: no constraint.
+                            on_edge[index] = value
+                            continue
                         return _unresolved_surface(first, second, "continuation")
                     if (gap.a > 0) == (edge == 1):
                         outside = True
@@ -7927,7 +8455,8 @@ def _revolution_plane_generator_lines(
         ]
         rates = [float(uv_rate[index]) for index in range(2)]
         line_point: tuple[float, ...] = tuple(
-            0.5 * (low + high) for low, high in base_bounds
+            on_edge.get(index, 0.5 * (low + high))
+            for index, (low, high) in enumerate(base_bounds)
         )
 
         def point_at(parameter: float, /) -> np.ndarray:
@@ -8011,6 +8540,325 @@ def _revolution_plane_generator_lines(
             start_kind="boundary",
             end_kind="boundary",
             end_nodes=((start[1], start[2]), (stop[1], stop[2])),
+        )
+        if curve is None:
+            return _unresolved_surface(first, second, "resolution")
+        curves.append(curve)
+    return SurfaceIntersectionResult(curves=tuple(curves))
+
+
+def _revolution_plane_axial_sections(
+    first: SurfaceRegion,
+    second: SurfaceRegion,
+    policy: ParametricIntersectionPolicy,
+    /,
+) -> SurfaceIntersectionResult | None:
+    """Intersect a straight slanted revolution (a cone) with a plane holding its axis direction.
+
+    The cone point is ``O + (a0 + a1 v) k + s (cos t r + sin t (k x r))`` with
+    ``s = 1 + l v``; on the plane ``s (alpha cos t + beta sin t) = gamma``. Off
+    the axis (``gamma != 0``) the section is a graph ``s = gamma / g(t)`` over
+    the angle, and every trim constraint (a plane chart edge value or a profile
+    end) multiplied by ``g`` becomes an exact harmonic sign condition
+    ``A cos t + B sin t + C``. Their roots split the angle circle; one
+    interval sample per piece decides it, and each inside piece is an angular
+    branch whose ends fix the exact coordinate of the constraint they meet.
+    """
+    from ._patches import ExactLineCurve, LineCurve, RevolutionSurface
+
+    if isinstance(first.patch, RevolutionSurface) and isinstance(
+        second.patch, PlanePatch
+    ):
+        revolution, plane = first.patch, second.patch
+        revolution_region, plane_region, plane_is_first = first, second, False
+    elif isinstance(first.patch, PlanePatch) and isinstance(
+        second.patch, RevolutionSurface
+    ):
+        revolution, plane = second.patch, first.patch
+        revolution_region, plane_region, plane_is_first = second, first, True
+    else:
+        return None
+    profile = revolution.curve
+    if isinstance(profile, LineCurve):
+        origin_values, direction_values = profile.origin_exact, profile.direction_exact
+    elif isinstance(profile, ExactLineCurve):
+        origin_values = profile.first_exact
+        direction_values = tuple(
+            last - start
+            for start, last in zip(profile.first_exact, profile.last_exact, strict=True)
+        )
+    else:
+        return None
+    if len(origin_values) != 3 or any(
+        not isinstance(value, Fraction) for value in (*origin_values, *direction_values)
+    ):
+        return None
+    origin = cast(tuple[Fraction, ...], tuple(origin_values))
+    direction = cast(tuple[Fraction, ...], tuple(direction_values))
+    axis_origin = rational_vector(np.asarray(revolution.axis_origin))
+    axis = rational_vector(np.asarray(revolution.axis_direction))
+    plane_origin = rational_vector(np.asarray(plane.origin))
+    normal = rational_cross(
+        rational_vector(np.asarray(plane.first_axis)),
+        rational_vector(np.asarray(plane.second_axis)),
+    )
+    if (
+        rational_dot(axis, axis) != 1
+        or all(value == 0 for value in normal)
+        or rational_dot(normal, axis) != 0
+    ):
+        return None
+    relative = tuple(origin[index] - axis_origin[index] for index in range(3))
+    axial_origin = rational_dot(relative, axis)
+    axial_rate = rational_dot(direction, axis)
+    radial = tuple(relative[index] - axial_origin * axis[index] for index in range(3))
+    radial_rate = tuple(direction[index] - axial_rate * axis[index] for index in range(3))
+    squared_radius = rational_dot(radial, radial)
+    if squared_radius == 0:
+        return None
+    slope = rational_dot(radial_rate, radial) / squared_radius
+    if slope == 0 or any(
+        radial_rate[index] != slope * radial[index] for index in range(3)
+    ):
+        # An axial profile is a cylinder; a profile leaving its meridian
+        # half-plane is not a cone of this form.
+        return None
+    tangent = rational_cross(axis, radial)
+    alpha = rational_dot(normal, radial)
+    beta = rational_dot(normal, tangent)
+    gamma = rational_dot(
+        normal, tuple(plane_origin[index] - axis_origin[index] for index in range(3))
+    )
+    box = np.asarray(revolution_region.parameter_box, dtype=np.float64)
+    if gamma == 0 or any(
+        1 + slope * Fraction.from_float(float(box[edge, 1])) <= 0 for edge in range(2)
+    ):
+        # A plane through the axis, or a face reaching the apex.
+        return _unresolved_surface(first, second, "continuation")
+    angle_lower, angle_upper = float(box[0, 0]), float(box[1, 0])
+    period = revolution.periods[0]
+    if (
+        revolution.native_period_symbols()[0] != "two_pi"
+        or period is None
+        or Fraction.from_float(angle_upper) - Fraction.from_float(angle_lower)
+        != Fraction.from_float(float(period))
+    ):
+        return _unresolved_surface(first, second, "continuation")
+    uv_offset = _plane_chart_coordinates(
+        plane,
+        tuple(axis_origin[index] - plane_origin[index] for index in range(3)),
+        point=False,
+    )
+    uv_axis = _plane_chart_coordinates(plane, axis, point=False)
+    uv_radial = _plane_chart_coordinates(plane, radial, point=False)
+    uv_tangent = _plane_chart_coordinates(plane, tangent, point=False)
+    if (
+        uv_offset is None
+        or uv_axis is None
+        or uv_radial is None
+        or uv_tangent is None
+        or not all(
+            isinstance(value, Fraction)
+            for value in (*uv_offset, *uv_axis, *uv_radial, *uv_tangent)
+        )
+    ):
+        return None
+    offset_uv = cast(tuple[Fraction, Fraction], uv_offset)
+    axis_uv = cast(tuple[Fraction, Fraction], uv_axis)
+    radial_uv = cast(tuple[Fraction, Fraction], uv_radial)
+    tangent_uv = cast(tuple[Fraction, Fraction], uv_tangent)
+    # uv_i = K_i + s (c_i + cos t radial_i + sin t tangent_i) with s = gamma / g.
+    rise = axial_rate / slope
+    constant_uv = tuple(
+        offset_uv[index] + (axial_origin - rise) * axis_uv[index] for index in range(2)
+    )
+    lift_uv = tuple(rise * axis_uv[index] for index in range(2))
+    sign = 1 if gamma > 0 else -1
+    plane_bounds = np.asarray(plane_region.parameter_box, dtype=np.float64)
+    revolution_offset = 0 if plane_is_first is False else 2
+    plane_offset = 2 - revolution_offset
+    chart_axis = revolution_offset
+    profile_axis = revolution_offset + 1
+    # Each constraint: (A, B, C, fixed coordinate, exact value, strict); its
+    # harmonic sign(gamma) * (A cos t + B sin t + C) is positive inside.
+    constraints: list[tuple[Fraction, Fraction, Fraction, int | None, float]] = [
+        (sign * alpha, sign * beta, Fraction(0), None, 0.0)
+    ]
+    for index in range(2):
+        for edge, orientation in ((0, 1), (1, -1)):
+            value = float(plane_bounds[edge, index])
+            gap = constant_uv[index] - Fraction.from_float(value)
+            constraints.append(
+                (
+                    orientation * sign * (gap * alpha + gamma * radial_uv[index]),
+                    orientation * sign * (gap * beta + gamma * tangent_uv[index]),
+                    orientation * sign * gamma * lift_uv[index],
+                    plane_offset + index,
+                    value,
+                )
+            )
+    for edge, orientation in ((0, 1), (1, -1)):
+        value = float(box[edge, 1])
+        bound = 1 + slope * Fraction.from_float(value)
+        # v >= v_lower is s >= s_lower when the slope is positive.
+        direction_sign = orientation * (1 if slope > 0 else -1)
+        constraints.append(
+            (
+                -direction_sign * sign * bound * alpha,
+                -direction_sign * sign * bound * beta,
+                direction_sign * sign * gamma,
+                profile_axis,
+                value,
+            )
+        )
+    context = interval_context(80)
+
+    def interval(value: Fraction, /) -> Any:
+        return context.mpf(value.numerator) / context.mpf(value.denominator)
+
+    window = interval(Fraction.from_float(angle_lower))
+    two_pi = 2 * context.pi
+
+    def in_window(angle: Any, /) -> Any | None:
+        middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+        angle = angle - math.floor((middle - angle_lower) / math.tau) * two_pi
+        if not (window.b < angle.a and angle.b < (window + two_pi).a):
+            return None
+        return angle
+
+    events: list[tuple[Any, int | None, float]] = []
+    for a, b, c, fixed, value in constraints:
+        squared = a * a + b * b
+        if squared == 0:
+            if c == 0:
+                return _unresolved_surface(first, second, "singular")
+            continue
+        if c * c > squared:
+            continue
+        if c * c == squared:
+            # A double root is a tangency of the section with a trim.
+            return _unresolved_surface(first, second, "singular")
+        phase = context.atan2(interval(b), interval(a))
+        ratio = -interval(c) / context.sqrt(interval(squared))
+        width = context.atan2(context.sqrt(1 - ratio**2), ratio)
+        for angle in (phase - width, phase + width):
+            placed = in_window(angle)
+            if placed is None:
+                return _unresolved_surface(first, second, "continuation")
+            events.append((placed, fixed, value))
+    events.sort(key=lambda event: float(event[0].a))
+    if any(
+        not events[index][0].b < events[index + 1][0].a
+        for index in range(len(events) - 1)
+    ):
+        return _unresolved_surface(first, second, "continuation")
+
+    def inside(angle: Any, /) -> bool | None:
+        cosine, sine = context.cos(angle), context.sin(angle)
+        decided = True
+        for a, b, c, _, _ in constraints:
+            value = interval(a) * cosine + interval(b) * sine + interval(c)
+            if value.b < 0:
+                return False
+            if not value.a > 0:
+                decided = False
+        return True if decided else None
+
+    def scalars(cosine: Any, sine: Any, /) -> tuple[Any, Any, Any]:
+        g = interval(alpha) * cosine + interval(beta) * sine
+        s = interval(gamma) / g
+        plane = tuple(
+            interval(constant_uv[index])
+            + s
+            * (
+                interval(lift_uv[index])
+                + interval(radial_uv[index]) * cosine
+                + interval(tangent_uv[index]) * sine
+            )
+            for index in range(2)
+        )
+        return plane[0], plane[1], (s - 1) / interval(slope)
+
+    def point_at(angle: float, /) -> np.ndarray:
+        values = scalars(context.cos(context.mpf(angle)), context.sin(context.mpf(angle)))
+        plane_uv = (float(values[0].mid), float(values[1].mid))
+        revolution_uv = (angle, float(values[2].mid))
+        return np.asarray(
+            (*plane_uv, *revolution_uv)
+            if plane_is_first
+            else (*revolution_uv, *plane_uv),
+            dtype=np.float64,
+        )
+
+    def box_for(
+        lower_angle: float, upper_angle: float, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        span = context.mpf([lower_angle, upper_angle])
+        values = scalars(context.cos(span), context.sin(span))
+        lows = [float(np.nextafter(float(value.a), -np.inf)) for value in values]
+        highs = [float(np.nextafter(float(value.b), np.inf)) for value in values]
+        plane_lower, plane_upper = lows[:2], highs[:2]
+        revolution_lower = (lower_angle, lows[2])
+        revolution_upper = (upper_angle, highs[2])
+        if plane_is_first:
+            return (
+                np.asarray((*plane_lower, *revolution_lower), dtype=np.float64),
+                np.asarray((*plane_upper, *revolution_upper), dtype=np.float64),
+            )
+        return (
+            np.asarray((*revolution_lower, *plane_lower), dtype=np.float64),
+            np.asarray((*revolution_upper, *plane_upper), dtype=np.float64),
+        )
+
+    def inner(angle: Any, step: float, /) -> float | None:
+        # The representative float of a trim crossing lies inside the arc.
+        value = float(angle.b if step > 0 else angle.a)
+        for _ in range(8):
+            value = float(np.nextafter(value, step))
+            if inside(context.mpf(value)):
+                return value
+        return None
+
+    curves = []
+    for index, (start, start_fixed, start_value) in enumerate(events):
+        across_seam = index == len(events) - 1
+        end, end_fixed, end_value = events[(index + 1) % len(events)]
+        stop = end + (two_pi if across_seam else 0)
+        state = None
+        for weight in (0.5, 0.381966, 0.618034, 0.25, 0.75):
+            state = inside(start + weight * (stop - start))
+            if state is not None:
+                break
+        if state is None:
+            return _unresolved_surface(first, second, "continuation")
+        if not state:
+            continue
+        if start_fixed is None or end_fixed is None:
+            # The section leaves through the axis-parallel asymptote only
+            # where the profile range is unbounded.
+            return _unresolved_surface(first, second, "continuation")
+        theta_lower = inner(start, np.inf)
+        theta_upper = inner(end, -np.inf)
+        if (
+            theta_lower is None
+            or theta_upper is None
+            or not (across_seam or theta_lower < theta_upper)
+        ):
+            return _unresolved_surface(first, second, "continuation")
+        curve = _angular_surface_branch(
+            first,
+            second,
+            chart_axis,
+            theta_lower,
+            theta_upper,
+            policy,
+            point_at,
+            box_for,
+            closed=False,
+            start_kind="boundary",
+            end_kind="boundary",
+            end_nodes=((start_fixed, start_value), (end_fixed, end_value)),
+            seam=(angle_lower, angle_upper) if across_seam else None,
         )
         if curve is None:
             return _unresolved_surface(first, second, "resolution")
@@ -9200,6 +10048,9 @@ def intersect_surface_regions(
     generator_lines = _revolution_plane_generator_lines(first, second, selected)
     if generator_lines is not None:
         return generator_lines
+    axial_sections = _revolution_plane_axial_sections(first, second, selected)
+    if axial_sections is not None:
+        return axial_sections
     parallel_cylinders = _parallel_cylinder_separation(first, second, selected)
     if parallel_cylinders is not None:
         return parallel_cylinders

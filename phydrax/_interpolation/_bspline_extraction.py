@@ -1228,6 +1228,8 @@ def _tensor_bernstein_derivative(
 # smallest subnormal covers gradual underflow.
 _INTERVAL_ROUNDING = 4.0 * float(np.finfo(np.float64).eps)
 _INTERVAL_UNDERFLOW = float(np.finfo(np.float64).smallest_subnormal)
+# Restricted bounds retained per span (refinement plus certification of one mesh).
+_SPAN_RESTRICTION_CAPACITY = 8192
 
 
 def _binary64_down(value: Fraction, /) -> float:
@@ -1535,6 +1537,11 @@ class RationalBSplineSurfaceSpan:
     _interval_nets: dict[str, tuple[np.ndarray, np.ndarray]] = field(
         default_factory=dict, repr=False, compare=False
     )
+    # Restricted group bounds per exact relative box: refinement and the
+    # certificate query the same cell boxes, so each restriction runs once.
+    _restrictions: dict[
+        tuple[str, tuple[ExactScalar, ...]], tuple[tuple[Fraction, Fraction], ...]
+    ] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def has_hessian(self) -> bool:
@@ -1571,13 +1578,21 @@ class RationalBSplineSurfaceSpan:
         /,
     ) -> tuple[tuple[Fraction, Fraction], ...]:
         """Outward-rounded bounds of one prepared net group on a relative sub-box."""
+        key = (name, relative_bounds)
+        restricted = self._restrictions.get(key)
+        if restricted is not None:
+            return restricted
         net = self._interval_nets.get(name)
         if net is None:
             net = _interval_tensor_stack(self._exact_group(name))
             self._interval_nets[name] = net
-        return _interval_component_bounds(
+        restricted = _interval_component_bounds(
             *_interval_tensor_restrict(net, *relative_bounds)
         )
+        if len(self._restrictions) >= _SPAN_RESTRICTION_CAPACITY:
+            del self._restrictions[next(iter(self._restrictions))]
+        self._restrictions[key] = restricted
+        return restricted
 
     def _derivative_data(
         self,

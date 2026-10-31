@@ -906,6 +906,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     )
                 grid_velocity = jnp.zeros_like(geometry_block.quadrature_weights)
             grid_normal = self.precision.reconstruction(grid_velocity)
+            kinematic_normal = self.precision.reconstruction(
+                geometry_block.quadrature_kinematic_grid_normal_velocity
+            )
             if layout.block_kind == "physical":
                 policies = self.boundaries.boundaries
             elif layout.block_kind == "cut":
@@ -935,7 +938,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     continue
                 patch_points = points[indices]
                 patch_normal = normal[indices]
-                patch_grid_velocity = grid_normal[indices, :, None] * patch_normal
+                patch_grid_velocity = kinematic_normal[indices, :, None] * patch_normal
+                patch_flux_normal = grid_normal[indices]
                 if isinstance(policy, MovingSlipWallBoundary):
                     context = policy.make_context(
                         metrics.time,
@@ -948,6 +952,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         geometry_version=metrics.geometry_version,
                         face_block_id=layout.block_id,
                         motion_plan_id=motion_plan_id,
+                        flux_grid_normal_velocity=patch_flux_normal,
                     )
                 else:
                     context_dtype = jnp.result_type(
@@ -969,6 +974,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         args=args,
                         absolute_tolerance=float(tolerance),
                         relative_tolerance=float(tolerance),
+                        flux_grid_normal_velocity=patch_flux_normal,
                         topology_epoch_id=metrics.topology_epoch_id,
                         geometry_layout_id=metrics.geometry_layout_id,
                         geometry_version=metrics.geometry_version,

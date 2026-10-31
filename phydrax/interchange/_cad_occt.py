@@ -18,7 +18,7 @@ import hashlib
 import importlib
 import io
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
@@ -27,13 +27,13 @@ from typing import Any, Callable, Protocol, Self, Sequence, TYPE_CHECKING, TypeV
 from .._host_io import open_regular_file
 from .._physical import SpatialCoordinateContract
 from .._publication import PublicationMode, publish_bytes
-from ..geometry.brep._model import BRepModel
 
 
 if TYPE_CHECKING:
     from OCP.TopoDS import TopoDS_Shape
 
     from ..geometry.brep._constructors import BRepTessellationPolicy
+    from ._cad import CadImportResult
 
 
 class _IsSameEntity(Protocol):
@@ -266,7 +266,7 @@ def read_occt_shape(path: str | os.PathLike[str], /) -> tuple[TopoDS_Shape, str,
     return _read_occt_shape(path, _occt_modules())
 
 
-def model_from_occt_shape(
+def import_occt_shape(
     shape: TopoDS_Shape,
     *,
     coordinate_contract: SpatialCoordinateContract,
@@ -275,13 +275,16 @@ def model_from_occt_shape(
     source_format: str = "occt-shape",
     tessellation: BRepTessellationPolicy | None = None,
     relative_geometric_tolerance: float = 1.0e-8,
-) -> BRepModel:
+) -> CadImportResult:
     """Convert an explicit OCCT shape through the native exact BRep-text codec.
 
     ``coordinate_contract`` declares the length unit of the shape's numeric
     coordinates. OCCT is only a serialization bridge here: source carriers,
     p-curves, topology and assembly uses are reconstructed by the native
-    decoder. No OCCT mesh is adopted as source authority.
+    decoder. No OCCT mesh is adopted as source authority. The codec result is
+    returned whole, so its import losses (dropped derived records, synthesized
+    boundaries, chart-closure repairs, source tolerances) reach the caller with
+    the model they describe.
     """
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
@@ -290,68 +293,24 @@ def model_from_occt_shape(
         raise ValueError("source_id must be nonempty.")
     if not isinstance(source_format, str) or not source_format.strip():
         raise ValueError("source_format must be nonempty.")
-    occt = _occt_modules()
-    digest = shape_digest(shape) if source_digest is None else source_digest
-    payload = _canonical_brep_text(shape, occt)
-    from ..geometry.brep._model import BRepImportReport, BRepModel
-    from ..geometry.brep._tessellation import tessellate_brep_model
-    from ._cad import CadImportPolicy, refuse
-    from ._cad_brep_text import decode_brep_text_bytes
+    payload = _canonical_brep_text(shape, _occt_modules())
+    from ._cad import CadImportPolicy
+    from ._cad_brep_text import decode_brep_text_resource
+    from ._cad_io import CadResource
 
-    policy = CadImportPolicy(
-        coordinate_contract,
-        tessellation=tessellation,
-        relative_geometric_tolerance=relative_geometric_tolerance,
-    )
-    # The report is rebound to this shape before tessellating, so the
-    # source-fidelity proof of the tessellation is derived and validated once,
-    # on the published model.
-    imported = decode_brep_text_bytes(
-        payload,
+    # The declared identity is bound when the model is published, so the
+    # tessellation's source-fidelity proof is derived once, on that model.
+    return decode_brep_text_resource(
+        CadResource(payload, hashlib.sha256(payload).hexdigest(), identifier),
         CadImportPolicy(
             coordinate_contract,
+            tessellation=tessellation,
             relative_geometric_tolerance=relative_geometric_tolerance,
         ),
         source_length_unit=coordinate_contract.length_unit,
-        source_path=identifier,
-    ).model
-    if not isinstance(imported.report, BRepImportReport):
-        raise RuntimeError("Native BRep text decoding did not produce BRepImportReport.")
-    report = replace(
-        imported.report,
-        source_id=identifier,
-        source_digest=digest,
         source_format=source_format,
-        import_policy_id=policy.policy_id,
+        source_digest=source_digest,
     )
-    model = BRepModel(
-        geometry=imported.geometry,
-        patches=imported.patches,
-        parameter_bounds=imported.parameter_bounds,
-        orientation=imported.orientation,
-        physical_tags=imported.physical_tags,
-        coordinate_contract=coordinate_contract,
-        report=report,
-        trim_domains=imported.trim_domains,
-    )
-    if tessellation is None or not model.patches:
-        return model
-    try:
-        realization, certificate = tessellate_brep_model(model, tessellation)
-        return BRepModel(
-            geometry=model.geometry,
-            patches=model.patches,
-            parameter_bounds=model.parameter_bounds,
-            orientation=model.orientation,
-            physical_tags=model.physical_tags,
-            coordinate_contract=coordinate_contract,
-            report=report,
-            trim_domains=model.trim_domains,
-            tessellation=realization,
-            tessellation_certificate=certificate,
-        )
-    except ValueError as error:
-        raise refuse("inconsistent-geometry", identifier, str(error)) from error
 
 
 def persist_occt_shape(
@@ -362,8 +321,12 @@ def persist_occt_shape(
     coordinate_contract: SpatialCoordinateContract,
     overwrite: bool = False,
     tessellation: BRepTessellationPolicy | None = None,
-) -> BRepModel:
-    """Publish a validated BRep-text carrier, then import its native source."""
+) -> CadImportResult:
+    """Publish a validated BRep-text carrier, then import its native source.
+
+    Returns the same codec result as :func:`import_occt_shape`, bound to the
+    published path and digest.
+    """
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
     if shape.IsNull():
@@ -394,7 +357,7 @@ def persist_occt_shape(
         mode=mode,
         validator=validate_staged,
     )
-    return model_from_occt_shape(
+    return import_occt_shape(
         shape,
         coordinate_contract=coordinate_contract,
         source_id=os.fspath(target),
@@ -406,7 +369,7 @@ def persist_occt_shape(
 
 __all__ = [
     "explore_unique",
-    "model_from_occt_shape",
+    "import_occt_shape",
     "persist_occt_shape",
     "read_occt_shape",
     "shape_digest",

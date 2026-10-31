@@ -38,6 +38,7 @@ from phydrax.meshing._device_metric import (
     _work,
     DeviceMetricEvidence,
 )
+from phydrax.meshing._local_metric import LocalMetricEvidence
 
 
 _LOWER = 1.0 / np.sqrt(2.0)
@@ -193,6 +194,31 @@ def _edge_metric_lengths(mesh: Any, tensor: Any, /) -> Any:
     edges = np.asarray(mesh.connectivity.edges)
     delta = points[edges[:, 1]] - points[edges[:, 0]]
     return np.sqrt(np.sum((delta @ tensor) * delta, axis=1))
+
+
+def test_native_metric_route_escapes_the_split_collapse_hysteresis() -> None:
+    # Regular passes stall on one short birth edge whose collapses all create an
+    # edge above sqrt(2); the stall escape collapses it (the next split repairs
+    # the long edge) and lowers the stall potential, so the host route completes
+    # on the same input as the device route.
+    tensor = np.diag((1.0 / 0.5**2, 1.0 / 0.1**2))
+    source = _source(perturbation=0.3)
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MetricMeshAdaptation(_metric(source, tensor)),
+            policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_2D),
+        )
+    )
+
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    evidence = result.evidence
+    assert isinstance(evidence, LocalMetricEvidence)
+    assert evidence.converged and not evidence.stalled and not evidence.stalled_edges
+    result.target.audit.require_passed()
+    lengths = _edge_metric_lengths(result.target.mesh, tensor)
+    assert np.all((lengths >= _LOWER - 1.0e-12) & (lengths <= _UPPER + 1.0e-12))
+    assert np.all(_signed_areas(result.target.mesh) > 0.0)
 
 
 def test_device_metric_adaptation_reaches_a_certified_unit_mesh() -> None:

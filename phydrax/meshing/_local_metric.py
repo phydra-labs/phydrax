@@ -326,6 +326,8 @@ class _PeriodicContext(NamedTuple):
     # represents each edge orbit; orbit-locked splits are anchored on it.
     edge_member_windings: np.ndarray
     edge_representative_rows: np.ndarray
+    # Absolute deck exponents of each live state vertex (zero for dead rows).
+    vertex_windings: np.ndarray
 
 
 def _exact_periodic_point(
@@ -1050,6 +1052,24 @@ def _unit(topology: _Topology, /) -> bool:
     return bool(np.all((lengths >= _LOWER) & (lengths <= _UPPER)))
 
 
+def _band_excess(lengths: np.ndarray, /) -> np.ndarray:
+    """Distance of ``ln L`` from the unit band ``[-ln sqrt(2), ln sqrt(2)]``."""
+    return np.maximum(np.abs(np.log(lengths)) - np.log(_UPPER), 0.0)
+
+
+def _stall_potential(topology: _Topology, /) -> tuple[int, int]:
+    """Well-founded stall measure: out-of-band edges, then quantized band excess.
+
+    Both components are natural numbers, so the lexicographic order on them
+    admits no infinite strictly decreasing sequence (see
+    ``execute_local_metric_adaptation``).
+    """
+    lengths = _measured(topology)
+    outside = (lengths < _LOWER) | (lengths > _UPPER)
+    excess = np.floor(_band_excess(lengths) / _DEVIATION_QUANTUM).astype(np.int64)
+    return int(np.count_nonzero(outside)), int(np.sum(excess))
+
+
 # ------------------------------------------------------------------ state updates
 
 
@@ -1555,6 +1575,11 @@ def _collapse_link(
     return shared == 1 + (topology.edge_cells[edge, 1] >= 0)
 
 
+def _band_excess(lengths: np.ndarray, /) -> np.ndarray:
+    """Distance of ``ln L`` from the unit band ``[-ln sqrt(2), ln sqrt(2)]``."""
+    return np.maximum(np.abs(np.log(lengths)) - np.log(_UPPER), 0.0)
+
+
 def _collapse_geometry(
     state: _State, topology: _Topology, removed: Any, kept: Any, mode: PredicateMode, /
 ) -> Any:
@@ -1581,8 +1606,22 @@ def _collapse_geometry(
     return status, longest
 
 
+def _collapse_within_limit(births: Any, longest: Any, escape: bool, /) -> Any:
+    """Length admission of collapses (see ``execute_local_metric_adaptation``).
+
+    Regular phases: a collapse that removes or keeps a birth (a -1 source row,
+    reset by the next execution) must keep every new edge at or below the split
+    threshold (the split/collapse hysteresis); other collapses up to
+    ``_COLLAPSE_LIMIT``. The stall escape admits every collapse up to
+    ``_COLLAPSE_LIMIT``; the next split phase splits its long edges.
+    """
+    if escape:
+        return longest <= _COLLAPSE_LIMIT
+    return longest <= np.where(births, _UPPER, _COLLAPSE_LIMIT)
+
+
 def _collapse_candidates(
-    state: _State, topology: _Topology, mode: PredicateMode, /
+    state: _State, topology: _Topology, mode: PredicateMode, escape: bool, /
 ) -> _CollapseCandidates:
     short = np.flatnonzero((topology.lengths < _LOWER) & ~topology.edge_protected)
     edge = np.concatenate((short, short))
@@ -1591,18 +1630,9 @@ def _collapse_candidates(
     admissible = _collapse_admissible(topology, edge, removed, kept)
     link = _collapse_link(topology, edge, removed, kept)
     orientation, longest = _collapse_geometry(state, topology, removed, kept, mode)
-    # A -1 source row marks a birth in this execution; the next execution resets
-    # every current vertex. Either orientation may remove a birth, but only when
-    # the resulting edges stay below the split threshold.
-    collapse_limit = np.where(
-        (state.source_rows[removed] < 0) | (state.source_rows[kept] < 0),
-        _UPPER,
-        _COLLAPSE_LIMIT,
-    )
-    geometric = np.maximum(
-        orientation,
-        np.where(link & (longest <= collapse_limit), _OK, _INVALID),
-    )
+    births = (state.source_rows[removed] < 0) | (state.source_rows[kept] < 0)
+    within = _collapse_within_limit(births, longest, escape)
+    geometric = np.maximum(orientation, np.where(link & within, _OK, _INVALID))
     status = np.where(admissible, geometric, _INADMISSIBLE)
     return _CollapseCandidates(edge, removed, kept, status, longest)
 
@@ -1850,6 +1880,7 @@ def _periodic_cover_collapse(
     removed: np.ndarray,
     kept: np.ndarray,
     quotient_id: int,
+    escape: bool,
     /,
 ) -> _PeriodicCollapse | str:
     """Collapse a removed vertex orbit whose lifted members are not all edge ends.
@@ -2030,13 +2061,14 @@ def _periodic_cover_collapse(
     )
     if np.any(status != _OK):
         return "invalid" if np.all(status != _UNCERTAIN) else "uncertain"
-    # The same split/collapse hysteresis as lifted collapses: removing or keeping
-    # a birth requires every new edge to stay below the split threshold.
+    # The same length admission as lifted collapses, decided on the whole orbit.
     births = bool(np.any(state.source_rows[removed_rows] < 0)) or bool(
         np.any(state.source_rows[kept_rows] < 0)
     )
-    if np.any(longest > (_UPPER if births else _COLLAPSE_LIMIT)):
-        return "hysteresis" if births else "long"
+    if np.any(longest > _COLLAPSE_LIMIT):
+        return "long"
+    if not np.all(_collapse_within_limit(births, longest, escape)):
+        return "hysteresis"
     stencils = None
     if image_count:
         stencils = _located_stencil_bank(
@@ -2078,6 +2110,7 @@ def _periodic_collapse_operations(
     mode: PredicateMode,
     context: _PeriodicContext,
     source: _Source,
+    escape: bool,
     /,
 ) -> list[_PeriodicCollapse]:
     """Complete quotient collapse operations, one per admissible edge orbit."""
@@ -2129,6 +2162,7 @@ def _periodic_collapse_operations(
                     removed,
                     kept,
                     int(context.edge_quotient_ids[orbit]),
+                    escape,
                 )
                 operation = None if isinstance(covered, str) else covered
             else:
@@ -2169,6 +2203,73 @@ def _periodic_collapse_operations(
     return operations
 
 
+def _retired_lineage(
+    state: _State,
+    retired: np.ndarray,
+    source: _Source,
+    /,
+) -> _State:
+    """Move the lineage records of retired lifted rows onto a live lifted member.
+
+    A record ``(r, y)`` of a retired row ``r`` names the quotient edge
+    ``(key r, key y, w_y - w_r)`` (orbit keys and reduced deck exponents), which
+    survives on another lifted member: the record moves onto the live lifted
+    edge with that label (the least such pair), so every lifted member of its
+    source edge keeps the same quotient target. A record whose quotient edge
+    has no live member is dropped.
+    """
+    touched = np.any(np.isin(state.lineage_keys, retired), axis=1)
+    if retired.size == 0 or not np.any(touched):
+        return state
+    keys, windings, cell_value = (
+        state.orbit_keys,
+        state.orbit_windings,
+        source.periodic_cell,
+    )
+    keys_out = state.lineage_keys.copy()
+    keep = ~touched
+    if keys is not None and windings is not None and cell_value is not None:
+        orders = identification_orders(cell_value)
+
+        def label(first: np.ndarray, second: np.ndarray, /) -> list[tuple[int, ...]]:
+            shift = reduce_periodic_exponents(windings[second] - windings[first], orders)
+            return [
+                (*map(int, a), *map(int, b), *map(int, c))
+                for a, b, c in zip(keys[first], keys[second], shift, strict=True)
+            ]
+
+        edges = np.unique(
+            np.sort(state.cells[:, [[0, 1], [1, 2], [2, 0]]].reshape((-1, 2)), axis=1),
+            axis=0,
+        )
+        members: dict[tuple[int, ...], tuple[int, int]] = {}
+        for first, second in ((edges[:, 0], edges[:, 1]), (edges[:, 1], edges[:, 0])):
+            for name, pair in zip(label(first, second), edges.tolist(), strict=True):
+                members.setdefault(name, (int(pair[0]), int(pair[1])))
+        rows = np.flatnonzero(touched)
+        records = state.lineage_keys[rows]
+        for record, name in zip(
+            rows.tolist(), label(records[:, 0], records[:, 1]), strict=True
+        ):
+            pair = members.get(name)
+            if pair is not None:
+                keys_out[record] = pair
+                keep[record] = True
+    unique = np.flatnonzero(keep)
+    unique = unique[
+        _distinct(
+            _codes(keys_out[unique]),
+            state.lineage_sources[unique],
+            -state.lineage_ranks[unique],
+        )
+    ]
+    return state._replace(
+        lineage_keys=keys_out[unique],
+        lineage_sources=state.lineage_sources[unique],
+        lineage_ranks=state.lineage_ranks[unique],
+    )
+
+
 def _collapse_round(
     state: _State,
     topology: _Topology,
@@ -2177,8 +2278,10 @@ def _collapse_round(
     periodic_context: _PeriodicContext | None,
     _source: _Source,
     /,
+    *,
+    escape: bool = False,
 ) -> tuple[_State, _Counts, int]:
-    found = _collapse_candidates(state, topology, mode)
+    found = _collapse_candidates(state, topology, mode, escape)
     if found.edge.size == 0:
         return state, counts, 0
     half = found.edge.size // 2
@@ -2214,7 +2317,7 @@ def _collapse_round(
         kept = kept[selected]
     else:
         operations = _periodic_collapse_operations(
-            state, topology, found, mode, periodic_context, _source
+            state, topology, found, mode, periodic_context, _source, escape
         )
         if not operations:
             return state, counts, 0
@@ -2294,7 +2397,6 @@ def _collapse_round(
     )
     # Retired lifted members have no edges left; their quotient edges keep
     # their lineage and feature records on the surviving members.
-    lineage = ~np.any(np.isin(updated.lineage_keys, retired), axis=1)
     features = ~np.any(np.isin(updated.feature_keys, retired), axis=1)
     alive = updated.alive.copy()
     alive[removed] = False
@@ -2302,12 +2404,10 @@ def _collapse_round(
     collapse_to = updated.collapse_to.copy()
     collapse_to[removed] = kept
     collapse_to[retired] = retired_to
+    updated = _retired_lineage(
+        updated._replace(alive=alive, collapse_to=collapse_to), retired, _source
+    )
     updated = updated._replace(
-        alive=alive,
-        collapse_to=collapse_to,
-        lineage_keys=updated.lineage_keys[lineage],
-        lineage_sources=updated.lineage_sources[lineage],
-        lineage_ranks=updated.lineage_ranks[lineage],
         feature_keys=updated.feature_keys[features],
         feature_class=updated.feature_class[features],
         feature_protected=updated.feature_protected[features],
@@ -2316,6 +2416,21 @@ def _collapse_round(
         updated,
         counts._replace(collapses=counts.collapses + removed.size),
         removed.size,
+    )
+
+
+def _escape_collapse_round(
+    state: _State,
+    topology: _Topology,
+    counts: _Counts,
+    mode: PredicateMode,
+    periodic_context: _PeriodicContext | None,
+    source: _Source,
+    /,
+) -> tuple[_State, _Counts, int]:
+    """Stall escape: every collapse up to ``_COLLAPSE_LIMIT`` (births included)."""
+    return _collapse_round(
+        state, topology, counts, mode, periodic_context, source, escape=True
     )
 
 
@@ -4155,6 +4270,9 @@ def _periodic_state_context(
         for row in range(mesh.ambient_dimension + 1)
     )
     vertex_exact_isometries = [identity] * state.points.shape[0]
+    state_vertex_windings = np.zeros(
+        (state.points.shape[0], vertex_windings.shape[1]), dtype=np.int64
+    )
     vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [
         ()
     ] * state.points.shape[0]
@@ -4168,6 +4286,7 @@ def _periodic_state_context(
         representative_metric = state.metric[representative_state_row]
         representative_point = state.points[representative_state_row]
         for state_row, target_row in zip(state_rows, target_rows, strict=True):
+            state_vertex_windings[state_row] = vertex_windings[target_row]
             winding = vertex_windings[target_row] - representative_winding
             exact_isometry = exact_periodic_element(bound_periodic.cell, winding)
             vertex_exact_isometries[state_row] = exact_isometry
@@ -4313,6 +4432,7 @@ def _periodic_state_context(
         int(bound_periodic.allocator_next_ids[0]),
         edge_member_windings,
         edge_representative_rows,
+        state_vertex_windings,
     )
 
 
@@ -4345,7 +4465,7 @@ def _collapse_refusal(
             or vertex_members[context.vertex_orbits[kept[0]]] != np.unique(kept).size
         ):
             refusal = _periodic_cover_collapse(
-                state, topology, context, source, mode, members, removed, kept, 0
+                state, topology, context, source, mode, members, removed, kept, 0, False
             )
             return refusal if isinstance(refusal, str) else "unselected"
     if not np.all(_collapse_link(topology, members, removed, kept)):
@@ -4353,11 +4473,13 @@ def _collapse_refusal(
     status, longest = _collapse_geometry(state, topology, removed, kept, mode)
     if np.any(status != _OK):
         return "invalid" if np.all(status != _UNCERTAIN) else "uncertain"
-    births = (state.source_rows[removed] < 0) | (state.source_rows[kept] < 0)
-    if np.any(births & (longest > _UPPER)):
-        return "hysteresis"
     if np.any(longest > _COLLAPSE_LIMIT):
         return "long"
+    births = (state.source_rows[removed] < 0) | (state.source_rows[kept] < 0)
+    if not np.all(_collapse_within_limit(births, longest, False)):
+        # Above the split threshold; the stall escape that admits it was rolled
+        # back because the next stall did not lower the stall potential.
+        return "hysteresis"
     return "unselected"
 
 
@@ -4489,11 +4611,27 @@ def execute_local_metric_adaptation(
     """Adapt a planar triangle mesh until it meets the unit-mesh criterion or stalls.
 
     No candidate or pass quota truncates the finite staged work. Every accepted
-    split/collapse/flip phase exhausts its current candidates before proceeding;
-    a full pass that cannot change the state terminates as a reported stall.
+    split/collapse/flip phase exhausts its current candidates before proceeding.
     Periodic sources group split, collapse, flip, and relocation proposals by
     quotient orbit, execute complete lifted groups, and validate the exact target
     stencil and lineage before returning an immutable candidate edit.
+
+    Stall escape. Regular collapses keep the split/collapse hysteresis (a
+    collapse touching a birth may not create an edge above sqrt(2)), so a run
+    can stall on a short edge whose every collapse creates such an edge. At a
+    full pass that applies nothing, the run measures the stall potential
+    ``(out-of-band edges, quantized band excess)`` (``_stall_potential``) and
+    runs one escape phase: every collapse up to ``_COLLAPSE_LIMIT``, births
+    included (the next split phase splits its long edges). The escape stands
+    when the run then reaches the unit criterion or a stall of strictly lower
+    potential, which may escape again; otherwise the run returns the escaped
+    stall's state as a reported stall. A stall whose escape phase applies
+    nothing is reported as is.
+
+    Termination: the potentials of the escaped stalls strictly decrease in the
+    lexicographic order on pairs of natural numbers, which is well-founded, so
+    escapes are finitely many; an escape phase removes a vertex (orbit) per
+    collapse, so it is finite; between escapes the regular passes run unchanged.
     """
     values = _validate_mesh(mesh, metric)
     _validate_controls(predicate_mode, topology_operations, relocation)
@@ -4517,6 +4655,8 @@ def execute_local_metric_adaptation(
     counts = _Counts()
     passes = 0
     stalled = False
+    # The last stall that escaped: its state, counts, passes, and potential.
+    escaped_from: tuple[_State, _Counts, int, tuple[int, int]] | None = None
     periodic_topology_pending = mesh.periodic_topology is not None and topology_operations
     while not _unit(topology) or periodic_topology_pending:
         periodic_topology_pending = False
@@ -4534,9 +4674,32 @@ def execute_local_metric_adaptation(
         topology, periodic_context = _periodic_topology(
             mesh, source, state, topology, predicate_mode
         )
-        if applied == 0:
-            stalled = True
+        if applied != 0:
+            continue
+        stalled = True
+        if not topology_operations or _unit(topology):
             break
+        potential = _stall_potential(topology)
+        if escaped_from is not None and potential >= escaped_from[3]:
+            # The last escape did not lower the stall potential: return its stall.
+            state, counts, passes, _ = escaped_from
+            topology = _topology(state, predicate_mode)
+            topology, periodic_context = _periodic_topology(
+                mesh, source, state, topology, predicate_mode
+            )
+            break
+        stall = (state, counts, passes, potential)
+        state, counts, escaped = _run_phase(
+            state, counts, _escape_collapse_round, predicate_mode, mesh, source
+        )
+        if escaped == 0:
+            break
+        stalled = False
+        escaped_from = stall
+        topology = _topology(state, predicate_mode)
+        topology, periodic_context = _periodic_topology(
+            mesh, source, state, topology, predicate_mode
+        )
     stalled_edges = (
         _stall_findings(state, topology, periodic_context, source, predicate_mode)
         if stalled and topology_operations

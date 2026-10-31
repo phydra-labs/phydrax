@@ -42,7 +42,7 @@ from phydrax.geometry.brep._constructors import (
     ProfilePlane,
 )
 from phydrax.geometry.brep._model import BRepGeometry, BRepModel
-from phydrax.interchange import model_from_occt_shape, prepare_occt_projection
+from phydrax.interchange import import_occt_shape, prepare_occt_projection
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
@@ -52,14 +52,14 @@ _EDGE = phx.geometry.BRepEntityDimension.EDGE
 
 
 def _bound(shape: Any, embedding: Any = None) -> Any:
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.05,
             angular_deflection=0.2,
         ),
-    )
+    ).model
     return model, phx.geometry.prepare_brep_projection(model, embedding=embedding)
 
 
@@ -299,24 +299,53 @@ def test_closed_revolution_containment_is_exact_with_unresolved_boundary(
     assert np.asarray(located.dimensions).tolist() == [3] * len(inside)
 
 
+def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
+    # From the axis point (0, 0, 1) the first ray direction meets the cylinder
+    # exactly on the top rim (height 1 + sqrt(2) * sqrt(3) / sqrt(6) = 2); that
+    # ray is not decisive, the next transversal direction decides containment.
+    model = import_occt_shape(
+        BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape(),
+        coordinate_contract=_CONTRACT,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1, angular_deflection=0.3
+        ),
+    ).model
+    projection = phx.geometry.prepare_brep_projection(model)
+
+    def contains(points: Any) -> list[bool | None]:
+        return [
+            projection._contains_solid(np.asarray(point, dtype=np.float64), 0)
+            for point in points
+        ]
+
+    inside = ((0.0, 0.0, 1.0), (0.5, 0.0, 1.0), (0.0, 0.0, 0.5), (-0.3, 0.4, 1.9))
+    outside = ((0.0, 0.0, 3.0), (0.0, 0.0, -1.0), (2.0, 0.0, 1.0), (0.0, 1.5, 2.0))
+    boundary = ((0.0, 0.0, 2.0), (0.0, 0.0, 0.0), (1.0, 0.0, 1.0), (0.5, 0.0, 2.0))
+    assert contains(inside) == [True] * len(inside)
+    assert contains(outside) == [False] * len(outside)
+    assert contains(boundary) == [None] * len(boundary)
+    located = projection.locate_solids(np.asarray(inside, dtype=np.float64))
+    assert np.asarray(located.status).tolist() == [_STATUS.UNIQUE] * len(inside)
+
+
 def test_brep_projection_scenario_2() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1,
             angular_deflection=0.3,
         ),
-    )
-    remodeled = model_from_occt_shape(
+    ).model
+    remodeled = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.05,
             angular_deflection=0.3,
         ),
-    )
+    ).model
 
     # Tessellating the shape does not change its exact-geometry revision.
     assert remodeled.source_revision == model.source_revision
@@ -339,6 +368,13 @@ def test_brep_projection_scenario_2() -> None:
 
     np.testing.assert_allclose(edge.points, [[2**-0.5, 2**-0.5]])
     np.testing.assert_allclose(edge.residuals, [1.0 - 2**-0.5])
+    # The planar result keeps the edge's defined tangent; only its second
+    # frame slot is undefined.
+    edge_tangents = np.asarray(edge.tangents)
+    np.testing.assert_allclose(
+        np.abs(edge_tangents[0, 0]), [2**-0.5, 2**-0.5], atol=1e-12
+    )
+    assert np.all(np.isnan(edge_tangents[0, 1]))
     # Inside the hole the trimmed face's closest point lies on the hole boundary.
     np.testing.assert_allclose(face.points, [[2**-0.5, 2**-0.5], [1.5, 0.0]])
     np.testing.assert_allclose(face.residuals, [1.0 - 2**-0.5, 0.0], atol=1e-12)
@@ -388,14 +424,14 @@ def _mesh_reference(
 
 @pytest.fixture
 def query_box_model() -> Any:
-    return model_from_occt_shape(
+    return import_occt_shape(
         BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1,
             angular_deflection=0.3,
         ),
-    )
+    ).model
 
 
 @pytest.mark.parametrize(
@@ -547,14 +583,14 @@ def test_brep_memory_candidate_nearest_preserves_second_face_and_refit(
 
 
 def test_fixed_topology_brep_queries_follow_changed_radius_and_derivative() -> None:
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         BRepPrimAPI_MakeSphere(1.0).Shape(),
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.2,
             angular_deflection=0.4,
         ),
-    )
+    ).model
     geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
     kernel: Any = geometry.kernel
     radius_index = next(
@@ -617,7 +653,8 @@ def test_fixed_topology_brep_prepared_leaves_round_trip(query_box_model: Any) ->
     assert actual.represented_geometry_id == expected.represented_geometry_id
 
 
-def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> None:
+def _instanced_box(placement: BRepAffinePlacement) -> BRepModel:
+    """Unit box definition used twice: at the identity and under ``placement``."""
     definition = brep_box(
         (0.0, 0.0, 0.0),
         (1.0, 1.0, 1.0),
@@ -625,14 +662,6 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
         source_id="projection-instance-definition",
     )
     source = definition.geometry
-    translated = BRepAffinePlacement.from_matrix(
-        (
-            (1, 0, 0, 10),
-            (0, 1, 0, 0),
-            (0, 0, 1, 0),
-            (0, 0, 0, 1),
-        )
-    )
     graph = BRepAssemblyGraph(
         roots=(BRepAssemblyUse("pair", definition_id="two-copies"),),
         definitions=(
@@ -640,7 +669,7 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
                 "two-copies",
                 (
                     BRepAssemblyUse("left", solid_index=0),
-                    BRepAssemblyUse("right", placement=translated, solid_index=0),
+                    BRepAssemblyUse("right", placement=placement, solid_index=0),
                 ),
             ),
         ),
@@ -667,7 +696,7 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
         solid_shells=source.solid_shells,
         assembly_graph=graph,
     )
-    model = BRepModel(
+    return BRepModel(
         geometry=geometry,
         patches=definition.patches,
         parameter_bounds=definition.parameter_bounds,
@@ -676,6 +705,19 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
         coordinate_contract=definition.coordinate_contract,
         report=definition.report,
         trim_domains=definition.trim_domains,
+    )
+
+
+def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> None:
+    model = _instanced_box(
+        BRepAffinePlacement.from_matrix(
+            (
+                (1, 0, 0, 10),
+                (0, 1, 0, 0),
+                (0, 0, 1, 0),
+                (0, 0, 0, 1),
+            )
+        )
     )
     projection = phx.geometry.prepare_brep_projection(model)
     vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
@@ -710,6 +752,41 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
     assert projected.occurrence_paths == (("pair", "left"),)
     located = projection.locate_solids(np.asarray(((0.5, 0.5, 0.5),)))
     assert located.occurrence_paths == (("pair", "left"),)
+
+
+def test_occurrence_projection_rotates_each_defined_edge_tangent() -> None:
+    # Edge frames are partial (curve tangent, undefined second slot); the
+    # occurrence rotation must still carry the defined tangent into the world.
+    model = _instanced_box(
+        BRepAffinePlacement.from_matrix(
+            (
+                (0, -1, 0, 0),
+                (1, 0, 0, 0),
+                (0, 0, 1, 0),
+                (0, 0, 0, 1),
+            )
+        )
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
+    ends = np.sort(vertices[np.asarray(model.geometry.edge_vertices)], axis=1)
+    edge = int(
+        np.flatnonzero(
+            np.all(ends[:, 0] == 0.0, axis=1)
+            & np.all(ends[:, 1] == np.asarray((1.0, 0.0, 0.0)), axis=1)
+        )[0]
+    )
+    projected = projection.project(
+        np.asarray(((0.0, 0.5, 0.0),)),
+        np.asarray((1,), dtype=np.int64),
+        np.asarray((edge,), dtype=np.int64),
+        occurrence_paths=(("pair", "right"),),
+    )
+    assert np.asarray(projected.status).tolist() == [_STATUS.UNIQUE]
+    np.testing.assert_allclose(projected.points, [[0.0, 0.5, 0.0]], atol=1e-12)
+    tangents = np.asarray(projected.tangents)
+    np.testing.assert_allclose(np.abs(tangents[0, 0]), [0.0, 1.0, 0.0], atol=1e-12)
+    assert np.all(np.isnan(tangents[0, 1]))
 
 
 def test_native_projection_exposes_reflexive_topology_incidence() -> None:
@@ -781,7 +858,7 @@ def test_definition_projection_returns_explicit_empty_occurrence_paths() -> None
 
 def test_optional_occt_projection_binds_physical_source_revision() -> None:
     shape = BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape()
-    model = model_from_occt_shape(shape, coordinate_contract=_CONTRACT)
+    model = import_occt_shape(shape, coordinate_contract=_CONTRACT).model
     projection = prepare_occt_projection(model, shape)
     assert projection.source_revision == model.source_revision
     source_vertex = np.asarray(model.geometry.vertex_points)[0]
@@ -798,11 +875,11 @@ def test_optional_occt_projection_binds_physical_source_revision() -> None:
     assert np.isinf(np.asarray(observed.residuals)[0])
     assert observed.frame_id == model.coordinate_contract.spatial_id
 
-    different = model_from_occt_shape(
+    different = import_occt_shape(
         BRepPrimAPI_MakeBox(2.0, 2.0, 3.0).Shape(),
         coordinate_contract=_CONTRACT,
         source_digest=model.report.source_digest,
-    )
+    ).model
     with pytest.raises(ValueError, match="physical source_revision"):
         prepare_occt_projection(different, shape)
 
@@ -817,7 +894,7 @@ def test_optional_occt_projection_maps_assembly_entities_to_occurrence_paths() -
     builder.MakeCompound(compound)
     builder.Add(compound, source)
     builder.Add(compound, placed)
-    model = model_from_occt_shape(compound, coordinate_contract=_CONTRACT)
+    model = import_occt_shape(compound, coordinate_contract=_CONTRACT).model
     projection = prepare_occt_projection(model, compound)
     occurrences = tuple(model.geometry.iter_occurrences())
     assert len(occurrences) == 2

@@ -16,7 +16,7 @@ import numpy as np
 import phydrax.geometry._source_fidelity as source_fidelity_owner
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import MeshcoreError, surface_envelope, SurfaceEnvelopeResult
+from .._meshcore import MeshcoreError, SurfaceEnvelopeResult
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -36,7 +36,8 @@ from ..geometry.reconstruction._boundary import ReconstructedTriangleBoundarySou
 from ..geometry.reconstruction._core import ReconstructedGeometrySource
 from ..geometry.reconstruction._envelope import (
     envelope_reproduces,
-    record_envelope_reproduction,
+    produce_envelope,
+    SurfaceEnvelopeReproduction,
 )
 from ..geometry.reconstruction._sheet import AuthoredTriangleSheet
 from ..geometry.simplicial._regions import MeshRegion
@@ -108,9 +109,14 @@ def _original_domain_query(source: _EnvelopeOriginal, /) -> MeshingDomainBoundar
 
 
 def _fresh_original(source: _EnvelopeOriginal, /) -> _EnvelopeOriginal:
+    # The retained meshing domain is reused only when it is exactly the
+    # construction of the recomputed inputs; the constructors rebuild otherwise.
     if isinstance(source, AuthoredTriangleSheet):
         fresh: _EnvelopeOriginal = AuthoredTriangleSheet(
-            source.vertices, source.triangles, feature_id=source.feature_id
+            source.vertices,
+            source.triangles,
+            feature_id=source.feature_id,
+            meshing_domain=source.meshing_domain,
         )
     else:
         fresh = ReconstructedGeometrySource(
@@ -122,6 +128,7 @@ def _fresh_original(source: _EnvelopeOriginal, /) -> _EnvelopeOriginal:
             persistent_edge_ids=np.asarray(source.persistent_edge_ids, dtype=np.int64),
             persistent_facet_ids=np.asarray(source.persistent_facet_ids, dtype=np.int64),
             persistent_region_id=source.persistent_region_id,
+            meshing_domain=source.meshing_domain,
         )
     if (
         fresh.source_id != source.source_id
@@ -386,11 +393,15 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
     ``result.bounds`` is the native deviation proof: ``bounds[0]`` bounds the
     distance from every original point to the envelope surface and
     ``bounds[2] <= dist(envelope point, original) <= bounds[1]``.
+    ``reproduction`` records that the kernel produced ``result`` from the
+    original's triangles and these controls; currentness accepts it only for
+    exactly that content and otherwise reruns the kernel.
     """
 
     original: _EnvelopeOriginal
     original_boundary_query: ReconstructedTriangleBoundarySource
     result: SurfaceEnvelopeResult
+    reproduction: SurfaceEnvelopeReproduction
     domain: PiecewiseLinearDomain
     plc_source: NativePlcSource
     coordinate_contract: SpatialCoordinateContract
@@ -472,13 +483,8 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         try:
             # The marching-tetrahedra surface is remeshed inside the certified
             # band: same band bounds, embedded oriented manifold, better angles.
-            result = surface_envelope(
-                source_vertices,
-                source_triangles,
-                controls[0],
-                controls[1],
-                controls[2],
-                remesh=True,
+            result, reproduction = produce_envelope(
+                source_vertices, source_triangles, controls[:3]
             )
         except MeshcoreError as error:
             raise _failure(
@@ -486,14 +492,6 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="surface_envelope_execution",
             ) from error
-        record_envelope_reproduction(
-            source_vertices,
-            source_triangles,
-            controls[:3],
-            result.bounds,
-            result.surface_vertices,
-            result.surface_triangles,
-        )
         if max(float(result.bounds[0]), float(result.bounds[1])) > controls[3]:
             raise _failure(
                 "The native upper bound cannot certify the requested maximum_deviation at these envelope controls.",
@@ -547,6 +545,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         self.original = fresh_original
         self.original_boundary_query = original_query
         self.result = result
+        self.reproduction = reproduction
         self.domain = domain
         self.coordinate_contract = coordinate_contract
         self.source_id = source_id_
@@ -654,6 +653,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 result.bounds,
                 result.surface_vertices,
                 result.surface_triangles,
+                self.reproduction,
             )
         except MeshcoreError as error:
             raise ValueError(
@@ -1646,6 +1646,7 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             envelope_triangles=np.asarray(source.domain.facets, dtype=np.int64),
             target_vertex_global_ids=vertex_ids,
             target_facet_global_ids=facet_ids,
+            reproduction=source.reproduction,
         )
         try:
             distance_witness.require_current(

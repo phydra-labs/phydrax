@@ -230,3 +230,164 @@ def test_mesh_motion_routes_scenario_2() -> None:
     inverted = validity.evaluate(folded)
     assert int(inverted.status) & int(D.MotionValidityStatus.ORIENTATION_CHANGED)
     assert float(inverted.minimum_relative_jacobian) < 0.0
+
+
+@pytest.mark.parametrize(
+    "route", (Route.HARMONIC, Route.LINEAR_ELASTICITY, Route.WINSLOW, Route.MMPDE)
+)
+def test_every_route_converges_for_tiny_boundary_moves(route: Any) -> None:
+    """Solve criteria are relative to the motion, not absolute coordinate floors.
+
+    Every route solves for the displacement normalized by its largest boundary
+    entry (reported as `displacement_scale`), so a 1e-9 move converges like an
+    O(0.1) one and reports its residual in coordinate units.
+    """
+    points, triangles, boundary = _square(4)
+    edge = points[boundary]
+    direction = np.stack((0.2 * edge[:, 1], 0.1 * np.sin(np.pi * edge[:, 0])), 1)
+    interior = np.setdiff1d(np.arange(points.shape[0]), boundary)
+    extension = _extension(points, triangles, boundary, route)
+    # A uniform monitor: MMPDE then moves the interior only with the boundary.
+    monitor = _GaussianMonitor(jnp.asarray(0.0)) if route is Route.MMPDE else None
+    linear = route in (Route.HARMONIC, Route.LINEAR_ELASTICITY)
+    amplitudes = (1.0e-9, 1.0e-5, 1.0e-1) if linear else (1.0e-5, 1.0e-1)
+    responses = []
+    for amplitude in amplitudes:
+        result = extension.extend(amplitude * direction, monitor=monitor)
+        assert bool(result.successful), (amplitude, np.asarray(result.status))
+        np.testing.assert_allclose(
+            result.displacement_scale, amplitude * np.max(np.abs(direction)), rtol=1e-15
+        )
+        # The residual scales with the motion (MMPDE's carries 1 / tau).
+        assert float(result.residual_norm) <= 1.0e-6 * float(result.displacement_scale)
+        response = np.asarray(result.displacement)[interior] / amplitude
+        assert float(np.max(np.abs(response))) > 1.0e-3
+        responses.append(response)
+    if linear:
+        # Linear routes are homogeneous in the boundary data.
+        for response in responses[:-1]:
+            np.testing.assert_allclose(response, responses[-1], rtol=0.0, atol=1e-9)
+    else:
+        # A small move follows the route's linearization.
+        scale = float(np.max(np.abs(responses[-1])))
+        assert float(np.max(np.abs(responses[0] - responses[-1]))) < 0.2 * scale
+
+
+def _periodic_strip(count: Any) -> Any:
+    """Lifted unit square, periodic in x: the x = 1 column twins the x = 0 one."""
+
+    points, triangles, _ = _square(count)
+    kept = np.flatnonzero(points[:, 0] == 0.0)
+    twin = np.flatnonzero(points[:, 0] == 1.0)
+    kept = kept[np.argsort(points[kept, 1])]
+    twin = twin[np.argsort(points[twin, 1])]
+    translations = np.broadcast_to((1.0, 0.0), (kept.size, 2))
+    boundary = np.flatnonzero((points[:, 1] == 0.0) | (points[:, 1] == 1.0))
+    return points, triangles, boundary, (kept, twin, translations)
+
+
+def test_periodic_extension_solves_harmonic_motion_on_the_quotient() -> None:
+    count = 6
+    points, triangles, boundary, pairs = _periodic_strip(count)
+    kept, twin, _ = pairs
+    extension = D.FiniteElementMotionExtension(
+        points,
+        (("triangle", triangles),),
+        boundary,
+        policy=D.FiniteElementMeshMotionPolicy(route=Route.HARMONIC),
+        periodic_vertex_pairs=pairs,
+    )
+    # Bottom wall fixed; the top wall slides by a lattice-periodic profile.
+    prescribed = np.zeros((boundary.size, 2))
+    top = points[boundary, 1] == 1.0
+    prescribed[top, 0] = 0.08 * np.sin(2.0 * np.pi * points[boundary[top], 0])
+    prescribed[top, 1] = 0.05 * np.cos(2.0 * np.pi * points[boundary[top], 0])
+
+    result = eqx.filter_jit(extension.extend)(prescribed)
+
+    assert bool(result.successful)
+    displacement = np.asarray(result.displacement)
+    np.testing.assert_array_equal(displacement[twin], displacement[kept])
+    # A prescribed class takes its first member's value; corner twins agree
+    # with their own prescription to rounding (sin(0) against sin(2 pi)).
+    np.testing.assert_allclose(displacement[boundary], prescribed, rtol=0.0, atol=1e-15)
+
+    # Independent reference: weld the twins into the quotient mesh and solve
+    # its graph Laplacian (edge weights 1/length) densely.
+    weld = np.arange(points.shape[0])
+    weld[twin] = kept
+    edges = np.sort(
+        np.concatenate(
+            [triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]]
+        ),
+        axis=1,
+    )
+    edges = np.unique(edges, axis=0)
+    lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+    welded = np.sort(weld[edges], axis=1)
+    welded, unique = np.unique(welded, axis=0, return_index=True)
+    weights = 1.0 / lengths[unique]
+    laplacian = np.zeros((points.shape[0], points.shape[0]))
+    for (a, b), weight in zip(welded, weights, strict=True):
+        laplacian[a, a] += weight
+        laplacian[b, b] += weight
+        laplacian[a, b] -= weight
+        laplacian[b, a] -= weight
+    quotient = np.unique(weld)
+    fixed = np.unique(weld[boundary])
+    free = np.setdiff1d(quotient, fixed)
+    values = np.zeros((points.shape[0], 2))
+    values[weld[boundary]] = prescribed
+    reference = np.linalg.solve(
+        laplacian[np.ix_(free, free)],
+        -laplacian[np.ix_(free, fixed)] @ values[fixed],
+    )
+    np.testing.assert_allclose(displacement[free], reference, rtol=0.0, atol=1e-9)
+    # Seam columns move: the coupling is exercised, not a fixed seam.
+    assert float(np.max(np.abs(displacement[kept]))) > 1.0e-3
+
+
+@pytest.mark.parametrize("route", (Route.LINEAR_ELASTICITY, Route.WINSLOW))
+def test_periodic_extension_keeps_twins_exact_on_every_route(route: Any) -> None:
+    points, triangles, boundary, pairs = _periodic_strip(5)
+    kept, twin, _ = pairs
+    extension = D.FiniteElementMotionExtension(
+        points,
+        (("triangle", triangles),),
+        boundary,
+        policy=D.FiniteElementMeshMotionPolicy(route=route),
+        periodic_vertex_pairs=pairs,
+    )
+    prescribed = np.zeros((boundary.size, 2))
+    top = points[boundary, 1] == 1.0
+    prescribed[top, 0] = 0.06 * np.sin(2.0 * np.pi * points[boundary[top], 0])
+
+    result = eqx.filter_jit(extension.extend)(prescribed)
+
+    assert bool(result.successful)
+    displacement = np.asarray(result.displacement)
+    np.testing.assert_array_equal(displacement[twin], displacement[kept])
+    assert float(np.max(np.abs(displacement[kept]))) > 1.0e-4
+    assert bool(_orientation_preserved(points, triangles, displacement).valid)
+
+
+def test_periodic_extension_refuses_non_lattice_twins_and_torn_prescriptions() -> None:
+    points, triangles, boundary, pairs = _periodic_strip(4)
+    kept, twin, translations = pairs
+    with pytest.raises(ValueError, match="lattice translates"):
+        D.FiniteElementMotionExtension(
+            points,
+            (("triangle", triangles),),
+            boundary,
+            periodic_vertex_pairs=(kept, twin, translations * 0.5),
+        )
+    extension = D.FiniteElementMotionExtension(
+        points,
+        (("triangle", triangles),),
+        boundary,
+        periodic_vertex_pairs=pairs,
+    )
+    # The two lifted copies of a wall corner disagree: not a periodic motion.
+    torn = np.zeros((boundary.size, 2))
+    torn[np.flatnonzero(boundary == twin[-1]), 0] = 0.01
+    assert not bool(extension.extend(torn).successful)

@@ -110,10 +110,14 @@ class CommonRefinementPolicy(StrictModule):
         if not isinstance(predicate_mode, PredicateMode):
             raise TypeError("predicate_mode must be a PredicateMode.")
         if predicate_mode is PredicateMode.FILTERED_DEVICE:
-            raise ValueError("Common refinement certifies on the host: use FILTERED or EXACT.")
+            raise ValueError(
+                "Common refinement certifies on the host: use FILTERED or EXACT."
+            )
         if not isinstance(coverage, CommonRefinementCoverage):
             raise TypeError("coverage must be a CommonRefinementCoverage.")
-        if not isinstance(second_moments, bool) or not isinstance(overlap_simplices, bool):
+        if not isinstance(second_moments, bool) or not isinstance(
+            overlap_simplices, bool
+        ):
             raise TypeError("second_moments and overlap_simplices must be bools.")
         tolerance = float(coverage_tolerance)
         if not np.isfinite(tolerance) or not 0.0 <= tolerance < 1.0:
@@ -191,8 +195,12 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
         self.target_gap_count = int(np.sum(-target_defects > target_tolerance))
         self.source_double_count = int(np.sum(source_defects > source_tolerance))
         self.target_double_count = int(np.sum(target_defects > target_tolerance))
-        self.maximum_relative_source_defect = _relative_maximum(source_defects, source_measures)
-        self.maximum_relative_target_defect = _relative_maximum(target_defects, target_measures)
+        self.maximum_relative_source_defect = _relative_maximum(
+            source_defects, source_measures
+        )
+        self.maximum_relative_target_defect = _relative_maximum(
+            target_defects, target_measures
+        )
         self.uncertain_predicate_count = counts.uncertain
         self.invalid_cell_count = counts.invalid
         self.intersection_failure_count = counts.failures
@@ -205,7 +213,11 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
                 "target_defects": array_tree_fingerprint(target_defects),
                 "source_tolerances": array_tree_fingerprint(source_tolerance),
                 "target_tolerances": array_tree_fingerprint(target_tolerance),
-                "unresolved": (self.uncertain_predicate_count, self.invalid_cell_count, self.intersection_failure_count),
+                "unresolved": (
+                    self.uncertain_predicate_count,
+                    self.invalid_cell_count,
+                    self.intersection_failure_count,
+                ),
             }
         )
 
@@ -797,7 +809,7 @@ def _outside_exact_domain(mesh: CellMesh, /) -> bool:
 def _candidate_pairs(
     source: _Decomposition, target: _Decomposition, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Exhaustively enumerate positive-extent box overlaps in stable cell-ID order."""
+    """Enumerate positive-extent box overlaps sorted by local (target, source) cell."""
 
     target_bvh = prepare_bvh(target.bbox_min, target.bbox_max, dtype=jnp.float64)
     source_bvh = prepare_bvh(source.bbox_min, source.bbox_max, dtype=jnp.float64)
@@ -810,7 +822,9 @@ def _candidate_pairs(
         return empty, empty.copy()
     target_cells = np.concatenate(target_parts)
     source_cells = np.concatenate(source_parts)
-    order = np.lexsort((source.global_ids[source_cells], target.global_ids[target_cells]))
+    # The CSR rows are local target cells (`target_offsets` is a bincount of
+    # `target_cells`) listing local source cells in ascending order.
+    order = np.lexsort((source_cells, target_cells))
     return target_cells[order], source_cells[order]
 
 
@@ -1064,6 +1078,7 @@ def _narrow_phase(
     )
     return _NarrowResult(entries, counts)
 
+
 def _joined(parts: list[np.ndarray], empty_shape: tuple[int, ...], /) -> np.ndarray:
     if not parts:
         return np.zeros(empty_shape, dtype=np.float64)
@@ -1226,9 +1241,7 @@ def prepare_common_refinement(
     )
     failure = _decomposition_failure(outside, counts)
     if failure is not None:
-        return _prepared(
-            first, second, None, counts, *failure, identities, policy
-        )
+        return _prepared(first, second, None, counts, *failure, identities, policy)
     target_cells, source_cells = _candidate_pairs(first, second)
     counts = counts._replace(candidates=target_cells.size)
     narrow = _narrow_phase(first, second, target_cells, source_cells, policy)
@@ -1351,7 +1364,9 @@ def prepare_compact_cell_common_refinement(
         or target_kind not in dimensions
         or dimensions[source_kind] != dimensions[target_kind]
     ):
-        raise ValueError("Compact common refinement requires matching 2D/3D cell dimensions.")
+        raise ValueError(
+            "Compact common refinement requires matching 2D/3D cell dimensions."
+        )
     dimension = dimensions[source_kind]
 
     def normalize(
@@ -1361,11 +1376,11 @@ def prepare_compact_cell_common_refinement(
         raw_faces: Any | None,
         name: str,
         /,
-    ) -> tuple[tuple[np.ndarray, ...], np.ndarray, tuple[tuple[np.ndarray, ...], ...] | None]:
+    ) -> tuple[
+        tuple[np.ndarray, ...], np.ndarray, tuple[tuple[np.ndarray, ...], ...] | None
+    ]:
         if isinstance(raw_vertices, np.ndarray) and raw_vertices.ndim == 3:
-            vertices = tuple(
-                np.asarray(row, dtype=np.float64) for row in raw_vertices
-            )
+            vertices = tuple(np.asarray(row, dtype=np.float64) for row in raw_vertices)
         else:
             vertices = tuple(np.asarray(row, dtype=np.float64) for row in raw_vertices)
         identifiers = np.asarray(raw_ids)
@@ -1377,9 +1392,11 @@ def prepare_compact_cell_common_refinement(
             or np.unique(identifiers).size != identifiers.size
         ):
             raise ValueError(f"{name} compact cells need unique nonnegative stable IDs.")
-        if identifiers.dtype.kind == "u" and identifiers.size and int(
-            np.max(identifiers)
-        ) > np.iinfo(np.int64).max:
+        if (
+            identifiers.dtype.kind == "u"
+            and identifiers.size
+            and int(np.max(identifiers)) > np.iinfo(np.int64).max
+        ):
             raise ValueError(f"{name} stable cell IDs must fit signed int64.")
         minimum = {
             "triangle": 3,
@@ -1405,7 +1422,9 @@ def prepare_compact_cell_common_refinement(
             faces = None
         else:
             if raw_faces is None or len(raw_faces) != len(vertices):
-                raise ValueError("Compact polyhedra require one authored face set per cell.")
+                raise ValueError(
+                    "Compact polyhedra require one authored face set per cell."
+                )
             normalized_faces = []
             for cell, cell_faces in zip(vertices, raw_faces, strict=True):
                 loops = tuple(np.asarray(face, dtype=np.int32) for face in cell_faces)
@@ -1459,8 +1478,7 @@ def prepare_compact_cell_common_refinement(
                 "cell_faces": None
                 if faces is None
                 else tuple(
-                    tuple(array_tree_fingerprint(loop) for loop in cell)
-                    for cell in faces
+                    tuple(array_tree_fingerprint(loop) for loop in cell) for cell in faces
                 ),
             }
         )
@@ -1484,9 +1502,7 @@ def prepare_compact_cell_common_refinement(
                 connectivity[cell, :count] = np.arange(base, base + count, dtype=np.int32)
                 valid[cell, :count] = True
                 definitions.append(
-                    tuple(
-                        np.asarray(loop, dtype=np.int32) + base for loop in cell_faces
-                    )
+                    tuple(np.asarray(loop, dtype=np.int32) + base for loop in cell_faces)
                 )
             block = CellBlock(
                 f"{side}-compact-polyhedra",

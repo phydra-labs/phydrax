@@ -819,10 +819,18 @@ def prepare_finite_element_field_reconstruction(
             )
         elif simplex:
             if location_policy is None:
+                # The locator grows its candidate capacity (doubling, up to the
+                # cell count) until the BVH search is complete, so it starts
+                # small: its Newton arrays scale with points x capacity x seeds,
+                # and starting at the cell count made them quadratic in mesh size.
+                # An affine map's Newton step is exact from any seed, so only a
+                # curved map needs the vertex seeds besides the centroid.
                 simplex_policy = SimplicialLocationPolicy(
-                    cell_map.cell_count,
+                    min(cell_map.cell_count, 16),
                     16,
-                    1 + len(reference_cell_topology(kind).vertices),
+                    1
+                    if cell_map.coordinate_element.degree == 1
+                    else 1 + len(reference_cell_topology(kind).vertices),
                 )
             elif isinstance(location_policy, SimplicialLocationPolicy):
                 simplex_policy = location_policy

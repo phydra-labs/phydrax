@@ -338,12 +338,15 @@ rank, and conditioning remain explicit runtime evidence. See
 
 ### General polygon location and mapped cell measures
 
-Polygon point queries are independent of the star-kernel construction used by
-`ExplicitPolygonH1Plan`: simple boundary loops are checked with exact
-binary-rational predicates and covered by deterministic ear-clipped triangles.
-Self-intersecting loops are refused. Bounded BVH candidates return a selected
-triangle, its local vertex slots, barycentric coordinates, and conditioning
-evidence; the query does not silently extrapolate across an unresolved cell.
+Polygon point queries do not assume star-shaped cells: simple boundary loops
+are checked with exact binary-rational predicates and covered by deterministic
+ear-clipped triangles. Self-intersecting loops are refused. Bounded BVH
+candidates return a selected triangle, its local node slots, barycentric
+coordinates, and conditioning evidence; the query does not silently
+extrapolate across an unresolved cell. A family whose basis is piecewise linear
+on another subdivision locates in that subdivision instead: explicit polygon H1
+reconstruction locates in the witness fans on which its condensed P1 basis is
+defined, so values and gradients are those of the discrete space.
 
 Full-dimensional polynomial mapped measures on supported simplex, tensor-box,
 and prism cells use exact reference-cell moments. Rational volume densities

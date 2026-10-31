@@ -44,7 +44,7 @@ def _source(path: Any, shape: Any) -> Any:
             linear_deflection=0.03,
             angular_deflection=0.15,
         ),
-    )
+    ).model
 
 
 def _face_indices(source: Any, axis: Any, coordinate: Any) -> Any:
@@ -58,7 +58,9 @@ def _face_indices(source: Any, axis: Any, coordinate: Any) -> Any:
 
 def _scope(provider: Any, source: Any, dimension: Any, indices: Any) -> Any:
     entities = {2: source.face_ids, 3: source.solid_ids}[dimension]
-    return phx.meshing.MeshingScope.from_geometry(source, tuple(entities[index] for index in indices))
+    return phx.meshing.MeshingScope.from_geometry(
+        source, tuple(entities[index] for index in indices)
+    )
 
 
 def _slab_fixture(path: Any) -> Any:
