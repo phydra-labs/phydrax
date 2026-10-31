@@ -604,6 +604,28 @@ def test_metric_quality_measures_shape_in_metric_space() -> None:
     assert float(stretched.metric_quality[0]) == pytest.approx(1.0)
 
 
+def test_non_applicable_metric_quality_is_nan_at_every_mesh_size() -> None:
+    from phydrax.meshing._quality import CellQualityReportArchiveRecipe
+
+    # Large all-NaN XLA CPU min-reductions return +inf; the summary must not.
+    count = 12_000
+    offsets = np.arange(count, dtype=np.float64)[:, None] * np.asarray((2.0, 0.0, 0.0))
+    reference = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    coordinates = (offsets[:, None, :] + reference[None]).reshape((-1, 3))
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        coordinates, np.arange(4 * count, dtype=np.int32).reshape((count, 4))
+    )
+    evaluation = phx.meshing.evaluate_cell_quality(mesh)
+    assert bool(jnp.all(jnp.isnan(evaluation.metric_quality)))
+    report = phx.meshing.summarize_cell_quality(evaluation)
+    assert np.isnan(report.minimum_metric_quality)
+    assert (
+        CellQualityReportArchiveRecipe.from_report(report).minimum_metric_quality is None
+    )
+
+
 def test_finite_volume_quality_measures_skewness_and_non_orthogonality() -> None:
     def evaluate(shift: Any) -> Any:
         points = np.asarray(
