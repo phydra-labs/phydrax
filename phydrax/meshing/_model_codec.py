@@ -337,6 +337,7 @@ def _register_model_archive_types() -> None:
         GeometryAssociation,
         GeometryAssociationKind,
         GeometryAssociationProvenance,
+        GeometrySourceEntityRole,
     )
     from ..meshing._certification import MeshCertificationReport
     from ..meshing._certification_inputs import MeshCertificationInputs
@@ -752,6 +753,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", GeometryAssociation),
         ("phydrax.meshing", GeometryAssociationKind),
         ("phydrax.meshing", GeometryAssociationProvenance),
+        ("phydrax.meshing", GeometrySourceEntityRole),
         ("phydrax.meshing", MeshAttribute),
         ("phydrax.meshing", MeshAttributeRole),
         ("phydrax.meshing", MeshLabel),

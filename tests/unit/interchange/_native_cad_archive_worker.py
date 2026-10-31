@@ -75,7 +75,6 @@ if TYPE_CHECKING:
     from phydrax.graph._partition import GraphPartitionPlan
     from phydrax.linalg._spaces import AbstractVectorSpace
     from phydrax.meshing._boundary_layer import BoundaryLayerEvidence
-    from phydrax.meshing._certification import MeshCertificationReport
     from phydrax.meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
     from phydrax.meshing._layer_curving import LayerCurvingConstructionResult
     from phydrax.meshing._layer_curving_records import (
@@ -185,6 +184,7 @@ from phydrax.geometry._global_embedding import (
     GlobalEmbeddingCertificate,
 )
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
+from phydrax.geometry._mesh_certificates import _same_tree_content
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
     MeshingDomainCurve,
@@ -328,7 +328,7 @@ from phydrax.lifecycle._composition_rebind import (
     CompositionEntry,
 )
 from phydrax.meshing._assembly import MeshPart
-from phydrax.meshing._association import GeometryAssociation
+from phydrax.meshing._association import GeometryAssociation, GeometryAssociationKind
 from phydrax.meshing._audit import CellMeshAuditPolicy
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._certification_inputs import MeshCertificationInputs
@@ -1979,7 +1979,7 @@ def _curved_volume_material_chain() -> tuple[
     )
 
 
-def _rebuild_compiled_analytic_geometry(value: CompiledGeometry, /) -> CompiledGeometry:
+def _rebuild_compiled_analytic_geometry(value: object, /) -> CompiledGeometry:
     if not isinstance(value, CompiledGeometry):
         raise TypeError("Analytic implicit profile requires a compiled geometry owner.")
     stored_schema = value.state.schema
@@ -4417,11 +4417,11 @@ def _rebuild_restricted_coverage_witness(
     return witness
 
 
-def _rebuild_mesh_certification_report(
-    value: object, mesh: CellMesh, geometry: CellGeometrySpec, /
-) -> MeshCertificationReport:
+def _rebuild_mesh_certification_premises(
+    value: object, /
+) -> tuple[MeshCertificationInputs, CellMeshAuditPolicy, str]:
+    """Rebuild a stored report's premises; acceptance is recomputed once by the caller."""
     from phydrax.meshing._certification import MeshCertificationReport
-    from phydrax.meshing._native_construction import NativeMeshOrganization
     from phydrax.meshing._quality import CellQualityReport
 
     if type(value) is not MeshCertificationReport:
@@ -4433,30 +4433,7 @@ def _rebuild_mesh_certification_report(
     ):
         _validate_implicit_source_chart_witness(inputs.source, inputs.fidelity_witness)
     audit_policy = _rebuild_as(value.audit_policy, CellMeshAuditPolicy)
-    boundary = (
-        None if value.boundary is None else _rebuild_as(value.boundary, SurfaceModel)
-    )
-    report = MeshCertificationReport(
-        inputs,
-        audit_policy=audit_policy,
-        organization=NativeMeshOrganization(
-            boundary=boundary,
-            patches=_rebuild_tuple_as(value.patches, MeshPatch),
-            zones=_rebuild_tuple_as(value.zones, MeshZone),
-            labels=_rebuild_tuple_as(value.labels, MeshLabel),
-            attributes=_rebuild_tuple_as(value.attributes, MeshAttribute),
-            associations=_rebuild_tuple_as(value.associations, GeometryAssociation),
-        ),
-    )
-    if (
-        report.report_id != value.report_id
-        or report.audit.quality.report_id != stored_quality.report_id
-    ):
-        raise ValueError(
-            "Stored certification report differs from recomputed premises or quality."
-        )
-    report.revalidate(mesh, geometry)
-    return report
+    return inputs, audit_policy, stored_quality.report_id
 
 
 def _meshing_source_accuracy(value: str, /) -> MeshingSourceAccuracy:
@@ -5448,7 +5425,7 @@ def _rebuild_continuation_value(
         query.require_current()
         return query
     if isinstance(value, AnalyticImplicitProfileArchiveRecipe):
-        geometry = _rebuild_as(value.geometry, CompiledGeometry)
+        geometry = _rebuild_compiled_analytic_geometry(value.geometry)
         contract = _rebuild_as(value.coordinate_contract, SpatialCoordinateContract)
         if not isinstance(contract, SpatialCoordinateContract):
             raise TypeError("Analytic implicit profile lost its coordinate contract.")
@@ -5685,6 +5662,12 @@ def _rebuild_continuation_value(
             hard=value.hard,
         )
     if isinstance(value, GeometryAssociation):
+        # Rows without a source stratum are stored as -1; when no row names one
+        # the constructor's absent-strata form reproduces exactly those banks.
+        strata_absent = value.association_kind is not GeometryAssociationKind.BREP and (
+            bool(np.all(np.asarray(value.source_dimensions) == -1))
+            and bool(np.all(np.asarray(value.source_indices) == -1))
+        )
         return GeometryAssociation(
             value.association_kind,
             value.source_id,
@@ -5696,8 +5679,8 @@ def _rebuild_continuation_value(
             resolved=value.resolved,
             ambiguous=value.ambiguous,
             exact=value.exact,
-            source_dimensions=value.source_dimensions,
-            source_indices=value.source_indices,
+            source_dimensions=None if strata_absent else value.source_dimensions,
+            source_indices=None if strata_absent else value.source_indices,
             source_roles=value.source_roles,
             source_occurrence_paths=value.source_occurrence_paths,
             source_region_sides=value.source_region_sides,
@@ -6032,9 +6015,15 @@ def _rebuild_continuation_value(
             )
         schedule = _rebuild_as(value.schedule, MeshCertificationSchedule)
         domain = None if value.domain is None else _rebuild_coverage_domain(value.domain)
+        # One archived definition (an analytic profile serving as domain,
+        # fidelity and feature source) restores to one owner object, as the
+        # route authored it; the archive stores equal subtrees once.
+        profile = domain if isinstance(domain, AnalyticImplicitProfile) else None
         source = (
             None
             if value.source is None
+            else profile
+            if profile is not None and _same_tree_content(value.source, value.domain)
             else _rebuild_as(value.source, SourceBoundaryQuery)
         )
         inputs = MeshCertificationInputs(
@@ -6065,6 +6054,9 @@ def _rebuild_continuation_value(
             feature_source=(
                 None
                 if value.feature_source is None
+                else profile
+                if profile is not None
+                and _same_tree_content(value.feature_source, value.domain)
                 else _rebuild_as(value.feature_source, _SourceEntityScopes)
             ),
             source_coverage_witness=(
@@ -6137,13 +6129,13 @@ def _rebuild_continuation_value(
             if value.planar_embedding is None
             else _rebuild_as(value.planar_embedding, PlanarEmbedding)
         )
-        certification = (
+        premises = (
             None
             if value.certification is None
-            else _rebuild_mesh_certification_report(value.certification, mesh, geometry)
+            else _rebuild_mesh_certification_premises(value.certification)
         )
-        certification_inputs = None if certification is None else certification.inputs
-        audit_policy = None if certification is None else certification.audit_policy
+        certification_inputs = None if premises is None else premises[0]
+        audit_policy = None if premises is None else premises[1]
         layer_curving_evidence = (
             None
             if value.layer_curving_evidence is None
@@ -6170,11 +6162,17 @@ def _rebuild_continuation_value(
             region_boundary_evidence=region_boundary_evidence,
             planar_embedding=planar_embedding,
         )
-        if certification is not None and (
-            certified_result.certification is None
-            or certified_result.certification.report_id != certification.report_id
+        # Restore-time validation: certify_cell_mesh recomputes acceptance once
+        # from the rebuilt premises; later revalidation of this report reuses it.
+        if value.certification is not None and (
+            premises is None
+            or certified_result.certification is None
+            or certified_result.certification.report_id != value.certification.report_id
+            or certified_result.certification.audit.quality.report_id != premises[2]
         ):
-            raise ValueError("Cell result organization differs from its stored report.")
+            raise ValueError(
+                "Stored certification report differs from recomputed premises, quality, or organization."
+            )
         if layer_curving_evidence is None:
             result = certified_result
         else:
@@ -8939,6 +8937,7 @@ def _source_coverage_archive_fixture() -> tuple[
         surface_source=organization.surface_source,
         region_boundary_evidence=organization.region_boundary_evidence,
         planar_embedding=construction.planar_embedding,
+        embedding=request.global_embedding,
     )
     if result.certification is None:
         raise ValueError("Restricted coverage fixture lost computed certification.")
@@ -9059,7 +9058,9 @@ def _rebuild_source_coverage_composition(
     if witness is None:
         raise ValueError("Cold source-coverage continuation lost its proof input.")
     report.require_passed()
-    report.revalidate(result.mesh, result.geometry)
+    # The restore recomputed this report (and its embedding) from the rebuilt
+    # premises; revalidation reuses that in-hand embedding explicitly.
+    report.revalidate(result.mesh, result.geometry, embedding=report.embedding)
     if report.coverage is None:
         raise ValueError("Cold restricted coverage lost its computed domain certificate.")
     if not isinstance(report.inputs.domain, AnalyticImplicitProfile):
