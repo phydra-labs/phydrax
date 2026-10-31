@@ -46,7 +46,7 @@ def _persist(shape: Any, path: Any, *, overwrite: Any = False) -> Any:
             angular_deflection=0.2,
         ),
         overwrite=overwrite,
-    )
+    ).model
 
 
 def _surface_spec(source: Any, size: Any, **kwargs: Any) -> Any:
@@ -159,9 +159,7 @@ def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path: Any) ->
         0.2, 0.04, phx.meshing.BackgroundMetricMode.ANISOTROPIC
     )
 
-    report = provider.validate(
-        cube, _volume_spec(cube, 0.5), background_metric=control
-    )
+    report = provider.validate(cube, _volume_spec(cube, 0.5), background_metric=control)
 
     assert not report.supported
     with pytest.raises(phx.meshing.MeshingFailure) as failure:
@@ -363,9 +361,7 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
         )
     )
 
-    result = provider.plan(
-        source, _volume_spec(source, 0.6, order=order)
-    ).execute()
+    result = provider.plan(source, _volume_spec(source, 0.6, order=order)).execute()
 
     achieved = dict(result.compliance.achieved)
     elements, routes, coordinates = result.geometry.resolve(result.mesh)
@@ -404,12 +400,8 @@ def test_real_session_import_cache_uses_revision_bound_native_export(
     provider = phx.meshing.GmshProvider()
 
     with provider.open_session() as session:
-        first = session.execute(
-            provider.plan(source, _volume_spec(source, 0.5))
-        )
-        second = session.execute(
-            provider.plan(source, _volume_spec(source, 0.4))
-        )
+        first = session.execute(provider.plan(source, _volume_spec(source, 0.5)))
+        second = session.execute(provider.plan(source, _volume_spec(source, 0.4)))
         assert (session.import_cache_misses, session.import_cache_hits) == (1, 1)
         assert session.cached_source_revisions == (source.model.source_revision,)
         # Replacing the original path cannot mutate the immutable BRepSource model.
@@ -419,9 +411,7 @@ def test_real_session_import_cache_uses_revision_bound_native_export(
         assert session.cached_source_revisions == (source.model.source_revision,)
 
     assert (
-        first.compliance.passed
-        and second.compliance.passed
-        and third.compliance.passed
+        first.compliance.passed and second.compliance.passed and third.compliance.passed
     )
     assert first.mesh.mesh_id != second.mesh.mesh_id
 

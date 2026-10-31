@@ -1770,12 +1770,12 @@ rank replay, and coarsening back to the original roots; run it with `pytest -n 0
 ```python
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeSphere
 
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 
 shape = BRepPrimAPI_MakeSphere(1.0).Shape()
-model = model_from_occt_shape(
+model = import_occt_shape(
     shape, coordinate_contract=phx.SpatialCoordinateContract.si()
-)
+).model
 # An octahedron inscribed in the unit sphere, turned off its seam and poles.
 c, s = np.cos(0.3), np.sin(0.3)
 turn = np.asarray(((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0)))

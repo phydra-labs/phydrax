@@ -42,7 +42,7 @@ from phydrax.geometry.brep._constructors import (
     ProfilePlane,
 )
 from phydrax.geometry.brep._model import BRepGeometry, BRepModel
-from phydrax.interchange import model_from_occt_shape, prepare_occt_projection
+from phydrax.interchange import import_occt_shape, prepare_occt_projection
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
@@ -52,14 +52,14 @@ _EDGE = phx.geometry.BRepEntityDimension.EDGE
 
 
 def _bound(shape: Any, embedding: Any = None) -> Any:
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.05,
             angular_deflection=0.2,
         ),
-    )
+    ).model
     return model, phx.geometry.prepare_brep_projection(model, embedding=embedding)
 
 
@@ -251,22 +251,22 @@ def test_native_torus_projects_interior_and_both_seam_points() -> None:
 
 def test_brep_projection_scenario_2() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1,
             angular_deflection=0.3,
         ),
-    )
-    remodeled = model_from_occt_shape(
+    ).model
+    remodeled = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.05,
             angular_deflection=0.3,
         ),
-    )
+    ).model
 
     # Tessellating the shape does not change its exact-geometry revision.
     assert remodeled.source_revision == model.source_revision
@@ -338,14 +338,14 @@ def _mesh_reference(
 
 @pytest.fixture
 def query_box_model() -> Any:
-    return model_from_occt_shape(
+    return import_occt_shape(
         BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1,
             angular_deflection=0.3,
         ),
-    )
+    ).model
 
 
 @pytest.mark.parametrize(
@@ -497,14 +497,14 @@ def test_brep_memory_candidate_nearest_preserves_second_face_and_refit(
 
 
 def test_fixed_topology_brep_queries_follow_changed_radius_and_derivative() -> None:
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         BRepPrimAPI_MakeSphere(1.0).Shape(),
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.2,
             angular_deflection=0.4,
         ),
-    )
+    ).model
     geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
     kernel: Any = geometry.kernel
     radius_index = next(
@@ -731,7 +731,7 @@ def test_definition_projection_returns_explicit_empty_occurrence_paths() -> None
 
 def test_optional_occt_projection_binds_physical_source_revision() -> None:
     shape = BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape()
-    model = model_from_occt_shape(shape, coordinate_contract=_CONTRACT)
+    model = import_occt_shape(shape, coordinate_contract=_CONTRACT).model
     projection = prepare_occt_projection(model, shape)
     assert projection.source_revision == model.source_revision
     source_vertex = np.asarray(model.geometry.vertex_points)[0]
@@ -748,11 +748,11 @@ def test_optional_occt_projection_binds_physical_source_revision() -> None:
     assert np.isinf(np.asarray(observed.residuals)[0])
     assert observed.frame_id == model.coordinate_contract.spatial_id
 
-    different = model_from_occt_shape(
+    different = import_occt_shape(
         BRepPrimAPI_MakeBox(2.0, 2.0, 3.0).Shape(),
         coordinate_contract=_CONTRACT,
         source_digest=model.report.source_digest,
-    )
+    ).model
     with pytest.raises(ValueError, match="physical source_revision"):
         prepare_occt_projection(different, shape)
 
@@ -767,7 +767,7 @@ def test_optional_occt_projection_maps_assembly_entities_to_occurrence_paths() -
     builder.MakeCompound(compound)
     builder.Add(compound, source)
     builder.Add(compound, placed)
-    model = model_from_occt_shape(compound, coordinate_contract=_CONTRACT)
+    model = import_occt_shape(compound, coordinate_contract=_CONTRACT).model
     projection = prepare_occt_projection(model, compound)
     occurrences = tuple(model.geometry.iter_occurrences())
     assert len(occurrences) == 2
