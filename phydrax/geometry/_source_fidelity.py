@@ -443,10 +443,13 @@ def _partition_findings(
     witness: SurfaceChartWitness | SourceBoundaryChartWitness,
     /,
 ) -> tuple[MeshCertificateFinding, ...]:
-
     # Currentness fingerprints the whole domain: check once, not per patch.
     source.require_current()
     domain = source.domain
+    # Binding a method of the Equinox source builds a pytree that flattens the
+    # whole domain; bind the per-patch queries once, not once per patch.
+    collapsed_pole_slivers = source.collapsed_pole_slivers
+    trim_partition_reference = source._trim_partition_reference_unchecked
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
         charts = tuple(
@@ -504,9 +507,9 @@ def _partition_findings(
             # Collapsed pole slivers are part of their owner cells' chart preimages.
             target = (
                 *target,
-                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+                *(sliver for _, sliver in collapsed_pole_slivers(patch, target)),
             )
-        declared, _ = source._trim_partition_reference_unchecked(patch, target)
+        declared, _ = trim_partition_reference(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -5237,6 +5240,11 @@ def certify_source_fidelity(
         witness_ids, witness_patches, witness_charts, strict=True
     ):
         by_patch.setdefault(patch, []).append((cell_id, chart))
+    # Binding a method of the Equinox source builds a pytree that flattens the
+    # whole domain; bind the per-patch queries once, not once per patch.
+    collapsed_pole_slivers = domain_source.collapsed_pole_slivers
+    pole_sliver_cap_bound = domain_source.pole_sliver_cap_bound
+    trim_partition_reference = domain_source._trim_partition_reference_unchecked
     for patch, chart_rows in by_patch.items():
         charts_float = np.asarray(
             [
@@ -5347,18 +5355,18 @@ def certify_source_fidelity(
             # pole corner, whose target image is bounded by the endpoint error.
             sliver_caps: dict[int, Fraction] = {}
             target_charts = tuple(chart for _, chart in chart_rows)
-            slivers = domain_source.collapsed_pole_slivers(patch, target_charts)
+            slivers = collapsed_pole_slivers(patch, target_charts)
             for owner_row, sliver in slivers:
                 owner = chart_rows[owner_row][0]
                 sliver_caps[owner] = max(
                     sliver_caps.get(owner, Fraction(0)),
-                    domain_source.pole_sliver_cap_bound(patch, sliver),
+                    pole_sliver_cap_bound(patch, sliver),
                 )
             # Target charts follow a curved trim by chords. A chart point between a
             # chord and its arc is within the lens bound of both, so the directed
             # distances of every cell meeting the lens box grow by its surface image.
             # Currentness was validated once above, before the per-patch loop.
-            _, lenses = domain_source._trim_partition_reference_unchecked(
+            _, lenses = trim_partition_reference(
                 patch, (*target_charts, *(sliver for _, sliver in slivers))
             )
             lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses)
