@@ -842,6 +842,8 @@ def _polyhedral_quotient_from_power(
     carrier_barycentric_by_vertex: dict[
         int, tuple[Fraction, Fraction, Fraction, Fraction]
     ] = {}
+    # Authored sites whose unshifted (owned) cell meets each native vertex.
+    base_site_ids_by_vertex: dict[int, frozenset[int]] = {}
     for vertex in sorted(used_vertices):
         start, stop = map(int, np.asarray(restricted.vertex_site_offsets)[vertex : vertex + 2])
         witnesses = np.asarray(restricted.vertex_sites, dtype=np.int64)[start:stop]
@@ -942,6 +944,11 @@ def _polyhedral_quotient_from_power(
             )
         key = min(candidates)
         identity_by_vertex[vertex] = key
+        base_site_ids_by_vertex[vertex] = frozenset(
+            int(point_ids[image_owners[int(image)]])
+            for image in witnesses
+            if not np.any(image_windings[int(image)])
+        )
 
 
     loops_by_site = {
@@ -1042,11 +1049,21 @@ def _polyhedral_quotient_from_power(
         [root_id_by_signature[signature] for signature, _ in vertex_keys],
         dtype=np.int64,
     )
+    # A lifted vertex image is owned by the owner of the smallest authored site
+    # whose unshifted cell contains that exact image. Every rank resident on the
+    # image reaches it through one of its own unshifted cells, and the chosen
+    # owner's unshifted cell holds the same lifted ID, so owner directories can
+    # resolve every resident image without a global vertex table.
+    base_site_ids_by_key: dict[_PowerVertexKey, frozenset[int]] = {}
+    for vertex, key in identity_by_vertex.items():
+        base_sites = base_site_ids_by_vertex[vertex]
+        previous_sites = base_site_ids_by_key.setdefault(key, base_sites)
+        if previous_sites != base_sites or not base_sites:
+            raise ValueError(
+                "A lifted periodic power vertex lacks one consistent unshifted incident cell."
+            )
     vertex_owner_ranks = np.asarray(
-        [
-            owner_by_site_id[min(site_id for site_id, _ in signature[0])]
-            for signature, _ in vertex_keys
-        ],
+        [owner_by_site_id[min(base_site_ids_by_key[key])] for key in vertex_keys],
         dtype=np.int32,
     )
     vertex_absolute_windings = np.asarray(
@@ -2144,8 +2161,10 @@ def _owner_local_periodic_power_candidate(
     vertex_source_ids = np.zeros((0,), dtype=np.int64)
     vertex_owner_ranks = np.zeros((0,), dtype=np.int32)
     vertex_absolute_windings = np.zeros((0, dimension), dtype=np.int64)
+    # Every owner joins the geometry failure collective, including owners
+    # without cells; a conditional collective would desynchronize the group.
+    local_error = None
     if cell_rows:
-        local_error = None
         try:
             if restricted is None:
                 raise ValueError("Owned periodic cells require exact restricted power data.")
@@ -2220,9 +2239,9 @@ def _owner_local_periodic_power_candidate(
             geometry = CellGeometrySpec.power(mesh, source_map)
         except Exception as error:
             local_error = str(error)
-        _owner_group_fail_if_any(
-            local_error, execution_group, axis_name, "exact owner power geometry"
-        )
+    _owner_group_fail_if_any(
+        local_error, execution_group, axis_name, "exact owner power geometry"
+    )
     candidate_revision_id = canonical_fingerprint(
         {
             "kind": "owner-local-periodic-power-candidate",

@@ -4688,7 +4688,19 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
         *,
         axis_name: str = "periodic_adaptive_rebind",
     ) -> OwnerLocalPeriodicAdaptiveResult:
-        """Rebind after an owner-group-wide, geometry-preserving migration."""
+        """Rebind after an owner-group-wide, geometry-preserving migration.
+
+        The supplied plan is the one whose partition labels drove the migration
+        (the caller binds those labels to it), so it replaces the stored plan as
+        the current placement request. The owner group itself cannot change:
+        both plans must address the current owner directory's part count. An
+        adaptation placed without an explicit plan records the supplied plan.
+
+        Only the target view identities are rebound. The rank-local transition
+        rows (lineage, vertex stencil, cell ancestry) stay the adaptation's
+        execution record on its original placement; a field transfer through
+        the adaptation runs on that placement and is then repartitioned.
+        """
         from .._execution_runtime import ExecutionGroup
         from ..discretization._view_support import OwnerLocalCellGeometry
         from ..graph._partition import GraphPartitionPlan
@@ -4699,10 +4711,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             raise TypeError("execution_group must be ExecutionGroup.")
         if not isinstance(graph_partition_plan, GraphPartitionPlan):
             raise TypeError("graph_partition_plan must be GraphPartitionPlan.")
-        if self.graph_partition_plan is None:
-            raise ValueError(
-                "Ownership migration requires the stored explicit graph plan."
-            )
 
         def rebuilt_plan(plan: GraphPartitionPlan, /) -> GraphPartitionPlan:
             return GraphPartitionPlan(
@@ -4713,12 +4721,19 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
                 refinement_passes=plan.refinement_passes,
             )
 
-        stored_plan = rebuilt_plan(self.graph_partition_plan)
         supplied_plan = rebuilt_plan(graph_partition_plan)
+        stored = self.graph_partition_plan
+        stored_plan = None if stored is None else rebuilt_plan(stored)
         if (
-            not _owner_local_periodic_values_equal(self.graph_partition_plan, stored_plan)
+            (
+                stored is not None
+                and stored_plan is not None
+                and (
+                    not _owner_local_periodic_values_equal(stored, stored_plan)
+                    or stored_plan.part_count != supplied_plan.part_count
+                )
+            )
             or not _owner_local_periodic_values_equal(graph_partition_plan, supplied_plan)
-            or not _owner_local_periodic_values_equal(stored_plan, supplied_plan)
             or supplied_plan.part_count != current_view.owner_directory_data.part_count
             or current_view.owner_directory_data.rank != current_view.owner_rank
         ):
