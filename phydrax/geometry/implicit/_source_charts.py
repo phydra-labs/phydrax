@@ -65,7 +65,7 @@ from ...typing import ConvertibleToArray
 from .._source_identity import source_entity_id
 from ._adaptive_discovery import (
     _FieldEnclosures,
-    _root_on_edge,
+    _root_on_edges,
     AdaptiveImplicitBoundarySource,
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurface,
@@ -162,10 +162,12 @@ class _PieceProof:
     directional_derivative_lower: float
     directional_derivative_upper: float
     target_jacobian: IntervalMatrix2
+    # Enclosure of the target-map derivative DP over the piece.
+    target_derivatives: IntervalDerivative3x2
 
 
 type _PieceOutcome = tuple[_PieceProof | None, str, bool]
-type _PieceProver = Callable[[Sequence[TriangleReference]], list[_PieceOutcome]]
+type _PieceProver = Callable[[Sequence[TriangleReference]], tuple[_PieceSteps, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +303,44 @@ class AdaptiveImplicitRootChartMap:
         target_cell_reference: ConvertibleToArray | Sequence[ExactScalar],
         /,
     ) -> ImplicitRootChartPoint:
+        return self.project_targets((row,), (target_cell_reference,))[0]
+
+    def project_targets(
+        self,
+        rows: Sequence[int],
+        target_cell_references: Sequence[ConvertibleToArray | Sequence[ExactScalar]],
+        /,
+    ) -> tuple[ImplicitRootChartPoint, ...]:
+        """Lift many full target-cell reference points; each lift is the single-point lift.
+
+        The interval queries of all lifts run batched, which leaves every lift
+        unchanged; a point shared by several queries is lifted once.
+        """
+        if len(rows) != len(target_cell_references):
+            raise ValueError("rows and target_cell_references must align.")
+        results: list[ImplicitRootChartPoint | None] = []
+        lifts: list[tuple[np.ndarray, _PreparedFace, float]] = []
+        lift_rows: list[int] = []
+        for row, target_cell_reference in zip(rows, target_cell_references, strict=True):
+            query = self._target_query(row, target_cell_reference)
+            if isinstance(query, ImplicitRootChartPoint):
+                results.append(query)
+                continue
+            lift_rows.append(len(results))
+            results.append(None)
+            lifts.append(query)
+        for index, lifted in zip(
+            lift_rows, _lift_points(self.source, self._bounds, lifts), strict=True
+        ):
+            results[index] = lifted
+        return tuple(result for result in results if result is not None)
+
+    def _target_query(
+        self,
+        row: int,
+        target_cell_reference: ConvertibleToArray | Sequence[ExactScalar],
+        /,
+    ) -> ImplicitRootChartPoint | tuple[np.ndarray, _PreparedFace, float]:
         if isinstance(row, bool) or not isinstance(row, (int, np.integer)):
             raise TypeError("row must be an integer chart-witness row.")
         index = int(row)
@@ -353,22 +393,12 @@ class AdaptiveImplicitRootChartMap:
                     face.root_edge_keys,
                     "certified_root_chart",
                 )
-        piece_parameter: float | None = None
         for piece in face.pieces:
             local = _barycentric(target_chart_point, piece.triangle, solver=piece.solver)
             if all(value >= 0 for value in local):
-                piece_parameter = piece.maximum_root_parameter
-                break
-        if piece_parameter is None:
-            raise ValueError(
-                "Target reference point is not covered by a certified implicit chart subtriangle."
-            )
-        return _lift_point(
-            self.source,
-            self._bounds,
-            point,
-            face,
-            piece_parameter,
+                return point, face, piece.maximum_root_parameter
+        raise ValueError(
+            "Target reference point is not covered by a certified implicit chart subtriangle."
         )
 
     def evaluate_target(
@@ -379,6 +409,18 @@ class AdaptiveImplicitRootChartMap:
     ) -> np.ndarray:
         """Evaluate the source-root lift at one full target-cell reference point."""
         return np.array(self.project_target(row, target_cell_reference).point, copy=True)
+
+    def evaluate_targets(
+        self,
+        rows: Sequence[int],
+        target_cell_references: Sequence[ConvertibleToArray | Sequence[ExactScalar]],
+        /,
+    ) -> np.ndarray:
+        """Evaluate many source-root lifts with batched interval queries, shape ``(N, 3)``."""
+        lifted = self.project_targets(rows, target_cell_references)
+        return np.asarray([item.point for item in lifted], dtype=np.float64).reshape(
+            (len(lifted), 3)
+        )
 
     def require_current(
         self,
@@ -512,6 +554,168 @@ def _restrict_polynomial(
     if not isinstance(restricted, dict):
         raise TypeError("Implicit source chart target maps must remain polynomial.")
     return restricted
+
+
+@dataclass(frozen=True, slots=True)
+class _EnclosedPolynomial:
+    """A face polynomial on the standard triangle as rational centre plus error.
+
+    Rational coefficients stay exact. Each quadratic-radical coefficient is
+    enclosed once by an outward-rounded binary64 (dyadic) interval and replaced
+    by its dyadic midpoint, with the radius kept per monomial. Every monomial
+    ``u^a v^b`` lies in ``[0, 1]`` on the standard triangle and its
+    subtriangles, so the polynomial is within ``error`` of its centre there and
+    interval proofs compose only rational coefficients.
+    """
+
+    center: Polynomial
+    radii: dict[tuple[int, ...], float]
+    error: float
+
+
+def _coefficient_error(radii: dict[tuple[int, ...], float], /) -> float:
+    if not radii:
+        return 0.0
+    return float(np.nextafter(math.fsum(radii.values()), np.inf))
+
+
+def _enclose_polynomial(expression: Polynomial, /) -> _EnclosedPolynomial:
+    center: Polynomial = {}
+    radii: dict[tuple[int, ...], float] = {}
+    for exponent, coefficient in expression.items():
+        if isinstance(coefficient, Fraction):
+            center[exponent] = coefficient
+            continue
+        lower, upper = _exact_interval(coefficient)
+        middle = 0.5 * lower + 0.5 * upper
+        if not (
+            math.isfinite(lower) and math.isfinite(upper) and lower <= middle <= upper
+        ):
+            raise ValueError(
+                "Implicit target map coefficients require finite binary64 enclosures."
+            )
+        center[exponent] = Fraction.from_float(middle)
+        radius = max(middle - lower, upper - middle)
+        if radius > 0.0:
+            radii[exponent] = float(np.nextafter(radius, np.inf))
+    return _EnclosedPolynomial(center, radii, _coefficient_error(radii))
+
+
+def _enclosed_derivative(value: _EnclosedPolynomial, axis: int, /) -> _EnclosedPolynomial:
+    radii: dict[tuple[int, ...], float] = {}
+    for exponent, radius in value.radii.items():
+        if exponent[axis]:
+            lowered = (*exponent[:axis], exponent[axis] - 1, *exponent[axis + 1 :])
+            radii[lowered] = float(np.nextafter(radius * exponent[axis], np.inf))
+    return _EnclosedPolynomial(
+        derivative(value.center, axis), radii, _coefficient_error(radii)
+    )
+
+
+def _widen(value: Interval, error: float, /) -> Interval:
+    if error == 0.0:
+        return value
+    return (
+        float(np.nextafter(value[0] - error, -np.inf)),
+        float(np.nextafter(value[1] + error, np.inf)),
+    )
+
+
+def _enclosed_interval(
+    value: _EnclosedPolynomial, triangle: TriangleReference, /
+) -> Interval:
+    """Enclose an enclosed face polynomial over a subtriangle of the standard triangle."""
+    return _widen(_poly_interval(value.center, triangle), value.error)
+
+
+@dataclass(frozen=True, slots=True)
+class _FaceEnclosure:
+    """Enclosed face coordinates and their first derivatives, built once per face."""
+
+    values: tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial]
+    tangents: tuple[
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial],
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial],
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial],
+    ]
+
+
+def _enclose_face(expressions: Polynomial3, /) -> _FaceEnclosure:
+    first, second, third = (_enclose_polynomial(value) for value in expressions)
+
+    def tangent(
+        value: _EnclosedPolynomial, /
+    ) -> tuple[_EnclosedPolynomial, _EnclosedPolynomial]:
+        return _enclosed_derivative(value, 0), _enclosed_derivative(value, 1)
+
+    return _FaceEnclosure(
+        (first, second, third), (tangent(first), tangent(second), tangent(third))
+    )
+
+
+def _enclosed_box(
+    face: _FaceEnclosure, triangle: TriangleReference, /
+) -> tuple[np.ndarray, np.ndarray]:
+    intervals = tuple(_enclosed_interval(value, triangle) for value in face.values)
+    return (
+        np.asarray([value[0] for value in intervals], dtype=np.float64),
+        np.asarray([value[1] for value in intervals], dtype=np.float64),
+    )
+
+
+def _restricted_face(
+    face: _FaceEnclosure, triangle: TriangleReference, /
+) -> tuple[tuple[np.ndarray, np.ndarray], IntervalDerivative3x2]:
+    """Restrict each face coordinate once to a piece; enclose it and its gradient.
+
+    With ``R = C(a + E s)`` for the piece corners ``a, b, c`` and
+    ``E = [b - a, c - a]``, the chain rule ``[R_s, R_t] = [C_u, C_v] E`` gives
+    the restricted derivatives ``[C_u, C_v](a + E s) = [R_s, R_t] E^-1``
+    exactly, so one composition per coordinate serves the value and both
+    derivatives.
+    """
+    a, b, c = triangle
+    e00, e01 = b[0] - a[0], c[0] - a[0]
+    e10, e11 = b[1] - a[1], c[1] - a[1]
+    determinant = e00 * e11 - e01 * e10
+    if determinant == 0:
+        raise ValueError("Implicit chart pieces must be nondegenerate triangles.")
+    lower: list[float] = []
+    upper: list[float] = []
+    derivatives: list[IntervalVector2] = []
+    for value, (tangent_u, tangent_v) in zip(face.values, face.tangents, strict=True):
+        restricted = _restrict_polynomial(value.center, triangle)
+        low, high = _widen(polynomial_bounds(restricted, "simplex", 2), value.error)
+        lower.append(low)
+        upper.append(high)
+        along_s = derivative(restricted, 0)
+        along_t = derivative(restricted, 1)
+        exponents = set(along_s) | set(along_t)
+        zero = Fraction(0)
+        derivative_u: Polynomial = {
+            exponent: (
+                along_s.get(exponent, zero) * e11 - along_t.get(exponent, zero) * e10
+            )
+            / determinant
+            for exponent in exponents
+        }
+        derivative_v: Polynomial = {
+            exponent: (
+                along_t.get(exponent, zero) * e00 - along_s.get(exponent, zero) * e01
+            )
+            / determinant
+            for exponent in exponents
+        }
+        derivatives.append(
+            (
+                _widen(polynomial_bounds(derivative_u, "simplex", 2), tangent_u.error),
+                _widen(polynomial_bounds(derivative_v, "simplex", 2), tangent_v.error),
+            )
+        )
+    return (
+        (np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)),
+        (derivatives[0], derivatives[1], derivatives[2]),
+    )
 
 
 def _evaluate_exact_polynomial(
@@ -840,17 +1044,6 @@ def _gradient_norm_interval(lower: np.ndarray, upper: np.ndarray, /) -> Interval
     )
 
 
-def _box_from_polynomials(
-    expressions: Polynomial3,
-    triangle: TriangleReference,
-) -> tuple[np.ndarray, np.ndarray]:
-    intervals = tuple(_poly_interval(expression, triangle) for expression in expressions)
-    return (
-        np.asarray([value[0] for value in intervals], dtype=np.float64),
-        np.asarray([value[1] for value in intervals], dtype=np.float64),
-    )
-
-
 def _triangle_coordinate_expressions(
     cell_expressions: Polynomial3,
     corners: ReferenceTriangle,
@@ -956,6 +1149,18 @@ type _BoxResults = tuple[tuple[_FieldBox, ...], tuple[IntervalMatrix3, ...]]
 type _PieceSteps = Generator[_BoxRequests, _BoxResults, _PieceOutcome]
 
 
+@dataclass(frozen=True, slots=True)
+class _FaceRound:
+    """Piece proofs and standalone box queries one face needs before its next step."""
+
+    pieces: tuple[_PieceSteps, ...] = ()
+    queries: tuple[_BoxRequests, ...] = ()
+
+
+type _FaceReply = tuple[list[_PieceOutcome], list[_BoxResults]]
+type _FaceSteps[T] = Generator[_FaceRound, _FaceReply, T]
+
+
 def _interval_vector3(lower: np.ndarray, upper: np.ndarray, /) -> IntervalVector3:
     return (
         (float(lower[0]), float(upper[0])),
@@ -1029,9 +1234,13 @@ def _run_piece_steps(
     bounds: _FieldEnclosures,
     hessian_program: PreparedIntervalFunction,
     steps: Sequence[_PieceSteps],
+    queries: Sequence[_BoxRequests] = (),
     /,
-) -> list[_PieceOutcome]:
-    """Advance all piece proofs together, batching each round of box queries."""
+) -> tuple[list[_PieceOutcome], list[_BoxResults]]:
+    """Advance all piece proofs together, batching each round of box queries.
+
+    Standalone ``queries`` join the first round's evaluation.
+    """
     outcomes: list[_PieceOutcome | None] = [None] * len(steps)
     pending: dict[int, _BoxRequests] = {}
     for index, step in enumerate(steps):
@@ -1039,13 +1248,16 @@ def _run_piece_steps(
             pending[index] = next(step)
         except StopIteration as stop:
             outcomes[index] = stop.value
-    while pending:
+    query_results: list[_BoxResults] = []
+    while pending or len(query_results) < len(queries):
         indices = tuple(pending)
+        extra = list(queries) if len(query_results) < len(queries) else []
         results = _evaluate_box_requests(
-            bounds, hessian_program, [pending[index] for index in indices]
+            bounds, hessian_program, [pending[index] for index in indices] + extra
         )
+        query_results.extend(results[len(indices) :])
         pending = {}
-        for index, result in zip(indices, results, strict=True):
+        for index, result in zip(indices, results[: len(indices)], strict=True):
             try:
                 pending[index] = steps[index].send(result)
             except StopIteration as stop:
@@ -1055,6 +1267,57 @@ def _run_piece_steps(
         if outcome is None:
             raise RuntimeError("An implicit root-chart piece proof did not finish.")
         finished.append(outcome)
+    return finished, query_results
+
+
+def _run_faces[T](
+    bounds: _FieldEnclosures,
+    hessian_program: PreparedIntervalFunction,
+    faces: Sequence[_FaceSteps[T]],
+    /,
+) -> list[T]:
+    """Advance every face proof together, one batched round of piece proofs at a time.
+
+    Each face yields its next round independently of the others; every round
+    evaluates the field and Hessian boxes of all faces' pending pieces at once,
+    which leaves each face's proof unchanged.
+    """
+    results: list[T | None] = [None] * len(faces)
+    active: dict[int, _FaceRound] = {}
+    for index, face in enumerate(faces):
+        try:
+            active[index] = next(face)
+        except StopIteration as stop:
+            results[index] = stop.value
+    while active:
+        order = tuple(active)
+        outcomes, query_results = _run_piece_steps(
+            bounds,
+            hessian_program,
+            [step for index in order for step in active[index].pieces],
+            [query for index in order for query in active[index].queries],
+        )
+        following: dict[int, _FaceRound] = {}
+        piece_start = query_start = 0
+        for index in order:
+            round_ = active[index]
+            piece_stop = piece_start + len(round_.pieces)
+            query_stop = query_start + len(round_.queries)
+            reply: _FaceReply = (
+                outcomes[piece_start:piece_stop],
+                query_results[query_start:query_stop],
+            )
+            piece_start, query_start = piece_stop, query_stop
+            try:
+                following[index] = faces[index].send(reply)
+            except StopIteration as stop:
+                results[index] = stop.value
+        active = following
+    finished: list[T] = []
+    for result in results:
+        if result is None:
+            raise RuntimeError("An implicit root-chart face proof did not finish.")
+        finished.append(result)
     return finished
 
 
@@ -1106,7 +1369,7 @@ def _shifted_tangents(
 
 
 def _piece_center(
-    target_expressions: Polynomial3, triangle: TriangleReference, /
+    face: _FaceEnclosure, triangle: TriangleReference, /
 ) -> tuple[np.ndarray, np.ndarray, IntervalVector2]:
     """Enclose the target point at the piece centroid and the parameter offsets."""
     center: TrianglePoint = (
@@ -1114,8 +1377,11 @@ def _piece_center(
         (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3,
     )
     coordinates = tuple(
-        _exact_interval(_evaluate_exact_polynomial(expression, center))
-        for expression in target_expressions
+        _widen(
+            _exact_interval(_evaluate_exact_polynomial(value.center, center)),
+            value.error,
+        )
+        for value in face.values
     )
     offsets: IntervalVector2 = (
         (
@@ -1158,38 +1424,32 @@ def _shifted_center_box(
 
 def _face_piece_proofs(
     surface: AdaptiveImplicitSurface,
-    bounds: _FieldEnclosures,
-    hessian_program: PreparedIntervalFunction,
-    target_expressions: Polynomial3,
+    face: _FaceEnclosure,
     triangles: Sequence[TriangleReference],
     *,
     source_orientation: int,
     projected_axes: tuple[int, int, int],
     tolerance: float | None,
     maximum_normal_deviation: float | None,
-) -> list[_PieceOutcome]:
-    """Prove sibling subtriangles with batched field and Hessian enclosures."""
-    return _run_piece_steps(
-        bounds,
-        hessian_program,
-        [
-            _face_piece_steps(
-                surface,
-                target_expressions,
-                triangle,
-                source_orientation,
-                projected_axes,
-                tolerance,
-                maximum_normal_deviation,
-            )
-            for triangle in triangles
-        ],
+) -> tuple[_PieceSteps, ...]:
+    """Piece proofs of sibling subtriangles, run together by `_run_piece_steps`."""
+    return tuple(
+        _face_piece_steps(
+            surface,
+            face,
+            triangle,
+            source_orientation,
+            projected_axes,
+            tolerance,
+            maximum_normal_deviation,
+        )
+        for triangle in triangles
     )
 
 
 def _face_piece_steps(
     surface: AdaptiveImplicitSurface,
-    target_expressions: Polynomial3,
+    face: _FaceEnclosure,
     triangle: TriangleReference,
     source_orientation: int,
     projected_axes: tuple[int, int, int],
@@ -1201,33 +1461,14 @@ def _face_piece_steps(
     The proof yields its field and Hessian box queries, so sibling pieces share
     one batched interval evaluation per step.
     """
-    restricted: Polynomial3 = (
-        _restrict_polynomial(target_expressions[0], triangle),
-        _restrict_polynomial(target_expressions[1], triangle),
-        _restrict_polynomial(target_expressions[2], triangle),
-    )
-    p_low, p_high = _box_from_polynomials(restricted, _STANDARD_TRIANGLE)
+    (p_low, p_high), target_derivatives = _restricted_face(face, triangle)
     if np.array_equal(p_low, p_high):
         return (
             None,
             "Target coordinate map has no physical two-dimensional chart extent.",
             False,
         )
-    target_derivatives: IntervalDerivative3x2 = (
-        (
-            _poly_interval(derivative(target_expressions[0], 0), triangle),
-            _poly_interval(derivative(target_expressions[0], 1), triangle),
-        ),
-        (
-            _poly_interval(derivative(target_expressions[1], 0), triangle),
-            _poly_interval(derivative(target_expressions[1], 1), triangle),
-        ),
-        (
-            _poly_interval(derivative(target_expressions[2], 0), triangle),
-            _poly_interval(derivative(target_expressions[2], 1), triangle),
-        ),
-    )
-    center_low, center_high, offsets = _piece_center(target_expressions, triangle)
+    center_low, center_high, offsets = _piece_center(face, triangle)
     fields, hessians = yield _BoxRequests(
         ((p_low, p_high), (center_low, center_high)), ((p_low, p_high),)
     )
@@ -1541,6 +1782,7 @@ def _face_piece_steps(
                 map_derivatives[projected_axes[1]],
                 map_derivatives[projected_axes[2]],
             ),
+            target_derivatives,
         ),
         "",
         False,
@@ -1584,18 +1826,17 @@ _STANDARD_TRIANGLE = (
 def _prove_face_triangles(
     prove: _PieceProver,
     triangles: Sequence[TriangleReference],
-) -> tuple[tuple[_PieceProof, ...], str]:
+) -> _FaceSteps[tuple[tuple[_PieceProof, ...], str]]:
     """Prove target subtriangles, splitting only the pieces that need refinement.
 
-    Each refinement generation is proved in one batch.
+    Each refinement generation is one face round, batched across faces.
     """
     pending = list(triangles)
     accepted: list[_PieceProof] = []
     while pending:
         children: list[TriangleReference] = []
-        for triangle, (proof, detail, refine) in zip(
-            pending, prove(pending), strict=True
-        ):
+        outcomes, _ = yield _FaceRound(prove(pending))
+        for triangle, (proof, detail, refine) in zip(pending, outcomes, strict=True):
             if proof is not None:
                 accepted.append(proof)
                 continue
@@ -1612,12 +1853,10 @@ def _prove_face_triangles(
 
 
 def _transversal_injectivity(
-    bounds: _FieldEnclosures,
-    hessian_program: PreparedIntervalFunction,
-    target_expressions: Polynomial3,
+    face: _FaceEnclosure,
     orientation: int,
     /,
-) -> Callable[[Sequence[_PieceProof]], float]:
+) -> _FaceSteps[Callable[[Sequence[_PieceProof]], float]]:
     """Certify whole-face injectivity of the normal-line root chart directly.
 
     If ``R(u1) = R(u2)`` with ``R = P + t grad f(P)``, the mean-value forms
@@ -1634,22 +1873,17 @@ def _transversal_injectivity(
     Returns a function of the face pieces giving the normalized lower bound of
     the determinant, or 0.0 when some enclosure is not strictly signed.
     """
-    face_low, face_high = _box_from_polynomials(target_expressions, _STANDARD_TRIANGLE)
+    face_low, face_high = _enclosed_box(face, _STANDARD_TRIANGLE)
     if not (np.all(np.isfinite(face_low)) and np.all(np.isfinite(face_high))):
         return lambda pieces: 0.0
-    ((_, gradient),), (hessian,) = _evaluate_box_requests(
-        bounds,
-        hessian_program,
-        [_BoxRequests(((face_low, face_high),), ((face_low, face_high),))],
-    )[0]
+    _, results = yield _FaceRound(
+        queries=(_BoxRequests(((face_low, face_high),), ((face_low, face_high),)),)
+    )
+    ((_, gradient),), (hessian,) = results[0]
     hessian_norm = max(
         sum(max(abs(entry[0]), abs(entry[1])) for entry in row) for row in hessian
     )
     gradient_bound = max(max(abs(entry[0]), abs(entry[1])) for entry in gradient)
-    tangent_expressions: tuple[tuple[Polynomial, Polynomial], ...] = tuple(
-        (derivative(expression, 0), derivative(expression, 1))
-        for expression in target_expressions
-    )
     # |D^2(DP)[d, d]| / 24 with |d_a d_b| <= 1 on the standard triangle; the
     # third derivatives of a map of degree at most three are constants.
     chord_errors = tuple(
@@ -1659,8 +1893,10 @@ def _transversal_injectivity(
                     sum(
                         max(
                             abs(value)
-                            for value in _poly_interval(
-                                derivative(derivative(tangent, first), second),
+                            for value in _enclosed_interval(
+                                _enclosed_derivative(
+                                    _enclosed_derivative(tangent, first), second
+                                ),
                                 _STANDARD_TRIANGLE,
                             )
                         )
@@ -1673,16 +1909,13 @@ def _transversal_injectivity(
             )
             for tangent in row
         )
-        for row in tangent_expressions
+        for row in face.tangents
     )
 
-    def tangents(triangle: TriangleReference, chord: bool, /) -> IntervalDerivative3x2:
+    def chord_tangents(piece: _PieceProof, /) -> IntervalDerivative3x2:
         def entry(axis: int, column: int, /) -> Interval:
-            value = _poly_interval(tangent_expressions[axis][column], triangle)
-            if not chord:
-                return value
             error = chord_errors[axis][column]
-            return _interval_add(value, (-error, error))
+            return _interval_add(piece.target_derivatives[axis][column], (-error, error))
 
         return (
             (entry(0, 0), entry(0, 1)),
@@ -1690,7 +1923,10 @@ def _transversal_injectivity(
             (entry(2, 0), entry(2, 1)),
         )
 
-    face_tangents = tangents(_STANDARD_TRIANGLE, False)
+    face_tangents = tuple(
+        tuple(_enclosed_interval(value, _STANDARD_TRIANGLE) for value in row)
+        for row in face.tangents
+    )
     area_norm = _interval_vector_norm_bounds(
         (
             _interval_subtract(
@@ -1733,7 +1969,7 @@ def _transversal_injectivity(
         lower = math.inf
         for piece in pieces:
             determinant = _normal_area_interval(
-                tangents(piece.triangle, True), direction, orientation
+                chord_tangents(piece), direction, orientation
             )
             if determinant[0] <= 0.0:
                 return 0.0
@@ -1803,7 +2039,7 @@ def _certify_face_injectivity(
     prove: _PieceProver,
     transversal: Callable[[Sequence[_PieceProof]], float],
     pieces: tuple[_PieceProof, ...],
-) -> tuple[tuple[_PieceProof, ...], float, str]:
+) -> _FaceSteps[tuple[tuple[_PieceProof, ...], float, str]]:
     """Prove the projected root chart injective on the whole convex target face.
 
     Each generation first tries the transversal certificate on the current
@@ -1878,7 +2114,7 @@ def _certify_face_injectivity(
                     "Implicit root-chart injectivity reached target-parameter representability.",
                 )
             children.extend(split)
-        refined, detail = _prove_face_triangles(prove, children)
+        refined, detail = yield from _prove_face_triangles(prove, children)
         if detail:
             return pieces, 0.0, detail
         current = decided + list(refined)
@@ -2049,14 +2285,13 @@ def _build_face(
     target: _TargetMapSource,
     witness: SourceBoundaryChartWitness,
     surface: AdaptiveImplicitSurface,
-    bounds: _FieldEnclosures,
-    hessian_program: PreparedIntervalFunction,
     root_rows: dict[GridEdge, tuple[np.ndarray, float]],
     cell_rows: dict[SourceCellKey, int],
     *,
     tolerance: float | None,
     maximum_normal_deviation: float | None,
-) -> _PreparedFace:
+) -> _FaceSteps[_PreparedFace]:
+    """Prove one face's root chart; its piece rounds are batched across faces."""
 
     block_index, cell_row = target_row
     cell_expressions = _target_cell_coordinate_expressions(target, block_index, cell_row)
@@ -2120,30 +2355,26 @@ def _build_face(
             raise ValueError(
                 "Implicit chart root edge has no retained adaptive root witness."
             )
+    face = _enclose_face(target_expressions)
     prove: _PieceProver = partial(
         _face_piece_proofs,
         surface,
-        bounds,
-        hessian_program,
-        target_expressions,
+        face,
         source_orientation=orientation,
         projected_axes=projected_axes,
         tolerance=tolerance,
         maximum_normal_deviation=maximum_normal_deviation,
     )
-    pieces, detail = _prove_face_triangles(prove, (_STANDARD_TRIANGLE,))
+    pieces, detail = yield from _prove_face_triangles(prove, (_STANDARD_TRIANGLE,))
     if not pieces:
         raise ValueError(
             detail or "Implicit root chart has no certified target subtriangle."
         )
     injectivity_margin = 0.0
     if not detail:
-        pieces, injectivity_margin, detail = _certify_face_injectivity(
-            prove,
-            _transversal_injectivity(
-                bounds, hessian_program, target_expressions, orientation
-            ),
-            pieces,
+        transversal = yield from _transversal_injectivity(face, orientation)
+        pieces, injectivity_margin, detail = yield from _certify_face_injectivity(
+            prove, transversal, pieces
         )
     jacobian_lower = min(piece.chart_jacobian_lower for piece in pieces)
     residual_upper = max(piece.field_residual[1] for piece in pieces)
@@ -2208,12 +2439,19 @@ def _shared_edge_map_issues(
     target_rows: tuple[tuple[int, int], ...],
     faces: tuple[_PreparedFace, ...],
 ) -> dict[int, str]:
-    """Require exact target polynomial agreement and root ancestry on shared edges."""
+    """Require exact target polynomial agreement and root ancestry on shared edges.
+
+    A chart corner whose target point is exactly its named scaffold root point
+    takes that root (the scaffold path, where every corner is one); any other
+    corner lifts its own physical point, which depends only on the point. A
+    shared target vertex must therefore be taken from the same scaffold root
+    edge by every adjacent chart, or be lifted by all of them.
+    """
     from ...discretization._reference_cell import reference_cell_topology
 
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     edge_maps: dict[tuple[int, int], tuple[int, Polynomial3]] = {}
-    root_at_vertex: dict[int, GridEdge] = {}
+    root_at_vertex: dict[int, GridEdge | None] = {}
     issues: dict[int, str] = {}
     standard: TriangleReference = _STANDARD_TRIANGLE
     for row, (face, (block_index, cell_row)) in enumerate(
@@ -2255,9 +2493,23 @@ def _shared_edge_map_issues(
         if row in issues:
             continue
         for corner, target_vertex_id in enumerate(chart_vertex_global_ids):
-            root_key = _canonical_grid_edge(face.root_edge_keys[corner])
-            previous = root_at_vertex.get(target_vertex_id)
-            if previous is not None and previous != root_key:
+            root_key: GridEdge | None = _canonical_grid_edge(face.root_edge_keys[corner])
+            corner_point = np.asarray(
+                tuple(
+                    float(evaluate_expression(expression, face.reference_corners[corner]))
+                    for expression in face.cell_expressions
+                ),
+                dtype=np.float64,
+            )
+            if not np.array_equal(
+                corner_point.view(np.uint64),
+                face.root_corner_points[corner][1].view(np.uint64),
+            ):
+                root_key = None
+            if (
+                target_vertex_id in root_at_vertex
+                and root_at_vertex[target_vertex_id] != root_key
+            ):
                 issues[row] = (
                     "Adjacent target charts assign different exact scaffold root edges "
                     "to one shared target vertex."
@@ -2422,23 +2674,24 @@ def prepare_adaptive_implicit_root_charts(
     root_rows = _source_root_rows(surface)
     cell_rows = _source_cell_rows(surface)
     target = _target_map_source(mesh, geometry)
-    prepared: list[_PreparedFace] = []
-    for row, target_row in enumerate(target_rows):
-        prepared.append(
+    prepared = _run_faces(
+        bounds,
+        hessian_program,
+        [
             _build_face(
                 row,
                 target_row,
                 target,
                 witness,
                 surface,
-                bounds,
-                hessian_program,
                 root_rows,
                 cell_rows,
                 tolerance=tolerance_,
                 maximum_normal_deviation=normal_,
             )
-        )
+            for row, target_row in enumerate(target_rows)
+        ],
+    )
     edge_issues = _shared_edge_map_issues(mesh, witness, target_rows, tuple(prepared))
     for row, detail in edge_issues.items():
         prepared[row] = _mark_chart_unresolved(prepared[row], detail)
@@ -2455,13 +2708,36 @@ def prepare_adaptive_implicit_root_charts(
     )
 
 
-def _lift_point(
+def _doubling_steps(start: float, maximum_step: float, /) -> list[float]:
+    """The coordinate-spacing doubling sequence inside a normal tube; never empty."""
+    steps = [start]
+    while True:
+        next_step = float(np.nextafter(steps[-1] * 2.0, np.inf))
+        if not math.isfinite(next_step) or next_step <= steps[-1]:
+            break
+        if next_step > maximum_step:
+            break
+        steps.append(next_step)
+    return steps
+
+
+def _lift_points(
     source: AdaptiveImplicitSourceQuery,
     bounds: _FieldEnclosures,
-    point: np.ndarray,
-    face: _PreparedFace,
-    maximum_root_parameter: float,
-) -> ImplicitRootChartPoint:
+    requests: Sequence[tuple[np.ndarray, _PreparedFace, float]],
+    /,
+) -> list[ImplicitRootChartPoint]:
+    """Lift target points along their gradient lines to certified local roots.
+
+    Doubling from the coordinate spacing keeps each bracket independent of the
+    face, so faces sharing a node lift it to the same root: every doubling
+    candidate inside a face's normal tube is signed and the first strictly
+    opposite one closes the bracket. Requests sharing a point are lifted once
+    over the widest tube and each keeps exactly the single-request outcome; all
+    interval queries are batched, which leaves every enclosure unchanged.
+    """
+    if not requests:
+        return []
     adaptive, frame_id = _source_authority(source)
     if not frame_id:
         raise ValueError(
@@ -2473,107 +2749,170 @@ def _lift_point(
         0
     ]
     gradient_function = jax.grad(scalar)
-    field_value = float(np.asarray(scalar(jnp.asarray(point)), dtype=np.float64))
-    gradient = np.asarray(gradient_function(jnp.asarray(point)), dtype=np.float64)
-    if (
-        gradient.shape != (3,)
-        or not np.all(np.isfinite(gradient))
-        or not math.isfinite(field_value)
-    ):
-        raise ValueError("Implicit root-chart point has a nonfinite field or gradient.")
-    gradient_lower = bounds.boxes(point[None, :], point[None, :]).gradient_lower[0]
-    gradient_upper = bounds.boxes(point[None, :], point[None, :]).gradient_upper[0]
-    gradient_norm_lower, _ = _gradient_norm_interval(gradient_lower, gradient_upper)
-    if gradient_norm_lower <= 0.0:
-        raise ValueError(
-            "Implicit root-chart point is singular or lacks an interval gradient norm."
-        )
-    field_lower, field_upper = bounds.point_values(point[None, :])
-    low_value = float(field_lower[0])
-    high_value = float(field_upper[0])
-    if low_value <= 0.0 <= high_value:
-        if low_value == 0.0 and high_value == 0.0:
-            return ImplicitRootChartPoint(
-                np.array(point, copy=True),
-                0.0,
-                0.0,
-                face.source_cell_key,
-                face.root_edge_keys,
-                "certified_root_chart",
+    unique_rows: dict[bytes, int] = {}
+    points: list[np.ndarray] = []
+    widest: list[float] = []
+    request_rows: list[int] = []
+    for point, _, maximum_step in requests:
+        key = point.tobytes()
+        unique = unique_rows.get(key)
+        if unique is None:
+            unique = unique_rows[key] = len(points)
+            points.append(point)
+            widest.append(maximum_step)
+        else:
+            widest[unique] = max(widest[unique], maximum_step)
+        request_rows.append(unique)
+    gradients: list[np.ndarray] = []
+    for point in points:
+        field_value = float(np.asarray(scalar(jnp.asarray(point)), dtype=np.float64))
+        gradient = np.asarray(gradient_function(jnp.asarray(point)), dtype=np.float64)
+        if (
+            gradient.shape != (3,)
+            or not np.all(np.isfinite(gradient))
+            or not math.isfinite(field_value)
+        ):
+            raise ValueError(
+                "Implicit root-chart point has a nonfinite field or gradient."
             )
-        raise ValueError(
-            "Pointwise implicit field sign is unresolved at target-map resolution."
-        )
-    point_sign = -1 if high_value < 0.0 else 1
-    scale_value = max(1.0, float(np.linalg.norm(point)))
-    step = float(np.spacing(scale_value))
-    if step <= 0.0 or not math.isfinite(step):
-        raise ValueError(
-            "Implicit normal root bracket reached coordinate representability."
-        )
-    maximum_step = maximum_root_parameter
-    # Doubling from the coordinate spacing keeps the bracket independent of the
-    # face, so faces sharing a node lift it to the same root. All doubling
-    # candidates inside the face tube are signed in one interval evaluation and
-    # the first strictly opposite one closes the bracket.
-    steps = [step]
-    while True:
-        next_step = float(np.nextafter(steps[-1] * 2.0, np.inf))
-        if not math.isfinite(next_step) or next_step <= steps[-1]:
-            break
-        if next_step > maximum_step:
-            break
-        steps.append(next_step)
-    direction = -1.0 if point_sign > 0 else 1.0
-    candidates = point[None, :] + (
-        direction * np.asarray(steps, dtype=np.float64)[:, None] * gradient[None, :]
-    )
-    candidate_lower, candidate_upper = bounds.point_values(candidates)
-    for index, (step, second) in enumerate(zip(steps, candidates, strict=True)):
-        if not np.all(np.isfinite(second)) or np.array_equal(second, point):
+        gradients.append(gradient)
+    stacked = np.stack(points)
+    boxes = bounds.boxes(stacked, stacked)
+    for gradient_lower, gradient_upper in zip(
+        boxes.gradient_lower, boxes.gradient_upper, strict=True
+    ):
+        if _gradient_norm_interval(gradient_lower, gradient_upper)[0] <= 0.0:
+            raise ValueError(
+                "Implicit root-chart point is singular or lacks an interval gradient norm."
+            )
+    field_lower, field_upper = bounds.point_values(stacked)
+    signs: list[int] = []
+    step_rows: list[list[float]] = []
+    candidate_rows: list[np.ndarray] = []
+    for unique, point in enumerate(points):
+        low_value = float(field_lower[unique])
+        high_value = float(field_upper[unique])
+        if low_value <= 0.0 <= high_value:
+            if low_value == 0.0 and high_value == 0.0:
+                signs.append(0)
+                step_rows.append([])
+                candidate_rows.append(np.empty((0, 3), dtype=np.float64))
+                continue
+            raise ValueError(
+                "Pointwise implicit field sign is unresolved at target-map resolution."
+            )
+        point_sign = -1 if high_value < 0.0 else 1
+        step = float(np.spacing(max(1.0, float(np.linalg.norm(point)))))
+        if step <= 0.0 or not math.isfinite(step):
             raise ValueError(
                 "Implicit normal root bracket reached coordinate representability."
             )
-        if float(candidate_upper[index]) < 0.0:
-            second_sign = -1
-        elif float(candidate_lower[index]) > 0.0:
-            second_sign = 1
-        else:
-            second_sign = 0
-        if second_sign == 0 or second_sign == point_sign:
+        steps = _doubling_steps(step, widest[unique])
+        direction = -1.0 if point_sign > 0 else 1.0
+        signs.append(point_sign)
+        step_rows.append(steps)
+        candidate_rows.append(
+            point[None, :]
+            + (
+                direction
+                * np.asarray(steps, dtype=np.float64)[:, None]
+                * gradients[unique][None, :]
+            )
+        )
+    candidate_lower, candidate_upper = bounds.point_values(np.concatenate(candidate_rows))
+    # Per point: the first doubling index that either closes the bracket
+    # (True) or reaches coordinate representability (False).
+    events: list[tuple[int, bool] | None] = []
+    brackets: list[tuple[np.ndarray, np.ndarray, int, int]] = []
+    bracket_rows: dict[int, int] = {}
+    offset = 0
+    for unique, (point, candidates) in enumerate(
+        zip(points, candidate_rows, strict=True)
+    ):
+        event: tuple[int, bool] | None = None
+        for index, second in enumerate(candidates):
+            if not np.all(np.isfinite(second)) or np.array_equal(second, point):
+                event = (index, False)
+                break
+            if float(candidate_upper[offset + index]) < 0.0:
+                second_sign = -1
+            elif float(candidate_lower[offset + index]) > 0.0:
+                second_sign = 1
+            else:
+                continue
+            if second_sign != signs[unique]:
+                event = (index, True)
+                bracket_rows[unique] = len(brackets)
+                brackets.append(
+                    (point, np.array(second, copy=True), signs[unique], second_sign)
+                )
+                break
+        offset += candidates.shape[0]
+        events.append(event)
+    roots = (
+        _root_on_edges(
+            bounds,
+            np.asarray(
+                [(first, second) for first, second, _, _ in brackets], dtype=np.float64
+            ),
+            np.asarray(
+                [(first, second) for _, _, first, second in brackets], dtype=np.int8
+            ),
+            surface.policy.root_tolerance,
+        )
+        if brackets
+        else ()
+    )
+    lifted: list[ImplicitRootChartPoint] = []
+    for (point, face, maximum_step), unique in zip(requests, request_rows, strict=True):
+        if signs[unique] == 0:
+            lifted.append(
+                ImplicitRootChartPoint(
+                    np.array(point, copy=True),
+                    0.0,
+                    0.0,
+                    face.source_cell_key,
+                    face.root_edge_keys,
+                    "certified_root_chart",
+                )
+            )
             continue
-        if step > maximum_step:
+        steps = step_rows[unique]
+        tube = 1 + sum(1 for value in steps[1:] if value <= maximum_step)
+        event = events[unique]
+        if event is None or event[0] >= tube:
+            raise ValueError(
+                "Implicit root is not isolated inside the certified face-local normal tube."
+            )
+        index, closes = event
+        if not closes:
+            raise ValueError(
+                "Implicit normal root bracket reached coordinate representability."
+            )
+        if steps[index] > maximum_step:
             raise ValueError(
                 "Implicit root bracket exceeds its certified face-local normal tube."
             )
-        root = _root_on_edge(
-            bounds,
-            point,
-            np.array(second, copy=True),
-            point_sign,
-            second_sign,
-            surface.policy.root_tolerance,
-        )
-        root_point, error, issue = root[:3]
+        root_point, error, issue = roots[bracket_rows[unique]][:3]
         if issue:
             label = AdaptiveImplicitBoxIssue(issue).name.lower()
             raise ValueError(f"Implicit normal root isolation is unresolved ({label}).")
         displacement = np.nextafter(
             float(np.linalg.norm(root_point - point)) + float(error), np.inf
         )
-        root_point = np.array(root_point, dtype=np.float64, copy=True)
-        root_point.setflags(write=False)
-        return ImplicitRootChartPoint(
-            root_point,
-            float(displacement),
-            float(error),
-            face.source_cell_key,
-            face.root_edge_keys,
-            "certified_root_chart",
+        root_copy = np.array(root_point, dtype=np.float64, copy=True)
+        root_copy.setflags(write=False)
+        lifted.append(
+            ImplicitRootChartPoint(
+                root_copy,
+                float(displacement),
+                float(error),
+                face.source_cell_key,
+                face.root_edge_keys,
+                "certified_root_chart",
+            )
         )
-    raise ValueError(
-        "Implicit root is not isolated inside the certified face-local normal tube."
-    )
+    return lifted
 
 
 def _nearest_center_squared(
@@ -2624,6 +2963,7 @@ def _evaluate_exact_point(
 def _nearest_target_chart_bounds(
     sample: PhysicalPoint3,
     expressions: Polynomial3,
+    enclosure: _FaceEnclosure,
     threshold: Fraction,
     /,
 ) -> tuple[Fraction, Fraction, bool]:
@@ -2651,9 +2991,9 @@ def _nearest_target_chart_bounds(
     while pending:
         triangle = pending.pop()
         intervals: IntervalVector3 = (
-            _poly_interval(expressions[0], triangle),
-            _poly_interval(expressions[1], triangle),
-            _poly_interval(expressions[2], triangle),
+            _enclosed_interval(enclosure.values[0], triangle),
+            _enclosed_interval(enclosure.values[1], triangle),
+            _enclosed_interval(enclosure.values[2], triangle),
         )
         if any(not math.isfinite(value) for interval in intervals for value in interval):
             unresolved = True
@@ -2669,19 +3009,24 @@ def _nearest_target_chart_bounds(
             lower_squared_rows.append(lower_squared)
             continue
         candidate_solver = _prepare_barycentric_solver(triangle)
+        corner, first, second = triangle
         for parameter in candidate_parameters:
             if not all(
                 value >= 0
                 for value in _barycentric(parameter, triangle, solver=candidate_solver)
             ):
                 continue
+            # The triangle's restricted map at ``parameter``, evaluated directly.
             point = _evaluate_exact_point(
+                expressions,
                 (
-                    _restrict_polynomial(expressions[0], triangle),
-                    _restrict_polynomial(expressions[1], triangle),
-                    _restrict_polynomial(expressions[2], triangle),
+                    corner[0]
+                    + (first[0] - corner[0]) * parameter[0]
+                    + (second[0] - corner[0]) * parameter[1],
+                    corner[1]
+                    + (first[1] - corner[1]) * parameter[0]
+                    + (second[1] - corner[1]) * parameter[1],
                 ),
-                parameter,
             )
             squared = _squared_distance(sample, point)
             if squared < best_upper_squared:
@@ -2875,6 +3220,7 @@ def certify_adaptive_implicit_charts(
         mesh, geometry, None, witness, full_source=False
     )
     target_maps: list[Polynomial3] = []
+    target_map_enclosures: list[_FaceEnclosure] = []
     target_map_boxes: list[tuple[np.ndarray, np.ndarray]] = []
     target_map_centers: list[ExactPoint3] = []
     center_parameter: TrianglePoint = (Fraction(1, 3), Fraction(1, 3))
@@ -2887,8 +3233,10 @@ def certify_adaptive_implicit_charts(
             _token_chart(witness.target_reference_rational_tokens[row])
         )
         mapped = _triangle_coordinate_expressions(cell_expressions, reference_corners)
+        enclosure = _enclose_face(mapped)
         target_maps.append(mapped)
-        target_map_boxes.append(_box_from_polynomials(mapped, _STANDARD_TRIANGLE))
+        target_map_enclosures.append(enclosure)
+        target_map_boxes.append(_enclosed_box(enclosure, _STANDARD_TRIANGLE))
         target_map_centers.append(_evaluate_exact_point(mapped, center_parameter))
     box_lower = np.asarray([box[0] for box in target_map_boxes], dtype=np.float64)
     box_upper = np.asarray([box[1] for box in target_map_boxes], dtype=np.float64)
@@ -2951,7 +3299,7 @@ def certify_adaptive_implicit_charts(
                     if Fraction.from_float(float(lower_distances[row])) > threshold:
                         continue
                     lower, upper, _resolved = _nearest_target_chart_bounds(
-                        sample, target_maps[row], threshold
+                        sample, target_maps[row], target_map_enclosures[row], threshold
                     )
                     nearest_lower = min(nearest_lower, lower)
                     nearest_upper = min(nearest_upper, upper)

@@ -19,6 +19,7 @@ from phydrax.discretization._cell_geometry import (
 )
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.discretization.fem._reference import (
     FiniteElementSpec,
     lagrange_reference_node_data,
@@ -51,6 +52,7 @@ from phydrax.geometry.implicit._policy import (
 )
 from phydrax.geometry.implicit._source_charts import (
     _AdaptiveImplicitProjectionResult,
+    AdaptiveImplicitRootChartMap,
     certify_adaptive_implicit_charts,
     prepare_adaptive_implicit_root_charts,
 )
@@ -401,13 +403,12 @@ def _extend_implicit_target_mesh(
     )
 
 
-def _curved_geometry(
+def _affine_root_map(
     mesh: CellMesh,
     source: _BoundAdaptiveSourceQuery,
     geometry: CellGeometrySpec,
     witness: SourceBoundaryChartWitness,
-    degree: int,
-) -> tuple[CellGeometrySpec, SourceBoundaryChartWitness]:
+) -> AdaptiveImplicitRootChartMap:
     root_map = prepare_adaptive_implicit_root_charts(
         mesh,
         geometry,
@@ -417,6 +418,15 @@ def _curved_geometry(
         maximum_normal_deviation=np.pi,
     )
     assert root_map.status == "certified"
+    return root_map
+
+
+def _curved_geometry(
+    mesh: CellMesh,
+    source: _BoundAdaptiveSourceQuery,
+    root_map: AdaptiveImplicitRootChartMap,
+    degree: int,
+) -> tuple[CellGeometrySpec, SourceBoundaryChartWitness]:
     straight = _straight_geometry(mesh, degree)
     elements, routes, coordinates = straight.resolve(mesh)
     elements_by_block: dict[str, CellGeometryElement] = {}
@@ -438,22 +448,25 @@ def _curved_geometry(
     route = np.asarray(routes_by_block[block.name], dtype=np.int64)
     assigned: dict[int, np.ndarray] = {}
     nodal_reference_data = lagrange_reference_node_data(element)
+    chart_rows: list[int] = []
+    references: list[tuple[ExactScalar, ...]] = []
+    geometry_rows: list[int] = []
     for row, cell_row in enumerate(range(block.cell_count)):
         for node in nodal_reference_data:
             if node.exact_point is None:
                 raise ValueError(
                     "Implicit chart fixture requires exact Lagrange reference nodes."
                 )
-            local_dof = node.local_dof
-            geometry_row = int(route[cell_row, local_dof])
-            point = root_map.evaluate_target(row, node.exact_point)
-            previous = assigned.get(geometry_row)
-            if previous is not None:
-                np.testing.assert_array_equal(
-                    previous.view(np.uint64), point.view(np.uint64)
-                )
-            assigned[geometry_row] = np.array(point, copy=True)
-            values[geometry_row] = point
+            chart_rows.append(row)
+            references.append(node.exact_point)
+            geometry_rows.append(int(route[cell_row, node.local_dof]))
+    points = root_map.evaluate_targets(chart_rows, references)
+    for geometry_row, point in zip(geometry_rows, points, strict=True):
+        previous = assigned.get(geometry_row)
+        if previous is not None:
+            np.testing.assert_array_equal(previous.view(np.uint64), point.view(np.uint64))
+        assigned[geometry_row] = np.array(point, copy=True)
+        values[geometry_row] = point
     result = CellGeometrySpec(elements_by_block, routes_by_block, values)
     return result, _chart_witness(mesh, result, source)
 
@@ -498,8 +511,9 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
     with pytest.raises(ValueError):
         validate_source_fidelity_witness(mesh, affine, source, raw_entity_witness)
 
+    affine_root_map = _affine_root_map(mesh, source, affine, affine_witness)
     for degree in (2, 3):
-        curved, witness = _curved_geometry(mesh, source, affine, affine_witness, degree)
+        curved, witness = _curved_geometry(mesh, source, affine_root_map, degree)
         chart_map = prepare_adaptive_implicit_root_charts(
             mesh,
             curved,
@@ -519,18 +533,20 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
             item.source_cell_key and len(item.root_edge_keys) == 3
             for item in chart_map.chart_evidence
         )
-        assert all(
-            np.all(
-                np.isfinite(
-                    chart_map.evaluate_target(row, (Fraction(1, 3), Fraction(1, 3)))
-                )
-            )
-            for row in range(len(chart_map.chart_evidence))
+        rows = tuple(range(len(chart_map.chart_evidence)))
+        exact_centroids = chart_map.evaluate_targets(
+            rows, [(Fraction(1, 3), Fraction(1, 3))] * len(rows)
         )
-
-        assert all(
-            np.all(np.isfinite(chart_map.evaluate_target(row, (1.0 / 3.0, 1.0 / 3.0))))
-            for row in range(len(chart_map.chart_evidence))
+        authored_centroids = chart_map.evaluate_targets(
+            rows, [(1.0 / 3.0, 1.0 / 3.0)] * len(rows)
+        )
+        assert np.all(np.isfinite(exact_centroids))
+        assert np.all(np.isfinite(authored_centroids))
+        np.testing.assert_array_equal(
+            chart_map.evaluate_target(0, (Fraction(1, 3), Fraction(1, 3))).view(
+                np.uint64
+            ),
+            exact_centroids[0].view(np.uint64),
         )
         if degree == 2:
             fidelity = certify_adaptive_implicit_charts(
