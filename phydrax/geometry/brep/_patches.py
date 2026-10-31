@@ -2032,7 +2032,7 @@ class ExtrusionSurface(AbstractSurfacePatch):
         profile = self.curve.parameter_domain
         if profile is None:
             return None
-        return profile, (-np.inf, np.inf)
+        return (profile[0], -np.inf), (profile[1], np.inf)
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.direction.dtype)

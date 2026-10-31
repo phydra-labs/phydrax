@@ -28,6 +28,7 @@ from ...linalg._exact import determinant_exact, solve_exact
 from .._rational import rational_vector
 from ._carrier_pieces import carrier_payload
 from ._intersection_curve import (
+    exact_curve_parameter_point,
     IntersectionCurve,
     IntersectionPCurve,
     SurfaceRegion,
@@ -678,6 +679,35 @@ def _same_extrusion_profile_line_lift(
             for source, original in zip(source_controls, base_controls, strict=True)
         )
     return False
+
+
+def _same_extrusion_generator_line_lift(
+    curve: AbstractCurve,
+    pcurve: AbstractCurve,
+    patch: ExtrusionSurface,
+    /,
+) -> bool:
+    """Prove an affine edge is the extrusion generator through an exact profile point."""
+    chart = _affine_curve_coefficients(pcurve, (Fraction(0),) * pcurve.ambient_dimension)
+    if chart is None or chart[1][0] != 0 or chart[1][1] == 0:
+        return False
+    (profile_parameter, height), (_, rate) = chart
+    if not isinstance(profile_parameter, Fraction) or not isinstance(height, Fraction):
+        return False
+    domain = patch.curve.parameter_domain
+    if domain is not None and not (
+        Fraction.from_float(domain[0]) <= profile_parameter <= Fraction.from_float(domain[1])
+    ):
+        return False
+    base = exact_curve_parameter_point(patch.curve, profile_parameter)
+    source = _affine_curve_coefficients(curve, (Fraction(0),) * curve.ambient_dimension)
+    if base is None or source is None or len(base) != 3:
+        return False
+    direction = rational_vector(np.asarray(patch.direction))
+    return source == (
+        tuple(a + height * b for a, b in zip(base, direction, strict=True)),
+        tuple(rate * value for value in direction),
+    )
 
 
 def _same_conic_root_extrusion_line_lift(
@@ -2659,7 +2689,10 @@ def exact_source_lift(
     if (
         isinstance(region.patch, ExtrusionSurface)
         and isinstance(pcurve, (LineCurve, ExactLineCurve))
-        and _same_extrusion_profile_line_lift(curve, pcurve, region.patch)
+        and (
+            _same_extrusion_profile_line_lift(curve, pcurve, region.patch)
+            or _same_extrusion_generator_line_lift(curve, pcurve, region.patch)
+        )
     ):
         return True
     if isinstance(curve, IntersectionCurve) and isinstance(pcurve, IntersectionPCurve):
