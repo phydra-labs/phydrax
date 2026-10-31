@@ -855,7 +855,7 @@ def test_overset_face_shared_by_several_donor_pieces_balances_its_face_flux() ->
     np.add.at(scattered, np.asarray(block.neighbor_cells), route_flux)
     np.testing.assert_allclose(scattered.sum(axis=0), 0.0, atol=1e-13)
 
-    with pytest.raises(ValueError, match="face of its receptor cell"):
+    with pytest.raises(ValueError, match="index certified receptor faces"):
         phx.discretization.UnstructuredOversetPlan(
             discretization,
             discretization,
