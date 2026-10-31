@@ -649,6 +649,24 @@ def _classify_owner_local_faces(
     return groups, joins, translations
 
 
+def periodic_image_scale(coordinates: ArrayLike, /) -> float:
+    """Length scale of the rounding that identifies periodic lattice images."""
+    values = np.asarray(coordinates, dtype=np.float64)
+    return max(1.0, float(np.max(np.abs(values)))) if values.size else 1.0
+
+
+def periodic_image_key(image: ArrayLike, scale: float, /) -> tuple[int, ...]:
+    """Total order of lattice image translations: the identity, then lexicographic.
+
+    Translations are summed seam offsets, so they are rounded at ``1e-9 * scale``;
+    distinct lattice images differ by a lattice vector, far above that tolerance.
+    """
+    rounded = np.rint(np.asarray(image, dtype=np.float64) / (1.0e-9 * scale)).astype(
+        np.int64
+    )
+    return (int(np.any(rounded != 0)), *(int(value) for value in rounded))
+
+
 def _triangle_measures(cell_points: Array, /) -> tuple[Array, Array]:
     """Signed areas (positive counterclockwise) and centroids of ``(..., 3, 2)``."""
     cross = (cell_points[..., 1, 0] - cell_points[..., 0, 0]) * (
@@ -2548,6 +2566,25 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 "owner-local periodic FV discretization joins seam faces across "
                 "lattice images."
             )
+
+    def neighbor_side_points(
+        self, points: Array, face_ids: Array | None = None, /
+    ) -> Array:
+        """Face points ``(faces, points, dimension)`` in each neighbor's own frame.
+
+        Owner-local periodic seam faces join a neighbor resident at another
+        lattice image: a face point ``p`` in the owner's frame is
+        ``p + periodic_face_translations[face]`` beside the neighbor. Without
+        seams the points are returned unchanged. ``face_ids`` selects the faces
+        of ``points`` when they are a subset of this discretization's faces.
+        """
+        values = jnp.asarray(points)
+        if self.periodic_face_translations is None:
+            return values
+        translations = self.periodic_face_translations
+        if face_ids is not None:
+            translations = translations[jnp.asarray(face_ids, dtype=jnp.int32)]
+        return values + translations.astype(values.dtype)[:, None, :]
 
     def directional_control_volume_widths(self) -> Array:
         """Return volume-normalized directional widths from control-volume faces."""
