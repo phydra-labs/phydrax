@@ -79,7 +79,6 @@ def _source_binding_issues(
     return []
 
 
-
 def _rows_from_stable_ids(
     entity_ids: np.ndarray, stable_ids: tuple[int, ...], name: str, /
 ) -> np.ndarray:
@@ -88,8 +87,11 @@ def _rows_from_stable_ids(
     if any(int(identifier) not in rows for identifier in values):
         raise ValueError(f"{name} scope contains an undeclared stable source entity ID.")
     return np.asarray([rows[int(identifier)] for identifier in values], dtype=np.int64)
+
+
 def _target_support(
-    specification: VolumeMeshingSpec, /,
+    specification: VolumeMeshingSpec,
+    /,
 ) -> list[str]:
     target = specification.target
     families = target.cell_families
@@ -153,11 +155,11 @@ def _control_support(
             scope.entity_set_id != source.scope_entity_set_id(scope.entity_dimension)
             or np.setdiff1d(identifiers, stable_ids).size
         ):
-            issues.append("protected features inside the declared stable PLC source strata")
-        elif feature.feature_kind is FeatureKind.MATERIAL_INTERFACE:
-            rows = _rows_from_stable_ids(
-                identifiers, complex_.facet_entity_ids, "facet"
+            issues.append(
+                "protected features inside the declared stable PLC source strata"
             )
+        elif feature.feature_kind is FeatureKind.MATERIAL_INTERFACE:
+            rows = _rows_from_stable_ids(identifiers, complex_.facet_entity_ids, "facet")
             if any(
                 complex_.facet_regions[int(row), 0] < 0
                 or complex_.facet_regions[int(row), 1] < 0
@@ -165,7 +167,9 @@ def _control_support(
                 == complex_.facet_regions[int(row), 1]
                 for row in rows.tolist()
             ):
-                issues.append("material-interface features selecting only separating PLC facets")
+                issues.append(
+                    "material-interface features selecting only separating PLC facets"
+                )
     region_ids = np.asarray(complex_.region_entity_ids, dtype=np.int64)
     controlled_rows: set[int] = set()
     for control in specification.region_controls:
@@ -271,11 +275,7 @@ def volume_support_issues(
             and specification.maximum_deviation > source.maximum_deviation
         ):
             issues.append("a mapped PLC deviation bound no weaker than source authority")
-        issues.append(
-            "exact output coordinates and target-to-root reference maps for every mapped PLC cell"
-        )
     return issues
-
 
 
 def _source_region_scopes(
@@ -292,10 +292,9 @@ def _source_region_scopes(
             raise ValueError("Source region keys must resolve to unique owner scope IDs.")
         owner_ids_by_key[key] = int(identifier)
     region_ids = np.asarray(complex_.region_entity_ids, dtype=np.int64)
-    if (
-        region_ids.shape != (len(complex_.region_ids),)
-        or len(complex_.region_occurrence_paths) != len(complex_.region_ids)
-    ):
+    if region_ids.shape != (len(complex_.region_ids),) or len(
+        complex_.region_occurrence_paths
+    ) != len(complex_.region_ids):
         raise ValueError("PLC source region identities and occurrence paths must align.")
     records = []
     for row, identifier in enumerate(region_ids.tolist()):
@@ -329,14 +328,15 @@ def _region_controls_by_row(
     /,
 ) -> dict[int, RegionControl]:
     rows_by_scope = {
-        scope.scope_id: row
-        for row, (_, _, scope) in enumerate(region_scopes)
+        scope.scope_id: row for row, (_, _, scope) in enumerate(region_scopes)
     }
     result: dict[int, RegionControl] = {}
     for control in controls:
         row = rows_by_scope.get(control.scope.scope_id)
         if row is None:
-            raise ValueError("Region control scope does not identify an authored source region.")
+            raise ValueError(
+                "Region control scope does not identify an authored source region."
+            )
         if row in result:
             raise ValueError("A source region may have only one explicit region control.")
         result[row] = control
@@ -383,10 +383,11 @@ def _region_zones(
             for row, (region_id, occurrence_path, _) in enumerate(region_scopes)
         )
     ):
-        raise ValueError("Volume region assignments differ from their source occurrences.")
+        raise ValueError(
+            "Volume region assignments differ from their source occurrences."
+        )
     multiplicity = {
-        name: construction.region_ids.count(name)
-        for name in set(construction.region_ids)
+        name: construction.region_ids.count(name) for name in set(construction.region_ids)
     }
     zones: list[MeshZone] = []
     zone_ids: dict[int, str] = {}
@@ -411,11 +412,7 @@ def _region_zones(
             if seed is not None
             else None
         )
-        zone_name = (
-            name
-            if multiplicity[name] == 1
-            else f"{name}@{source_scope.scope_id}"
-        )
+        zone_name = name if multiplicity[name] == 1 else f"{name}@{source_scope.scope_id}"
         zone = MeshZone(
             zone_name,
             MeshZoneRole.REGION,
@@ -428,8 +425,6 @@ def _region_zones(
     return tuple(zones), zone_ids
 
 
-
-
 def _boundary_face_entities(
     mesh: CellMesh, construction: VolumeConstruction, /
 ) -> np.ndarray:
@@ -439,7 +434,9 @@ def _boundary_face_entities(
         raise ValueError("Canonical face incidence and face entity IDs are misaligned.")
     rows = {
         tuple(sorted(face)): int(identifier)
-        for face, identifier in zip(connectivity_faces.tolist(), identifiers.tolist(), strict=True)
+        for face, identifier in zip(
+            connectivity_faces.tolist(), identifiers.tolist(), strict=True
+        )
     }
     if len(rows) != identifiers.size:
         raise ValueError("Canonical volume faces do not have unique vertex incidence.")
@@ -447,12 +444,16 @@ def _boundary_face_entities(
         return np.asarray(
             [
                 rows[tuple(sorted(face))]
-                for face in np.asarray(construction.boundary_faces, dtype=np.int64).tolist()
+                for face in np.asarray(
+                    construction.boundary_faces, dtype=np.int64
+                ).tolist()
             ],
             dtype=np.int64,
         )
     except KeyError as error:
-        raise ValueError("A recovered boundary face is absent from canonical mesh incidence.") from error
+        raise ValueError(
+            "A recovered boundary face is absent from canonical mesh incidence."
+        ) from error
 
 
 def _edge_entity_ids(mesh: CellMesh, /) -> dict[tuple[int, int], int]:
@@ -462,7 +463,9 @@ def _edge_entity_ids(mesh: CellMesh, /) -> dict[tuple[int, int], int]:
         raise ValueError("Canonical edge incidence and edge entity IDs are misaligned.")
     rows = {
         tuple(sorted(edge)): int(identifier)
-        for edge, identifier in zip(connectivity_edges.tolist(), identifiers.tolist(), strict=True)
+        for edge, identifier in zip(
+            connectivity_edges.tolist(), identifiers.tolist(), strict=True
+        )
     }
     if len(rows) != identifiers.size:
         raise ValueError("Canonical volume edges do not have unique vertex incidence.")
@@ -493,6 +496,8 @@ def _faces_connected(faces: np.ndarray, /) -> bool:
             if other != root:
                 parents[other] = root
     return len({find(row) for row in range(faces.shape[0])}) == 1
+
+
 def _patches_and_labels(
     source: NativePlcSource,
     specification: VolumeMeshingSpec,
@@ -516,9 +521,7 @@ def _patches_and_labels(
         raise ValueError("PLC facet region incidence must align with source facets.")
     patches: list[MeshPatch] = []
     facet_faces: dict[int, np.ndarray] = {}
-    region_boundary_faces: list[list[int]] = [
-        [] for _ in range(len(region_scopes))
-    ]
+    region_boundary_faces: list[list[int]] = [[] for _ in range(len(region_scopes))]
     region_patch_sides: list[list[tuple[str, int]]] = [
         [] for _ in range(len(region_scopes))
     ]
@@ -598,9 +601,7 @@ def _patches_and_labels(
     labels: list[MeshLabel] = []
     region_evidence: list[RegionBoundaryEvidence] = []
     for region, (region_id, occurrence_path, source_scope) in enumerate(region_scopes):
-        selected = np.unique(
-            np.asarray(region_boundary_faces[region], dtype=np.int64)
-        )
+        selected = np.unique(np.asarray(region_boundary_faces[region], dtype=np.int64))
         if selected.size == 0 or not region_patch_sides[region]:
             raise ValueError(
                 f"PLC region occurrence {region_id!r} has no oriented boundary patches."
@@ -639,7 +640,9 @@ def _patches_and_labels(
     ):
         if selected:
             labels.append(
-                MeshLabel(name, _mesh_scope(mesh, 2, np.asarray(selected, dtype=np.int64)))
+                MeshLabel(
+                    name, _mesh_scope(mesh, 2, np.asarray(selected, dtype=np.int64))
+                )
             )
     edge_ids_by_key = _edge_entity_ids(mesh)
     explicit = source.complex.segments.shape[0]
@@ -672,11 +675,11 @@ def _tetrahedron_regions(
         raise ValueError("Native PLC region associations require one tetrahedron block.")
     cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
     if np.asarray(construction.cell_regions).shape != (cells.shape[0],):
-        raise ValueError("Native PLC cell regions must align with tetrahedron block rows.")
+        raise ValueError(
+            "Native PLC cell regions must align with tetrahedron block rows."
+        )
     edge_rows, face_rows = simplex_volume_entities(mesh)
     return cells, edge_rows, face_rows
-
-
 
 
 def _source_identity_maps(
@@ -739,7 +742,9 @@ def _source_key(
         ) from error
     key, path = source.source_entity_key_for_scope(dimension, entity_id)
     if path != occurrence_path:
-        raise ValueError("PLC source scope resolution changed its authored occurrence path.")
+        raise ValueError(
+            "PLC source scope resolution changed its authored occurrence path."
+        )
     return key
 
 
@@ -770,7 +775,9 @@ def _source_associations(
         or np.any(input_vertices < -1)
         or np.any(input_vertices >= len(complex_.vertex_ids))
     ):
-        raise ValueError("PLC vertex ancestry must align with the recovered mesh vertex bank.")
+        raise ValueError(
+            "PLC vertex ancestry must align with the recovered mesh vertex bank."
+        )
     vertex_dimensions_list: list[int] = []
     for input_vertex, witness_stratum in zip(
         input_vertices.tolist(), witness_strata.tolist(), strict=True
@@ -782,7 +789,9 @@ def _source_associations(
         elif witness_stratum == 0:
             vertex_dimensions_list.append(3)
         else:
-            raise ValueError("Inserted PLC vertices must retain one source-stratum witness.")
+            raise ValueError(
+                "Inserted PLC vertices must retain one source-stratum witness."
+            )
     vertex_dimensions = np.asarray(vertex_dimensions_list, dtype=np.int64)
     vertex_keys = tuple(
         _source_key(source, source_maps, int(dimension), identity, path)
@@ -848,7 +857,9 @@ def _source_associations(
     cells, connectivity_edges, connectivity_faces = _tetrahedron_regions(construction)
     edge_regions: dict[tuple[int, int], set[int]] = {}
     face_regions: dict[tuple[int, ...], set[int]] = {}
-    for cell, region in zip(cells.tolist(), construction.cell_regions.tolist(), strict=True):
+    for cell, region in zip(
+        cells.tolist(), construction.cell_regions.tolist(), strict=True
+    ):
         for pair in combinations(cell, 2):
             edge_regions.setdefault(tuple(sorted(pair)), set()).add(region)
         for triple in combinations(cell, 3):
@@ -924,7 +935,9 @@ def _source_associations(
                 ):
                     parameters.append(float(construction.witness_parameters[vertex, 0]))
                 else:
-                    raise ValueError("Constrained PLC edge endpoints lost exact source parameters.")
+                    raise ValueError(
+                        "Constrained PLC edge endpoints lost exact source parameters."
+                    )
             edge_orientations[row] = 1 if parameters[1] > parameters[0] else -1
             continue
         facets = face_facet_edges.get(key, set())
@@ -938,9 +951,7 @@ def _source_associations(
             edge_residuals.append(
                 float(
                     np.max(
-                        construction.witness_deviations[
-                            np.asarray(edge, dtype=np.int64)
-                        ]
+                        construction.witness_deviations[np.asarray(edge, dtype=np.int64)]
                     )
                 )
             )
@@ -948,7 +959,9 @@ def _source_associations(
             continue
         regions = edge_regions.get(key, set())
         if len(regions) != 1:
-            raise ValueError("Every PLC mesh edge must have one source stratum or region.")
+            raise ValueError(
+                "Every PLC mesh edge must have one source stratum or region."
+            )
         region = next(iter(regions))
         local_id = construction.region_ids[region]
         path = construction.region_occurrence_paths[region]
@@ -1043,6 +1056,8 @@ def _source_associations(
         orientations=face_orientations,
     )
     return vertex_association, edge_association, face_association, cell_association
+
+
 def _organization(
     source: NativePlcSource,
     specification: VolumeMeshingSpec,
@@ -1059,9 +1074,7 @@ def _organization(
         specification.region_controls if region_controls is None else region_controls,
     )
     seeds = _region_seeds_by_row(region_scopes, specification.region_seeds)
-    zones, zone_ids = _region_zones(
-        construction, region_scopes, controls, seeds
-    )
+    zones, zone_ids = _region_zones(construction, region_scopes, controls, seeds)
     patches, labels, region_boundary_evidence = _patches_and_labels(
         source,
         specification,
@@ -1080,7 +1093,9 @@ def _organization(
     )
 
 
-def _mesh_scope(mesh: CellMesh, dimension: int, identifiers: np.ndarray, /) -> MeshingScope:
+def _mesh_scope(
+    mesh: CellMesh, dimension: int, identifiers: np.ndarray, /
+) -> MeshingScope:
     entity_set = mesh.entity_set(dimension)
     return MeshingScope(
         mesh.mesh_id,
@@ -1116,7 +1131,9 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
             and source.mapped_domain.coordinate_contract.spatial_id
             != coordinate_contract.spatial_id
         ):
-            raise ValueError("Mapped PLC source and target use different spatial coordinate contracts.")
+            raise ValueError(
+                "Mapped PLC source and target use different spatial coordinate contracts."
+            )
         self.source = source
         self.specification = specification
         self.coordinate_contract = coordinate_contract
@@ -1164,7 +1181,9 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
         if self.source.mapped_domain is not None:
             candidate_query = self.source.boundary_query()
             if not isinstance(candidate_query, MappedReferenceBoundarySource):
-                raise TypeError("Mapped PLC volume coverage requires its exact root boundary query.")
+                raise TypeError(
+                    "Mapped PLC volume coverage requires its exact root boundary query."
+                )
             fidelity_source = candidate_query
             fidelity_witness = mapped_plc_boundary_chart_witness(
                 self.source, construction, geometry, fidelity_source
@@ -1182,19 +1201,30 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
                 self.source.maximum_deviation is not None
                 and fidelity_tolerance > self.source.maximum_deviation
             ):
-                raise ValueError("The requested mapped PLC tolerance exceeds its source-declared bound.")
+                raise ValueError(
+                    "The requested mapped PLC tolerance exceeds its source-declared bound."
+                )
             for feature in self.specification.protected_features:
                 if not feature.hard:
                     continue
                 identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
-                if feature.feature_kind in (FeatureKind.SURFACE, FeatureKind.MATERIAL_INTERFACE):
+                if feature.feature_kind in (
+                    FeatureKind.SURFACE,
+                    FeatureKind.MATERIAL_INTERFACE,
+                ):
                     keys = tuple(
                         self.source.source_entity_key_for_scope(2, int(identifier))
                         for identifier in identifiers.tolist()
                     )
-                    candidate_feature_query = self.source.boundary_query(face_scope_keys=keys)
-                    if not isinstance(candidate_feature_query, MappedReferenceBoundarySource):
-                        raise TypeError("Mapped facet features require their exact root chart query.")
+                    candidate_feature_query = self.source.boundary_query(
+                        face_scope_keys=keys
+                    )
+                    if not isinstance(
+                        candidate_feature_query, MappedReferenceBoundarySource
+                    ):
+                        raise TypeError(
+                            "Mapped facet features require their exact root chart query."
+                        )
                     feature_query = candidate_feature_query
                     feature_witness = mapped_plc_boundary_chart_witness(
                         self.source, construction, geometry, feature_query
@@ -1204,9 +1234,15 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
                         self.source.source_entity_key_for_scope(1, int(identifier))
                         for identifier in identifiers.tolist()
                     )
-                    candidate_feature_query = self.source.boundary_query(edge_scope_keys=keys)
-                    if not isinstance(candidate_feature_query, MappedReferenceBoundarySource):
-                        raise TypeError("Mapped curve features require their exact root chart query.")
+                    candidate_feature_query = self.source.boundary_query(
+                        edge_scope_keys=keys
+                    )
+                    if not isinstance(
+                        candidate_feature_query, MappedReferenceBoundarySource
+                    ):
+                        raise TypeError(
+                            "Mapped curve features require their exact root chart query."
+                        )
                     feature_query = candidate_feature_query
                     feature_witness = mapped_plc_edge_chart_witness(
                         self.source, construction, geometry, feature_query
@@ -1224,9 +1260,7 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
                     (feature_query, feature_witness, feature.maximum_deviation)
                 )
         schedule = MeshCertificationSchedule(
-            "mapped_volume"
-            if self.source.mapped_domain is not None
-            else "volume_plc"
+            "mapped_volume" if self.source.mapped_domain is not None else "volume_plc"
         )
         certification = NativeCertificationRequest(
             schedule,
@@ -1330,12 +1364,17 @@ def _volume_compliance(
             key = f"size:{control.control_id}:maximum"
             requested.append((key, control.maximum_size))
             achieved.append((key, achieved_maximum))
-            if control.strength is SizeControlStrength.HARD and achieved_maximum > control.maximum_size:
+            if (
+                control.strength is SizeControlStrength.HARD
+                and achieved_maximum > control.maximum_size
+            ):
                 issues.append(key)
     for feature in specification.protected_features:
         identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
         if feature.scope.entity_dimension == 2:
-            rows = _rows_from_stable_ids(identifiers, source.complex.facet_entity_ids, "facet")
+            rows = _rows_from_stable_ids(
+                identifiers, source.complex.facet_entity_ids, "facet"
+            )
             face_mask = np.isin(construction.face_source_facets, rows)
             vertices = np.unique(construction.boundary_faces[face_mask])
         elif feature.scope.entity_dimension == 1:
@@ -1360,7 +1399,9 @@ def _volume_compliance(
             segment_mask = np.isin(construction.segment_source_edges, rows)
             vertices = np.unique(construction.segments[segment_mask])
         elif feature.scope.entity_dimension == 0:
-            rows = _rows_from_stable_ids(identifiers, source.complex.vertex_entity_ids, "vertex")
+            rows = _rows_from_stable_ids(
+                identifiers, source.complex.vertex_entity_ids, "vertex"
+            )
             vertices = np.flatnonzero(np.isin(construction.input_vertices, rows))
         else:
             continue
@@ -1389,13 +1430,17 @@ def prepare_native_plc_volume(
     /,
 ) -> PreparedPlcVolume:
     if options.route != "plc_tetrahedral":
-        raise ValueError("Native PLC volume preparation requires the plc_tetrahedral route.")
+        raise ValueError(
+            "Native PLC volume preparation requires the plc_tetrahedral route."
+        )
     issues = volume_support_issues(source, specification)
     if issues:
         raise ValueError("Unsupported native PLC volume request: " + "; ".join(issues))
     schedule = options.volume_schedule
     if schedule is None:
-        raise ValueError("Native PLC volume route requires its numerical volume schedule.")
+        raise ValueError(
+            "Native PLC volume route requires its numerical volume schedule."
+        )
     return PreparedPlcVolume(
         source,
         specification,

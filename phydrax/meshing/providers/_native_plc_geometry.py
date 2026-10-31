@@ -45,7 +45,9 @@ from ._native_sources import NativePlcSource
 def simplex_volume_entities(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
     connectivity = mesh.connectivity
     if mesh.topological_dimension != 3:
-        raise ValueError("Native PLC output requires three-dimensional simplex incidence.")
+        raise ValueError(
+            "Native PLC output requires three-dimensional simplex incidence."
+        )
     if isinstance(connectivity, SimplicialConnectivity):
         edges = np.asarray(connectivity.entities[1], dtype=np.int64)
         faces = np.asarray(connectivity.entities[2], dtype=np.int64)
@@ -63,7 +65,9 @@ def simplex_volume_entities(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
         or faces.shape[1] != 3
         or cell_faces.shape != (sum(block.cell_count for block in mesh.blocks), 4)
     ):
-        raise ValueError("Native PLC volume incidence must retain tetrahedral cells, faces, and edges.")
+        raise ValueError(
+            "Native PLC volume incidence must retain tetrahedral cells, faces, and edges."
+        )
     return edges, faces
 
 
@@ -84,7 +88,9 @@ def volume_cell_entity_rows(
         from ...discretization._hexahedral import HexahedralConnectivity
 
         if not isinstance(connectivity, HexahedralConnectivity):
-            raise ValueError("Volume cell incidence requires simplex, tetrahedron, or hexahedron cells.")
+            raise ValueError(
+                "Volume cell incidence requires simplex, tetrahedron, or hexahedron cells."
+            )
         edge_vertices = np.asarray(connectivity.edges, dtype=np.int64)
         face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
     if edge_vertices.ndim != 2 or face_vertices.ndim != 2:
@@ -97,7 +103,10 @@ def volume_cell_entity_rows(
         tuple(sorted(int(value) for value in vertices)): row
         for row, vertices in enumerate(face_vertices.tolist())
     }
-    if len(edge_rows) != edge_vertices.shape[0] or len(face_rows) != face_vertices.shape[0]:
+    if (
+        len(edge_rows) != edge_vertices.shape[0]
+        or len(face_rows) != face_vertices.shape[0]
+    ):
         raise ValueError("Canonical volume edge/face incidence is not unique.")
     rows_by_cell_id: dict[int, tuple[tuple[int, ...], tuple[int, ...]]] = {}
     for block in mesh.blocks:
@@ -106,8 +115,12 @@ def volume_cell_entity_rows(
             raise ValueError("Volume entity incidence found a non-volume cell block.")
         cells = np.asarray(block.vertices, dtype=np.int64)
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
-        local_edges = tuple(tuple(int(value) for value in row) for row in topology.entities[1])
-        local_faces = tuple(tuple(int(value) for value in row) for row in topology.entities[2])
+        local_edges = tuple(
+            tuple(int(value) for value in row) for row in topology.entities[1]
+        )
+        local_faces = tuple(
+            tuple(int(value) for value in row) for row in topology.entities[2]
+        )
         for identifier_raw, cell_values in zip(
             identifiers.tolist(), cells.tolist(), strict=True
         ):
@@ -125,7 +138,9 @@ def volume_cell_entity_rows(
                     for face in local_faces
                 )
             except KeyError as error:
-                raise ValueError("A volume cell entity is absent from canonical incidence.") from error
+                raise ValueError(
+                    "A volume cell entity is absent from canonical incidence."
+                ) from error
             rows_by_cell_id[identifier] = (cell_edges, cell_faces)
     raw_ids = (
         np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
@@ -134,41 +149,64 @@ def volume_cell_entity_rows(
     )
     if raw_ids.ndim != 1 or raw_ids.dtype.kind not in "iu":
         raise TypeError("cell_global_ids must be an integer vector.")
-    if raw_ids.dtype.kind == "u" and raw_ids.size and np.any(raw_ids > np.iinfo(np.int64).max):
+    if (
+        raw_ids.dtype.kind == "u"
+        and raw_ids.size
+        and np.any(raw_ids > np.iinfo(np.int64).max)
+    ):
         raise ValueError("cell_global_ids must fit int64.")
     identifiers = np.asarray(raw_ids, dtype=np.int64)
-    if identifiers.size != len(rows_by_cell_id) or np.unique(identifiers).size != identifiers.size:
-        raise ValueError("Volume cell identity bank does not cover every cell exactly once.")
+    if (
+        identifiers.size != len(rows_by_cell_id)
+        or np.unique(identifiers).size != identifiers.size
+    ):
+        raise ValueError(
+            "Volume cell identity bank does not cover every cell exactly once."
+        )
     try:
-        ordered = tuple(rows_by_cell_id[int(identifier)] for identifier in identifiers.tolist())
+        ordered = tuple(
+            rows_by_cell_id[int(identifier)] for identifier in identifiers.tolist()
+        )
     except KeyError as error:
-        raise ValueError("A requested volume cell ID is absent from connectivity.") from error
+        raise ValueError(
+            "A requested volume cell ID is absent from connectivity."
+        ) from error
     if not ordered:
         return np.empty((0, 0), dtype=np.int64), np.empty((0, 0), dtype=np.int64)
     edge_counts = {len(edges) for edges, _ in ordered}
     face_counts = {len(faces) for _, faces in ordered}
     if len(edge_counts) != 1 or len(face_counts) != 1:
-        raise ValueError("Volume local entity arity must be uniform for this incidence query.")
+        raise ValueError(
+            "Volume local entity arity must be uniform for this incidence query."
+        )
     return np.asarray([edges for edges, _ in ordered], dtype=np.int64), np.asarray(
         [faces for _, faces in ordered], dtype=np.int64
     )
+
+
 def _mapped_plc_geometry(
     source: NativePlcSource, construction: VolumeConstruction, /
 ) -> CellGeometrySpec:
     domain = source.mapped_domain
     if domain is None or source.complex.geometry is None:
-        raise ValueError("Mapped PLC realization requires both its exact geometry and MappedReferenceDomain.")
+        raise ValueError(
+            "Mapped PLC realization requires both its exact geometry and MappedReferenceDomain."
+        )
     if (
         not isinstance(construction.domain, type(domain))
         or construction.domain.domain_id != domain.domain_id
         or (construction.source_id, construction.source_revision)
         != (source.source_id, source.source_revision)
     ):
-        raise ValueError("PLC construction changed its mapped source or root-domain identity.")
+        raise ValueError(
+            "PLC construction changed its mapped source or root-domain identity."
+        )
     controls = construction.reference_chart_controls
     mesh = construction.mesh
     if len(mesh.blocks) != 1 or not controls:
-        raise ValueError("Mapped PLC geometry requires exact root charts for one generated tetrahedron block.")
+        raise ValueError(
+            "Mapped PLC geometry requires exact root charts for one generated tetrahedron block."
+        )
     target_block = mesh.blocks[0]
     target_ids = np.asarray(target_block.global_ids, dtype=np.int64)
     if (
@@ -177,14 +215,15 @@ def _mapped_plc_geometry(
         or tuple(control.target_cell_id for control in controls)
         != tuple(int(value) for value in target_ids.tolist())
     ):
-        raise ValueError("Mapped PLC target cells and exact root-chart records are not aligned.")
+        raise ValueError(
+            "Mapped PLC target cells and exact root-chart records are not aligned."
+        )
 
     root_mesh = domain.reference_mesh
     root_elements, root_routes, _ = domain.source_geometry.resolve(root_mesh)
     coordinates = np.asarray(domain.source_geometry.coordinates, dtype=np.float64)
     root_cell_rows = {
-        int(identifier): row
-        for row, identifier in enumerate(domain.root_cell_ids)
+        int(identifier): row for row, identifier in enumerate(domain.root_cell_ids)
     }
     root_vertex_ids = np.asarray(root_mesh.vertex_global_ids, dtype=np.int64)
     source_elements = []
@@ -204,7 +243,9 @@ def _mapped_plc_geometry(
             or control.source_geometry_id != domain.reference_geometry_id
             or control.source_topology_id != root_mesh.topology_id
         ):
-            raise ValueError("Mapped PLC chart control changed its source, target, or domain binding.")
+            raise ValueError(
+                "Mapped PLC chart control changed its source, target, or domain binding."
+            )
         source_block = root_mesh.blocks[control.source_block_index]
         source_cells = np.asarray(source_block.vertices, dtype=np.int64)
         source_ids = np.asarray(source_block.global_ids, dtype=np.int64)
@@ -218,13 +259,19 @@ def _mapped_plc_geometry(
         domain_row = root_cell_rows.get(control.source_cell_id)
         if (
             domain_row is None
-            or domain.root_cell_occurrence_paths[domain_row] != control.source_occurrence_path
-            or domain.region_ids[int(domain.cell_regions[domain_row])] != control.source_region_id
+            or domain.root_cell_occurrence_paths[domain_row]
+            != control.source_occurrence_path
+            or domain.region_ids[int(domain.cell_regions[domain_row])]
+            != control.source_region_id
         ):
-            raise ValueError("Mapped PLC chart control changed its root occurrence or material region.")
+            raise ValueError(
+                "Mapped PLC chart control changed its root occurrence or material region."
+            )
         root_element = root_elements[control.source_block_index]
         if not isinstance(root_element, cell_geometry_owner.ScalarCoordinateElement):
-            raise ValueError("Mapped PLC roots require scalar source coordinate elements.")
+            raise ValueError(
+                "Mapped PLC roots require scalar source coordinate elements."
+            )
         base_element = cell_geometry_owner.coordinate_reference_chain(root_element)[0]
         root_chart = cell_geometry_owner.restriction_chart_arguments(
             root_element,
@@ -235,15 +282,15 @@ def _mapped_plc_geometry(
             control.arguments
             if root_chart is None
             else tuple(
-                compose_expression(argument, control.arguments)
-                for argument in root_chart
+                compose_expression(argument, control.arguments) for argument in root_chart
             )
         )
         if any(
-            not isinstance(argument, (Mapping, RationalPolynomial))
-            for argument in chart
+            not isinstance(argument, (Mapping, RationalPolynomial)) for argument in chart
         ):
-            raise ValueError("Mapped PLC tetrahedra require exact polynomial or rational root charts.")
+            raise ValueError(
+                "Mapped PLC tetrahedra require exact polynomial or rational root charts."
+            )
         source_elements.append(base_element)
         charts.append(tuple(chart))
         source_routes.append(
@@ -254,26 +301,9 @@ def _mapped_plc_geometry(
         source_cell_ids.append(control.source_cell_id)
         exact_vertices.append(control.source_reference_vertices)
 
-        root_topology_vertices = tuple(
-            tuple(Fraction.from_float(float(value)) for value in vertex)
-            for vertex in reference_cell_topology(control.source_cell_kind).vertices
+        parent_vertex_ids.append(
+            root_vertex_ids[source_cells[control.source_cell_row]].tolist()
         )
-        root_cell_vertices = source_cells[control.source_cell_row]
-        cell_parent_vertices = []
-        for reference_point in control.source_reference_vertices:
-            matches = tuple(
-                index
-                for index, root_point in enumerate(root_topology_vertices)
-                if reference_point == root_point
-            )
-            if len(matches) > 1:
-                raise ValueError("Mapped PLC source-reference corner is not uniquely identified.")
-            cell_parent_vertices.append(
-                -1
-                if not matches
-                else int(root_vertex_ids[int(root_cell_vertices[matches[0]])])
-            )
-        parent_vertex_ids.append(cell_parent_vertices)
 
     element_ids = {element.element_id for element in source_elements}
     if len(element_ids) != 1:
@@ -330,7 +360,9 @@ def plc_cell_geometry(
     if source.mapped_domain is not None:
         return _mapped_plc_geometry(source, construction)
     if source.complex.geometry is not None:
-        raise ValueError("Mapped PLC geometry requires its original MappedReferenceDomain.")
+        raise ValueError(
+            "Mapped PLC geometry requires its original MappedReferenceDomain."
+        )
     return CellGeometrySpec.affine(construction.mesh)
 
 
@@ -343,8 +375,6 @@ class PhysicalPlcTetrahedra:
     tetrahedra: np.ndarray
 
 
-
-
 @checked
 def physical_plc_tetrahedra(
     source: NativePlcSource, construction: VolumeConstruction, /
@@ -355,7 +385,9 @@ def physical_plc_tetrahedra(
     block = mesh.blocks[0]
     cells = np.asarray(block.vertices, dtype=np.int64)
     if block.cell_kind not in {"tetrahedron", "simplex:3"}:
-        raise ValueError("A PLC carrier for physical power construction must be tetrahedral.")
+        raise ValueError(
+            "A PLC carrier for physical power construction must be tetrahedral."
+        )
     reference_vertices = tuple(
         tuple(Fraction.from_float(float(value)) for value in vertex)
         for vertex in reference_cell_topology(block.cell_kind).vertices
@@ -378,7 +410,9 @@ def physical_plc_tetrahedra(
         sorted_points[row] != sorted_points[int(starts[group])]
         for row, group in enumerate(group_rows.tolist())
     ):
-        raise ValueError("PLC source geometry is discontinuous across shared tetrahedron vertices.")
+        raise ValueError(
+            "PLC source geometry is discontinuous across shared tetrahedron vertices."
+        )
     points = np.empty((mesh.coordinates.shape[0], 3), dtype=np.float64)
     points[unique_vertices] = np.asarray(
         [
@@ -388,7 +422,9 @@ def physical_plc_tetrahedra(
         dtype=np.float64,
     )
     if unique_vertices.size != points.shape[0] or not np.all(np.isfinite(points)):
-        raise ValueError("Every PLC mesh vertex must have a finite physical source-map value.")
+        raise ValueError(
+            "Every PLC mesh vertex must have a finite physical source-map value."
+        )
     points.setflags(write=False)
     cells.setflags(write=False)
     return PhysicalPlcTetrahedra(geometry, points, cells)
@@ -411,11 +447,15 @@ def mapped_plc_boundary_chart_witness(
         or query.domain.domain_id != domain.domain_id
         or construction.domain.domain_id != domain.domain_id
     ):
-        raise ValueError("Mapped PLC chart witness requires the original source, root, and query authority.")
+        raise ValueError(
+            "Mapped PLC chart witness requires the original source, root, and query authority."
+        )
     query.require_current()
     mesh = construction.mesh
     if len(mesh.blocks) != 1:
-        raise ValueError("Mapped PLC chart witnesses require one exact simplex target block.")
+        raise ValueError(
+            "Mapped PLC chart witnesses require one exact simplex target block."
+        )
     block = mesh.blocks[0]
     if block.cell_kind not in {"simplex:3", "tetrahedron"}:
         raise ValueError("Mapped PLC chart witnesses require tetrahedral targets.")
@@ -425,16 +465,16 @@ def mapped_plc_boundary_chart_witness(
     }
     cell_ids = tuple(int(value) for value in np.asarray(block.global_ids, dtype=np.int64))
     if len(controls_by_cell) != len(cell_ids) or set(controls_by_cell) != set(cell_ids):
-        raise ValueError("Every mapped PLC tetrahedron needs one exact target-to-root chart.")
+        raise ValueError(
+            "Every mapped PLC tetrahedron needs one exact target-to-root chart."
+        )
 
     def cross2(
         first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction], /
     ) -> Fraction:
         return first[0] * second[1] - first[1] * second[0]
 
-    def signed_double_area(
-        points: tuple[tuple[Fraction, Fraction], ...], /
-    ) -> Fraction:
+    def signed_double_area(points: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
         return sum(
             cross2(points[row], points[(row + 1) % len(points)])
             for row in range(len(points))
@@ -498,10 +538,13 @@ def mapped_plc_boundary_chart_witness(
                 previous = polygon[row - 1]
                 current = polygon[row]
                 following = polygon[(row + 1) % len(polygon)]
-                if cross2(
-                    (current[0] - previous[0], current[1] - previous[1]),
-                    (following[0] - current[0], following[1] - current[1]),
-                ) == 0:
+                if (
+                    cross2(
+                        (current[0] - previous[0], current[1] - previous[1]),
+                        (following[0] - current[0], following[1] - current[1]),
+                    )
+                    == 0
+                ):
                     polygon.pop(row)
                     changed = True
                     break
@@ -537,13 +580,13 @@ def mapped_plc_boundary_chart_witness(
         for entity_id in source.scope_entity_ids(2).tolist()
     }
     selected_keys = set(query.face_scope_keys)
-    charts_by_face_key: dict[
-        tuple[int, tuple[str, tuple[str, ...]]], list[str]
-    ] = {}
+    charts_by_face_key: dict[tuple[int, tuple[str, tuple[str, ...]]], list[str]] = {}
     for chart_id in query.face_chart_ids:
         key = query.chart_source_key(2, chart_id)
         if key not in source_keys:
-            raise ValueError("Mapped PLC query chart is not bound to its source entity bank.")
+            raise ValueError(
+                "Mapped PLC query chart is not bound to its source entity bank."
+            )
         chart_row = query.chart_row(2, chart_id)
         root_face_id = int(query.polygon_root_face_global_ids[chart_row])
         charts_by_face_key.setdefault((root_face_id, key), []).append(chart_id)
@@ -551,7 +594,9 @@ def mapped_plc_boundary_chart_witness(
     root_mesh = domain.reference_mesh
     root_topology_by_kind = {
         kind: reference_cell_topology(kind)
-        for kind in {control.source_cell_kind for control in construction.reference_chart_controls}
+        for kind in {
+            control.source_cell_kind for control in construction.reference_chart_controls
+        }
     }
     root_cell_rows = {
         int(identifier): row for row, identifier in enumerate(domain.root_cell_ids)
@@ -583,7 +628,10 @@ def mapped_plc_boundary_chart_witness(
                     candidates.append(local_face)
             elif cell_kind == "hexahedron":
                 face = tuple(
-                    tuple(Fraction.from_float(float(value)) for value in topology.vertices[int(index)])
+                    tuple(
+                        Fraction.from_float(float(value))
+                        for value in topology.vertices[int(index)]
+                    )
                     for index in local_vertices
                 )
                 constant_axes = tuple(
@@ -597,9 +645,13 @@ def mapped_plc_boundary_chart_witness(
                 if all(point[axis] == face[0][axis] for point in reference_points):
                     candidates.append(local_face)
             else:
-                raise ValueError("Mapped PLC source chart witness encountered an unsupported root cell kind.")
+                raise ValueError(
+                    "Mapped PLC source chart witness encountered an unsupported root cell kind."
+                )
         if len(candidates) != 1:
-            raise ValueError("A mapped PLC output face must lie on one exact root-cell face.")
+            raise ValueError(
+                "A mapped PLC output face must lie on one exact root-cell face."
+            )
         return candidates[0]
 
     chart_cell_ids: list[int] = []
@@ -613,27 +665,52 @@ def mapped_plc_boundary_chart_witness(
     orientations: list[int] = []
     face_sources = tuple(construction.face_source_ids)
     face_occurrences = tuple(construction.face_source_occurrence_paths)
-    if (
-        len(construction.boundary_faces) != len(face_sources)
-        or len(face_sources) != len(face_occurrences)
+    if len(construction.boundary_faces) != len(face_sources) or len(face_sources) != len(
+        face_occurrences
     ):
-        raise ValueError("Mapped PLC boundary source keys must align with actual recovered facets.")
-    for output_face_row, face_vertices in enumerate(np.asarray(construction.boundary_faces, dtype=np.int64)):
+        raise ValueError(
+            "Mapped PLC boundary source keys must align with actual recovered facets."
+        )
+    for output_face_row, face_vertices in enumerate(
+        np.asarray(construction.boundary_faces, dtype=np.int64)
+    ):
         source_key = (face_sources[output_face_row], face_occurrences[output_face_row])
         if source_key not in source_keys:
-            raise ValueError("Recovered PLC boundary facet names an absent source entity key.")
+            raise ValueError(
+                "Recovered PLC boundary facet names an absent source entity key."
+            )
         if source_key not in selected_keys:
             continue
         face_row = target_face_rows.get(frozenset(int(value) for value in face_vertices))
         if face_row is None:
-            raise ValueError("Recovered PLC boundary facet is absent from target connectivity.")
+            raise ValueError(
+                "Recovered PLC boundary facet is absent from target connectivity."
+            )
         owners = target_face_owners.get(face_row, ())
-        if len(owners) != 1:
-            raise ValueError("A mapped PLC boundary facet must have one target cell/local-face owner.")
-        target_cell_id, target_local_face = owners[0]
-        control = controls_by_cell.get(target_cell_id)
-        if control is None:
-            raise ValueError("Mapped PLC target boundary facet has no exact root-cell control.")
+        if not 1 <= len(owners) <= 2:
+            raise ValueError(
+                "A mapped PLC boundary facet must have one or two target cell/local-face owners."
+            )
+        # The query retains one root-face side per material interface; witness
+        # the target owner whose exact root cell is that selected side.
+        selected_root_cells = {
+            int(query.polygon_root_cell_global_ids[query.chart_row(2, chart_id)])
+            for (_, key), chart_ids_for_face in charts_by_face_key.items()
+            if key == source_key
+            for chart_id in chart_ids_for_face
+        }
+        side_owners = tuple(
+            owner
+            for owner in owners
+            if owner[0] in controls_by_cell
+            and controls_by_cell[owner[0]].source_cell_id in selected_root_cells
+        )
+        if len(side_owners) != 1:
+            raise ValueError(
+                "A mapped PLC boundary facet must have one target owner on its selected root side."
+            )
+        target_cell_id, target_local_face = side_owners[0]
+        control = controls_by_cell[target_cell_id]
         target_local_vertices = target_local_faces[target_local_face]
         target_reference_corners = tuple(
             target_reference_vertices[index] for index in target_local_vertices
@@ -660,16 +737,22 @@ def mapped_plc_boundary_chart_witness(
         )
         target_area = abs(signed_double_area(target_uv))
         if target_area == 0:
-            raise ValueError("Mapped PLC target boundary facet is degenerate in its exact root-face chart.")
+            raise ValueError(
+                "Mapped PLC target boundary facet is degenerate in its exact root-face chart."
+            )
         candidates = charts_by_face_key.get((root_face_id, source_key), ())
         if not candidates:
-            raise ValueError("Mapped PLC target facet has no matching exact source chart.")
+            raise ValueError(
+                "Mapped PLC target facet has no matching exact source chart."
+            )
         covered_area = Fraction(0)
         for chart_id in candidates:
             chart_row = query.chart_row(2, chart_id)
             if (
-                int(query.polygon_root_cell_global_ids[chart_row]) != control.source_cell_id
-                or int(query.polygon_root_local_face_indices[chart_row]) != root_local_face
+                int(query.polygon_root_cell_global_ids[chart_row])
+                != control.source_cell_id
+                or int(query.polygon_root_local_face_indices[chart_row])
+                != root_local_face
             ):
                 continue
             source_uv = tuple(query.chart_face_uv(chart_id))
@@ -682,7 +765,11 @@ def mapped_plc_boundary_chart_witness(
             covered_area += area
             source_entity_id, occurrence = query.chart_source_key(2, chart_id)
             for triangle_row in range(1, len(clipped) - 1):
-                uv_triangle = (clipped[0], clipped[triangle_row], clipped[triangle_row + 1])
+                uv_triangle = (
+                    clipped[0],
+                    clipped[triangle_row],
+                    clipped[triangle_row + 1],
+                )
                 target_parameters = tuple(
                     triangle_parameters(point, target_uv) for point in uv_triangle
                 )
@@ -693,9 +780,15 @@ def mapped_plc_boundary_chart_witness(
                     tuple(
                         target_reference_corners[0][axis]
                         + target_parameters[point_row][0]
-                        * (target_reference_corners[1][axis] - target_reference_corners[0][axis])
+                        * (
+                            target_reference_corners[1][axis]
+                            - target_reference_corners[0][axis]
+                        )
                         + target_parameters[point_row][1]
-                        * (target_reference_corners[2][axis] - target_reference_corners[0][axis])
+                        * (
+                            target_reference_corners[2][axis]
+                            - target_reference_corners[0][axis]
+                        )
                         for axis in range(3)
                     )
                     for point_row in range(3)
@@ -721,7 +814,9 @@ def mapped_plc_boundary_chart_witness(
                     ),
                 )
                 if target_orientation == 0 or source_orientation == 0:
-                    raise ValueError("Mapped PLC source/target chart intersection is degenerate.")
+                    raise ValueError(
+                        "Mapped PLC source/target chart intersection is degenerate."
+                    )
                 chart_cell_ids.append(target_cell_id)
                 chart_face_ids.append(int(target_face_ids[face_row]))
                 chart_local_faces.append(target_local_face)
@@ -730,17 +825,27 @@ def mapped_plc_boundary_chart_witness(
                 source_entity_ids.append(source_entity_id)
                 occurrence_paths.append(occurrence)
                 source_parameter_rows.append(source_parameters)
-                orientations.append(1 if target_orientation * source_orientation > 0 else -1)
+                orientations.append(
+                    1 if target_orientation * source_orientation > 0 else -1
+                )
         if covered_area != target_area:
-            raise ValueError("Mapped PLC source charts do not exactly partition a recovered target facet.")
+            raise ValueError(
+                "Mapped PLC source charts do not exactly partition a recovered target facet."
+            )
     if not chart_cell_ids:
         raise ValueError("Mapped PLC boundary query produced no target chart witnesses.")
     target_reference_values = np.asarray(
-        [[[float(value) for value in point] for point in row] for row in target_reference_rows],
+        [
+            [[float(value) for value in point] for point in row]
+            for row in target_reference_rows
+        ],
         dtype=np.float64,
     )
     source_parameter_values = np.asarray(
-        [[[float(value) for value in point] for point in row] for row in source_parameter_rows],
+        [
+            [[float(value) for value in point] for point in row]
+            for row in source_parameter_rows
+        ],
         dtype=np.float64,
     )
     return SourceBoundaryChartWitness(
@@ -764,6 +869,8 @@ def mapped_plc_boundary_chart_witness(
         source_parameter_rational_tokens=rational_chart_tokens(source_parameter_rows),
         orientations=np.asarray(orientations, dtype=np.int8),
     )
+
+
 @checked
 def mapped_plc_point_witness(
     source: NativePlcSource,
@@ -775,14 +882,24 @@ def mapped_plc_point_witness(
 ) -> SourceBoundaryPointWitness:
     """Bind preserved PLC corners to their exact mapped-root source keys."""
     if source.mapped_domain is None or query.authority is not source:
-        raise ValueError("Mapped PLC point witnesses require their original mapped source authority.")
+        raise ValueError(
+            "Mapped PLC point witnesses require their original mapped source authority."
+        )
     query.require_current()
     entity_ids = np.asarray(source_vertex_entity_ids, dtype=np.int64)
-    if entity_ids.ndim != 1 or entity_ids.size == 0 or np.unique(entity_ids).size != entity_ids.size:
-        raise ValueError("Mapped PLC point witness requires unique authored source vertex IDs.")
+    if (
+        entity_ids.ndim != 1
+        or entity_ids.size == 0
+        or np.unique(entity_ids).size != entity_ids.size
+    ):
+        raise ValueError(
+            "Mapped PLC point witness requires unique authored source vertex IDs."
+        )
     source_rows_by_key = {
         source.source_entity_key_for_scope(0, int(identifier)): row
-        for row, identifier in enumerate(np.asarray(source.complex.vertex_entity_ids, dtype=np.int64))
+        for row, identifier in enumerate(
+            np.asarray(source.complex.vertex_entity_ids, dtype=np.int64)
+        )
     }
     input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
     target_vertex_ids = np.asarray(construction.mesh.vertex_global_ids, dtype=np.int64)
@@ -794,13 +911,19 @@ def mapped_plc_point_witness(
     for key in source_keys:
         source_row = source_rows_by_key.get(key)
         if source_row is None:
-            raise ValueError("Mapped PLC corner key is absent from its authored vertex bank.")
+            raise ValueError(
+                "Mapped PLC corner key is absent from its authored vertex bank."
+            )
         matches = np.flatnonzero(input_vertices == source_row)
         if matches.size != 1:
-            raise ValueError("Every mapped PLC source corner must remain one target vertex.")
+            raise ValueError(
+                "Every mapped PLC source corner must remain one target vertex."
+            )
         target_ids.append(int(target_vertex_ids[int(matches[0])]))
     if len(set(target_ids)) != len(target_ids):
-        raise ValueError("Distinct mapped PLC source corners cannot share a target vertex ID.")
+        raise ValueError(
+            "Distinct mapped PLC source corners cannot share a target vertex ID."
+        )
     return SourceBoundaryPointWitness(
         mesh_id=construction.mesh.mesh_id,
         geometry_id=cell_geometry_id(geometry),
@@ -812,6 +935,8 @@ def mapped_plc_point_witness(
         source_entity_ids=tuple(key for key, _ in source_keys),
         occurrence_paths=tuple(path for _, path in source_keys),
     )
+
+
 @checked
 def mapped_plc_edge_chart_witness(
     source: NativePlcSource,
@@ -823,19 +948,32 @@ def mapped_plc_edge_chart_witness(
     """Bind recovered PLC segments to exact mapped source-curve intervals."""
     domain = source.mapped_domain
     if domain is None or source.root_relation is None or query.authority is not source:
-        raise ValueError("Mapped PLC edge witnesses require their original root-bound source authority.")
+        raise ValueError(
+            "Mapped PLC edge witnesses require their original root-bound source authority."
+        )
     query.require_current()
     mesh = construction.mesh
-    if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind not in {"simplex:3", "tetrahedron"}:
-        raise ValueError("Mapped PLC edge witnesses require one tetrahedral target block.")
+    if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind not in {
+        "simplex:3",
+        "tetrahedron",
+    }:
+        raise ValueError(
+            "Mapped PLC edge witnesses require one tetrahedral target block."
+        )
     block = mesh.blocks[0]
     controls_by_cell = {
         control.target_cell_id: control
         for control in construction.reference_chart_controls
     }
-    target_cell_ids = tuple(int(value) for value in np.asarray(block.global_ids, dtype=np.int64))
-    if len(controls_by_cell) != len(target_cell_ids) or set(controls_by_cell) != set(target_cell_ids):
-        raise ValueError("Mapped PLC edge witnesses need exact root controls for every target cell.")
+    target_cell_ids = tuple(
+        int(value) for value in np.asarray(block.global_ids, dtype=np.int64)
+    )
+    if len(controls_by_cell) != len(target_cell_ids) or set(controls_by_cell) != set(
+        target_cell_ids
+    ):
+        raise ValueError(
+            "Mapped PLC edge witnesses need exact root controls for every target cell."
+        )
     target_topology = reference_cell_topology(block.cell_kind)
     target_local_edges = tuple(
         tuple(int(value) for value in edge) for edge in target_topology.entities[1]
@@ -849,11 +987,15 @@ def mapped_plc_edge_chart_witness(
     target_cell_edge_rows, _ = volume_cell_entity_rows(
         mesh, np.asarray(target_cell_ids, dtype=np.int64)
     )
-    target_cell_row_by_id = {identifier: row for row, identifier in enumerate(target_cell_ids)}
+    target_cell_row_by_id = {
+        identifier: row for row, identifier in enumerate(target_cell_ids)
+    }
     target_edge_owners: dict[int, list[tuple[int, int]]] = {}
     for target_cell_id, target_row in target_cell_row_by_id.items():
         for local_edge, edge_row in enumerate(target_cell_edge_rows[target_row].tolist()):
-            target_edge_owners.setdefault(int(edge_row), []).append((target_cell_id, local_edge))
+            target_edge_owners.setdefault(int(edge_row), []).append(
+                (target_cell_id, local_edge)
+            )
 
     source_keys = {
         source.source_entity_key_for_scope(1, int(entity_id))
@@ -864,7 +1006,9 @@ def mapped_plc_edge_chart_witness(
     for chart_id in query.edge_chart_ids:
         key = query.chart_source_key(1, chart_id)
         if key not in source_keys:
-            raise ValueError("Mapped PLC edge query chart is not bound to its source entity bank.")
+            raise ValueError(
+                "Mapped PLC edge query chart is not bound to its source entity bank."
+            )
         charts_by_key.setdefault(key, []).append(chart_id)
 
     root_mesh = domain.reference_mesh
@@ -887,7 +1031,10 @@ def mapped_plc_edge_chart_witness(
         /,
     ) -> tuple[tuple[Fraction, ...], ...]:
         return tuple(
-            tuple(value if isinstance(value, Fraction) else Fraction(value) for value in point)
+            tuple(
+                value if isinstance(value, Fraction) else Fraction(value)
+                for value in point
+            )
             for point in root_reference_geometry.evaluate_exact(
                 root_mesh,
                 np.asarray((cell_id,), dtype=np.int64),
@@ -895,9 +1042,7 @@ def mapped_plc_edge_chart_witness(
             )[0]
         )
 
-    def belongs_to_root_stratum(
-        cell_id: int, dimension: int, entity_id: int, /
-    ) -> bool:
+    def belongs_to_root_stratum(cell_id: int, dimension: int, entity_id: int, /) -> bool:
         if dimension == 3:
             return cell_id == entity_id
         root_row = root_cell_rows.get(cell_id)
@@ -921,12 +1066,9 @@ def mapped_plc_edge_chart_witness(
         result = []
         for point in points:
             parameter = (point[axis] - first[axis]) / delta[axis]
-            if (
-                not 0 <= parameter <= 1
-                or any(
-                    first[other] + parameter * delta[other] != point[other]
-                    for other in range(len(delta))
-                )
+            if not 0 <= parameter <= 1 or any(
+                first[other] + parameter * delta[other] != point[other]
+                for other in range(len(delta))
             ):
                 return None
             result.append(parameter)
@@ -942,28 +1084,41 @@ def mapped_plc_edge_chart_witness(
     source_parameter_rows: list[tuple[tuple[Fraction, ...], ...]] = []
     orientations: list[int] = []
     intervals_by_chart: dict[str, list[tuple[Fraction, Fraction]]] = {}
-    if (
-        len(construction.segments) != len(construction.segment_source_ids)
-        or len(construction.segment_source_ids) != len(construction.segment_source_occurrence_paths)
+    if len(construction.segments) != len(construction.segment_source_ids) or len(
+        construction.segment_source_ids
+    ) != len(construction.segment_source_occurrence_paths):
+        raise ValueError(
+            "Recovered PLC segment source keys must align with actual target edges."
+        )
+    for output_edge_row, edge_vertices in enumerate(
+        np.asarray(construction.segments, dtype=np.int64)
     ):
-        raise ValueError("Recovered PLC segment source keys must align with actual target edges.")
-    for output_edge_row, edge_vertices in enumerate(np.asarray(construction.segments, dtype=np.int64)):
         source_key = (
             construction.segment_source_ids[output_edge_row],
             construction.segment_source_occurrence_paths[output_edge_row],
         )
         if source_key not in source_keys:
-            raise ValueError("Recovered PLC segment names an absent authored source edge key.")
+            raise ValueError(
+                "Recovered PLC segment names an absent authored source edge key."
+            )
         if source_key not in selected_keys:
             continue
-        target_edge_row = target_edge_rows.get(frozenset(int(value) for value in edge_vertices))
+        target_edge_row = target_edge_rows.get(
+            frozenset(int(value) for value in edge_vertices)
+        )
         if target_edge_row is None:
-            raise ValueError("Recovered PLC segment is absent from target edge connectivity.")
+            raise ValueError(
+                "Recovered PLC segment is absent from target edge connectivity."
+            )
         owners = target_edge_owners.get(target_edge_row, ())
         if not owners:
-            raise ValueError("Recovered PLC segment has no target cell/local-edge incidence.")
+            raise ValueError(
+                "Recovered PLC segment has no target cell/local-edge incidence."
+            )
         candidates: list[
-            tuple[int, int, str, tuple[Fraction, Fraction], tuple[tuple[Fraction, ...], ...]]
+            tuple[
+                int, int, str, tuple[Fraction, Fraction], tuple[tuple[Fraction, ...], ...]
+            ]
         ] = []
         for target_cell_id, target_local_edge in owners:
             control = controls_by_cell[target_cell_id]
@@ -986,7 +1141,9 @@ def mapped_plc_edge_chart_witness(
                     control.source_cell_id, root_dimension, root_entity_id
                 ):
                     continue
-                if not belongs_to_root_stratum(root_cell_id, root_dimension, root_entity_id):
+                if not belongs_to_root_stratum(
+                    root_cell_id, root_dimension, root_entity_id
+                ):
                     continue
                 source_reference_points = tuple(
                     tuple(Fraction.from_float(float(value)) for value in point)
@@ -994,7 +1151,9 @@ def mapped_plc_edge_chart_witness(
                         query.segment_root_reference_vertices[chart_row], dtype=np.float64
                     )
                 )
-                source_global_points = root_global_points(root_cell_id, source_reference_points)
+                source_global_points = root_global_points(
+                    root_cell_id, source_reference_points
+                )
                 parameters = line_parameters(
                     target_global_points,
                     source_global_points[0],
@@ -1011,12 +1170,18 @@ def mapped_plc_edge_chart_witness(
                         )
                     )
         if not candidates:
-            raise ValueError("Mapped PLC output edge has no exact authored root-curve chart.")
+            raise ValueError(
+                "Mapped PLC output edge has no exact authored root-curve chart."
+            )
         chart_ids_for_edge = {candidate[2] for candidate in candidates}
         if len(chart_ids_for_edge) != 1:
-            raise ValueError("Mapped PLC output edge is ambiguous across source curve charts.")
+            raise ValueError(
+                "Mapped PLC output edge is ambiguous across source curve charts."
+            )
         selected = min(candidates, key=lambda value: value[0])
-        target_cell_id, target_local_edge, chart_id, parameters, target_references = selected
+        target_cell_id, target_local_edge, chart_id, parameters, target_references = (
+            selected
+        )
         source_key = query.chart_source_key(1, chart_id)
         target_reference_rows.append(target_references)
         source_parameter_rows.append(((parameters[0],), (parameters[1],)))
@@ -1038,17 +1203,28 @@ def mapped_plc_edge_chart_witness(
             not ordered
             or ordered[0][0] != 0
             or ordered[-1][1] != 1
-            or any(left[1] != right[0] for left, right in zip(ordered, ordered[1:], strict=True))
+            or any(
+                left[1] != right[0]
+                for left, right in zip(ordered, ordered[1:], strict=True)
+            )
         ):
-            raise ValueError(f"Mapped output edges do not exhaust source curve chart {chart_id}.")
+            raise ValueError(
+                f"Mapped output edges do not exhaust source curve chart {chart_id}."
+            )
     if not chart_cell_ids:
         raise ValueError("Mapped PLC edge query produced no target chart witnesses.")
     target_reference_values = np.asarray(
-        [[[float(value) for value in point] for point in row] for row in target_reference_rows],
+        [
+            [[float(value) for value in point] for point in row]
+            for row in target_reference_rows
+        ],
         dtype=np.float64,
     )
     source_parameter_values = np.asarray(
-        [[[float(value) for value in point] for point in row] for row in source_parameter_rows],
+        [
+            [[float(value) for value in point] for point in row]
+            for row in source_parameter_rows
+        ],
         dtype=np.float64,
     )
     return SourceBoundaryChartWitness(
@@ -1072,6 +1248,8 @@ def mapped_plc_edge_chart_witness(
         source_parameter_rational_tokens=rational_chart_tokens(source_parameter_rows),
         orientations=np.asarray(orientations, dtype=np.int8),
     )
+
+
 @checked
 def mapped_plc_reference_map(
     source: NativePlcSource, construction: VolumeConstruction, /
@@ -1086,7 +1264,9 @@ def mapped_plc_reference_map(
         or not construction.reference_chart_controls
         or len(construction.mesh.blocks) != 1
     ):
-        raise ValueError("Mapped PLC reference maps require their complete current root-chart controls.")
+        raise ValueError(
+            "Mapped PLC reference maps require their complete current root-chart controls."
+        )
     block = construction.mesh.blocks[0]
     controls = tuple(construction.reference_chart_controls)
     target_ids = np.asarray(block.global_ids, dtype=np.int64)
@@ -1104,13 +1284,12 @@ def mapped_plc_reference_map(
         )
         or len({control.source_cell_kind for control in controls}) != 1
     ):
-        raise ValueError("Mapped PLC reference-map rows changed target, source, root, or occurrence identity.")
+        raise ValueError(
+            "Mapped PLC reference-map rows changed target, source, root, or occurrence identity."
+        )
     exact_vertices = tuple(control.source_reference_vertices for control in controls)
     numeric_vertices = np.asarray(
-        [
-            [[float(value) for value in point] for point in row]
-            for row in exact_vertices
-        ],
+        [[[float(value) for value in point] for point in row] for row in exact_vertices],
         dtype=np.float64,
     )
     return ReferenceCellMapWitnesses(
@@ -1124,6 +1303,8 @@ def mapped_plc_reference_map(
             tuple(control.arguments for control in controls)
         ),
     )
+
+
 __all__ = [
     "PhysicalPlcTetrahedra",
     "mapped_plc_boundary_chart_witness",
