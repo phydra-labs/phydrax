@@ -516,9 +516,12 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
 
     Trim sides are chart lines: rational lines or exact conic-root angle
     isolines, whose bounds are outward enclosures of the exact root. A seam
-    side may carry an integer native-period gauge over its line.
+    side may carry an integer native-period gauge over its line, and a side
+    may be an exact affine chart transport of a line, which is again a line;
+    a doubly periodic face (a full torus) is the rectangle of one period in
+    each direction traced by such sides.
     """
-    from ._boolean_core import PeriodicPCurve
+    from ._boolean_core import AffinePCurve, PeriodicPCurve
 
     geometry = model.geometry
     loops = geometry.face_loops[face]
@@ -535,8 +538,8 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
         edge = geometry.coedge_edges[coedge]
         curve = geometry.pcurves[coedge]
         line = curve
-        while isinstance(line, PeriodicPCurve):
-            line = line.source_curve
+        while isinstance(line, (PeriodicPCurve, AffinePCurve)):
+            line = line.source_curve if isinstance(line, PeriodicPCurve) else line.curve
         if (
             not isinstance(line, (LineCurve, ExactLineCurve, ConicRootLinePCurve))
             or curve.ambient_dimension != 2
