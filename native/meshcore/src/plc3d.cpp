@@ -4952,8 +4952,15 @@ class PlcRecoveryBuilder {
       std::vector<Proposal> wrapped;
       std::vector<Proposal> remainder;
       std::size_t nodes = 0;
+      const auto count_wrap = [&]() {
+        PlcSuppressionSearch& evidence = candidate_.suppression_search;
+        ++evidence.wraps;
+        evidence.wrap_cells += static_cast<int64_t>(nodes);
+        evidence.max_wrap_cells = std::max(evidence.max_wrap_cells, static_cast<int64_t>(nodes));
+      };
       const bool wrap_ok = wrap_cavity(cavity, kPlaceholder, {}, false, wrapped, nodes,
                                        partial_only ? &remainder : nullptr, lineage);
+      count_wrap();
       if (wrap_ok) {
         proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
         done = true;
@@ -5074,8 +5081,12 @@ class PlcRecoveryBuilder {
         added.push_back(vertex);
         extra.push_back(vertex);
       }
-      if (!extra.empty() &&
-          wrap_cavity(cavity, kPlaceholder, extra, false, wrapped, nodes, nullptr, lineage)) {
+      nodes = 0;
+      const bool extra_ok =
+          !extra.empty() &&
+          wrap_cavity(cavity, kPlaceholder, extra, false, wrapped, nodes, nullptr, lineage);
+      if (!extra.empty()) count_wrap();
+      if (extra_ok) {
         proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
         done = true;
         return PHX_MC_OK;

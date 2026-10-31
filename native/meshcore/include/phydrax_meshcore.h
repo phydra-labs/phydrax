@@ -1167,11 +1167,12 @@ PHX_MC_API int32_t phx_mc_plc3d_failure(
     const phx_mc_plc3d_result* result, int32_t* reason, int32_t* first_kind,
     int64_t* first, int32_t* second_kind, int64_t* second, double* certified_deviation,
     double* declared_bound);
-// Steiner-suppression search evidence: values[0..8] = wedges searched,
+// Steiner-suppression search evidence: values[0..11] = wedges searched,
 // wedges filled, states expanded, most states in one wedge, largest searched
 // wedge (cells), wedges filled after merging with neighbouring cells, most
 // merged layers, wedges whose region was exhausted unfilled, largest
-// exhausted region (cells). Available after a refusal too.
+// exhausted region (cells), constrained Delaunay wraps run, cells they laid,
+// most cells laid by one wrap. Available after a refusal too.
 PHX_MC_API int32_t phx_mc_plc3d_suppression_search(
     const phx_mc_plc3d_result* result, int64_t* values);
 PHX_MC_API void phx_mc_plc3d_free(phx_mc_plc3d_result* result);

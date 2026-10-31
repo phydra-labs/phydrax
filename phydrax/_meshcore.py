@@ -2482,7 +2482,9 @@ class PlcSuppressionSearch(NamedTuple):
     their own are merged with neighbouring cells layer by layer: wedges
     filled that way and the most layers one needed, and wedges whose
     constraint-delimited region was exhausted without a fill with the
-    largest such region in cells.
+    largest such region in cells. Last, the gift-wrapped constrained
+    Delaunay fills: how many ran and the cells they laid in total and at
+    most in one fill (one step per cell), a deterministic work measure.
     """
 
     searches: int
@@ -2494,6 +2496,9 @@ class PlcSuppressionSearch(NamedTuple):
     max_merge_layers: int
     exhausted: int
     max_exhausted_cells: int
+    wraps: int
+    wrap_cells: int
+    max_wrap_cells: int
 
 
 class PlcSourceData(NamedTuple):
@@ -4873,7 +4878,7 @@ def _plc3d_build(
             ),
             "plc3d_failure",
         )
-        search = np.zeros((9,), dtype=np.int64)
+        search = np.zeros((len(PlcSuppressionSearch._fields),), dtype=np.int64)
         _raise_for_call(
             library["phx_mc_plc3d_suppression_search"](handle, search.ctypes.data),
             "plc3d_suppression_search",

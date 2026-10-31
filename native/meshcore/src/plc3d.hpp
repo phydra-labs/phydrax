@@ -119,7 +119,9 @@ struct PlcSourceRefusal {
 // the most layers one needed, and wedges whose constraint-delimited region
 // was exhausted without a fill with the largest such region in cells (a
 // suppression refusal follows only such exhaustion or a wedge that cannot
-// merge at all).
+// merge at all). Last, the work of the gift-wrapped constrained Delaunay
+// fills (complete, stopped at a stuck side, or partial): how many ran, the
+// cells they laid in total and at most in one fill (each cell is one step).
 struct PlcSuppressionSearch {
   int64_t searches = 0;
   int64_t fills = 0;
@@ -130,6 +132,9 @@ struct PlcSuppressionSearch {
   int64_t max_merge_layers = 0;
   int64_t exhausted = 0;
   int64_t max_exhausted_cells = 0;
+  int64_t wraps = 0;
+  int64_t wrap_cells = 0;
+  int64_t max_wrap_cells = 0;
 };
 
 // Recovered complex: input point ids are preserved and new vertices follow.
