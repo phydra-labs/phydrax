@@ -4205,39 +4205,19 @@ def _retarget_source_boundary_chart_witness(
                         }
                     )
 
+    # An implicit root chart is the target face itself lifted into the zero set
+    # of its root cell: every row keeps its ancestor's root cell and edges with
+    # the standard root parameters, oriented like its target reference face.
+    implicit = np.asarray(witness.implicit_cell_keys).size > 0
+    standard_chart = tuple(
+        tuple(Fraction(value) for value in point) for point in ((0, 0), (1, 0), (0, 1))
+    )
+
     def merged_pieces(rows: list[dict[str, Any]], /) -> list[dict[str, Any]]:
         """Merge the child pieces of one restored parent entity into its chart."""
         if len(rows) < 2 or any("parent_corners" not in value for value in rows):
             return rows
         corners = rows[0]["parent_corners"]
-        point_parameters: dict[tuple[Fraction, ...], tuple[Fraction, ...]] = {}
-        for value in rows:
-            for point, parameter in zip(
-                value["reference"], value["parameters_exact"], strict=True
-            ):
-                previous = point_parameters.setdefault(tuple(point), tuple(parameter))
-                if previous != tuple(parameter):
-                    raise ValueError(
-                        "Coarsened source chart pieces disagree at a shared point."
-                    )
-        if any(corner not in point_parameters for corner in corners):
-            raise ValueError("A restored chart entity corner has no source chart piece.")
-        corner_parameters = tuple(point_parameters[corner] for corner in corners)
-        for point, parameter in point_parameters.items():
-            weights = _simplex_chart_weights(point, corners, chart_dimension)
-            if weights is None or parameter != tuple(
-                sum(
-                    (
-                        weights[corner] * corner_parameters[corner][axis]
-                        for corner in range(chart_dimension + 1)
-                    ),
-                    Fraction(0),
-                )
-                for axis in range(chart_dimension)
-            ):
-                raise ValueError(
-                    "Coarsened source chart pieces are not one exact affine parent chart."
-                )
         local_entity = rows[0]["local_entity"]
         if chart_dimension == 1:
             target_orientation = 1
@@ -4252,11 +4232,53 @@ def _retarget_source_boundary_chart_witness(
             target_orientation = _chart_orientation(
                 np.asarray(target_chart[0], dtype=np.float64), 2
             )
-        orientation = (
-            _chart_orientation(corner_parameters, chart_dimension) * target_orientation
-        )
-        if orientation == 0 or any(value["orientation"] != orientation for value in rows):
-            raise ValueError("Coarsened source chart pieces disagree on orientation.")
+        if implicit:
+            covered = {tuple(point) for value in rows for point in value["reference"]}
+            if any(corner not in covered for corner in corners):
+                raise ValueError(
+                    "A restored chart entity corner has no source chart piece."
+                )
+            corner_parameters = standard_chart
+            orientation = target_orientation
+        else:
+            point_parameters: dict[tuple[Fraction, ...], tuple[Fraction, ...]] = {}
+            for value in rows:
+                for point, parameter in zip(
+                    value["reference"], value["parameters_exact"], strict=True
+                ):
+                    previous = point_parameters.setdefault(tuple(point), tuple(parameter))
+                    if previous != tuple(parameter):
+                        raise ValueError(
+                            "Coarsened source chart pieces disagree at a shared point."
+                        )
+            if any(corner not in point_parameters for corner in corners):
+                raise ValueError(
+                    "A restored chart entity corner has no source chart piece."
+                )
+            corner_parameters = tuple(point_parameters[corner] for corner in corners)
+            for point, parameter in point_parameters.items():
+                weights = _simplex_chart_weights(point, corners, chart_dimension)
+                if weights is None or parameter != tuple(
+                    sum(
+                        (
+                            weights[corner] * corner_parameters[corner][axis]
+                            for corner in range(chart_dimension + 1)
+                        ),
+                        Fraction(0),
+                    )
+                    for axis in range(chart_dimension)
+                ):
+                    raise ValueError(
+                        "Coarsened source chart pieces are not one exact affine parent chart."
+                    )
+            orientation = (
+                _chart_orientation(corner_parameters, chart_dimension)
+                * target_orientation
+            )
+            if orientation == 0 or any(
+                value["orientation"] != orientation for value in rows
+            ):
+                raise ValueError("Coarsened source chart pieces disagree on orientation.")
         merged = dict(rows[0])
         merged.update(
             reference=corners,
@@ -4316,6 +4338,18 @@ def _retarget_source_boundary_chart_witness(
             value["vertices"],
         )
     )
+    if implicit:
+        rows_to_publish = [
+            {
+                **value,
+                "parameters_exact": standard_chart,
+                "parameters": np.asarray(standard_chart, dtype=np.float64),
+                # The stored sign is chart orientation times target orientation.
+                "orientation": value["orientation"]
+                * _chart_orientation(value["parameters_exact"], chart_dimension),
+            }
+            for value in rows_to_publish
+        ]
     source_rows = [int(value["source_row"]) for value in rows_to_publish]
     implicit_cells = np.asarray(witness.implicit_cell_keys, dtype=np.int64)
     implicit_edges = np.asarray(witness.implicit_root_edge_keys, dtype=np.int64)
