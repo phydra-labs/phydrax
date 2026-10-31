@@ -274,9 +274,15 @@ def test_box_whole_boundary_wall_grows_certified_layers_around_a_tetrahedral_cor
     assert _finite_element_volume(result.mesh) == pytest.approx(1.0, abs=1.0e-12)
     assert _enclosed_volume(result.mesh) == pytest.approx(1.0, abs=1.0e-12)
     # Columns diverge at the sharp edges, so their side faces are bilinear;
-    # polyhedral FV refuses them instead of approximating a planar face.
-    with pytest.raises(ValueError, match="planarity certificate"):
-        prepare_polyhedral_finite_volume_geometry(result.mesh)
+    # polyhedral FV decomposes those warped faces about their vertex centroids
+    # and both neighbors integrate over the same triangles.
+    finite_volume = prepare_polyhedral_finite_volume_geometry(result.mesh)
+    warped = np.count_nonzero(finite_volume.face_quadrature_valid, axis=1) == 4
+    assert np.any(warped)
+    cell_volumes = np.asarray(finite_volume.cell_volumes, dtype=np.float64)
+    assert np.all(cell_volumes > 0.0)
+    assert float(np.sum(cell_volumes)) == pytest.approx(1.0, abs=1.0e-12)
+    assert float(np.max(finite_volume.closure_residual)) <= 1.0e-14
 
 
 def test_box_bottom_wall_refuses_a_schedule_that_meets_the_adjacent_sides() -> None:
