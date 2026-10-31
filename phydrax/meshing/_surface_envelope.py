@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from numbers import Integral
-from typing import final, TYPE_CHECKING
+from typing import final
 
 import equinox as eqx
 import numpy as np
@@ -411,15 +411,6 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
     scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
     edges: np.ndarray
-
-    if not TYPE_CHECKING:
-
-        def __getattribute__(self, name: str, /) -> object:
-            # Equinox binds each method as a BoundMethod pytree whose construction
-            # flattens the whole receiver (original source, domain, PLC carrier).
-            # PWL boundary queries resolve keys once per facet, so those loops
-            # became quadratic. Methods bind as plain Python methods.
-            return object.__getattribute__(self, name)
 
     @checked
     def __init__(

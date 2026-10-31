@@ -2394,14 +2394,6 @@ class NativePlcSource(StrictModule, NonTrainableState):
     scope_entity_key_banks: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...]
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
 
-    if not TYPE_CHECKING:
-
-        def __getattribute__(self, name: str, /) -> object:
-            # Equinox binds each method as a BoundMethod pytree whose construction
-            # flattens the whole receiver, so per-entity loops over its methods
-            # became quadratic. Methods bind as plain Python methods.
-            return object.__getattribute__(self, name)
-
     @checked
     def __init__(
         self,
