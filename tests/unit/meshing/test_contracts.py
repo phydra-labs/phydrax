@@ -432,6 +432,94 @@ def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> 
         )
 
 
+def _advancing(wall: Any, volume_scope: Any) -> Any:
+    return phx.meshing.BoundaryLayerControl(
+        wall,
+        phx.meshing.LayerSchedule((0.05, 0.075)),
+        route=phx.meshing.BoundaryLayerRoute.ADVANCING,
+        volume_scope=volume_scope,
+    )
+
+
+def _face_bounded_volume_spec(boundary_scope: Any, control: Any) -> Any:
+    return phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3,
+            3,
+            phx.meshing.CellFamilyPolicy(
+                required=("prism", "tetrahedron"), allow_mixed=True
+            ),
+        ),
+        boundary_scope,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(phx.meshing.UniformSizeControl(boundary_scope, 0.2),),
+        layer_controls=(control,),
+    )
+
+
+def test_face_bounded_volume_spec_authors_layers_in_source_terms() -> None:
+    boundary_scope = _scope(2, (10, 20, 30))
+    partial = _advancing(_scope(2, (20,)), _scope(3, (40,)))
+    whole = _advancing(boundary_scope, _scope(3, (40,)))
+
+    assert _face_bounded_volume_spec(boundary_scope, partial).layer_controls == (partial,)
+    assert _face_bounded_volume_spec(boundary_scope, whole).layer_controls == (whole,)
+
+
+def test_face_bounded_volume_spec_rejects_foreign_or_misdimensioned_layers() -> None:
+    boundary_scope = _scope(2, (10, 20, 30))
+    volume_scope = _scope(3, (40,))
+
+    with pytest.raises(ValueError, match="contained in the source boundary scope"):
+        _face_bounded_volume_spec(
+            boundary_scope, _advancing(_scope(2, (20, 50)), volume_scope)
+        )
+    foreign_set = phx.meshing.MeshingScope(
+        "shape",
+        "revision-1",
+        phx.meshing.MeshingEntityKind.GEOMETRY,
+        2,
+        "other-face-set",
+        np.asarray((20,), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="contained in the source boundary scope"):
+        _face_bounded_volume_spec(boundary_scope, _advancing(foreign_set, volume_scope))
+    with pytest.raises(ValueError, match="source-geometry terms"):
+        _face_bounded_volume_spec(
+            boundary_scope,
+            _advancing(
+                _scope(2, (20,), revision="revision-2"),
+                _scope(3, (40,), revision="revision-2"),
+            ),
+        )
+    mesh_wall = phx.meshing.MeshingScope(
+        "shape",
+        "revision-1",
+        phx.meshing.MeshingEntityKind.MESH,
+        2,
+        "entities-2",
+        np.asarray((20,), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="source-geometry terms"):
+        _face_bounded_volume_spec(
+            boundary_scope,
+            phx.meshing.BoundaryLayerControl(
+                mesh_wall,
+                phx.meshing.LayerSchedule((0.05,)),
+                route=phx.meshing.BoundaryLayerRoute.ADVANCING,
+            ),
+        )
+    with pytest.raises(ValueError, match="need a solid scope"):
+        _face_bounded_volume_spec(
+            boundary_scope,
+            phx.meshing.BoundaryLayerControl(
+                _scope(1, (20,)),
+                phx.meshing.LayerSchedule((0.05,)),
+                route=phx.meshing.BoundaryLayerRoute.PROVIDER,
+            ),
+        )
+
+
 def test_meshing_failure_evidence_reaches_trace_diagnostic() -> None:
     evidence = phx.meshing.MeshingFailureEvidence(
         requested_quantities={"minimum_quality": 0.8, "maximum_skew": 0.2},

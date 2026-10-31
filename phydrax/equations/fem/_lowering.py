@@ -838,20 +838,13 @@ def compile_workset_program(
                     discretization.local_field_binding(field).layout_id
                     for field in fields
                 ),
-                geometry_action_id=canonical_fingerprint(
-                    {
-                        "kind": "finite-element-geometry-actions",
-                        "coordinate_element": coordinate_element.element_id,
-                        "block": block.name,
-                        "neighbor_coordinate_element": (
-                            None
-                            if neighbor_coordinate_element is None
-                            else neighbor_coordinate_element.element_id
-                        ),
-                        "neighbor_block": (
-                            None if neighbor_block is None else neighbor_block.name
-                        ),
-                    }
+                geometry_action_id=_geometry_action_id(
+                    coordinate_element.element_id,
+                    block.name,
+                    None
+                    if neighbor_coordinate_element is None
+                    else neighbor_coordinate_element.element_id,
+                    None if neighbor_block is None else neighbor_block.name,
                 ),
                 coefficient_layout_ids=_coefficient_layout_ids(action),
                 precision_id=discretization.precision_policy.policy_id,
@@ -987,12 +980,90 @@ def compile_finite_element_hp_mortar_workset(
     )
 
 
+def _geometry_action_id(
+    coordinate_element_id: str,
+    block_name: str,
+    neighbor_coordinate_element_id: str | None,
+    neighbor_block_name: str | None,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "finite-element-geometry-actions",
+            "coordinate_element": coordinate_element_id,
+            "block": block_name,
+            "neighbor_coordinate_element": neighbor_coordinate_element_id,
+            "neighbor_block": neighbor_block_name,
+        }
+    )
+
+
+def _declared_kernel_identities(
+    action: FiniteElementAction,
+    discretization: FiniteElementDiscretization,
+    /,
+    *,
+    local_kernel: str,
+    realization: str,
+) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Kernel identities of one action from its form and space declaration.
+
+    An owner with no locally resident entities for an action (a real empty owner
+    after repartition) has no worksets to read identities from; the per-block
+    reference, field layout and geometry identities are the same ones every
+    resident block would lower to.
+    """
+    domain = _domain_for_action(action, discretization)
+    fields = tuple(
+        dict.fromkeys(
+            _output_fields(action)
+            + _input_fields(action)
+            + _coefficient_fields(action, discretization)
+        )
+    )
+    output_field_index = discretization._field_index(_output_fields(action)[0])
+    strategies: set[str] = set()
+    references: list[str] = []
+    geometries: list[str] = []
+    for block_index, block in enumerate(discretization.mesh.blocks):
+        reference, reference_id = _prepared_reference(
+            action,
+            block,
+            discretization.elements[output_field_index][block_index],
+            discretization.precision_policy,
+            domain.kind,
+        )
+        strategies.add(
+            _select_local_kernel(
+                local_kernel, realization, action, domain.kind, reference
+            )
+        )
+        references.append(reference_id)
+        geometries.append(
+            _geometry_action_id(
+                discretization.coordinate_elements[block_index].element_id,
+                block.name,
+                None,
+                None,
+            )
+        )
+    ordered = tuple(sorted(strategies))
+    strategy = ordered[0] if len(ordered) == 1 else f"mixed[{','.join(ordered)}]"
+    layouts = tuple(
+        discretization.local_field_binding(field).layout_id for field in fields
+    )
+    return strategy, tuple(references), layouts, tuple(geometries)
+
+
 def kernel_table_from_form(
     form: Any,
     ir: LocalActionIR,
     workset_program: WorksetProgram,
     discretization: AbstractPreparedLocalDiscretization,
     /,
+    *,
+    local_kernel: str = "auto",
+    realization: str = "sparse",
 ) -> KernelTable:
     if type(form).__name__ != "FiniteElementForm":
         raise TypeError("Expected FiniteElementForm.")
@@ -1005,27 +1076,44 @@ def kernel_table_from_form(
             for workset in workset_program.worksets
             if action_index in workset.action_index_values
         )
-        strategies = tuple(sorted(set(value.local_kernel for value in signatures)))
-        strategy = (
-            strategies[0] if len(strategies) == 1 else f"mixed[{','.join(strategies)}]"
-        )
+        if signatures:
+            strategies = tuple(sorted(set(value.local_kernel for value in signatures)))
+            strategy = (
+                strategies[0]
+                if len(strategies) == 1
+                else f"mixed[{','.join(strategies)}]"
+            )
+            reference_ids = tuple(
+                reference
+                for value in signatures
+                for reference in value.reference_action_ids
+            )
+            layout_ids = tuple(
+                layout for value in signatures for layout in value.field_layout_ids
+            )
+            geometry_ids = tuple(value.geometry_action_id for value in signatures)
+        elif isinstance(discretization, FiniteElementDiscretization):
+            strategy, reference_ids, layout_ids, geometry_ids = (
+                _declared_kernel_identities(
+                    action,
+                    discretization,
+                    local_kernel=str(local_kernel),
+                    realization=str(realization),
+                )
+            )
+        else:
+            raise ValueError(
+                "Prepared-local actions without worksets have no declared kernel identities."
+            )
         bindings.append(
             KernelBinding(
                 action.action_id,
                 descriptor.action_kind,
                 evaluator,
                 local_kernel=strategy,
-                reference_action_ids=tuple(
-                    reference
-                    for value in signatures
-                    for reference in value.reference_action_ids
-                ),
-                field_layout_ids=tuple(
-                    layout for value in signatures for layout in value.field_layout_ids
-                ),
-                geometry_action_ids=tuple(
-                    value.geometry_action_id for value in signatures
-                ),
+                reference_action_ids=reference_ids,
+                field_layout_ids=layout_ids,
+                geometry_action_ids=geometry_ids,
                 coefficient_layout_ids=_coefficient_layout_ids(action),
                 precision_id=cast(Any, discretization.precision_policy).policy_id,
                 ir_semantics_id=ir.actions[action_index].action_id,

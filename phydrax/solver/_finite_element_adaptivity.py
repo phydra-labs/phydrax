@@ -1109,9 +1109,14 @@ def partition_owner_local_finite_element_graph(
         execution_group,
         axis_name=axis_name,
     )
+    if not result.feasible:
+        raise ValueError(
+            "FE graph partition did not reach the plan's part capacities; "
+            f"part weights {np.asarray(result.part_weights).tolist()} exceed "
+            f"capacities {np.asarray(result.capacity_weights).tolist()}."
+        )
     if (
-        not result.feasible
-        or not np.array_equal(np.asarray(result.entity_ids, dtype=np.int64), owned_ids)
+        not np.array_equal(np.asarray(result.entity_ids, dtype=np.int64), owned_ids)
         or np.asarray(result.owners).shape != owned_ids.shape
         or result.plan_id != plan.plan_id
     ):

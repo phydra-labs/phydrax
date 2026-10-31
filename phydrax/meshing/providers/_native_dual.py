@@ -519,21 +519,17 @@ def _entity_vertex_rows(mesh: CellMesh, dimension: int, /) -> np.ndarray:
         rows = np.asarray(connectivity.faces, dtype=np.int64)
     elif dimension == 2 and isinstance(connectivity, PolygonalConnectivity):
         valid = np.asarray(connectivity.cell_vertex_valid, dtype=np.bool_)
-        if not np.all(valid):
-            raise ValueError(
-                "Dual cell-face ancestry requires uniform polygon vertex arity."
-            )
-        rows = np.asarray(connectivity.cell_vertices, dtype=np.int64)
+        rows = np.where(valid, np.asarray(connectivity.cell_vertices, dtype=np.int64), -1)
     elif dimension == 2 and isinstance(connectivity, PolyhedralConnectivity):
+        # Mixed families carry triangle and quadrilateral faces; shorter rows
+        # are right-padded with -1 and every consumer skips the padding.
         offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
         counts = np.diff(offsets)
-        if not counts.size or np.any(counts != counts[0]):
-            raise ValueError(
-                "Dual cell-face ancestry requires uniform polyhedral face arity."
-            )
-        rows = np.asarray(connectivity.face_vertex_values, dtype=np.int64).reshape(
-            (counts.size, int(counts[0]))
-        )
+        values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        width = int(np.max(counts)) if counts.size else 0
+        rows = np.full((counts.size, width), -1, dtype=np.int64)
+        columns = np.arange(values.size, dtype=np.int64) - np.repeat(offsets[:-1], counts)
+        rows[np.repeat(np.arange(counts.size, dtype=np.int64), counts), columns] = values
     else:
         raise ValueError(
             "Dual route has no canonical vertex rows for this entity dimension."
@@ -1471,10 +1467,11 @@ def _cell_entity_rows(mesh: CellMesh, dimension: int, /) -> tuple[np.ndarray, np
             raise ValueError(
                 "Dual volume cell IDs do not bijectively bind connectivity rows."
             )
-        rows = np.asarray(
-            [rows_by_id[int(identifier)] for identifier in identifiers.tolist()],
-            dtype=np.int64,
-        )
+        width = max(block.vertices.shape[1] for block in mesh.blocks)
+        rows = np.full((identifiers.size, width), -1, dtype=np.int64)
+        for row, identifier in enumerate(identifiers.tolist()):
+            cell = rows_by_id[int(identifier)]
+            rows[row, : cell.size] = cell
     else:
         rows = _entity_vertex_rows(mesh, dimension)
     if rows.shape[0] != identifiers.size:
@@ -1511,7 +1508,7 @@ def _dual_hex_organization(
             }
         else:
             base_entity_lookup[dimension] = {
-                tuple(sorted(map(int, vertices))): row
+                tuple(sorted(int(value) for value in vertices if value >= 0)): row
                 for row, vertices in enumerate(rows.tolist())
             }
         association = _association_for_dimension(base.organization, base_mesh, dimension)
@@ -1588,6 +1585,7 @@ def _dual_hex_organization(
                         {
                             int(value)
                             for vertex in entity
+                            if vertex >= 0
                             for value in supports[int(vertex)].tolist()
                             if int(value) >= 0
                         }
@@ -1625,6 +1623,9 @@ def _dual_hex_organization(
 
     target_cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
     zones = []
+    # Zone IDs are bound to their mesh scope, so patch adjacency must name the
+    # rebuilt output zones rather than the scaffold zones.
+    zone_ids: dict[str, str] = {}
     for zone in base.organization.zones:
         source_zone_cells = set(
             np.asarray(zone.scope.entity_ids, dtype=np.int64).tolist()
@@ -1636,15 +1637,15 @@ def _dual_hex_organization(
             )
         ]
         if selected.size:
-            zones.append(
-                MeshZone(
-                    zone.name,
-                    zone.role,
-                    _mesh_scope(mesh, 3, selected),
-                    material_id=zone.material_id,
-                    region_role=zone.region_role,
-                )
+            output_zone = MeshZone(
+                zone.name,
+                zone.role,
+                _mesh_scope(mesh, 3, selected),
+                material_id=zone.material_id,
+                region_role=zone.region_role,
             )
+            zone_ids[zone.zone_id] = output_zone.zone_id
+            zones.append(output_zone)
 
     labels = []
     for label in base.organization.labels:
@@ -1700,12 +1701,22 @@ def _dual_hex_organization(
             dtype=np.int64,
         )
         if selected.size:
+            if any(value not in zone_ids for value in patch.adjacent_zone_ids):
+                raise ValueError(
+                    "Dual patch adjacency names a scaffold zone without output cells."
+                )
             patches.append(
                 MeshPatch(
                     patch.name,
                     _mesh_scope(mesh, dimension, selected),
                     connected=patch.connected,
-                    adjacent_zone_ids=patch.adjacent_zone_ids,
+                    adjacent_zone_ids=tuple(
+                        zone_ids[value] for value in patch.adjacent_zone_ids
+                    ),
+                    source_adjacent_region_ids=patch.source_adjacent_region_ids,
+                    source_adjacent_region_occurrence_paths=(
+                        patch.source_adjacent_region_occurrence_paths
+                    ),
                 )
             )
     return NativeMeshOrganization(
@@ -4157,6 +4168,11 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
                 scoped_fidelity.append(
                     (feature_query, feature_witness, feature.maximum_deviation)
                 )
+        # The grid geometry is the exact per-cell restriction of the root source
+        # map, so its source deviation is zero. Without a requested bound the
+        # certificate proves that exact claim instead of an invented allowance.
+        requested = self.specification.maximum_deviation
+        fidelity_tolerance = 0.0 if requested is None else requested
         certification = NativeCertificationRequest(
             MeshCertificationSchedule("volume_plc"),
             self.source.source_id,
@@ -4164,7 +4180,7 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
             domain=self.source.domain,
             cell_regions=np.asarray(mapped.cell_regions, dtype=np.int64),
             fidelity_source=fidelity_source,
-            fidelity_tolerance=self.specification.maximum_deviation,
+            fidelity_tolerance=fidelity_tolerance,
             fidelity_witness=fidelity_witness,
             protected_features=self.specification.protected_features,
             scoped_fidelity=tuple(scoped_fidelity),

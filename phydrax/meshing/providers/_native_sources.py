@@ -29,6 +29,7 @@ from ...discretization._reference_cell import reference_cell_topology
 from ...discretization._tensor_support import PreparedTensorGrid
 from ...geometry._atlas import BoundaryAtlas
 from ...geometry._contracts import CompiledGeometry, GeometryKind
+from ...geometry._curve_boundary import SegmentChartCurve
 from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
 from ...geometry._meshing_domain import MeshingDomain
@@ -2060,15 +2061,12 @@ class NativeCurveSource(StrictModule, NonTrainableState):
             if isinstance(self.curves, SegmentMesh):
                 edge = np.asarray(self.curves.edges, dtype=np.int64)[source_row]
                 points = np.asarray(self.curves.vertices, dtype=np.float64)[edge]
-                line = getattr(carrier, "line", None)
                 if (
-                    line is None
-                    or not np.array_equal(np.asarray(line.origin), points[0])
-                    or not np.array_equal(
-                        np.asarray(line.direction), points[1] - points[0]
-                    )
-                    or getattr(carrier, "first", None) != first
-                    or getattr(carrier, "last", None) != last
+                    not isinstance(carrier, SegmentChartCurve)
+                    or not np.array_equal(np.asarray(carrier.start), points[0])
+                    or not np.array_equal(np.asarray(carrier.end), points[1])
+                    or carrier.first != first
+                    or carrier.last != last
                 ):
                     raise ValueError(
                         "Curve boundary query changed its SegmentMesh source chart."
@@ -2223,15 +2221,12 @@ class NativeCurveSource(StrictModule, NonTrainableState):
             if isinstance(self.curves, SegmentMesh):
                 edge = np.asarray(self.curves.edges, dtype=np.int64)[chart_row]
                 source_points = np.asarray(self.curves.vertices, dtype=np.float64)[edge]
-                line = getattr(carrier, "line", None)
                 if (
-                    line is None
-                    or not np.array_equal(np.asarray(line.origin), source_points[0])
-                    or not np.array_equal(
-                        np.asarray(line.direction), source_points[1] - source_points[0]
-                    )
-                    or getattr(carrier, "first", None) != first
-                    or getattr(carrier, "last", None) != last
+                    not isinstance(carrier, SegmentChartCurve)
+                    or not np.array_equal(np.asarray(carrier.start), source_points[0])
+                    or not np.array_equal(np.asarray(carrier.end), source_points[1])
+                    or carrier.first != first
+                    or carrier.last != last
                 ):
                     raise ValueError(
                         "Curve point query changed its SegmentMesh source chart."

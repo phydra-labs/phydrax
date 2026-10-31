@@ -1076,7 +1076,10 @@ enum phx_mc_plc_failure_reason {
   PHX_MC_PLC_NONREPRESENTABLE = 10,
   PHX_MC_PLC_INVALID_SEED = 14,
   PHX_MC_PLC_OUTSIDE_DOMAIN = 15,
-  PHX_MC_PLC_SOURCE_DEVIATION = 17
+  PHX_MC_PLC_SOURCE_DEVIATION = 17,
+  /* A non-representable segment split point could not be moved off the
+   * boundary: first names the PLC edge row, second the split point. */
+  PHX_MC_PLC_STEINER_SUPPRESSION = 18
 };
 enum phx_mc_plc_entity_kind {
   PHX_MC_PLC_ENTITY_NONE = 0,

@@ -13,6 +13,7 @@
 #include <limits>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <new>
 #include <set>
@@ -145,6 +146,38 @@ bool segments_meet(const double* a, const double* b, const double* c, const doub
   if (o1 * o2 < 0 && o3 * o4 < 0) return true;
   return (o1 == 0 && within(pa, pb, pc)) || (o2 == 0 && within(pa, pb, pd)) ||
          (o3 == 0 && within(pc, pd, pa)) || (o4 == 0 && within(pc, pd, pb));
+}
+
+// p lies in the closed coordinate box of a and b (p collinear with ab).
+bool between_on_line(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& p) {
+  for (int axis = 0; axis < 3; ++axis) {
+    const int low = (coordinate(p, axis) - coordinate(a, axis)).sign();
+    const int high = (coordinate(b, axis) - coordinate(p, axis)).sign();
+    if (low * high < 0) return false;
+  }
+  return true;
+}
+
+// segments_meet on exact (possibly witnessed) positions.
+bool segments_meet(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                   const ExactPointRef& d) {
+  if (orient3d(a, b, c, d) != 0) return false;
+  const bool c_on_line = collinear(a, b, c);
+  const bool d_on_line = collinear(a, b, d);
+  if (c_on_line && d_on_line) {
+    return between_on_line(a, b, c) || between_on_line(a, b, d) || between_on_line(c, d, a);
+  }
+  const ExactPointRef& third = c_on_line ? d : c;
+  int axis = 0;
+  while (axis < 3 && orient2d_projected(a, b, third, axis) == 0) ++axis;
+  if (axis == 3) return false;
+  const int o1 = orient2d_projected(a, b, c, axis);
+  const int o2 = orient2d_projected(a, b, d, axis);
+  const int o3 = orient2d_projected(c, d, a, axis);
+  const int o4 = orient2d_projected(c, d, b, axis);
+  if (o1 * o2 < 0 && o3 * o4 < 0) return true;
+  return (o1 == 0 && between_on_line(a, b, c)) || (o2 == 0 && between_on_line(a, b, d)) ||
+         (o3 == 0 && between_on_line(c, d, a)) || (o4 == 0 && between_on_line(c, d, b));
 }
 
 int32_t triangulate_planar_loop(
@@ -997,7 +1030,8 @@ class PlcRecoveryBuilder {
       }
       if (!restart) break;
     }
-    if (trace_enabled_) std::fprintf(stderr, "PLC_TRACE classify_begin\n");
+    status_ = suppress_witnessed_vertices();
+    if (status_ != PHX_MC_OK) return status_;
     status_ = classify_regions();
     if (status_ != PHX_MC_OK) return status_;
     if (trace_enabled_) std::fprintf(stderr, "PLC_TRACE embedding_begin\n");
@@ -1089,9 +1123,73 @@ class PlcRecoveryBuilder {
     return work_points_.data() + 3 * static_cast<std::size_t>(vertex);
   }
 
+  // Predicate argument of a work vertex: exact witnessed position or carrier.
+  ExactPointRef ref(int32_t vertex) const {
+    return exact_points_.reference(work_points_.data(), vertex);
+  }
+
+  int orient(int32_t a, int32_t b, int32_t c, int32_t d) const {
+    return orient3d(ref(a), ref(b), ref(c), ref(d));
+  }
+
+  // Coordinate plane onto which triangle abc projects nondegenerately, tried
+  // by decreasing carrier normal component and decided on exact positions.
+  int exact_projection_axis(int32_t a, int32_t b, int32_t c) const {
+    double u[3], v[3], normal[3];
+    geometry::difference(point(b), point(a), u);
+    geometry::difference(point(c), point(a), v);
+    geometry::cross(u, v, normal);
+    int axes[3] = {0, 1, 2};
+    std::sort(axes, axes + 3, [&](int left, int right) {
+      return std::fabs(normal[left]) > std::fabs(normal[right]);
+    });
+    for (int axis : axes) {
+      if (orient2d_projected(ref(a), ref(b), ref(c), axis) != 0) return axis;
+    }
+    return -1;
+  }
+
+  // Triangulates a simple planar loop listed with projected orientation
+  // `orientation` by ear clipping on exact positions: an ear is a strictly
+  // convex corner whose closed triangle holds no other loop vertex, so every
+  // triangle is nondegenerate, keeps the loop orientation, and the triangles
+  // tile the loop (a simple polygon with more than three vertices has two
+  // such ears; collinear loop vertices are never ear tips).
+  bool exact_loop_triangles(const std::vector<int32_t>& loop, int axis, int orientation,
+                            std::vector<Triple>& triangles) const {
+    triangles.clear();
+    std::vector<int32_t> ring = loop;
+    const auto turn = [&](int32_t a, int32_t b, int32_t c) {
+      return orient2d_projected(ref(a), ref(b), ref(c), axis) * orientation;
+    };
+    while (ring.size() > 3) {
+      bool clipped = false;
+      const std::size_t count = ring.size();
+      for (std::size_t at = 0; at < count && !clipped; ++at) {
+        const int32_t previous = ring[(at + count - 1) % count];
+        const int32_t tip = ring[at];
+        const int32_t next = ring[(at + 1) % count];
+        if (turn(previous, tip, next) <= 0) continue;
+        const bool blocked = std::any_of(ring.begin(), ring.end(), [&](int32_t vertex) {
+          return vertex != previous && vertex != tip && vertex != next &&
+                 turn(previous, tip, vertex) >= 0 && turn(tip, next, vertex) >= 0 &&
+                 turn(next, previous, vertex) >= 0;
+        });
+        if (blocked) continue;
+        triangles.push_back({previous, tip, next});
+        ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(at));
+        clipped = true;
+      }
+      if (!clipped) return false;
+    }
+    if (ring.size() != 3 || turn(ring[0], ring[1], ring[2]) <= 0) return false;
+    triangles.push_back({ring[0], ring[1], ring[2]});
+    return true;
+  }
+
   int32_t output_vertex(int32_t vertex) const {
     const int32_t points = static_cast<int32_t>(candidate_.points.size() / 3);
-    if (vertex < points) return vertex;
+    if (vertex < points) return point_output_[static_cast<std::size_t>(vertex)];
     const int32_t volume = vertex - points - corner_count_;
     if (volume < 0 || static_cast<std::size_t>(volume) >= volume_output_.size()) return -1;
     return volume_output_[static_cast<std::size_t>(volume)];
@@ -1129,7 +1227,7 @@ class PlcRecoveryBuilder {
       bool positive = false;
       bool negative = false;
       for (int32_t vertex = 0; vertex < source_point_count_; ++vertex) {
-        const int side = orient3d(point(face[0]), point(face[1]), point(face[2]), point(vertex));
+        const int side = orient(face[0], face[1], face[2], vertex);
         positive = positive || side > 0;
         negative = negative || side < 0;
         if (positive && negative) return false;
@@ -1179,9 +1277,9 @@ class PlcRecoveryBuilder {
     const auto coplanar = [&](std::int32_t first, std::int32_t second) {
       const std::int32_t* a = candidate_.input_triangles.data() + 3 * first;
       const std::int32_t* b = candidate_.input_triangles.data() + 3 * second;
-      return orient3d(point(a[0]), point(a[1]), point(a[2]), point(b[0])) == 0 &&
-             orient3d(point(a[0]), point(a[1]), point(a[2]), point(b[1])) == 0 &&
-             orient3d(point(a[0]), point(a[1]), point(a[2]), point(b[2])) == 0;
+      return orient(a[0], a[1], a[2], b[0]) == 0 &&
+             orient(a[0], a[1], a[2], b[1]) == 0 &&
+             orient(a[0], a[1], a[2], b[2]) == 0;
     };
     for (const auto& [edge, uses] : edge_uses) {
       (void)edge;
@@ -1320,23 +1418,32 @@ class PlcRecoveryBuilder {
     }
   }
 
-  bool point_in_planar_polygon(const PlcPlanarPolygon& polygon, const double* query) const {
-    const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
+  // Projected coordinates (scaled by `scale`) of a work vertex, exactly.
+  void projected(int32_t vertex, int axis, double scale, Expansion* coordinates) const {
+    coordinates[0] = coordinate(ref(vertex), (axis + 1) % 3).scaled(scale);
+    coordinates[1] = coordinate(ref(vertex), (axis + 2) % 3).scaled(scale);
+  }
+
+  // Closed containment of the projected query q in the polygon's projected
+  // boundary loops; loop vertices are scaled by `scale` to match q, so a
+  // rational query (a face centroid times three) is decided exactly.
+  bool point_in_planar_polygon(const PlcPlanarPolygon& polygon, const Expansion* q,
+                               double scale) const {
     bool inside = false;
     for (const auto& loop : polygon.boundary_loops) {
       for (std::size_t i = 0, j = loop.size() - 1; i < loop.size(); j = i++) {
-        const double* first = point(loop[i]);
-        const double* second = point(loop[j]);
-        const double a[2] = {first[x], first[y]};
-        const double b[2] = {second[x], second[y]};
-        const double q[2] = {query[x], query[y]};
-        const int side = orient2d(a, b, q);
-        if (side == 0 && std::min(a[0], b[0]) <= q[0] && q[0] <= std::max(a[0], b[0]) &&
-            std::min(a[1], b[1]) <= q[1] && q[1] <= std::max(a[1], b[1])) {
+        Expansion a[2], b[2];
+        projected(loop[i], polygon.axis, scale, a);
+        projected(loop[j], polygon.axis, scale, b);
+        const int side = orient2d_sign(a, b, q);
+        if (side == 0 && (q[0] - a[0]).sign() * (b[0] - q[0]).sign() >= 0 &&
+            (q[1] - a[1]).sign() * (b[1] - q[1]).sign() >= 0) {
           return true;
         }
-        if ((a[1] > q[1]) != (b[1] > q[1]) &&
-            ((b[1] > a[1] && side > 0) || (b[1] < a[1] && side < 0))) {
+        const bool a_above = (a[1] - q[1]).sign() > 0;
+        const bool b_above = (b[1] - q[1]).sign() > 0;
+        const int rising = (b[1] - a[1]).sign();
+        if (a_above != b_above && ((rising > 0 && side > 0) || (rising < 0 && side < 0))) {
           inside = !inside;
         }
       }
@@ -1344,58 +1451,55 @@ class PlcRecoveryBuilder {
     return inside;
   }
 
-
   bool face_in_planar_polygon(const PlcPlanarPolygon& polygon, const Triple& face) const {
-    const double* a = point(polygon.plane_vertices[0]);
-    const double* b = point(polygon.plane_vertices[1]);
-    const double* c = point(polygon.plane_vertices[2]);
     for (int slot = 0; slot < 3; ++slot) {
-      const double* vertex = point(face[slot]);
-      if (orient3d(a, b, c, vertex) != 0 || !point_in_planar_polygon(polygon, vertex)) {
+      Expansion q[2];
+      projected(face[slot], polygon.axis, 1.0, q);
+      if (orient(polygon.plane_vertices[0], polygon.plane_vertices[1],
+                 polygon.plane_vertices[2], face[slot]) != 0 ||
+          !point_in_planar_polygon(polygon, q, 1.0)) {
         return false;
       }
     }
-    const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
-    const auto strictly_on_segment = [](const double* first, const double* second,
-                                        const double* point) {
-      const double a[2] = {first[0], first[1]};
-      const double b[2] = {second[0], second[1]};
-      const double p[2] = {point[0], point[1]};
-      return orient2d(a, b, p) == 0 && std::min(a[0], b[0]) <= p[0] &&
-             p[0] <= std::max(a[0], b[0]) &&
-             std::min(a[1], b[1]) <= p[1] && p[1] <= std::max(a[1], b[1]) &&
-             (p[0] != a[0] || p[1] != a[1]) &&
-             (p[0] != b[0] || p[1] != b[1]);
+    const int axis = polygon.axis;
+    // c lies on the closed segment ab, distinct from both endpoints.
+    const auto strictly_on_segment = [&](int32_t a, int32_t b, int32_t c) {
+      return orient2d_projected(ref(a), ref(b), ref(c), axis) == 0 &&
+             between_on_line(ref(a), ref(b), ref(c)) && !same_point(ref(c), ref(a)) &&
+             !same_point(ref(c), ref(b));
     };
     for (int face_side = 0; face_side < 3; ++face_side) {
-      const double* first = point(face[face_side]);
-      const double* second = point(face[(face_side + 1) % 3]);
-      const double a[2] = {first[x], first[y]};
-      const double b[2] = {second[x], second[y]};
+      const int32_t first = face[face_side];
+      const int32_t second = face[(face_side + 1) % 3];
       for (const auto& loop : polygon.boundary_loops) {
         for (std::size_t edge = 0; edge < loop.size(); ++edge) {
-          const double* boundary_first = point(loop[edge]);
-          const double* boundary_second = point(loop[(edge + 1) % loop.size()]);
-          const double c[2] = {boundary_first[x], boundary_first[y]};
-          const double d[2] = {boundary_second[x], boundary_second[y]};
-          const int first_side = orient2d(a, b, c);
-          const int second_side = orient2d(a, b, d);
-          const int third_side = orient2d(c, d, a);
-          const int fourth_side = orient2d(c, d, b);
-          if (first_side * second_side < 0 && third_side * fourth_side < 0) {
-            return false;
-          }
-          if (strictly_on_segment(a, b, c) || strictly_on_segment(a, b, d)) {
+          const int32_t boundary_first = loop[edge];
+          const int32_t boundary_second = loop[(edge + 1) % loop.size()];
+          const int first_side =
+              orient2d_projected(ref(first), ref(second), ref(boundary_first), axis);
+          const int second_side =
+              orient2d_projected(ref(first), ref(second), ref(boundary_second), axis);
+          const int third_side =
+              orient2d_projected(ref(boundary_first), ref(boundary_second), ref(first), axis);
+          const int fourth_side =
+              orient2d_projected(ref(boundary_first), ref(boundary_second), ref(second), axis);
+          if (first_side * second_side < 0 && third_side * fourth_side < 0) return false;
+          if (strictly_on_segment(first, second, boundary_first) ||
+              strictly_on_segment(first, second, boundary_second)) {
             return false;
           }
         }
       }
     }
-    double centroid[3];
-    for (int axis = 0; axis < 3; ++axis) {
-      centroid[axis] = (point(face[0])[axis] + point(face[1])[axis] + point(face[2])[axis]) / 3.0;
+    // Three times the centroid against loops scaled by three.
+    Expansion centroid[2];
+    for (int32_t vertex : face) {
+      Expansion q[2];
+      projected(vertex, axis, 1.0, q);
+      centroid[0] = centroid[0] + q[0];
+      centroid[1] = centroid[1] + q[1];
     }
-    return point_in_planar_polygon(polygon, centroid);
+    return point_in_planar_polygon(polygon, centroid, 3.0);
   }
 
   int32_t recover_planar_polygons(
@@ -1448,17 +1552,15 @@ class PlcRecoveryBuilder {
                       kPlcFacet, polygon.facet);
         }
         Triple oriented = finite[0]->oriented;
-        const double p0[2] = {point(oriented[0])[x], point(oriented[0])[y]};
-        const double p1[2] = {point(oriented[1])[x], point(oriented[1])[y]};
-        const double p2[2] = {point(oriented[2])[x], point(oriented[2])[y]};
-        if (orient2d(p0, p1, p2) != polygon.orientation) {
+        if (orient2d_projected(ref(oriented[0]), ref(oriented[1]), ref(oriented[2]),
+                               polygon.axis) != polygon.orientation) {
           std::swap(oriented[1], oriented[2]);
         }
         for (int slot = 0; slot < 3; ++slot) {
-          const double* first = point(oriented[slot]);
-          const double* second = point(oriented[(slot + 1) % 3]);
-          mesh_area = mesh_area + Expansion::product(first[x], second[y]) -
-                      Expansion::product(first[y], second[x]);
+          Expansion first[2], second[2];
+          projected(oriented[slot], polygon.axis, 1.0, first);
+          projected(oriented[(slot + 1) % 3], polygon.axis, 1.0, second);
+          mesh_area = mesh_area + first[0] * second[1] - first[1] * second[0];
         }
         const auto [unused, inserted] = planar_source_faces_.emplace(
             key, PlcSourceFace{oriented, polygon.facet, polygon.source_triangle});
@@ -1601,11 +1703,23 @@ class PlcRecoveryBuilder {
       }
     }
     edge_chains_.resize(edge_count);
+    std::vector<int32_t> source_edges;
     for (std::size_t edge = 0; edge < edge_chains_.size(); ++edge) {
       if (!is_source_edge(edge)) continue;
       const int32_t first = candidate_.plc_edges[2 * edge];
       const int32_t second = candidate_.plc_edges[2 * edge + 1];
       edge_chains_[edge] = {{0.0, first}, {1.0, second}};
+      source_edges.push_back(first);
+      source_edges.push_back(second);
+    }
+    // Acute input vertices (two incident source edges at an angle below 90
+    // degrees) are the apices of the concentric split shells.
+    const std::vector<double> radii = protection_radii(
+        candidate_.points.data(), source_point_count_, source_edges,
+        candidate_.input_triangles);
+    shell_apex_.assign(static_cast<std::size_t>(source_point_count_), 0);
+    for (std::size_t vertex = 0; vertex < radii.size(); ++vertex) {
+      shell_apex_[vertex] = radii[vertex] > 0.0 ? 1 : 0;
     }
     candidate_.witnesses.resize(static_cast<std::size_t>(source_point_count_));
     candidate_.vertex_dimension.resize(static_cast<std::size_t>(source_point_count_), 0);
@@ -1621,6 +1735,7 @@ class PlcRecoveryBuilder {
     local_edits_ = false;
     const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
     triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr, count);
+    triangulation_->set_exact_points(&exact_points_);
     alive_.assign(static_cast<std::size_t>(count), 1);
     std::vector<int32_t> all(static_cast<std::size_t>(count));
     std::iota(all.begin(), all.end(), 0);
@@ -1649,19 +1764,6 @@ class PlcRecoveryBuilder {
     if (!triangulation_ || vertex < 0 ||
         static_cast<std::size_t>(vertex) + 1 != candidate_.points.size() / 3) {
       return PHX_MC_INTERNAL_ERROR;
-    }
-    // Bowyer-Watson insertion is star-shaped only in a Delaunay complex;
-    // after a local recovery edit the next restart rebuilds instead.
-    if (local_edits_) return PHX_MC_OK;
-    if (triangulation_->constrained_facets() != 0) {
-      if (progress_enabled_) {
-        std::fprintf(
-            stderr,
-            "PLC_PROGRESS incremental_insert vertex=%d accepted=0 "
-            "reason=constrained_facets\n",
-            vertex);
-      }
-      return PHX_MC_OK;
     }
     const std::size_t old_source_points = static_cast<std::size_t>(vertex);
     const std::size_t old_work_points = work_points_.size() / 3;
@@ -1718,12 +1820,15 @@ class PlcRecoveryBuilder {
                      "PLC_TRACE incremental_insert vertex=%d status=%d fallback=1\n",
                      vertex, insert_status);
       }
-      if (insert_status == PHX_MC_INTERNAL_ERROR ||
-          insert_status == PHX_MC_CONSTRAINT_INTERSECTION ||
-          insert_status == PHX_MC_INDEX_RANGE_ERROR) {
+      // Checked insertion refuses, leaving the complex unchanged, when the
+      // conflict cavity is not star-shaped from the vertex (the complex is no
+      // longer Delaunay after local recovery edits) or crosses a constrained
+      // facet; only these typed refusals rebuild at the next restart.
+      if (insert_status == PHX_MC_UNRESOLVED ||
+          insert_status == PHX_MC_CONSTRAINT_INTERSECTION) {
         return PHX_MC_OK;
       }
-      return insert_status;
+      return fail(insert_status, kPlcNonrepresentable, kPlcPoint, vertex);
     }
     bool inserted = false;
     for (std::size_t row = 0; row < complex.tets.size(); ++row) {
@@ -1734,20 +1839,7 @@ class PlcRecoveryBuilder {
         inserted = inserted || point == vertex;
       }
     }
-    if (!inserted) {
-      if (trace_enabled_) {
-        std::fprintf(stderr,
-                     "PLC_TRACE incremental_insert vertex=%d status=%d fallback=1\n",
-                     vertex, PHX_MC_INTERNAL_ERROR);
-      }
-      if (progress_enabled_) {
-        std::fprintf(
-            stderr,
-            "PLC_PROGRESS incremental_insert vertex=%d accepted=0 status=%d\n",
-            vertex, PHX_MC_INTERNAL_ERROR);
-      }
-      return PHX_MC_OK;
-    }
+    if (!inserted) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, vertex);
     vertex_tet_.swap(next_vertex_tet);
     star_marks_.resize(complex.tets.size(), 0U);
     star_.clear();
@@ -1800,7 +1892,7 @@ class PlcRecoveryBuilder {
     }
     if (start < 0 || !complex.live(start) ||
         vertex_slot(complex.tets[static_cast<std::size_t>(start)], first) < 0) {
-      start = triangulation_->locate(point(first));
+      start = triangulation_->locate(ref(first));
       if (start < 0) {
         return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
       }
@@ -1875,215 +1967,125 @@ class PlcRecoveryBuilder {
     return std::isfinite(bound) ? bound : 0.0;
   }
 
-  int32_t split_source_edge(std::size_t edge, std::size_t interval,
-                            bool& restart) {
-    if (input_.policy == BoundaryPolicy::kFixed) {
-      return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, edge);
-    }
-    const PlcEdgePoint first = edge_chains_[edge][interval];
-    const PlcEdgePoint second = edge_chains_[edge][interval + 1];
-    double local_tolerance = 0.0;
-    const double local_target = split_target(
-        point(first.vertex), point(second.vertex),
-        protection_[static_cast<std::size_t>(first.vertex)],
-        protection_[static_cast<std::size_t>(second.vertex)], local_tolerance);
-    const double target = first.parameter +
-        local_target * (second.parameter - first.parameter);
-    const double target_tolerance = local_tolerance * (second.parameter - first.parameter);
+  // Concentric-shell split rule (Ruppert; Shewchuk, "Constrained Delaunay
+  // tetrahedralizations and provably good boundary recovery", IMR 2002): a
+  // chain interval ending at an acute input vertex (a shell apex) is split at
+  // the distance from that apex that is the power of two in [l/3, 2l/3],
+  // every other interval at its midpoint. Repeated splits toward an apex stay
+  // on its power-of-two spheres, so a vertex on a shell never encroaches the
+  // apex interval of another segment through the same apex: for an angle
+  // theta > 0, |w - m|^2 = r^2 (5/4 - cos theta) > r^2 / 4.
+  double split_parameter(std::size_t edge, const PlcEdgePoint& first,
+                         const PlcEdgePoint& second) const {
     const int32_t source_first = candidate_.plc_edges[2 * edge];
     const int32_t source_second = candidate_.plc_edges[2 * edge + 1];
-    const double* edge_corners[2] = {
-        candidate_.points.data() + 3 * static_cast<std::size_t>(source_first),
-        candidate_.points.data() + 3 * static_cast<std::size_t>(source_second)};
-    const uint64_t diagnostic_edge_key =
-        topology::undirected_edge(source_first, source_second);
-    const bool diagnostic_source_segment =
-        source_segment_rows_[edge] >= 0 ||
-        polygon_loop_edges_.contains(diagnostic_edge_key);
-    std::size_t existing_on_source = 0;
-    std::size_t existing_in_interval = 0;
-    int32_t first_existing_vertex = -1;
-    double first_existing_parameter = std::numeric_limits<double>::quiet_NaN();
-    int32_t first_existing_dimension = -1;
-    int32_t first_existing_stratum = -1;
-    int32_t first_existing_entity = -1;
-    if (progress_enabled_ && diagnostic_source_segment) {
-      int axis = 0;
-      while (axis < 3 && edge_corners[0][axis] == edge_corners[1][axis]) ++axis;
-      if (axis < 3) {
-        const double first_coordinate = point(first.vertex)[axis];
-        const double second_coordinate = point(second.vertex)[axis];
-        const double lower = std::min(first_coordinate, second_coordinate);
-        const double upper = std::max(first_coordinate, second_coordinate);
-        for (int32_t vertex = 0;
-             vertex < static_cast<int32_t>(candidate_.points.size() / 3); ++vertex) {
-          if (vertex == first.vertex || vertex == second.vertex) continue;
-          const double* existing =
-              candidate_.points.data() + 3 * static_cast<std::size_t>(vertex);
-          double parameters[2] = {0.0, 0.0};
-          source_locator(edge_corners, SourceStratum::kSegment, existing, parameters, false);
-          if (!source_parameters_valid(SourceStratum::kSegment, parameters) ||
-              source_deviation(edge_corners, SourceStratum::kSegment, parameters,
-                               existing) != 0.0) {
-            continue;
-          }
-          ++existing_on_source;
-          if (!(lower < existing[axis] && existing[axis] < upper)) continue;
-          ++existing_in_interval;
-          if (first_existing_vertex < 0) {
-            first_existing_vertex = vertex;
-            first_existing_parameter = parameters[0];
-            first_existing_dimension = static_cast<int32_t>(
-                candidate_.vertex_dimension[static_cast<std::size_t>(vertex)]);
-            first_existing_stratum = static_cast<int32_t>(
-                candidate_.witnesses[static_cast<std::size_t>(vertex)].stratum);
-            first_existing_entity =
-                candidate_.witnesses[static_cast<std::size_t>(vertex)].entity;
-          }
-        }
-      }
-    }
-    const auto report_split_refusal = [&](const char* branch) {
-      if (!progress_enabled_) return;
-      std::fprintf(
-          stderr,
-          "PLC_PROGRESS split_refusal row=%zu interval=%zu branch=%s target=%.17g "
-          "target_tolerance=%.17g chain=(%.17g,%.17g) exact_on_source=%zu "
-          "exact_in_interval=%zu existing_vertex=%d existing_parameter=%.17g "
-          "existing_dimension=%d existing_witness=(%d,%d)\n",
-          edge, interval, branch, target, target_tolerance, first.parameter,
-          second.parameter, existing_on_source, existing_in_interval,
-          first_existing_vertex, first_existing_parameter, first_existing_dimension,
-          first_existing_stratum, first_existing_entity);
-    };
-    double constructed[3];
-    if (!exact_segment_point(edge_corners[0], edge_corners[1], target,
-                             target_tolerance, constructed)) {
-      report_split_refusal("exact_segment_point");
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-    }
-    double edge_parameters[2] = {0.0, 0.0};
-    source_locator(edge_corners, SourceStratum::kSegment, constructed, edge_parameters, false);
-    if (!source_parameters_valid(SourceStratum::kSegment, edge_parameters) ||
-        !(edge_parameters[0] > first.parameter && edge_parameters[0] < second.parameter)) {
-      report_split_refusal("edge_parameters");
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-    }
+    const double length =
+        std::sqrt(geometry::squared_distance(point(source_first), point(source_second)));
+    const double span = second.parameter - first.parameter;
+    const bool first_apex =
+        first.vertex == source_first && shell_apex_[static_cast<std::size_t>(source_first)] != 0;
+    const bool second_apex = second.vertex == source_second &&
+                             shell_apex_[static_cast<std::size_t>(source_second)] != 0;
+    if (first_apex == second_apex || !(length > 0.0)) return first.parameter + 0.5 * span;
+    const double shell = std::exp2(std::floor(std::log2(2.0 * span * length / 3.0)));
+    return first_apex ? first.parameter + shell / length : second.parameter - shell / length;
+  }
 
-    const uint64_t edge_key = topology::undirected_edge(source_first, source_second);
-    const bool source_segment = source_segment_rows_[edge] >= 0 ||
-                                polygon_loop_edges_.contains(edge_key);
-    double carrier[3];
-    double deviation = 0.0;
-    PlcRecoveryWitness witness{};
-    int8_t vertex_dimension = 0;
-    double chain_parameter = edge_parameters[0];
-    if (source_segment) {
-      if (!source_carrier(edge_corners, SourceStratum::kSegment, edge_parameters,
-                          carrier, deviation)) {
-        report_split_refusal("source_carrier");
-        return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-      }
-      double carrier_parameters[2] = {0.0, 0.0};
-      source_locator(edge_corners, SourceStratum::kSegment, carrier,
-                     carrier_parameters, false);
-      if (!source_parameters_valid(SourceStratum::kSegment, carrier_parameters) ||
-          !(carrier_parameters[0] > first.parameter &&
-            carrier_parameters[0] < second.parameter)) {
-        report_split_refusal("carrier_parameters");
-        return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-      }
-      chain_parameter = carrier_parameters[0];
-      // Raw PlcRecovery witnesses index the carrier-edge row; Python resolves
-      // it by exact endpoints to the canonical source edge identity.
-      witness.stratum = SourceStratum::kSegment;
-      witness.entity = static_cast<int32_t>(edge);
-      witness.parameters[0] = edge_parameters[0];
-      witness.deviation = deviation;
-      vertex_dimension = 1;
-    } else {
-      const std::size_t begin = edge_triangle_offsets_[edge];
-      const std::size_t end = edge_triangle_offsets_[edge + 1];
-      if (begin == end) {
-        report_split_refusal("facet_use_missing");
-        return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-      }
-      const int32_t source_triangle = edge_triangle_rows_[begin];
-      double witness_parameters[2] = {0.0, 0.0};
-      double maximum_deviation = 0.0;
-      for (std::size_t use = begin; use < end; ++use) {
-        const int32_t triangle = edge_triangle_rows_[use];
-        const int32_t* face =
-            candidate_.input_triangles.data() + 3 * static_cast<std::size_t>(triangle);
-        const double* face_corners[3] = {
-            point(face[0]), point(face[1]), point(face[2])};
-        double parameters[2] = {0.0, 0.0};
-        source_locator(face_corners, SourceStratum::kFacet, constructed, parameters, false);
-        if (!source_parameters_valid(SourceStratum::kFacet, parameters)) {
-          report_split_refusal("facet_parameters");
-          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-        }
-        int side = 0;
-        if (locate_on_triangle(constructed, face_corners, side) == kFeatureNone) {
-          report_split_refusal("outside_source_facet");
-          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-        }
-        const double face_deviation = source_deviation(
-            face_corners, SourceStratum::kFacet, parameters, constructed);
-        if (face_deviation < 0.0) {
-          report_split_refusal("facet_deviation");
-          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
-        }
-        maximum_deviation = std::max(maximum_deviation, face_deviation);
-        if (triangle == source_triangle) {
-          witness_parameters[0] = parameters[0];
-          witness_parameters[1] = parameters[1];
-        }
-      }
-      std::copy(constructed, constructed + 3, carrier);
-      deviation = maximum_deviation;
-      // kFacet entity is the exact input-triangle/source-face row.
-      witness.stratum = SourceStratum::kFacet;
-      witness.entity = source_triangle;
-      witness.parameters[0] = witness_parameters[0];
-      witness.parameters[1] = witness_parameters[1];
-      witness.deviation = deviation;
-      vertex_dimension = 2;
+  // True when a vertex other than p and q lies in the closed diametral ball
+  // of pq, (w - p) . (w - q) <= 0, decided exactly on witnessed positions.
+  bool encroached(int32_t p, int32_t q) const {
+    const double* a = point(p);
+    const double* b = point(q);
+    const double radius = 0.5 * std::sqrt(geometry::squared_distance(a, b));
+    double lower[3];
+    double upper[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      // Carriers of witnessed vertices are within one rounding of their
+      // exact positions; the margin keeps the box conservative.
+      const double margin =
+          radius + 0x1p-40 * (radius + std::fabs(a[axis]) + std::fabs(b[axis]));
+      lower[axis] = std::min(a[axis], b[axis]) - margin;
+      upper[axis] = std::max(a[axis], b[axis]) + margin;
     }
+    Expansion pa[3];
+    Expansion pb[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      pa[axis] = coordinate(ref(p), axis);
+      pb[axis] = coordinate(ref(q), axis);
+    }
+    const int32_t count = static_cast<int32_t>(work_points_.size() / 3);
+    for (int32_t vertex = 0; vertex < count; ++vertex) {
+      if (vertex == p || vertex == q || alive_[static_cast<std::size_t>(vertex)] == 0) continue;
+      const double* w = point(vertex);
+      if (w[0] < lower[0] || w[0] > upper[0] || w[1] < lower[1] || w[1] > upper[1] ||
+          w[2] < lower[2] || w[2] > upper[2]) {
+        continue;
+      }
+      Expansion dot;
+      for (int axis = 0; axis < 3; ++axis) {
+        const Expansion coordinate_w = coordinate(ref(vertex), axis);
+        dot = dot + (coordinate_w - pa[axis]) * (coordinate_w - pb[axis]);
+      }
+      if (dot.sign() <= 0) return true;
+    }
+    return false;
+  }
 
-    const double bound = source_edge_tolerance(edge);
-    if (deviation > bound) {
-      candidate_.source_refusal = {deviation, bound};
-      report_split_refusal("source_deviation");
-      if (progress_enabled_) {
-        std::fprintf(stderr,
-                     "PLC_PROGRESS split_source_deviation row=%zu deviation=%.17g "
-                     "bound=%.17g\n",
-                     edge, deviation, bound);
-      }
-      return fail(PHX_MC_UNRESOLVED, kPlcSourceDeviation, kPlcEdge, edge);
-    }
-    for (int32_t vertex = 0; vertex < static_cast<int32_t>(candidate_.points.size() / 3); ++vertex) {
-      const double* existing = candidate_.points.data() + 3 * static_cast<std::size_t>(vertex);
-      if (existing[0] == carrier[0] && existing[1] == carrier[1] && existing[2] == carrier[2]) {
-        edge_chains_[edge].insert(
-            edge_chains_[edge].begin() + static_cast<std::ptrdiff_t>(interval + 1),
-            {chain_parameter, vertex});
-        incremental_triangulation_ready_ = true;
-        restart = true;
-        return PHX_MC_OK;
-      }
+  // Splits chain interval `interval` of source edge `edge` at the exactly
+  // witnessed point S = A + t (B - A) of its authored segment AB, with t from
+  // split_parameter. S is a dyadic rational point; its carrier is the
+  // correctly rounded S, and every predicate on the new vertex evaluates S.
+  int32_t split_source_edge(std::size_t edge, std::size_t interval, bool& restart) {
+    const PlcEdgePoint first = edge_chains_[edge][interval];
+    const PlcEdgePoint second = edge_chains_[edge][interval + 1];
+    const double parameter = split_parameter(edge, first, second);
+    // The interval is exhausted only when binary64 has no parameter strictly
+    // inside it, i.e. after about 50 halvings of the source segment.
+    if (!(first.parameter < parameter && parameter < second.parameter)) {
+      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
     }
     if (candidate_.points.size() / 3 >= static_cast<std::size_t>(kMaxMeshPoints - corner_count_)) {
       return fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
     }
+    const double* corners[2] = {
+        candidate_.points.data() + 3 * static_cast<std::size_t>(candidate_.plc_edges[2 * edge]),
+        candidate_.points.data() +
+            3 * static_cast<std::size_t>(candidate_.plc_edges[2 * edge + 1])};
+    Expansion position[3];
+    segment_witness_position(corners[0], corners[1], parameter, position);
+    double carrier[3];
+    for (int axis = 0; axis < 3; ++axis) carrier[axis] = nearest_double(position[axis]);
+    if (!geometry::point_in_domain(carrier)) {
+      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
+    }
+    const double deviation = outward_distance(carrier, position);
+    // A source point can coincide with no other vertex of a valid PLC; equal
+    // carriers of distinct exact points would be indistinguishable output.
+    const ExactPointRef split{carrier, deviation == 0.0 ? nullptr : position};
+    for (int32_t vertex = 0; vertex < static_cast<int32_t>(candidate_.points.size() / 3);
+         ++vertex) {
+      if (!geometry::same_point(carrier, point(vertex))) continue;
+      if (same_point(split, ref(vertex))) {
+        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcEdge, edge,
+                    kPlcPoint, vertex);
+      }
+      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge, kPlcPoint, vertex);
+    }
     const int32_t vertex = static_cast<int32_t>(candidate_.points.size() / 3);
     candidate_.points.insert(candidate_.points.end(), carrier, carrier + 3);
+    // Raw PlcRecovery witnesses index the carrier-edge row; Python resolves
+    // it by exact endpoints to the canonical source edge identity.
+    PlcRecoveryWitness witness{};
+    witness.stratum = SourceStratum::kSegment;
+    witness.entity = static_cast<int32_t>(edge);
+    witness.parameters[0] = parameter;
+    witness.deviation = deviation;
     candidate_.witnesses.push_back(witness);
-    candidate_.vertex_dimension.push_back(vertex_dimension);
+    candidate_.vertex_dimension.push_back(1);
+    if (deviation != 0.0) exact_points_.assign(vertex, position);
     edge_chains_[edge].insert(
         edge_chains_[edge].begin() + static_cast<std::ptrdiff_t>(interval + 1),
-        {chain_parameter, vertex});
+        {parameter, vertex});
     const int32_t insertion_status = insert_source_vertex_incrementally(vertex);
     if (insertion_status != PHX_MC_OK) return insertion_status;
     restart = true;
@@ -2114,44 +2116,34 @@ class PlcRecoveryBuilder {
     std::size_t hits = 0;
     std::size_t misses = 0;
   };
+  // Recovers every chain interval of every source edge, in row order. A
+  // missing interval is first recovered without new vertices (planar flips on
+  // an incident facet plane, else one edge removal); otherwise an encroached
+  // interval is split by split_source_edge and the scan restarts. An interval
+  // whose closed diametral ball holds no other vertex is strongly Delaunay
+  // and so present in every Delaunay tetrahedralization of the vertices: it
+  // can be missing only after local recovery edits, and the restart rebuilds.
+  //
+  // Termination. Splits happen only on encroached intervals, at the
+  // concentric-shell points of split_parameter; Shewchuk (IMR 2002, segment
+  // recovery with protecting shells) shows that every such split vertex has
+  // insertion radius at least a constant fraction of the local feature size
+  // of the PLC at that vertex, so a packing argument bounds the number of
+  // split vertices. Recovery edits never remove a chain interval (edge
+  // removal skips them; a planar flip removes only an edge crossing the
+  // target, which no source interval of a valid PLC does), so after a
+  // rebuild every non-encroached interval stays present: rebuild-only
+  // restarts cannot follow each other without a split in between.
   int32_t recover_source_edges(bool& restart) {
     restart = false;
-    const auto edge_preparation_started = std::chrono::steady_clock::now();
-    std::vector<int32_t> edge_segments;
+    chain_intervals_.clear();
     for (const auto& chain : edge_chains_) {
-      for (std::size_t point_index = 0; point_index + 1 < chain.size(); ++point_index) {
-        edge_segments.push_back(chain[point_index].vertex);
-        edge_segments.push_back(chain[point_index + 1].vertex);
+      for (std::size_t interval = 0; interval + 1 < chain.size(); ++interval) {
+        chain_intervals_.insert(
+            topology::undirected_edge(chain[interval].vertex, chain[interval + 1].vertex));
       }
     }
-    if (progress_enabled_) {
-      std::fprintf(stderr,
-                   "PLC_PROGRESS phase=source_edge_bank points=%zu intervals=%zu seconds=%.3f\n",
-                   candidate_.points.size() / 3, edge_segments.size() / 2,
-                   std::chrono::duration<double>(
-                       std::chrono::steady_clock::now() - edge_preparation_started)
-                       .count());
-    }
-    const auto protection_started = std::chrono::steady_clock::now();
-    if (progress_enabled_) {
-      std::fprintf(stderr,
-                   "PLC_PROGRESS phase=protection begin points=%zu edges=%zu triangles=%zu\n",
-                   candidate_.points.size() / 3, edge_segments.size() / 2,
-                   candidate_.input_triangles.size() / 3);
-    }
-    protection_ = protection_radii(candidate_.points.data(),
-        static_cast<int64_t>(candidate_.points.size() / 3), edge_segments,
-        candidate_.input_triangles);
-    if (progress_enabled_) {
-      std::fprintf(stderr,
-                   "PLC_PROGRESS phase=protection done points=%zu edges=%zu seconds=%.3f\n",
-                   candidate_.points.size() / 3, edge_segments.size() / 2,
-                   std::chrono::duration<double>(
-                       std::chrono::steady_clock::now() - protection_started)
-                       .count());
-    }
     protected_segments_.clear();
-    const auto protected_scan_started = std::chrono::steady_clock::now();
     for (const auto& chain : edge_chains_) {
       for (std::size_t interval = 0; interval + 1 < chain.size(); ++interval) {
         const int32_t first = chain[interval].vertex;
@@ -2162,308 +2154,88 @@ class PlcRecoveryBuilder {
         if (edge_present) protected_segments_.push_back({first, second});
       }
     }
-    if (progress_enabled_) {
-      std::fprintf(stderr,
-                   "PLC_PROGRESS phase=protected_edge_scan done=%zu seconds=%.3f\n",
-                   protected_segments_.size(),
-                   std::chrono::duration<double>(
-                       std::chrono::steady_clock::now() - protected_scan_started)
-                       .count());
-    }
-    std::size_t missing_progress = 0;
-    const auto edge_scan_started = std::chrono::steady_clock::now();
     for (std::size_t edge = 0; edge < edge_chains_.size(); ++edge) {
       active_source_edge_ = edge;
       for (std::size_t interval = 0; interval + 1 < edge_chains_[edge].size(); ++interval) {
-        if (trace_enabled_ && interval == 0 && edge % 32 == 0) {
-          std::fprintf(stderr,
-                       "PLC_TRACE edge_scan row=%zu/%zu points=%zu finite_cells=%lld\n",
-                       edge, edge_chains_.size(), candidate_.points.size() / 3,
-                       static_cast<long long>(triangulation_->complex().finite_count));
-        }
-        if (progress_enabled_ && interval == 0 && edge % 32 == 0) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS edge_scan row=%zu/%zu missing=%zu points=%zu "
-                       "cells=%lld seconds=%.3f\n",
-                       edge, edge_chains_.size(), missing_progress,
-                       candidate_.points.size() / 3,
-                       static_cast<long long>(triangulation_->complex().finite_count),
-                       std::chrono::duration<double>(
-                           std::chrono::steady_clock::now() - edge_scan_started)
-                           .count());
-        }
         const int32_t first = edge_chains_[edge][interval].vertex;
         const int32_t second = edge_chains_[edge][interval + 1].vertex;
         bool edge_present = false;
         const int32_t edge_status = has_edge(first, second, edge_present);
         if (edge_status != PHX_MC_OK) return edge_status;
         if (edge_present) continue;
-        ++missing_progress;
-        if (trace_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_TRACE edge_missing row=%zu interval=%zu endpoints=(%d,%d) "
-                       "missing=%zu\n",
-                       edge, interval, first, second, missing_progress);
+        bool recovered = false;
+        const int32_t local_status = try_planar_source_edge(edge, first, second, recovered);
+        if (local_status != PHX_MC_OK) return local_status;
+        if (recovered) {
+          protected_segments_.push_back({first, second});
+          continue;
         }
         if (progress_enabled_) {
           std::fprintf(stderr,
                        "PLC_PROGRESS edge_missing row=%zu interval=%zu endpoints=(%d,%d) "
-                       "missing=%zu points=%zu cells=%lld\n",
-                       edge, interval, first, second, missing_progress,
-                       candidate_.points.size() / 3,
-                       static_cast<long long>(triangulation_->complex().finite_count));
+                       "points=%zu local_edits=%d\n",
+                       edge, interval, first, second, candidate_.points.size() / 3,
+                       local_edits_ ? 1 : 0);
         }
-        EdgeCavityScratch scratch;
-        std::vector<int32_t> cavity;
-        const int32_t start = finite_vertex_cell(first);
-        if (start < 0) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
-        if (progress_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS phase=segment_search_begin row=%zu interval=%zu "
-                       "endpoints=(%d,%d) cells=%lld\n",
-                       edge, interval, first, second,
-                       static_cast<long long>(triangulation_->complex().finite_count));
+        if (encroached(first, second)) return split_source_edge(edge, interval, restart);
+        if (!local_edits_) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
         }
-        const auto segment_search_started = std::chrono::steady_clock::now();
-        const int32_t cavity_status = collect_edge_cavity(
-            triangulation_->complex(), work_points_.data(), first, second, start, scratch, cavity);
-        if (progress_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS phase=segment_search row=%zu status=%d "
-                       "cavity_cells=%zu seconds=%.3f\n",
-                       edge, cavity_status, cavity.size(),
-                       std::chrono::duration<double>(
-                           std::chrono::steady_clock::now() - segment_search_started)
-                           .count());
-        }
-        if (cavity_status != PHX_MC_OK) {
-          if (trace_enabled_) {
-            std::fprintf(stderr,
-                         "PLC_TRACE edge_cavity row=%zu interval=%zu status=%d cells=%zu\n",
-                         edge, interval, cavity_status, cavity.size());
-          }
-          return fail(cavity_status, kPlcNonrepresentable, kPlcEdge, edge);
-        }
-        EdgeRecoveryContactCache contact_cache;
-        if (input_.policy == BoundaryPolicy::kFixed) {
-          const PlcFailure prior_failure = failure_;
-          const PlcSourceRefusal prior_source_refusal = candidate_.source_refusal;
-          protected_segments_.push_back({first, second});
-          const int32_t recovery_status = recover_vertex_source_edge(
-              edge, first, second, cavity, contact_cache, true);
-          if (recovery_status != PHX_MC_OK) {
-            if (recovery_status != PHX_MC_CONSTRAINT_INTERSECTION) {
-              protected_segments_.pop_back();
-              return recovery_status;
-            }
-            const PlcFailure recovery_failure = failure_;
-            const PlcSourceRefusal recovery_refusal = candidate_.source_refusal;
-            failure_ = prior_failure;
-            candidate_.source_refusal = prior_source_refusal;
-            bool planar_recovered = false;
-            const int32_t planar_status =
-                try_planar_source_edge(edge, first, second, planar_recovered);
-            if (planar_status != PHX_MC_OK) {
-              protected_segments_.pop_back();
-              return planar_status;
-            }
-            if (planar_recovered) continue;
-            bool incident_facet_recovered = false;
-            const int32_t facet_status = recover_incident_authored_triangle_facets(
-                edge, first, second, incident_facet_recovered);
-            if (facet_status != PHX_MC_OK) {
-              protected_segments_.pop_back();
-              return facet_status;
-            }
-            if (cavity_steiner_restart_required_) {
-              cavity_steiner_restart_required_ = false;
-              failure_ = prior_failure;
-              candidate_.source_refusal = prior_source_refusal;
-              protected_segments_.pop_back();
-              restart = true;
-              return PHX_MC_OK;
-            }
-            if (incident_facet_recovered) {
-              failure_ = prior_failure;
-              candidate_.source_refusal = prior_source_refusal;
-              continue;
-            }
-            protected_segments_.pop_back();
-            failure_ = recovery_failure;
-            candidate_.source_refusal = recovery_refusal;
-            return recovery_status;
-          }
-          bool edge_present = false;
-          const int32_t edge_status = has_edge(first, second, edge_present);
-          if (edge_status != PHX_MC_OK) {
-            protected_segments_.pop_back();
-            return edge_status;
-          }
-          if (!edge_present) {
-            protected_segments_.pop_back();
-            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
-          }
-          continue;
-        }
-        // Exhaust the complete local vertex cavity before conforming subdivision.
-        const PlcFailure prior_failure = failure_;
-        const PlcSourceRefusal prior_source_refusal = candidate_.source_refusal;
-        if (trace_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_TRACE vertex_cavity_local_begin row=%zu interval=%zu "
-                       "cells=%zu\n",
-                       edge, interval, cavity.size());
-        }
-        protected_segments_.push_back({first, second});
-        if (progress_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS phase=local_cavity_begin row=%zu interval=%zu "
-                       "cavity_cells=%zu points=%zu\n",
-                       edge, interval, cavity.size(), candidate_.points.size() / 3);
-        }
-        const auto local_cavity_started = std::chrono::steady_clock::now();
-        const int32_t local_status = recover_vertex_source_edge(
-            edge, first, second, cavity, contact_cache, false);
-        if (progress_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS phase=local_cavity row=%zu status=%d "
-                       "cavity_cells=%zu finite_cells=%lld seconds=%.3f\n",
-                       edge, local_status, cavity.size(),
-                       static_cast<long long>(triangulation_->complex().finite_count),
-                       std::chrono::duration<double>(
-                           std::chrono::steady_clock::now() - local_cavity_started)
-                           .count());
-        }
-        if (trace_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_TRACE vertex_cavity_local_done row=%zu interval=%zu "
-                       "status=%d points=%zu finite_cells=%lld\n",
-                       edge, interval, local_status, candidate_.points.size() / 3,
-                       static_cast<long long>(triangulation_->complex().finite_count));
-        }
-        if (local_status == PHX_MC_OK) {
-          bool edge_present = false;
-          const int32_t edge_status = has_edge(first, second, edge_present);
-          if (edge_status != PHX_MC_OK) {
-            protected_segments_.pop_back();
-            return edge_status;
-          }
-          if (!edge_present) {
-            protected_segments_.pop_back();
-            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
-          }
-          continue;
-        }
-        protected_segments_.pop_back();
-        if (local_status != PHX_MC_CONSTRAINT_INTERSECTION) return local_status;
-        failure_ = prior_failure;
-        candidate_.source_refusal = prior_source_refusal;
-        const int32_t split_status = split_source_edge(edge, interval, restart);
-        if (progress_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS phase=source_split row=%zu status=%d restart=%d "
-                       "points=%zu attempts=%zu accepted=%zu refused=%zu\n",
-                       edge, split_status, restart ? 1 : 0,
-                       candidate_.points.size() / 3, progress_incremental_attempts_,
-                       progress_incremental_accepted_,
-                       progress_incremental_attempts_ - progress_incremental_accepted_);
-        }
-        if (trace_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_TRACE edge_split row=%zu interval=%zu status=%d "
-                       "restart_required=%d points=%zu\n",
-                       edge, interval, split_status, restart ? 1 : 0,
-                       candidate_.points.size() / 3);
-        }
-        if (split_status == PHX_MC_OK) return split_status;
-        if (split_status != PHX_MC_UNRESOLVED &&
-            split_status != PHX_MC_INDEX_RANGE_ERROR) {
-          return split_status;
-        }
-        const PlcFailure split_failure = failure_;
-        const PlcSourceRefusal split_source_refusal = candidate_.source_refusal;
-        failure_ = prior_failure;
-        candidate_.source_refusal = prior_source_refusal;
-        if (trace_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_TRACE vertex_closure_fallback row=%zu split_status=%d\n",
-                       edge, split_status);
-        }
-        bool planar_recovered = false;
-        const int32_t planar_status =
-            try_planar_source_edge(edge, first, second, planar_recovered);
-        if (planar_status != PHX_MC_OK) return planar_status;
-        if (planar_recovered) {
-          protected_segments_.push_back({first, second});
-          continue;
-        }
-        protected_segments_.push_back({first, second});
-        bool incident_facet_recovered = false;
-        const int32_t incident_facet_status =
-            recover_incident_authored_triangle_facets(
-                edge, first, second, incident_facet_recovered);
-        if (incident_facet_status != PHX_MC_OK) {
-          protected_segments_.pop_back();
-          return incident_facet_status;
-        }
-        if (cavity_steiner_restart_required_) {
-          cavity_steiner_restart_required_ = false;
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          protected_segments_.pop_back();
-          restart = true;
-          return PHX_MC_OK;
-        }
-        if (incident_facet_recovered) {
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          continue;
-        }
-        if (progress_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS phase=contact_closure_begin row=%zu split_status=%d "
-                       "cavity_cells=%zu\n",
-                       edge, split_status, cavity.size());
-        }
-        const auto closure_started = std::chrono::steady_clock::now();
-        const int32_t closure_status = recover_vertex_source_edge(
-            edge, first, second, cavity, contact_cache, true);
-        if (progress_enabled_) {
-          std::fprintf(stderr,
-                       "PLC_PROGRESS phase=contact_closure row=%zu status=%d "
-                       "cavity_cells=%zu finite_cells=%lld seconds=%.3f\n",
-                       edge, closure_status, cavity.size(),
-                       static_cast<long long>(triangulation_->complex().finite_count),
-                       std::chrono::duration<double>(
-                           std::chrono::steady_clock::now() - closure_started)
-                           .count());
-        }
-        if (closure_status == PHX_MC_OK) {
-          bool edge_present = false;
-          const int32_t edge_status = has_edge(first, second, edge_present);
-          if (edge_status != PHX_MC_OK) {
-            protected_segments_.pop_back();
-            return edge_status;
-          }
-          if (!edge_present) {
-            protected_segments_.pop_back();
-            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
-          }
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          continue;
-        }
-        protected_segments_.pop_back();
-        if (closure_status != PHX_MC_CONSTRAINT_INTERSECTION) return closure_status;
-        failure_ = split_failure;
-        candidate_.source_refusal = split_source_refusal;
-        return split_status;
+        incremental_triangulation_ready_ = false;
+        restart = true;
+        return PHX_MC_OK;
       }
     }
     return PHX_MC_OK;
   }
-  // Candidate-face closure grows only across exact, unconstrained finite cells;
-  // source subdivision can precede it when an exact representable split exists.
+
+  // Fixed boundaries admit no split: the local vertex cavity, planar flips,
+  // and the incident authored-facet transaction are the recovery stages.
+  int32_t recover_fixed_source_edge(std::size_t edge, int32_t first, int32_t second) {
+    EdgeCavityScratch scratch;
+    std::vector<int32_t> cavity;
+    const int32_t start = finite_vertex_cell(first);
+    if (start < 0) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
+    const int32_t cavity_status = collect_edge_cavity(
+        triangulation_->complex(), work_points_.data(), first, second, start, scratch, cavity);
+    if (cavity_status != PHX_MC_OK) {
+      return fail(cavity_status, kPlcNonrepresentable, kPlcEdge, edge);
+    }
+    EdgeRecoveryContactCache contact_cache;
+    const PlcFailure prior_failure = failure_;
+    const PlcSourceRefusal prior_source_refusal = candidate_.source_refusal;
+    protected_segments_.push_back({first, second});
+    const int32_t recovery_status =
+        recover_vertex_source_edge(edge, first, second, cavity, contact_cache, true);
+    if (recovery_status == PHX_MC_OK) {
+      bool edge_present = false;
+      const int32_t edge_status = has_edge(first, second, edge_present);
+      if (edge_status != PHX_MC_OK) return edge_status;
+      if (!edge_present) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
+      return PHX_MC_OK;
+    }
+    if (recovery_status != PHX_MC_CONSTRAINT_INTERSECTION) return recovery_status;
+    const PlcFailure recovery_failure = failure_;
+    const PlcSourceRefusal recovery_refusal = candidate_.source_refusal;
+    failure_ = prior_failure;
+    candidate_.source_refusal = prior_source_refusal;
+    bool incident_facet_recovered = false;
+    const int32_t facet_status =
+        recover_incident_authored_triangle_facets(edge, first, second, incident_facet_recovered);
+    if (facet_status != PHX_MC_OK) return facet_status;
+    if (incident_facet_recovered || cavity_steiner_restart_required_) {
+      failure_ = prior_failure;
+      candidate_.source_refusal = prior_source_refusal;
+      return PHX_MC_OK;
+    }
+    bool planar_recovered = false;
+    const int32_t planar_status = try_planar_source_edge(edge, first, second, planar_recovered);
+    if (planar_status != PHX_MC_OK || planar_recovered) return planar_status;
+    failure_ = recovery_failure;
+    candidate_.source_refusal = recovery_refusal;
+    return recovery_status;
+  }
+
 
   struct EdgeRecoveryFace {
     Triple vertices;
@@ -2915,10 +2687,10 @@ class PlcRecoveryBuilder {
     }
     for (int32_t vertex : side.vertices) {
       if (vertex == face[0] || vertex == face[1] || vertex == face[2] || vertex == apex) continue;
-      if (orient3d(point(face[0]), point(face[1]), point(face[2]), point(vertex)) >= 0 &&
-          orient3d(point(face[1]), point(apex), point(face[2]), point(vertex)) >= 0 &&
-          orient3d(point(face[0]), point(face[2]), point(apex), point(vertex)) >= 0 &&
-          orient3d(point(face[0]), point(apex), point(face[1]), point(vertex)) >= 0) {
+      if (orient(face[0], face[1], face[2], vertex) >= 0 &&
+          orient(face[1], apex, face[2], vertex) >= 0 &&
+          orient(face[0], face[2], apex, vertex) >= 0 &&
+          orient(face[0], apex, face[1], vertex) >= 0) {
         rejection_reason = 5;
         return PHX_MC_OK;
       }
@@ -3107,8 +2879,7 @@ class PlcRecoveryBuilder {
               has_first ? recovery_edge_[1] : recovery_edge_[0];
           if (std::binary_search(side.vertices.begin(), side.vertices.end(),
                                  target) &&
-              orient3d(point(face[0]), point(face[1]), point(face[2]),
-                       point(target)) > 0) {
+              orient(face[0], face[1], face[2], target) > 0) {
             forced_apex = target;
             EdgeRecoveryFailureDetail contact{};
             bool admissible = false;
@@ -3208,9 +2979,7 @@ class PlcRecoveryBuilder {
       const PlcSourceRefusal saved_refusal = candidate_.source_refusal;
       const std::size_t old_point_count = candidate_.points.size();
       bool restart = false;
-      const int32_t status = split_source_face(
-          key, current->second, restart, parameters, spacing, carrier,
-          deviation);
+      const int32_t status = split_source_face(key, current->second, restart);
       if (status == PHX_MC_OK && restart) {
         if (progress_enabled_) {
           ++progress_face_steiner_insertions_;
@@ -3623,8 +3392,7 @@ class PlcRecoveryBuilder {
       edit.add(tet.data(), constraints, kNoRegion);
     }
     EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
-      return orient3d(point(vertices[0]), point(vertices[1]), point(vertices[2]),
-                      point(vertices[3])) > 0;
+      return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;
     });
     if (edit_status == EditStatus::kOk) edit_status = edit.commit();
     local_edits_ = local_edits_ || edit_status == EditStatus::kOk;
@@ -3682,17 +3450,11 @@ class PlcRecoveryBuilder {
   enum class PlanarWalk { kCovered, kUncovered, kVertexOnEdge };
 
   int planar_side(const PlanarFrame& frame, int32_t vertex) const {
-    return orient3d(point(frame.plane[0]), point(frame.plane[1]),
-                    point(frame.plane[2]), point(vertex));
+    return orient(frame.plane[0], frame.plane[1], frame.plane[2], vertex);
   }
 
   int planar_orient(const PlanarFrame& frame, int32_t a, int32_t b, int32_t c) const {
-    const int x = (frame.axis + 1) % 3;
-    const int y = (frame.axis + 2) % 3;
-    const double pa[2] = {point(a)[x], point(a)[y]};
-    const double pb[2] = {point(b)[x], point(b)[y]};
-    const double pc[2] = {point(c)[x], point(c)[y]};
-    return orient2d(pa, pb, pc);
+    return orient2d_projected(ref(a), ref(b), ref(c), frame.axis);
   }
 
   bool in_plane(const PlanarFrame& frame, int32_t vertex) const {
@@ -3724,7 +3486,7 @@ class PlcRecoveryBuilder {
     int32_t start = vertex_tet_[static_cast<std::size_t>(vertex)];
     if (start < 0 || !complex.live(start) ||
         vertex_slot(complex.tets[static_cast<std::size_t>(start)], vertex) < 0) {
-      start = triangulation_->locate(point(vertex));
+      start = triangulation_->locate(ref(vertex));
       if (start < 0 || !complex.live(start) ||
           vertex_slot(complex.tets[static_cast<std::size_t>(start)], vertex) < 0) {
         return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, vertex);
@@ -3988,8 +3750,8 @@ class PlcRecoveryBuilder {
             const double* ci = point(chain[i]);
             const double* cm = point(chain[m]);
             const double* cj = point(chain[j]);
-            if (orient3d(point(p), ci, cm, cj) != sign ||
-                orient3d(point(q), ci, cm, cj) != -sign) {
+            if (orient(p, chain[i], chain[m], chain[j]) != sign ||
+                orient(q, chain[i], chain[m], chain[j]) != -sign) {
               continue;
             }
             const double shape = std::min(tetrahedron_shape(point(p), ci, cm, cj),
@@ -4136,7 +3898,8 @@ class PlcRecoveryBuilder {
       }
       std::copy_n(candidate, 3, previous);
       const bool visible = std::all_of(faces.begin(), faces.end(), [&](const Triple& face) {
-        return orient3d(point(face[0]), point(face[1]), point(face[2]), candidate) > 0;
+        return orient3d(ref(face[0]), ref(face[1]), ref(face[2]),
+                        ExactPointRef{candidate, nullptr}) > 0;
       });
       if (visible && clear_of_sources(candidate)) {
         std::copy_n(candidate, 3, location);
@@ -4225,8 +3988,7 @@ class PlcRecoveryBuilder {
     }
     for (const auto& tet : tets) edit.add(tet.data(), nullptr, kNoRegion);
     EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
-      return orient3d(point(vertices[0]), point(vertices[1]), point(vertices[2]),
-                      point(vertices[3])) > 0;
+      return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;
     });
     if (edit_status != EditStatus::kOk) {
       edit.rollback();
@@ -4257,6 +4019,8 @@ class PlcRecoveryBuilder {
   // fins (u, a, b) and (v, b, a). This is the 3-2 flip for a ring of three.
   int32_t remove_edge_toward(int32_t u, int32_t v, int32_t a, int32_t b, bool& applied) {
     applied = false;
+    // A recovered source interval is never traded for another edge.
+    if (chain_intervals_.contains(topology::undirected_edge(u, v))) return PHX_MC_OK;
     std::vector<int32_t> cells;
     const int32_t status = edge_cells(u, v, cells);
     if (status != PHX_MC_OK) return status;
@@ -4315,8 +4079,7 @@ class PlcRecoveryBuilder {
           tets.push_back({face[static_cast<std::size_t>(side)],
                           face[static_cast<std::size_t>((side + 1) % 3)],
                           first.v[first_apex], other});
-          if (orient3d(point(tets.back()[0]), point(tets.back()[1]), point(tets.back()[2]),
-                       point(tets.back()[3])) < 0) {
+          if (orient(tets.back()[0], tets.back()[1], tets.back()[2], tets.back()[3]) < 0) {
             std::swap(tets.back()[0], tets.back()[1]);
           }
         }
@@ -4392,28 +4155,29 @@ class PlcRecoveryBuilder {
                         const PlanarCrossing& crossing) const {
     const int x = (frame.axis + 1) % 3;
     const int y = (frame.axis + 2) % 3;
-    const double* pa = point(a);
-    const double* pb = point(b);
-    const Expansion ex = Expansion::difference(pb[x], pa[x]);
-    const Expansion ey = Expansion::difference(pb[y], pa[y]);
+    const Expansion ax = coordinate(ref(a), x);
+    const Expansion ay = coordinate(ref(a), y);
+    const Expansion bx = coordinate(ref(b), x);
+    const Expansion by = coordinate(ref(b), y);
+    const Expansion ex = bx - ax;
+    const Expansion ey = by - ay;
     const auto primary = [&](int32_t vertex) {
-      const double* p = point(vertex);
-      const Expansion cross = ex * Expansion::difference(p[y], pa[y]) -
-                              ey * Expansion::difference(p[x], pa[x]);
+      const Expansion cross = ex * (coordinate(ref(vertex), y) - ay) -
+                              ey * (coordinate(ref(vertex), x) - ax);
       return cross * cross;
     };
     const auto secondary = [&](int32_t vertex) {
-      const double* p = point(vertex);
-      const Expansion dx = Expansion(2.0 * p[x]) - Expansion::sum(pa[x], pb[x]);
-      const Expansion dy = Expansion(2.0 * p[y]) - Expansion::sum(pa[y], pb[y]);
+      const Expansion dx = coordinate(ref(vertex), x).scaled(2.0) - ax - bx;
+      const Expansion dy = coordinate(ref(vertex), y).scaled(2.0) - ay - by;
       return dx * dx + dy * dy;
     };
     const int32_t rows[3] = {crossing.left, crossing.right, crossing.before};
-    const double* pz = point(crossing.after);
+    const Expansion zx = coordinate(ref(crossing.after), x);
+    const Expansion zy = coordinate(ref(crossing.after), y);
     Expansion dx[3], dy[3];
     for (int row = 0; row < 3; ++row) {
-      dx[row] = Expansion::difference(point(rows[row])[x], pz[x]);
-      dy[row] = Expansion::difference(point(rows[row])[y], pz[y]);
+      dx[row] = coordinate(ref(rows[row]), x) - zx;
+      dy[row] = coordinate(ref(rows[row]), y) - zy;
     }
     const auto lifted = [&](const auto& height) {
       const Expansion hz = height(crossing.after);
@@ -4585,7 +4349,7 @@ class PlcRecoveryBuilder {
     int32_t start = vertex_tet_[static_cast<std::size_t>(first)];
     if (start < 0 || !complex.live(start) ||
         vertex_slot(complex.tets[static_cast<std::size_t>(start)], first) < 0) {
-      start = triangulation_->locate(point(first));
+      start = triangulation_->locate(ref(first));
       if (start < 0) return PHX_MC_INTERNAL_ERROR;
       vertex_tet_[static_cast<std::size_t>(first)] = start;
     }
@@ -4783,8 +4547,7 @@ class PlcRecoveryBuilder {
       for (int slot = 0; slot < 4; ++slot) {
         Triple face{};
         oriented_facet(second.data(), slot, face.data());
-        inside = inside && orient3d(point(face[0]), point(face[1]), point(face[2]),
-                                    point(vertex)) >= 0;
+        inside = inside && orient(face[0], face[1], face[2], vertex) >= 0;
       }
       if (inside) return false;
     }
@@ -4794,8 +4557,7 @@ class PlcRecoveryBuilder {
       for (int slot = 0; slot < 4; ++slot) {
         Triple face{};
         oriented_facet(first.data(), slot, face.data());
-        inside = inside && orient3d(point(face[0]), point(face[1]), point(face[2]),
-                                    point(vertex)) >= 0;
+        inside = inside && orient(face[0], face[1], face[2], vertex) >= 0;
       }
       if (inside) return false;
     }
@@ -4909,8 +4671,7 @@ class PlcRecoveryBuilder {
           continue;
         }
         const Triple& on_face = face.vertices;
-        if (orient3d(point(on_face[0]), point(on_face[1]), point(on_face[2]),
-                     point(apex)) <= 0) {
+        if (orient(on_face[0], on_face[1], on_face[2], apex) <= 0) {
           valid = false;
           break;
         }
@@ -4929,15 +4690,12 @@ class PlcRecoveryBuilder {
         auto sorted_tet = tet;
         std::sort(sorted_tet.begin(), sorted_tet.end());
         if (!unique_tets.insert(sorted_tet).second ||
-            orient3d(point(tet[0]), point(tet[1]), point(tet[2]),
-                     point(tet[3])) <= 0) {
+            orient(tet[0], tet[1], tet[2], tet[3]) <= 0) {
           valid = false;
           break;
         }
         for (int32_t vertex : tet) {
-          const int sign = orient3d(
-              point(source.oriented[0]), point(source.oriented[1]),
-              point(source.oriented[2]), point(vertex));
+          const int sign = orient(source.oriented[0], source.oriented[1], source.oriented[2], vertex);
           if (sign != 0 && sign != side_sign) {
             valid = false;
             break;
@@ -4995,8 +4753,7 @@ class PlcRecoveryBuilder {
             Triple face{};
             oriented_facet(tet.data(), slot, face.data());
             inside = inside &&
-                orient3d(point(face[0]), point(face[1]), point(face[2]),
-                         point(vertex)) >= 0;
+                orient(face[0], face[1], face[2], vertex) >= 0;
           }
           if (inside) {
             failed_contact = "unrepresented-cavity-vertex";
@@ -5234,37 +4991,23 @@ class PlcRecoveryBuilder {
     }
     if (boundary.size() < 3) return PHX_MC_CONSTRAINT_INTERSECTION;
 
-    const double* a = point(source.oriented[0]);
-    const double* b = point(source.oriented[1]);
-    const double* c = point(source.oriented[2]);
-    const int axis = projection_axis(a, b, c);
+    const int axis =
+        exact_projection_axis(source.oriented[0], source.oriented[1], source.oriented[2]);
     if (axis < 0) return PHX_MC_CONSTRAINT_INTERSECTION;
-    const int x = (axis + 1) % 3;
-    const int y = (axis + 2) % 3;
-    const double a2[2] = {a[x], a[y]};
-    const double b2[2] = {b[x], b[y]};
-    const double c2[2] = {c[x], c[y]};
-    const int orientation = orient2d(a2, b2, c2);
+    const ExactPointRef corners[3] = {ref(source.oriented[0]), ref(source.oriented[1]),
+                                      ref(source.oriented[2])};
+    const int orientation = orient2d_projected(corners[0], corners[1], corners[2], axis);
     if (orientation == 0) return PHX_MC_CONSTRAINT_INTERSECTION;
     const auto point_location = [&](int32_t vertex) {
-      if (orient3d(a, b, c, point(vertex)) != 0) return 0;
-      const double query[2] = {point(vertex)[x], point(vertex)[y]};
+      const ExactPointRef query = ref(vertex);
+      if (orient3d(corners[0], corners[1], corners[2], query) != 0) return 0;
       bool on_boundary = false;
       for (int side = 0; side < 3; ++side) {
-        const int32_t first = source.oriented[static_cast<std::size_t>(side)];
-        const int32_t second =
-            source.oriented[static_cast<std::size_t>((side + 1) % 3)];
-        const double p[2] = {point(first)[x], point(first)[y]};
-        const double q[2] = {point(second)[x], point(second)[y]};
-        const int side_sign = orient2d(p, q, query) * orientation;
+        const ExactPointRef& p = corners[side];
+        const ExactPointRef& q = corners[(side + 1) % 3];
+        const int side_sign = orient2d_projected(p, q, query, axis) * orientation;
         if (side_sign < 0) return 0;
-        if (side_sign == 0 &&
-            std::min(p[0], q[0]) <= query[0] &&
-            query[0] <= std::max(p[0], q[0]) &&
-            std::min(p[1], q[1]) <= query[1] &&
-            query[1] <= std::max(p[1], q[1])) {
-          on_boundary = true;
-        }
+        if (side_sign == 0 && between_on_line(p, q, query)) on_boundary = true;
       }
       return on_boundary ? 1 : 2;
     };
@@ -5289,15 +5032,11 @@ class PlcRecoveryBuilder {
           return PHX_MC_CONSTRAINT_INTERSECTION;
         }
         if (first_location == 0 && second_location == 0 &&
-            orient3d(a, b, c, point(first)) == 0 &&
-            orient3d(a, b, c, point(second)) == 0) {
+            orient3d(corners[0], corners[1], corners[2], ref(first)) == 0 &&
+            orient3d(corners[0], corners[1], corners[2], ref(second)) == 0) {
           for (int side = 0; side < 3; ++side) {
-            const int32_t edge_first =
-                source.oriented[static_cast<std::size_t>(side)];
-            const int32_t edge_second =
-                source.oriented[static_cast<std::size_t>((side + 1) % 3)];
-            if (segments_meet(point(first), point(second),
-                              point(edge_first), point(edge_second))) {
+            if (segments_meet(ref(first), ref(second), corners[side],
+                              corners[(side + 1) % 3])) {
               return PHX_MC_CONSTRAINT_INTERSECTION;
             }
           }
@@ -5305,6 +5044,22 @@ class PlcRecoveryBuilder {
       }
     }
     std::vector<Triple> triangles;
+    const bool witnessed = std::any_of(boundary.begin(), boundary.end(), [&](int32_t vertex) {
+      return ref(vertex).exact != nullptr;
+    });
+    if (witnessed) {
+      // Binary64 carriers of witnessed vertices are off the facet plane, so
+      // the planar loop is triangulated on exact positions.
+      if (!internal_constraints.empty()) return PHX_MC_CONSTRAINT_INTERSECTION;
+      if (!exact_loop_triangles(boundary, axis, orientation, triangles)) {
+        return PHX_MC_CONSTRAINT_INTERSECTION;
+      }
+      children.reserve(triangles.size());
+      for (const Triple& face : triangles) {
+        children.push_back({face, source.facet, source.source_triangle});
+      }
+      return PHX_MC_OK;
+    }
     const int32_t status = triangulate_planar_loop(
         work_points_.data(),
         static_cast<int64_t>(candidate_.points.size() / 3), boundary.data(),
@@ -5897,8 +5652,7 @@ class PlcRecoveryBuilder {
       } else {
         if (!source_keys.contains(key)) return PHX_MC_CONSTRAINT_INTERSECTION;
         for (int32_t vertex : uses.front().oriented) {
-          if (orient3d(point(reference.oriented[0]), point(reference.oriented[1]),
-                       point(reference.oriented[2]), point(vertex)) != 0) {
+          if (orient(reference.oriented[0], reference.oriented[1], reference.oriented[2], vertex) != 0) {
             return PHX_MC_CONSTRAINT_INTERSECTION;
           }
         }
@@ -6302,8 +6056,7 @@ class PlcRecoveryBuilder {
       }
     }
     EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
-      return orient3d(point(vertices[0]), point(vertices[1]), point(vertices[2]),
-                      point(vertices[3])) > 0;
+      return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;
     });
     if (edit_status == EditStatus::kOk) edit_status = edit.commit();
     local_edits_ = local_edits_ || edit_status == EditStatus::kOk;
@@ -6913,164 +6666,114 @@ class PlcRecoveryBuilder {
     return false;
   }
 
-  bool exact_source_face_point(int32_t source_triangle, double* point,
-                               double* parameters) const {
-    const int32_t* face = candidate_.input_triangles.data() + 3 * source_triangle;
-    const double* a = candidate_.points.data() + 3 * static_cast<std::size_t>(face[0]);
-    const double* b = candidate_.points.data() + 3 * static_cast<std::size_t>(face[1]);
-    const double* c = candidate_.points.data() + 3 * static_cast<std::size_t>(face[2]);
-    const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-    const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-    const double* triangle[3] = {a, b, c};
-    for (int resolution = 2; resolution <= 52; ++resolution) {
-      const double scale = std::exp2(resolution);
-      const double parameter = std::round(scale / 3.0) / scale;
-      for (int axis = 0; axis < 3; ++axis) {
-        point[axis] = a[axis] + parameter * ab[axis] + parameter * ac[axis];
-      }
-      int side = 0;
-      if (geometry::point_in_domain(point) &&
-          locate_on_triangle(point, triangle, side) == kFeatureInterior) {
-        parameters[0] = parameter;
-        parameters[1] = parameter;
-        return true;
-      }
-    }
-    return false;
-  }
-
-  int32_t split_source_face(
-      const Triple& key, const PlcSourceFace& source, bool& restart,
-      const double* steiner_parameters = nullptr,
-      double minimum_spacing = 0.0,
-      const double* steiner_carrier = nullptr,
-      double steiner_deviation = 0.0) {
+  // Splits the missing subface `source`, a child of source triangle
+  // T = ABC, at the exactly witnessed point S = A + l1 (B - A) + l2 (C - A).
+  // (l1, l2) are the barycentric coordinates of the child's centroid,
+  // rounded to dyadic rationals of increasing precision until S lies
+  // exactly in the child's open interior; S keeps its exact position in the
+  // exact vertex bank (its carrier is the rounding of S), so S is exactly
+  // coplanar with every subface of T and later recovery and suppression
+  // decide on S itself. The child becomes the fan from S over its boundary,
+  // which includes the split points on its edges.
+  int32_t split_source_face(const Triple& key, const PlcSourceFace& source, bool& restart) {
+    restart = false;
+    const auto refuse = [&]() {
+      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
+    };
+    const int32_t source_count = static_cast<int32_t>(candidate_.points.size() / 3);
     std::vector<int32_t> boundary;
     for (int side = 0; side < 3; ++side) {
       const int32_t first = source.oriented[static_cast<std::size_t>(side)];
       const int32_t second = source.oriented[static_cast<std::size_t>((side + 1) % 3)];
       boundary.push_back(first);
-      int axis = 0;
-      for (int k = 1; k < 3; ++k) {
-        if (std::fabs(point(second)[k] - point(first)[k]) >
-            std::fabs(point(second)[axis] - point(first)[axis])) axis = k;
-      }
-      const double a = point(first)[axis];
-      const double b = point(second)[axis];
       std::vector<int32_t> interior;
-      for (int32_t vertex = 0; vertex < static_cast<int32_t>(candidate_.points.size() / 3); ++vertex) {
+      for (int32_t vertex = 0; vertex < source_count; ++vertex) {
         if (vertex == first || vertex == second) continue;
-        const double coordinate = point(vertex)[axis];
-        if (!(std::min(a, b) < coordinate && coordinate < std::max(a, b)) ||
-            !geometry::collinear(point(first), point(second), point(vertex), 1)) continue;
+        if (!collinear(ref(first), ref(second), ref(vertex)) ||
+            !between_on_line(ref(first), ref(second), ref(vertex))) {
+          continue;
+        }
         interior.push_back(vertex);
       }
+      // Order along the edge by the exact projection onto it.
       std::sort(interior.begin(), interior.end(), [&](int32_t x, int32_t y) {
-        return a < b ? point(x)[axis] < point(y)[axis] : point(x)[axis] > point(y)[axis];
+        Expansion along;
+        for (int axis = 0; axis < 3; ++axis) {
+          along = along + (coordinate(ref(y), axis) - coordinate(ref(x), axis)) *
+                              (coordinate(ref(second), axis) - coordinate(ref(first), axis));
+        }
+        return along.sign() > 0;
       });
       boundary.insert(boundary.end(), interior.begin(), interior.end());
     }
-    if (boundary.size() < 3) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
-    }
     const int32_t* original = candidate_.input_triangles.data() + 3 * source.source_triangle;
-    const double* source_corners[3] = {
+    const double* corners[3] = {
         candidate_.points.data() + 3 * static_cast<std::size_t>(original[0]),
         candidate_.points.data() + 3 * static_cast<std::size_t>(original[1]),
         candidate_.points.data() + 3 * static_cast<std::size_t>(original[2])};
-    double constructed[3];
-    double parameters[2] = {0.0, 0.0};
-    const bool is_source_triangle =
-        sorted_triple(source.oriented.data()) == sorted_triple(original);
-    bool constructed_ok = false;
-    if (steiner_parameters != nullptr) {
-      parameters[0] = steiner_parameters[0];
-      parameters[1] = steiner_parameters[1];
-      constructed_ok =
-          source_parameters_valid(SourceStratum::kFacet, parameters);
-    } else {
-      constructed_ok = is_source_triangle
-          ? exact_source_face_point(source.source_triangle, constructed,
-                                    parameters)
-          : exact_triangle_point(point(source.oriented[0]),
-                                 point(source.oriented[1]),
-                                 point(source.oriented[2]), constructed);
-      if (!is_source_triangle && constructed_ok) {
-        source_locator(source_corners, SourceStratum::kFacet, constructed,
-                       parameters, false);
-      }
+    // Barycentric coordinates of the child's carrier centroid in T, by the
+    // normal equations of the affine map (only a target for the search).
+    double centroid[3] = {0.0, 0.0, 0.0};
+    for (int32_t vertex : source.oriented) {
+      for (int axis = 0; axis < 3; ++axis) centroid[axis] += point(vertex)[axis] / 3.0;
     }
-    if (!constructed_ok) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                  source.facet);
-    }
-    if (!source_parameters_valid(SourceStratum::kFacet, parameters)) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                  source.facet);
-    }
+    double u[3], v[3], w[3];
+    geometry::difference(corners[1], corners[0], u);
+    geometry::difference(corners[2], corners[0], v);
+    geometry::difference(centroid, corners[0], w);
+    const double uu = geometry::dot(u, u), uv = geometry::dot(u, v), vv = geometry::dot(v, v);
+    const double wu = geometry::dot(w, u), wv = geometry::dot(w, v);
+    const double determinant = uu * vv - uv * uv;
+    if (!(determinant > 0.0)) return refuse();
+    const double target[2] = {(wu * vv - wv * uv) / determinant, (wv * uu - wu * uv) / determinant};
+    const ExactPointRef child[3] = {ref(source.oriented[0]), ref(source.oriented[1]),
+                                    ref(source.oriented[2])};
+    double parameters[2];
+    Expansion position[3];
     double carrier[3];
-    double deviation = 0.0;
-    if (steiner_carrier != nullptr) {
-      std::copy_n(steiner_carrier, 3, carrier);
-      deviation = steiner_deviation;
-    } else if (!source_carrier(source_corners, SourceStratum::kFacet,
-                               parameters, carrier, deviation)) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                  source.facet);
-    }
-    const double bound = source_facet_tolerance(source.facet);
-    if (deviation > bound) {
-      candidate_.source_refusal = {deviation, bound};
-      return fail(PHX_MC_UNRESOLVED, kPlcSourceDeviation, kPlcFacet, source.facet);
-    }
-    const double* const child_triangle[3] = {
-        point(source.oriented[0]), point(source.oriented[1]), point(source.oriented[2])};
-    int center_side = 0;
-    if (locate_on_triangle(carrier, child_triangle, center_side) != kFeatureInterior) {
-      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
-    }
-    const Expansion minimum_spacing_squared =
-        Expansion::product(minimum_spacing, minimum_spacing);
-    for (std::size_t vertex = 0;
-         vertex < candidate_.points.size() / 3; ++vertex) {
-      const double* existing =
-          candidate_.points.data() + 3 * vertex;
-      if (geometry::same_point(carrier, existing)) {
-        return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                    source.facet);
+    bool found = false;
+    for (int bits = 4; bits <= 52 && !found; ++bits) {
+      const double scale = std::exp2(bits);
+      parameters[0] = std::round(target[0] * scale) / scale;
+      parameters[1] = std::round(target[1] * scale) / scale;
+      if (!source_parameters_valid(SourceStratum::kFacet, parameters) ||
+          !source_point(corners, SourceStratum::kFacet, parameters, position)) {
+        continue;
       }
-      if (minimum_spacing > 0.0) {
-        const Expansion dx = Expansion::difference(carrier[0], existing[0]);
-        const Expansion dy = Expansion::difference(carrier[1], existing[1]);
-        const Expansion dz = Expansion::difference(carrier[2], existing[2]);
-        const Expansion distance_squared = dx * dx + dy * dy + dz * dz;
-        if ((distance_squared - minimum_spacing_squared).sign() < 0) {
-          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet,
-                      source.facet);
-        }
-      }
+      for (int axis = 0; axis < 3; ++axis) carrier[axis] = nearest_double(position[axis]);
+      if (!geometry::point_in_domain(carrier)) continue;
+      int side = 0;
+      found = locate_on_triangle(ExactPointRef{carrier, position}, child, side) ==
+              kFeatureInterior;
     }
-    if (candidate_.points.size() / 3 >= static_cast<std::size_t>(kMaxMeshPoints - corner_count_)) {
+    if (!found) return refuse();
+    const double deviation = outward_distance(carrier, position);
+    // Distinct exact points with equal carriers would be indistinguishable.
+    const ExactPointRef split{carrier, deviation == 0.0 ? nullptr : position};
+    for (int32_t vertex = 0; vertex < source_count; ++vertex) {
+      if (!geometry::same_point(carrier, point(vertex))) continue;
+      if (same_point(split, ref(vertex))) {
+        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcFacet, source.facet,
+                    kPlcPoint, vertex);
+      }
+      return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet, kPlcPoint,
+                  vertex);
+    }
+    if (source_count >= kMaxMeshPoints - corner_count_) {
       return fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcFacet, source.facet);
     }
-    const int32_t center = static_cast<int32_t>(candidate_.points.size() / 3);
-    const PlcSourceFace parent = source;
+    const int32_t center = source_count;
     std::map<Triple, PlcSourceFace> staged_source_faces;
     for (std::size_t side = 0; side < boundary.size(); ++side) {
-      const Triple child{boundary[side], boundary[(side + 1) % boundary.size()], center};
-      const Triple child_key = sorted_triple(child.data());
+      const Triple child_face{boundary[side], boundary[(side + 1) % boundary.size()], center};
+      const Triple child_key = sorted_triple(child_face.data());
       if (source_faces_.contains(child_key) ||
           !staged_source_faces
-               .emplace(child_key,
-                        PlcSourceFace{child, parent.facet, parent.source_triangle})
+               .emplace(child_key, PlcSourceFace{child_face, source.facet, source.source_triangle})
                .second) {
-        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
-                    kPlcFacet, parent.facet);
+        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcFacet, source.facet);
       }
     }
-    candidate_.points.reserve(candidate_.points.size() + 3);
-    candidate_.witnesses.reserve(candidate_.witnesses.size() + 1);
-    candidate_.vertex_dimension.reserve(candidate_.vertex_dimension.size() + 1);
     candidate_.points.insert(candidate_.points.end(), carrier, carrier + 3);
     PlcRecoveryWitness witness{};
     witness.stratum = SourceStratum::kFacet;
@@ -7080,28 +6783,29 @@ class PlcRecoveryBuilder {
     witness.deviation = deviation;
     candidate_.witnesses.push_back(witness);
     candidate_.vertex_dimension.push_back(2);
+    if (deviation != 0.0) exact_points_.assign(center, position);
     source_faces_.erase(key);
     source_faces_.merge(staged_source_faces);
+    const int32_t insertion_status = insert_source_vertex_incrementally(center);
+    if (insertion_status != PHX_MC_OK) return insertion_status;
     restart = true;
     return PHX_MC_OK;
   }
 
+  // Recovers every subface: present ones are marked; a missing one is
+  // recovered by in-plane flips when its facet plane is covered, else split
+  // at an exactly witnessed interior point (split_source_face) and the scan
+  // restarts. FIXED boundaries take the same path; their split points are
+  // removed again by suppression.
   int32_t recover_source_faces(bool& restart) {
     restart = false;
     std::map<Triple, std::vector<PlcFaceUse>> faces;
     TetrahedralComplex& complex = triangulation_->complex();
-    bool attempted_fixed_face = false;
-    Triple previous_fixed_face{};
-    const auto mark_source_faces = [&](bool skip_missing) -> int32_t {
+    const auto mark_source_faces = [&]() -> int32_t {
       for (const auto& [key, source] : source_faces_) {
         const auto found = faces.find(key);
         if (found == faces.end() || found->second.size() != 2) {
-          if (skip_missing) continue;
-          return fail(input_.policy == BoundaryPolicy::kFixed ? PHX_MC_CONSTRAINT_INTERSECTION
-                                                              : PHX_MC_UNRESOLVED,
-                      input_.policy == BoundaryPolicy::kFixed ? kPlcFixedFacet
-                                                              : kPlcNonrepresentable,
-                      kPlcFacet, source.facet);
+          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
         }
         const PlcFaceUse* finite[2] = {nullptr, nullptr};
         int finite_count = 0;
@@ -7117,16 +6821,10 @@ class PlcRecoveryBuilder {
           const bool second_positive =
               FacetKey::of(finite[1]->oriented.data()) == FacetKey::of(source.oriented.data());
           if (first_positive == second_positive) {
-            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable,
-                        kPlcFacet, source.facet);
+            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcFacet, source.facet);
           }
         } else if (finite_count != 1 || corner_count_ != 0) {
-          if (skip_missing) continue;
-          return fail(input_.policy == BoundaryPolicy::kFixed ? PHX_MC_CONSTRAINT_INTERSECTION
-                                                              : PHX_MC_UNRESOLVED,
-                      input_.policy == BoundaryPolicy::kFixed ? kPlcFixedFacet
-                                                              : kPlcNonrepresentable,
-                      kPlcFacet, source.facet);
+          return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcFacet, source.facet);
         }
         complex.set_facet_constraint(finite[0]->tet, finite[0]->slot, source.facet);
       }
@@ -7146,25 +6844,11 @@ class PlcRecoveryBuilder {
       }
       const int32_t planar_status = recover_planar_polygons(faces);
       if (planar_status != PHX_MC_OK) return planar_status;
-
-      if (input_.policy == BoundaryPolicy::kFixed) {
-        const int32_t label_status = mark_source_faces(true);
-        if (label_status != PHX_MC_OK) return label_status;
-      }
       bool source_face_recovered = false;
       for (const auto& [key, source] : source_faces_) {
         const auto found = faces.find(key);
         if (found != faces.end() && found->second.size() == 2) continue;
-        if (input_.policy == BoundaryPolicy::kFixed) {
-          if (attempted_fixed_face && key == previous_fixed_face) {
-            return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedFacet,
-                        kPlcFacet, source.facet);
-          }
-          attempted_fixed_face = true;
-          previous_fixed_face = key;
-        }
         const PlcFailure prior_failure = failure_;
-        const PlcSourceRefusal prior_source_refusal = candidate_.source_refusal;
         bool planar_recovered = false;
         const Triple planar_key = key;
         const PlcSourceFace planar_source = source;
@@ -7181,33 +6865,828 @@ class PlcRecoveryBuilder {
           }
           failure_ = prior_failure;
         }
-        // Recover the exact current chain patch before conforming facet subdivision.
-        const int32_t status = recover_current_source_face(source);
-        if (cavity_steiner_restart_required_) {
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          cavity_steiner_restart_required_ = false;
-          restart = true;
-          return PHX_MC_OK;
-        }
-        if (status == PHX_MC_OK) {
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          source_face_recovered = true;
-          break;
-        }
-        if (input_.policy != BoundaryPolicy::kFixed &&
-            (status == PHX_MC_CONSTRAINT_INTERSECTION ||
-             status == PHX_MC_UNRESOLVED)) {
-          failure_ = prior_failure;
-          candidate_.source_refusal = prior_source_refusal;
-          return split_source_face(key, source, restart);
-        }
-        return status;
+        return split_source_face(planar_key, planar_source, restart);
       }
       if (source_face_recovered) continue;
-      return mark_source_faces(false);
+      return mark_source_faces();
     }
+  }
+
+  // Steiner suppression (cf. Si, TetGen boundary recovery with -Y): once
+  // all facets are recovered, every boundary split point is removed again
+  // when the policy is FIXED, and otherwise every split point whose exact
+  // position is not a binary64 point, so published boundary vertices lie
+  // exactly on their sources. The recovered subfaces through such a point s
+  // are retriangulated without s within their own planar polygons (as the
+  // fans from a neighbour t when s contracts onto t, else by exact ear
+  // clipping), so the two chain intervals at a segment point merge into one,
+  // and every wedge of the star of s is refilled by remove_witnessed_vertex.
+  // Each suppression removes one boundary vertex and adds at most one volume
+  // point per wedge, so the pass is finite. A point whose fans or wedges
+  // admit none of the exactly verified replacements is a typed
+  // STEINER_SUPPRESSION refusal naming its source segment or facet.
+  struct SuppressionFan {
+    int32_t facet = -1;
+    int32_t source_triangle = -1;
+    bool planar = false;
+    Triple reference{};
+    std::vector<Triple> old_faces;
+    std::vector<Triple> new_faces;
+  };
+
+  int32_t suppress_witnessed_vertices() {
+    const int32_t count = static_cast<int32_t>(candidate_.points.size() / 3);
+    suppressed_.assign(static_cast<std::size_t>(count), 0);
+    for (int32_t vertex = source_point_count_; vertex < count; ++vertex) {
+      if (input_.policy != BoundaryPolicy::kFixed && exact_points_.position(vertex) == nullptr) {
+        continue;
+      }
+      const int32_t status = suppress_vertex(vertex);
+      if (status != PHX_MC_OK) return status;
+    }
+    return PHX_MC_OK;
+  }
+
+  // Half-fans of the recovered subfaces through s, split at the chain
+  // neighbours p and q, each retriangulated without s.
+  bool suppression_fans(int32_t s, int32_t p, int32_t q, std::vector<SuppressionFan>& fans) const {
+    struct Use {
+      Triple oriented;
+      int32_t source_triangle;
+      bool planar;
+    };
+    std::map<int32_t, std::vector<Use>> by_facet;
+    for (const auto* faces : {&source_faces_, &planar_source_faces_}) {
+      const bool planar = faces == &planar_source_faces_;
+      for (const auto& [key, source] : *faces) {
+        if (std::find(key.begin(), key.end(), s) == key.end()) continue;
+        by_facet[source.facet].push_back({source.oriented, source.source_triangle, planar});
+      }
+    }
+    fans.clear();
+    for (const auto& [facet, uses] : by_facet) {
+      std::map<int32_t, std::size_t> successor;
+      std::set<int32_t> targets;
+      std::vector<Triple> rotated;
+      for (const Use& use : uses) {
+        Triple face = use.oriented;
+        while (face[0] != s) std::rotate(face.begin(), face.begin() + 1, face.end());
+        if (!successor.emplace(face[1], rotated.size()).second) return false;
+        targets.insert(face[2]);
+        rotated.push_back(face);
+      }
+      std::vector<int32_t> starts;
+      for (const auto& [vertex, unused] : successor) {
+        (void)unused;
+        if (!targets.contains(vertex)) starts.push_back(vertex);
+      }
+      // A full disk of one facet around s is cut into its two half-fans at
+      // the chain neighbours p and q of a segment point; around a facet
+      // point (p < 0) it is one closed loop.
+      const bool disk = starts.empty();
+      if (disk) starts = p >= 0 ? std::vector<int32_t>{p, q} : std::vector<int32_t>{rotated[0][1]};
+      std::vector<char> used(rotated.size(), 0);
+      for (int32_t start : starts) {
+        SuppressionFan fan;
+        fan.facet = facet;
+        fan.planar = true;
+        std::vector<int32_t> loop{start};
+        for (;;) {
+          const auto next = successor.find(loop.back());
+          if (next == successor.end() || used[next->second] != 0) break;
+          used[next->second] = 1;
+          const Triple& face = rotated[next->second];
+          const Use& use = uses[next->second];
+          // A half-fan lies in one source triangle (or one planar polygon).
+          if (fan.old_faces.empty()) fan.source_triangle = use.source_triangle;
+          fan.planar = fan.planar && use.planar;
+          fan.old_faces.push_back(face);
+          loop.push_back(face[2]);
+          if (p >= 0 && (loop.back() == p || loop.back() == q)) break;
+        }
+        const int32_t end = loop.back();
+        if (p < 0) {
+          if (!disk || end != start) return false;
+          loop.pop_back();
+        } else if (fan.old_faces.empty() ||
+                   !((start == p && end == q) || (start == q && end == p))) {
+          return false;
+        }
+        if (fan.old_faces.empty()) return false;
+        fan.reference = fan.old_faces.front();
+        const int axis = exact_projection_axis(fan.reference[0], fan.reference[1],
+                                               fan.reference[2]);
+        if (axis < 0 || loop.size() < 3) return false;
+        const int orientation = orient2d_projected(
+            ref(fan.reference[0]), ref(fan.reference[1]), ref(fan.reference[2]), axis);
+        if (!exact_loop_triangles(loop, axis, orientation, fan.new_faces)) return false;
+        fans.push_back(std::move(fan));
+      }
+      if (std::find(used.begin(), used.end(), 0) != used.end()) return false;
+    }
+    return p < 0 ? fans.size() == 1 : !fans.empty();
+  }
+
+  // Makes the star of s star-shaped from t where 2-3 flips allow: a cell
+  // (s, a, b, c) whose link face abc does not strictly face t, with abc
+  // unconstrained and a finite neighbour (a, b, c, d), is replaced by the
+  // three cells around the new edge sd when all three are exactly positive
+  // (sd crosses the open triangle abc). Each flip replaces one link face of
+  // s by three faces through d and keeps a valid complex; the pass is bounded
+  // by four times the number of cells around s at entry.
+  int32_t flip_star_toward(int32_t s, int32_t t) {
+    TetrahedralComplex& complex = triangulation_->complex();
+    std::vector<int32_t> cells;
+    int32_t status = vertex_cells(s, cells);
+    if (status != PHX_MC_OK) return status;
+    std::size_t budget = 4 * cells.size();
+    while (budget-- > 0) {
+      bool flipped = false;
+      for (int32_t cell : cells) {
+        const Tetrahedron tet = complex.tets[static_cast<std::size_t>(cell)];
+        if (is_ghost(tet) || vertex_slot(tet, t) >= 0) continue;
+        const int own = vertex_slot(tet, s);
+        std::array<int32_t, 4> collapsed{tet.v[0], tet.v[1], tet.v[2], tet.v[3]};
+        collapsed[static_cast<std::size_t>(own)] = t;
+        if (orient(collapsed[0], collapsed[1], collapsed[2], collapsed[3]) > 0) continue;
+        if (complex.constraint(cell, own) != kNoConstraint) continue;
+        const int32_t other = tet.n[own];
+        if (!complex.live(other)) continue;
+        const Tetrahedron neighbor = complex.tets[static_cast<std::size_t>(other)];
+        if (is_ghost(neighbor)) continue;
+        const int back = neighbor_slot(neighbor, cell);
+        if (back < 0) continue;
+        const int32_t d = neighbor.v[back];
+        // Three cells: `tet` with one link vertex replaced by d each; the
+        // face opposite d is tet's, the face opposite s the neighbour's.
+        std::array<SuppressionCell, 3> created{};
+        int count = 0;
+        bool valid = true;
+        for (int slot = 0; slot < 4 && valid; ++slot) {
+          if (slot == own) continue;
+          SuppressionCell next{{tet.v[0], tet.v[1], tet.v[2], tet.v[3]},
+                               {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+          next.v[static_cast<std::size_t>(slot)] = d;
+          valid = orient(next.v[0], next.v[1], next.v[2], next.v[3]) > 0;
+          next.constraints[static_cast<std::size_t>(slot)] = complex.constraint(cell, slot);
+          next.constraints[static_cast<std::size_t>(own)] =
+              complex.constraint(other, vertex_slot(neighbor, tet.v[slot]));
+          created[static_cast<std::size_t>(count++)] = next;
+        }
+        if (!valid) continue;
+        CavityEdit edit(complex);
+        edit.begin();
+        if (edit.remove(cell) != EditStatus::kOk || edit.remove(other) != EditStatus::kOk) continue;
+        for (const SuppressionCell& next : created) {
+          edit.add(next.v.data(), next.constraints.data(), kNoRegion);
+        }
+        EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
+          return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;
+        });
+        if (edit_status == EditStatus::kOk) edit_status = edit.commit();
+        if (edit_status != EditStatus::kOk) {
+          edit.rollback();
+          if (edit_status == EditStatus::kSlotLimit) {
+            return fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+          }
+          continue;
+        }
+        local_edits_ = true;
+        star_marks_.resize(complex.tets.size(), 0U);
+        for (int32_t id : edit.created()) {
+          for (int32_t vertex : complex.tets[static_cast<std::size_t>(id)].v) {
+            vertex_tet_[static_cast<std::size_t>(vertex)] = id;
+          }
+        }
+        if (!triangulation_->set_hint(edit.created().front())) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+        }
+        flipped = true;
+        break;
+      }
+      if (!flipped) return PHX_MC_OK;
+      status = vertex_cells(s, cells);
+      if (status != PHX_MC_OK) return status;
+    }
+    return PHX_MC_OK;
+  }
+
+  // A cell of a suppression proposal and the source facet marks of its faces.
+  struct SuppressionCell {
+    std::array<int32_t, 4> v;
+    std::array<int32_t, 4> constraints;
+  };
+
+  // Steiner-free fill of a closed cavity by exact gift wrapping. Each
+  // boundary cell carries `placeholder` in one slot: the face opposite it
+  // is a boundary face and a cavity vertex x lies on its inner side exactly
+  // when the cell with x substituted is positive. Sides of faces are keyed
+  // by the face oriented as its cell on that side sees it, so a face may
+  // bound the cavity from both sides (a slit along an open sheet). An open
+  // side is closed by a cavity vertex on its inner side; each other face of
+  // the new cell either closes an open side, or opens the far side of a new
+  // face, and may neither repeat a closed side nor lie outside a boundary
+  // face. The side with the fewest admissible apices is closed first,
+  // apices in increasing order of the number of rivals inside their
+  // circumsphere (the Delaunay choice first) after the `preferred` apex,
+  // with bounded backtracking. A finished fill is a set of positive cells
+  // with every face paired and the cavity boundary as boundary, hence the
+  // 3-chain of the cavity: the cells tile it.
+  bool wrap_cavity(const std::vector<SuppressionCell>& boundary, int32_t placeholder,
+                   int32_t preferred, const std::vector<int32_t>& interior,
+                   std::vector<SuppressionCell>& filled) const {
+    struct Open {
+      std::array<int32_t, 4> cell;
+      int slot;
+      int32_t constraint;
+    };
+    const auto side_of = [](const std::array<int32_t, 4>& cell, int slot) {
+      int32_t face[3];
+      oriented_facet(cell.data(), slot, face);
+      return FacetKey::of(face);
+    };
+    const auto with = [](std::array<int32_t, 4> cell, int slot, int32_t vertex) {
+      cell[static_cast<std::size_t>(slot)] = vertex;
+      return cell;
+    };
+    const auto positive = [&](const std::array<int32_t, 4>& v) {
+      return orient(v[0], v[1], v[2], v[3]) > 0;
+    };
+    std::map<FacetKey, Open> front;
+    std::set<FacetKey> outside;
+    std::set<int32_t> vertices;
+    for (const SuppressionCell& cell : boundary) {
+      const auto found = std::find(cell.v.begin(), cell.v.end(), placeholder);
+      if (found == cell.v.end()) return false;
+      const int slot = static_cast<int>(found - cell.v.begin());
+      const FacetKey side = side_of(cell.v, slot);
+      if (!front.emplace(side, Open{cell.v, slot, cell.constraints[static_cast<std::size_t>(slot)]})
+               .second) {
+        return false;
+      }
+      outside.insert(side.reversed());
+      for (int k = 0; k < 4; ++k) {
+        if (k != slot) vertices.insert(cell.v[static_cast<std::size_t>(k)]);
+      }
+    }
+    // Interior candidates: volume points that may become apices.
+    vertices.insert(interior.begin(), interior.end());
+    std::set<FacetKey> closed;
+    filled.clear();
+    std::size_t budget = 4096;
+    std::function<bool()> search = [&]() -> bool {
+      if (front.empty()) return true;
+      if (budget == 0) return false;
+      --budget;
+      FacetKey key{};
+      std::vector<int32_t> candidates;
+      bool chosen = false;
+      for (const auto& [side, open] : front) {
+        std::vector<int32_t> admissible;
+        for (int32_t vertex : vertices) {
+          if (vertex == side.a || vertex == side.b || vertex == side.c) continue;
+          if (positive(with(open.cell, open.slot, vertex))) admissible.push_back(vertex);
+        }
+        if (admissible.empty()) return false;
+        if (!chosen || admissible.size() < candidates.size()) {
+          key = side;
+          candidates = std::move(admissible);
+          chosen = true;
+        }
+      }
+      const Open open = front.at(key);
+      std::vector<std::pair<int, int32_t>> order;
+      for (int32_t vertex : candidates) {
+        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
+        int inside = 0;
+        for (int32_t rival : candidates) {
+          if (rival == vertex) continue;
+          inside += insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
+                                 tet[0], tet[1], tet[2], tet[3], rival) > 0 ? 1 : 0;
+        }
+        // The preferred apex (the contraction target) goes first.
+        order.push_back({vertex == preferred ? -1 : inside, vertex});
+      }
+      std::sort(order.begin(), order.end());
+      for (const auto& [unused, vertex] : order) {
+        (void)unused;
+        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
+        SuppressionCell cell{tet, {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+        cell.constraints[static_cast<std::size_t>(open.slot)] = open.constraint;
+        std::vector<FacetKey> matched;
+        std::vector<FacetKey> sealed;
+        std::vector<std::pair<FacetKey, Open>> opened;
+        bool valid = true;
+        for (int slot = 0; slot < 4 && valid; ++slot) {
+          if (slot == open.slot) continue;
+          const FacetKey side = side_of(tet, slot);
+          const auto other = front.find(side);
+          if (other != front.end()) {
+            matched.push_back(side);
+            cell.constraints[static_cast<std::size_t>(slot)] = other->second.constraint;
+            continue;
+          }
+          if (closed.contains(side) || outside.contains(side)) {
+            valid = false;
+            break;
+          }
+          sealed.push_back(side);
+          const FacetKey far = side.reversed();
+          if (closed.contains(far) || front.contains(far)) continue;
+          // The cell across this face lies on its other side.
+          std::array<int32_t, 4> flipped = with(tet, slot, placeholder);
+          std::swap(flipped[static_cast<std::size_t>((slot + 1) % 4)],
+                    flipped[static_cast<std::size_t>((slot + 2) % 4)]);
+          opened.push_back({far, Open{flipped, slot, kNoConstraint}});
+        }
+        if (!valid) continue;
+        front.erase(key);
+        closed.insert(key);
+        std::vector<Open> saved;
+        for (const FacetKey& side : matched) {
+          saved.push_back(front.at(side));
+          front.erase(side);
+          closed.insert(side);
+        }
+        for (const FacetKey& side : sealed) closed.insert(side);
+        for (const auto& [side, entry] : opened) front.emplace(side, entry);
+        filled.push_back(cell);
+        if (search()) return true;
+        filled.pop_back();
+        for (const auto& [side, entry] : opened) {
+          (void)entry;
+          front.erase(side);
+        }
+        for (const FacetKey& side : sealed) closed.erase(side);
+        for (std::size_t row = 0; row < matched.size(); ++row) {
+          closed.erase(matched[row]);
+          front.emplace(matched[row], saved[row]);
+        }
+        closed.erase(key);
+        front.emplace(key, open);
+        if (budget == 0) return false;
+      }
+      return false;
+    };
+    return search();
+  }
+
+  // A cell equal to `cell` except that the face opposite `slot` is `face`,
+  // seen from the cell with the same orientation as `cell` sees its own face
+  // there when `same` holds, reversed otherwise.
+  static std::array<int32_t, 4> transplant(const int32_t* cell, int slot, const Triple& face,
+                                           bool same) {
+    const Triple wanted = same ? face : Triple{face[0], face[2], face[1]};
+    std::array<int32_t, 4> result{cell[0], cell[1], cell[2], cell[3]};
+    int others[3];
+    int count = 0;
+    for (int k = 0; k < 4; ++k) {
+      if (k != slot) others[count++] = k;
+    }
+    for (int k = 0; k < 3; ++k) {
+      result[static_cast<std::size_t>(others[k])] = wanted[static_cast<std::size_t>(k)];
+    }
+    Triple seen{};
+    oriented_facet(result.data(), slot, seen.data());
+    if (!(FacetKey::of(seen.data()) == FacetKey::of(wanted.data()))) {
+      std::swap(result[static_cast<std::size_t>(others[0])],
+                result[static_cast<std::size_t>(others[1])]);
+    }
+    return result;
+  }
+
+  // Removes the witnessed vertex s from the complex. With t >= 0 every
+  // recovered subface (s, a, b) becomes (t, a, b) (an edge contraction;
+  // subfaces through t vanish), otherwise each half-fan through s is ear
+  // clipped without s (suppression_fans with chain neighbours p, q, or the
+  // full disk of a facet point when p < 0). The star of s splits into wedges
+  // (cells joined across faces through s that are not subfaces). A wedge is
+  // replaced by its contraction onto t when every finite cell stays
+  // positive; a hull wedge of ghost cells over subfaces by ghost cells over
+  // the new subfaces; any other finite wedge by a Steiner-free gift-wrapped
+  // fill of its cavity (link faces and new subfaces), else by the cones from
+  // one binary64 point y = s + l d (d the sum of the inner unit normals of
+  // its subface planes, l halving) over that cavity boundary. Every finite
+  // proposed cell is exactly positive on exact positions and the cavity edit
+  // checks that the proposal's boundary is the link of s with its marks, so
+  // the proposal tiles the star. Otherwise nothing changes.
+  int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, bool& removed) {
+    removed = false;
+    TetrahedralComplex& complex = triangulation_->complex();
+    if (t >= 0) {
+      const int32_t flip_status = flip_star_toward(s, t);
+      if (flip_status != PHX_MC_OK) return flip_status;
+    }
+    std::vector<int32_t> cells;
+    const int32_t cells_status = vertex_cells(s, cells);
+    if (cells_status != PHX_MC_OK) return cells_status;
+    struct NewFace {
+      Triple oriented;
+      int32_t facet;
+      int32_t source_triangle;
+      bool planar;
+    };
+    struct OldFace {
+      Triple oriented;
+      std::size_t group;
+    };
+    std::map<Triple, OldFace> old_faces;
+    std::vector<std::vector<NewFace>> groups;
+    if (t >= 0) {
+      for (const auto* faces : {&source_faces_, &planar_source_faces_}) {
+        const bool planar = faces == &planar_source_faces_;
+        for (const auto& [key, face] : *faces) {
+          if (std::find(key.begin(), key.end(), s) == key.end()) continue;
+          old_faces.emplace(key, OldFace{face.oriented, groups.size()});
+          groups.emplace_back();
+          if (std::find(key.begin(), key.end(), t) != key.end()) continue;
+          Triple mapped = face.oriented;
+          std::replace(mapped.begin(), mapped.end(), s, t);
+          groups.back().push_back({mapped, face.facet, face.source_triangle, planar});
+        }
+      }
+    } else {
+      std::vector<SuppressionFan> fans;
+      if (!suppression_fans(s, p, q, fans)) return PHX_MC_OK;
+      for (const SuppressionFan& fan : fans) {
+        for (const Triple& face : fan.old_faces) {
+          old_faces.emplace(sorted_triple(face.data()), OldFace{face, groups.size()});
+        }
+        groups.emplace_back();
+        for (const Triple& face : fan.new_faces) {
+          groups.back().push_back({face, fan.facet, fan.source_triangle, fan.planar});
+        }
+      }
+    }
+
+    std::unordered_map<int32_t, std::size_t> row_of;
+    for (std::size_t row = 0; row < cells.size(); ++row) row_of.emplace(cells[row], row);
+    std::vector<std::size_t> parent(cells.size());
+    std::iota(parent.begin(), parent.end(), 0);
+    const auto root = [&](std::size_t row) {
+      while (parent[row] != row) row = parent[row] = parent[parent[row]];
+      return row;
+    };
+    struct Contact {
+      std::size_t row;
+      int slot;
+      const OldFace* face;
+    };
+    std::vector<Contact> contacts;
+    for (std::size_t row = 0; row < cells.size(); ++row) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[row])];
+      const int own = vertex_slot(tet, s);
+      for (int slot = 0; slot < 4; ++slot) {
+        if (slot == own) continue;
+        Triple face{};
+        oriented_facet(tet.v, slot, face.data());
+        const auto old = old_faces.find(sorted_triple(face.data()));
+        if (old != old_faces.end()) {
+          contacts.push_back({row, slot, &old->second});
+          continue;
+        }
+        const auto neighbor = row_of.find(tet.n[slot]);
+        if (neighbor == row_of.end()) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+        }
+        parent[root(row)] = root(neighbor->second);
+      }
+    }
+    std::map<std::size_t, std::vector<std::size_t>> wedges;
+    for (std::size_t row = 0; row < cells.size(); ++row) wedges[root(row)].push_back(row);
+
+    using Proposal = SuppressionCell;
+    constexpr int32_t kPlaceholder = std::numeric_limits<int32_t>::min() / 2;
+    const auto positive = [&](const std::array<int32_t, 4>& v, const ExactPointRef* center) {
+      if (std::find(v.begin(), v.end(), kGhostVertex) != v.end()) return true;
+      ExactPointRef corners[4];
+      for (int slot = 0; slot < 4; ++slot) {
+        corners[slot] = v[static_cast<std::size_t>(slot)] == kPlaceholder
+            ? *center : ref(v[static_cast<std::size_t>(slot)]);
+      }
+      return orient3d(corners[0], corners[1], corners[2], corners[3]) > 0;
+    };
+    // Cells over the new subfaces of the groups met by a wedge, once per
+    // group, oriented like the wedge cell that meets the group.
+    const auto subface_cells = [&](const std::vector<std::size_t>& rows) {
+      std::vector<Proposal> result;
+      std::set<std::pair<std::size_t, bool>> emitted;
+      for (const Contact& contact : contacts) {
+        if (root(contact.row) != root(rows.front())) continue;
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[contact.row])];
+        Triple seen{};
+        oriented_facet(tet.v, contact.slot, seen.data());
+        const bool same = FacetKey::of(seen.data()) == FacetKey::of(contact.face->oriented.data());
+        // A wedge meets a group from both sides along an open sheet.
+        if (!emitted.insert({contact.face->group, same}).second) continue;
+        for (const NewFace& face : groups[contact.face->group]) {
+          Proposal cell{transplant(tet.v, contact.slot, face.oriented, same),
+                        {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+          if (tet.v[contact.slot] != kGhostVertex) cell.v[static_cast<std::size_t>(contact.slot)] = kPlaceholder;
+          cell.constraints[static_cast<std::size_t>(contact.slot)] = face.facet;
+          result.push_back(cell);
+        }
+      }
+      return result;
+    };
+    std::vector<Proposal> proposals;
+    std::vector<std::array<double, 3>> centers;
+    std::vector<int32_t> added;
+    // Volume points appended for a replacement that is not committed die.
+    const auto abandon = [&]() {
+      for (int32_t vertex : added) alive_[static_cast<std::size_t>(vertex)] = 0;
+      return PHX_MC_OK;
+    };
+    for (const auto& [unused, rows] : wedges) {
+      (void)unused;
+      bool ghost = false;
+      std::vector<std::size_t> blocked;
+      for (std::size_t row : rows) {
+        ghost = ghost || is_ghost(complex.tets[static_cast<std::size_t>(cells[row])]);
+        if (t < 0) blocked.push_back(row);
+      }
+      if (t >= 0) {
+        std::vector<Proposal> collapse;
+        bool star_shaped = true;
+        for (std::size_t row : rows) {
+          const int32_t cell = cells[row];
+          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+          if (vertex_slot(tet, t) >= 0) continue;
+          Proposal proposal{};
+          for (int slot = 0; slot < 4; ++slot) {
+            proposal.v[static_cast<std::size_t>(slot)] = tet.v[slot] == s ? t : tet.v[slot];
+            proposal.constraints[static_cast<std::size_t>(slot)] = complex.constraint(cell, slot);
+          }
+          if (!positive(proposal.v, nullptr)) {
+            star_shaped = false;
+            blocked.push_back(row);
+          }
+          collapse.push_back(proposal);
+        }
+        if (star_shaped) {
+          proposals.insert(proposals.end(), collapse.begin(), collapse.end());
+          continue;
+        }
+      }
+      if (ghost) {
+        // A hull wedge: ghost cells, each over one subface through s.
+        std::size_t covered = 0;
+        for (const Contact& contact : contacts) {
+          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[contact.row])];
+          if (root(contact.row) == root(rows.front()) && tet.v[contact.slot] == kGhostVertex) {
+            ++covered;
+          }
+        }
+        if (covered != rows.size()) return abandon();
+        const std::vector<Proposal> hull = subface_cells(rows);
+        proposals.insert(proposals.end(), hull.begin(), hull.end());
+        continue;
+      }
+      // The cavity boundary: link faces (s replaced by the placeholder) and
+      // the new subfaces.
+      std::vector<Proposal> cavity = subface_cells(rows);
+      std::vector<std::array<double, 3>> normals;
+      double reach = std::numeric_limits<double>::infinity();
+      for (std::size_t row : rows) {
+        const int32_t cell = cells[row];
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+        const int own = vertex_slot(tet, s);
+        Proposal link{{tet.v[0], tet.v[1], tet.v[2], tet.v[3]},
+                      {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+        link.v[static_cast<std::size_t>(own)] = kPlaceholder;
+        link.constraints[static_cast<std::size_t>(own)] = complex.constraint(cell, own);
+        cavity.push_back(link);
+        for (int32_t vertex : tet.v) {
+          if (vertex != s) {
+            reach = std::min(reach, std::sqrt(geometry::squared_distance(point(s), point(vertex))));
+          }
+        }
+      }
+      for (const Contact& contact : contacts) {
+        if (root(contact.row) != root(rows.front())) continue;
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[contact.row])];
+        Triple face{};
+        oriented_facet(tet.v, contact.slot, face.data());
+        double u[3], w[3], normal[3], offset[3];
+        geometry::difference(point(face[1]), point(face[0]), u);
+        geometry::difference(point(face[2]), point(face[0]), w);
+        geometry::cross(u, w, normal);
+        geometry::difference(point(tet.v[contact.slot]), point(s), offset);
+        const double length = std::sqrt(geometry::dot(normal, normal));
+        if (!(length > 0.0)) continue;
+        const double sign = geometry::dot(normal, offset) < 0.0 ? -1.0 : 1.0;
+        const std::array<double, 3> unit{sign * normal[0] / length, sign * normal[1] / length,
+                                         sign * normal[2] / length};
+        if (std::none_of(normals.begin(), normals.end(), [&](const auto& known) {
+              return known[0] * unit[0] + known[1] * unit[1] + known[2] * unit[2] > 1.0 - 0x1p-30;
+            })) {
+          normals.push_back(unit);
+        }
+      }
+      std::vector<Proposal> wrapped;
+      if (wrap_cavity(cavity, kPlaceholder, t, {}, wrapped)) {
+        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+        continue;
+      }
+      // Steiner-assisted fill: interior points of the cells that block the
+      // contraction (every cell without a target) join the apex candidates.
+      std::vector<int32_t> extra;
+      for (std::size_t row : blocked) {
+        if (root(row) != root(rows.front()) || extra.size() == 8) continue;
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[row])];
+        double centroid[3] = {0.0, 0.0, 0.0};
+        for (int32_t vertex : tet.v) {
+          for (int axis = 0; axis < 3; ++axis) centroid[axis] += 0.25 * point(vertex)[axis];
+        }
+        if (!geometry::point_in_domain(centroid)) continue;
+        int32_t vertex = -1;
+        const int32_t status = add_volume_point(centroid, vertex);
+        if (status != PHX_MC_OK) return status;
+        added.push_back(vertex);
+        extra.push_back(vertex);
+      }
+      if (!extra.empty() && wrap_cavity(cavity, kPlaceholder, t, extra, wrapped)) {
+        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+        continue;
+      }
+      double direction[3] = {0.0, 0.0, 0.0};
+      for (const auto& unit : normals) {
+        for (int axis = 0; axis < 3; ++axis) direction[axis] += unit[static_cast<std::size_t>(axis)];
+      }
+      const double norm = std::sqrt(geometry::dot(direction, direction));
+      if (normals.empty() || !(norm > 0.0) || !std::isfinite(reach) || !(reach > 0.0)) {
+        return abandon();
+      }
+      bool found = false;
+      double location[3];
+      for (double step = 0.25 * reach; step > 0x1p-40 * reach && !found; step *= 0.5) {
+        for (int axis = 0; axis < 3; ++axis) {
+          location[axis] = point(s)[axis] + step * direction[axis] / norm;
+        }
+        if (!geometry::point_in_domain(location)) continue;
+        const ExactPointRef center{location, nullptr};
+        found = std::all_of(cavity.begin(), cavity.end(), [&](const Proposal& cone) {
+          return positive(cone.v, &center);
+        });
+      }
+      if (!found) return abandon();
+      // Placeholder ids of later centers stay distinct until appended.
+      for (Proposal& cone : cavity) {
+        std::replace(cone.v.begin(), cone.v.end(), kPlaceholder,
+                     kPlaceholder + 1 + static_cast<int32_t>(centers.size()));
+      }
+      centers.push_back({location[0], location[1], location[2]});
+      proposals.insert(proposals.end(), cavity.begin(), cavity.end());
+    }
+
+    for (std::size_t row = 0; row < centers.size(); ++row) {
+      int32_t vertex = -1;
+      const int32_t status = add_volume_point(centers[row].data(), vertex);
+      if (status != PHX_MC_OK) return status;
+      added.push_back(vertex);
+      for (Proposal& proposal : proposals) {
+        std::replace(proposal.v.begin(), proposal.v.end(),
+                     kPlaceholder + 1 + static_cast<int32_t>(row), vertex);
+      }
+    }
+    // Subfaces through s are interior to the removed star; their marks move
+    // to the proposal, which carries them on the new subfaces.
+    std::vector<std::array<int32_t, 3>> released;
+    for (int32_t cell : cells) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      for (int slot = 0; slot < 4; ++slot) {
+        if (tet.v[slot] == s) continue;
+        const int32_t constraint = complex.constraint(cell, slot);
+        if (constraint == kNoConstraint) continue;
+        released.push_back({cell, slot, constraint});
+        complex.set_facet_constraint(cell, slot, kNoConstraint);
+      }
+    }
+    CavityEdit edit(complex);
+    edit.begin();
+    for (int32_t cell : cells) {
+      if (edit.remove(cell) != EditStatus::kOk) {
+        for (const auto& [mark_cell, slot, constraint] : released) {
+          complex.set_facet_constraint(mark_cell, slot, constraint);
+        }
+        return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+      }
+    }
+    for (const Proposal& proposal : proposals) {
+      edit.add(proposal.v.data(), proposal.constraints.data(), kNoRegion);
+    }
+    EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
+      return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;
+    });
+    if (edit_status == EditStatus::kOk) edit_status = edit.commit();
+    if (edit_status != EditStatus::kOk) {
+      edit.rollback();
+      for (const auto& [mark_cell, slot, constraint] : released) {
+        complex.set_facet_constraint(mark_cell, slot, constraint);
+      }
+      for (int32_t vertex : added) alive_[static_cast<std::size_t>(vertex)] = 0;
+      return edit_status == EditStatus::kSlotLimit
+          ? fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint, s)
+          : PHX_MC_OK;
+    }
+    local_edits_ = true;
+    star_marks_.resize(complex.tets.size(), 0U);
+    int32_t hint = -1;
+    for (int32_t id : edit.created()) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(id)];
+      if (is_ghost(tet)) continue;
+      if (hint < 0) hint = id;
+      for (int32_t vertex : tet.v) vertex_tet_[static_cast<std::size_t>(vertex)] = id;
+    }
+    if (hint < 0 || !triangulation_->set_hint(hint)) {
+      return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+    }
+    for (const auto& [key, unused] : old_faces) {
+      (void)unused;
+      source_faces_.erase(key);
+      planar_source_faces_.erase(key);
+    }
+    for (const std::vector<NewFace>& group : groups) {
+      for (const NewFace& face : group) {
+        auto& faces = face.planar ? planar_source_faces_ : source_faces_;
+        faces.emplace(sorted_triple(face.oriented.data()),
+                      PlcSourceFace{face.oriented, face.facet, face.source_triangle});
+      }
+    }
+    alive_[static_cast<std::size_t>(s)] = 0;
+    vertex_tet_[static_cast<std::size_t>(s)] = -1;
+    suppressed_[static_cast<std::size_t>(s)] = 1;
+    for (int32_t vertex : added) {
+      const bool used = std::any_of(proposals.begin(), proposals.end(), [&](const Proposal& cell) {
+        return std::find(cell.v.begin(), cell.v.end(), vertex) != cell.v.end();
+      });
+      if (!used) alive_[static_cast<std::size_t>(vertex)] = 0;
+    }
+    removed = true;
+    return PHX_MC_OK;
+  }
+
+  // Suppresses one witnessed vertex: contraction onto a chain neighbour (a
+  // segment point) or a disk neighbour (a facet point), else the ear-clipped
+  // half-fans. A point that cannot be removed is a STEINER_SUPPRESSION
+  // refusal naming its source segment or facet; under FIXED it is the
+  // FIXED_SEGMENT / FIXED_FACET refusal of that entity (its boundary could
+  // not be recovered unmodified).
+  int32_t suppress_vertex(int32_t s) {
+    const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
+    const bool segment = witness.stratum == SourceStratum::kSegment;
+    const auto refuse = [&]() {
+      const bool fixed = input_.policy == BoundaryPolicy::kFixed;
+      const int32_t status = fixed ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_UNRESOLVED;
+      if (segment) {
+        return fail(status, fixed ? kPlcFixedSegment : kPlcSteinerSuppression, kPlcEdge,
+                    static_cast<int64_t>(witness.entity), kPlcPoint, s);
+      }
+      const int32_t facet = input_.polygon_facets[
+          candidate_.input_polygons[static_cast<std::size_t>(witness.entity)]];
+      return fail(status, fixed ? kPlcFixedFacet : kPlcSteinerSuppression, kPlcFacet, facet,
+                  kPlcPoint, s);
+    };
+    int32_t p = -1;
+    int32_t q = -1;
+    std::vector<int32_t> targets;
+    std::size_t position = 0;
+    if (segment) {
+      auto& chain = edge_chains_[static_cast<std::size_t>(witness.entity)];
+      position = 1;
+      while (position + 1 < chain.size() && chain[position].vertex != s) ++position;
+      if (position + 1 >= chain.size()) {
+        return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, s);
+      }
+      p = chain[position - 1].vertex;
+      q = chain[position + 1].vertex;
+      targets = {p, q};
+    } else {
+      std::set<int32_t> ring;
+      for (const auto* faces : {&source_faces_, &planar_source_faces_}) {
+        for (const auto& [key, unused] : *faces) {
+          (void)unused;
+          if (std::find(key.begin(), key.end(), s) == key.end()) continue;
+          for (int32_t vertex : key) {
+            if (vertex != s) ring.insert(vertex);
+          }
+        }
+      }
+      targets.assign(ring.begin(), ring.end());
+    }
+    targets.push_back(-1);
+    for (int32_t target : targets) {
+      bool removed = false;
+      const int32_t status = remove_witnessed_vertex(s, target, p, q, removed);
+      if (status != PHX_MC_OK) return status;
+      if (!removed) continue;
+      if (segment) {
+        auto& chain = edge_chains_[static_cast<std::size_t>(witness.entity)];
+        chain.erase(chain.begin() + static_cast<std::ptrdiff_t>(position));
+      }
+      return PHX_MC_OK;
+    }
+    return refuse();
   }
 
   int32_t seed_tet(const double* seed, int64_t row) {
@@ -7373,10 +7852,17 @@ class PlcRecoveryBuilder {
     candidate_.segment_sources.clear();
     candidate_.tets.reserve(static_cast<std::size_t>(complex.finite_count) * 4);
     candidate_.tet_regions.reserve(static_cast<std::size_t>(complex.finite_count));
-    // Volume Steiner points are published only when a domain cell uses them,
-    // in ascending work-vertex order after the source and boundary points.
-    const std::size_t published_points = candidate_.points.size() / 3;
-    const int32_t first_volume = static_cast<int32_t>(published_points) + corner_count_;
+    // Suppressed split points are dropped; volume Steiner points are
+    // published only when a domain cell uses them, in ascending work-vertex
+    // order after the source and boundary points.
+    const std::size_t candidate_points = candidate_.points.size() / 3;
+    point_output_.assign(candidate_points, -1);
+    std::size_t published_points = 0;
+    for (std::size_t vertex = 0; vertex < candidate_points; ++vertex) {
+      if (vertex < suppressed_.size() && suppressed_[vertex] != 0) continue;
+      point_output_[vertex] = static_cast<int32_t>(published_points++);
+    }
+    const int32_t first_volume = static_cast<int32_t>(candidate_points) + corner_count_;
     volume_output_.assign(volume_count_, -1);
     for (std::size_t t = 0; t < complex.tets.size(); ++t) {
       const Tetrahedron& tet = complex.tets[t];
@@ -7405,17 +7891,20 @@ class PlcRecoveryBuilder {
       candidate_.tets.insert(candidate_.tets.end(), output_tet, output_tet + 4);
       candidate_.tet_regions.push_back(complex.region(static_cast<int32_t>(t)));
     }
-    for (const auto& [key, source] : source_faces_) {
-      (void)key;
-      candidate_.faces.insert(candidate_.faces.end(), source.oriented.begin(), source.oriented.end());
+    const auto publish_face = [&](const PlcSourceFace& source) {
+      for (int32_t vertex : source.oriented) {
+        candidate_.faces.push_back(point_output_[static_cast<std::size_t>(vertex)]);
+      }
       candidate_.face_sources.push_back(source.facet);
       candidate_.face_orientations.push_back(1);
+    };
+    for (const auto& [key, source] : source_faces_) {
+      (void)key;
+      publish_face(source);
     }
     for (const auto& [key, source] : planar_source_faces_) {
       (void)key;
-      candidate_.faces.insert(candidate_.faces.end(), source.oriented.begin(), source.oriented.end());
-      candidate_.face_sources.push_back(source.facet);
-      candidate_.face_orientations.push_back(1);
+      publish_face(source);
     }
     std::size_t segment_count = 0;
     for (const auto& chain : edge_chains_)
@@ -7426,11 +7915,25 @@ class PlcRecoveryBuilder {
       const auto& chain = edge_chains_[edge];
       if (chain.size() < 2) continue;
       for (std::size_t interval = 0; interval + 1 < chain.size(); ++interval) {
-        candidate_.segments.push_back(chain[interval].vertex);
-        candidate_.segments.push_back(chain[interval + 1].vertex);
+        candidate_.segments.push_back(
+            point_output_[static_cast<std::size_t>(chain[interval].vertex)]);
+        candidate_.segments.push_back(
+            point_output_[static_cast<std::size_t>(chain[interval + 1].vertex)]);
         candidate_.segment_sources.push_back(static_cast<int32_t>(edge));
       }
     }
+    std::size_t kept = 0;
+    for (std::size_t vertex = 0; vertex < candidate_points; ++vertex) {
+      if (point_output_[vertex] < 0) continue;
+      std::copy_n(candidate_.points.begin() + static_cast<std::ptrdiff_t>(3 * vertex), 3,
+                  candidate_.points.begin() + static_cast<std::ptrdiff_t>(3 * kept));
+      candidate_.witnesses[kept] = candidate_.witnesses[vertex];
+      candidate_.vertex_dimension[kept] = candidate_.vertex_dimension[vertex];
+      ++kept;
+    }
+    candidate_.points.resize(3 * kept);
+    candidate_.witnesses.resize(kept);
+    candidate_.vertex_dimension.resize(kept);
     candidate_.protection = protection_radii(
         candidate_.points.data(), static_cast<int64_t>(published_points),
         candidate_.segments, candidate_.input_triangles);
@@ -7490,13 +7993,23 @@ class PlcRecoveryBuilder {
   std::unordered_set<uint64_t> polygon_loop_edges_;
   std::vector<std::size_t> edge_triangle_offsets_;
   std::vector<int32_t> edge_triangle_rows_;
-  std::vector<double> protection_;
+  // Acute input vertices: apices of the concentric split shells.
+  std::vector<char> shell_apex_;
+  // Exact positions of witnessed split vertices, keyed by work vertex.
+  ExactVertexBank exact_points_;
+  // Current chain intervals, which recovery edits must never remove.
+  std::unordered_set<uint64_t> chain_intervals_;
   std::vector<std::array<int32_t, 2>> protected_segments_;
   std::array<int32_t, 2> recovery_edge_{-1, -1};
   bool cavity_steiner_restart_required_ = false;
   std::size_t volume_count_ = 0;
   std::vector<int32_t> volume_output_;
+  // True once a local recovery edit has left the complex non-Delaunay.
   bool local_edits_ = false;
+  // Candidate points moved off the boundary by Steiner suppression.
+  std::vector<char> suppressed_;
+  // Published index of each candidate point (-1 when suppressed).
+  std::vector<int32_t> point_output_;
 };
 
 }  // namespace

@@ -30,7 +30,13 @@ from .._geometry_predicates import orient2d, PredicateMode, PredicateSign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
-from ..discretization._periodic_exact import exact_periodic_element
+from ..discretization._periodic_exact import (
+    _multiply,
+    apply_periodic,
+    exact_periodic_element,
+    identification_orders,
+    reduce_periodic_exponents,
+)
 from ..discretization._periodic_topology import _entity_vertex_rows
 from ..linalg._exact import solve_exact
 from ._lineage import EntityLineageKind
@@ -201,7 +207,9 @@ class LocalMetricOutcome(NamedTuple):
     metric: np.ndarray
     evidence: LocalMetricEvidence
 
+
 type ExactSourceRow = tuple[tuple[int, Fraction], ...]
+
 
 class _State(NamedTuple):
     """Working mesh; vertex rows are never reused, removed rows stay dead."""
@@ -232,6 +240,11 @@ class _State(NamedTuple):
     lineage_sources: np.ndarray
     lineage_ranks: np.ndarray
     next_vertex_id: int
+    # Periodic producer-owned vertex orbit identity: one ``(kind, root id)`` key
+    # per row (kind 0 keeps a source vertex orbit, kind 1 names the root vertex of
+    # an orbit-locked split) and the absolute deck exponents of every member.
+    orbit_keys: np.ndarray | None = None
+    orbit_windings: np.ndarray | None = None
 
 
 class _Source(NamedTuple):
@@ -243,6 +256,7 @@ class _Source(NamedTuple):
     edge_keys: np.ndarray
     block_count: int
     families: tuple[tuple[str, str], ...]
+    periodic_cell: Any = None
 
 
 class _Counts(NamedTuple):
@@ -274,6 +288,7 @@ class _Topology(NamedTuple):
     neighbor_offsets: np.ndarray
     neighbor_values: np.ndarray
 
+
 class _PeriodicContext(NamedTuple):
     edge_orbits: np.ndarray
     edge_quotient_ids: np.ndarray
@@ -282,17 +297,17 @@ class _PeriodicContext(NamedTuple):
     vertex_orbits: np.ndarray
     vertex_quotient_ids: np.ndarray
     vertex_representatives: np.ndarray
-    vertex_exact_isometries: tuple[
-        tuple[tuple[Fraction, ...], ...], ...
-    ]
-    vertex_stabilizers: tuple[
-        tuple[tuple[tuple[Fraction, ...], ...], ...], ...
-    ]
+    vertex_exact_isometries: tuple[tuple[tuple[Fraction, ...], ...], ...]
+    vertex_stabilizers: tuple[tuple[tuple[tuple[Fraction, ...], ...], ...], ...]
     cell_orbits: np.ndarray
     cell_quotient_ids: np.ndarray
     cell_quality: np.ndarray
     target_mesh_id: str
     vertex_allocator_next_id: int
+    # Absolute deck exponents of each state edge and the state edge row that
+    # represents each edge orbit; orbit-locked splits are anchored on it.
+    edge_member_windings: np.ndarray
+    edge_representative_rows: np.ndarray
 
 
 def _exact_periodic_point(
@@ -535,6 +550,7 @@ def _disjoint_selection(
         undecided &= ~blocked
     return selected
 
+
 def _complete_periodic_operations(
     candidate_rows: np.ndarray,
     all_orbit_rows: np.ndarray,
@@ -545,9 +561,7 @@ def _complete_periodic_operations(
     candidate_orbits = all_orbit_rows[candidate_rows]
     member_count = np.bincount(all_orbit_rows, minlength=orbit_count)
     candidate_count = np.bincount(candidate_orbits, minlength=orbit_count)
-    valid_count = np.bincount(
-        candidate_orbits[candidate_valid], minlength=orbit_count
-    )
+    valid_count = np.bincount(candidate_orbits[candidate_valid], minlength=orbit_count)
     eligible = np.flatnonzero(
         (member_count > 0)
         & (candidate_count == member_count)
@@ -645,6 +659,7 @@ def _validate_mesh(mesh: CellMesh, metric: Any, /) -> np.ndarray:
                 )
 
     return values
+
 
 def _validate_controls(
     predicate_mode: Any, topology_operations: Any, relocation: Any, /
@@ -751,6 +766,29 @@ def _initial_state(
         lineage_ranks=np.zeros((edges.shape[0],), dtype=np.int64),
         next_vertex_id=int(np.max(vertex_ids)) + 1,
     )
+    periodic = mesh.periodic_topology
+    if periodic is not None:
+        # Source vertices keep their source orbit: the key names the orbit root
+        # and the winding is the root-relative deck exponent, with fixed
+        # generators zeroed exactly as the stencil-derived identity does.
+        lifted_ids = np.asarray(mesh.entity_set(0).entity_ids, dtype=np.int64)
+        representatives = np.asarray(periodic.vertex_representatives, dtype=np.int64)
+        orders = identification_orders(periodic.cell)
+        shifts = reduce_periodic_exponents(
+            np.asarray(periodic.vertex_shifts, dtype=np.int64), orders
+        )
+        shifts[np.asarray(periodic.vertex_fixed_generators, dtype=np.bool_)] = 0
+        lifted_order = np.argsort(lifted_ids, kind="stable")
+        positions = np.searchsorted(lifted_ids[lifted_order], vertex_ids)
+        if np.any(positions >= lifted_ids.size) or not np.array_equal(
+            lifted_ids[lifted_order[np.minimum(positions, lifted_ids.size - 1)]],
+            vertex_ids,
+        ):
+            raise ValueError("Periodic vertex orbits do not cover the source rows.")
+        rows = lifted_order[positions]
+        orbit_keys = np.zeros((count, 2), dtype=np.int64)
+        orbit_keys[:, 1] = lifted_ids[representatives[rows]]
+        state = state._replace(orbit_keys=orbit_keys, orbit_windings=shifts[rows])
     triangles = points[cells]
     source = _Source(
         points=points,
@@ -765,6 +803,7 @@ def _initial_state(
         edge_keys=entity_keys(mesh, 1),
         block_count=len(mesh.blocks),
         families=tuple((block.name, block.cell_kind) for block in mesh.blocks),
+        periodic_cell=None if periodic is None else periodic.cell,
     )
     return state, source
 
@@ -925,9 +964,21 @@ def _append_vertices(
     source_stencil_weights: np.ndarray,
     source_stencil_valid: np.ndarray,
     source_stencil_exact: tuple[ExactSourceRow, ...],
+    orbit_keys: np.ndarray | None = None,
+    orbit_windings: np.ndarray | None = None,
     /,
 ) -> _State:
     count = points.shape[0]
+    if (state.orbit_keys is None) != (orbit_keys is None) or (
+        orbit_keys is not None
+        and (
+            orbit_windings is None
+            or state.orbit_windings is None
+            or orbit_keys.shape != (count, 2)
+            or orbit_windings.shape != (count, state.orbit_windings.shape[1])
+        )
+    ):
+        raise ValueError("Periodic generated vertices require explicit orbit identity.")
     width = max(
         state.source_stencil_weights.shape[1],
         source_stencil_weights.shape[1],
@@ -967,11 +1018,17 @@ def _append_vertices(
             (state.collapse_to, np.full((count,), -1, dtype=np.int64))
         ),
         next_vertex_id=state.next_vertex_id + count,
+        orbit_keys=(
+            None
+            if state.orbit_keys is None or orbit_keys is None
+            else np.concatenate((state.orbit_keys, orbit_keys))
+        ),
+        orbit_windings=(
+            None
+            if state.orbit_windings is None or orbit_windings is None
+            else np.concatenate((state.orbit_windings, orbit_windings))
+        ),
     )
-
-
-
-
 
 
 def _replace_cells(
@@ -1114,9 +1171,7 @@ def _split_round(
             periodic_context.edge_quotient_ids.size,
         )
         canonical_first = periodic_context.edge_canonical_vertices[candidates, 0]
-        canonical_parameter = np.where(
-            first == canonical_first, t, 1.0 - t
-        )
+        canonical_parameter = np.where(first == canonical_first, t, 1.0 - t)
         candidate_orbits = periodic_context.edge_orbits[candidates]
         for orbit in complete_orbits:
             member_positions = np.flatnonzero(candidate_orbits == orbit)
@@ -1136,6 +1191,35 @@ def _split_round(
     middle = state.points[first] + t[:, None] * (
         state.points[second] - state.points[first]
     )
+    split_root = np.arange(candidates.size, dtype=np.int64)
+    if periodic_context is not None:
+        # Every member of a split orbit is the exact deck image of the midpoint
+        # on the orbit's representative edge, so the generated vertex orbit is
+        # bit-consistent with its root on non-dyadic lattices.
+        cell_value = source.periodic_cell
+        if cell_value is None:
+            raise ValueError("Periodic splits require the source lattice.")
+        position_of_edge = {
+            int(edge): position for position, edge in enumerate(candidates.tolist())
+        }
+        member_windings = periodic_context.edge_member_windings[candidates]
+        for orbit in complete_orbits:
+            if int(orbit) in periodic_midpoint_inconsistent:
+                continue
+            root = position_of_edge.get(
+                int(periodic_context.edge_representative_rows[int(orbit)])
+            )
+            if root is None:
+                raise ValueError("A complete split orbit lost its representative edge.")
+            member_positions = np.flatnonzero(candidate_orbits == orbit)
+            split_root[member_positions] = root
+            members = member_positions[member_positions != root]
+            if members.size:
+                middle[members] = apply_periodic(
+                    cell_value,
+                    np.broadcast_to(middle[root], (members.size, middle.shape[1])),
+                    member_windings[members] - member_windings[root],
+                )
     op, cell, local = _cavity_sides(topology, candidates)
     rows = state.cells[cell]
     span = np.arange(cell.size)
@@ -1167,9 +1251,7 @@ def _split_round(
                 rank, local_of[op[inside]], cell[inside], state.cells.shape[0]
             )
         ]
-        chosen = chosen[
-            np.lexsort((ids[second[chosen]], ids[first[chosen]]))
-        ]
+        chosen = chosen[np.lexsort((ids[second[chosen]], ids[first[chosen]]))]
     else:
         candidate_valid = status == _OK
         for orbit in np.unique(periodic_context.edge_orbits[candidates]):
@@ -1208,11 +1290,14 @@ def _split_round(
                 raise ValueError("Periodic metric midpoints differ across an edge orbit.")
         chosen = np.flatnonzero(np.isin(operation_of_candidate, selected))
         chosen_edges = candidates[chosen]
+        # The root member is allocated first so it carries the smallest new
+        # vertex ID and therefore represents the generated orbit.
         chosen = chosen[
             np.lexsort(
                 (
                     ids[second[chosen]],
                     ids[first[chosen]],
+                    (split_root[chosen] != chosen).astype(np.int64),
                     periodic_context.edge_quotient_ids[
                         periodic_context.edge_orbits[chosen_edges]
                     ],
@@ -1223,6 +1308,37 @@ def _split_round(
     new_rows[chosen] = state.points.shape[0] + np.arange(chosen.size)
     weights = np.stack((1.0 - t[chosen], t[chosen]), axis=1)
     samples = np.stack((state.metric[first[chosen]], state.metric[second[chosen]]), 1)
+    split_metrics = np.array(_interpolate_metrics(samples, weights), dtype=np.float64)
+    split_orbit_keys: np.ndarray | None = None
+    split_orbit_windings: np.ndarray | None = None
+    if periodic_context is not None:
+        chosen_position = {
+            int(position): row for row, position in enumerate(chosen.tolist())
+        }
+        root_rows = np.asarray(
+            [chosen_position[int(split_root[position])] for position in chosen],
+            dtype=np.int64,
+        )
+        cell_value = source.periodic_cell
+        member_windings = periodic_context.edge_member_windings[candidates[chosen]]
+        for row, root_row in enumerate(root_rows.tolist()):
+            if row != root_row:
+                split_metrics[row] = _exact_periodic_metric(
+                    exact_periodic_element(
+                        cell_value, member_windings[row] - member_windings[root_row]
+                    ),
+                    split_metrics[root_row],
+                )
+        split_orbit_keys = np.stack(
+            (
+                np.ones((chosen.size,), dtype=np.int64),
+                state.next_vertex_id + root_rows,
+            ),
+            axis=1,
+        )
+        split_orbit_windings = reduce_periodic_exponents(
+            member_windings, identification_orders(cell_value)
+        )
     split_sources, split_weights, split_valid, split_supported, split_exact = (
         _located_stencil_bank(
             source,
@@ -1238,11 +1354,13 @@ def _split_round(
     grown = _append_vertices(
         state,
         middle[chosen],
-        _interpolate_metrics(samples, weights),
+        split_metrics,
         split_sources,
         split_weights,
         split_valid,
         split_exact,
+        split_orbit_keys,
+        split_orbit_windings,
     )
     picked = np.flatnonzero(new_rows[op] >= 0)
     m = new_rows[op[picked]]
@@ -1479,9 +1597,7 @@ def _collapse_round(
         kept = kept[selected]
     else:
         short_edges = found.edge[:half]
-        canonical_removed = periodic_context.edge_canonical_vertices[
-            short_edges, 0
-        ]
+        canonical_removed = periodic_context.edge_canonical_vertices[short_edges, 0]
         first_candidates = np.where(
             found.removed[:half] == canonical_removed,
             np.arange(half),
@@ -1641,9 +1757,7 @@ def _flip_round(
     if periodic_context is None:
         ids = state.vertex_ids
         edges = topology.edges[candidates[valid]]
-        rank = _ranks(
-            before[valid] - after[valid], ids[edges[:, 0]], ids[edges[:, 1]]
-        )
+        rank = _ranks(before[valid] - after[valid], ids[edges[:, 0]], ids[edges[:, 1]])
         local_ops = np.concatenate((np.arange(valid.size), np.arange(valid.size)))
         selected = valid[
             _disjoint_selection(
@@ -1849,9 +1963,7 @@ def _relocation_round_nonperiodic(
         target_bank = np.empty(
             (_RELOCATION_SCALE_LANES, vertices.size, 2), dtype=np.float64
         )
-        active_bank = np.zeros(
-            (_RELOCATION_SCALE_LANES, vertices.size), dtype=np.bool_
-        )
+        active_bank = np.zeros((_RELOCATION_SCALE_LANES, vertices.size), dtype=np.bool_)
         scale_bank = scale.copy()
         representable = pending.copy()
         for lane in range(_RELOCATION_SCALE_LANES):
@@ -1869,9 +1981,7 @@ def _relocation_round_nonperiodic(
         status_rows, quality_rows = _proposal_checks(
             state, topology, vertex_bank, target_rows, metric_rows, mode
         )
-        metric_bank = metric_rows.reshape(
-            (_RELOCATION_SCALE_LANES, vertices.size, 2, 2)
-        )
+        metric_bank = metric_rows.reshape((_RELOCATION_SCALE_LANES, vertices.size, 2, 2))
         status_bank = status_rows.reshape((_RELOCATION_SCALE_LANES, vertices.size))
         quality_bank = quality_rows.reshape((_RELOCATION_SCALE_LANES, vertices.size))
         improving_bank = (
@@ -1880,9 +1990,7 @@ def _relocation_round_nonperiodic(
             & (status_bank == _OK)
         )
         candidate_indices = np.flatnonzero(improving_bank.reshape((-1,)))
-        source_stencil_rows = np.full(
-            (improving_bank.size,), -1, dtype=np.int64
-        )
+        source_stencil_rows = np.full((improving_bank.size,), -1, dtype=np.int64)
         candidate_support = np.zeros((improving_bank.size,), dtype=np.bool_)
         source_stencils: (
             tuple[
@@ -1917,9 +2025,7 @@ def _relocation_round_nonperiodic(
             candidate_support[candidate_indices] = source_stencils[3]
         for lane in range(_RELOCATION_SCALE_LANES):
             active = pending & active_bank[lane]
-            improving = active & (
-                quality_bank[lane] > before + _IMPROVEMENT
-            )
+            improving = active & (quality_bank[lane] > before + _IMPROVEMENT)
             accepted = improving & (status_bank[lane] == _OK)
             lane_rows = lane * vertices.size + np.arange(vertices.size)
             has_support = candidate_support[lane_rows]
@@ -1994,10 +2100,7 @@ def _relocation_round_nonperiodic(
     source_stencil_exact = list(state.source_stencil_exact)
     for vertex, exact_row in zip(
         moved.tolist(),
-        (
-            source_stencil_exact_best[index]
-            for index in chosen.tolist()
-        ),
+        (source_stencil_exact_best[index] for index in chosen.tolist()),
         strict=True,
     ):
         source_stencil_exact[int(vertex)] = exact_row
@@ -2056,8 +2159,9 @@ def _relocation_round_periodic(
             np.min(
                 topology.quality[
                     topology.ball_cells[
-                        topology.ball_offsets[int(vertex)] :
-                        topology.ball_offsets[int(vertex) + 1]
+                        topology.ball_offsets[int(vertex)] : topology.ball_offsets[
+                            int(vertex) + 1
+                        ]
                     ]
                 ],
                 initial=np.inf,
@@ -2070,23 +2174,22 @@ def _relocation_round_periodic(
     orbits = np.asarray(periodic_context.vertex_orbits, dtype=np.int64)
     for orbit in np.unique(orbits[vertices]):
         members = np.flatnonzero(orbits == orbit)
-        if not members.size or any(int(vertex) not in position_by_vertex for vertex in members):
+        if not members.size or any(
+            int(vertex) not in position_by_vertex for vertex in members
+        ):
             continue
         member_positions = np.asarray(
             [position_by_vertex[int(vertex)] for vertex in members], dtype=np.int64
         )
         member_cells = [
             topology.ball_cells[
-                topology.ball_offsets[int(vertex)] :
-                topology.ball_offsets[int(vertex) + 1]
+                topology.ball_offsets[int(vertex)] : topology.ball_offsets[
+                    int(vertex) + 1
+                ]
             ]
             for vertex in members.tolist()
         ]
-        cavity = frozenset(
-            int(cell)
-            for rows in member_cells
-            for cell in rows.tolist()
-        )
+        cavity = frozenset(int(cell) for rows in member_cells for cell in rows.tolist())
         if sum(rows.size for rows in member_cells) != len(cavity):
             continue
         before = np.asarray(
@@ -2098,18 +2201,19 @@ def _relocation_round_periodic(
         representative_position = position_by_vertex.get(representative)
         if representative_position is None:
             continue
+        # ``origin`` and ``member_displacement`` follow member order, while
+        # ``representative_position`` indexes the movable-vertex bank.
+        representative_member = int(np.flatnonzero(members == representative)[0])
         scale = 1.0
         had_uncertain = False
         had_invalid = False
         accepted: dict[str, Any] | None = None
         while True:
             representative_target = (
-                origin[representative_position]
-                + scale * member_displacement[representative_position]
+                origin[representative_member]
+                + scale * member_displacement[representative_member]
             )
-            if np.array_equal(
-                representative_target, origin[representative_position]
-            ):
+            if np.array_equal(representative_target, origin[representative_member]):
                 break
             representative_metric = _proposal_metric(
                 state,
@@ -2148,14 +2252,10 @@ def _relocation_round_periodic(
                     for stabilizer in periodic_context.vertex_stabilizers[int(vertex)]:
                         if not np.array_equal(
                             target[member_position],
-                            _exact_periodic_point(
-                                stabilizer, target[member_position]
-                            ),
+                            _exact_periodic_point(stabilizer, target[member_position]),
                         ) or not np.array_equal(
                             metric[member_position],
-                            _exact_periodic_metric(
-                                stabilizer, metric[member_position]
-                            ),
+                            _exact_periodic_metric(stabilizer, metric[member_position]),
                         ):
                             valid = False
                             geometry_invalid = True
@@ -2213,9 +2313,9 @@ def _relocation_round_periodic(
             occupied.update(candidate["cavity"])
     if not selected:
         return state, counts, 0, done
-    moved = np.concatenate(
-        [candidate["vertices"] for candidate in selected]
-    ).astype(np.int64, copy=False)
+    moved = np.concatenate([candidate["vertices"] for candidate in selected]).astype(
+        np.int64, copy=False
+    )
     points = state.points.copy()
     tensors = state.metric.copy()
     for candidate in selected:
@@ -2229,10 +2329,7 @@ def _relocation_round_periodic(
     stencil_width = max(
         (
             state.source_stencil_weights.shape[1],
-            *(
-                candidate["source_stencils"][0].shape[1]
-                for candidate in selected
-            ),
+            *(candidate["source_stencils"][0].shape[1] for candidate in selected),
         )
     )
     source_stencil_sources, source_stencil_weights, source_stencil_valid = (
@@ -2249,9 +2346,9 @@ def _relocation_round_periodic(
     source_stencil_exact = list(state.source_stencil_exact)
     for candidate in selected:
         rows = candidate["vertices"]
-        stencil_sources, stencil_weights, stencil_valid, _, stencil_exact = (
-            candidate["source_stencils"]
-        )
+        stencil_sources, stencil_weights, stencil_valid, _, stencil_exact = candidate[
+            "source_stencils"
+        ]
         stencil_sources, stencil_weights, stencil_valid = _pad_stencil_columns(
             stencil_sources,
             stencil_weights,
@@ -2295,9 +2392,7 @@ def _relocation_round(
     /,
 ) -> tuple[_State, _Counts, int, np.ndarray]:
     if periodic_context is None:
-        return _relocation_round_nonperiodic(
-            state, topology, counts, done, mode, source
-        )
+        return _relocation_round_nonperiodic(state, topology, counts, done, mode, source)
     return _relocation_round_periodic(
         state, topology, counts, done, mode, periodic_context, source
     )
@@ -2324,6 +2419,7 @@ def _periodic_topology(
         ),
         context,
     )
+
 
 def _run_phase(
     state: _State,
@@ -2420,10 +2516,84 @@ def _locate(
     first = order[np.searchsorted(query[order], query_rows)]
     exact_zero = certain[first] & (signs[first] == PredicateSign.ZERO)
     cells[query_rows] = cell[first]
-    chosen[query_rows] = _normalized(
-        np.where(exact_zero, 0.0, barycentric[first])
-    )
+    chosen[query_rows] = _normalized(np.where(exact_zero, 0.0, barycentric[first]))
     return cells, chosen, located
+
+
+def _exact_cell_barycentric(
+    source: _Source, cell: int, query: tuple[Fraction, ...], /
+) -> tuple[Fraction, ...]:
+    vertices = source.cells[cell]
+    corners = [
+        tuple(Fraction(float(value)) for value in source.points[int(vertex)].tolist())
+        for vertex in vertices.tolist()
+    ]
+    origin = corners[0]
+    matrix = [
+        [corners[column + 1][axis] - origin[axis] for column in range(2)]
+        for axis in range(2)
+    ]
+    tail = solve_exact(
+        matrix,
+        [[query[0] - origin[0]], [query[1] - origin[1]]],
+    )
+    return (
+        Fraction(1) - tail[0][0] - tail[1][0],
+        tail[0][0],
+        tail[1][0],
+    )
+
+
+def _periodic_image_exponents(cell_value: Any, /) -> tuple[np.ndarray, ...]:
+    """Nearest nonzero deck exponents, ordered by length then lexicographically."""
+    from itertools import product
+
+    rank = int(identification_orders(cell_value).size)
+    candidates = [
+        np.asarray(values, dtype=np.int64)
+        for values in product((-1, 0, 1), repeat=rank)
+        if any(values)
+    ]
+    candidates.sort(key=lambda values: (int(np.abs(values).sum()), tuple(values)))
+    return tuple(candidates)
+
+
+def _exact_periodic_image(
+    cell_value: Any, exponents: np.ndarray, point: np.ndarray, /
+) -> tuple[Fraction, ...]:
+    element = exact_periodic_element(cell_value, exponents)
+    vector = tuple(Fraction(float(value)) for value in point) + (Fraction(1),)
+    return tuple(
+        sum(
+            (element[row][column] * vector[column] for column in range(len(vector))),
+            Fraction(0),
+        )
+        for row in range(len(point))
+    )
+
+
+def _periodic_image_location(
+    source: _Source, point: np.ndarray, mode: PredicateMode, /
+) -> tuple[int, tuple[Fraction, ...]] | None:
+    """Locate an exact deck image of a query that rounds outside the lifted source.
+
+    A generated vertex on the boundary of the lifted source region can round just
+    outside it; one of its exact deck images then lies in a lifted source cell.
+    The returned barycentric weights reproduce that exact image, which carries
+    the same periodic source data as the query itself.
+    """
+    if source.periodic_cell is None:
+        return None
+    for exponents in _periodic_image_exponents(source.periodic_cell):
+        image = _exact_periodic_image(source.periodic_cell, exponents, point)
+        shadow = np.asarray([[float(value) for value in image]], dtype=np.float64)
+        cells, _, _ = _locate(source, shadow, mode)
+        if int(cells[0]) < 0:
+            continue
+        barycentric = _exact_cell_barycentric(source, int(cells[0]), image)
+        if all(weight >= 0 for weight in barycentric):
+            return int(cells[0]), barycentric
+    return None
 
 
 def _located_stencil_bank(
@@ -2447,37 +2617,25 @@ def _located_stencil_bank(
     outside = cells < 0
     underflow = np.zeros((points.shape[0],), dtype=np.bool_)
     width = max(3, int(stencil_width))
-    for row, cell in enumerate(cells.tolist()):
-        if cell < 0:
-            continue
-        vertices = source.cells[cell]
-        corners = [
-            tuple(
-                Fraction(float(value))
-                for value in source.points[int(vertex)].tolist()
+    for row, located_cell in enumerate(cells.tolist()):
+        cell = int(located_cell)
+        barycentric: tuple[Fraction, ...] | None = None
+        if cell >= 0:
+            barycentric = _exact_cell_barycentric(
+                source,
+                cell,
+                tuple(Fraction(float(value)) for value in points[row].tolist()),
             )
-            for vertex in vertices.tolist()
-        ]
-        origin = corners[0]
-        matrix = [
-            [corners[column + 1][axis] - origin[axis] for column in range(2)]
-            for axis in range(2)
-        ]
-        query = tuple(Fraction(float(value)) for value in points[row].tolist())
-        tail = solve_exact(
-            matrix,
-            [[query[0] - origin[0]], [query[1] - origin[1]]],
-        )
-        barycentric = (
-            Fraction(1) - tail[0][0] - tail[1][0],
-            tail[0][0],
-            tail[1][0],
-        )
-        if any(weight < 0 for weight in barycentric):
-            outside[row] = True
-            if allow_invalid_rows:
-                continue
-            raise ValueError("A target vertex lies outside the source domain.")
+        if barycentric is None or any(weight < 0 for weight in barycentric):
+            image = _periodic_image_location(source, points[row], mode)
+            if image is None:
+                outside[row] = True
+                if allow_invalid_rows:
+                    continue
+                raise ValueError("A target vertex lies outside the source domain.")
+            cell, barycentric = image
+            outside[row] = False
+        vertices = source.cells[cell]
         entries: list[tuple[int, Fraction]] = []
         for vertex, exact_weight in zip(vertices.tolist(), barycentric, strict=True):
             if exact_weight == 0:
@@ -2525,7 +2683,6 @@ def _located_stencil_bank(
     )
 
 
-
 def _target_order(state: _State, /) -> Any:
     """Target rows: surviving source vertices in source order, then new vertices."""
     rows = np.flatnonzero(state.alive)
@@ -2567,9 +2724,7 @@ def _stencil(
     sources = np.full((len(exact_rows), width), -1, dtype=np.int64)
     weights = np.zeros((len(exact_rows), width), dtype=np.float64)
     valid = np.zeros((len(exact_rows), width), dtype=np.bool_)
-    exact_weights = [
-        [Fraction(0) for _ in range(width)] for _ in exact_rows
-    ]
+    exact_weights = [[Fraction(0) for _ in range(width)] for _ in exact_rows]
     for row, entries in enumerate(exact_rows):
         if (
             not entries
@@ -2601,12 +2756,23 @@ def _stencil(
             weights[row, column] = projection
             valid[row, column] = True
             exact_weights[row][column] = exact_weight
-        if tuple(reproduced) != target:
+        if tuple(reproduced) != target and (
+            source.periodic_cell is None
+            or not any(
+                _exact_periodic_image(
+                    source.periodic_cell,
+                    exponents,
+                    state.points[int(order_rows[row])],
+                )
+                == tuple(reproduced)
+                for exponents in _periodic_image_exponents(source.periodic_cell)
+            )
+        ):
+            # A periodic row may reproduce an exact deck image of its target.
             raise ValueError(
                 "Exact source interpolation row does not reproduce its target."
             )
     return sources, weights, valid, tuple(tuple(row) for row in exact_weights)
-
 
 
 def _surviving(state: _State, /) -> np.ndarray:
@@ -2710,8 +2876,15 @@ def _assemble(state: _State, source: _Source, mode: PredicateMode, /) -> Any:
         stencil_valid=stencil[2],
         stencil_exact_weights=stencil[3],
         relations=relations,
+        vertex_orbit_keys=(
+            None if state.orbit_keys is None else state.orbit_keys[order].copy()
+        ),
+        vertex_windings=(
+            None if state.orbit_windings is None else state.orbit_windings[order].copy()
+        ),
     )
     return edit, state.metric[order]
+
 
 def _periodic_state_context(
     mesh: CellMesh,
@@ -2740,10 +2913,10 @@ def _periodic_state_context(
     edge_target_rows = key_rows(entity_keys(bound, 1), edge_keys)
     if np.any(edge_target_rows < 0):
         raise ValueError("Periodic local topology lost a lifted state edge.")
-    edge_orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)[edge_target_rows]
-    target_edge_vertices = np.asarray(
-        _entity_vertex_rows(bound)[1], dtype=np.int64
-    )
+    edge_orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)[
+        edge_target_rows
+    ]
+    target_edge_vertices = np.asarray(_entity_vertex_rows(bound)[1], dtype=np.int64)
     permutation_rows = tuple(
         np.asarray(edge_map.corner_permutation_row(int(row)), dtype=np.int64)
         for row in edge_target_rows
@@ -2760,24 +2933,22 @@ def _periodic_state_context(
     vertex_orbits[order] = np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
     row_of = np.full((state.points.shape[0],), -1, dtype=np.int64)
     row_of[order] = np.arange(order.size, dtype=np.int64)
-    fixed_generators = np.asarray(
-        bound_periodic.vertex_fixed_generators, dtype=np.bool_
-    )
+    fixed_generators = np.asarray(bound_periodic.vertex_fixed_generators, dtype=np.bool_)
     vertex_windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
     vertex_representatives = np.asarray(
         vertex_map.representative_lifted_rows, dtype=np.int64
     )
-    representative_state_rows = np.full(
-        (state.points.shape[0],), -1, dtype=np.int64
-    )
+    representative_state_rows = np.full((state.points.shape[0],), -1, dtype=np.int64)
     identity = tuple(
-        tuple(Fraction(int(row == column)) for column in range(mesh.ambient_dimension + 1))
+        tuple(
+            Fraction(int(row == column)) for column in range(mesh.ambient_dimension + 1)
+        )
         for row in range(mesh.ambient_dimension + 1)
     )
     vertex_exact_isometries = [identity] * state.points.shape[0]
-    vertex_stabilizers: list[
-        tuple[tuple[tuple[Fraction, ...], ...], ...]
-    ] = [()] * state.points.shape[0]
+    vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [
+        ()
+    ] * state.points.shape[0]
     for orbit in np.unique(vertex_orbits[order]):
         state_rows = np.flatnonzero(vertex_orbits == orbit)
         target_rows = row_of[state_rows]
@@ -2832,19 +3003,19 @@ def _periodic_state_context(
     ):
         raise ValueError("Periodic local topology lost a lifted state cell.")
     cell_target_rows = cell_order[cell_positions]
-    cell_orbits = np.asarray(cell_map.lifted_to_quotient, dtype=np.int64)[cell_target_rows]
+    cell_orbits = np.asarray(cell_map.lifted_to_quotient, dtype=np.int64)[
+        cell_target_rows
+    ]
 
-    edge_state_by_target = np.full(
-        (target_edge_vertices.shape[0],), -1, dtype=np.int64
-    )
+    edge_state_by_target = np.full((target_edge_vertices.shape[0],), -1, dtype=np.int64)
     edge_state_by_target[edge_target_rows] = np.arange(
         topology.edges.shape[0], dtype=np.int64
     )
-    edge_representatives = np.asarray(
-        edge_map.representative_lifted_rows, dtype=np.int64
-    )
+    edge_representatives = np.asarray(edge_map.representative_lifted_rows, dtype=np.int64)
     edge_windings = np.asarray(edge_map.winding_shifts, dtype=np.int64)
     edge_lengths = topology.lengths.copy()
+    edge_member_windings = edge_windings[edge_target_rows]
+    edge_representative_rows = np.full((edge_representatives.size,), -1, dtype=np.int64)
     # Evaluate each periodic scalar on its exact canonical lift; coordinate and
     # tensor orbit consistency is independently checked above.
     for orbit in np.unique(edge_orbits):
@@ -2859,6 +3030,7 @@ def _periodic_state_context(
         if representative_row < 0:
             raise ValueError("Periodic edge orbit has no state representative.")
         representative_vertices = edge_canonical_vertices[representative_row]
+        edge_representative_rows[orbit] = representative_row
         representative_winding = edge_windings[representative_target_row]
         for edge_row in rows:
             target_row = int(edge_target_rows[edge_row])
@@ -2867,19 +3039,26 @@ def _periodic_state_context(
                 edge_windings[target_row] - representative_winding,
             )
             member_vertices = edge_canonical_vertices[edge_row]
+            # Only root-relative lifts are bit-consistent on non-dyadic
+            # lattices, so the edge action is checked through the vertex root:
+            # the composed exact element must reproduce each member corner.
             for representative_vertex, member_vertex in zip(
                 representative_vertices, member_vertices, strict=True
             ):
-                if not np.array_equal(
-                    state.points[member_vertex],
-                    _exact_periodic_point(
-                        isometry, state.points[representative_vertex]
-                    ),
-                ) or not np.array_equal(
-                    state.metric[member_vertex],
-                    _exact_periodic_metric(
-                        isometry, state.metric[representative_vertex]
-                    ),
+                root_row = int(representative_state_rows[member_vertex])
+                composite = _multiply(
+                    isometry, vertex_exact_isometries[representative_vertex]
+                )
+                if (
+                    root_row != int(representative_state_rows[representative_vertex])
+                    or not np.array_equal(
+                        state.points[member_vertex],
+                        _exact_periodic_point(composite, state.points[root_row]),
+                    )
+                    or not np.array_equal(
+                        state.metric[member_vertex],
+                        _exact_periodic_metric(composite, state.metric[root_row]),
+                    )
                 ):
                     raise ValueError(
                         "Periodic edge geometry must respect its exact orbit action."
@@ -2890,9 +3069,7 @@ def _periodic_state_context(
     cell_state_by_target[cell_target_rows] = np.arange(
         state_cell_ids.size, dtype=np.int64
     )
-    cell_representatives = np.asarray(
-        cell_map.representative_lifted_rows, dtype=np.int64
-    )
+    cell_representatives = np.asarray(cell_map.representative_lifted_rows, dtype=np.int64)
     cell_quality = _quality(edge_lengths[topology.cell_edges])
     for orbit in np.unique(cell_orbits):
         rows = np.flatnonzero(cell_orbits == orbit)
@@ -2925,6 +3102,8 @@ def _periodic_state_context(
         cell_quality,
         bound.mesh_id,
         int(bound_periodic.allocator_next_ids[0]),
+        edge_member_windings,
+        edge_representative_rows,
     )
 
 
@@ -3001,15 +3180,11 @@ def execute_local_metric_adaptation(
     )
     topology = _topology(state, predicate_mode)
     _validate_classification(state, topology)
-    topology, _ = _periodic_topology(
-        mesh, source, state, topology, predicate_mode
-    )
+    topology, _ = _periodic_topology(mesh, source, state, topology, predicate_mode)
     counts = _Counts()
     passes = 0
     stalled = False
-    periodic_topology_pending = (
-        mesh.periodic_topology is not None and topology_operations
-    )
+    periodic_topology_pending = mesh.periodic_topology is not None and topology_operations
     while not _unit(topology) or periodic_topology_pending:
         periodic_topology_pending = False
         passes += 1
@@ -3023,9 +3198,7 @@ def execute_local_metric_adaptation(
             source,
         )
         topology = _topology(state, predicate_mode)
-        topology, _ = _periodic_topology(
-            mesh, source, state, topology, predicate_mode
-        )
+        topology, _ = _periodic_topology(mesh, source, state, topology, predicate_mode)
         if applied == 0:
             stalled = True
             break

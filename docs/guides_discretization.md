@@ -346,8 +346,12 @@ triangle, its local vertex slots, barycentric coordinates, and conditioning
 evidence; the query does not silently extrapolate across an unresolved cell.
 
 Full-dimensional polynomial mapped measures on supported simplex, tensor-box,
-and prism cells use exact reference-cell moments. Rational volume densities use
-a positive Bernstein denominator enclosure and a geometric-series remainder.
+and prism cells use exact reference-cell moments. Rational volume densities
+first factor each coordinate row's shared denominator out of the Jacobian and
+cancel coordinate denominators that divide the density exactly; the reduced
+density is then collapsed onto the unit box and split until every patch's
+Bernstein denominator enclosure contracts by one half, where an exact
+geometric series with an outward remainder is summed.
 Embedded curves and surfaces integrate their polynomial or rational Gram
 density over positive Bernstein patches; pyramid volumes use the collapsed-box
 chart with its exact Jacobian weight. Every result retains per-cell outward

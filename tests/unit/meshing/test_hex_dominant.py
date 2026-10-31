@@ -52,7 +52,10 @@ def test_hex_dominant_accepts_dimension_qualified_simplex_source_blocks() -> Non
     assert np.array_equal(result.parent_cell_ids, cell_ids[result.parent_cells])
     restriction = result.geometry.restriction_source
     assert restriction is not None
-    assert restriction.source_block_names == ("authored-simplex-source",)
+    # One source block name per target family block; all name the authored block.
+    assert restriction.source_block_names == ("authored-simplex-source",) * len(
+        result.mesh.blocks
+    )
 
 
 def _simplex_volume(points: np.ndarray, cell: np.ndarray) -> float:

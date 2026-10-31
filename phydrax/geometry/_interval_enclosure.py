@@ -57,6 +57,18 @@ def _hull(values: Sequence[Interval], /) -> Interval:
     return lower, upper
 
 
+def _sign_clamped(
+    value: Interval, nonnegative: HostArray, nonpositive: HostArray, /
+) -> Interval:
+    # Outward rounding widens an exact zero bound across the origin. A result
+    # whose sign is fixed by its operand signs keeps that sign, so a sum of
+    # squares remains an admissible base for even roots and real powers.
+    return (
+        np.where(nonnegative, np.maximum(value[0], 0.0), value[0]),
+        np.where(nonpositive, np.minimum(value[1], 0.0), value[1]),
+    )
+
+
 def interval_add(first: Interval, second: Interval, /) -> Interval:
     shape = np.broadcast_shapes(np.shape(first[0]), np.shape(second[0]))
     if np.all(np.asarray(second[0]) == 0) and np.all(np.asarray(second[1]) == 0):
@@ -64,7 +76,12 @@ def interval_add(first: Interval, second: Interval, /) -> Interval:
     if np.all(np.asarray(first[0]) == 0) and np.all(np.asarray(first[1]) == 0):
         return np.broadcast_to(second[0], shape), np.broadcast_to(second[1], shape)
     with np.errstate(invalid="ignore", over="ignore"):
-        return _round_out(np.add(first[0], second[0]), np.add(first[1], second[1]))
+        result = _round_out(np.add(first[0], second[0]), np.add(first[1], second[1]))
+    return _sign_clamped(
+        result,
+        (np.asarray(first[0]) >= 0.0) & (np.asarray(second[0]) >= 0.0),
+        (np.asarray(first[1]) <= 0.0) & (np.asarray(second[1]) <= 0.0),
+    )
 
 
 def interval_subtract(first: Interval, second: Interval, /) -> Interval:
@@ -85,7 +102,20 @@ def interval_multiply(first: Interval, second: Interval, /) -> Interval:
         lower = np.minimum.reduce(products)
         upper = np.maximum.reduce(products)
     invalid = np.logical_or.reduce(tuple(np.isnan(value) for value in products))
-    return _round_out(np.where(invalid, -np.inf, lower), np.where(invalid, np.inf, upper))
+    result = _round_out(
+        np.where(invalid, -np.inf, lower), np.where(invalid, np.inf, upper)
+    )
+    first_nonnegative = np.asarray(first[0]) >= 0.0
+    first_nonpositive = np.asarray(first[1]) <= 0.0
+    second_nonnegative = np.asarray(second[0]) >= 0.0
+    second_nonpositive = np.asarray(second[1]) <= 0.0
+    return _sign_clamped(
+        result,
+        (first_nonnegative & second_nonnegative)
+        | (first_nonpositive & second_nonpositive),
+        (first_nonnegative & second_nonpositive)
+        | (first_nonpositive & second_nonnegative),
+    )
 
 
 def interval_divide(first: Interval, second: Interval, /) -> Interval:
@@ -935,11 +965,14 @@ def _primitive(
                 selected = np.asarray(exponent[0])
                 if selected.ndim == 0:
                     return _primitive("integer_pow", (values[0],), {"y": int(selected)})
-            if np.any(np.asarray(values[0][0]) <= 0.0):
+            if np.any(np.asarray(values[0][0]) < 0.0):
                 raise IntervalExtensionError(
-                    "noninteger power requires a strictly positive base interval."
+                    "noninteger power requires a nonnegative base interval."
                 )
-            return (interval_exp(interval_multiply(exponent, interval_log(values[0]))),)
+            # log extends 0 to -inf, so exp(y log x) encloses 0**y for every
+            # exponent sign; a nonnegative base has a nonnegative real power.
+            power = interval_exp(interval_multiply(exponent, interval_log(values[0])))
+            return ((np.maximum(power[0], 0.0), power[1]),)
         case "maximum" | "max":
             return (interval_maximum(values[0], values[1]),)
         case "minimum" | "min":
@@ -1120,6 +1153,84 @@ def _read_atom(
     return _as_interval(atom.val)
 
 
+# Pure value-preserving restructurings: equal primitive, parameters and operand
+# identity imply the same real value, so their outputs share one identity.
+_VIEW_PRIMITIVES = frozenset(
+    (
+        "slice",
+        "squeeze",
+        "reshape",
+        "expand_dims",
+        "broadcast_in_dim",
+        "transpose",
+        "convert_element_type",
+        "copy",
+    )
+)
+
+type _StaticParameter = (
+    int | bool | str | np.dtype[Any] | None | tuple[_StaticParameter, ...]
+)
+
+
+def _static_parameter(value: object, /) -> bool:
+    if value is None or isinstance(value, (int, bool, str, np.dtype)):
+        return True
+    return isinstance(value, tuple) and all(_static_parameter(item) for item in value)
+
+
+@dataclass(slots=True)
+class IntervalOperandIdentity:
+    """Real-value identity of jaxpr variables within one jaxpr walk.
+
+    Interval arithmetic loses the dependency between two operands that denote
+    the same real value. JAX traces ``x[i] * x[i]`` as two separate slices, so
+    identity follows equal view equations back to one representative before a
+    product is recognized as an even power.
+    """
+
+    representatives: dict[jax_core.Var, jax_core.Var] = field(default_factory=dict)
+    views: dict[
+        tuple[str, tuple[jax_core.Var, ...], tuple[tuple[str, _StaticParameter], ...]],
+        jax_core.Var,
+    ] = field(default_factory=dict)
+
+    def _representative(self, variable: jax_core.Var, /) -> jax_core.Var:
+        return self.representatives.get(variable, variable)
+
+    def record(self, equation: jax_core.JaxprEqn, /) -> None:
+        """Record the identity of a single-output view equation."""
+        name = equation.primitive.name
+        if (
+            name not in _VIEW_PRIMITIVES
+            or len(equation.outvars) != 1
+            or isinstance(equation.outvars[0], jax_core.DropVar)
+            or not all(_static_parameter(value) for value in equation.params.values())
+        ):
+            return
+        operands: list[jax_core.Var] = []
+        for atom in equation.invars:
+            if not isinstance(atom, jax_core.Var):
+                return
+            operands.append(self._representative(atom))
+        key = (name, tuple(operands), tuple(sorted(equation.params.items())))
+        output = equation.outvars[0]
+        self.representatives[output] = self.views.setdefault(key, output)
+
+    def is_square(self, equation: jax_core.JaxprEqn, /) -> bool:
+        """Return whether a real product multiplies one value by itself."""
+        if equation.primitive.name != "mul" or len(equation.invars) != 2:
+            return False
+        first, second = equation.invars
+        return (
+            isinstance(first, jax_core.Var)
+            and isinstance(second, jax_core.Var)
+            and self._representative(first) is self._representative(second)
+            and isinstance(first.aval, ShapedArray)
+            and first.aval.dtype.kind == "f"
+        )
+
+
 def _evaluate_jaxpr(
     jaxpr: jax_core.Jaxpr,
     constants: tuple[Interval, ...],
@@ -1127,11 +1238,13 @@ def _evaluate_jaxpr(
     /,
 ) -> tuple[Interval, ...]:
     environment: dict[jax_core.Var, Interval] = {}
+    identity = IntervalOperandIdentity()
     for variable, value in zip(jaxpr.constvars, constants, strict=True):
         environment[variable] = value
     for variable, value in zip(jaxpr.invars, inputs, strict=True):
         environment[variable] = value
     for equation in jaxpr.eqns:
+        identity.record(equation)
         arguments = tuple(_read_atom(atom, environment) for atom in equation.invars)
         name = equation.primitive.name
         if name in ("pjit", "jit", "custom_jvp_call"):
@@ -1179,13 +1292,7 @@ def _evaluate_jaxpr(
                     _hull(tuple(row[index] for row in branch_outputs))
                     for index in range(len(branch_outputs[0]))
                 )
-        elif (
-            name == "mul"
-            and len(equation.invars) == 2
-            and equation.invars[0] is equation.invars[1]
-            and isinstance(equation.invars[0].aval, ShapedArray)
-            and equation.invars[0].aval.dtype.kind == "f"
-        ):
+        elif identity.is_square(equation):
             outputs = (interval_square(arguments[0]),)
         else:
             outputs = _primitive(name, arguments, equation.params)

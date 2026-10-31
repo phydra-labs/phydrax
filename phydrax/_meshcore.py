@@ -139,6 +139,7 @@ class PlcFailureReason(IntEnum):
     INVALID_SEED = 14
     OUTSIDE_DOMAIN = 15
     SOURCE_DEVIATION = 17
+    STEINER_SUPPRESSION = 18
 
 
 class PlcEntityKind(IntEnum):

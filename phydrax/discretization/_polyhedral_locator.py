@@ -33,6 +33,7 @@ from ._cell_geometry_validity import cell_geometry_id
 from ._cell_locator import AbstractCellLocator, CellLocationResult, CellLocationStatus
 from ._cell_mesh import CellMesh
 from ._coordinate_enclosure import CoordinateSourceBank
+from ._exact_algebraic_geometry import coefficient_payload
 
 
 class _PolyhedralCoordinateDim(Dim):
@@ -728,7 +729,10 @@ class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
                 "local_view": local_view_id,
                 "cell_ids": identifiers,
                 "face_ids": face_ids,
-                "exact_coordinates": exact_coordinates,
+                "exact_coordinates": tuple(
+                    tuple(coefficient_payload(value) for value in point)
+                    for point in exact_coordinates
+                ),
                 "triangles": faces,
             }
         )

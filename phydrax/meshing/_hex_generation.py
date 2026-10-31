@@ -72,6 +72,47 @@ from ._hex_schedule import (
 def _is_tetrahedron_family(cell_kind: str, /) -> bool:
     return reference_cell_topology(cell_kind).family == "tetrahedron"
 
+
+def _dual_hex_reference_corners(
+    hex_vertices: list[int] | np.ndarray,
+    parent_vertices: np.ndarray,
+    supports: np.ndarray,
+    /,
+) -> tuple[tuple[Fraction, Fraction, Fraction], ...]:
+    """Exact parent-tetrahedron reference corners of one vertex-star dual hex.
+
+    Each dual vertex is the barycenter of its source support (a vertex, edge,
+    face or the cell), so its parent reference point is the mean of the
+    supporting reference tetrahedron vertices.
+    """
+    reference = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology("tetrahedron").vertices
+    )
+    local_by_vertex = {
+        int(vertex): reference[local]
+        for local, vertex in enumerate(np.asarray(parent_vertices).tolist())
+    }
+    corners: list[tuple[Fraction, Fraction, Fraction]] = []
+    for target_vertex in np.asarray(hex_vertices).tolist():
+        support = tuple(
+            int(value)
+            for value in supports[int(target_vertex)].tolist()
+            if int(value) >= 0
+        )
+        if not support or any(vertex not in local_by_vertex for vertex in support):
+            raise ValueError(
+                "A dual hexahedron support must lie in its retained source tetrahedron."
+            )
+        point = tuple(
+            sum((local_by_vertex[vertex][axis] for vertex in support), Fraction(0))
+            / len(support)
+            for axis in range(3)
+        )
+        corners.append((point[0], point[1], point[2]))
+    return tuple(corners)
+
+
 def _trilinear_chart(
     corners: tuple[tuple[Fraction, Fraction, Fraction], ...],
     /,
@@ -115,6 +156,7 @@ def _evaluate_trilinear_chart(
             * point[2] ** powers[2]
         )
     return value
+
 
 def _compose_restricted_dual_chart(
     element: ScalarCoordinateElement,
@@ -175,14 +217,6 @@ def _compose_tetrahedral_dual_geometry(
     if not isinstance(source_element, ScalarCoordinateElement):
         raise ValueError("Curved dual hex composition requires a scalar chart element.")
     source_routes_host = np.asarray(source_routes[0], dtype=np.int64)
-    reference_tetrahedra: tuple[tuple[Fraction, Fraction, Fraction], ...] = tuple(
-        (
-            Fraction(float(point[0])),
-            Fraction(float(point[1])),
-            Fraction(float(point[2])),
-        )
-        for point in reference_cell_topology("tetrahedron").vertices
-    )
     reference_hexes: tuple[tuple[Fraction, Fraction, Fraction], ...] = tuple(
         (
             Fraction(float(point[0])),
@@ -213,40 +247,7 @@ def _compose_tetrahedral_dual_geometry(
             raise ValueError("Dual hexahedron references an absent source tetrahedron.")
         parent_rows[row] = parent
         vertices = source_cells[parent]
-        local_by_vertex = {
-            int(vertex): reference_tetrahedra[local]
-            for local, vertex in enumerate(vertices.tolist())
-        }
-        corners: list[tuple[Fraction, Fraction, Fraction]] = []
-        for target_vertex in hex_:
-            support = tuple(
-                int(value)
-                for value in supports[int(target_vertex)].tolist()
-                if int(value) >= 0
-            )
-            if not support or any(vertex not in local_by_vertex for vertex in support):
-                raise ValueError(
-                    "A dual hexahedron support must lie in its retained source tetrahedron."
-                )
-            corners.append(
-                (
-                    sum(
-                        (local_by_vertex[vertex][0] for vertex in support),
-                        Fraction(0),
-                    )
-                    / len(support),
-                    sum(
-                        (local_by_vertex[vertex][1] for vertex in support),
-                        Fraction(0),
-                    )
-                    / len(support),
-                    sum(
-                        (local_by_vertex[vertex][2] for vertex in support),
-                        Fraction(0),
-                    )
-                    / len(support),
-                )
-            )
+        corners = _dual_hex_reference_corners(hex_, vertices, supports)
         current_chart = _trilinear_chart(tuple(corners))
         root_candidate, root_cell_id, root_chart = _compose_restricted_dual_chart(
             source_element,
@@ -257,7 +258,9 @@ def _compose_tetrahedral_dual_geometry(
         if root_element is None:
             root_element = root_candidate
         elif root_element is not root_candidate:
-            raise ValueError("Dual hexes in one source block require one common root element.")
+            raise ValueError(
+                "Dual hexes in one source block require one common root element."
+            )
         current_charts.append(current_chart)
         root_charts.append(root_chart)
         root_cell_ids[row] = root_cell_id
@@ -311,7 +314,9 @@ def _compose_tetrahedral_dual_geometry(
         )
 
     if root_element is None:
-        raise ValueError("Curved dual hex composition requires a retained root coordinate element.")
+        raise ValueError(
+            "Curved dual hex composition requires a retained root coordinate element."
+        )
     blocks = []
     elements_by_block = {}
     routes_by_block = {}
@@ -370,6 +375,7 @@ def _compose_tetrahedral_dual_geometry(
     )
     return target, geometry, cell_order
 
+
 def _compose_multiblock_tetrahedral_dual_geometry(
     source: CellMesh,
     target: CellMesh,
@@ -396,28 +402,20 @@ def _compose_multiblock_tetrahedral_dual_geometry(
     )
     elements, source_routes, _ = source_geometry.resolve(source)
     scalar_elements = tuple(
-        element
-        for element in elements
-        if isinstance(element, ScalarCoordinateElement)
+        element for element in elements if isinstance(element, ScalarCoordinateElement)
     )
     if (
         len(scalar_elements) != len(source.blocks)
         or len(target.blocks) != len(source.blocks)
         or tuple(block.name for block in target.blocks)
         != tuple(block.name for block in source.blocks)
-        or any(not _is_tetrahedron_family(element.cell_kind) for element in scalar_elements)
+        or any(
+            not _is_tetrahedron_family(element.cell_kind) for element in scalar_elements
+        )
     ):
         raise ValueError(
             "Multi-block dual restriction requires one scalar tetrahedral chart per source block."
         )
-    reference_tetrahedra: tuple[tuple[Fraction, Fraction, Fraction], ...] = tuple(
-        (
-            Fraction(float(point[0])),
-            Fraction(float(point[1])),
-            Fraction(float(point[2])),
-        )
-        for point in reference_cell_topology("tetrahedron").vertices
-    )
     reference_hexes: tuple[tuple[Fraction, Fraction, Fraction], ...] = tuple(
         (
             Fraction(float(point[0])),
@@ -436,10 +434,7 @@ def _compose_multiblock_tetrahedral_dual_geometry(
     source_blocks_by_block = {}
     target_order: list[int] = []
     source_cell_ids = np.concatenate(
-        tuple(
-            np.asarray(block.global_ids, dtype=np.int64)
-            for block in source.blocks
-        )
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in source.blocks)
     )
     for block_index, (source_block, target_block, source_cells_block) in enumerate(
         zip(source.blocks, target.blocks, source_cells_by_block, strict=True)
@@ -458,56 +453,26 @@ def _compose_multiblock_tetrahedral_dual_geometry(
         ):
             if not 0 <= target_cell_id < parent_offsets.size - 1:
                 raise ValueError("Dual target cell ID is outside its parent table.")
-            start, stop = int(parent_offsets[target_cell_id]), int(
-                parent_offsets[target_cell_id + 1]
+            start, stop = (
+                int(parent_offsets[target_cell_id]),
+                int(parent_offsets[target_cell_id + 1]),
             )
             if stop - start != 1:
                 raise ValueError(
                     "Each dual hexahedron must retain one source tetrahedron chart."
                 )
             parent = int(parent_cells[start])
-            if not int(source_offsets[block_index]) <= parent < int(
-                source_offsets[block_index + 1]
+            if (
+                not int(source_offsets[block_index])
+                <= parent
+                < int(source_offsets[block_index + 1])
             ):
                 raise ValueError(
                     "Multi-block dual target must retain the corresponding source block."
                 )
             local_parent = parent - int(source_offsets[block_index])
             source_cell = source_cells_block[local_parent]
-            local_by_vertex = {
-                int(vertex): reference_tetrahedra[local]
-                for local, vertex in enumerate(source_cell.tolist())
-            }
-            corners: list[tuple[Fraction, Fraction, Fraction]] = []
-            for target_vertex in hex_:
-                support = tuple(
-                    int(value)
-                    for value in supports[int(target_vertex)].tolist()
-                    if int(value) >= 0
-                )
-                if not support or any(vertex not in local_by_vertex for vertex in support):
-                    raise ValueError(
-                        "A dual hexahedron support must lie in its retained source tetrahedron."
-                    )
-                corners.append(
-                    (
-                        sum(
-                            (local_by_vertex[vertex][0] for vertex in support),
-                            Fraction(0),
-                        )
-                        / len(support),
-                        sum(
-                            (local_by_vertex[vertex][1] for vertex in support),
-                            Fraction(0),
-                        )
-                        / len(support),
-                        sum(
-                            (local_by_vertex[vertex][2] for vertex in support),
-                            Fraction(0),
-                        )
-                        / len(support),
-                    )
-                )
+            corners = _dual_hex_reference_corners(hex_, source_cell, supports)
             current_chart = _trilinear_chart(tuple(corners))
             root_candidate, root_cell_id, root_chart = _compose_restricted_dual_chart(
                 scalar_elements[block_index],
@@ -573,12 +538,9 @@ def _compose_multiblock_tetrahedral_dual_geometry(
 
     target_order_array = np.asarray(target_order, dtype=np.int64)
     source_cell_count = parent_offsets.size - 1
-    if (
-        target_order_array.shape != (source_cell_count,)
-        or not np.array_equal(
-            np.sort(target_order_array),
-            np.arange(source_cell_count, dtype=np.int64),
-        )
+    if target_order_array.shape != (source_cell_count,) or not np.array_equal(
+        np.sort(target_order_array),
+        np.arange(source_cell_count, dtype=np.int64),
     ):
         raise ValueError(
             "Every multi-block dual cell must retain one unique target identity."
@@ -620,10 +582,14 @@ def _mesh_face_vertices(mesh: CellMesh, /) -> np.ndarray:
         return np.asarray(connectivity.faces, dtype=np.int64)
     if isinstance(connectivity, SimplicialConnectivity):
         if connectivity.dimension != 3:
-            raise TypeError("Dual face extraction requires three-dimensional simplicial topology.")
+            raise TypeError(
+                "Dual face extraction requires three-dimensional simplicial topology."
+            )
         return np.asarray(connectivity.entities[2], dtype=np.int64)
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("Volume face extraction requires simplex, hex, or poly connectivity.")
+        raise TypeError(
+            "Volume face extraction requires simplex, hex, or poly connectivity."
+        )
     offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
     widths = np.diff(offsets)
@@ -641,30 +607,60 @@ def _mesh_face_vertices(mesh: CellMesh, /) -> np.ndarray:
     return vertices.reshape((widths.size, int(widths[0])))
 
 
-def _attach_dual_parent_ancestry(
+def _restrict_affine_dual_geometry(
     source: CellMesh,
     target: CellMesh,
-    geometry: CellGeometrySpec,
     source_geometry: CellGeometrySpec,
     source_cells: np.ndarray,
     block_offsets: np.ndarray,
+    supports: np.ndarray,
     /,
 ) -> CellGeometrySpec:
-    """Retain stable source cell, vertex, and material-block identities."""
+    """Restrict each dual hex exactly through its affine parent tetrahedron.
+
+    Every hex keeps the exact trilinear chart of its barycentric corners into
+    the parent reference tetrahedron, so its coordinate map is the parent map
+    composed with that chart (no rounded dual vertex enters the geometry), and
+    stable source cell, vertex and material-block identities are retained.
+    """
+    elements, source_routes, _ = source_geometry.resolve(source)
     source_vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
+    elements_by_block = {}
+    routes_by_block = {}
     parent_cells_by_block = {}
     parent_vertices_by_block = {}
     source_blocks_by_block = {}
     for block_index, (source_block, target_block) in enumerate(
         zip(source.blocks, target.blocks, strict=True)
     ):
+        source_element = elements[block_index]
+        if not isinstance(source_element, ScalarCoordinateElement):
+            raise TypeError("Affine dual restriction requires a scalar parent element.")
         start, stop = int(block_offsets[block_index]), int(block_offsets[block_index + 1])
-        parent_cells_by_block[target_block.name] = np.repeat(
-            np.asarray(source_block.global_ids, dtype=np.int64), 4
+        local_parents = np.repeat(np.arange(stop - start, dtype=np.int64), 4)
+        parent_ids = np.asarray(source_block.global_ids, dtype=np.int64)[local_parents]
+        hexes = np.asarray(target_block.vertices, dtype=np.int64)
+        elements_by_block[target_block.name] = PerCellRestrictedCellGeometryElement(
+            source_element,
+            "hexahedron",
+            tuple(int(value) for value in np.asarray(target_block.global_ids).tolist()),
+            tuple(int(value) for value in parent_ids.tolist()),
+            tuple(
+                _trilinear_chart(
+                    _dual_hex_reference_corners(
+                        hexes[row], source_cells[start + row // 4], supports
+                    )
+                )
+                for row in range(hexes.shape[0])
+            ),
         )
-        parent_vertices_by_block[target_block.name] = np.repeat(
-            source_vertex_ids[source_cells[start:stop]], 4, axis=0
-        )
+        routes_by_block[target_block.name] = np.asarray(
+            source_routes[block_index], dtype=np.int64
+        )[local_parents]
+        parent_cells_by_block[target_block.name] = parent_ids
+        parent_vertices_by_block[target_block.name] = source_vertex_ids[
+            source_cells[start + local_parents]
+        ]
         source_blocks_by_block[target_block.name] = source_block.name
     restriction = CellGeometryRestrictionSource(
         cell_geometry_id(source_geometry),
@@ -673,17 +669,17 @@ def _attach_dual_parent_ancestry(
         parent_vertices_by_block,
         block_source_blocks=source_blocks_by_block,
     )
-    elements = dict(zip(geometry.block_names, geometry.elements, strict=True))
-    routes = {
-        name: np.asarray(route, dtype=np.int32)
-        for name, route in zip(geometry.block_names, geometry.geometry_dofs, strict=True)
-    }
+    restricted_map = (
+        None
+        if source_geometry.source_map is None
+        else _RestrictedCoordinateMap(source, source_geometry, target)
+    )
     return CellGeometrySpec(
-        elements,
-        routes,
-        geometry.coordinates,
-        source_map=geometry.source_map,
-        source_mesh=target if geometry.source_map is not None else None,
+        elements_by_block,
+        routes_by_block,
+        source_geometry.coordinates,
+        source_map=restricted_map,
+        source_mesh=target if restricted_map is not None else None,
         restriction_source=restriction,
     )
 
@@ -696,11 +692,12 @@ def _dual_hex_source_edge_ancestry(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     source_connectivity = source.connectivity
     target_connectivity = target.connectivity
-    if isinstance(
-        source_connectivity, (TetrahedralConnectivity, PolyhedralConnectivity)
-    ):
+    if isinstance(source_connectivity, (TetrahedralConnectivity, PolyhedralConnectivity)):
         source_edges = np.asarray(source_connectivity.edges, dtype=np.int64)
-    elif isinstance(source_connectivity, SimplicialConnectivity) and source_connectivity.dimension == 3:
+    elif (
+        isinstance(source_connectivity, SimplicialConnectivity)
+        and source_connectivity.dimension == 3
+    ):
         source_edges = np.asarray(source_connectivity.entities[1], dtype=np.int64)
     else:
         raise TypeError("Dual edge ancestry requires tetrahedral source topology.")
@@ -712,11 +709,13 @@ def _dual_hex_source_edge_ancestry(
     else:
         raise TypeError("Dual edge ancestry requires hexahedral target connectivity.")
     target_edge_ids = np.asarray(target.entity_set(1).entity_ids, dtype=np.int64)
-    if (
-        source_edges.shape != (source_edge_ids.size, 2)
-        or target_edges.shape != (target_edge_ids.size, 2)
+    if source_edges.shape != (source_edge_ids.size, 2) or target_edges.shape != (
+        target_edge_ids.size,
+        2,
     ):
-        raise ValueError("Dual source-edge ancestry must align with canonical edge banks.")
+        raise ValueError(
+            "Dual source-edge ancestry must align with canonical edge banks."
+        )
     source_by_vertices: dict[tuple[int, int], tuple[int, tuple[int, int]]] = {}
     for row, edge in enumerate(source_edges.tolist()):
         oriented_endpoints = (int(edge[0]), int(edge[1]))
@@ -731,14 +730,10 @@ def _dual_hex_source_edge_ancestry(
     for target_row, edge in enumerate(target_edges.tolist()):
         endpoint_supports: tuple[tuple[int, ...], tuple[int, ...]] = (
             tuple(
-                int(value)
-                for value in supports[int(edge[0])].tolist()
-                if int(value) >= 0
+                int(value) for value in supports[int(edge[0])].tolist() if int(value) >= 0
             ),
             tuple(
-                int(value)
-                for value in supports[int(edge[1])].tolist()
-                if int(value) >= 0
+                int(value) for value in supports[int(edge[1])].tolist() if int(value) >= 0
             ),
         )
         source_vertices = sorted(
@@ -819,12 +814,13 @@ def extract_volume_hexes(
         )
     )
     source_connectivity = source.connectivity
-    if isinstance(
-        source_connectivity, (TetrahedralConnectivity, PolyhedralConnectivity)
-    ):
+    if isinstance(source_connectivity, (TetrahedralConnectivity, PolyhedralConnectivity)):
         edges = np.asarray(source_connectivity.edges, dtype=np.int64)
         face_incidence = np.asarray(source_connectivity.face_cell_counts, dtype=np.int64)
-    elif isinstance(source_connectivity, SimplicialConnectivity) and source_connectivity.dimension == 3:
+    elif (
+        isinstance(source_connectivity, SimplicialConnectivity)
+        and source_connectivity.dimension == 3
+    ):
         edges = np.asarray(source_connectivity.entities[1], dtype=np.int64)
         face_incidence = np.bincount(
             np.asarray(source_connectivity.cell_entities[2], dtype=np.int64).reshape(-1),
@@ -864,12 +860,30 @@ def extract_volume_hexes(
         ]
         nodes[row, 14] = original + edge_count + face_count + row
 
+    # Dual vertices are correctly rounded exact barycenters, so they equal the
+    # rounded images of the exact restricted hex charts.
+    exact_points = tuple(
+        tuple(Fraction(float(value)) for value in point) for point in points.tolist()
+    )
     coordinates = np.concatenate(
         (
             points,
-            np.mean(points[edges], axis=1),
-            np.mean(points[faces], axis=1),
-            np.mean(points[cells], axis=1),
+            np.asarray(
+                [
+                    [
+                        float(
+                            sum(
+                                (exact_points[vertex][axis] for vertex in row),
+                                Fraction(0),
+                            )
+                            / len(row)
+                        )
+                        for axis in range(3)
+                    ]
+                    for row in (*edges.tolist(), *faces.tolist(), *cells.tolist())
+                ],
+                dtype=np.float64,
+            ).reshape((-1, 3)),
         ),
         axis=0,
     )
@@ -885,9 +899,7 @@ def extract_volume_hexes(
             CellBlock(
                 block.name,
                 "hexahedron",
-                hexes[
-                    4 * int(block_offsets[index]) : 4 * int(block_offsets[index + 1])
-                ],
+                hexes[4 * int(block_offsets[index]) : 4 * int(block_offsets[index + 1])],
                 global_ids=np.arange(
                     4 * int(block_offsets[index]),
                     4 * int(block_offsets[index + 1]),
@@ -912,14 +924,8 @@ def extract_volume_hexes(
     parents = np.repeat(np.arange(cell_count, dtype=np.int64), 4)
     parent_offsets = np.arange(parents.size + 1, dtype=np.int64)
     if affine_source:
-        geometry = CellGeometrySpec.affine(mesh)
-        geometry = _attach_dual_parent_ancestry(
-            source,
-            mesh,
-            geometry,
-            source_geometry,
-            cells,
-            block_offsets,
+        geometry = _restrict_affine_dual_geometry(
+            source, mesh, source_geometry, cells, block_offsets, supports
         )
     elif len(source.blocks) == 1:
         mesh, geometry, cell_order = _compose_tetrahedral_dual_geometry(
@@ -943,7 +949,9 @@ def extract_volume_hexes(
     )
     connectivity = mesh.connectivity
     if not isinstance(connectivity, (HexahedralConnectivity, PolyhedralConnectivity)):
-        raise TypeError("Dual boundary extraction requires hexahedral output connectivity.")
+        raise TypeError(
+            "Dual boundary extraction requires hexahedral output connectivity."
+        )
     boundary = np.zeros((coordinates.shape[0],), dtype=np.bool_)
     boundary_faces = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
     boundary[_mesh_face_vertices(mesh)[boundary_faces].reshape(-1)] = True
@@ -980,8 +988,7 @@ _HEX_REFERENCE_POINTS: tuple[tuple[Fraction, Fraction, Fraction], ...] = tuple(
     for point in _HEX_TOPOLOGY.vertices
 )
 _HEX_REFERENCE_BITS: tuple[tuple[int, int, int], ...] = tuple(
-    (int(point[0]), int(point[1]), int(point[2]))
-    for point in _HEX_TOPOLOGY.vertices
+    (int(point[0]), int(point[1]), int(point[2])) for point in _HEX_TOPOLOGY.vertices
 )
 _HEX_LOCAL_FACES: tuple[tuple[int, int, int, int], ...] = tuple(
     (int(face[0]), int(face[1]), int(face[2]), int(face[3]))
@@ -1018,9 +1025,7 @@ class _MappedRootIntegerGrid:
     block_reference_vertices: tuple[
         tuple[tuple[tuple[Fraction, Fraction, Fraction], ...], ...], ...
     ]
-    entity_parent_strata: tuple[
-        tuple[tuple[tuple[int, ...], int, int], ...], ...
-    ]
+    entity_parent_strata: tuple[tuple[tuple[tuple[int, ...], int, int], ...], ...]
     grid_id: str
 
 
@@ -1070,12 +1075,26 @@ class MappedGridHexConstruction(StrictModule, NonTrainableState):
         regions = np.array(cell_regions, dtype=np.int64, copy=True)
         parents = np.array(source_parent_rows, dtype=np.int64, copy=True)
         counts = np.array(root_axis_counts, dtype=np.int64, copy=True)
-        dimensions = tuple(np.array(value, dtype=np.int8, copy=True) for value in entity_parent_dimensions)
-        identifiers = tuple(np.array(value, dtype=np.int64, copy=True) for value in entity_parent_ids)
+        dimensions = tuple(
+            np.array(value, dtype=np.int8, copy=True)
+            for value in entity_parent_dimensions
+        )
+        identifiers = tuple(
+            np.array(value, dtype=np.int64, copy=True) for value in entity_parent_ids
+        )
         scaled = np.array(scaled_jacobian_lower, dtype=np.float64, copy=True)
         mean = np.array(mean_ratio_lower, dtype=np.float64, copy=True)
         aspect = np.array(aspect_ratio_upper, dtype=np.float64, copy=True)
-        for value in (regions, parents, counts, *dimensions, *identifiers, scaled, mean, aspect):
+        for value in (
+            regions,
+            parents,
+            counts,
+            *dimensions,
+            *identifiers,
+            scaled,
+            mean,
+            aspect,
+        ):
             value.setflags(write=False)
         cell_count = mesh.connectivity.cell_count
         if (
@@ -1092,14 +1111,20 @@ class MappedGridHexConstruction(StrictModule, NonTrainableState):
                 dimension.shape != (mesh.entity_set(degree).entity_ids.size,)
                 or identifier.shape != dimension.shape
                 or np.any((dimension < 0) | (dimension > 3))
-                for degree, (dimension, identifier) in enumerate(zip(dimensions, identifiers, strict=True))
+                for degree, (dimension, identifier) in enumerate(
+                    zip(dimensions, identifiers, strict=True)
+                )
             )
             or len(reference_maps) != len(mesh.blocks)
             or any(value.shape != (cell_count,) for value in (scaled, mean, aspect))
             or any(not np.all(np.isfinite(value)) for value in (scaled, mean, aspect))
-            or not all((source_domain_id, source_frame_id, source_connection_id, schedule_id))
+            or not all(
+                (source_domain_id, source_frame_id, source_connection_id, schedule_id)
+            )
         ):
-            raise ValueError("Mapped grid construction banks must align with source-root restrictions.")
+            raise ValueError(
+                "Mapped grid construction banks must align with source-root restrictions."
+            )
         self.mesh = mesh
         self.geometry = geometry
         self.validity = validity
@@ -1178,15 +1203,21 @@ def _equalize_root_axis_counts(
         right_points = np.asarray(_HEX_TOPOLOGY.vertices, dtype=np.int64)[
             np.asarray(_HEX_LOCAL_FACES[right_face], dtype=np.int64)
         ]
-        left_normal = int(np.flatnonzero(np.all(left_points == left_points[:1], axis=0))[0])
-        right_normal = int(np.flatnonzero(np.all(right_points == right_points[:1], axis=0))[0])
+        left_normal = int(
+            np.flatnonzero(np.all(left_points == left_points[:1], axis=0))[0]
+        )
+        right_normal = int(
+            np.flatnonzero(np.all(right_points == right_points[:1], axis=0))[0]
+        )
         transport = connection.transports[row]
         for axis in range(3):
             if axis == left_normal:
                 continue
             target_axis = int(np.argmax(np.abs(transport[:, axis])))
             if target_axis == right_normal:
-                raise ValueError("Mapped root face connection does not preserve tangent axes.")
+                raise ValueError(
+                    "Mapped root face connection does not preserve tangent axes."
+                )
             join(3 * int(left) + axis, 3 * int(right) + target_axis)
     maxima: dict[int, int] = {}
     for root in range(roots):
@@ -1246,24 +1277,25 @@ def _root_entity_lookups(
     else:
         raise TypeError("Mapped root entity lookup requires hexahedral cell incidence.")
     if edges.shape != (edge_ids.size, 2) or faces.shape != (face_ids.size, 4):
-        raise ValueError("Mapped root entity IDs do not align with their incidence banks.")
+        raise ValueError(
+            "Mapped root entity IDs do not align with their incidence banks."
+        )
     edge_lookup: dict[tuple[int, int], int] = {}
     for index in range(edges.shape[0]):
         first_row = int(edges[index, 0])
         second_row = int(edges[index, 1])
-        identifiers = sorted(
-            (int(vertex_ids[first_row]), int(vertex_ids[second_row]))
-        )
+        identifiers = sorted((int(vertex_ids[first_row]), int(vertex_ids[second_row])))
         edge_lookup[(identifiers[0], identifiers[1])] = int(edge_ids[index])
     face_lookup: dict[tuple[int, int, int, int], int] = {}
     for index in range(faces.shape[0]):
         identifiers = sorted(
             int(vertex_ids[int(faces[index, column])]) for column in range(4)
         )
-        face_lookup[
-            (identifiers[0], identifiers[1], identifiers[2], identifiers[3])
-        ] = int(face_ids[index])
+        face_lookup[(identifiers[0], identifiers[1], identifiers[2], identifiers[3])] = (
+            int(face_ids[index])
+        )
     return vertex_ids, edge_lookup, face_lookup
+
 
 def _root_entity_for_points(
     points: tuple[tuple[Fraction, Fraction, Fraction], ...],
@@ -1285,7 +1317,9 @@ def _root_entity_for_points(
         return 3, int(root_cell_id)
     root_points = _HEX_REFERENCE_POINTS
     if len(fixed) == 3:
-        local = next(index for index, point in enumerate(root_points) if point == points[0])
+        local = next(
+            index for index, point in enumerate(root_points) if point == points[0]
+        )
         return 0, int(vertex_ids[int(root_cell[local])])
     if len(fixed) == 2:
         fixed_axes = {axis for axis, _ in fixed}
@@ -1339,7 +1373,11 @@ def _root_grid_node_key(
         local_edge = next(
             edge
             for edge in _HEX_LOCAL_EDGES
-            if all(root_points[vertex][axis] == point[axis] for axis in fixed for vertex in edge)
+            if all(
+                root_points[vertex][axis] == point[axis]
+                for axis in fixed
+                for vertex in edge
+            )
         )
         first = int(vertex_ids[int(root_cell[local_edge[0]])])
         second = int(vertex_ids[int(root_cell[local_edge[1]])])
@@ -1355,7 +1393,9 @@ def _root_grid_node_key(
         local_face = next(
             face
             for face in _HEX_LOCAL_FACES
-            if all(root_points[vertex][fixed_axis] == point[fixed_axis] for vertex in face)
+            if all(
+                root_points[vertex][fixed_axis] == point[fixed_axis] for vertex in face
+            )
         )
         global_cycle = (
             int(vertex_ids[int(root_cell[local_face[0]])]),
@@ -1383,7 +1423,9 @@ def _root_grid_node_key(
         for local_vertex, identifier in zip(local_face, global_cycle, strict=True):
             local_point = root_points[local_vertex]
             bits = (int(local_point[varying_axes[0]]), int(local_point[varying_axes[1]]))
-            weight = (u if bits[0] else Fraction(1) - u) * (v if bits[1] else Fraction(1) - v)
+            weight = (u if bits[0] else Fraction(1) - u) * (
+                v if bits[1] else Fraction(1) - v
+            )
             mapped_u += weight * canonical_uv[identifier][0]
             mapped_v += weight * canonical_uv[identifier][1]
         return ("face", face_id, mapped_u, mapped_v)
@@ -1412,7 +1454,9 @@ def _mapped_axis_counts(
     /,
 ) -> np.ndarray:
     if connection.frame_id != frame.frame_id:
-        raise ValueError("Mapped source-block connection belongs to a different prepared frame.")
+        raise ValueError(
+            "Mapped source-block connection belongs to a different prepared frame."
+        )
     bounds = np.asarray(frame.axis_jacobian_bounds, dtype=np.float64)
     if route == "balanced_grid":
         count = max(1, int(math.ceil(float(np.max(bounds)) / target_size)))
@@ -1422,15 +1466,17 @@ def _mapped_axis_counts(
     return _equalize_root_axis_counts(counts, frame, connection)
 
 
-
-
 def _exact_coordinate_row(values: tuple[object, ...], /) -> tuple[ExactScalar, ...]:
     result: list[ExactScalar] = []
     for value in values:
         if not isinstance(value, (Fraction, RadicalElement)):
-            raise TypeError("Mapped root coordinates must retain exact rational or algebraic values.")
+            raise TypeError(
+                "Mapped root coordinates must retain exact rational or algebraic values."
+            )
         result.append(value)
     return tuple(result)
+
+
 @checked
 def generate_integer_grid_hexes(
     domain: MappedReferenceDomain,
@@ -1445,19 +1491,27 @@ def generate_integer_grid_hexes(
     """Build conforming source-root tensor subdivisions from physical Jacobian bounds."""
     if not isinstance(domain, MappedReferenceDomain):
         raise TypeError("domain must be MappedReferenceDomain.")
-    if not isinstance(frame, PreparedSourceHexFrame) or not isinstance(connection, SourceBlockConnection):
-        raise TypeError("Mapped tensor grids require a prepared source frame and block connection.")
+    if not isinstance(frame, PreparedSourceHexFrame) or not isinstance(
+        connection, SourceBlockConnection
+    ):
+        raise TypeError(
+            "Mapped tensor grids require a prepared source frame and block connection."
+        )
     match schedule.route:
         case "balanced_grid" | "frame_grid":
             pass
         case _:
-            raise ValueError("Mapped tensor grids require balanced_grid or frame_grid schedules.")
+            raise ValueError(
+                "Mapped tensor grids require balanced_grid or frame_grid schedules."
+            )
     if (
         frame.reference_mesh.mesh_id != domain.reference_mesh.mesh_id
         or frame.source_geometry_id != cell_geometry_id(domain.source_geometry)
         or connection.frame_id != frame.frame_id
     ):
-        raise ValueError("Mapped tensor-grid preparation must retain current root map and connectivity.")
+        raise ValueError(
+            "Mapped tensor-grid preparation must retain current root map and connectivity."
+        )
     size = finite_real_scalar(target_size, "target_size")
     if size <= 0.0:
         raise ValueError("target_size must be positive.")
@@ -1468,24 +1522,26 @@ def generate_integer_grid_hexes(
         size = min(size, upper)
     root_axis_counts = _mapped_axis_counts(frame, connection, size, schedule.route)
     roots = sum(block.cell_count for block in domain.reference_mesh.blocks)
-    if root_axis_counts.shape != (roots, 3) or np.asarray(domain.cell_regions).shape != (roots,):
-        raise ValueError("Mapped root counts and region assignments must cover every source root.")
+    if root_axis_counts.shape != (roots, 3) or np.asarray(domain.cell_regions).shape != (
+        roots,
+    ):
+        raise ValueError(
+            "Mapped root counts and region assignments must cover every source root."
+        )
     vertex_ids, edge_lookup, face_lookup = _root_entity_lookups(domain.reference_mesh)
     block_cells: list[list[list[int]]] = [[] for _ in domain.reference_mesh.blocks]
     block_global_ids: list[list[int]] = [[] for _ in domain.reference_mesh.blocks]
     block_parent_rows: list[list[int]] = [[] for _ in domain.reference_mesh.blocks]
     block_regions: list[list[int]] = [[] for _ in domain.reference_mesh.blocks]
-    block_reference_vertices: list[list[tuple[tuple[Fraction, Fraction, Fraction], ...]]] = [
-        [] for _ in domain.reference_mesh.blocks
-    ]
+    block_reference_vertices: list[
+        list[tuple[tuple[Fraction, Fraction, Fraction], ...]]
+    ] = [[] for _ in domain.reference_mesh.blocks]
     vertex_rows: dict[_RootGridNodeKey, int] = {}
     vertex_keys: list[_RootGridNodeKey] = []
     vertex_root_rows: list[int] = []
     vertex_reference_points: list[tuple[Fraction, Fraction, Fraction]] = []
     exact_vertex_coordinates: list[tuple[ExactScalar, ...]] = []
-    entity_sources: list[dict[tuple[int, ...], tuple[int, int]]] = [
-        {} for _ in range(4)
-    ]
+    entity_sources: list[dict[tuple[int, ...], tuple[int, int]]] = [{} for _ in range(4)]
     parent_rows = np.asarray(frame.root_block_rows, dtype=np.int64)
     block_indices = np.asarray(frame.root_block_indices, dtype=np.int64)
     root_cells = np.asarray(frame.root_cells, dtype=np.int64)
@@ -1525,7 +1581,9 @@ def generate_integer_grid_hexes(
             _exact_coordinate_row(tuple(point)) for point in raw_exact_points
         )
         local_rows: dict[tuple[int, int, int], int] = {}
-        for index, point, exact_point in zip(lattice, local_points, exact_points, strict=True):
+        for index, point, exact_point in zip(
+            lattice, local_points, exact_points, strict=True
+        ):
             key = _root_grid_node_key(
                 point,
                 root_cell,
@@ -1543,7 +1601,9 @@ def generate_integer_grid_hexes(
                 vertex_reference_points.append(point)
                 exact_vertex_coordinates.append(tuple(exact_point))
             elif exact_vertex_coordinates[existing] != tuple(exact_point):
-                raise ValueError("Adjacent mapped root charts disagree on an exact shared grid vertex.")
+                raise ValueError(
+                    "Adjacent mapped root charts disagree on an exact shared grid vertex."
+                )
             local_rows[index] = existing
         for lower_values in product(*(range(value) for value in counts)):
             lower = (
@@ -1588,8 +1648,14 @@ def generate_integer_grid_hexes(
             block_reference_vertices[block_index].append(reference_cell)
             for dimension in range(4):
                 for local_entity in _HEX_TOPOLOGY.entities[dimension]:
-                    target_vertices = tuple(cell_nodes[int(index)] for index in local_entity)
-                    key = (target_vertices[0],) if dimension == 0 else tuple(sorted(target_vertices))
+                    target_vertices = tuple(
+                        cell_nodes[int(index)] for index in local_entity
+                    )
+                    key = (
+                        (target_vertices[0],)
+                        if dimension == 0
+                        else tuple(sorted(target_vertices))
+                    )
                     if dimension == 3:
                         parent_stratum = (3, root_id)
                     else:
@@ -1603,7 +1669,9 @@ def generate_integer_grid_hexes(
                         )
                     previous = entity_sources[dimension].get(key)
                     if previous is not None and previous != parent_stratum:
-                        raise ValueError("Shared mapped root-grid entities disagree on source stratum ancestry.")
+                        raise ValueError(
+                            "Shared mapped root-grid entities disagree on source stratum ancestry."
+                        )
                     entity_sources[dimension][key] = parent_stratum
     grid_id = canonical_fingerprint(
         {
@@ -1614,7 +1682,9 @@ def generate_integer_grid_hexes(
             "schedule": schedule.schedule_id,
             "target_size": size,
             "root_counts": root_axis_counts,
-            "cells": tuple(tuple(tuple(cell) for cell in values) for values in block_cells),
+            "cells": tuple(
+                tuple(tuple(cell) for cell in values) for values in block_cells
+            ),
             "parents": tuple(tuple(values) for values in block_parent_rows),
             "regions": tuple(tuple(values) for values in block_regions),
             "vertex_keys": tuple(repr(key) for key in vertex_keys),
@@ -1634,20 +1704,27 @@ def generate_integer_grid_hexes(
         tuple(vertex_keys),
         np.asarray(vertex_root_rows, dtype=np.int64),
         tuple(vertex_reference_points),
-        tuple(np.asarray(values, dtype=np.int32).reshape((-1, 8)) for values in block_cells),
+        tuple(
+            np.asarray(values, dtype=np.int32).reshape((-1, 8)) for values in block_cells
+        ),
         tuple(np.asarray(values, dtype=np.int64) for values in block_global_ids),
         tuple(np.asarray(values, dtype=np.int64) for values in block_parent_rows),
         tuple(np.asarray(values, dtype=np.int64) for values in block_regions),
         tuple(tuple(values) for values in block_reference_vertices),
         tuple(
             tuple(
-                (key, entity_sources[dimension][key][0], entity_sources[dimension][key][1])
+                (
+                    key,
+                    entity_sources[dimension][key][0],
+                    entity_sources[dimension][key][1],
+                )
                 for key in sorted(entity_sources[dimension])
             )
             for dimension in range(4)
         ),
         grid_id,
     )
+
 
 def _tensor_box_chart(
     lower: tuple[Fraction, Fraction, Fraction],
@@ -1721,9 +1798,13 @@ def _matrix_norm_squared_upper(matrix: tuple[tuple[Fraction, ...], ...], /) -> F
         for left in range(3)
     )
     return max(
-        gram[row][row] + sum((abs(gram[row][column]) for column in range(3) if column != row), Fraction(0))
+        gram[row][row]
+        + sum(
+            (abs(gram[row][column]) for column in range(3) if column != row), Fraction(0)
+        )
         for row in range(3)
     )
+
 
 def _exact_binary64_interval(
     interval: tuple[Fraction | float, Fraction | float], /
@@ -1735,34 +1816,34 @@ def _exact_binary64_interval(
     )
 
 
-
 def _mapped_root_quality(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Bound mapped-cell quality over exact restricted polynomial coordinate maps."""
     elements, routes, _ = geometry.resolve(mesh)
     coefficients = tuple(
-        _exact_coordinate_row(tuple(row))
-        for row in geometry.source_coordinates()
+        _exact_coordinate_row(tuple(row)) for row in geometry.source_coordinates()
     )
     scaled_values: list[float] = []
     mean_values: list[float] = []
     aspect_values: list[float] = []
     center = (Fraction(1, 2), Fraction(1, 2), Fraction(1, 2))
     identity = tuple(
-        tuple(Fraction(int(row == column)) for column in range(3))
-        for row in range(3)
+        tuple(Fraction(int(row == column)) for column in range(3)) for row in range(3)
     )
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         if not isinstance(element, PerCellRestrictedCellGeometryElement):
-            raise TypeError("Mapped source quality requires exact per-cell root restrictions.")
+            raise TypeError(
+                "Mapped source quality requires exact per-cell root restrictions."
+            )
         routes_host = np.asarray(route, dtype=np.int64)
         for row in range(block.cell_count):
             local = tuple(coefficients[int(index)] for index in routes_host[row])
-            basis: tuple[Expression, ...] = coordinate_effective_basis(element, cell_row=row)
+            basis: tuple[Expression, ...] = coordinate_effective_basis(
+                element, cell_row=row
+            )
             components: tuple[tuple[ExactScalar, ...], ...] = tuple(
-                tuple(local[dof][axis] for dof in range(len(local)))
-                for axis in range(3)
+                tuple(local[dof][axis] for dof in range(len(local))) for axis in range(3)
             )
             expressions = linear_combinations(basis, components)
             jacobian = tuple(
@@ -1783,23 +1864,43 @@ def _mapped_root_quality(
                     multiply(multiply(jacobian[0][0], jacobian[1][1]), jacobian[2][2]),
                     multiply(multiply(jacobian[0][1], jacobian[1][2]), jacobian[2][0]),
                     multiply(multiply(jacobian[0][2], jacobian[1][0]), jacobian[2][1]),
-                    scale(multiply(multiply(jacobian[0][2], jacobian[1][1]), jacobian[2][0]), -1),
-                    scale(multiply(multiply(jacobian[0][1], jacobian[1][0]), jacobian[2][2]), -1),
-                    scale(multiply(multiply(jacobian[0][0], jacobian[1][2]), jacobian[2][1]), -1),
+                    scale(
+                        multiply(
+                            multiply(jacobian[0][2], jacobian[1][1]), jacobian[2][0]
+                        ),
+                        -1,
+                    ),
+                    scale(
+                        multiply(
+                            multiply(jacobian[0][1], jacobian[1][0]), jacobian[2][2]
+                        ),
+                        -1,
+                    ),
+                    scale(
+                        multiply(
+                            multiply(jacobian[0][0], jacobian[1][2]), jacobian[2][1]
+                        ),
+                        -1,
+                    ),
                 ),
                 3,
             )
             determinant_lower, _ = polynomial_bounds(determinant, "box", 3)
             determinant_lower = float(determinant_lower)
             if not math.isfinite(determinant_lower) or determinant_lower <= 0.0:
-                raise ValueError("Mapped root-cell determinant lacks a positive Bernstein lower bound.")
+                raise ValueError(
+                    "Mapped root-cell determinant lacks a positive Bernstein lower bound."
+                )
             determinant_lower = float(np.nextafter(determinant_lower, -np.inf))
             component_magnitudes = tuple(
                 tuple(max(abs(lower), abs(upper)) for lower, upper in row_bounds)
                 for row_bounds in bounds
             )
             column_square_upper = tuple(
-                sum((component_magnitudes[row][axis] ** 2 for row in range(3)), Fraction(0))
+                sum(
+                    (component_magnitudes[row][axis] ** 2 for row in range(3)),
+                    Fraction(0),
+                )
                 for axis in range(3)
             )
             column_upper = tuple(
@@ -1812,7 +1913,11 @@ def _mapped_root_quality(
                 for value in column_square_upper
             )
             product_upper = float(
-                np.nextafter(np.nextafter(column_upper[0] * column_upper[1], np.inf) * column_upper[2], np.inf)
+                np.nextafter(
+                    np.nextafter(column_upper[0] * column_upper[1], np.inf)
+                    * column_upper[2],
+                    np.inf,
+                )
             )
             frobenius_square_exact = sum(
                 (value * value for row in component_magnitudes for value in row),
@@ -1825,24 +1930,33 @@ def _mapped_root_quality(
             determinant_power_lower = float(
                 np.nextafter(determinant_lower ** (2.0 / 3.0), -np.inf)
             )
-            mean_numerator_lower = float(np.nextafter(3.0 * determinant_power_lower, -np.inf))
+            mean_numerator_lower = float(
+                np.nextafter(3.0 * determinant_power_lower, -np.inf)
+            )
             mean_lower = float(
                 np.nextafter(mean_numerator_lower / frobenius_squared_upper, -np.inf)
             )
             center_jacobian = np.asarray(
                 [
-                    [float(evaluate_expression(jacobian[physical][axis], center)) for axis in range(3)]
+                    [
+                        float(evaluate_expression(jacobian[physical][axis], center))
+                        for axis in range(3)
+                    ]
                     for physical in range(3)
                 ],
                 dtype=np.float64,
             )
             left, _, right = np.linalg.svd(center_jacobian, full_matrices=False)
             left_rotation = tuple(
-                tuple(Fraction.from_float(float(left[column, row])) for column in range(3))
+                tuple(
+                    Fraction.from_float(float(left[column, row])) for column in range(3)
+                )
                 for row in range(3)
             )
             right_rotation = tuple(
-                tuple(Fraction.from_float(float(right[column, row])) for column in range(3))
+                tuple(
+                    Fraction.from_float(float(right[column, row])) for column in range(3)
+                )
                 for row in range(3)
             )
             inverse_left = solve_exact(left_rotation, [list(row) for row in identity])
@@ -1855,7 +1969,9 @@ def _mapped_root_quality(
                     upper = Fraction(0)
                     for physical_axis in range(3):
                         coefficient = left_rotation[output_axis][physical_axis]
-                        interval_lower, interval_upper = bounds[physical_axis][reference_axis]
+                        interval_lower, interval_upper = bounds[physical_axis][
+                            reference_axis
+                        ]
                         if coefficient >= 0:
                             lower += coefficient * interval_lower
                             upper += coefficient * interval_upper
@@ -1871,8 +1987,12 @@ def _mapped_root_quality(
                     lower = Fraction(0)
                     upper = Fraction(0)
                     for source_reference_axis in range(3):
-                        coefficient = right_rotation[source_reference_axis][output_reference_axis]
-                        interval_lower, interval_upper = left_bounds[output_axis][source_reference_axis]
+                        coefficient = right_rotation[source_reference_axis][
+                            output_reference_axis
+                        ]
+                        interval_lower, interval_upper = left_bounds[output_axis][
+                            source_reference_axis
+                        ]
                         if coefficient >= 0:
                             lower += coefficient * interval_lower
                             upper += coefficient * interval_upper
@@ -1898,38 +2018,69 @@ def _mapped_root_quality(
                 or inverse_left_norm_upper <= 0
                 or inverse_right_norm_upper <= 0
             ):
-                raise ValueError("Mapped root-cell metric lacks a positive certified singular-value bound.")
+                raise ValueError(
+                    "Mapped root-cell metric lacks a positive certified singular-value bound."
+                )
             minimum_eigenvalue = float(np.nextafter(float(eigen_lower), -np.inf))
             maximum_eigenvalue = float(np.nextafter(float(eigen_upper), np.inf))
             if minimum_eigenvalue <= 0.0:
-                raise ValueError("Mapped root-cell metric lacks a positive certified singular-value bound.")
+                raise ValueError(
+                    "Mapped root-cell metric lacks a positive certified singular-value bound."
+                )
             minimum_rotated = float(
-                np.nextafter(math.sqrt(np.nextafter(minimum_eigenvalue, -np.inf)), -np.inf)
+                np.nextafter(
+                    math.sqrt(np.nextafter(minimum_eigenvalue, -np.inf)), -np.inf
+                )
             )
-            maximum_rotated = float(
-                np.nextafter(math.sqrt(maximum_eigenvalue), np.inf)
-            )
+            maximum_rotated = float(np.nextafter(math.sqrt(maximum_eigenvalue), np.inf))
             left_op_upper = float(
-                np.nextafter(math.sqrt(float(np.nextafter(float(left_norm_upper), np.inf))), np.inf)
+                np.nextafter(
+                    math.sqrt(float(np.nextafter(float(left_norm_upper), np.inf))), np.inf
+                )
             )
             right_op_upper = float(
-                np.nextafter(math.sqrt(float(np.nextafter(float(right_norm_upper), np.inf))), np.inf)
+                np.nextafter(
+                    math.sqrt(float(np.nextafter(float(right_norm_upper), np.inf))),
+                    np.inf,
+                )
             )
             inverse_left_op_upper = float(
-                np.nextafter(math.sqrt(float(np.nextafter(float(inverse_left_norm_upper), np.inf))), np.inf)
+                np.nextafter(
+                    math.sqrt(
+                        float(np.nextafter(float(inverse_left_norm_upper), np.inf))
+                    ),
+                    np.inf,
+                )
             )
             inverse_right_op_upper = float(
-                np.nextafter(math.sqrt(float(np.nextafter(float(inverse_right_norm_upper), np.inf))), np.inf)
+                np.nextafter(
+                    math.sqrt(
+                        float(np.nextafter(float(inverse_right_norm_upper), np.inf))
+                    ),
+                    np.inf,
+                )
             )
-            minimum_denominator = float(np.nextafter(left_op_upper * right_op_upper, np.inf))
-            maximum_multiplier = float(np.nextafter(inverse_left_op_upper * inverse_right_op_upper, np.inf))
-            minimum_singular = float(np.nextafter(minimum_rotated / minimum_denominator, -np.inf))
-            maximum_singular = float(np.nextafter(maximum_rotated * maximum_multiplier, np.inf))
+            minimum_denominator = float(
+                np.nextafter(left_op_upper * right_op_upper, np.inf)
+            )
+            maximum_multiplier = float(
+                np.nextafter(inverse_left_op_upper * inverse_right_op_upper, np.inf)
+            )
+            minimum_singular = float(
+                np.nextafter(minimum_rotated / minimum_denominator, -np.inf)
+            )
+            maximum_singular = float(
+                np.nextafter(maximum_rotated * maximum_multiplier, np.inf)
+            )
             if minimum_singular <= 0.0 or not math.isfinite(maximum_singular):
-                raise ValueError("Mapped root-cell metric lacks a positive certified singular-value bound.")
+                raise ValueError(
+                    "Mapped root-cell metric lacks a positive certified singular-value bound."
+                )
             scaled_values.append(scaled_lower)
             mean_values.append(mean_lower)
-            aspect_values.append(float(np.nextafter(maximum_singular / minimum_singular, np.inf)))
+            aspect_values.append(
+                float(np.nextafter(maximum_singular / minimum_singular, np.inf))
+            )
     return (
         np.asarray(scaled_values, dtype=np.float64),
         np.asarray(mean_values, dtype=np.float64),
@@ -1941,7 +2092,9 @@ def _target_entity_rows(mesh: CellMesh, dimension: int, /) -> np.ndarray:
     if dimension == 0:
         return np.arange(mesh.coordinates.shape[0], dtype=np.int64).reshape((-1, 1))
     if dimension not in (1, 2, 3):
-        raise ValueError("Mapped tensor-grid entities require dimensions in zero through three.")
+        raise ValueError(
+            "Mapped tensor-grid entities require dimensions in zero through three."
+        )
     connectivity = mesh.connectivity
     if isinstance(connectivity, HexahedralConnectivity):
         if dimension == 1:
@@ -1958,7 +2111,9 @@ def _target_entity_rows(mesh: CellMesh, dimension: int, /) -> np.ndarray:
                 raise TypeError("Mapped hexahedral target faces must have four vertices.")
             return values.reshape((-1, 4))
     else:
-        raise TypeError("Mapped tensor-grid entity lookup requires hexahedral cell incidence.")
+        raise TypeError(
+            "Mapped tensor-grid entity lookup requires hexahedral cell incidence."
+        )
     return np.concatenate(
         [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks], axis=0
     )
@@ -1987,7 +2142,9 @@ def realize_mapped_grid_hexes(
         or grid.schedule_id != schedule.schedule_id
         or frame.geometry is not domain.source_geometry
     ):
-        raise ValueError("Mapped grid realization requires its exact root geometry and frame inputs.")
+        raise ValueError(
+            "Mapped grid realization requires its exact root geometry and frame inputs."
+        )
     point_count = len(grid.vertex_keys)
     exact_points: list[tuple[ExactScalar, ...] | None] = [None] * point_count
     root_ids = np.asarray(frame.root_cell_ids, dtype=np.int64)
@@ -1995,7 +2152,9 @@ def realize_mapped_grid_hexes(
         rows = np.flatnonzero(np.asarray(grid.vertex_root_rows) == root_row)
         if not rows.size:
             continue
-        parameters = tuple(grid.vertex_reference_points[int(row)] for row in rows.tolist())
+        parameters = tuple(
+            grid.vertex_reference_points[int(row)] for row in rows.tolist()
+        )
         evaluated = domain.source_geometry.evaluate_exact(
             domain.reference_mesh,
             np.asarray((int(root_ids[root_row]),), dtype=np.int64),
@@ -2006,7 +2165,9 @@ def realize_mapped_grid_hexes(
     exact_coordinate_rows: list[tuple[ExactScalar, ...]] = []
     for point in exact_points:
         if point is None:
-            raise ValueError("Every mapped grid vertex must retain one exact root-chart owner.")
+            raise ValueError(
+                "Every mapped grid vertex must retain one exact root-chart owner."
+            )
         exact_coordinate_rows.append(point)
     coordinates = np.asarray(
         [[float(value) for value in point] for point in exact_coordinate_rows],
@@ -2014,9 +2175,13 @@ def realize_mapped_grid_hexes(
     )
     if not np.all(np.isfinite(coordinates)):
         raise ValueError("Mapped root-coordinate realization must remain finite.")
-    source_vertex_ids = np.asarray(domain.reference_mesh.vertex_global_ids, dtype=np.int64)
+    source_vertex_ids = np.asarray(
+        domain.reference_mesh.vertex_global_ids, dtype=np.int64
+    )
     added = sum(key[0] != "vertex" for key in grid.vertex_keys)
-    generated_ids = fresh_vertex_global_ids(domain.reference_mesh, added)[source_vertex_ids.size :]
+    generated_ids = fresh_vertex_global_ids(domain.reference_mesh, added)[
+        source_vertex_ids.size :
+    ]
     target_vertex_ids: list[int] = []
     generated_row = 0
     for key in grid.vertex_keys:
@@ -2029,7 +2194,9 @@ def realize_mapped_grid_hexes(
             target_vertex_ids.append(int(generated_ids[generated_row]))
             generated_row += 1
         else:
-            raise ValueError("Mapped root grid contains an unknown exact vertex key kind.")
+            raise ValueError(
+                "Mapped root grid contains an unknown exact vertex key kind."
+            )
     blocks = tuple(
         CellBlock(
             f"mapped:{source_block.name}",
@@ -2066,7 +2233,12 @@ def realize_mapped_grid_hexes(
     parent_maps_by_block: dict[str, ReferenceCellMapWitnesses] = {}
     output_reference_maps: list[ReferenceCellMapWitnesses] = []
     source_parent_rows: list[np.ndarray] = []
-    for block_index, (source_block, target_block, parent_rows, reference_vertices) in enumerate(
+    for block_index, (
+        source_block,
+        target_block,
+        parent_rows,
+        reference_vertices,
+    ) in enumerate(
         zip(
             domain.reference_mesh.blocks,
             target.blocks,
@@ -2077,11 +2249,16 @@ def realize_mapped_grid_hexes(
     ):
         target_ids = np.asarray(target_block.global_ids, dtype=np.int64)
         target_ids_sequence = tuple(int(value) for value in target_ids.tolist())
-        root_ids_for_block = np.asarray(source_block.global_ids, dtype=np.int64)[parent_rows]
+        root_ids_for_block = np.asarray(source_block.global_ids, dtype=np.int64)[
+            parent_rows
+        ]
         root_ids_sequence = tuple(int(value) for value in root_ids_for_block.tolist())
         target_count = target_ids.size
         reference_array = np.asarray(
-            [[[float(value) for value in point] for point in cell] for cell in reference_vertices],
+            [
+                [[float(value) for value in point] for point in cell]
+                for cell in reference_vertices
+            ],
             dtype=np.float64,
         )
         cell_chart_arguments = tuple(
@@ -2108,7 +2285,9 @@ def realize_mapped_grid_hexes(
         )
         root_element_candidate = elements[block_index]
         if not isinstance(root_element_candidate, ScalarCoordinateElement):
-            raise TypeError("Mapped root coordinate source must be a scalar cell element.")
+            raise TypeError(
+                "Mapped root coordinate source must be a scalar cell element."
+            )
         elements_by_block[target_block.name] = PerCellRestrictedCellGeometryElement(
             root_element_candidate,
             "hexahedron",
@@ -2127,7 +2306,12 @@ def realize_mapped_grid_hexes(
         source_parent_rows.append(
             np.asarray(
                 [
-                    int(np.flatnonzero((frame.root_block_indices == block_index) & (frame.root_block_rows == int(row)))[0])
+                    int(
+                        np.flatnonzero(
+                            (frame.root_block_indices == block_index)
+                            & (frame.root_block_rows == int(row))
+                        )[0]
+                    )
                     for row in parent_rows
                 ],
                 dtype=np.int64,
@@ -2144,7 +2328,9 @@ def realize_mapped_grid_hexes(
     restricted_map = (
         None
         if domain.source_geometry.source_map is None
-        else _RestrictedCoordinateMap(domain.reference_mesh, domain.source_geometry, target)
+        else _RestrictedCoordinateMap(
+            domain.reference_mesh, domain.source_geometry, target
+        )
     )
     geometry = CellGeometrySpec(
         elements_by_block,
@@ -2156,14 +2342,18 @@ def realize_mapped_grid_hexes(
     )
     validity = certify_cell_geometry_validity(geometry, mesh=target)
     if validity.invalid_count or validity.unresolved_count:
-        raise ValueError("Mapped root-grid cells must have certified positive coordinate maps.")
+        raise ValueError(
+            "Mapped root-grid cells must have certified positive coordinate maps."
+        )
     scaled, mean, aspect = _mapped_root_quality(target, geometry)
     if (
         float(np.min(scaled)) < schedule.minimum_scaled_jacobian
         or float(np.min(mean)) < schedule.minimum_mean_ratio
         or float(np.max(aspect)) > schedule.maximum_aspect_ratio
     ):
-        raise ValueError("Mapped root-grid cells fail the declared physical quality schedule.")
+        raise ValueError(
+            "Mapped root-grid cells fail the declared physical quality schedule."
+        )
     entity_dimensions: list[np.ndarray] = []
     entity_ids: list[np.ndarray] = []
     for dimension in range(4):
@@ -2181,9 +2371,13 @@ def realize_mapped_grid_hexes(
             )
             parent = parent_by_key.get(key)
             if parent is None:
-                raise ValueError(f"Mapped root-grid entity dimension {dimension} lacks source ancestry.")
+                raise ValueError(
+                    f"Mapped root-grid entity dimension {dimension} lacks source ancestry."
+                )
             parents.append(parent)
-        entity_dimensions.append(np.asarray([value[0] for value in parents], dtype=np.int8))
+        entity_dimensions.append(
+            np.asarray([value[0] for value in parents], dtype=np.int8)
+        )
         entity_ids.append(np.asarray([value[1] for value in parents], dtype=np.int64))
     regions = np.concatenate(grid.block_regions)
     parents = np.concatenate(source_parent_rows)
@@ -2205,6 +2399,8 @@ def realize_mapped_grid_hexes(
         grid.connection_id,
         schedule.schedule_id,
     )
+
+
 __all__ = [
     "MappedGridHexConstruction",
     "extract_volume_hexes",

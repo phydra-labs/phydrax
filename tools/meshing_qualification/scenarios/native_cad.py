@@ -53,7 +53,7 @@ def _three_dimensional_partition() -> Any:
     operands = (
         phx.geometry.BRepPartitionOperand(
             "left",
-            phx.geometry.brep_box(
+            phx.geometry.brep.brep_box(
                 (0.0, 0.0, 0.0),
                 (1.0, 1.0, 1.0),
                 coordinate_contract=contract,
@@ -63,7 +63,7 @@ def _three_dimensional_partition() -> Any:
         ),
         phx.geometry.BRepPartitionOperand(
             "right",
-            phx.geometry.brep_box(
+            phx.geometry.brep.brep_box(
                 (1.0, 0.0, 0.0),
                 (2.0, 1.0, 1.0),
                 coordinate_contract=contract,

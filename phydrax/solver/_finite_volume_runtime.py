@@ -134,6 +134,16 @@ class FiniteVolumeOwnerLocalCellStateBankSpec:
         object.__setattr__(self, "cell_axis", int(self.cell_axis))
 
 
+def _owner_local_view_types() -> tuple[type, ...]:
+    """Owner-local FV layouts: one part view, or a disjoint multi-part composite."""
+    from ..discretization._view_support import (
+        OwnerLocalCellGeometry,
+        OwnerLocalCompositeCellGeometry,
+    )
+
+    return (OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry)
+
+
 def _prepare_owner_local_fv_stage_state_provider(
     owner_local_view: Any,
     execution_group: Any,
@@ -148,15 +158,14 @@ def _prepare_owner_local_fv_stage_state_provider(
 
     from .._execution_runtime import ExecutionGroup
     from ..discretization._distributed_field import DistributedHaloPlan
-    from ..discretization._view_support import OwnerLocalCellGeometry
     from ..meshing._distribution import (
         _owner_exchange_message_banks,
         _owner_group_allgather,
         _owner_pair_channel_plan,
     )
 
-    if not isinstance(owner_local_view, OwnerLocalCellGeometry):
-        raise TypeError("owner_local_view must be OwnerLocalCellGeometry.")
+    if not isinstance(owner_local_view, _owner_local_view_types()):
+        raise TypeError("owner_local_view must be an owner-local FV cell layout.")
     if not isinstance(execution_group, ExecutionGroup):
         raise TypeError("execution_group must be ExecutionGroup.")
     axis = str(axis_name).strip()
@@ -484,9 +493,12 @@ def _require_owner_local_fv_geometry_current(
     axis_name: str,
     /,
 ) -> None:
-    from ..discretization._view_support import OwnerLocalCellGeometry
+    from ..discretization._view_support import (
+        OwnerLocalCellGeometry,
+        OwnerLocalCompositeCellGeometry,
+    )
 
-    if not isinstance(view, OwnerLocalCellGeometry) or not isinstance(
+    if not isinstance(view, _owner_local_view_types()) or not isinstance(
         dynamics.discretization, UnstructuredFiniteVolumeDiscretization
     ):
         raise TypeError(
@@ -494,14 +506,21 @@ def _require_owner_local_fv_geometry_current(
         )
     prepared_view = dynamics.discretization.owner_local_view
     if (
-        not isinstance(prepared_view, OwnerLocalCellGeometry)
+        prepared_view is None
+        or type(prepared_view) is not type(view)
         or prepared_view.local_view_id != view.local_view_id
         or prepared_view.distribution_id != view.distribution_id
         or prepared_view.part_id != view.part_id
         or prepared_view.source_topology_id != view.source_topology_id
         or prepared_view.source_geometry_id != view.source_geometry_id
-        or prepared_view.source_map_id != view.source_map_id
-        or prepared_view.source_context_id != view.source_context_id
+        or (
+            isinstance(view, OwnerLocalCellGeometry)
+            and isinstance(prepared_view, OwnerLocalCellGeometry)
+            and (
+                prepared_view.source_map_id != view.source_map_id
+                or prepared_view.source_context_id != view.source_context_id
+            )
+        )
     ):
         raise ValueError(
             "Prepared FV dynamics differ from their exact compact geometry view."
@@ -510,8 +529,50 @@ def _require_owner_local_fv_geometry_current(
         execution_group,
         axis_name=axis_name,
     )
-    local_mesh, local_geometry = view.reconstruct_local_geometry()
     prepared_mesh = dynamics.discretization.mesh
+    if isinstance(view, OwnerLocalCompositeCellGeometry):
+        # The FV lowering re-blocks the union by cell kind, so the carriers are
+        # compared through their stable vertex/cell identities and coordinates.
+        union_mesh = view.union_local_mesh()
+        if (union_mesh is None) != (prepared_mesh is None):
+            raise ValueError(
+                "Prepared FV mesh differs from the composite owner-local carrier."
+            )
+        if union_mesh is None or prepared_mesh is None:
+            return
+        union_vertices = np.asarray(union_mesh.vertex_global_ids, dtype=np.int64)
+        prepared_vertices = np.asarray(prepared_mesh.vertex_global_ids, dtype=np.int64)
+        union_order = np.argsort(union_vertices, kind="stable")
+        prepared_order = np.argsort(prepared_vertices, kind="stable")
+        dimension = union_mesh.topological_dimension
+        if (
+            not np.array_equal(
+                union_vertices[union_order], prepared_vertices[prepared_order]
+            )
+            or not np.array_equal(
+                np.asarray(union_mesh.coordinates)[union_order],
+                np.asarray(prepared_mesh.coordinates)[prepared_order],
+            )
+            or not np.array_equal(
+                np.sort(
+                    np.asarray(
+                        union_mesh.topology.entity_sets[dimension].entity_ids,
+                        dtype=np.int64,
+                    )
+                ),
+                np.sort(
+                    np.asarray(
+                        prepared_mesh.topology.entity_sets[dimension].entity_ids,
+                        dtype=np.int64,
+                    )
+                ),
+            )
+        ):
+            raise ValueError(
+                "Prepared FV mesh differs from the composite owner-local carrier."
+            )
+        return
+    local_mesh, local_geometry = view.reconstruct_local_geometry()
     if local_mesh is None:
         if (
             prepared_mesh is not None
@@ -1090,10 +1151,11 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             owner_axis = ""
         else:
             from .._execution_runtime import ExecutionGroup
-            from ..discretization._view_support import OwnerLocalCellGeometry
 
-            if not isinstance(owner_local_view, OwnerLocalCellGeometry):
-                raise TypeError("owner_local_geometry must be OwnerLocalCellGeometry.")
+            if not isinstance(owner_local_view, _owner_local_view_types()):
+                raise TypeError(
+                    "owner_local_geometry must be an owner-local FV cell layout."
+                )
             if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
                 raise TypeError("Owner-local geometry requires unstructured FV dynamics.")
             if not isinstance(
@@ -1794,9 +1856,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             self._validate_sliding_state(runtime_state)
 
     def _owner_local_runtime_cell_ids(self) -> np.ndarray:
-        from ..discretization._view_support import OwnerLocalCellGeometry
-
-        if not isinstance(self.owner_local_geometry, OwnerLocalCellGeometry):
+        if not isinstance(self.owner_local_geometry, _owner_local_view_types()):
             raise ValueError("Owner-local runtime lacks its typed geometry view.")
         if not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics):
             raise TypeError("Owner-local runtime requires unstructured FV dynamics.")
@@ -2032,20 +2092,23 @@ class PreparedFiniteVolumeRuntime(StrictModule):
     ) -> FiniteVolumeValidatedRuntimeState:
         """Validate a decoded accepted shard against this exact source runtime."""
         from .._execution_runtime import ExecutionGroup
-        from ..discretization._view_support import OwnerLocalCellGeometry
+        from ..discretization._view_support import (
+            OwnerLocalCellGeometry,
+            OwnerLocalCompositeCellGeometry,
+        )
         from ..meshing._distribution import _owner_group_fail_if_any
 
         execution_group = self.owner_local_execution_group
         if not isinstance(execution_group, ExecutionGroup):
             raise TypeError("Restored owner-local state requires its ExecutionGroup.")
-        owner_view: OwnerLocalCellGeometry | None = None
+        owner_view: OwnerLocalCellGeometry | OwnerLocalCompositeCellGeometry | None = None
         normalized_state: FiniteVolumeRuntimeState | None = None
         runtime_cell_ids: np.ndarray | None = None
         state_id: str | None = None
         local_error: str | None = None
         try:
             owner_view = self.owner_local_geometry
-            if not isinstance(owner_view, OwnerLocalCellGeometry):
+            if not isinstance(owner_view, _owner_local_view_types()):
                 raise TypeError(
                     "Restored owner-local state requires its source geometry view."
                 )
@@ -7593,6 +7656,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             evidence_policy_id=original_content.evidence_policy_id,
             evidence_version=original_content.evidence_version,
             precision=original_content.precision,
+            owned_cell_mask=original_content.owned_cell_mask,
         )
         next_content = jax.lax.cond(
             accepted,

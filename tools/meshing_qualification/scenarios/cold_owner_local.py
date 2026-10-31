@@ -99,7 +99,7 @@ def _target_graph_partition_plan() -> Any:
         target_shares=np.asarray((0.0, 0.0, 1.0), dtype=np.float64),
         maximum_imbalance=1.0,
         require_nonempty=False,
-        refinement_passes=0,
+        refinement_passes=1,
     )
 
 
@@ -459,14 +459,26 @@ def _compile_owner_local_problem(
         or getattr(source_authority, "source_revision", None) != view.source_revision
     ):
         raise ValueError("Compact FE view lost its source value or geometry authority.")
-    cell_scope = view.scope(view.topological_dimension, view.cell_ids)
-    if not np.array_equal(
-        np.sort(np.asarray(cell_scope.entity_ids, dtype=np.int64)),
-        np.sort(np.asarray(view.cell_ids, dtype=np.int64)),
-    ):
-        raise ValueError("Compact FE view scope changed its locally resident cell IDs.")
+    if not np.asarray(view.cell_ids).size:
+        # A real empty owner has no resident cells to scope; it must not
+        # retain stray vertex rows either.
+        if np.asarray(view.vertex_ids).size:
+            raise ValueError("An empty compact FE owner retained vertex rows.")
+    else:
+        cell_scope = view.scope(view.topological_dimension, view.cell_ids)
+        if not np.array_equal(
+            np.sort(np.asarray(cell_scope.entity_ids, dtype=np.int64)),
+            np.sort(np.asarray(view.cell_ids, dtype=np.int64)),
+        ):
+            raise ValueError(
+                "Compact FE view scope changed its locally resident cell IDs."
+            )
     mesh, coordinate_spec = view.reconstruct_local_geometry()
     if mesh is None:
+        # An empty owner carries no blocks; the periodic Delaunay producer names
+        # its single simplex block "periodic" on every owner.
+        if view.topological_dimension != 2:
+            raise ValueError("The periodic FE scenario expects triangle cells.")
         authority = phx.discretization.EmptyLocalCellMeshAuthority(
             view.source_topology_id,
             view.source_geometry_id,
@@ -474,8 +486,8 @@ def _compile_owner_local_problem(
             group.spec.group_id,
             local_rank,
             view.owner_directory_data.part_count,
-            view.blocks[0].name,
-            view.blocks[0].cell_kind,
+            view.blocks[0].name if view.blocks else "periodic",
+            view.blocks[0].cell_kind if view.blocks else "triangle",
             view.topological_dimension,
             view.coordinates.shape[1],
         )
@@ -485,7 +497,7 @@ def _compile_owner_local_problem(
     )
     if not np.array_equal(local_cell_ids, np.asarray(view.cell_ids, dtype=np.int64)):
         raise ValueError("FE carrier rows differ from the accepted owner-local view.")
-    if not np.array_equal(
+    if local_cell_ids.size and not np.array_equal(
         np.sort(np.asarray(cell_scope.entity_ids, dtype=np.int64)),
         np.sort(local_cell_ids),
     ):
@@ -546,9 +558,13 @@ def _compile_owner_local_problem(
         "cold-owner-local-positive-mass-source",
         ("u", "content"),
         (
-            phx.equations.MassAction("u"),
-            phx.equations.SourceAction("u", 1.0),
-            phx.equations.MassAction("content", rules={"triangles": content_rule}),
+            phx.equations.MassAction("u", action_id="periodic-p1-mass"),
+            phx.equations.SourceAction("u", 1.0, action_id="periodic-p1-unit-source"),
+            phx.equations.MassAction(
+                "content",
+                action_id="periodic-p0-mass",
+                rules={"triangles": content_rule},
+            ),
             phx.equations.SourceAction(
                 "content",
                 content_coefficient,

@@ -84,12 +84,16 @@ def _plan(
 
 
 def _area(result: Any, name: str) -> float:
+    # Exact shoelace area over coedge start points. A p-curve follows its
+    # edge's parameter, so a reversed coedge starts at the p-curve's end.
+    geometry = result.model.geometry
     total = Fraction(0)
     for entity in result.region(name).entity_ids:
-        face = entity.index
-        for loop in result.model.geometry.face_loops[face]:
+        for loop in geometry.face_loops[entity.index]:
             points = tuple(
-                result.model.geometry.pcurves[coedge].evaluate_exact(Fraction(0))
+                geometry.pcurves[coedge].evaluate_exact(
+                    Fraction(0 if geometry.coedge_senses[coedge] > 0 else 1)
+                )
                 for coedge in loop
             )
             total += (
@@ -128,7 +132,7 @@ def test_polygonal_hole_is_preserved_as_an_exact_curved_trim_loop() -> None:
     assert len(result.region("region").entity_ids) == 1
     assert len(result.model.geometry.face_loops[0]) == 2
     assert result.model.topology.num_edges == 8
-    assert result.report.created_target_occurrences > 0
+    assert result.report.created_target_occurrences == 0
     np.testing.assert_array_equal(source.vertices, vertices)
 
 
@@ -168,9 +172,14 @@ def test_crossing_triangle_sources_partition_with_exact_lineage() -> None:
         )
     )
 
-    assert _area(result, "first") == pytest.approx(4.5)
+    # Exact oracle: "first" wins the 7/2 overlap, so it keeps its whole area 8
+    # and "second" keeps 8 - 7/2.
+    assert _area(result, "first") == pytest.approx(8.0)
     assert _area(result, "second") == pytest.approx(4.5)
     assert result.model.topology.num_faces > 2
+    # Only the exact edge crossings (1, 0), (2, 0) and (3, 1) lack a source
+    # vertex; (1, 3) is a vertex of the second source.
+    assert result.report.created_target_occurrences == 3
     assert result.association_graph.transaction.coverage.source_exhaustive
     assert result.association_graph.transaction.coverage.target_exhaustive
     np.testing.assert_array_equal(first.vertices, first_vertices)

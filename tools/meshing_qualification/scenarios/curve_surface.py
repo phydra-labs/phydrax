@@ -14,7 +14,7 @@ from phydrax.meshing._contracts import (
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._scope import MeshingScope
-from phydrax.meshing._sizing import UniformSizeControl
+from phydrax.meshing._sizing import SizeCompliancePolicy, UniformSizeControl
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
 from phydrax.meshing.providers._native_sources import NativeCurveSource
 
@@ -29,12 +29,21 @@ def native_curve() -> dict[str, object]:
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         source_id="qualification:native-curve",
     )
-    source = NativeCurveSource(segments, "revision-1")
+    source = NativeCurveSource(
+        segments,
+        "revision-1",
+        curve_entity_ids=np.asarray((1,), dtype=np.int64),
+        vertex_entity_ids=np.asarray((1, 2), dtype=np.int64),
+    )
     scope = MeshingScope.whole(source, 1)
     specification = CurveMeshingSpec(
         CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
         scope,
         size_controls=(UniformSizeControl(scope, 0.2),),
+        # 0.2 m is not binary-representable, so a zero-tolerance hard target is
+        # unsatisfiable by any floating-point partition; the request accepts a
+        # 1 ppm size deviation while the length/straightness oracles stay at 1e-12.
+        size_compliance=SizeCompliancePolicy(relative_tolerance=1.0e-6),
         maximum_deviation=1.0e-8,
     )
     plan = NativeMeshingProvider().plan(
