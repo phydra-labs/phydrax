@@ -483,7 +483,7 @@ def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> 
 
 
 def _declared_rotated_cube(
-    facet_planes: object | None, facet_plane_tolerances: object | None = None
+    facet_planes: np.ndarray | None, facet_plane_tolerances: np.ndarray | None = None
 ) -> NativePlcSource:
     base = _grouped_cube_source(angle=0.3).complex
     loops = np.asarray(base.polygon_vertices).reshape(-1, 3)
