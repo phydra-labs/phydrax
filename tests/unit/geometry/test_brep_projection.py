@@ -295,7 +295,10 @@ def test_brep_query_nearest_matches_independent_faces(
     )
     result = geometry.closest_point(jnp.asarray(points))
     np.testing.assert_allclose(result.closest_point, closest, atol=2e-14)
-    np.testing.assert_array_equal(result.source_entity_id, face)
+    # The imported source evaluates native face carriers and reports source
+    # faces; the fixed-topology kernel queries its tessellation triangles.
+    entities = face if differentiable else np.asarray(model.triangle_face_ids)[face]
+    np.testing.assert_array_equal(result.source_entity_id, entities)
     np.testing.assert_allclose(
         np.abs(result.normal_coordinate), np.sqrt(first), atol=2e-14
     )
@@ -306,10 +309,12 @@ def test_brep_query_nearest_matches_independent_faces(
     normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
     np.testing.assert_allclose(result.oriented_normal, normals, atol=2e-14)
     assert result.physical_geometry_id == model.source_revision
-    assert result.represented_geometry_id == (
-        f"{model.model_id}:fixed-topology-query" if differentiable else model.model_id
-    )
-    assert not result.exact_to_physical
+    if differentiable:
+        assert result.represented_geometry_id == f"{model.model_id}:fixed-topology-query"
+        assert not result.exact_to_physical
+    else:
+        assert result.represented_geometry_id == model.source_revision
+        assert result.exact_to_physical
 
 
 def test_brep_two_face_margin_matches_independent_reference(query_box_model: Any) -> None:
