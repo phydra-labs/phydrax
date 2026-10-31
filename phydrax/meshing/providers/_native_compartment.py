@@ -14,6 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization import CellMesh, SimplicialConnectivity, TetrahedralConnectivity
 from ...geometry._compartments import CompartmentMeshingSource
 from ...geometry._source_identity import source_entity_id
 from ...geometry.multiregion_surface import (
@@ -25,10 +26,12 @@ from ...geometry.multiregion_surface import (
     MultiRegionSurfaceTopology,
     PreparedMultiRegionSurface,
 )
+from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...typing import checked
 from .._compartments import CompartmentPlcPreparation, prepare_compartment_plc
 from .._contracts import MeshingFailure, MeshingFailureCategory, VolumeMeshingSpec
 from .._native_construction import NativeMeshConstruction
+from .._organization import RegionBoundaryEvidence
 from .._plc_source import PiecewiseLinearComplex
 from .._volume_generation import NativeVolumeSchedule
 from ._native_options import NativeMeshingOptions
@@ -49,6 +52,42 @@ def _label_field_failure(message: str, /) -> MeshingFailure:
         message,
         provider_code="native_compartment_label_source",
         stage="source_inspection",
+    )
+
+
+def _exterior_surface(
+    source: CompartmentMeshingSource, mesh: CellMesh, /
+) -> SurfaceModel:
+    """The bulk mesh exterior as an outward surface bound to the source outer surface.
+
+    The exterior facets are the categorical exterior faces, which the source
+    outer surface was proven to cover exactly, so this surface is a conforming
+    refinement of that outer surface with the bulk mesh's vertex identities.
+    """
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        faces = np.asarray(connectivity.entities[2], dtype=np.int64)
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        faces = np.asarray(connectivity.faces, dtype=np.int64)
+    else:
+        raise TypeError("Compartment bulk meshes must have tetrahedral connectivity.")
+    exterior = faces[np.asarray(connectivity.boundary_faces, dtype=np.bool_)]
+    used, rows = np.unique(exterior.reshape((-1,)), return_inverse=True)
+    outer = source.outer_surface
+    return SurfaceModel.from_triangles(
+        np.asarray(mesh.coordinates, dtype=np.float64)[used],
+        rows.reshape((-1, 3)),
+        SurfaceMetadata(
+            source_id=outer.metadata.source_id,
+            source_revision=outer.metadata.source_revision,
+            coordinate_contract=outer.metadata.coordinate_contract,
+            provenance=("native-compartment-exterior", outer.model_id),
+        ),
+        vertex_global_ids=np.asarray(mesh.vertex_global_ids, dtype=np.int64)[used],
+        cell_global_ids=np.arange(exterior.shape[0], dtype=np.int64),
+        numeric_version=source.source_revision,
+        repair_orientation=True,
+        orient_closed_outward=True,
     )
 
 
@@ -143,9 +182,7 @@ def _normalize_label_field_source(
             "Label-field topology no longer matches its retained source seed."
         )
 
-    positions = np.asarray(
-        state.positions[: topology.vertex_count], dtype=np.float64
-    )
+    positions = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
     certified_seed_positions = np.asarray(
         seed.positions, dtype=np.dtype(topology.plan.coordinate_dtype)
     ).astype(np.float64)
@@ -171,9 +208,7 @@ def _normalize_label_field_source(
             "Label-field PLC normalization requires retained stable source keys for every vertex."
         )
     boundary_indices = tuple(
-        index
-        for index, kind in enumerate(topology.region_kinds)
-        if kind == "boundary"
+        index for index, kind in enumerate(topology.region_kinds) if kind == "boundary"
     )
     if (
         len(boundary_indices) != 1
@@ -188,22 +223,20 @@ def _normalize_label_field_source(
         if lineage.boundary_region_id in lineage.source_label_ids
         else -1
     )
-    if (
-        lineage.region_source_label_indices[boundary_index]
-        != boundary_source_index
-        or any(
-            source_index < 0
-            or source_index >= len(lineage.source_label_ids)
-            or lineage.source_label_ids[source_index] != region_id
-            for region_index, (region_id, source_index) in enumerate(
-                zip(
-                    topology.region_ids,
-                    lineage.region_source_label_indices,
-                    strict=True,
-                )
+    if lineage.region_source_label_indices[
+        boundary_index
+    ] != boundary_source_index or any(
+        source_index < 0
+        or source_index >= len(lineage.source_label_ids)
+        or lineage.source_label_ids[source_index] != region_id
+        for region_index, (region_id, source_index) in enumerate(
+            zip(
+                topology.region_ids,
+                lineage.region_source_label_indices,
+                strict=True,
             )
-            if region_index != boundary_index
         )
+        if region_index != boundary_index
     ):
         raise _label_field_failure(
             "Label-field source labels do not preserve their region lineage."
@@ -264,9 +297,7 @@ def _normalize_label_field_source(
     plc_regions = np.empty((topology.face_count, 2), dtype=np.int64)
     source_region_pairs: list[tuple[str, str]] = []
     facet_ids: list[str] = []
-    for row, (face, labels) in enumerate(
-        zip(faces, face_labels, strict=True)
-    ):
+    for row, (face, labels) in enumerate(zip(faces, face_labels, strict=True)):
         left_id = topology.region_ids[int(labels[0])]
         right_id = topology.region_ids[int(labels[1])]
         left = region_to_plc.get(left_id, -1)
@@ -281,8 +312,7 @@ def _normalize_label_field_source(
         source_region_pairs.append((left_id, right_id))
         oriented_keys = tuple(source_keys[int(vertex)] for vertex in face)
         rotations = tuple(
-            oriented_keys[offset:] + oriented_keys[:offset]
-            for offset in range(3)
+            oriented_keys[offset:] + oriented_keys[:offset] for offset in range(3)
         )
         facet_key = canonical_fingerprint(
             {
@@ -316,8 +346,6 @@ def _normalize_label_field_source(
         tuple(source_region_pairs),
         lineage.boundary_region_id,
     )
-
-
 
 
 @final
@@ -390,12 +418,20 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
                         connected=patch.connected,
                         adjacent_zone_ids=patch.adjacent_zone_ids,
                         source_adjacent_region_ids=(
-                            None if source_region_keys[0] is None else source_region_keys[0][0],
-                            None if source_region_keys[1] is None else source_region_keys[1][0],
+                            None
+                            if source_region_keys[0] is None
+                            else source_region_keys[0][0],
+                            None
+                            if source_region_keys[1] is None
+                            else source_region_keys[1][0],
                         ),
                         source_adjacent_region_occurrence_paths=(
-                            None if source_region_keys[0] is None else source_region_keys[0][1],
-                            None if source_region_keys[1] is None else source_region_keys[1][1],
+                            None
+                            if source_region_keys[0] is None
+                            else source_region_keys[0][1],
+                            None
+                            if source_region_keys[1] is None
+                            else source_region_keys[1][1],
                         ),
                     )
                 )
@@ -426,11 +462,11 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
             if interface_id is not None
         }
         definitions = {
-            value.interface_id: value
-            for value in self.source.compartments.interfaces
+            value.interface_id: value for value in self.source.compartments.interfaces
         }
         patches = []
         renamed = set()
+        renamed_patch_ids: dict[str, str] = {}
         for patch in organization.patches:
             matches = tuple(
                 (facet_id, interface_id, source_pair)
@@ -462,30 +498,50 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
                 _source_region_key(region_keys, source_pair[0]),
                 _source_region_key(region_keys, source_pair[1]),
             )
-            patches.append(
-                type(patch)(
-                    interface_id,
-                    patch.scope,
-                    connected=patch.connected,
-                    adjacent_zone_ids=patch.adjacent_zone_ids,
-                    source_adjacent_region_ids=(
-                        None if source_region_keys[0] is None else source_region_keys[0][0],
-                        None if source_region_keys[1] is None else source_region_keys[1][0],
-                    ),
-                    source_adjacent_region_occurrence_paths=(
-                        None if source_region_keys[0] is None else source_region_keys[0][1],
-                        None if source_region_keys[1] is None else source_region_keys[1][1],
-                    ),
-                )
+            interface_patch = type(patch)(
+                interface_id,
+                patch.scope,
+                connected=patch.connected,
+                adjacent_zone_ids=patch.adjacent_zone_ids,
+                source_adjacent_region_ids=(
+                    None if source_region_keys[0] is None else source_region_keys[0][0],
+                    None if source_region_keys[1] is None else source_region_keys[1][0],
+                ),
+                source_adjacent_region_occurrence_paths=(
+                    None if source_region_keys[0] is None else source_region_keys[0][1],
+                    None if source_region_keys[1] is None else source_region_keys[1][1],
+                ),
             )
+            renamed_patch_ids[patch.patch_id] = interface_patch.patch_id
+            patches.append(interface_patch)
         if len({patch.name for patch in patches}) != len(patches):
             raise ValueError(
                 "Compartment interface identifiers cannot collide with other output patch names."
             )
+        # Region boundary evidence names its oriented patches by ID; the
+        # renamed interface patches keep each facet's scope and sides.
+        evidence = tuple(
+            RegionBoundaryEvidence(
+                construction.mesh,
+                value.source_scope,
+                value.source_region_id,
+                value.control_id,
+                value.material_id,
+                value.role,
+                value.boundary_label,
+                tuple(
+                    (renamed_patch_ids.get(identifier, identifier), side)
+                    for identifier, side in value.patch_sides
+                ),
+                source_occurrence_path=value.source_occurrence_path,
+            )
+            for value in organization.region_boundary_evidence
+        )
         organization = replace(
             organization,
-            boundary=self.source.outer_surface,
+            boundary=_exterior_surface(self.source, construction.mesh),
             patches=tuple(patches),
+            region_boundary_evidence=evidence,
         )
         return replace(construction, organization=organization)
 
@@ -566,11 +622,7 @@ def prepare_native_compartment(
         coordinate_contract,
         schedule,
     )
-    return _PreparedCompartmentRoute(
-        source, preparation, label_field, volume
-    )
-
-
+    return _PreparedCompartmentRoute(source, preparation, label_field, volume)
 
 
 __all__ = ["prepare_native_compartment"]

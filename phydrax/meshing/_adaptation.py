@@ -95,7 +95,7 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryPointWitness,
     SurfaceEnvelopeDistanceWitness,
 )
-from ..geometry._source_fidelity import SourceFidelityWitness
+from ..geometry._source_fidelity_certificate import SourceFidelityWitness
 from ..geometry._volume_material_deformation import (
     MaterialReferenceDeclaration,
     VolumeMaterialDeformation,
@@ -2865,6 +2865,12 @@ def _restricted_target_geometry(
         routes = []
         exact_cells = []
         parent_kinds = set()
+        # Exact source images of target corners, evaluated for the whole block
+        # at once: each evaluation resolves the source map over every cell.
+        corner_images: dict[int, tuple[tuple[Any, ...], ...]] = {}
+        pending_rows: list[int] = []
+        pending_sources: list[int] = []
+        pending_points: list[tuple[tuple[Fraction, ...], ...]] = []
         for row, target_id in enumerate(identifiers.tolist()):
             restored = coarse.get(int(target_id))
             if restored is not None:
@@ -2876,7 +2882,7 @@ def _restricted_target_geometry(
                 parent_blocks.append(restored.parent.block_name)
                 parent_kinds.add(restored.root_kind)
                 exact_cells.append(restored.exact_points)
-                images = coarse_corners[int(target_id)]
+                corner_images[row] = coarse_corners[int(target_id)]
             else:
                 witness, map_row, exact_points = records[int(target_id)]
                 source_id = int(
@@ -2941,13 +2947,26 @@ def _restricted_target_geometry(
                             for point in root_points
                         )
                     )
-                images = source.geometry.evaluate_exact(
-                    source.mesh,
-                    np.asarray((source_id,), dtype=np.int64),
-                    (exact_points,),
-                )[0]
+                pending_rows.append(row)
+                pending_sources.append(source_id)
+                pending_points.append(exact_points)
+        if pending_rows:
+            corner_images.update(
+                zip(
+                    pending_rows,
+                    source.geometry.evaluate_exact(
+                        source.mesh,
+                        np.asarray(pending_sources, dtype=np.int64),
+                        tuple(pending_points),
+                    ),
+                    strict=True,
+                )
+            )
+        for row in range(identifiers.size):
             for vertex_id, coordinate in zip(
-                target_vertex_ids[target_cells[row]].tolist(), images, strict=True
+                target_vertex_ids[target_cells[row]].tolist(),
+                corner_images[row],
+                strict=True,
             ):
                 previous = exact_vertex_coordinates.get(int(vertex_id))
                 if previous is not None and previous != tuple(coordinate):

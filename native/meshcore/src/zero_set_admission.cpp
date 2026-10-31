@@ -301,6 +301,60 @@ bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c
   return true;
 }
 
+// The source normals near the triangle are orientation * grad f / |grad f| at
+// zero-set points within the tolerance of it, so over bbox(T) widened by the
+// tolerance. With the gradient enclosure's midpoint g and radius vector r
+// (|r| < |g|), every enclosed direction lies within asin(|r| / |g|) of g. An
+// admitted triangle's points lie within the tolerance of Z, so across its
+// smallest altitude it tilts from the local tangent plane by up to
+// asin(2 tolerance / altitude), which widens the cone. An undecided or
+// zero-straddling enclosure constrains nothing (a crease enclosure holds
+// both sides' gradients, so the crease is kept).
+NormalCone ZeroSetBandAdmission::normal_cone(const Point& a, const Point& b, const Point& c,
+                                             const std::array<VertexEvidence, 3>& evidence) const {
+  NormalCone cone;
+  const double tilt = normal_cone_floor(a, b, c, evidence);
+  if (!(tilt < kOpenCone)) return cone;
+  Point lower{}, upper{};
+  bounding_box(a, b, c, lower, upper);
+  for (int d = 0; d < 3; ++d) {
+    lower[d] = next_down(lower[d] - tolerance_);
+    upper[d] = next_up(upper[d] + tolerance_);
+  }
+  std::array<Interval, 3> gradient{};
+  if (!gradient_over(gradient_, lower, upper, gradient)) return cone;
+  Point middle{}, spread{};
+  for (int d = 0; d < 3; ++d) {
+    const Interval& g = gradient[static_cast<size_t>(d)];
+    middle[d] = g.lower + 0.5 * (g.upper - g.lower);
+    spread[d] = next_up(std::max(g.upper - middle[d], middle[d] - g.lower));
+  }
+  const double middle_norm = std::hypot(middle[0], middle[1], middle[2]);
+  const double spread_norm = next_up(std::hypot(spread[0], spread[1], spread[2]));
+  if (!(spread_norm < middle_norm) || !std::isfinite(middle_norm)) return cone;
+  const double half = std::asin(spread_norm / middle_norm) + tilt;
+  if (!(half < cone.half_angle)) return cone;
+  for (int d = 0; d < 3; ++d) cone.axis[d] = orientation_ * middle[d] / middle_norm;
+  cone.half_angle = half;
+  return cone;
+}
+
+double ZeroSetBandAdmission::normal_cone_floor(const Point& a, const Point& b, const Point& c,
+                                               const std::array<VertexEvidence, 3>&) const {
+  Point u{}, w{};
+  for (int d = 0; d < 3; ++d) {
+    u[d] = b[d] - a[d];
+    w[d] = c[d] - a[d];
+  }
+  const double twice_area = std::hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2],
+                                       u[0] * w[1] - u[1] * w[0]);
+  const double longest = std::max({std::hypot(u[0], u[1], u[2]), std::hypot(w[0], w[1], w[2]),
+                                   std::hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2])});
+  if (!(twice_area > 0) || !(longest > 0)) return kOpenCone;
+  const double tilt = 2 * tolerance_ * longest / twice_area;  // 2 tolerance / altitude
+  return tilt < 1 ? std::asin(tilt) : kOpenCone;
+}
+
 Point ZeroSetBandAdmission::project(const Point& position) const {
   std::array<Interval, 3> gradient{};
   Interval value{};

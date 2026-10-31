@@ -55,10 +55,11 @@ plane along a generator, a face edge touching the circle from outside the face,
 and any touch outside a trim or edge range. A face edge touching the circle from
 inside the face is an exact double root with multiplicity evidence: the arc
 gets one node at the contact, and the edge vertex there keeps the replayable
-tangency through the CAD archive. The remaining refusals return typed
-unresolved regions: a crossing exactly through a face corner, which for an
-axis-aligned box puts a box edge on a cylinder generator; and a junction of two
-branches whose partner faces are not both planes of one model.
+tangency through the CAD archive. A circle through a face corner ends its arcs
+on that corner's source vertex, and a source edge lying on a cylinder generator
+is one edge shared with the cylinder through its exact lift instead of a
+branch. The remaining refusals return typed unresolved regions: a junction of
+two branches whose partner faces are not both planes of one model.
 
 T-spline B-rep intersections use cell-local rational Bézier source pieces and
 native interval enclosures. Transverse graph branches against planes, cylinders,

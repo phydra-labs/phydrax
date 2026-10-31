@@ -732,31 +732,61 @@ def test_finite_element_preparation_accepts_a_near_flat_positive_tetrahedron() -
     assert float(np.asarray(evaluation.minimum_metric_eigenvalue)[0]) > 0.0
 
 
-def test_default_floor_refuses_exactly_what_jacobian_consumers_cannot_evaluate() -> None:
-    floor = D.CellValidityPolicy().relative_determinant_floor
+def _flat_triangle_points(measure: float) -> np.ndarray:
+    # Embedded triangle with Jacobian columns (1, 0, 0) and (1, h, 0): its
+    # Gram-relative determinant, the policy's measure of embedded maps, is
+    # r^2 = h^2 / (1 + h^2).
+    height = np.sqrt(measure / (1.0 - measure))
+    return np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, height, 0.0)), dtype=np.float64
+    )
 
-    def tetrahedron_status(relative: float) -> int:
-        mesh = D.CellMesh(
-            _flat_tetrahedron_points(relative),
-            (D.CellBlock("cells", "tetrahedron", np.asarray(((0, 1, 2, 3),))),),
-        )
-        geometry = D.CellGeometrySpec.affine(mesh)
-        certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
-        return int(certificate.status[0])
 
-    assert tetrahedron_status(0.5 * floor) == Status.INVALID
-    assert tetrahedron_status(2.0 * floor) == Status.CERTIFIED_VALID
-    # Every certified cell is evaluable by the consumers: full-dimensional and
-    # embedded Jacobians whose relative determinant just clears the floor.
-    relative = floor * (1.0 + 1.0e-6)
-    square = (
-        _flat_tetrahedron_points(relative)[1:] - _flat_tetrahedron_points(relative)[0]
-    ).T
-    height = relative / np.sqrt(1.0 - relative * relative)
-    embedded = np.asarray(((1.0, 1.0), (0.0, height), (0.0, 0.0)), dtype=np.float64)
-    for jacobian in (square, embedded):
-        *_, successful = validity_module.cell_jacobian_inverse_and_measure(jacobian)
-        assert bool(successful)
+def _affine_status(points: np.ndarray, kind: str, policy: Any = None) -> int:
+    mesh = D.CellMesh(
+        points,
+        (D.CellBlock("cells", kind, np.arange(points.shape[0])[None, :]),),
+    )
+    geometry = D.CellGeometrySpec.affine(mesh)
+    certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
+    return int(certificate.status[0])
+
+
+@pytest.mark.parametrize(
+    ("kind", "points"),
+    (("tetrahedron", _flat_tetrahedron_points), ("triangle", _flat_triangle_points)),
+    ids=("full-dimensional", "embedded"),
+)
+def test_validity_floor_refuses_exactly_what_jacobian_consumers_cannot_evaluate(
+    kind: str, points: Any
+) -> None:
+    floor = D.CellValidityPolicy().determinant_floor()
+    assert _affine_status(points(0.5 * floor), kind) == Status.INVALID
+    assert _affine_status(points(2.0 * floor), kind) == Status.CERTIFIED_VALID
+    # A requested floor below the consumers' bound does not lower it.
+    lenient = D.CellValidityPolicy(relative_determinant_floor=0.0)
+    assert _affine_status(points(0.5 * floor), kind, lenient) == Status.INVALID
+    # Every certified cell is evaluable by the consumers.
+    cell = points(floor * (1.0 + 1.0e-6))
+    jacobian = (cell[1:] - cell[0]).T
+    *_, successful = validity_module.cell_jacobian_inverse_and_measure(jacobian)
+    assert bool(successful)
+
+
+def test_thin_layer_polygon_is_valid_and_an_unresolvable_edge_is_not() -> None:
+    # A 1e-6-thick layer polygon: thinness is an aspect ratio, not a degeneracy.
+    thin = ((0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (1.0, 1.0e-6), (0.0, 1.0e-6))
+    assert _polygon_status(thin) == Status.CERTIFIED_VALID
+    # An edge of one unit in the last place of 0.5 has no resolvable direction.
+    degenerate = (
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (1.0, 1.0),
+        (0.0, 1.0),
+        (0.0, np.nextafter(0.5, 1.0)),
+        (0.0, 0.5),
+    )
+    assert _polygon_status(degenerate) == Status.INVALID
 
 
 @pytest.mark.parametrize("ambient_dimension", (2, 3), ids=("square-map", "embedded-map"))
