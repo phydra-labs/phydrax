@@ -1549,6 +1549,178 @@ def test_owner_local_composite_fv_layout_lowers_and_conserves_each_part() -> Non
         )
 
 
+def _serial_periodic_residual(
+    view: Any, state: np.ndarray, dynamics: Any, /
+) -> tuple[np.ndarray, int]:
+    """Independent serial periodic FV residual of the owned rows of ``view``.
+
+    Faces are paired through their midpoints reduced to the fundamental
+    lattice cell, so a seam face meets its partner at whatever image the
+    partner is resident; owned rows need every partner resident. Returns the
+    residual and the number of owned faces whose partner sits at another image.
+    """
+    mesh, _ = view.reconstruct_local_geometry()
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    lift = np.asarray(view.periodic_lift_matrix, dtype=np.float64)
+    inverse = np.linalg.inv(lift)
+    row_by_id = {int(value): row for row, value in enumerate(np.asarray(view.cell_ids))}
+    owned = np.asarray(view.owned, dtype=np.bool_)
+    cell_faces: dict[int, list[tuple[tuple[int, ...], np.ndarray, np.ndarray]]] = {}
+    faces: dict[tuple[int, ...], list[tuple[int, np.ndarray]]] = {}
+    volumes = np.zeros((owned.size,), dtype=np.float64)
+    for block in mesh.blocks:
+        for vertices, identifier in zip(
+            np.asarray(block.vertices), np.asarray(block.global_ids), strict=True
+        ):
+            row = row_by_id[int(identifier)]
+            points = coordinates[np.asarray(vertices)]
+            first, second = points[1] - points[0], points[2] - points[0]
+            signed = 0.5 * (first[0] * second[1] - first[1] * second[0])
+            if signed < 0.0:
+                points = points[::-1]
+            volumes[row] = abs(signed)
+            for start, stop in ((0, 1), (1, 2), (2, 0)):
+                tangent = points[stop] - points[start]
+                area = np.asarray((tangent[1], -tangent[0]))
+                midpoint = 0.5 * (points[start] + points[stop])
+                fractional = (midpoint @ inverse) % 1.0
+                key = tuple(
+                    int(np.rint(value * 1.0e8)) % 100000000 for value in fractional
+                )
+                faces.setdefault(key, []).append((row, midpoint))
+                cell_faces.setdefault(row, []).append((key, area, midpoint))
+    solver = dynamics.method.interface_solver
+    residual = np.zeros_like(state)
+    seam_faces = 0
+    for row in np.flatnonzero(owned):
+        for key, area, midpoint in cell_faces[int(row)]:
+            partners = [
+                (other, other_midpoint)
+                for other, other_midpoint in faces[key]
+                if not (other == row and np.allclose(other_midpoint, midpoint))
+            ]
+            assert len(partners) == 1, "every owned face needs one resident partner"
+            partner, partner_midpoint = partners[0]
+            if not np.allclose(partner_midpoint, midpoint):
+                seam_faces += 1
+            measure = float(np.linalg.norm(area))
+            flux = solver.normal_face_flux(
+                dynamics.system,
+                jnp.asarray(state[row])[None],
+                jnp.asarray(state[partner])[None],
+                jnp.asarray(area / measure)[None],
+                None,
+            ).normal_flux
+            residual[row] -= np.asarray(flux)[0] * measure / volumes[row]
+    return residual, seam_faces
+
+
+def test_owner_local_periodic_fv_joins_seams_and_matches_serial_residual() -> None:
+    """Periodic seam faces of owner-local patches are interior faces.
+
+    One owner (every seam owned on both sides) or three process owners (seams
+    against halo cells at other lattice images): owned rows reproduce an
+    independent serial periodic FV residual, flux crosses the seams, and no
+    periodic face is a physical boundary.
+    """
+    from phydrax._execution_resources import ExecutionGroupSpec
+    from phydrax._execution_runtime import ExecutionGroup
+    from phydrax.discretization._view_support import OwnerLocalCellGeometry
+    from tests.unit.meshing.test_native_overset import _owner_local_periodic_assembly
+
+    devices = tuple(sorted(jax.devices(), key=lambda device: device.process_index))
+    ranks = tuple(device.process_index for device in devices)
+    if jax.process_count() == 1:
+        devices = (jax.local_devices()[0],)
+        ranks = (jax.process_index(),)
+        owners = np.zeros((4,), dtype=np.int32)
+    elif jax.process_count() == 3 and ranks == (0, 1, 2) and len(devices) == 3:
+        owners = np.asarray((1, 1, 0, 2), dtype=np.int32)
+    else:
+        pytest.skip("This contract runs on one owner or three process owners.")
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "owner-local-periodic-seams",
+            ranks,
+            tuple((device.process_index, device.id) for device in devices),
+            mesh_axes=(("owner_local_periodic_seams", len(devices)),),
+        ),
+        devices,
+    )
+    view = (
+        _owner_local_periodic_assembly(
+            "periodic-seams",
+            np.asarray(((0.11, 0.13), (0.58, 0.17), (0.31, 0.62), (0.84, 0.77))),
+            owners,
+            group,
+        )
+        .parts[0]
+        .carrier
+    )
+    assert isinstance(view, OwnerLocalCellGeometry)
+    if not np.any(np.asarray(view.owned)):
+        return
+    system = phx.equations.EulerSystem(2)
+    geometry = phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
+        view, component_names=system.component_names
+    ).prepare()
+    owned = np.asarray(view.owned, dtype=np.bool_)
+    neighbor = np.asarray(geometry.neighbor_cells)
+    owner = np.asarray(geometry.owner_cells)
+    # A periodic part has no physical boundary; only halo cuts stay open.
+    assert not np.any(owned[owner[neighbor < 0]])
+    physical = geometry.boundary_patch_names.index("__physical_boundary__")
+    assert not np.any(np.asarray(geometry.boundary_patch_ids) == physical)
+    assert geometry.periodic_face_translations is not None
+    seams = np.any(np.asarray(geometry.periodic_face_translations) != 0.0, axis=1)
+    assert np.any(seams)
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        geometry.boundary_patch_names,
+        {
+            name: phx.discretization.ExtrapolationBoundary()
+            for name in geometry.boundary_patch_names
+        },
+    )
+    dynamics: Any = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR(
+            "owner-local-periodic-seams", "state", system, boundaries
+        ),
+        geometry,
+        phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+    ).dynamics
+    cell_ids = np.asarray(geometry.cell_global_ids, dtype=np.int64)
+    primitive = np.zeros((cell_ids.size, 4), dtype=np.float64)
+    primitive[:, 0] = 1.0 + (cell_ids % 7) * 0.05
+    primitive[:, 1] = 0.1 + (cell_ids % 3) * 0.02
+    primitive[:, 2] = -0.05 + (cell_ids % 4) * 0.01
+    primitive[:, 3] = 1.0 + (cell_ids % 5) * 0.05
+    state = np.asarray(system.primitive_to_conserved(jnp.asarray(primitive)))
+    residual = np.asarray(dynamics(jnp.asarray(0.0), jnp.asarray(state)))
+    view_rows = {int(value): row for row, value in enumerate(np.asarray(view.cell_ids))}
+    plan_rows = np.asarray([view_rows[int(value)] for value in cell_ids], dtype=np.int64)
+    view_state = np.empty_like(state)
+    view_state[plan_rows] = state
+    expected, seam_count = _serial_periodic_residual(view, view_state, dynamics)
+    assert seam_count > 0
+    owned_plan = owned[plan_rows]
+    np.testing.assert_allclose(
+        residual[owned_plan],
+        expected[plan_rows][owned_plan],
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
+    flux, _ = dynamics.face_fluxes(jnp.asarray(0.0), jnp.asarray(state))
+    assert float(np.max(np.abs(np.asarray(flux)[seams]))) > 1.0e-3
+    # A step with the joined operator conserves the periodic content of a
+    # single owner exactly: no flux leaves through a seam.
+    if len(devices) == 1:
+        volumes = np.asarray(geometry.cell_volumes)[:, None]
+        np.testing.assert_allclose(np.sum(volumes * residual, axis=0), 0.0, atol=1.0e-13)
+
+
 def test_native_owner_local_fv_motion_event_restarts_and_advances(
     tmp_path: Any,
 ) -> None:

@@ -188,6 +188,14 @@ def _unique_receptor_faces(
     area_vectors = np.asarray(geometry.area_vectors)[route_face_ids]
     face_measures = np.asarray(geometry.face_quadrature_weights)[route_face_ids]
     orientation = np.where(owner_cells[route_face_ids] == receptor_cells, 1.0, -1.0)
+    if geometry.periodic_face_translations is not None:
+        # A receptor on the neighbor side of a periodic seam sees the face at its
+        # own lattice image.
+        translations = np.asarray(geometry.periodic_face_translations)[route_face_ids]
+        face_points = (
+            face_points
+            + np.where(orientation[:, None] < 0.0, translations, 0.0)[:, None, :]
+        )
     normals = np.broadcast_to(
         orientation[:, None, None]
         * (area_vectors / np.asarray(geometry.face_measures)[route_face_ids, None])[
