@@ -39,6 +39,7 @@ from phydrax.geometry._source_fidelity import (
 from phydrax.geometry._source_identity import source_entity_id
 from phydrax.geometry.implicit import (
     _adaptive_discovery as adaptive_discovery,
+    _source_charts as source_charts,
     AnalyticImplicitProfile,
 )
 from phydrax.geometry.implicit._adaptive_discovery import (
@@ -590,6 +591,40 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
                     maximum_normal_deviation=np.pi,
                     root_charts=chart_map,
                 )
+
+
+def test_adaptive_implicit_on_surface_p2_sphere_charts_certify_in_bounded_rounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _surface, source, contract, mesh, affine, affine_witness = _adaptive_source(
+        smooth=False, authoring_profile=True
+    )
+    affine_root_map = _affine_root_map(mesh, source, affine, affine_witness)
+    curved, witness = _curved_geometry(mesh, source, affine_root_map, 2)
+    rounds = 0
+    run_piece_steps = source_charts._run_piece_steps
+
+    def counted_rounds(
+        bounds: source_charts._FieldEnclosures,
+        hessian_program: source_charts.PreparedIntervalFunction,
+        steps: Sequence[source_charts._PieceSteps],
+        queries: Sequence[source_charts._BoxRequests] = (),
+        /,
+    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults]]:
+        nonlocal rounds
+        rounds += 1
+        return run_piece_steps(bounds, hessian_program, steps, queries)
+
+    monkeypatch.setattr(source_charts, "_run_piece_steps", counted_rounds)
+    # Without fidelity controls every face's endpoint signs and differential
+    # close by refinement and bracket widening alone, in a few batched rounds.
+    chart_map = prepare_adaptive_implicit_root_charts(
+        mesh, curved, source, witness, frame_id=contract.spatial_id
+    )
+    assert chart_map.status == "certified"
+    assert all(item.status == "certified" for item in chart_map.chart_evidence)
+    assert all(item.chart_injectivity_margin > 0.0 for item in chart_map.chart_evidence)
+    assert rounds <= 4
 
 
 def test_adaptive_implicit_fidelity_retains_scoped_target_extent() -> None:

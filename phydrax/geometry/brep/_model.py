@@ -723,6 +723,7 @@ def _rebuild_intersection_root(root: Any, cache: dict[int, Any] | None = None, /
         return cache[key]
     from ._intersection import (
         CurveSurfaceIntersectionRoot,
+        ExactLineCylinderTangency,
         IntersectionCurvePointRoot,
         TrimIntersectionRoot,
         TripleSurfaceIntersectionRoot,
@@ -756,6 +757,11 @@ def _rebuild_intersection_root(root: Any, cache: dict[int, Any] | None = None, /
                 None
                 if root.endpoint_witness is None
                 else _rebuild_conic_root_line_endpoint(root.endpoint_witness, cache)
+            ),
+            tangent_witness=(
+                None
+                if root.tangent_witness is None
+                else ExactLineCylinderTangency(curve, surface)
             ),
         )
     elif isinstance(root, TripleSurfaceIntersectionRoot):
@@ -3402,6 +3408,23 @@ def _validate_model_source_bindings(
         )
 
 
+def _brep_model_id(source_revision: str, tessellation: BRepTessellation | None, /) -> str:
+    """Identify a model as its physical source plus its query representation.
+
+    A model without a tessellation is its physical source; a tessellated model is
+    a distinct query representation of that source.
+    """
+    if tessellation is None:
+        return source_revision
+    return canonical_fingerprint(
+        {
+            "kind": "brep-model",
+            "source_revision": source_revision,
+            "query_representation": tessellation.tessellation_id,
+        }
+    )
+
+
 def _tessellation_multiregion_surface(
     domain: MeshingDomain, tessellation: BRepTessellation, /
 ) -> MultiRegionSurfaceTopology | None:
@@ -3556,7 +3579,7 @@ class BRepModel(StrictModule):
         self.report = report
         self.tessellation = tessellation
         self.source_revision = source_revision
-        self.model_id = source_revision
+        self.model_id = _brep_model_id(source_revision, tessellation)
         if tessellation is not None:
             self._validate_tessellation(
                 tessellation, source_revision, geometry, patches_, bounds_host, signs
@@ -3589,9 +3612,8 @@ class BRepModel(StrictModule):
             self.coordinate_contract,
             self.report,
         )
-        if (
-            current_revision != self.source_revision
-            or self.model_id != self.source_revision
+        if current_revision != self.source_revision or self.model_id != _brep_model_id(
+            self.source_revision, self.tessellation
         ):
             raise ValueError(
                 "BRepModel content has changed since its source revision was recorded."

@@ -27,12 +27,7 @@ from ...exterior._form_type import FormType
 from ...linalg import (
     ArraySpace,
     BlockSpace,
-    DenseLinearOperator,
-    FactorizationPolicy,
-    factorize,
-    inverse_small_linear,
     OperatorProperties,
-    SmallLinearSolvePlan,
 )
 from ...sparse import (
     EdgeRelation,
@@ -56,6 +51,7 @@ from .._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
+from .._cell_geometry_validity import cell_jacobian_inverse_and_measure
 from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock, SimplicialConnectivity
 from .._core import (
     DiscretizationCapability,
@@ -1531,79 +1527,61 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
 def _cell_metric_determinants(
     cell_kind: str, points: np.ndarray, /
 ) -> tuple[np.ndarray, str]:
-    """Evaluate the admitted cell family's existing metric determinant formula."""
+    """Evaluate each admitted cell's metric determinant det(J^T J).
+
+    The value is the square of the measure from
+    ``cell_jacobian_inverse_and_measure`` (0 where its solve fails): full-
+    dimensional cells square their evaluated det(J), whose binary64 sign is
+    reliable, and embedded cells keep the Gram determinant.
+    """
+
+    def metric_determinant(edge_matrix: ArrayLike) -> np.ndarray:
+        _, _, measure, _, successful = cell_jacobian_inverse_and_measure(
+            jnp.asarray(edge_matrix, dtype=jnp.float64)
+        )
+        return np.asarray(jnp.where(successful, measure * measure, 0.0))
+
+    def edges(origin: int, *others: int) -> np.ndarray:
+        return np.stack(
+            tuple(points[:, other] - points[:, origin] for other in others), axis=-1
+        )
+
     if cell_kind.startswith("simplex:"):
-        edge_matrix = np.swapaxes(points[:, 1:] - points[:, :1], -1, -2)
-        determinant = np.linalg.det(np.swapaxes(edge_matrix, -1, -2) @ edge_matrix)
-        return np.asarray(
-            determinant
+        return metric_determinant(
+            np.swapaxes(points[:, 1:] - points[:, :1], -1, -2)
         ), "Finite-element simplices require positive finite metric determinant."
     if cell_kind.startswith("tensor:"):
         chart = _linear_reference_element(cell_kind)
         gradients = np.asarray(chart.tabulate(chart.reference_nodes)[1])
         jacobian = np.asarray(ein.contract("qir,cid->cqdr", gradients, points))
-        determinant = np.linalg.det(np.swapaxes(jacobian, -1, -2) @ jacobian)
-        return np.asarray(
-            determinant
+        return metric_determinant(
+            jacobian
         ), "Finite-element tensor cells require positive finite metric determinant."
     if cell_kind == "interval":
-        difference = points[:, 1] - points[:, 0]
-        determinant = np.sum(difference * difference, axis=-1)
+        determinant = metric_determinant(edges(0, 1))
     elif cell_kind == "triangle":
-        first = points[:, 1] - points[:, 0]
-        second = points[:, 2] - points[:, 0]
-        determinant = (
-            np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
-            - np.sum(first * second, axis=-1) ** 2
-        )
+        determinant = metric_determinant(edges(0, 1, 2))
     elif cell_kind == "quadrilateral":
-        first = points[:, 1] - points[:, 0]
-        second = points[:, 3] - points[:, 0]
-        determinant = (
-            np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
-            - np.sum(first * second, axis=-1) ** 2
-        )
+        determinant = metric_determinant(edges(0, 1, 3))
     elif cell_kind == "tetrahedron":
-        edge_matrix = np.stack(
-            (
-                points[:, 1] - points[:, 0],
-                points[:, 2] - points[:, 0],
-                points[:, 3] - points[:, 0],
-            ),
-            axis=-1,
-        )
-        gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-        determinant = np.linalg.det(gram)
+        determinant = metric_determinant(edges(0, 1, 2, 3))
     elif cell_kind == "hexahedron":
-        edge_matrix = np.stack(
-            (
-                points[:, 1] - points[:, 0],
-                points[:, 3] - points[:, 0],
-                points[:, 4] - points[:, 0],
-            ),
-            axis=-1,
-        )
-        gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-        determinant = np.linalg.det(gram)
+        determinant = metric_determinant(edges(0, 1, 3, 4))
     elif cell_kind in ("prism", "pyramid"):
         tetrahedra = (
             ((0, 1, 2, 3), (1, 2, 4, 3), (2, 4, 5, 3))
             if cell_kind == "prism"
             else ((0, 1, 2, 4), (0, 2, 3, 4))
         )
-        determinants = []
-        for first_vertex, second_vertex, third_vertex, fourth_vertex in tetrahedra:
-            edge_matrix = np.stack(
-                (
-                    points[:, second_vertex] - points[:, first_vertex],
-                    points[:, third_vertex] - points[:, first_vertex],
-                    points[:, fourth_vertex] - points[:, first_vertex],
+        determinant = np.min(
+            np.stack(
+                tuple(
+                    metric_determinant(edges(*tetrahedron)) for tetrahedron in tetrahedra
                 ),
                 axis=-1,
-            )
-            gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-            determinants.append(np.linalg.det(gram))
-        determinant = np.min(np.stack(tuple(determinants), axis=-1), axis=-1)
+            ),
+            axis=-1,
+        )
     else:
         raise ValueError("Unsupported finite-element cell kind.")
     return np.asarray(
@@ -2875,44 +2853,18 @@ def _evaluate_coordinate_map(
         physical_points = ein.contract("qi,cid->cqd", geometry_values, cell_coordinates)
         jacobian = ein.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
     metric = ein.contract("...di,...dj->...ij", jacobian, jacobian)
-    if metric.shape[-1] <= 4:
-        inverse_result = inverse_small_linear(
-            SmallLinearSolvePlan(metric.shape[-1]), metric
-        )
-        inverse_metric = inverse_result.value
-        successful = inverse_result.successful
-        gram_determinant = jnp.where(successful, inverse_result.determinant, 0.0)
-    else:
-        tangent = ArraySpace(
-            (metric.shape[-1],),
-            dtype=metric.dtype,
-            space_id=f"finite-element-reference-tangent:{metric.shape[-1]}",
-        )
-        factors = factorize(
-            DenseLinearOperator(
-                metric,
-                source=tangent,
-                target=tangent,
-                operator_id=f"finite-element-geometry-gram:{metric.shape[-1]}",
-            ),
-            FactorizationPolicy("lu"),
-        )
-        inverse_result = factors.materialize_inverse()
-        inverse_metric = inverse_result.value
-        successful = inverse_result.successful
-        gram_determinant = jnp.where(
-            successful, jnp.exp(factors.log_abs_determinant()), 0
-        )
-    measure = jnp.sqrt(gram_determinant)
-    inverse_jacobian = ein.contract("...ij,...dj->...id", inverse_metric, jacobian)
-    if jacobian.shape[-2] == jacobian.shape[-1]:
-        determinant = jnp.where(
-            successful,
-            jnp.linalg.det(jacobian),
-            0.0,
-        )
-    else:
-        determinant = measure
+    # Full-dimensional maps evaluate det(J) itself (its sign survives binary64
+    # down to a few u relative to the column-norm product, where the Gram
+    # determinant's is lost below sqrt(u)); embedded maps keep the Gram
+    # determinant. Both solve column-normalized Jacobians.
+    inverse_jacobian, inverse_metric, measure, determinant, successful = (
+        cell_jacobian_inverse_and_measure(jacobian)
+    )
+    inverse_metric = jnp.where(successful[..., None, None], inverse_metric, 0.0)
+    inverse_jacobian = jnp.where(successful[..., None, None], inverse_jacobian, 0.0)
+    measure = jnp.where(successful, measure, 0.0)
+    determinant = jnp.where(successful, determinant, 0.0)
+    gram_determinant = measure * measure
     return (
         physical_points,
         jacobian,
@@ -3005,11 +2957,11 @@ def _prepare_block_geometry(
         and element.value_spec.form_type.twist == "untwisted"
     ):
         physical_basis = basis_values
+        # Physical gradients are J^+T grad = J (J^T J)^-1 grad, formed from the
+        # (pseudo-)inverse Jacobian rather than J times the inverse metric:
+        # the metric is conditioned like r^-2, the Jacobian like r^-1.
         physical_gradients = ein.contract(
-            "cqdi,cqij,qkj->cqkd",
-            jacobian,
-            inverse_metric,
-            reference_gradients,
+            "cqid,qki->cqkd", inverse_jacobian, reference_gradients
         )
     else:
         physical_basis = map_reference_values(
@@ -3308,7 +3260,7 @@ def _masked_local_tensors(
     points_, weights_ = _degree_aware_reference_rule(plan.cell_kind, plan.degree)
     reference_points = policy.geometry(points_)
     reference_weights = policy.accumulation(weights_)
-    physical_points, jacobian, _, inverse_metric, _, _, measure_factor, _ = (
+    physical_points, _, _, _, inverse_jacobian, _, measure_factor, _ = (
         _evaluate_coordinate_map(
             element,
             routes,
@@ -3335,7 +3287,7 @@ def _masked_local_tensors(
         reference_gradients=reference_gradients,
         physical_points=physical_points,
         physical_gradients=ein.contract(
-            "cqdi,cqij,qkj->cqkd", jacobian, inverse_metric, reference_gradients
+            "cqid,qki->cqkd", inverse_jacobian, reference_gradients
         ),
         physical_weights=physical_weights,
         measure=policy.output(jnp.sum(physical_weights, axis=1)),

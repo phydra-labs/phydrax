@@ -433,6 +433,283 @@ def _owner_neighbor(connectivity: Connectivity, cell_count: int, /) -> Any:
     return owner, neighbor, owner_sign
 
 
+_PERIODIC_SEAM_PATCH = "__periodic_seam__"
+
+
+@dataclass(frozen=True, slots=True)
+class _PeriodicVertexFrames:
+    """Quotient identity of every local vertex row of one owner-local carrier.
+
+    ``parts[row]`` is the periodic part index, or ``-1`` for rows of
+    nonperiodic parts and remote ghosts, which never join across seams.
+    ``roots`` are quotient vertex identities and ``windings`` the integer
+    lattice image of each lifted row; ``lifts[part]`` maps a winding to its
+    ambient translation (rows are lattice generators).
+    """
+
+    parts: np.ndarray
+    roots: np.ndarray
+    windings: tuple[np.ndarray | None, ...]
+    lifts: tuple[np.ndarray | None, ...]
+
+
+def _owner_local_periodic_vertex_frames(
+    view: Any, vertex_ids: np.ndarray, /
+) -> _PeriodicVertexFrames | None:
+    from .._view_support import OwnerLocalCompositeCellGeometry
+
+    parts = view.parts if isinstance(view, OwnerLocalCompositeCellGeometry) else (view,)
+    row_by_id = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
+    part_rows = np.full(vertex_ids.shape, -1, dtype=np.int64)
+    roots = np.full(vertex_ids.shape, -1, dtype=np.int64)
+    windings: list[np.ndarray | None] = [None] * vertex_ids.size
+    lifts: list[np.ndarray | None] = []
+    periodic = False
+    for index, part in enumerate(parts):
+        if part.periodic_topology_id is None:
+            lifts.append(None)
+            continue
+        periodic = True
+        if not part.coordinates_are_lifted:
+            raise ValueError("Owner-local periodic FV requires lifted local coordinates.")
+        if part.vertex_representative_ids is None or part.vertex_windings is None:
+            raise ValueError(
+                "Owner-local periodic FV requires quotient vertex roots and windings."
+            )
+        part_ids = np.asarray(part.vertex_ids, dtype=np.int64)
+        part_roots = np.asarray(part.vertex_representative_ids, dtype=np.int64)
+        part_windings = np.asarray(part.vertex_windings, dtype=np.int64)
+        if part_roots.shape != part_ids.shape or part_windings.shape[0] != part_ids.size:
+            raise ValueError("Owner-local periodic vertex ancestry is misaligned.")
+        lift = part.periodic_lift_matrix
+        lifts.append(None if lift is None else np.asarray(lift, dtype=np.float64))
+        for identifier, root, winding in zip(
+            part_ids, part_roots, part_windings, strict=True
+        ):
+            row = row_by_id.get(int(identifier))
+            if row is None:
+                raise ValueError(
+                    "Owner-local periodic FV carrier lost a resident vertex."
+                )
+            part_rows[row] = index
+            roots[row] = int(root)
+            windings[row] = winding
+    if not periodic:
+        return None
+    return _PeriodicVertexFrames(part_rows, roots, tuple(windings), tuple(lifts))
+
+
+def _periodic_seam_joins(
+    face_vertex_rows: Sequence[np.ndarray] | np.ndarray,
+    boundary_faces: np.ndarray,
+    face_owner_owned: np.ndarray,
+    coordinates: np.ndarray,
+    frames: _PeriodicVertexFrames,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Join unwelded seam faces of a lifted periodic patch by quotient identity.
+
+    A lifted face is identified by the quotient roots of its vertices and their
+    windings relative to one anchor vertex, minimized over anchors; two
+    boundary faces with the same identity in one periodic part are the two
+    sides of one quotient face, resident at lattice images differing by the
+    integer shift ``k``. The kept face (the owned side when exactly one side is
+    owned) carries the flux; ``translations[j]`` is the ambient image of ``k``,
+    so a neighbor-side point ``p`` in the kept owner's frame is ``p + t`` in the
+    neighbor's own lifted frame. Returns ``(joins, translations, unmatched)``:
+    ``joins[j] = (kept, merged)`` topology faces and the periodic boundary faces
+    whose partner is not resident.
+    """
+    dimension = coordinates.shape[1]
+    scale = max(1.0, float(np.max(np.abs(coordinates)))) if coordinates.size else 1.0
+    tolerance = 1.0e-9 * scale
+    groups: dict[tuple[Any, ...], list[tuple[int, np.ndarray, np.ndarray]]] = {}
+    for face in np.asarray(boundary_faces, dtype=np.int64).tolist():
+        rows = np.asarray(face_vertex_rows[face], dtype=np.int64)
+        parts = frames.parts[rows]
+        if np.all(parts < 0):
+            continue
+        if np.any(parts != parts[0]):
+            raise ValueError("A local face mixes periodic part frames.")
+        best: tuple[tuple[Any, ...], np.ndarray, np.ndarray] | None = None
+        for anchor in rows.tolist():
+            anchor_winding = frames.windings[anchor]
+            if anchor_winding is None:
+                raise ValueError("Owner-local periodic vertex lacks its winding.")
+            entries = sorted(
+                (
+                    int(frames.roots[row]),
+                    tuple(
+                        int(value)
+                        for value in np.asarray(frames.windings[row]) - anchor_winding
+                    ),
+                    int(row),
+                )
+                for row in rows.tolist()
+            )
+            signature = tuple((root, relative) for root, relative, _ in entries)
+            if best is None or signature < best[0]:
+                best = (
+                    signature,
+                    np.asarray(anchor_winding, dtype=np.int64),
+                    np.asarray([row for *_, row in entries], dtype=np.int64),
+                )
+        if best is None:
+            continue
+        groups.setdefault((int(parts[0]), best[0]), []).append(
+            (int(face), best[1], best[2])
+        )
+    joins: list[tuple[int, int]] = []
+    translations: list[np.ndarray] = []
+    unmatched: list[int] = []
+    for (part, _), members in sorted(groups.items(), key=lambda item: item[1][0][0]):
+        if len(members) == 1:
+            unmatched.append(members[0][0])
+            continue
+        if len(members) != 2:
+            raise ValueError(
+                "A quotient face is resident as more than two unwelded lifted faces."
+            )
+        first, second = sorted(members, key=lambda member: member[0])
+        if bool(face_owner_owned[second[0]]) and not bool(face_owner_owned[first[0]]):
+            first, second = second, first
+        shift = second[1] - first[1]
+        if not np.any(shift):
+            raise ValueError(
+                "Unwelded periodic seam partners must sit at distinct lattice images."
+            )
+        offsets = coordinates[second[2]] - coordinates[first[2]]
+        lift = frames.lifts[part]
+        translation = (
+            np.mean(offsets, axis=0)
+            if lift is None
+            else shift.astype(np.float64) @ lift[:, :dimension]
+        )
+        if np.max(np.abs(offsets - translation[None, :])) > tolerance:
+            raise ValueError(
+                "Periodic seam partners are not exact lattice translates of each other."
+            )
+        joins.append((first[0], second[0]))
+        translations.append(translation)
+    return (
+        np.asarray(joins, dtype=np.int32).reshape((-1, 2)),
+        np.asarray(translations, dtype=np.float64).reshape((-1, dimension)),
+        np.asarray(sorted(unmatched), dtype=np.int32),
+    )
+
+
+def _classify_owner_local_faces(
+    face_vertex_rows: Sequence[np.ndarray] | np.ndarray,
+    boundary_faces: np.ndarray,
+    face_owner_owned: np.ndarray,
+    coordinates: np.ndarray,
+    frames: _PeriodicVertexFrames | None,
+    /,
+) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
+    """Boundary face groups plus periodic seam joins of one owner-local carrier.
+
+    Owned boundary faces of a nonperiodic part are physical; boundary faces of
+    ghost cells are artificial halo cuts. Periodic parts have no physical
+    boundary: every seam face of an owned cell must join its resident partner.
+    """
+    boundary = np.asarray(boundary_faces, dtype=np.int32)
+    if frames is None:
+        joins = np.empty((0, 2), dtype=np.int32)
+        translations = np.empty((0, coordinates.shape[1]), dtype=np.float64)
+        periodic_boundary = np.zeros(boundary.shape, dtype=np.bool_)
+    else:
+        joins, translations, unmatched = _periodic_seam_joins(
+            face_vertex_rows, boundary, face_owner_owned, coordinates, frames
+        )
+        periodic_boundary = np.asarray(
+            [
+                bool(np.any(frames.parts[np.asarray(face_vertex_rows[face])] >= 0))
+                for face in boundary.tolist()
+            ],
+            dtype=np.bool_,
+        )
+        if np.any(face_owner_owned[unmatched]):
+            raise ValueError(
+                "Owner-local periodic FV view omits the resident periodic partner "
+                "of an owned seam face."
+            )
+    joined = set(int(value) for value in joins.reshape(-1))
+    owned = face_owner_owned[boundary]
+    physical = boundary[owned & ~periodic_boundary]
+    artificial = np.asarray(
+        [face for face in boundary[~owned].tolist() if face not in joined],
+        dtype=np.int32,
+    )
+    groups = {
+        "__physical_boundary__": physical,
+        "__owner_local_halo__": artificial,
+    }
+    if joins.size:
+        groups[_PERIODIC_SEAM_PATCH] = np.sort(joins.reshape(-1)).astype(np.int32)
+    return groups, joins, translations
+
+
+def periodic_image_scale(coordinates: ArrayLike, /) -> float:
+    """Length scale of the rounding that identifies periodic lattice images."""
+    values = np.asarray(coordinates, dtype=np.float64)
+    return max(1.0, float(np.max(np.abs(values)))) if values.size else 1.0
+
+
+def periodic_image_key(image: ArrayLike, scale: float, /) -> tuple[int, ...]:
+    """Total order of lattice image translations: the identity, then lexicographic.
+
+    Translations are summed seam offsets, so they are rounded at ``1e-9 * scale``;
+    distinct lattice images differ by a lattice vector, far above that tolerance.
+    """
+    rounded = np.rint(np.asarray(image, dtype=np.float64) / (1.0e-9 * scale)).astype(
+        np.int64
+    )
+    return (int(np.any(rounded != 0)), *(int(value) for value in rounded))
+
+
+def periodic_seam_vertex_pairs(
+    plan: Any, joins: np.ndarray, translations: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vertex rows `(kept, twin, translation)` of every joined seam face pair.
+
+    The twin face's vertex `twin[i]` is the kept face's vertex `kept[i]`
+    resident at the neighbor's lattice image: its coordinates are
+    `coordinates[kept[i]] + translation[i]`. Matching is done once on the
+    plan's own coordinates; motions must preserve it.
+    """
+    connectivity = None if plan.mesh is None else plan.mesh.connectivity
+    if isinstance(connectivity, PolygonalConnectivity):
+        face_vertices = np.asarray(connectivity.edges, dtype=np.int64)
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
+    else:
+        raise TypeError("Periodic seam vertex pairs need edge or triangle faces.")
+    points = np.asarray(plan.vertices, dtype=np.float64)
+    scale = max(1.0, float(np.max(np.abs(points)))) if points.size else 1.0
+    kept_vertices = face_vertices[joins[:, 0]]
+    twin_vertices = face_vertices[joins[:, 1]]
+    distance = np.linalg.norm(
+        points[twin_vertices][:, :, None, :]
+        - translations[:, None, None, :]
+        - points[kept_vertices][:, None, :, :],
+        axis=-1,
+    )
+    order = np.argmin(distance, axis=-1)
+    if np.any(np.min(distance, axis=-1) > 1.0e-9 * scale) or np.any(
+        np.sort(order, axis=-1) != np.arange(order.shape[1])[None, :]
+    ):
+        raise ValueError("Periodic seam twins are not lattice translates of each other.")
+    kept = np.take_along_axis(kept_vertices, order, axis=1)
+    pair_translations = np.broadcast_to(
+        translations[:, None, :], twin_vertices.shape + (translations.shape[1],)
+    )
+    return (
+        kept.reshape(-1),
+        twin_vertices.reshape(-1),
+        pair_translations.reshape((-1, translations.shape[1])),
+    )
+
+
 def _triangle_measures(cell_points: Array, /) -> tuple[Array, Array]:
     """Signed areas (positive counterclockwise) and centroids of ``(..., 3, 2)``."""
     cross = (cell_points[..., 1, 0] - cell_points[..., 0, 0]) * (
@@ -1063,6 +1340,8 @@ class _PreparedUnstructuredFiniteVolumeData:
     capabilities: tuple[DiscretizationCapability, ...]
     plan_id: str
     owner_local_view: Any | None = None
+    periodic_face_joins: Array | None = None
+    periodic_face_translations: Array | None = None
 
 
 class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
@@ -1087,6 +1366,11 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     owner_local_view: Any | None = None
+    # Owner-local periodic seam faces joined across lattice images: topology
+    # faces ``(kept, merged)`` and the ambient translation from the kept
+    # owner's frame to the neighbor's frame; ``None`` when nothing is joined.
+    periodic_face_joins: Array | None = None
+    periodic_face_translations: Array | None = None
 
     def __init__(
         self,
@@ -1122,6 +1406,8 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             self.capabilities = _prepared.capabilities
             self.plan_id = _prepared.plan_id
             self.owner_local_view = _prepared.owner_local_view
+            self.periodic_face_joins = _prepared.periodic_face_joins
+            self.periodic_face_translations = _prepared.periodic_face_translations
             return
         if vertices is None:
             raise TypeError("vertices must be supplied for direct construction.")
@@ -1332,6 +1618,8 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             }
         )
         self.owner_local_view = None
+        self.periodic_face_joins = None
+        self.periodic_face_translations = None
 
     @classmethod
     @checked
@@ -1598,32 +1886,35 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             int(identifier): bool(local_owned[row])
             for row, identifier in enumerate(local_cell_ids)
         }
+        coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+        frames = _owner_local_periodic_vertex_frames(
+            view, np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        )
         if isinstance(mesh.connectivity, PolyhedralConnectivity):
             connectivity = mesh.connectivity
             owner = np.asarray(connectivity.face_owner, dtype=np.int32)
             neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32)
-            boundary = np.flatnonzero(neighbor < 0)
             cell_order = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
-            physical = np.asarray(
-                [face for face in boundary if owned_by_id[int(cell_order[owner[face]])]],
-                dtype=np.int32,
-            )
-            artificial = np.asarray(
-                [
-                    face
-                    for face in boundary
-                    if not owned_by_id[int(cell_order[owner[face]])]
-                ],
-                dtype=np.int32,
+            face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+            face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+            groups, joins, translations = _classify_owner_local_faces(
+                tuple(
+                    face_values[face_offsets[face] : face_offsets[face + 1]]
+                    for face in range(owner.size)
+                ),
+                np.flatnonzero(neighbor < 0),
+                np.asarray(
+                    [owned_by_id[int(cell_order[cell])] for cell in owner],
+                    dtype=np.bool_,
+                ),
+                coordinates,
+                frames,
             )
             plan = cls.from_cell_mesh(
                 mesh,
                 field_name=field,
                 component_names=components,
-                boundary_face_groups={
-                    "__physical_boundary__": physical,
-                    "__owner_local_halo__": artificial,
-                },
+                boundary_face_groups=groups,
             )
         elif dimension == 2:
             triangle_blocks = tuple(
@@ -1694,19 +1985,16 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                     "Owner-local polygonal FV plans require polygonal topology."
                 )
             owner, neighbor, _ = _owner_neighbor(connectivity, base.cell_global_ids.size)
-            boundary = np.flatnonzero(neighbor < 0)
             face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
-            physical = np.asarray(
-                [face for face in boundary if owned_by_id[int(ordered_ids[owner[face]])]],
-                dtype=np.int32,
-            )
-            artificial = np.asarray(
-                [
-                    face
-                    for face in boundary
-                    if not owned_by_id[int(ordered_ids[owner[face]])]
-                ],
-                dtype=np.int32,
+            groups, joins, translations = _classify_owner_local_faces(
+                face_vertices,
+                np.flatnonzero(neighbor < 0),
+                np.asarray(
+                    [owned_by_id[int(ordered_ids[cell])] for cell in owner],
+                    dtype=np.bool_,
+                ),
+                coordinates,
+                frames,
             )
             plan = cls(
                 np.asarray(mesh.coordinates),
@@ -1715,8 +2003,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 vertex_global_ids=np.asarray(mesh.vertex_global_ids),
                 cell_global_ids=ordered_ids,
                 boundary_patches={
-                    "__physical_boundary__": face_vertices[physical],
-                    "__owner_local_halo__": face_vertices[artificial],
+                    name: face_vertices[faces] for name, faces in groups.items()
                 },
                 field_name=field,
                 component_names=components,
@@ -1750,19 +2037,16 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                     "Owner-local tetrahedral FV plans require tetrahedral topology."
                 )
             owner, neighbor, _ = _owner_neighbor(connectivity, base.cell_global_ids.size)
-            boundary = np.flatnonzero(neighbor < 0)
             face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
-            physical = np.asarray(
-                [face for face in boundary if owned_by_id[int(ordered_ids[owner[face]])]],
-                dtype=np.int32,
-            )
-            artificial = np.asarray(
-                [
-                    face
-                    for face in boundary
-                    if not owned_by_id[int(ordered_ids[owner[face]])]
-                ],
-                dtype=np.int32,
+            groups, joins, translations = _classify_owner_local_faces(
+                face_vertices,
+                np.flatnonzero(neighbor < 0),
+                np.asarray(
+                    [owned_by_id[int(ordered_ids[cell])] for cell in owner],
+                    dtype=np.bool_,
+                ),
+                coordinates,
+                frames,
             )
             plan = cls(
                 np.asarray(mesh.coordinates),
@@ -1770,8 +2054,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 vertex_global_ids=np.asarray(mesh.vertex_global_ids),
                 cell_global_ids=ordered_ids,
                 boundary_patches={
-                    "__physical_boundary__": face_vertices[physical],
-                    "__owner_local_halo__": face_vertices[artificial],
+                    name: face_vertices[faces] for name, faces in groups.items()
                 },
                 field_name=field,
                 component_names=components,
@@ -1782,13 +2065,44 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             )
         if plan.cell_global_ids.shape != (local_cell_ids.size,):
             raise ValueError("Owner-local FV lowering changed the local cell count.")
-        owner_plan_id = canonical_fingerprint(
-            {
-                "kind": "owner-local-unstructured-fv-plan",
-                "plan": plan.plan_id,
-                "view": view.local_view_id,
-            }
-        )
+        return cls._with_owner_local_joins(plan, view, joins, translations)
+
+    @classmethod
+    def _with_owner_local_joins(
+        cls,
+        plan: UnstructuredFiniteVolumePlan,
+        view: Any,
+        joins: np.ndarray,
+        translations: np.ndarray,
+        /,
+    ) -> UnstructuredFiniteVolumePlan:
+        """Bind a lifted owner-local plan to `view` with its periodic seam joins.
+
+        `plan` labels every unwelded seam face with the seam patch only to
+        satisfy the boundary partition of the lifted patch; joined, those faces
+        are interior faces of the quotient, so the patch is dropped.
+        """
+        patch_names = plan.patch_names
+        patch_faces = plan.patch_faces
+        if joins.size:
+            seam = patch_names.index(_PERIODIC_SEAM_PATCH)
+            if not np.array_equal(
+                np.sort(np.asarray(patch_faces[seam], dtype=np.int32)),
+                np.sort(joins.reshape(-1)),
+            ):
+                raise ValueError("Owner-local FV lowering renumbered periodic seams.")
+            patch_names = patch_names[:seam] + patch_names[seam + 1 :]
+            patch_faces = patch_faces[:seam] + patch_faces[seam + 1 :]
+        plan_identity: dict[str, Any] = {
+            "kind": "owner-local-unstructured-fv-plan",
+            "plan": plan.plan_id,
+            "view": view.local_view_id,
+        }
+        if joins.size:
+            plan_identity["periodic_face_joins"] = array_tree_fingerprint(joins)
+            plan_identity["periodic_face_translations"] = array_tree_fingerprint(
+                translations
+            )
         return cls(
             None,
             _prepared=_PreparedUnstructuredFiniteVolumeData(
@@ -1800,17 +2114,77 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 vertex_global_ids=plan.vertex_global_ids,
                 cell_global_ids=plan.cell_global_ids,
                 cell_dimension=plan.cell_dimension,
-                patch_names=plan.patch_names,
-                patch_faces=plan.patch_faces,
+                patch_names=patch_names,
+                patch_faces=patch_faces,
                 field_name=plan.field_name,
                 component_names=plan.component_names,
                 topology_id=plan.topology_id,
                 geometry_id=plan.geometry_id,
                 key=plan.key,
                 capabilities=plan.capabilities,
-                plan_id=owner_plan_id,
+                plan_id=canonical_fingerprint(plan_identity),
                 owner_local_view=view,
+                periodic_face_joins=jnp.asarray(joins) if joins.size else None,
+                periodic_face_translations=(
+                    jnp.asarray(translations) if joins.size else None
+                ),
             ),
+        )
+
+    def with_periodic_seam_vertices(self, vertices: ArrayLike, /) -> Any:
+        """This owner-local periodic plan on moved, translation-equivariant vertices.
+
+        Seam joins and their lattice translations are topology: every joined
+        pair must stay an exact translate (``1e-9`` of the coordinate scale) of
+        the other, otherwise the moved patch is not a lifted periodic patch.
+        """
+        joins = self.periodic_face_joins
+        translations = self.periodic_face_translations
+        if joins is None or translations is None or self.owner_local_view is None:
+            raise ValueError("Only owner-local periodic seam plans rejoin moved seams.")
+        points = np.asarray(vertices, dtype=np.float64)
+        if points.shape != np.asarray(self.vertices).shape:
+            raise ValueError("Moved seam vertices must keep the plan's vertex shape.")
+        joins_host = np.asarray(joins, dtype=np.int32)
+        translations_host = np.asarray(translations, dtype=np.float64)
+        kept_rows, twin_rows, pair_translations = periodic_seam_vertex_pairs(
+            self, joins_host, translations_host
+        )
+        scale = max(1.0, float(np.max(np.abs(points)))) if points.size else 1.0
+        if np.any(
+            np.abs(points[twin_rows] - points[kept_rows] - pair_translations)
+            > 1.0e-9 * scale
+        ):
+            raise ValueError(
+                "Moved periodic seam vertices are not lattice translates of their twins."
+            )
+        connectivity = self.mesh.connectivity if self.mesh is not None else None
+        if isinstance(connectivity, PolygonalConnectivity):
+            face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
+        elif isinstance(connectivity, TetrahedralConnectivity):
+            face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
+        else:
+            raise TypeError("Moved periodic seams need edge or triangle faces.")
+        patches = {
+            name: face_vertices[np.asarray(faces, dtype=np.int32)]
+            for name, faces in zip(self.patch_names, self.patch_faces, strict=True)
+        }
+        patches[_PERIODIC_SEAM_PATCH] = face_vertices[np.sort(joins_host.reshape(-1))]
+        moved = UnstructuredFiniteVolumePlan(
+            points,
+            triangles=self.triangles,
+            quadrilaterals=self.quadrilaterals,
+            tetrahedra=self.tetrahedra,
+            vertex_global_ids=self.vertex_global_ids,
+            cell_global_ids=self.cell_global_ids,
+            boundary_patches=patches,
+            field_name=self.field_name,
+            component_names=self.component_names,
+        )
+        if moved.topology_id != self.topology_id:
+            raise ValueError("Moving periodic seam vertices changed topology identity.")
+        return self._with_owner_local_joins(
+            moved, self.owner_local_view, joins_host, translations_host
         )
 
     def prepare(self, /, *, numeric_version: str = "0") -> Any:
@@ -1848,6 +2222,15 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     neighbor_cells: Array
     boundary_patch_ids: Array
     boundary_patch_names: tuple[str, ...] = eqx.field(static=True)
+    # Owner-local periodic seams joined across lattice images: the lifted
+    # topology face of every FV face (the owner's side), the topology face its
+    # neighbor holds (the unwelded twin on seams, the same face elsewhere) and,
+    # per FV face, the translation from the owner's frame to the neighbor's
+    # frame (zero off seams). ``None`` when no face is joined, so every FV face
+    # is its topology face in one embedding.
+    face_topology_ids: Array | None
+    neighbor_face_topology_ids: Array | None
+    periodic_face_translations: Array | None
     topology_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
     cell_space: DiscreteFieldSpace | None
@@ -1917,6 +2300,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             self.connectivity = None
             self.face_block = None
             self.face_blocks = ()
+            self.face_topology_ids = None
+            self.neighbor_face_topology_ids = None
+            self.periodic_face_translations = None
             self.cell_volumes = jnp.empty((0,), dtype=dtype)
             self.cell_centers = empty_points
             self.cell_quadrature_points = empty_quadrature_points
@@ -2051,6 +2437,66 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         boundary_patch_ids = np.full((face_count,), -1, dtype=np.int32)
         for patch_id, face_indices in enumerate(plan.patch_faces):
             boundary_patch_ids[np.asarray(face_indices, dtype=np.int32)] = patch_id
+        neighbor = np.array(neighbor, dtype=np.int32)
+        neighbor_offsets: Array | None = None
+        face_topology_ids: Array | None = None
+        neighbor_face_topology_ids: Array | None = None
+        twins_host = np.arange(face_count, dtype=np.int32)
+        periodic_face_translations: Array | None = None
+        if plan.periodic_face_joins is not None:
+            joins = np.asarray(plan.periodic_face_joins, dtype=np.int32)
+            translations = np.asarray(plan.periodic_face_translations, dtype=np.float64)
+            kept, merged = joins[:, 0], joins[:, 1]
+            joined = joins.reshape(-1)
+            if (
+                joins.ndim != 2
+                or translations.shape != (kept.size, cell_centers.shape[1])
+                or np.unique(joined).size != joined.size
+                or np.any(joined < 0)
+                or np.any(joined >= face_count)
+                or np.any(neighbor[joined] >= 0)
+                or np.any(boundary_patch_ids[joined] >= 0)
+            ):
+                raise ValueError(
+                    "Periodic seam joins must pair distinct unpatched boundary faces."
+                )
+            # The kept face carries the quotient face; its merged twin is the
+            # same face resident at the neighbor's lattice image.
+            neighbor[kept] = owner[merged]
+            twins_host[kept] = merged
+            offsets_host = np.zeros((face_count, cell_centers.shape[1]), dtype=np.float64)
+            offsets_host[kept] = translations
+            neighbor_offsets = jnp.asarray(offsets_host, dtype=cell_centers.dtype)
+        quality = _quality_report(
+            plan,
+            connectivity,
+            cell_volumes,
+            cell_centers,
+            area_vectors,
+            face_measures,
+            closure,
+            owner,
+            neighbor,
+            neighbor_offsets,
+        )
+        if neighbor_offsets is not None:
+            keep_host = np.ones((face_count,), dtype=np.bool_)
+            keep_host[np.asarray(plan.periodic_face_joins, dtype=np.int32)[:, 1]] = False
+            keep_faces = np.flatnonzero(keep_host).astype(np.int32)
+            keep = jnp.asarray(keep_faces)
+            owner = np.asarray(owner)[keep_faces]
+            neighbor = neighbor[keep_faces]
+            owner_sign = np.asarray(owner_sign)[keep_faces]
+            boundary_patch_ids = boundary_patch_ids[keep_faces]
+            face_centers = face_centers[keep]
+            area_vectors = area_vectors[keep]
+            face_measures = face_measures[keep]
+            quadrature_points = quadrature_points[keep]
+            quadrature_weights = quadrature_weights[keep]
+            periodic_face_translations = neighbor_offsets[keep]
+            face_topology_ids = keep
+            neighbor_face_topology_ids = jnp.asarray(twins_host[keep_faces])
+            face_count = int(keep_faces.size)
         embedding_id = canonical_fingerprint(
             {
                 "kind": "unstructured-fv-embedding",
@@ -2116,17 +2562,6 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 {"kind": "unstructured-face-block", "plan": plan.plan_id}
             ),
         )
-        quality = _quality_report(
-            plan,
-            connectivity,
-            cell_volumes,
-            cell_centers,
-            area_vectors,
-            face_measures,
-            closure,
-            owner,
-            neighbor,
-        )
         preparation = PreparationReport(
             capabilities=plan.capabilities,
             diagnostics=(
@@ -2180,6 +2615,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.connectivity = connectivity
         self.face_block = face_block
         self.face_blocks = (face_block,)
+        self.face_topology_ids = face_topology_ids
+        self.neighbor_face_topology_ids = neighbor_face_topology_ids
+        self.periodic_face_translations = periodic_face_translations
         self.cell_volumes = cell_volumes
         self.cell_centers = cell_centers
         self.cell_quadrature_points = cell_quadrature_points
@@ -2234,6 +2672,25 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     @property
     def state_shape(self) -> tuple[int, ...]:
         return (self.cell_count, self.component_count)
+
+    def neighbor_side_points(
+        self, points: Array, face_ids: Array | None = None, /
+    ) -> Array:
+        """Face points ``(faces, points, dimension)`` in each neighbor's own frame.
+
+        Owner-local periodic seam faces join a neighbor resident at another
+        lattice image: a face point ``p`` in the owner's frame is
+        ``p + periodic_face_translations[face]`` beside the neighbor. Without
+        seams the points are returned unchanged. ``face_ids`` selects the faces
+        of ``points`` when they are a subset of this discretization's faces.
+        """
+        values = jnp.asarray(points)
+        if self.periodic_face_translations is None:
+            return values
+        translations = self.periodic_face_translations
+        if face_ids is not None:
+            translations = translations[jnp.asarray(face_ids, dtype=jnp.int32)]
+        return values + translations.astype(values.dtype)[:, None, :]
 
     def directional_control_volume_widths(self) -> Array:
         """Return volume-normalized directional widths from control-volume faces."""
@@ -2386,11 +2843,15 @@ def _quality_report(
     closure: Any,
     owner: Any,
     neighbor: Any,
+    neighbor_offsets: Any = None,
 ) -> Any:
     owner_ = jnp.asarray(owner, dtype=jnp.int32)
     neighbor_ = jnp.asarray(neighbor, dtype=jnp.int32)
     interior = neighbor_ >= 0
     connector = cell_centers[jnp.maximum(neighbor_, 0)] - cell_centers[owner_]
+    if neighbor_offsets is not None:
+        # Seam neighbors sit at another lattice image; compare in the owner's frame.
+        connector = connector - neighbor_offsets
     denominator = jnp.linalg.norm(connector, axis=-1) * face_measures
     cosine = jnp.abs(jnp.sum(connector * area_vectors, axis=-1)) / jnp.where(
         denominator > 0.0, denominator, 1.0

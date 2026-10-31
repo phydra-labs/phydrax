@@ -1289,12 +1289,17 @@ def _curve_adaptive_implicit_layer_core(
             route = np.asarray(routes[face.target_block_row], dtype=np.int64)
             face_nodes = _reference_face_dofs(element, face.target_reference_corners)
             for local_dof, reference in face_nodes:
-                point = root_map.project_target(face.chart_row, reference)
                 geometry_row = int(route[face.target_cell_row, local_dof])
                 if geometry_row < 0:
                     raise ValueError(
                         "An implicit source-bound reference node has no map row."
                     )
+                if geometry_row < construction.mesh.coordinates.shape[0]:
+                    # Layer/core mesh vertices are immutable. A remeshed carrier's
+                    # vertices are near-roots, not scaffold roots; the final
+                    # chart proofs bound every face point, corners included.
+                    continue
+                point = root_map.project_target(face.chart_row, reference)
                 previous = assigned.get(geometry_row)
                 if previous is not None and not np.array_equal(
                     previous.view(np.uint64), point.point.view(np.uint64)
@@ -1303,18 +1308,7 @@ def _curve_adaptive_implicit_layer_core(
                         "Adjacent implicit root charts disagree on a shared geometry node."
                     )
                 assigned[geometry_row] = np.array(point.point, copy=True)
-                if geometry_row < construction.mesh.coordinates.shape[0]:
-                    physical_vertex = np.asarray(
-                        construction.mesh.coordinates, dtype=np.float64
-                    )[geometry_row]
-                    if not np.array_equal(
-                        physical_vertex.view(np.uint64), point.point.view(np.uint64)
-                    ):
-                        raise ValueError(
-                            "Implicit root chart changes an immutable layer/core mesh vertex."
-                        )
-                else:
-                    candidate_coordinates[geometry_row] = point.point
+                candidate_coordinates[geometry_row] = point.point
                 node_records.append(
                     (
                         geometry_row,

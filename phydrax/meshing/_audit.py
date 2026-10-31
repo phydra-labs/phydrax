@@ -189,6 +189,94 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         )
 
 
+class CellMeshManifoldScope(StrictModule, NonTrainableState):
+    """Declared vertex scope of the manifold (star-connectivity) checks.
+
+    A resident patch of a distributed mesh is legitimately pinched where its
+    resident cells end. The scope names the vertices whose complete star this
+    audit certifies (``vertex_ids``, all resident in the audited mesh) and the
+    non-resident star cells that complete those stars: dense blocks of cell
+    IDs and global vertex IDs per cell kind. Vertices outside the scope are
+    certified by the scopes of the other patches of the same partition, which
+    ``kind`` names (``"owned-star"``: every vertex is certified by its owner).
+    """
+
+    kind: str = eqx.field(static=True)
+    vertex_ids: jax.Array
+    star_cell_kinds: tuple[str, ...] = eqx.field(static=True)
+    star_cell_ids: tuple[jax.Array, ...]
+    star_cell_vertex_ids: tuple[jax.Array, ...]
+    scope_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        kind: str,
+        vertex_ids: Any,
+        /,
+        *,
+        star_cells: tuple[tuple[str, Any, Any], ...] = (),
+    ) -> None:
+        if not isinstance(kind, str) or not kind:
+            raise ValueError("Manifold scope kind must be a non-empty string.")
+        vertices = np.asarray(vertex_ids)
+        if (
+            vertices.ndim != 1
+            or vertices.dtype.kind not in "iu"
+            or np.any(vertices < 0)
+            or np.unique(vertices).size != vertices.size
+        ):
+            raise ValueError("Manifold scope vertex IDs must be unique non-negative IDs.")
+        kinds: list[str] = []
+        cell_ids: list[np.ndarray] = []
+        cell_vertices: list[np.ndarray] = []
+        for cell_kind, identifiers, rows in sorted(
+            star_cells, key=lambda value: value[0]
+        ):
+            ids = np.asarray(identifiers)
+            values = np.asarray(rows)
+            if (
+                not isinstance(cell_kind, str)
+                or cell_kind in kinds
+                or cell_kind == "polyhedron"
+                or ids.ndim != 1
+                or ids.dtype.kind not in "iu"
+                or values.ndim != 2
+                or values.dtype.kind not in "iu"
+                or values.shape[0] != ids.size
+                or values.shape[1] < 2
+                or np.any(values < 0)
+            ):
+                raise ValueError(
+                    "Manifold scope star cells must be dense blocks of IDs and vertex IDs."
+                )
+            order = np.argsort(ids, kind="stable")
+            kinds.append(cell_kind)
+            cell_ids.append(ids[order].astype(np.int64))
+            cell_vertices.append(values[order].astype(np.int64))
+        every_cell = np.concatenate(cell_ids) if cell_ids else np.empty((0,), np.int64)
+        if np.unique(every_cell).size != every_cell.size:
+            raise ValueError("Manifold scope star cell IDs must be unique.")
+        sorted_vertices = np.sort(vertices.astype(np.int64))
+        self.kind = kind
+        self.vertex_ids = jnp.asarray(sorted_vertices)
+        self.star_cell_kinds = tuple(kinds)
+        self.star_cell_ids = tuple(jnp.asarray(value) for value in cell_ids)
+        self.star_cell_vertex_ids = tuple(jnp.asarray(value) for value in cell_vertices)
+        self.scope_id = canonical_fingerprint(
+            {
+                "kind": "cell-mesh-manifold-scope",
+                "scope": kind,
+                "vertices": sorted_vertices,
+                "star_cells": [
+                    {"cell_kind": name, "cell_ids": ids, "vertex_ids": rows}
+                    for name, ids, rows in zip(
+                        kinds, cell_ids, cell_vertices, strict=True
+                    )
+                ],
+            }
+        )
+
+
 class CellMeshAuditReport(StrictModule, NonTrainableState):
     """Audit verdict with rejected issues, recorded findings, and evidence.
 
@@ -196,7 +284,8 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
     checks by whether the policy evaluated them; ``passed`` certifies nothing
     about a skipped check. ``check_counts`` lists every evaluated check with its
     finding count in deterministic order; ``unresolved`` names checks that could
-    not be decided.
+    not be decided. ``manifold_scope`` is the declared vertex scope of the
+    manifold checks (``None``: every vertex of the mesh was checked).
     """
 
     mesh_id: str = eqx.field(static=True)
@@ -216,6 +305,7 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
     boundary_counts: tuple[int, ...] = eqx.field(static=True)
     connectivity_entries: int = eqx.field(static=True)
     unused_vertex_count: int = eqx.field(static=True)
+    manifold_scope: CellMeshManifoldScope | None
     quality: CellQualityReport
     validity: CellValidityCertificate
     policy_id: str = eqx.field(static=True)
@@ -700,16 +790,81 @@ def _periodic_self_intersection_evidence(
     return len({finding.finding_id for finding in violations}), not complete
 
 
+def _manifold_scope_rows(
+    mesh: CellMesh, scope: CellMeshManifoldScope, /
+) -> tuple[np.ndarray, tuple[tuple[str, np.ndarray], ...]]:
+    """Scope vertex rows and star-cell vertex keys of one audited mesh.
+
+    Resident vertices key by mesh row; non-resident vertices take keys past
+    the vertex count in ascending global-ID order.
+    """
+
+    mesh_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    order = np.argsort(mesh_ids, kind="stable")
+    sorted_ids = mesh_ids[order]
+
+    def resident_rows(identifiers: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+        position = np.minimum(
+            np.searchsorted(sorted_ids, identifiers), max(sorted_ids.size - 1, 0)
+        )
+        found = (
+            sorted_ids[position] == identifiers
+            if sorted_ids.size
+            else np.zeros(identifiers.shape, dtype=np.bool_)
+        )
+        return np.where(found, order[position] if sorted_ids.size else -1, -1), found
+
+    scope_ids = np.asarray(scope.vertex_ids, dtype=np.int64)
+    scope_rows, scope_found = resident_rows(scope_ids)
+    if not np.all(scope_found):
+        raise ValueError("A manifold scope names vertices absent from the audited mesh.")
+    cell_ids = np.concatenate(
+        [
+            np.asarray(block.global_ids, dtype=np.int64).reshape(-1)
+            for block in mesh.blocks
+        ]
+    )
+    star_ids = tuple(np.asarray(value, dtype=np.int64) for value in scope.star_cell_ids)
+    if any(np.any(np.isin(value, cell_ids)) for value in star_ids):
+        raise ValueError("Manifold scope star cells must be absent from the mesh.")
+    star_rows = tuple(
+        np.asarray(value, dtype=np.int64) for value in scope.star_cell_vertex_ids
+    )
+    every_vertex = (
+        np.concatenate([value.reshape(-1) for value in star_rows])
+        if star_rows
+        else np.empty((0,), dtype=np.int64)
+    )
+    _, every_found = resident_rows(every_vertex)
+    foreign = np.unique(every_vertex[~every_found])
+    supplement = []
+    for cell_kind, rows in zip(scope.star_cell_kinds, star_rows, strict=True):
+        resident, found = resident_rows(rows.reshape(-1))
+        keys = np.where(
+            found,
+            resident,
+            mesh_ids.size + np.searchsorted(foreign, rows.reshape(-1)),
+        )
+        supplement.append((cell_kind, keys.reshape(rows.shape)))
+    return scope_rows, tuple(supplement)
+
+
 def _topology_findings(
     mesh: CellMesh,
     policy: CellMeshAuditPolicy,
     /,
     *,
     global_embedding: GlobalEmbeddingCertificate | None = None,
+    manifold_scope: CellMeshManifoldScope | None = None,
 ) -> tuple[tuple[tuple[str, int, CellMeshAuditDisposition], ...], tuple[str, ...]]:
     skip = CellMeshAuditDisposition.SKIP
     periodic_mesh = mesh.periodic_topology is not None
     periodic_embedding = periodic_mesh and global_embedding is not None
+    scope_rows, star_supplement = (
+        (None, ())
+        if manifold_scope is None
+        else _manifold_scope_rows(mesh, manifold_scope)
+    )
     evidence = audit_welded_topology(
         mesh,
         np.asarray(mesh.coordinates, dtype=np.float64),
@@ -723,6 +878,8 @@ def _topology_findings(
         check_self_intersection=(
             policy.self_intersection != skip and not periodic_embedding
         ),
+        manifold_vertices=scope_rows,
+        star_supplement=star_supplement,
     )
     self_intersections = evidence.self_intersections
     unresolved = list(evidence.unresolved)
@@ -770,6 +927,7 @@ def audit_cell_mesh(
     labels: tuple[MeshLabel, ...] = (),
     validity: CellValidityCertificate | None = None,
     global_embedding: GlobalEmbeddingCertificate | None = None,
+    manifold_scope: CellMeshManifoldScope | None = None,
 ) -> CellMeshAuditReport:
     """Audit bindings, welded topology, sampled quality, and certified validity.
 
@@ -780,7 +938,9 @@ def audit_cell_mesh(
     residuals are structurally validated by GeometryAssociation; source-specific
     residual tolerances remain the generating provider's responsibility. A supplied
     global embedding proof is reused for periodic quotient self-intersection and
-    must bind the exact same geometry and periodic topology.
+    must bind the exact same geometry and periodic topology. A ``manifold_scope``
+    restricts the vertex and edge star checks of a resident patch to the declared
+    vertex stars; the report records it.
     """
 
     if not isinstance(mesh, CellMesh):
@@ -790,6 +950,13 @@ def audit_cell_mesh(
     audit_policy = CellMeshAuditPolicy() if policy is None else policy
     if not isinstance(audit_policy, CellMeshAuditPolicy):
         raise TypeError("policy must be CellMeshAuditPolicy or None.")
+    if manifold_scope is not None and (
+        not isinstance(manifold_scope, CellMeshManifoldScope)
+        or audit_policy.nonmanifold == CellMeshAuditDisposition.SKIP
+    ):
+        raise ValueError(
+            "manifold_scope must be CellMeshManifoldScope of an evaluated manifold check."
+        )
     quality_evaluation, quality_bound = _quality_binding(mesh, quality)
     quality_scope, geometry_issues = _geometry_binding(mesh, geometry)
     validate_mesh_zones(tuple(zones))
@@ -845,7 +1012,10 @@ def audit_cell_mesh(
 
         global_embedding = certify_global_embedding(mesh, geometry, validity_)
     topology_findings, unresolved_checks = _topology_findings(
-        mesh, audit_policy, global_embedding=global_embedding
+        mesh,
+        audit_policy,
+        global_embedding=global_embedding,
+        manifold_scope=manifold_scope,
     )
     unresolved = list(unresolved_checks)
     if validity_.unresolved_count:
@@ -909,6 +1079,7 @@ def audit_cell_mesh(
         boundary_counts=boundary_counts,
         connectivity_entries=entries,
         unused_vertex_count=unused,
+        manifold_scope=manifold_scope,
         quality=quality_report,
         validity=validity_,
         policy_id=audit_policy.policy_id,
@@ -932,6 +1103,11 @@ def audit_cell_mesh(
                 "boundary_counts": boundary_counts,
                 "connectivity_entries": entries,
                 "policy": audit_policy.policy_id,
+                **(
+                    {}
+                    if manifold_scope is None
+                    else {"manifold_scope": manifold_scope.scope_id}
+                ),
             }
         ),
     )
@@ -941,5 +1117,6 @@ __all__ = [
     "CellMeshAuditDisposition",
     "CellMeshAuditPolicy",
     "CellMeshAuditReport",
+    "CellMeshManifoldScope",
     "audit_cell_mesh",
 ]

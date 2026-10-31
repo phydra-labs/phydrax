@@ -21,15 +21,26 @@ from phydrax.geometry.brep._boolean_core import (
     pcurve_surface_period_shifts,
     PeriodicPCurve,
 )
-from phydrax.geometry.brep._intersection import IntersectionCurvePointRoot
+from phydrax.geometry.brep._intersection import (
+    CurveSurfaceIntersectionRoot,
+    ExactLineCylinderTangency,
+    intersect_surface_regions,
+    IntersectionCurvePointRoot,
+)
 from phydrax.geometry.brep._intersection_curve import (
     CurveTrimSegment,
     IntersectionCurve,
     IntersectionPCurve,
     IntersectionSide,
+    SurfaceRegion,
 )
 from phydrax.geometry.brep._model import BRepModel
-from phydrax.geometry.brep._patches import AbstractCurve, CylinderPatch, LineCurve
+from phydrax.geometry.brep._patches import (
+    AbstractCurve,
+    CylinderPatch,
+    LineCurve,
+    PlanePatch,
+)
 from phydrax.geometry.brep._root_bindings import (
     BRepBranchNodeRoots,
     BRepVertexRoot,
@@ -457,6 +468,162 @@ def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks(
     assert tuple(
         None if root is None else root.root_id for root in restored.vertex_roots
     ) == tuple(None if root is None else root.root_id for root in geometry.vertex_roots)
+
+
+def _notch_branches(
+    lower: tuple[float, float, float], upper: tuple[float, float, float]
+) -> tuple[BRepBooleanResult, tuple[IntersectionCurve, ...]]:
+    cylinder = brep_cylinder(1.0, 2.0, coordinate_contract=_COORDINATES)
+    notch = brep_box(lower, upper, coordinate_contract=_COORDINATES)
+    original = _source_identity(cylinder), _source_identity(notch)
+    result = boolean_brep(cylinder, notch, "difference")
+    assert (_source_identity(cylinder), _source_identity(notch)) == original
+    assert result.model.topology.num_solids == 1
+    geometry = result.model.geometry
+    assert geometry is not None
+    branches = {
+        curve.branch_id: curve
+        for curve in geometry.curves
+        if isinstance(curve, IntersectionCurve)
+    }
+    for branch in branches.values():
+        assert branch.fully_certified
+        assert not branch.closed
+        assert (branch.start_kind, branch.end_kind) == ("boundary", "boundary")
+    _assert_exhaustive_oriented_lineage(result)
+    return result, tuple(branches.values())
+
+
+def test_notch_arc_across_the_cylinder_seam_splits_under_an_exact_deck() -> None:
+    # The notch sits on the cylinder's seam generator, so each cap-plane arc
+    # runs from the end of the angle window into its start.
+    _, branches = _notch_branches((-0.25, 0.75, 0.5), (0.25, 1.25, 1.5))
+    arcs = tuple(
+        branch for branch in branches if np.any(np.asarray(branch.node_axes)[1:-1] == 0)
+    )
+    assert len(arcs) == 2
+    for arc in arcs:
+        interior = np.asarray(arc.node_axes)[1:-1]
+        values = np.asarray(arc.node_values)[1:-1]
+        shifts = np.asarray(arc.node_period_shifts)[1:-1]
+        seam = [
+            index
+            for index in range(len(interior))
+            if interior[index] == 0 and values[index] == 0.0
+        ]
+        assert len(seam) == 1
+        incoming, outgoing = shifts[seam[0]]
+        np.testing.assert_array_equal(incoming - outgoing, (1, 0, 0, 0))
+        # Both ends fix the exact plane edge coordinate they lie on.
+        assert {int(arc.node_axes[0]), int(arc.node_axes[-1])} == {2}
+        assert {float(arc.node_values[0]), float(arc.node_values[-1])} == {0.0, 0.5}
+
+
+def test_notch_tangent_contacts_outside_the_trim_are_exactly_empty() -> None:
+    # The notch face y = 1 is a tangent plane of the cylinder and its cap edges
+    # are tangent lines, touching at x = 0, outside the notch (x >= 0.5). The
+    # exact zero discriminants place those double roots outside each trim.
+    _, branches = _notch_branches((0.5, 0.25, 0.5), (1.5, 1.0, 1.5))
+    assert len(branches) == 4
+    lines = [branch for branch in branches if int(branch.chart_axes[0]) == 1]
+    arcs = [branch for branch in branches if int(branch.chart_axes[0]) == 0]
+    assert len(lines) == 2 and len(arcs) == 2
+    for arc in arcs:
+        # Each arc runs from the edge y = 0.25 to the edge x = 0.5 of its cap.
+        assert {int(arc.node_axes[0]), int(arc.node_axes[-1])} == {2, 3}
+        assert {float(arc.node_values[0]), float(arc.node_values[-1])} == {0.0}
+
+
+def test_notch_on_a_tangent_plane_is_a_typed_line_contact() -> None:
+    # The notch face x = 1 touches the cylinder along the generator y = 0 and
+    # every other notch face stays outside: no branch, no material change.
+    cylinder = brep_cylinder(1.0, 2.0, coordinate_contract=_COORDINATES)
+    notch = brep_box(
+        (1.0, -0.25, 0.5), (1.5, 0.25, 1.5), coordinate_contract=_COORDINATES
+    )
+    lateral = SurfaceRegion(
+        cylinder.patches[1], np.asarray([[0.0, 0.0], [2.0 * np.pi, 1.0]])
+    )
+    tangent_face = next(
+        face
+        for face, patch in enumerate(notch.patches)
+        if isinstance(patch, PlanePatch)
+        and np.allclose(np.asarray(patch.origin)[0], 1.0)
+        and np.allclose(np.asarray(patch.first_axis)[0], 0.0)
+        and np.allclose(np.asarray(patch.second_axis)[0], 0.0)
+    )
+    contact = intersect_surface_regions(
+        lateral,
+        SurfaceRegion(notch.patches[tangent_face], np.asarray([[0.0, 0.0], [1.0, 1.0]])),
+    )
+    assert contact.complete and not contact.curves
+    (point,) = contact.points
+    assert (point.kind, point.certificate) == ("tangent_curve", "analytic-contact")
+    np.testing.assert_allclose(np.asarray(point.point)[:2], (1.0, 0.0), atol=1e-12)
+    result = boolean_brep(cylinder, notch, "difference")
+    assert result.model.topology.num_solids == 1
+    geometry = result.model.geometry
+    assert geometry is not None
+    assert len(geometry.face_loops) == 3
+    assert not any(isinstance(curve, IntersectionCurve) for curve in geometry.curves)
+
+
+def test_notch_edge_touching_the_cap_circle_from_inside_is_an_exact_double_root(
+    tmp_path: Path,
+) -> None:
+    # The notch's cap edges x = 1 touch each cap-plane circle at y = 0 from
+    # inside the notch face: an exact double root of the edge on the cylinder.
+    result, branches = _notch_branches((0.5, -0.25, 0.5), (1.0, 0.25, 1.5))
+    arcs = [branch for branch in branches if int(branch.chart_axes[0]) == 0]
+    assert len(arcs) == 2
+    for arc in arcs:
+        axes = np.asarray(arc.node_axes)
+        values = np.asarray(arc.node_values)
+        # The arc meets the edge at one node fixing the exact plane coordinate
+        # along the edge, between its two y = -0.25 and y = 0.25 crossings.
+        touches = [index for index in range(1, len(axes) - 1) if axes[index] != 0]
+        assert len(touches) == 1
+        assert {int(axes[0]), int(axes[-1]), int(axes[touches[0]])} == {3}
+        assert float(values[touches[0]]) == 0.25
+    geometry = result.model.geometry
+    assert geometry is not None
+    contacts = [
+        root.primary
+        for root in geometry.vertex_roots
+        if root is not None
+        and isinstance(root.primary, CurveSurfaceIntersectionRoot)
+        and root.primary.tangent_witness is not None
+    ]
+    assert len(contacts) == 2
+    for contact in contacts:
+        witness = contact.tangent_witness
+        assert witness is not None
+        assert contact.multiplicity == witness.multiplicity == 2
+        assert witness.parameter_exact == Fraction(1, 2)
+        assert witness.radial_exact == (Fraction(1), Fraction(0), Fraction(0))
+        enclosure = contact.parameter_enclosure()
+        assert enclosure[0, 0] == enclosure[1, 0] == 0.5
+    with pytest.raises(ValueError, match="double root"):
+        ExactLineCylinderTangency(
+            LineCurve((0.9, -1.0, 1.0), (0.0, 1.0, 0.0)),
+            contacts[0].surface,
+        )
+    archive = tmp_path / "interior-tangent-notch.phx"
+    save_brep_archive(result.model, archive)
+    restored = load_brep_archive(archive).geometry
+    assert restored is not None
+    assert tuple(
+        None if root is None else root.root_id for root in restored.vertex_roots
+    ) == tuple(None if root is None else root.root_id for root in geometry.vertex_roots)
+    assert (
+        sum(
+            root is not None
+            and isinstance(root.primary, CurveSurfaceIntersectionRoot)
+            and root.primary.multiplicity == 2
+            for root in restored.vertex_roots
+        )
+        == 2
+    )
 
 
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:

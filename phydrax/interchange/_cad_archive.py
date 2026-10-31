@@ -264,6 +264,7 @@ def _register_brep_types() -> None:
         ConicParameterEndpoint,
         ConicRootLineEndpointWitness,
         CurveSurfaceIntersectionRoot,
+        ExactLineCylinderTangency,
         IntersectionCurvePointRoot,
         NativePeriodEndpoint,
         TrimIntersectionRoot,
@@ -305,6 +306,7 @@ def _register_brep_types() -> None:
         TrimRootEndpoint,
         ConicParameterEndpoint,
         ConicRootLineEndpointWitness,
+        ExactLineCylinderTangency,
         BRepCurveSurfaceLift,
         BRepPlacedVertex,
         BRepRootSupport,
@@ -472,6 +474,7 @@ def _construct_intersection_dataclass(
         ConicParameterEndpoint,
         ConicRootLineEndpointWitness,
         CurveSurfaceIntersectionRoot,
+        ExactLineCylinderTangency,
         IntersectionCurvePointRoot,
         NativePeriodEndpoint,
         TrimIntersectionRoot,
@@ -588,11 +591,20 @@ def _construct_intersection_dataclass(
             "parameters",
             "preconditioner",
             "endpoint_witness",
+            "tangent_witness",
             "contraction",
             "root_id",
         }
         if set(fields) != expected_fields:
             raise ValueError("Stored curve-surface root field set is not canonical.")
+        tangent_witness = fields["tangent_witness"]
+        if (
+            tangent_witness is not None
+            and type(tangent_witness) is not ExactLineCylinderTangency
+        ):
+            raise TypeError(
+                "Stored curve-surface root lost its rebuilt tangency witness."
+            )
         endpoint_witness = fields["endpoint_witness"]
         if (
             endpoint_witness is not None
@@ -607,6 +619,7 @@ def _construct_intersection_dataclass(
             parameter_lower=fields["parameter_lower"],
             parameter_upper=fields["parameter_upper"],
             endpoint_witness=endpoint_witness,
+            tangent_witness=tangent_witness,
         )
         if (
             root.root_id != fields["root_id"]
@@ -663,6 +676,26 @@ def _construct_intersection_dataclass(
             turns=fields["turns"],
         )
 
+    if model_type is ExactLineCylinderTangency:
+        expected_fields = {
+            "curve",
+            "surface",
+            "parameter_exact",
+            "profile_exact",
+            "radial_exact",
+            "cosine_exact",
+            "sine_exact",
+            "multiplicity",
+        }
+        if set(fields) != expected_fields:
+            raise ValueError("Stored edge tangency field set is not canonical.")
+        tangency = ExactLineCylinderTangency(fields["curve"], fields["surface"])
+        if any(
+            getattr(tangency, name) != fields[name]
+            for name in expected_fields - {"curve", "surface"}
+        ):
+            raise ValueError("Stored edge tangency differs from its exact replay.")
+        return tangency
     if model_type is ConicParameterEndpoint:
         return ConicParameterEndpoint(
             fields["root"],
@@ -1259,10 +1292,10 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
             fields["v_knots"],
             fields["u_degree"],
             fields["v_degree"],
-            exact_control_points=fields["exact_control_points"],
-            exact_weights=fields["exact_weights"],
-            exact_u_knots=fields["exact_u_knots"],
-            exact_v_knots=fields["exact_v_knots"],
+            exact_control_points=fields["exact_control_point_bank"],
+            exact_weights=fields["exact_weight_bank"],
+            exact_u_knots=fields["exact_u_knot_bank"],
+            exact_v_knots=fields["exact_v_knot_bank"],
             control_point_ids=fields["control_point_ids"],
         )
     if model_type is BSplineCurve:
@@ -1271,9 +1304,9 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
             fields["weights"],
             fields["knots"],
             fields["degree"],
-            exact_control_points=fields["exact_control_points"],
-            exact_weights=fields["exact_weights"],
-            exact_knots=fields["exact_knots"],
+            exact_control_points=fields["exact_control_point_bank"],
+            exact_weights=fields["exact_weight_bank"],
+            exact_knots=fields["exact_knot_bank"],
         )
     if model_type is ConicParameterRoot:
         return ConicParameterRoot(

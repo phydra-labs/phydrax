@@ -301,7 +301,13 @@ class PreparedDiscontinuousMassInverse(StrictModule):
             }
         )
 
-    def _apply_primal(self, residual: ArrayLike, /, *, validate: bool = True) -> Array:
+    def apply(self, residual: ArrayLike, /) -> Array:
+        """Apply the block mass inverse.
+
+        Derivatives are those of the factorized solves: tangents pass through the
+        solve's linear, transposable derivative, gated by the primal solve status.
+        Status evidence is never recomputed from tangent data.
+        """
         value = jnp.asarray(residual)
         result = jnp.zeros_like(value)
         blocks = zip(
@@ -321,26 +327,18 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                     solved_flat = local_flat * inverse_diagonal[..., None]
                 case "affine_scaled":
                     solved_flat = (
-                        _solve_grouped_factor(factors[0], local_flat, validate=validate)
+                        _solve_grouped_factor(factors[0], local_flat)
                         / scales[:, None, None]
                     )
                 case "weight_adjusted":
-                    first = _solve_grouped_factor(
-                        factors[0], local_flat, validate=validate
-                    )
+                    first = _solve_grouped_factor(factors[0], local_flat)
                     weighted = ein.contract(
                         "cij,cjk->cik", weight_adjusted, first, backend="jax"
                     )
-                    solved_flat = _solve_grouped_factor(
-                        factors[0], weighted, validate=validate
-                    )
+                    solved_flat = _solve_grouped_factor(factors[0], weighted)
                 case "exact_batched":
                     solved_cells = tuple(
-                        _solve_grouped_factor(
-                            factor,
-                            local_flat[cell : cell + 1],
-                            validate=validate,
-                        )[0]
+                        _solve_grouped_factor(factor, local_flat[cell : cell + 1])[0]
                         for cell, factor in enumerate(factors)
                     )
                     solved_flat = jnp.stack(solved_cells, axis=0)
@@ -350,33 +348,6 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                 solved_flat.reshape(local.shape), unique_indices=True
             )
         return result
-
-    def apply(self, residual: ArrayLike, /) -> Array:
-        return _apply_discontinuous_mass(self, jnp.asarray(residual))
-
-
-@eqx.filter_custom_jvp
-def _apply_discontinuous_mass(
-    operator: PreparedDiscontinuousMassInverse,
-    residual: Array,
-    /,
-) -> Array:
-    return operator._apply_primal(residual)
-
-
-@_apply_discontinuous_mass.def_jvp
-def _apply_discontinuous_mass_jvp(
-    primals: tuple[PreparedDiscontinuousMassInverse, Array],
-    tangents: tuple[object, Array | None],
-) -> tuple[Array, Array]:
-    operator, residual = primals
-    _operator_tangent, residual_tangent = tangents
-    residual_tangent = (
-        jnp.zeros_like(residual) if residual_tangent is None else residual_tangent
-    )
-    primal = operator._apply_primal(residual)
-    tangent = operator._apply_primal(residual_tangent, validate=False)
-    return primal, tangent
 
 
 def _factor_mass_matrix(
@@ -409,22 +380,16 @@ def _solve_grouped_factor(
     factorization: PreparedFactorization,
     right_hand_sides: Array,
     /,
-    *,
-    validate: bool = True,
 ) -> Array:
     cell_count, local_width, component_count = right_hand_sides.shape
     grouped = jnp.transpose(right_hand_sides, (1, 0, 2)).reshape(
         (local_width, cell_count * component_count)
     )
     solved = factorization.solve(grouped)
-    value = (
-        eqx.error_if(
-            solved.value,
-            ~solved.successful,
-            "Local discontinuous mass factorization failed.",
-        )
-        if validate
-        else solved.value
+    value = eqx.error_if(
+        solved.value,
+        ~solved.successful,
+        "Local discontinuous mass factorization failed.",
     )
     return jnp.transpose(
         value.reshape((local_width, cell_count, component_count)),

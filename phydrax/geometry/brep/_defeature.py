@@ -573,7 +573,7 @@ def brep_defeature(
             status=status,
             reason=str(refusal),
             operation=operation_,
-            source_model_id=model.model_id,
+            source_model_id=model.source_revision,
             removed_face=face,
             model=None,
         )
@@ -623,7 +623,7 @@ def brep_defeature(
         status="certified",
         reason="native local extension and certified shape change",
         operation=operation_,
-        source_model_id=model.model_id,
+        source_model_id=model.source_revision,
         removed_face=face,
         model=target,
         volume_coefficients=coefficients,

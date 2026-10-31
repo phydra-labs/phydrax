@@ -123,6 +123,47 @@ class _Complex:
     edge_cells: np.ndarray
 
 
+def _dense_block_facets(
+    rows: np.ndarray, cell_kind: str, dimension: int, owners: np.ndarray, /
+) -> tuple[
+    list[np.ndarray],
+    list[np.ndarray],
+    list[np.ndarray],
+    np.ndarray | None,
+    np.ndarray | None,
+]:
+    """Oriented facet occurrences (and 3-D cell edges) of one dense cell block."""
+
+    count = rows.shape[0]
+    edges = None
+    edge_cells = None
+    if dimension == 1:
+        local_facets = ((0,), (1,))
+        local_signs = (-1, 1)
+    elif dimension == 2:
+        arity = rows.shape[1]
+        local_facets = tuple((index, (index + 1) % arity) for index in range(arity))
+        local_signs = (0,) * arity
+    else:
+        topology = reference_cell_topology(cell_kind)
+        local_facets = tuple(topology.entities[2])
+        local_signs = (0,) * len(local_facets)
+        local_edges = np.asarray(topology.entities[1])
+        edges = rows[:, local_edges].reshape(-1, 2)
+        edge_cells = np.repeat(owners, local_edges.shape[0])
+    width = max(len(face) for face in local_facets)
+    facet_rows = []
+    facet_cells = []
+    facet_signs = []
+    for face, sign in zip(local_facets, local_signs, strict=True):
+        values = np.full((count, width), -1, dtype=np.int64)
+        values[:, : len(face)] = rows[:, np.asarray(face)]
+        facet_rows.append(values)
+        facet_cells.append(owners)
+        facet_signs.append(np.full(count, sign, dtype=np.int8))
+    return facet_rows, facet_cells, facet_signs, edges, edge_cells
+
+
 def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
     """Cells, oriented facet occurrences, and (3-D) cell edges in welded ids."""
 
@@ -194,30 +235,30 @@ def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
         else:
             rows = welded[np.asarray(block.vertices, dtype=np.int64)]
             cell_rows.append(rows)
-            if dimension == 1:
-                local_facets = ((0,), (1,))
-                local_signs = (-1, 1)
-            elif dimension == 2:
-                arity = rows.shape[1]
-                local_facets = tuple(
-                    (index, (index + 1) % arity) for index in range(arity)
-                )
-                local_signs = (0,) * arity
-            else:
-                topology = reference_cell_topology(block.cell_kind)
-                local_facets = tuple(topology.entities[2])
-                local_signs = (0,) * len(local_facets)
-                local_edges = np.asarray(topology.entities[1])
-                edge_rows.append(rows[:, local_edges].reshape(-1, 2))
-                edge_cells.append(np.repeat(owners, local_edges.shape[0]))
-            width = max(len(face) for face in local_facets)
-            for face, sign in zip(local_facets, local_signs, strict=True):
-                values = np.full((count, width), -1, dtype=np.int64)
-                values[:, : len(face)] = rows[:, np.asarray(face)]
-                facet_rows.append(values)
-                facet_cells.append(owners)
-                facet_signs.append(np.full(count, sign, dtype=np.int8))
+            values, cells, signs, edges, incident = _dense_block_facets(
+                rows, block.cell_kind, dimension, owners
+            )
+            facet_rows.extend(values)
+            facet_cells.extend(cells)
+            facet_signs.extend(signs)
+            if edges is not None and incident is not None:
+                edge_rows.append(edges)
+                edge_cells.append(incident)
         cursor += count
+    return _assemble_complex(
+        cell_rows, facet_rows, facet_cells, facet_signs, edge_rows, edge_cells
+    )
+
+
+def _assemble_complex(
+    cell_rows: list[np.ndarray],
+    facet_rows: list[np.ndarray],
+    facet_cells: list[np.ndarray],
+    facet_signs: list[np.ndarray],
+    edge_rows: list[np.ndarray],
+    edge_cells: list[np.ndarray],
+    /,
+) -> _Complex:
     width = max(value.shape[1] for value in facet_rows)
     facets = np.concatenate(
         [
@@ -239,6 +280,39 @@ def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
         np.concatenate(facet_signs),
         np.concatenate(edge_rows) if edge_rows else np.empty((0, 2), dtype=np.int64),
         np.concatenate(edge_cells) if edge_cells else np.empty((0,), dtype=np.int64),
+    )
+
+
+def _supplemented_star_complex(
+    complex_: _Complex,
+    supplement: tuple[tuple[str, np.ndarray], ...],
+    dimension: int,
+    /,
+) -> _Complex:
+    """Append non-resident dense star cells, keyed like the welded complex."""
+
+    cell_rows = [complex_.cells]
+    facet_rows = [complex_.facets]
+    facet_cells = [complex_.facet_cells]
+    facet_signs = [complex_.facet_signs]
+    edge_rows = [complex_.edges]
+    edge_cells = [complex_.edge_cells]
+    cursor = complex_.cells.shape[0]
+    for cell_kind, rows in supplement:
+        owners = np.arange(cursor, cursor + rows.shape[0])
+        cell_rows.append(rows)
+        values, cells, signs, edges, incident = _dense_block_facets(
+            rows, cell_kind, dimension, owners
+        )
+        facet_rows.extend(values)
+        facet_cells.extend(cells)
+        facet_signs.extend(signs)
+        if edges is not None and incident is not None:
+            edge_rows.append(edges)
+            edge_cells.append(incident)
+        cursor += rows.shape[0]
+    return _assemble_complex(
+        cell_rows, facet_rows, facet_cells, facet_signs, edge_rows, edge_cells
     )
 
 
@@ -272,20 +346,30 @@ def _star_components(
     entity_rows: np.ndarray,
     entity_cells: np.ndarray,
     links: tuple[np.ndarray, np.ndarray, np.ndarray],
+    scope: np.ndarray | None = None,
     /,
 ) -> int:
     """Count entities whose incident cells split into several link components.
 
     ``links`` holds ``(entity keys, first cell, second cell)``: the two cells
-    share a facet containing that entity.
+    share a facet containing that entity. ``scope`` restricts the count to
+    entities with at least one vertex key in it.
     """
 
+    keys, first_cells, second_cells = links
+    if scope is not None:
+        kept = np.any(np.isin(entity_rows, scope), axis=1)
+        entity_rows = entity_rows[kept]
+        entity_cells = entity_cells[kept]
+        linked = np.any(np.isin(keys, scope), axis=1)
+        keys = keys[linked]
+        first_cells = first_cells[linked]
+        second_cells = second_cells[linked]
     if entity_rows.shape[0] == 0:
         return 0
     nodes = np.unique(
         np.concatenate((entity_rows, entity_cells[:, None]), axis=1), axis=0
     )
-    keys, first_cells, second_cells = links
     first = _lookup(nodes, np.concatenate((keys, first_cells[:, None]), axis=1))
     second = _lookup(nodes, np.concatenate((keys, second_cells[:, None]), axis=1))
     graph = coo_matrix(
@@ -859,11 +943,18 @@ def audit_welded_topology(
     check_manifold: bool,
     check_watertight: bool,
     check_self_intersection: bool,
+    manifold_vertices: np.ndarray | None = None,
+    star_supplement: tuple[tuple[str, np.ndarray], ...] = (),
 ) -> WeldedTopologyEvidence:
     """Evaluate the welded-topology checks of one mesh with host coordinates.
 
     ``coincident_tolerance`` is relative to the bounding-box diagonal; ``None``
-    disables welding.
+    disables welding. ``manifold_vertices`` (mesh vertex rows) restricts the
+    vertex and edge star checks to the stars of those vertices;
+    ``star_supplement`` adds dense ``(cell kind, vertex keys)`` blocks of star
+    cells absent from ``mesh``, where keys below the vertex count are mesh rows
+    and larger keys name non-resident vertices. Supplementary cells only enter
+    the star checks.
     """
 
     if coincident_tolerance is None:
@@ -895,19 +986,51 @@ def audit_welded_topology(
     nonmanifold_vertices = 0
     nonmanifold_edges = 0
     if check_manifold and mesh.topological_dimension >= 2:
-        cell_vertices = complex_.cells
+        star = complex_
+        star_first, star_second = first, second
+        if star_supplement:
+            vertex_count = points.shape[0]
+            star = _supplemented_star_complex(
+                complex_,
+                tuple(
+                    (
+                        cell_kind,
+                        np.where(
+                            rows < vertex_count,
+                            welded[np.minimum(rows, vertex_count - 1)],
+                            rows,
+                        ),
+                    )
+                    for cell_kind, rows in star_supplement
+                ),
+                mesh.topological_dimension,
+            )
+            _, star_inverse = np.unique(
+                _sorted_keys(star.facets), axis=0, return_inverse=True
+            )
+            star_first, star_second = _facet_links(star_inverse.reshape(-1))
+        scope = (
+            None
+            if manifold_vertices is None
+            else np.unique(welded[np.asarray(manifold_vertices, dtype=np.int64)])
+        )
+        cell_vertices = star.cells
         slots = cell_vertices >= 0
         owners = np.broadcast_to(
             np.arange(cell_vertices.shape[0])[:, None], cell_vertices.shape
         )[slots]
         nonmanifold_vertices = _star_components(
-            cell_vertices[slots][:, None], owners, _vertex_links(complex_, first, second)
+            cell_vertices[slots][:, None],
+            owners,
+            _vertex_links(star, star_first, star_second),
+            scope,
         )
         if mesh.topological_dimension == 3:
             nonmanifold_edges = _star_components(
-                np.sort(complex_.edges, axis=1),
-                complex_.edge_cells,
-                _edge_links(complex_, first, second),
+                np.sort(star.edges, axis=1),
+                star.edge_cells,
+                _edge_links(star, star_first, star_second),
+                scope,
             )
     embedded = mesh.ambient_dimension > mesh.topological_dimension
     open_facets = (

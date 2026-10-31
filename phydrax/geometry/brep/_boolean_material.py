@@ -32,6 +32,7 @@ import numpy as np
 from jax import Array
 
 import phydrax.geometry.brep._boolean_arrangement as boolean_arrangement_owner
+import phydrax.geometry.brep._boolean_cells as boolean_cells_owner
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -907,51 +908,69 @@ def _solid_label(
             "BRepBoolean.material.cell must have a certified strict interior box; got no box",
             (cell.classification_key,),
         )
-    pending: deque[tuple[_SurfaceBox, np.ndarray]] = deque()
-    for prepared in _surface_boxes(context, cell.owner):
-        lower, upper = (
-            np.maximum(seed[0], prepared.lower),
-            np.minimum(seed[1], prepared.upper),
-        )
-        if np.all(lower < upper):
-            pending.append((prepared, np.stack((lower, upper))))
-    while pending:
-        prepared, box = pending.popleft()
-        enclosure = _physical_enclosure(prepared, box)
-        if enclosure is not None:
-            coorientation = _coorientations(
-                context, cell, model, query, solid, box, known_faces
+
+    def label_from(seed: np.ndarray, /) -> SolidMaterialLabel | None:
+        pending: deque[tuple[_SurfaceBox, np.ndarray]] = deque()
+        for prepared in _surface_boxes(context, cell.owner):
+            lower, upper = (
+                np.maximum(seed[0], prepared.lower),
+                np.minimum(seed[1], prepared.upper),
             )
-            if coorientation is not None:
-                sides, supports = coorientation
-                return _make_label(
-                    context,
-                    cell,
-                    reference,
-                    sides,
-                    MaterialLabelRoute.COORIENTATION,
-                    supports,
-                    enclosure,
+            if np.all(lower < upper):
+                pending.append((prepared, np.stack((lower, upper))))
+        while pending:
+            prepared, box = pending.popleft()
+            enclosure = _physical_enclosure(prepared, box)
+            if enclosure is not None:
+                coorientation = _coorientations(
+                    context, cell, model, query, solid, box, known_faces
                 )
-            separated = _query_separation(context, cell, reference, query, enclosure)
-            if separated is not None:
-                inside, proof = separated
-                return _make_label(
-                    context,
-                    cell,
-                    reference,
-                    (inside, inside),
-                    MaterialLabelRoute.ENCLOSURE,
-                    (),
-                    proof,
-                )
-        axis = int(np.argmax(box[1] - box[0]))
-        middle = box[0, axis] + 0.5 * (box[1, axis] - box[0, axis])
-        if not box[0, axis] < middle < box[1, axis]:
-            continue
-        first, last = box.copy(), box.copy()
-        first[1, axis], last[0, axis] = middle, middle
-        pending.extend(((prepared, first), (prepared, last)))
+                if coorientation is not None:
+                    sides, supports = coorientation
+                    return _make_label(
+                        context,
+                        cell,
+                        reference,
+                        sides,
+                        MaterialLabelRoute.COORIENTATION,
+                        supports,
+                        enclosure,
+                    )
+                separated = _query_separation(context, cell, reference, query, enclosure)
+                if separated is not None:
+                    inside, proof = separated
+                    return _make_label(
+                        context,
+                        cell,
+                        reference,
+                        (inside, inside),
+                        MaterialLabelRoute.ENCLOSURE,
+                        (),
+                        proof,
+                    )
+            axis = int(np.argmax(box[1] - box[0]))
+            middle = box[0, axis] + 0.5 * (box[1, axis] - box[0, axis])
+            if not box[0, axis] < middle < box[1, axis]:
+                continue
+            first, last = box.copy(), box.copy()
+            first[1, axis], last[0, axis] = middle, middle
+            pending.extend(((prepared, first), (prepared, last)))
+        return None
+
+    label = label_from(seed)
+    if label is not None:
+        return label
+    # A seed on a tangent contact with the other solid (the loop's centre on a
+    # tangent generator) never separates; any other strict-interior seed of
+    # the same cell labels it equally.
+    off_centre = boolean_cells_owner._seed_box(
+        cell.domain,
+        tuple(boolean_arrangement_owner.piece_trim(piece) for piece in cell.loops[0]),
+        0.381966,
+    )
+    label = label_from(off_centre)
+    if label is not None:
+        return label
     raise BRepBooleanFailure(
         "BRepBoolean.material.cell remains unresolved at parameter representability",
         (cell.classification_key, reference.source_id, model.source_revision),

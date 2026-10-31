@@ -28,7 +28,7 @@ from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
-from ._audit import audit_cell_mesh, CellMeshAuditPolicy
+from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshManifoldScope
 from ._certification import MeshCertificationReport
 from ._certification_inputs import MeshCertificationInputs
 from ._contracts import (
@@ -226,11 +226,14 @@ def certify_cell_mesh(
     planar_embedding: PlanarEmbedding | None = None,
     layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
     embedding: GlobalEmbeddingCertificate | None = None,
+    manifold_scope: CellMeshManifoldScope | None = None,
 ) -> CellMeshingResult:
     """Canonicalize and certify one existing CellMesh through native substrates.
 
     ``embedding`` is a prepared global-embedding certificate of the canonical
     mesh; acceptance with ``certification_inputs`` checks and reuses it.
+    ``manifold_scope`` declares the vertex stars a resident patch of a
+    distributed mesh certifies; it applies to the direct audit only.
     """
 
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
@@ -246,6 +249,8 @@ def certify_cell_mesh(
         raise TypeError("geometry must be CellGeometrySpec or None.")
     if embedding is not None and certification_inputs is None:
         raise ValueError("A prepared embedding is reused only by certified acceptance.")
+    if manifold_scope is not None and certification_inputs is not None:
+        raise ValueError("A manifold scope applies only to the direct cell-mesh audit.")
     certification = None
     if certification_inputs is None:
         audit = audit_cell_mesh(
@@ -258,6 +263,7 @@ def certify_cell_mesh(
             attributes=attributes,
             zones=zones,
             labels=labels,
+            manifold_scope=manifold_scope,
         )
     else:
         certification_inputs.require_current(

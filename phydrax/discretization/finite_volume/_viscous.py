@@ -361,7 +361,11 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         discretization: UnstructuredFiniteVolumeDiscretization,
         /,
     ) -> Array:
-        """Least-squares conserved gradient on polygonal/polyhedral FV graphs."""
+        """Least-squares conserved gradient on polygonal/polyhedral FV graphs.
+
+        Across owner-local periodic seams the neighbor's center is taken at its
+        lattice image beside the owner.
+        """
 
         from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -382,6 +386,10 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             discretization.cell_centers[internal_neighbor]
             - discretization.cell_centers[internal_owner]
         )
+        if discretization.periodic_face_translations is not None:
+            displacement = displacement - discretization.periodic_face_translations[
+                internal
+            ].astype(displacement.dtype)
         difference = value[internal_neighbor] - value[internal_owner]
         matrix_terms = displacement[..., :, None] * displacement[..., None, :]
         rhs_terms = difference[..., :, None] * displacement[..., None, :]
@@ -553,14 +561,17 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 axis=-1,
             )
         )
+        # A seam neighbor's center is resident at another lattice image.
+        neighbor_centers = discretization.cell_centers[safe_neighbor]
+        if discretization.periodic_face_translations is not None:
+            neighbor_centers = (
+                neighbor_centers - discretization.periodic_face_translations
+            )
         neighbor_distance = jnp.where(
             neighbor >= 0,
             jnp.abs(
                 jnp.sum(
-                    (
-                        discretization.cell_centers[safe_neighbor]
-                        - discretization.face_centers
-                    )
+                    (neighbor_centers - discretization.face_centers)
                     * (
                         discretization.area_vectors
                         / discretization.face_measures[:, None]
