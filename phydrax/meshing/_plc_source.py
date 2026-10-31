@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from fractions import Fraction
 from typing import final, Literal
 
 import equinox as eqx
@@ -259,6 +260,50 @@ def _integer_array(value: ConvertibleToArray, name: str, /) -> np.ndarray:
     return np.asarray(array, dtype=np.int64)
 
 
+def _declared_facet_planes(
+    facet_planes: ConvertibleToArray | None,
+    facet_plane_tolerances: ConvertibleToArray | None,
+    scope: Scope,
+    /,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Validate declared facet plane rows and their tolerances (default 0)."""
+    if facet_planes is None:
+        if facet_plane_tolerances is not None:
+            raise ValueError("facet_plane_tolerances require facet_planes.")
+        return None, None
+    planes = parse(
+        np.array(facet_planes, dtype=np.float64, copy=True, order="C"),
+        HostFloat64[PlcFacetDim, Literal[3], Literal[3]],
+        "facet_planes",
+        scope=scope,
+    )
+    tolerances = parse(
+        np.zeros((planes.shape[0],), dtype=np.float64)
+        if facet_plane_tolerances is None
+        else np.array(facet_plane_tolerances, dtype=np.float64, copy=True, order="C"),
+        HostFloat64[PlcFacetDim],
+        "facet_plane_tolerances",
+        scope=scope,
+    )
+    declared = planes[~np.all(np.isnan(planes), axis=(1, 2))]
+    if not np.all(np.isfinite(declared)):
+        raise ValueError(
+            "A declared facet plane row must be finite; an undeclared row is all NaN."
+        )
+    for _origin, first, second in declared.tolist():
+        u = [Fraction(value) for value in first]
+        v = [Fraction(value) for value in second]
+        if (
+            u[1] * v[2] == u[2] * v[1]
+            and u[2] * v[0] == u[0] * v[2]
+            and u[0] * v[1] == u[1] * v[0]
+        ):
+            raise ValueError("Declared facet plane axes must be exactly independent.")
+    if not np.all(np.isfinite(tolerances)) or np.any(tolerances < 0.0):
+        raise ValueError("facet_plane_tolerances must be finite and nonnegative.")
+    return planes, tolerances
+
+
 @final
 class PiecewiseLinearComplex(StrictModule, NonTrainableState):
     """Oriented three-dimensional piecewise-linear source for solid filling.
@@ -284,6 +329,16 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
 
     Occurrence paths are explicit source-entity identity components. A repeated
     entity ID is valid only when its authored occurrence path distinguishes it.
+
+    ``facet_planes`` optionally declares an exact plane per facet as rows
+    ``(origin, first_axis, second_axis)`` of shape ``(facet_count, 3, 3)``; an
+    all-NaN row declares none, a declared row is finite with exactly
+    independent axes. ``facet_plane_tolerances`` (``(facet_count,)``, finite and
+    nonnegative, default 0) bounds how far a vertex may lie from its facet's
+    plane beyond rounding. A declared facet's triangles form one face group
+    whatever their binary64 rounding (its internal edges are not PLC edges)
+    once the plane admits each of its vertices: the plane meets the vertex's
+    rounding box or lies within the tolerance; recovery refuses otherwise.
     """
 
     __strict_contract__ = True
@@ -295,6 +350,8 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
     facet_regions: HostInt64[PlcFacetDim, Literal[2]]
     segments: HostInt64[PlcSegmentDim, Literal[2]]
     geometry: CellGeometrySpec | None
+    facet_planes: HostFloat64[PlcFacetDim, Literal[3], Literal[3]] | None
+    facet_plane_tolerances: HostFloat64[PlcFacetDim] | None
     vertex_ids: tuple[str, ...] = eqx.field(static=True)
     vertex_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     facet_ids: tuple[str, ...] = eqx.field(static=True)
@@ -335,6 +392,8 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         region_occurrence_paths: tuple[tuple[str, ...], ...],
         boundary: PlcBoundaryPolicy = "conforming",
         geometry: CellGeometrySpec | None = None,
+        facet_planes: ConvertibleToArray | None = None,
+        facet_plane_tolerances: ConvertibleToArray | None = None,
     ) -> None:
         if isinstance(polygons, np.ndarray) and polygons.ndim != 2:
             raise TypeError("polygons must be a sequence of one-dimensional index loops.")
@@ -420,6 +479,9 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             raise ValueError("Every declared region must occur in the facet incidence table.")
         if geometry is not None and geometry.coordinates.shape != points.shape:
             raise ValueError("geometry must bind one source coordinate row per PLC vertex.")
+        planes, plane_tolerances = _declared_facet_planes(
+            facet_planes, facet_plane_tolerances, scope
+        )
         vertex_paths = _occurrence_path_bank(
             vertex_occurrence_paths, vertex_count, "vertex_occurrence_paths"
         )
@@ -476,6 +538,9 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
 
         for array in (points, offsets, flat, owners, incidence, curves):
             array.setflags(write=False)
+        if planes is not None and plane_tolerances is not None:
+            planes.setflags(write=False)
+            plane_tolerances.setflags(write=False)
         self.vertices = points
         self.polygon_offsets = offsets
         self.polygon_vertices = flat
@@ -483,6 +548,8 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         self.facet_regions = incidence
         self.segments = curves
         self.geometry = geometry
+        self.facet_planes = planes
+        self.facet_plane_tolerances = plane_tolerances
         self.vertex_ids = vertex_names
         self.vertex_occurrence_paths = vertex_paths
         self.facet_ids = facet_names
@@ -527,6 +594,16 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
                     if geometry is not None
                     else {}
                 ),
+                **(
+                    {
+                        "facet_planes": array_tree_fingerprint(planes),
+                        "facet_plane_tolerances": array_tree_fingerprint(
+                            plane_tolerances
+                        ),
+                    }
+                    if planes is not None and plane_tolerances is not None
+                    else {}
+                ),
             }
         )
 
@@ -568,6 +645,8 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             facet_occurrence_paths=value.facet_occurrence_paths,
             boundary=value.boundary,
             geometry=value.geometry,
+            facet_planes=value.facet_planes,
+            facet_plane_tolerances=value.facet_plane_tolerances,
             segment_occurrence_paths=value.segment_occurrence_paths,
             region_occurrence_paths=value.region_occurrence_paths,
         )

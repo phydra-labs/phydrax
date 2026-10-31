@@ -64,6 +64,14 @@ struct PlcInput {
   BoundaryPolicy policy = BoundaryPolicy::kConforming;
   const double* facet_tolerances = nullptr;
   const double* segment_tolerances = nullptr;
+  // Declared exact facet planes, 9 values per facet (origin, first axis,
+  // second axis); an all-NaN row declares none. A declared facet groups its
+  // triangles across shared edges whatever their binary64 rounding, so its
+  // internal edges are not PLC edges, once every vertex of its polygons is
+  // admitted: the plane meets the vertex's rounding box or lies within the
+  // facet's declared tolerance of it (null tolerances are 0).
+  const double* facet_planes = nullptr;
+  const double* facet_plane_tolerances = nullptr;
 };
 
 namespace detail {

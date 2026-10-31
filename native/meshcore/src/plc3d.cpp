@@ -59,6 +59,62 @@ bool legal_contact(int8_t kind) {
          kind == PHX_MC_SHARED_EDGE;
 }
 
+// The exact normal of a declared plane row (origin, first axis, second axis):
+// the cross product of its axes.
+std::array<Expansion, 3> declared_plane_normal(const double* plane) {
+  const double* u = plane + 3;
+  const double* v = plane + 6;
+  return {Expansion::product(u[1], v[2]) - Expansion::product(u[2], v[1]),
+          Expansion::product(u[2], v[0]) - Expansion::product(u[0], v[2]),
+          Expansion::product(u[0], v[1]) - Expansion::product(u[1], v[0])};
+}
+
+// Whether the declared plane row `plane` with exact normal `normal` admits
+// the binary64 carrier x, exactly: the plane meets the closed box of the
+// reals that round to x (per axis, between the midpoints with the adjacent
+// binary64 values), so x is a correct rounding of a point of the plane, or
+// lies within `tolerance` of x. `distance` receives an upper bound of the
+// distance from x to the plane.
+bool declared_plane_admits(const double* plane, const std::array<Expansion, 3>& normal,
+                           double tolerance, const double* x, double& distance) {
+  const double* origin = plane;
+  // Twice the signed offset n . (c - o) at the corners c of the box, from
+  // the exact doubled bounds x + next(x) of each axis.
+  std::array<Expansion, 3> lower;
+  std::array<Expansion, 3> upper;
+  for (int axis = 0; axis < 3; ++axis) {
+    const Expansion doubled_origin = Expansion::sum(origin[axis], origin[axis]);
+    lower[static_cast<std::size_t>(axis)] =
+        Expansion::sum(x[axis], std::nextafter(x[axis], -std::numeric_limits<double>::infinity())) -
+        doubled_origin;
+    upper[static_cast<std::size_t>(axis)] =
+        Expansion::sum(x[axis], std::nextafter(x[axis], std::numeric_limits<double>::infinity())) -
+        doubled_origin;
+  }
+  bool below = false;
+  bool above = false;
+  for (int corner = 0; corner < 8; ++corner) {
+    Expansion offset;
+    for (int axis = 0; axis < 3; ++axis) {
+      const std::size_t row = static_cast<std::size_t>(axis);
+      offset = offset + normal[row] * ((corner >> axis) & 1 ? upper[row] : lower[row]);
+    }
+    below = below || offset.sign() <= 0;
+    above = above || offset.sign() >= 0;
+  }
+  Expansion offset;
+  for (int axis = 0; axis < 3; ++axis) {
+    offset = offset + normal[static_cast<std::size_t>(axis)] *
+                          Expansion::difference(x[axis], origin[axis]);
+  }
+  const Expansion length = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+  distance = std::nextafter(std::fabs(offset.estimate()) / std::sqrt(length.estimate()) *
+                                (1.0 + 0x1p-40),
+                            std::numeric_limits<double>::infinity());
+  if (below && above) return true;
+  return (length * Expansion::product(tolerance, tolerance) - offset * offset).sign() >= 0;
+}
+
 struct Box {
   double lower[3];
   double upper[3];
@@ -326,6 +382,8 @@ class SourcePreparer {
     if (seeds != PHX_MC_OK) return seeds;
     const int32_t polygons = triangulate_polygons();
     if (polygons != PHX_MC_OK) return polygons;
+    const int32_t planes = check_planes();
+    if (planes != PHX_MC_OK) return planes;
     build_groups();
     const int32_t edges = build_edges();
     if (edges != PHX_MC_OK) return edges;
@@ -505,16 +563,10 @@ class SourcePreparer {
     return PHX_MC_OK;
   }
 
-  bool coplanar_and_opposed(int32_t first, int32_t second) const {
+  // Whether the two triangles share an edge traversed in opposite directions.
+  bool opposed(int32_t first, int32_t second) const {
     const Triple& a = triangles_[static_cast<std::size_t>(first)];
     const Triple& b = triangles_[static_cast<std::size_t>(second)];
-    int32_t apex = -1;
-    for (int32_t vertex : b) {
-      if (std::find(a.begin(), a.end(), vertex) == a.end()) apex = vertex;
-    }
-    if (apex < 0 || orient3d(point(a[0]), point(a[1]), point(a[2]), point(apex)) != 0) {
-      return false;
-    }
     for (int r = 0; r < 3; ++r) {
       for (int q = 0; q < 3; ++q) {
         if (a[static_cast<std::size_t>(r)] == b[static_cast<std::size_t>((q + 1) % 3)] &&
@@ -522,6 +574,70 @@ class SourcePreparer {
       }
     }
     return false;
+  }
+
+  bool coplanar(int32_t first, int32_t second) const {
+    const Triple& a = triangles_[static_cast<std::size_t>(first)];
+    const Triple& b = triangles_[static_cast<std::size_t>(second)];
+    int32_t apex = -1;
+    for (int32_t vertex : b) {
+      if (std::find(a.begin(), a.end(), vertex) == a.end()) apex = vertex;
+    }
+    return apex >= 0 && orient3d(point(a[0]), point(a[1]), point(a[2]), point(apex)) == 0;
+  }
+
+  // A facet declares a plane when its row of facet_planes is not all NaN.
+  // The row must then be finite with exactly independent axes and its
+  // tolerance finite and nonnegative, else the facet is refused
+  // (SOURCE_DEVIATION, FACET). Every vertex of the facet's polygons must be
+  // admitted by the plane (declared_plane_admits), else the facet and the
+  // first vertex refused, with that vertex's certified distance to the plane
+  // and the tolerance as evidence.
+  int32_t check_planes() {
+    if (input_.facet_planes == nullptr) {
+      return input_.facet_plane_tolerances == nullptr ? PHX_MC_OK : PHX_MC_INVALID_ARGUMENT;
+    }
+    const auto facets = static_cast<std::size_t>(input_.facet_count);
+    declared_.assign(facets, 0);
+    std::vector<std::array<Expansion, 3>> normals(facets);
+    for (std::size_t facet = 0; facet < facets; ++facet) {
+      const double* row = input_.facet_planes + 9 * facet;
+      if (std::all_of(row, row + 9, [](double value) { return std::isnan(value); })) continue;
+      const double tolerance =
+          input_.facet_plane_tolerances == nullptr ? 0.0 : input_.facet_plane_tolerances[facet];
+      std::array<Expansion, 3> normal = declared_plane_normal(row);
+      if (!std::all_of(row, row + 9, [](double value) { return std::isfinite(value); }) ||
+          !std::isfinite(tolerance) || tolerance < 0.0 ||
+          std::all_of(normal.begin(), normal.end(),
+                      [](const Expansion& component) { return component.is_zero(); })) {
+        return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcFacet,
+                    static_cast<int64_t>(facet));
+      }
+      declared_[facet] = 1;
+      normals[facet] = std::move(normal);
+    }
+    for (int64_t polygon = 0; polygon < input_.polygon_count; ++polygon) {
+      const auto facet = static_cast<std::size_t>(input_.polygon_facets[polygon]);
+      if (declared_[facet] == 0) continue;
+      const double tolerance =
+          input_.facet_plane_tolerances == nullptr ? 0.0 : input_.facet_plane_tolerances[facet];
+      for (int64_t corner = input_.polygon_offsets[polygon];
+           corner < input_.polygon_offsets[polygon + 1]; ++corner) {
+        const int32_t vertex = input_.polygon_vertices[corner];
+        double distance = 0.0;
+        if (!declared_plane_admits(input_.facet_planes + 9 * facet, normals[facet], tolerance,
+                                   point(vertex), distance)) {
+          output_.source_refusal = {distance, tolerance};
+          return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcFacet,
+                      static_cast<int64_t>(facet), kPlcPoint, vertex);
+        }
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  bool declared(int32_t facet) const {
+    return !declared_.empty() && declared_[static_cast<std::size_t>(facet)] != 0;
   }
 
   void build_groups() {
@@ -541,8 +657,11 @@ class SourcePreparer {
       while (end < uses.size() && uses[end].first == uses[begin].first) ++end;
       if (end - begin == 2) {
         const int32_t a = uses[begin].second, b = uses[begin + 1].second;
-        if (triangle_facet_[static_cast<std::size_t>(a)] == triangle_facet_[static_cast<std::size_t>(b)] &&
-            coplanar_and_opposed(a, b)) {
+        const int32_t facet = triangle_facet_[static_cast<std::size_t>(a)];
+        // A declared facet groups across every shared edge; an undeclared
+        // one only where the two triangles are exactly coplanar.
+        if (facet == triangle_facet_[static_cast<std::size_t>(b)] && opposed(a, b) &&
+            (declared(facet) || coplanar(a, b))) {
           parent[static_cast<std::size_t>(topology::find_root(parent, a))] =
               topology::find_root(parent, b);
         }
@@ -787,6 +906,7 @@ class SourcePreparer {
   std::vector<int32_t> triangle_polygon_;
   std::vector<int32_t> triangle_facet_;
   std::vector<int32_t> triangle_group_;
+  std::vector<char> declared_;
   std::vector<std::pair<uint64_t, int32_t>> edge_uses_;
   std::vector<int32_t> edges_;
   std::unordered_map<uint64_t, int32_t> edge_ids_;
@@ -5889,6 +6009,7 @@ int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
     const int32_t source_status = prepare_plc_source(input, prepared);
     if (source_status != PHX_MC_OK) {
       result.failure = prepared.failure;
+      result.source_refusal = prepared.source_refusal;
       return source_status;
     }
     PlcRecoveryBuilder builder(input, prepared);

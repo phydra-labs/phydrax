@@ -445,6 +445,8 @@ class _Plc3DPrepareSourceRequest(ctypes.Structure):
         ("boundary_policy", _I32),
         ("facet_tolerances", _P),
         ("segment_tolerances", _P),
+        ("facet_planes", _P),
+        ("facet_plane_tolerances", _P),
         ("result", _P),
     )
 
@@ -4750,6 +4752,8 @@ def _plc3d_build(
     boundary_policy: PlcBoundaryPolicy = PlcBoundaryPolicy.CONFORMING,
     facet_tolerances: object | None = None,
     segment_tolerances: object | None = None,
+    facet_planes: object | None = None,
+    facet_plane_tolerances: object | None = None,
 ) -> PlcSourceData:
     """Run native PLC source preparation or full protected tetrahedral recovery."""
 
@@ -4827,6 +4831,23 @@ def _plc3d_build(
         segment_array.shape[0],
     ):
         raise ValueError("segment_tolerances must have shape (segment_count,).")
+    facet_count = region_array.shape[0]
+    plane_array = (
+        None if facet_planes is None else _real_array(facet_planes, "facet_planes")
+    )
+    if plane_array is not None and plane_array.shape != (facet_count, 3, 3):
+        raise ValueError("facet_planes must have shape (facet_count, 3, 3).")
+    if facet_plane_tolerances is not None and plane_array is None:
+        raise ValueError("facet_plane_tolerances require facet_planes.")
+    plane_tolerance_array = (
+        None
+        if facet_plane_tolerances is None
+        else _real_array(facet_plane_tolerances, "facet_plane_tolerances")
+    )
+    if plane_tolerance_array is not None and plane_tolerance_array.shape != (
+        facet_count,
+    ):
+        raise ValueError("facet_plane_tolerances must have shape (facet_count,).")
 
     library = load_meshcore()
     handle = ctypes.c_void_p()
@@ -4848,6 +4869,8 @@ def _plc3d_build(
         policy,
         None if facet_tolerance_array is None else facet_tolerance_array.ctypes.data,
         None if segment_tolerance_array is None else segment_tolerance_array.ctypes.data,
+        None if plane_array is None else plane_array.ctypes.data,
+        None if plane_tolerance_array is None else plane_tolerance_array.ctypes.data,
         ctypes.addressof(handle),
     )
     code = MeshcoreStatus(library[operation](ctypes.byref(request)))
@@ -4987,8 +5010,20 @@ def prepare_plc_source(
     boundary_policy: PlcBoundaryPolicy = PlcBoundaryPolicy.CONFORMING,
     facet_tolerances: object | None = None,
     segment_tolerances: object | None = None,
+    facet_planes: object | None = None,
+    facet_plane_tolerances: object | None = None,
 ) -> PlcSourceData:
-    """Prepare authored PLC topology without tetrahedral recovery."""
+    """Prepare authored PLC topology without tetrahedral recovery.
+
+    ``facet_planes`` (``(facet_count, 3, 3)``: origin, first axis, second
+    axis; an all-NaN row declares none) declares exact facet planes: a
+    declared facet's triangles form one group whatever their binary64
+    rounding, so its internal edges are not PLC edges, once every vertex is
+    admitted (the plane meets the vertex's rounding box or lies within the
+    facet's ``facet_plane_tolerances`` entry, default 0); otherwise the facet
+    refuses with ``SOURCE_DEVIATION`` naming the vertex and its certified
+    distance.
+    """
 
     return _plc3d_build(
         "phx_mc_plc3d_prepare_source",
@@ -5003,6 +5038,8 @@ def prepare_plc_source(
         boundary_policy=boundary_policy,
         facet_tolerances=facet_tolerances,
         segment_tolerances=segment_tolerances,
+        facet_planes=facet_planes,
+        facet_plane_tolerances=facet_plane_tolerances,
     )
 
 
@@ -5020,12 +5057,15 @@ def recover_plc(
     boundary_policy: PlcBoundaryPolicy = PlcBoundaryPolicy.CONFORMING,
     facet_tolerances: object | None = None,
     segment_tolerances: object | None = None,
+    facet_planes: object | None = None,
+    facet_plane_tolerances: object | None = None,
 ) -> PlcSourceData:
     """Recover a PLC with witnesses indexed by exported raw carrier banks.
 
     Stratum 1 entities index ``plc_edges`` and stratum 2 entities index
     ``input_triangles``. Python consumers must resolve these rows through exact
-    source identity before constructing a persistent source bank.
+    source identity before constructing a persistent source bank. Declared
+    facet planes are as for ``prepare_plc_source``.
     """
 
     return _plc3d_build(
@@ -5041,6 +5081,8 @@ def recover_plc(
         boundary_policy=boundary_policy,
         facet_tolerances=facet_tolerances,
         segment_tolerances=segment_tolerances,
+        facet_planes=facet_planes,
+        facet_plane_tolerances=facet_plane_tolerances,
     )
 
 
@@ -5058,11 +5100,14 @@ def recover_plc_3d(
     boundary_policy: PlcBoundaryPolicy = PlcBoundaryPolicy.CONFORMING,
     facet_tolerances: object | None = None,
     segment_tolerances: object | None = None,
+    facet_planes: object | None = None,
+    facet_plane_tolerances: object | None = None,
 ) -> PlcRecovery3D:
     """Recover a PLC with raw carrier-row witnesses and region labels.
 
     Stratum 1 entities index ``plc_edges``; stratum 2 entities index
     ``input_triangles``. These are not persistent canonical source-bank rows.
+    Declared facet planes are as for ``prepare_plc_source``.
     """
 
     segment_bank = np.empty((0, 2), dtype=np.int32) if segments is None else segments
@@ -5078,6 +5123,8 @@ def recover_plc_3d(
         boundary_policy=boundary_policy,
         facet_tolerances=facet_tolerances,
         segment_tolerances=segment_tolerances,
+        facet_planes=facet_planes,
+        facet_plane_tolerances=facet_plane_tolerances,
     )
     return PlcRecovery3D(
         recovered.status,

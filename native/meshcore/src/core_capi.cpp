@@ -101,7 +101,8 @@ int32_t validate_plc3d_prepare_request(const phx_mc_plc3d_prepare_source_request
       !addressable(request.seed_count, 3, sizeof(double)) ||
       !addressable(request.seed_count, 1, sizeof(int32_t)) ||
       !addressable(request.facet_count, 1, sizeof(double)) ||
-      !addressable(request.segment_count, 1, sizeof(double))) {
+      !addressable(request.segment_count, 1, sizeof(double)) ||
+      !addressable(request.facet_count, 9, sizeof(double))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   if (request.points == nullptr || request.polygon_offsets == nullptr ||
@@ -151,6 +152,8 @@ int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
     input.policy = static_cast<phx::mc::BoundaryPolicy>(request->boundary_policy);
     input.facet_tolerances = request->facet_tolerances;
     input.segment_tolerances = request->segment_tolerances;
+    input.facet_planes = request->facet_planes;
+    input.facet_plane_tolerances = request->facet_plane_tolerances;
     auto result = std::make_unique<phx_mc_plc3d_result>();
     const int32_t status = builder(input, result->recovery);
     if (status == PHX_MC_OK ||

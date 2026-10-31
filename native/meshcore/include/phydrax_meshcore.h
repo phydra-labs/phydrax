@@ -1135,6 +1135,14 @@ typedef struct phx_mc_plc3d_prepare_source_request {
   int32_t boundary_policy;
   const double* facet_tolerances;
   const double* segment_tolerances;
+  /* Optional declared exact facet planes: 9 values per facet (origin, first
+   * axis, second axis; an all-NaN row declares none) and their tolerances
+   * (facet_count values; null = 0). A declared facet's triangles form one
+   * group whatever their rounding once every vertex is admitted (the plane
+   * meets its rounding box or lies within the tolerance), else the facet
+   * refuses with SOURCE_DEVIATION naming the vertex. */
+  const double* facet_planes;
+  const double* facet_plane_tolerances;
   phx_mc_plc3d_result** result;
 } phx_mc_plc3d_prepare_source_request;
 PHX_MC_API int32_t phx_mc_plc3d_prepare_source(

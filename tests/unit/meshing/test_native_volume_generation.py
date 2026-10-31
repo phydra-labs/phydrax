@@ -482,6 +482,89 @@ def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> 
     assert np.all(np.asarray(requested.boundary_faces) < complex_.vertices.shape[0])
 
 
+def _declared_rotated_cube(
+    facet_planes: object | None, facet_plane_tolerances: object | None = None
+) -> NativePlcSource:
+    base = _grouped_cube_source(angle=0.3).complex
+    loops = np.asarray(base.polygon_vertices).reshape(-1, 3)
+    complex_ = PiecewiseLinearComplex(
+        base.vertices,
+        loops,
+        base.polygon_facets,
+        base.facet_regions,
+        base.region_ids,
+        segments=base.segments,
+        vertex_ids=base.vertex_ids,
+        vertex_occurrence_paths=base.vertex_occurrence_paths,
+        facet_ids=base.facet_ids,
+        facet_occurrence_paths=base.facet_occurrence_paths,
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=base.region_occurrence_paths,
+        boundary="fixed",
+        facet_planes=facet_planes,
+        facet_plane_tolerances=facet_plane_tolerances,
+    )
+    return NativePlcSource(complex_, "declared-cube", "revision-1")
+
+
+def _rotated_cube_planes() -> np.ndarray:
+    points = np.asarray(_grouped_cube_source(angle=0.3).complex.vertices)
+    corners = ((0, 2, 1), (4, 5, 6), (0, 1, 4), (2, 6, 3), (0, 4, 2), (1, 3, 5))
+    return np.asarray(
+        [(points[a], points[b] - points[a], points[c] - points[a]) for a, b, c in corners]
+    )
+
+
+def test_declared_facet_planes_group_rounded_cube_faces_without_diagonal_segments() -> (
+    None
+):
+    seed = RegionSeed(
+        np.zeros((3,), dtype=np.float64), "solid", "solid-material", RegionRole.SOLID
+    )
+    undeclared = _declared_rotated_cube(None)
+    declared = _declared_rotated_cube(_rotated_cube_planes(), np.full((6,), 1e-12))
+    # The rotated faces' two triangles are not exactly coplanar: undeclared,
+    # each face diagonal is a PLC edge and a recovered segment source.
+    assert undeclared.complex.facet_planes is None
+    assert (
+        undeclared.complex.complex_id
+        == _grouped_cube_source(angle=0.3).complex.complex_id
+    )
+    assert declared.complex.complex_id != undeclared.complex.complex_id
+    loose = _construct(undeclared, _request(undeclared, region_seeds=(seed,)))
+    grouped = _construct(declared, _request(declared, region_seeds=(seed,)))
+    complex_ = declared.complex
+    boundary_ids = {
+        complex_.plc_edge_ids[row]
+        for row, facets in enumerate(complex_.plc_edge_facets)
+        if len(facets) == 2
+    }
+    assert len(boundary_ids) == 12
+    assert len(set(loose.segment_source_ids)) == 18
+    assert set(grouped.segment_source_ids) == boundary_ids
+    assert set(grouped.face_source_ids) == set(complex_.facet_ids)
+
+
+def test_declared_facet_planes_are_validated_rows() -> None:
+    planes = _rotated_cube_planes()
+    with pytest.raises(ValueError, match="facet_plane_tolerances require"):
+        _declared_rotated_cube(None, np.zeros((6,)))
+    partial = planes.copy()
+    partial[2, 1, 0] = np.nan
+    with pytest.raises(ValueError, match="must be finite"):
+        _declared_rotated_cube(partial)
+    dependent = planes.copy()
+    dependent[2, 2] = 2.0 * dependent[2, 1]
+    with pytest.raises(ValueError, match="exactly independent"):
+        _declared_rotated_cube(dependent)
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        _declared_rotated_cube(planes, np.full((6,), -1.0))
+    undeclared_rows = np.full((6, 3, 3), np.nan)
+    accepted = _declared_rotated_cube(undeclared_rows)
+    np.testing.assert_array_equal(accepted.complex.facet_plane_tolerances, np.zeros((6,)))
+
+
 def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
     base = _source("conforming")
     complex_ = PiecewiseLinearComplex(
