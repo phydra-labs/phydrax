@@ -33,6 +33,8 @@ constexpr std::int64_t kReciprocal = 11;
 constexpr std::int64_t kSquare = 12;
 constexpr std::int64_t kCompare = 13;
 constexpr std::int64_t kSelect = 14;
+constexpr std::int64_t kMaximum = 15;
+constexpr std::int64_t kMinimum = 16;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -428,6 +430,31 @@ void compare_and_select() {
   PHX_CHECK(execute(reaching) == PHX_MC_INVALID_INPUT);
 }
 
+// Shared vectors with tests/unit/geometry (host interpreter): endpointwise and
+// exact, infinite endpoints included.
+void maximum_and_minimum() {
+  Program program;
+  const std::int64_t left =
+      program.values({{-1.0, 2.0}, {-kInfinity, 0.5}, {3.0, kInfinity}, {-2.0, -1.0}});
+  const std::int64_t right =
+      program.values({{0.0, 1.0}, {1e-12, 1e-12}, {-kInfinity, 4.0}, {-3.0, 5.0}});
+  const std::int64_t high = program.slots(4);
+  program.row(kMaximum, high, 4, left, -1, right, -1, 0);
+  const std::int64_t low = program.slots(4);
+  program.row(kMinimum, low, 4, left, -1, right, -1, 0);
+  PHX_CHECK(execute(program) == PHX_MC_OK);
+  const double expected_high[4][2] = {
+      {0.0, 2.0}, {1e-12, 0.5}, {3.0, kInfinity}, {-2.0, 5.0}};
+  const double expected_low[4][2] = {
+      {-1.0, 1.0}, {-kInfinity, 1e-12}, {-kInfinity, 4.0}, {-3.0, -1.0}};
+  for (int k = 0; k < 4; ++k) {
+    PHX_CHECK(program.lower[high + k] == expected_high[k][0]);
+    PHX_CHECK(program.upper[high + k] == expected_high[k][1]);
+    PHX_CHECK(program.lower[low + k] == expected_low[k][0]);
+    PHX_CHECK(program.upper[low + k] == expected_low[k][1]);
+  }
+}
+
 void interval_capability_query() {
   std::uint64_t opcodes = 0;
   const std::uint64_t expected =
@@ -437,7 +464,8 @@ void interval_capability_query() {
       (std::uint64_t{1} << kReduceSum) | (std::uint64_t{1} << kSine) |
       (std::uint64_t{1} << kCosine) | (std::uint64_t{1} << kSqrt) |
       (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
-      (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect);
+      (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect) |
+      (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -613,6 +641,7 @@ int main() {
   unary_interval_enclosures();
   interval_capability_query();
   compare_and_select();
+  maximum_and_minimum();
   deterministic_random_programs();
   validation_and_empty_programs();
   floating_point_modes();

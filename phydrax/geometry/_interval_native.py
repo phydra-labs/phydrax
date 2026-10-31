@@ -40,6 +40,8 @@ _RECIPROCAL = 11
 _SQUARE = 12
 _COMPARE = 13
 _SELECT = 14
+_MAXIMUM = 15
+_MINIMUM = 16
 
 
 def _size(shape: _Shape, /) -> int:
@@ -335,6 +337,65 @@ class _Builder:
         exact = None if value.exact is None else value.exact.transpose(axes)
         return _Tensor(shape, value.offset, locations, exact)
 
+    def _dot_general(
+        self,
+        left: _Tensor,
+        right: _Tensor,
+        params: Mapping[str, Any],
+        output_shape: _Shape,
+        /,
+    ) -> _Tensor:
+        """Contract as an elementwise product over (batch, free, free, contract)."""
+        (left_contract, right_contract), (left_batch, right_batch) = params[
+            "dimension_numbers"
+        ]
+        left_contract = tuple(int(axis) for axis in left_contract)
+        right_contract = tuple(int(axis) for axis in right_contract)
+        left_batch = tuple(int(axis) for axis in left_batch)
+        right_batch = tuple(int(axis) for axis in right_batch)
+        left_free = tuple(
+            axis
+            for axis in range(len(left.shape))
+            if axis not in left_contract and axis not in left_batch
+        )
+        right_free = tuple(
+            axis
+            for axis in range(len(right.shape))
+            if axis not in right_contract and axis not in right_batch
+        )
+        batch_shape = tuple(left.shape[axis] for axis in left_batch)
+        left_free_shape = tuple(left.shape[axis] for axis in left_free)
+        right_free_shape = tuple(right.shape[axis] for axis in right_free)
+        contract_shape = tuple(left.shape[axis] for axis in left_contract)
+        if (
+            batch_shape != tuple(right.shape[axis] for axis in right_batch)
+            or contract_shape != tuple(right.shape[axis] for axis in right_contract)
+            or batch_shape + left_free_shape + right_free_shape != output_shape
+        ):
+            raise IntervalExtensionError("native dot_general shapes do not align.")
+        product_shape = batch_shape + left_free_shape + right_free_shape + contract_shape
+        batch_count, left_count = len(batch_shape), len(left_free_shape)
+        right_start = batch_count + left_count
+        contract_start = right_start + len(right_free_shape)
+        ordered_left = self._transpose(left, left_batch + left_free + left_contract)
+        ordered_right = self._transpose(right, right_batch + right_free + right_contract)
+        left_mapped = self._mapped(
+            ordered_left,
+            product_shape,
+            tuple(range(right_start)) + tuple(range(contract_start, len(product_shape))),
+        )
+        right_mapped = self._mapped(
+            ordered_right,
+            product_shape,
+            tuple(range(batch_count)) + tuple(range(right_start, len(product_shape))),
+        )
+        product = self._emit_binary(_MULTIPLY, left_mapped, right_mapped, product_shape)
+        if not contract_shape:
+            return product
+        return self._reduce_sum(
+            product, tuple(range(contract_start, len(product_shape))), output_shape
+        )
+
     def _slice(
         self, value: _Tensor, slices: tuple[slice, ...], output_shape: _Shape, /
     ) -> _Tensor:
@@ -582,6 +643,20 @@ class _Builder:
                 "integer_pow", (value,), {"y": exponent - 1}, output_shape, False
             )[0]
             return (self._emit_binary(_MULTIPLY, previous, value, output_shape),)
+        if name in ("max", "min"):
+            first, second = values
+            if first.exact is not None and second.exact is not None:
+                select = np.maximum if name == "max" else np.minimum
+                exact = np.asarray(
+                    select(
+                        np.broadcast_to(first.exact, output_shape),
+                        np.broadcast_to(second.exact, output_shape),
+                    ),
+                    dtype=np.float64,
+                )
+                return (self._seed(exact, exact, exact=exact),)
+            opcode = _MAXIMUM if name == "max" else _MINIMUM
+            return (self._emit_binary(opcode, first, second, output_shape),)
         if name == "pow":
             exponent = values[1].exact
             if (
@@ -851,9 +926,14 @@ class _Builder:
             "cos",
             "integer_pow",
             "pow",
+            "max",
+            "min",
         ):
             (output_shape,) = output_shapes
             return self._lower_arithmetic(name, values, params, output_shape, same_input)
+        if name == "dot_general":
+            (output_shape,) = output_shapes
+            return (self._dot_general(values[0], values[1], params, output_shape),)
         if name == "reduce_sum":
             (output_shape,) = output_shapes
             axes = tuple(int(axis) for axis in params["axes"])

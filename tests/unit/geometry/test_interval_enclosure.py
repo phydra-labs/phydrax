@@ -431,6 +431,31 @@ def test_native_interval_comparison_selection_matches_host(comparison: str) -> N
     np.testing.assert_array_equal(native_bounds[1], host_bounds[1])
 
 
+@pytest.mark.parametrize("extremum", ("maximum", "minimum"))
+def test_native_interval_extrema_match_host(extremum: str) -> None:
+    # Shared vectors with the native test_interval_program maximum/minimum case,
+    # plus a constant operand (the superquadric norm floor).
+    select = jnp.maximum if extremum == "maximum" else jnp.minimum
+
+    def function(point: jax.Array) -> jax.Array:
+        return jnp.stack((select(point[0], point[1]), select(point[0], 1.0e-12)))
+
+    lower = np.asarray(
+        ((-1.0, 0.0), (-np.inf, 1.0e-12), (3.0, -np.inf), (-2.0, -3.0)), dtype=np.float64
+    )
+    upper = np.asarray(
+        ((2.0, 1.0), (0.5, 1.0e-12), (np.inf, 4.0), (-1.0, 5.0)), dtype=np.float64
+    )
+    native = prepare_interval_function(function, 2, execution="native")
+    host = prepare_interval_function(function, 2, execution="host")
+    native_bounds = native.evaluate(lower, upper)
+    host_bounds = host.evaluate(lower, upper)
+
+    assert native.execution == "native"
+    np.testing.assert_array_equal(native_bounds[0], host_bounds[0])
+    np.testing.assert_array_equal(native_bounds[1], host_bounds[1])
+
+
 def test_native_interval_lowers_the_finite_norm_gradient() -> None:
     center = jnp.asarray((0.37, 0.13, -0.36), dtype=jnp.float64)
 

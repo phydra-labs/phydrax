@@ -35,6 +35,10 @@ constexpr std::int64_t kCompare = 13;
 // case0 when certainly false (p.upper <= 0), else the hull of both. p is
 // operand a; case0 is the contiguous block at b and case1 the block at b + aux.
 constexpr std::int64_t kSelect = 14;
+// Elementwise maximum/minimum: monotone, so endpointwise and exact (NumPy NaN
+// propagation, -0 below +0).
+constexpr std::int64_t kMaximum = 15;
+constexpr std::int64_t kMinimum = 16;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -43,7 +47,8 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kReduceSum) | (std::uint64_t{1} << kSine) |
     (std::uint64_t{1} << kCosine) | (std::uint64_t{1} << kSqrt) |
     (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
-    (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect);
+    (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect) |
+    (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum);
 
 constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 constexpr double kPi = 3.141592653589793;  // binary64 pi, Python math.pi.
@@ -154,7 +159,7 @@ bool operand_valid(const std::int64_t* indices, std::int64_t index_count, std::i
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kSelect) return false;
+  if (row.opcode < kGather || row.opcode > kMinimum) return false;
   if (row.size < 0 || row.out < previous_end || row.out > workspace_size - row.size) return false;
   const auto operand = [&](std::int64_t offset, std::int64_t index) {
     return operand_valid(indices, index_count, offset, index, row.size, row.out);
@@ -173,6 +178,8 @@ bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* in
     case kSubtract:
     case kSubtractSame:
     case kMultiply:
+    case kMaximum:
+    case kMinimum:
       return row.aux == 0 && operand(row.a, row.a_index) && operand(row.b, row.b_index);
     case kCompare:
       return (row.aux == 0 || row.aux == 1) && operand(row.a, row.a_index) &&
@@ -397,6 +404,14 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
         }
         break;
       }
+      case kMaximum:
+        low = maximum(a_low, b_low);
+        high = maximum(a_high, b_high);
+        break;
+      case kMinimum:
+        low = minimum(a_low, b_low);
+        high = minimum(a_high, b_high);
+        break;
       default: {  // kMultiply
         const double ll = product(a_low, b_low);
         const double lu = product(a_low, b_high);
