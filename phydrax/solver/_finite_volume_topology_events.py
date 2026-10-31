@@ -2332,6 +2332,7 @@ def _candidate_admission_failure(
     *,
     ownership_migration: bool = False,
     current_epoch: TopologyEpoch | None = None,
+    migration_partition_ids: tuple[str, str] | None = None,
 ) -> TopologyEventStatus | None:
     """Admit one physical event or exact owner-placement migration."""
     if ownership_migration:
@@ -2365,13 +2366,21 @@ def _candidate_admission_failure(
         if not migration.result.feasible or migration.result.migration_count <= 0:
             return TopologyEventStatus.FAILED_RESOURCE_LIMIT
         target = candidate.candidate_epoch
+        # A composite layout migrates one part: the migration binds that part's
+        # directories, while the epochs bind the joined layout partitions.
+        source_partition, target_partition = (
+            (current_epoch.partition_id, target.partition_id)
+            if migration_partition_ids is None
+            else migration_partition_ids
+        )
         if (
             target.index != current_epoch.index + 1
             or target.topology_id != current_epoch.topology_id
             or target.geometry_id != current_epoch.geometry_id
             or target.partition_id == current_epoch.partition_id
-            or migration.source_directory_id != current_epoch.partition_id
-            or migration.target_directory_id != target.partition_id
+            or source_partition == target_partition
+            or migration.source_directory_id != source_partition
+            or migration.target_directory_id != target_partition
             or candidate.candidate_artifacts.epoch_id != target.epoch_id
         ):
             return TopologyEventStatus.FAILED_STALE_EPOCH
@@ -2469,6 +2478,7 @@ def _prepare_topology_event_artifacts(
         self.coverage_tolerance,
         ownership_migration=self.ownership_migration,
         current_epoch=self.journal.epoch_table[-1],
+        migration_partition_ids=self.migration_partition_ids,
     )
     if failure is not None:
         return self._failure(source_content, failure, automatic_remap=automatic_remap)
@@ -2515,6 +2525,7 @@ class FiniteVolumeTopologyEventTransaction:
         target_geometry: Any = None,
         remap_policy: CommonRefinementPolicy | None = None,
         remap_provenance: str = "topology-event",
+        migration_partition_ids: tuple[str, str] | None = None,
     ) -> None:
         if not isinstance(journal, FiniteVolumeTopologyEventJournal):
             raise TypeError("journal must be FiniteVolumeTopologyEventJournal.")
@@ -2531,6 +2542,20 @@ class FiniteVolumeTopologyEventTransaction:
         ):
             raise ValueError("Repartition requests cannot coalesce with physical events.")
         self.ownership_migration = event_kinds == {TopologyEventKind.REPARTITION}
+        if migration_partition_ids is not None and (
+            not self.ownership_migration
+            or not isinstance(migration_partition_ids, tuple)
+            or len(migration_partition_ids) != 2
+            or any(
+                not isinstance(value, str) or not value
+                for value in migration_partition_ids
+            )
+        ):
+            raise ValueError(
+                "migration_partition_ids must name the migrated part's source and "
+                "target directories of one repartition."
+            )
+        self.migration_partition_ids = migration_partition_ids
         if not isinstance(accepted, (bool, np.bool_)):
             raise TypeError("accepted must be boolean.")
         tolerance = float(coverage_tolerance)
@@ -3038,6 +3063,7 @@ class FiniteVolumeTopologyEventScheduler:
         remap_policy = constructor_kwargs.pop("remap_policy", None)
         remap_provenance = constructor_kwargs.pop("remap_provenance", "topology-event")
         coverage_tolerance = constructor_kwargs.pop("coverage_tolerance", 0.0)
+        migration_partition_ids = constructor_kwargs.pop("migration_partition_ids", None)
         active_cell_mask = constructor_kwargs.pop("active_cell_mask", _MISSING)
         admissibility = constructor_kwargs.pop("admissibility", None)
         transaction = FiniteVolumeTopologyEventTransaction(
@@ -3055,6 +3081,7 @@ class FiniteVolumeTopologyEventScheduler:
             target_geometry=target_geometry,
             remap_policy=remap_policy,
             remap_provenance=remap_provenance,
+            migration_partition_ids=migration_partition_ids,
         )
         result = transaction.execute(
             source_content,

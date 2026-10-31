@@ -72,6 +72,7 @@ from ..discretization.finite_volume._unstructured_motion import (
 from ..lifecycle import CompositionRebindReceipt
 from ..typing import checked
 from ._finite_volume import (
+    collective_branch,
     FiniteVolumeStageDecisionProvider,
     FiniteVolumeStageStateProvider,
     unstructured_ale_ssprk33_candidate,
@@ -82,6 +83,7 @@ from ._finite_volume import (
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._finite_volume_topology_events import (
     _OwnerLocalRepartitionTransfer,
+    FiniteVolumeContentTransferSemantics,
     FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventJournal,
     FiniteVolumeTopologyEventRequest,
@@ -392,7 +394,8 @@ def _prepare_owner_local_fv_stage_state_provider(
         )
 
         def exchange(local_state: Array, /) -> Array:
-            values = local_state[0]
+            # pmap strips the single local-device axis: one (capacity, c) block.
+            values = local_state
             rank = jax.lax.axis_index(stage_axis)
             for (
                 pair,
@@ -430,7 +433,7 @@ def _prepare_owner_local_fv_stage_state_provider(
                     lambda current: current,
                     values,
                 )
-            return values[None, ...]
+            return values
 
         mapped = jax.pmap(
             exchange,
@@ -1038,6 +1041,7 @@ class FiniteVolumeOwnerLocalRepartitionResult(StrictModule):
     event_status: Array = fixed_field()
     successor_runtime: PreparedFiniteVolumeRuntime | None = None
     repartition_receipt: CompositionRebindReceipt | None = fixed_field(default=None)
+    refusal: str | None = eqx.field(static=True, default=None)
 
 
 class FiniteVolumeScheduledAdvanceResult(StrictModule):
@@ -1189,13 +1193,15 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     ),
                 )
             )
+            # Every collective traced into one advance program must name the
+            # same device mesh axis, so the providers share the stage axis.
             owner_local_decision_provider = _owner_local_global_decision_provider(
                 owner_local_group,
-                axis_name=f"{owner_axis}_decisions",
+                axis_name=f"{owner_axis}_stage",
             )
             owner_local_scalar_min_provider = _owner_local_global_scalar_min_provider(
                 owner_local_group,
-                axis_name=f"{owner_axis}_scalar_min",
+                axis_name=f"{owner_axis}_stage",
             )
         if stage_state_provider is not None:
             if not isinstance(stage_state_provider, FiniteVolumeStageStateProvider):
@@ -2181,6 +2187,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise TypeError(
                 "Restored owner-local FV geometry requires unstructured dynamics."
             )
+        authority_error: str | None = None
         try:
             _require_owner_local_fv_geometry_current(
                 owner_view,
@@ -4938,6 +4945,256 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             is_leaf=lambda node: node is None,
         )
 
+    def commit_remesh(
+        self,
+        accepted_result: FiniteVolumeAdvanceResult,
+        transition: Any,
+        successor_dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+        /,
+        *,
+        content_semantics: FiniteVolumeContentTransferSemantics = (
+            "eulerian_physical_overlap"
+        ),
+    ) -> FiniteVolumeAdvanceResult:
+        """Commit one accepted remesh/adaptation transition at the step boundary.
+
+        ``content_semantics`` selects how the accepted conservative content
+        crosses the transition: the exact physical overlap of the endpoint
+        geometries for Eulerian content, or the transition's accepted volume
+        material chain for material-following content. The topology transaction
+        prepares that route, checks coverage and conservation, and publishes the
+        successor runtime only after the event commits; a rejected event keeps
+        the accepted predecessor state runnable.
+        """
+        from ..meshing import CellMeshTransition
+        from ._finite_volume_topology_events import (
+            FiniteVolumeRemeshArtifact,
+            FiniteVolumeTopologyArtifactEvidence,
+        )
+
+        if not isinstance(accepted_result, FiniteVolumeAdvanceResult):
+            raise TypeError("accepted_result must be FiniteVolumeAdvanceResult.")
+        if not isinstance(transition, CellMeshTransition):
+            raise TypeError("transition must be a CellMeshTransition.")
+        if not isinstance(successor_dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+            raise TypeError(
+                "successor_dynamics must be PreparedUnstructuredFiniteVolumeDynamics."
+            )
+        if not bool(np.asarray(accepted_result.accepted)):
+            return accepted_result
+        if self.owner_local_geometry is not None:
+            raise ValueError(
+                "Owner-local FV remeshing commits through the owner-local adaptation "
+                "and repartition transactions, not a single-rank remesh."
+            )
+        if not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+            raise TypeError("FV remeshing requires prepared unstructured dynamics.")
+        if (
+            self.dynamics.coupling.topology_event_policy != "accepted_step"
+            or successor_dynamics.coupling.topology_event_policy != "accepted_step"
+        ):
+            raise ValueError("FV remeshing requires accepted-step topology events.")
+        if (
+            self.sliding_plan is not None
+            or successor_dynamics.coupling.sliding is not None
+            or successor_dynamics.coupling.overset is not None
+            or successor_dynamics.coupling.motion is not None
+        ):
+            raise ValueError(
+                "Remesh commits rebind no sliding, overset, or motion coupling; "
+                "use the coupling's own topology transaction."
+            )
+        if (
+            successor_dynamics.system.system_id != self.dynamics.system.system_id
+            or successor_dynamics.precision.policy_id != self.precision.policy_id
+        ):
+            raise ValueError("Successor dynamics change the FV system or precision.")
+        accepted_state = accepted_result.runtime_state
+        current_epoch = accepted_state.topology_journal.epoch_table[-1]
+        current_artifacts = accepted_state.topology_journal.artifact_table[-1]
+        source_geometry = self.dynamics.discretization
+        target_geometry = successor_dynamics.discretization
+        request = FiniteVolumeTopologyEventRequest(
+            TopologyEventKind.REMESH,
+            current_epoch.epoch_id,
+            transition.transition_id,
+            payload_id=transition.transition_id,
+            reason=f"accepted {content_semantics} remesh",
+        )
+        accepted_step = int(np.asarray(accepted_state.accepted_step))
+        event_time = float(np.asarray(accepted_state.time))
+
+        def with_state(
+            content: FiniteVolumeConservativeContentState,
+            journal: FiniteVolumeTopologyEventJournal,
+            /,
+        ) -> FiniteVolumeRuntimeState:
+            return FiniteVolumeRuntimeState(
+                content,
+                journal,
+                accepted_state.step_size,
+                accepted_step=accepted_state.accepted_step,
+                last_status=accepted_state.last_status,
+                controller_state=accepted_state.controller_state,
+                integrator_state=accepted_state.integrator_state,
+                output_cursor=accepted_state.output_cursor,
+                sliding_coupling=accepted_state.sliding_coupling,
+                sliding_shift=accepted_state.sliding_shift,
+                sliding_event_id=accepted_state.sliding_event_id,
+            )
+
+        def fail(
+            status: TopologyEventStatus, reason: str, /
+        ) -> FiniteVolumeAdvanceResult:
+            evidence = FiniteVolumeTopologyArtifactEvidence(
+                passed=jnp.asarray(False),
+                status=jnp.asarray(int(status), dtype=jnp.int32),
+                coverage_error=jnp.asarray(0.0),
+                conservation_defect=jnp.asarray(0.0),
+                evidence_id=canonical_fingerprint(
+                    {
+                        "kind": "failed-finite-volume-remesh",
+                        "request": request.request_id,
+                        "reason": reason,
+                        "status": int(status),
+                    }
+                ),
+            )
+            scheduler = FiniteVolumeTopologyEventScheduler(
+                accepted_state.topology_journal
+            )
+            scheduler.submit(request, accepted_step, event_time)
+            rejected = scheduler.transact(
+                accepted=True,
+                source_content=accepted_state.content_state,
+                candidate_epoch=current_epoch,
+                candidate_artifacts=current_artifacts,
+                remap=evidence,
+                metrics=evidence,
+                evidence=evidence,
+                status=status,
+            )
+            return eqx.tree_at(
+                lambda result: result.runtime_state,
+                accepted_result,
+                with_state(rejected.content_state, rejected.journal),
+            )
+
+        candidate_epoch = TopologyEpoch(
+            current_epoch.index + 1,
+            target_geometry.geometry_id,
+            target_geometry.topology_id,
+            current_epoch.partition_id,
+        )
+        candidate_artifacts = FiniteVolumeTopologyArtifacts(
+            candidate_epoch,
+            target_geometry.prepared_id,
+            topology_artifact_id=transition.transition_id,
+            operators_artifact_id=successor_dynamics.dynamics_id,
+        )
+        try:
+            successor_runtime = PreparedFiniteVolumeRuntime(
+                successor_dynamics,
+                self.positivity,
+                self.policy,
+                topology_epoch=candidate_epoch,
+                topology_artifacts=candidate_artifacts,
+                stage_state_provider=self.stage_state_provider,
+                stage_flux_provider=self.stage_flux_provider,
+            )
+        except (TypeError, ValueError) as error:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                f"successor runtime preparation failed: {error}",
+            )
+        artifact = FiniteVolumeRemeshArtifact(
+            transition,
+            candidate_epoch,
+            candidate_artifacts,
+            None,
+            None,
+            None,
+            TopologyEventStatus.SUCCESS,
+            candidate_epoch.epoch_id,
+            payload_ids=(request.payload_id,),
+            target_geometry=target_geometry,
+            content_semantics=content_semantics,
+        )
+
+        def transfer(
+            source: FiniteVolumeConservativeContentState, remap: Any, /
+        ) -> FiniteVolumeConservativeContentState:
+            return FiniteVolumeConservativeContentState.from_cell_average(
+                remap.apply(source.cell_average()),
+                successor_runtime.effective_cell_volumes,
+                successor_runtime.active_cell_mask,
+                accepted_state.time,
+                topology_epoch_id=candidate_epoch.epoch_id,
+                geometry_family_id=successor_runtime.geometry_family_id,
+                geometry_layout_id=successor_runtime.geometry_layout_id,
+                geometry_version=jnp.asarray(0, dtype=jnp.int32),
+                evidence_policy_id=successor_runtime.evidence_policy_id,
+                evidence_version=jnp.asarray(0, dtype=jnp.int32),
+                precision=successor_runtime.precision,
+            )
+
+        # The transferred totals round once per moved product and compensated
+        # accumulation; bound the admitted content defect accordingly.
+        source_total = np.asarray(
+            accepted_state.content_state.conservative_content, dtype=np.float64
+        )
+        cell_rows = source_geometry.cell_count + target_geometry.cell_count
+        map_count = (
+            1
+            if transition.volume_material_chain is None
+            else len(transition.volume_material_chain.maps)
+        )
+        conservation_tolerance = float(
+            8.0
+            * np.finfo(np.float64).eps
+            * cell_rows
+            * map_count
+            * max(float(np.max(np.sum(np.abs(source_total), axis=0))), 1.0)
+        )
+        scheduler = FiniteVolumeTopologyEventScheduler(accepted_state.topology_journal)
+        scheduler.submit(request, accepted_step, event_time)
+        transaction = scheduler.transact(
+            accepted=True,
+            source_content=accepted_state.content_state,
+            artifact=artifact,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            coverage_tolerance=conservation_tolerance,
+            active_cell_mask=successor_runtime.active_cell_mask,
+            admissibility=lambda content: jnp.all(
+                successor_dynamics.system.admissible(content.cell_average())
+            ),
+            transfer=transfer,
+            result_id=candidate_epoch.epoch_id,
+            payload_ids=(request.payload_id,),
+        )
+        if not transaction.committed:
+            failure_status = (
+                transaction.failure
+                if transaction.failure is not None
+                else TopologyEventStatus.FAILED_COVERAGE
+            )
+            return fail(
+                failure_status,
+                "FV remesh transaction was rejected: " + failure_status.name,
+            )
+        answer = eqx.tree_at(
+            lambda result: result.runtime_state,
+            accepted_result,
+            with_state(transaction.content_state, transaction.journal),
+        )
+        return eqx.tree_at(
+            lambda result: result.successor_runtime,
+            answer,
+            successor_runtime,
+            is_leaf=lambda node: node is None,
+        )
+
     @checked
     def commit_owner_local_repartition(
         self,
@@ -5055,12 +5312,14 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             journal: FiniteVolumeTopologyEventJournal,
             content: FiniteVolumeConservativeContentState,
             event_status: TopologyEventStatus,
+            reason: str,
             /,
         ) -> FiniteVolumeOwnerLocalRepartitionResult:
             return FiniteVolumeOwnerLocalRepartitionResult(
                 with_journal(journal, content),
                 jnp.asarray(False),
                 jnp.asarray(int(event_status), dtype=jnp.int32),
+                refusal=reason,
             )
 
         def fail(
@@ -5096,7 +5355,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 evidence=evidence,
                 status=status,
             )
-            return rollback_result(transaction.journal, transaction.content_state, status)
+            return rollback_result(
+                transaction.journal, transaction.content_state, status, reason
+            )
 
         def collective_error(
             error: Exception | None,
@@ -5863,18 +6124,37 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 if target_runtime.sliding_initial_coupling is None
                 else target_runtime.sliding_initial_coupling.coupling_id
             )
-            if (
-                target_runtime.owner_local_owned_cell_mask is None
-                or not np.array_equal(
-                    np.asarray(target_runtime.owner_local_owned_cell_mask),
-                    target_owned_mask,
+            # The owner-local geometry family is the rank-local carrier, which a
+            # graph repartition changes by definition; the global source geometry
+            # and topology are bound by the candidate epoch above.
+            changed = tuple(
+                name
+                for name, differs in (
+                    (
+                        "owned_cell_mask",
+                        target_runtime.owner_local_owned_cell_mask is None
+                        or not np.array_equal(
+                            np.asarray(target_runtime.owner_local_owned_cell_mask),
+                            target_owned_mask,
+                        ),
+                    ),
+                    (
+                        "evidence_policy",
+                        target_runtime.evidence_policy_id
+                        != source_content.evidence_policy_id,
+                    ),
+                    ("sliding_plan", runtime_sliding_plan_id != source_sliding_plan_id),
+                    (
+                        "sliding_coupling",
+                        runtime_sliding_coupling_id != target_sliding_coupling_id,
+                    ),
                 )
-                or target_runtime.geometry_family_id != source_content.geometry_family_id
-                or target_runtime.evidence_policy_id != source_content.evidence_policy_id
-                or runtime_sliding_plan_id != source_sliding_plan_id
-                or runtime_sliding_coupling_id != target_sliding_coupling_id
-            ):
-                raise ValueError("Target runtime changes preserved FV state semantics.")
+                if differs
+            )
+            if changed:
+                raise ValueError(
+                    f"Target runtime changes preserved FV state semantics: {changed}."
+                )
         except Exception as error:
             target_runtime_error = error
         target_runtime_error_text = collective_error(
@@ -5950,6 +6230,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             *,
             content: FiniteVolumeConservativeContentState = source_content,
         ) -> _OwnerLocalRepartitionTransfer:
+            transfer_holder["refusal"] = reason
             rejected_root = canonical_fingerprint(
                 {
                     "kind": "rejected-owner-local-fv-cell-transfer",
@@ -6412,6 +6693,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 local_error, f"{self.owner_local_axis_name}_repartition_rebind"
             )
             if error_text is not None or next_state is None or receipt is None:
+                commit_holder["refusal"] = (
+                    error_text or "Owner-local FV state rebind returned no state."
+                )
                 return False
             commit_holder["state"] = next_state
             commit_holder["receipt"] = receipt
@@ -6439,6 +6723,13 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 result_id=candidate_epoch.epoch_id,
                 payload_ids=(route_identity_id,),
                 commit_action=commit_rebind,
+                migration_partition_ids=(
+                    (source_view.distribution_id, target_view.distribution_id)
+                    if isinstance(
+                        self.owner_local_geometry, OwnerLocalCompositeCellGeometry
+                    )
+                    else None
+                ),
             )
         except Exception as error:
             transaction_error = error
@@ -6460,10 +6751,19 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             commit_error, f"{self.owner_local_axis_name}_repartition_commit"
         )
         if commit_error_text is not None:
+            failure = transaction.failure
             return rollback_result(
                 transaction.journal,
                 source_content,
                 transaction.event_status,
+                "Owner-local FV graph repartition did not commit ("
+                + ("no failure status" if failure is None else failure.name)
+                + "): "
+                + str(
+                    transfer_holder.get("refusal")
+                    or commit_holder.get("refusal")
+                    or commit_error_text
+                ),
             )
         next_state = commit_holder.get("state")
         receipt = commit_holder.get("receipt")
@@ -6482,6 +6782,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 transaction.journal,
                 source_content,
                 transaction.event_status,
+                receipt_error_text,
             )
         if (
             not isinstance(next_state, FiniteVolumeRuntimeState)
@@ -6492,6 +6793,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 transaction.journal,
                 source_content,
                 TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                "Owner-local FV repartition lost its typed committed outputs.",
             )
         return FiniteVolumeOwnerLocalRepartitionResult(
             next_state,
@@ -6878,7 +7180,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 stage_state_provider=self.stage_state_provider,
                 stage_decision_provider=self.owner_local_decision_provider,
             )
-            candidate = jax.lax.cond(
+            candidate = collective_branch(
                 initial_valid,
                 lambda _: unstructured_ssprk33_content_candidate(
                     dynamics,
@@ -6895,7 +7197,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     cfl=self.policy.cfl,
                 ),
                 lambda _: zero_candidate,
-                operand=None,
             )
             if retry == 0:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals
@@ -7157,7 +7458,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     precheck_cfl_valid
                 )
             evaluate_physics = initial_valid & metrics_success & precheck_cfl_valid
-            candidate = jax.lax.cond(
+            if self.owner_local_decision_provider is not None:
+                evaluate_physics = self.owner_local_decision_provider(evaluate_physics)
+            candidate = collective_branch(
                 evaluate_physics,
                 lambda _: unstructured_ssprk33_content_candidate(
                     dynamics,
@@ -7175,7 +7478,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     stage_decision_provider=self.owner_local_decision_provider,
                 ),
                 lambda _: zero_candidate,
-                operand=None,
             )
             if retry == 0:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals

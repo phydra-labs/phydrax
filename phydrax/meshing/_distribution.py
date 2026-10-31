@@ -1114,6 +1114,34 @@ def _owner_group_fail_if_any(
         )
 
 
+_OWNER_REASON_BYTES = 768
+
+
+def _owner_group_fail_with_reasons(
+    local_error: str | None,
+    execution_group: Any,
+    axis_name: str,
+    /,
+) -> None:
+    """Raise one refusal naming every failing owner's own reason on all owners."""
+    payload = np.zeros((_OWNER_REASON_BYTES + 1,), dtype=np.uint8)
+    if local_error is not None:
+        raw = local_error.encode("utf-8")[:_OWNER_REASON_BYTES]
+        payload[0] = 1
+        payload[1 : 1 + len(raw)] = np.frombuffer(raw, dtype=np.uint8)
+    rows = np.asarray(
+        _owner_group_allgather(payload, execution_group, axis_name), dtype=np.uint8
+    ).reshape((-1, _OWNER_REASON_BYTES + 1))
+    reasons = [
+        f"owner {rank}: "
+        + bytes(row[1:]).rstrip(b"\x00").decode("utf-8", errors="replace")
+        for rank, row in enumerate(rows)
+        if row[0]
+    ]
+    if reasons:
+        raise ValueError("; ".join(reasons))
+
+
 def _sharded_owner_directory_id(
     directory_kind: str,
     source_manifest_id: str,
