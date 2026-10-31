@@ -539,9 +539,11 @@ bool TetMesh::validate_periodic_closure(const TetEdit& operation) const {
     if (!touched) continue;
     touched_vertex_orbits.insert(orbit.id);
     if (!has_periodic_payload) return false;
+    // A fundamental-domain lift edits the star of one copy of an orbit while the
+    // other copies keep theirs; every copy still needs its exact edit member and
+    // a surviving copy must remain the exact image of the representative.
     std::size_t surviving_count = 0;
     for (const TetPeriodicVertexMember& member : orbit.members) {
-      if (!affected_vertices.contains(member.vertex_id)) return false;
       const TetPeriodicEditMember* edit = edit_member(member.vertex_id);
       if (edit == nullptr || edit->winding != member.winding) return false;
       for (std::size_t component = 0; component < member.representative_to_member.size(); ++component) {

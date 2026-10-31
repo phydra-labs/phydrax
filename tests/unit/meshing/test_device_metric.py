@@ -38,6 +38,7 @@ from phydrax.meshing._device_metric import (
     _work,
     DeviceMetricEvidence,
 )
+from phydrax.meshing._local_metric import LocalMetricEvidence
 
 
 _LOWER = 1.0 / np.sqrt(2.0)
@@ -195,6 +196,37 @@ def _edge_metric_lengths(mesh: Any, tensor: Any, /) -> Any:
     return np.sqrt(np.sum((delta @ tensor) * delta, axis=1))
 
 
+def test_device_metric_reports_the_split_collapse_hysteresis_stall() -> None:
+    # Births may only collapse when every created edge stays below the split
+    # threshold; that hysteresis is what lets the uncapped passes terminate. On
+    # this anisotropic input the remaining short birth edges can only collapse
+    # into longer-than-split edges, and the host route refuses them identically:
+    # both routes report an honest stall instead of a size-compliant mesh.
+    tensor = np.diag((1.0 / 0.5**2, 1.0 / 0.1**2))
+    source = _source(perturbation=0.3)
+    request = MetricMeshAdaptation(_metric(source, tensor))
+    result = _adapt(source, request)
+
+    assert result.route is MeshAdaptationRoute.DEVICE_METRIC_2D
+    assert result.status is MeshAdaptationStatus.STALLED
+    assert result.evidence.stalled and not result.evidence.converged
+    assert result.evidence.out_of_range_edges > 0
+    assert result.evidence.maximum_metric_length <= _UPPER
+    assert result.evidence.minimum_metric_length < _LOWER
+    host = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            request,
+            policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_2D),
+        )
+    )
+    assert host.status is MeshAdaptationStatus.STALLED
+    evidence = host.evidence
+    assert isinstance(evidence, LocalMetricEvidence)
+    assert evidence.stalled_edges
+    assert all("collapse=hysteresis" in reason for _, reason in evidence.stalled_edges)
+
+
 def test_device_metric_adaptation_reaches_a_certified_unit_mesh() -> None:
     angle = np.deg2rad(31.0)
     rotation = np.asarray(
@@ -204,7 +236,6 @@ def test_device_metric_adaptation_reaches_a_certified_unit_mesh() -> None:
     for tensor, perturbation in [
         (np.eye(2) / 0.2**2, 0.0),
         (rotated, 0.2),
-        (np.diag((1.0 / 0.5**2, 1.0 / 0.1**2)), 0.3),
     ]:
         source = _source(perturbation=perturbation)
         result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))

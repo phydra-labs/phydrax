@@ -85,7 +85,9 @@ def _refuse(
 
 
 def _exactly_collinear(points: np.ndarray, /) -> bool:
-    exact = tuple(tuple(Fraction.from_float(float(value)) for value in row) for row in points)
+    exact = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in points
+    )
     first = tuple(exact[1][axis] - exact[0][axis] for axis in range(3))
     second = tuple(exact[2][axis] - exact[0][axis] for axis in range(3))
     return (
@@ -106,7 +108,9 @@ def _repair_topology(
     rank = np.empty_like(birth_order)
     rank[birth_order] = np.arange(birth_order.size, dtype=np.int64)
     repaired_vertices = np.asarray(unique[birth_order], dtype=np.float64)
-    welded = np.asarray(rank[np.asarray(inverse, dtype=np.int64).reshape(-1)], dtype=np.int64)
+    welded = np.asarray(
+        rank[np.asarray(inverse, dtype=np.int64).reshape(-1)], dtype=np.int64
+    )
     mapped = welded[triangles]
     degenerate = tuple(
         row
@@ -119,7 +123,10 @@ def _repair_topology(
             "a zero-area triangle has no orientation to repair.",
             "degenerate",
             degenerate,
-            tuple(tuple(float(value) for value in vertices[triangles[row]].mean(axis=0)) for row in degenerate),
+            tuple(
+                tuple(float(value) for value in vertices[triangles[row]].mean(axis=0))
+                for row in degenerate
+            ),
         )
     kept: list[tuple[int, int, int]] = []
     seen: set[tuple[int, ...]] = set()
@@ -133,12 +140,17 @@ def _repair_topology(
     edge_order: list[tuple[int, int]] = []
     for row, face in enumerate(kept):
         for local in range(3):
-            edge = (min(face[local], face[(local + 1) % 3]), max(face[local], face[(local + 1) % 3]))
+            edge = (
+                min(face[local], face[(local + 1) % 3]),
+                max(face[local], face[(local + 1) % 3]),
+            )
             if edge not in edge_faces:
                 edge_faces[edge] = []
                 edge_order.append(edge)
             edge_faces[edge].append(row)
-    non_manifold = tuple(sorted({row for rows in edge_faces.values() if len(rows) > 2 for row in rows}))
+    non_manifold = tuple(
+        sorted({row for rows in edge_faces.values() if len(rows) > 2 for row in rows})
+    )
     if non_manifold:
         _refuse(
             "Authored sheet edges are shared by more than two distinct triangles; "
@@ -146,14 +158,18 @@ def _repair_topology(
             "non_manifold_edge",
             non_manifold,
             tuple(
-                tuple(float(value) for value in repaired_vertices[list(edge)].mean(axis=0))
+                tuple(
+                    float(value) for value in repaired_vertices[list(edge)].mean(axis=0)
+                )
                 for edge in edge_order
                 if len(edge_faces[edge]) > 2
             ),
         )
 
     def traverses(face: tuple[int, int, int], first: int, last: int, /) -> bool:
-        return any((face[local], face[(local + 1) % 3]) == (first, last) for local in range(3))
+        return any(
+            (face[local], face[(local + 1) % 3]) == (first, last) for local in range(3)
+        )
 
     flipped = [False] * len(kept)
     component = [-1] * len(kept)
@@ -178,13 +194,24 @@ def _repair_topology(
                         flipped[neighbor] = needs_flip
                         pending.append(neighbor)
                     elif flipped[neighbor] != needs_flip:
-                        rows = tuple(index for index in range(len(kept)) if component[index] == components)
+                        rows = tuple(
+                            index
+                            for index in range(len(kept))
+                            if component[index] == components
+                        )
                         _refuse(
                             "An authored sheet component is non-orientable; no per-triangle "
                             "orientation assignment is consistent across its shared edges.",
                             "non_orientable_component",
                             rows,
-                            (tuple(float(value) for value in repaired_vertices[[first, last]].mean(axis=0)),),
+                            (
+                                tuple(
+                                    float(value)
+                                    for value in repaired_vertices[[first, last]].mean(
+                                        axis=0
+                                    )
+                                ),
+                            ),
                         )
         components += 1
     repaired_faces = np.asarray(
@@ -215,7 +242,9 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
     same point set with welded cracks, removed duplicates, and per-component
     consistent orientation; boundaries and holes stay open. It is not a closed
     region: consumers that need a volume must derive an explicit wrap, such as
-    a surface envelope, and report that interpretation.
+    a surface envelope, and report that interpretation. ``meshing_domain`` passes
+    a domain built for an earlier construction; it is reused only when its
+    content is exactly the construction of these inputs, otherwise rebuilt.
     """
 
     vertices: np.ndarray
@@ -239,7 +268,17 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
     scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, vertices: ArrayLike, triangles: ArrayLike, /, *, feature_id: str) -> None:
+    def __init__(
+        self,
+        vertices: ArrayLike,
+        triangles: ArrayLike,
+        /,
+        *,
+        feature_id: str,
+        meshing_domain: MeshingDomain | None = None,
+    ) -> None:
+        if meshing_domain is not None and not isinstance(meshing_domain, MeshingDomain):
+            raise TypeError("meshing_domain must be a MeshingDomain when provided.")
         authored_vertices = np.array(vertices, dtype=np.float64, copy=True)
         raw_triangles = np.asarray(triangles)
         if (
@@ -248,11 +287,22 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
             or authored_vertices.shape[0] < 3
             or not np.all(np.isfinite(authored_vertices))
         ):
-            raise ValueError("Authored sheet vertices must be a finite (N >= 3, 3) array.")
-        if raw_triangles.ndim != 2 or raw_triangles.shape[1] != 3 or raw_triangles.shape[0] == 0 or raw_triangles.dtype.kind not in "iu":
-            raise ValueError("Authored sheet triangles must be a nonempty integer (M, 3) array.")
+            raise ValueError(
+                "Authored sheet vertices must be a finite (N >= 3, 3) array."
+            )
+        if (
+            raw_triangles.ndim != 2
+            or raw_triangles.shape[1] != 3
+            or raw_triangles.shape[0] == 0
+            or raw_triangles.dtype.kind not in "iu"
+        ):
+            raise ValueError(
+                "Authored sheet triangles must be a nonempty integer (M, 3) array."
+            )
         authored_triangles = np.array(raw_triangles, dtype=np.int64, copy=True)
-        if np.any(authored_triangles < 0) or np.any(authored_triangles >= authored_vertices.shape[0]):
+        if np.any(authored_triangles < 0) or np.any(
+            authored_triangles >= authored_vertices.shape[0]
+        ):
             raise ValueError("Authored sheet triangles must reference declared vertices.")
         feature = canonical_identifier(feature_id, "feature_id")
         source_id = f"authored_sheet:{feature}"
@@ -278,7 +328,9 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
                     {
                         "kind": "authored-sheet-edge",
                         "source_id": source_id,
-                        "vertices": tuple(sorted((int(vertex_ids[first]), int(vertex_ids[last])))),
+                        "vertices": tuple(
+                            sorted((int(vertex_ids[first]), int(vertex_ids[last])))
+                        ),
                     }
                 )
                 for first, last in edges.tolist()
@@ -291,7 +343,9 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
                     {
                         "kind": "authored-sheet-facet",
                         "source_id": source_id,
-                        "vertices": tuple(sorted(int(vertex_ids[vertex]) for vertex in face)),
+                        "vertices": tuple(
+                            sorted(int(vertex_ids[vertex]) for vertex in face)
+                        ),
                     }
                 )
                 for face in repaired_faces.tolist()
@@ -301,14 +355,20 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
         for values in (vertex_ids, edge_ids, facet_ids):
             if np.unique(values).size != values.size:
                 raise ValueError("Authored sheet persistent entity IDs collide.")
-        euler = evidence.repaired_vertices - evidence.repaired_edges + evidence.repaired_triangles
+        euler = (
+            evidence.repaired_vertices
+            - evidence.repaired_edges
+            + evidence.repaired_triangles
+        )
         report = ReconstructionReport(
             source_kind="authored_triangle_sheet",
             algorithm="exact_weld_deduplicate_orient",
             input_digest=canonical_fingerprint(
                 {
                     "kind": "authored-triangle-sheet-input",
-                    "arrays": array_tree_fingerprint((authored_vertices, authored_triangles)),
+                    "arrays": array_tree_fingerprint(
+                        (authored_vertices, authored_triangles)
+                    ),
                 }
             ),
             input_points=evidence.authored_vertices,
@@ -335,9 +395,15 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
             {
                 "kind": "authored-triangle-sheet-revision",
                 "source_id": source_id,
-                "authored": array_tree_fingerprint((authored_vertices, authored_triangles)),
-                "repaired": array_tree_fingerprint((repaired_vertices, repaired_faces, edges)),
-                "persistent_entity_ids": array_tree_fingerprint((vertex_ids, edge_ids, facet_ids)),
+                "authored": array_tree_fingerprint(
+                    (authored_vertices, authored_triangles)
+                ),
+                "repaired": array_tree_fingerprint(
+                    (repaired_vertices, repaired_faces, edges)
+                ),
+                "persistent_entity_ids": array_tree_fingerprint(
+                    (vertex_ids, edge_ids, facet_ids)
+                ),
                 "report": asdict(report),
             }
         )
@@ -359,8 +425,11 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
             entity_ids,
             None,
             ("authored_sheet_vertex", "authored_sheet_edge", "authored_sheet_triangle"),
+            meshing_domain,
         )
-        id_banks, key_banks, set_ids = _reconstructed_scope_banks(domain, source_id, source_revision)
+        id_banks, key_banks, set_ids = _reconstructed_scope_banks(
+            domain, source_id, source_revision
+        )
         for values in (
             authored_vertices,
             authored_triangles,
@@ -394,7 +463,11 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
         self.scope_entity_set_ids = set_ids
 
     def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
-        if isinstance(dimension, bool) or not isinstance(dimension, Integral) or int(dimension) not in (0, 1, 2, 3):
+        if (
+            isinstance(dimension, bool)
+            or not isinstance(dimension, Integral)
+            or int(dimension) not in (0, 1, 2, 3)
+        ):
             raise ValueError("Authored sheet source dimension must be in 0..3.")
         return self.scope_entity_id_banks[int(dimension)]
 

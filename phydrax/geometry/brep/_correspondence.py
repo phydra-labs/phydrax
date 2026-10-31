@@ -436,6 +436,8 @@ def native_edge_pcurve(
         return _cylinder_section_pcurve(curve, patch)
     if isinstance(patch, RevolutionSurface) and isinstance(curve, CircleCurve):
         return _revolution_circle_pcurve_candidate(curve, patch)
+    if isinstance(patch, RevolutionSurface):
+        return _revolution_generator_pcurve(curve, patch)
     frame = _affine_surface_frame(patch)
     if frame is not None and curve.ambient_dimension == 3:
         plane_origin = frame[0]
@@ -495,6 +497,109 @@ def _cylinder_section_pcurve(
         origin_exact=(Fraction(0), height),
         direction_exact=(Fraction(1), Fraction(0)),
     )
+
+
+def _revolution_cylinder_frame(
+    patch: RevolutionSurface, /
+) -> tuple[CylinderPatch, Fraction] | None:
+    """The exact cylinder of a straight revolution and its profile height slope."""
+    from ._intersection import _revolution_cylinder_view
+
+    view = _revolution_cylinder_view(
+        SurfaceRegion(patch, np.asarray(((0.0, 0.0), (2.0 * np.pi, 1.0))))
+    )
+    if view is None or not isinstance(view[0].patch, CylinderPatch):
+        return None
+    return view[0].patch, view[1]
+
+
+def _revolution_generator_pcurve(
+    curve: AbstractCurve, patch: RevolutionSurface, /
+) -> ConicRootLinePCurve | None:
+    """Lift an axial line lying on a straight revolution cylinder exactly.
+
+    The line is a generator when its direction is axial and its radial offset
+    has the exact radius: its angle is the exact rational unit direction of
+    that offset, and its height is affine in the line parameter.
+    """
+    frame = _revolution_cylinder_frame(patch)
+    coefficients = _affine_curve_coefficients(curve, (Fraction(0),) * 3)
+    if frame is None or coefficients is None or curve.ambient_dimension != 3:
+        return None
+    cylinder, slope = frame
+    origin, direction = coefficients
+    vectors = (
+        origin,
+        direction,
+        cylinder.origin_exact,
+        cylinder.axis_exact,
+        cylinder.first_axis_exact,
+        cylinder.second_axis_exact,
+    )
+    if not all(isinstance(value, Fraction) for vector in vectors for value in vector):
+        return None
+    (
+        origin_values,
+        direction_values,
+        center,
+        axis,
+        first_axis,
+        second_axis,
+    ) = cast(tuple[tuple[Fraction, ...], ...], vectors)
+    radius = cylinder.radius_exact
+
+    def dot(first: tuple[Fraction, ...], second: tuple[Fraction, ...], /) -> Fraction:
+        return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+    rate = dot(direction_values, axis)
+    relative = tuple(
+        value - base for value, base in zip(origin_values, center, strict=True)
+    )
+    axial = dot(relative, axis)
+    radial = tuple(
+        value - axial * unit for value, unit in zip(relative, axis, strict=True)
+    )
+    if (
+        rate == 0
+        or any(
+            value != rate * unit
+            for value, unit in zip(direction_values, axis, strict=True)
+        )
+        or not isinstance(radius, Fraction)
+        or dot(radial, radial) != radius * radius
+    ):
+        return None
+    circle = CircleCurve(
+        np.asarray([float(value) for value in center]),
+        np.asarray([float(value) for value in first_axis]),
+        np.asarray([float(value) for value in second_axis]),
+        float(radius),
+        center_exact=center,
+        first_axis_exact=first_axis,
+        second_axis_exact=second_axis,
+        radius_exact=radius,
+    )
+    root = ConicParameterRoot(
+        circle, dot(radial, first_axis) / radius, dot(radial, second_axis) / radius
+    )
+    return ConicRootLinePCurve(root, axial / slope, rate / slope, parameter_range=None)
+
+
+def _same_conic_root_revolution_line_lift(
+    curve: AbstractCurve, pcurve: ConicRootLinePCurve, patch: RevolutionSurface, /
+) -> bool:
+    """Prove an axial edge is one exact generator of a straight revolution."""
+    frame = _revolution_cylinder_frame(patch)
+    if frame is None or pcurve.phase_shift_exact != 0:
+        return False
+    cylinder, slope = frame
+    heights = ConicRootLinePCurve(
+        pcurve.root,
+        pcurve.height_origin_exact * slope,
+        pcurve.height_direction_exact * slope,
+        parameter_range=pcurve.parameter_range,
+    )
+    return _same_conic_root_cylinder_line_lift(curve, heights, cylinder)
 
 
 def torus_circle_pcurve(curve: CircleCurve, patch: TorusPatch, /) -> LineCurve | None:
@@ -3001,6 +3106,10 @@ def exact_source_lift(
         return _same_conic_rootline_cylinder_lift(
             curve, pcurve, region.patch, first, last
         )
+    if isinstance(pcurve, ConicRootLinePCurve) and isinstance(
+        region.patch, RevolutionSurface
+    ):
+        return _same_conic_root_revolution_line_lift(curve, pcurve, region.patch)
     if isinstance(pcurve, ConicRootLinePCurve) and isinstance(
         region.patch, (ExtrusionSurface, CylinderPatch)
     ):

@@ -19,6 +19,7 @@ from ..discretization import (
     CellMesh,
     PreparedEmbeddedMeasureTransfer,
     PreparedMetricNetwork,
+    SimplicialConnectivity,
     TetrahedralConnectivity,
 )
 from ..ein import contract
@@ -30,6 +31,25 @@ from ..linalg import (
     solve,
 )
 from ..typing import checked
+
+
+def _tetrahedral_connectivity(
+    mesh: CellMesh, /
+) -> TetrahedralConnectivity | SimplicialConnectivity:
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, TetrahedralConnectivity) or (
+        isinstance(connectivity, SimplicialConnectivity) and connectivity.dimension == 3
+    ):
+        return connectivity
+    raise TypeError("Bulk DG0 transport requires a tetrahedral CellMesh.")
+
+
+def _tetrahedral_faces(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
+    """Face vertex rows and per-cell face rows of a tetrahedral mesh."""
+    connectivity = _tetrahedral_connectivity(mesh)
+    if isinstance(connectivity, TetrahedralConnectivity):
+        return np.asarray(connectivity.faces), np.asarray(connectivity.cell_faces)
+    return np.asarray(connectivity.entities[2]), np.asarray(connectivity.cell_entities[2])
 
 
 class BulkDGTransportEvidence(StrictModule):
@@ -127,10 +147,9 @@ class BulkDGTransportPlan:
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.mesh, CellMesh) or not isinstance(
-            self.mesh.connectivity, TetrahedralConnectivity
-        ):
+        if not isinstance(self.mesh, CellMesh):
             raise TypeError("Bulk DG0 transport requires a tetrahedral CellMesh.")
+        connectivity = _tetrahedral_connectivity(self.mesh)
         count = sum(block.cell_count for block in self.mesh.blocks)
         porosity = np.asarray(self.porosity, dtype=np.float64)
         diffusivity = np.asarray(self.diffusivity, dtype=np.float64)
@@ -164,7 +183,6 @@ class BulkDGTransportPlan:
             diffusivity = symmetric
         if velocity.shape != (count, 3) or np.any(~np.isfinite(velocity)):
             raise ValueError("velocity must have finite shape (cell_count, 3).")
-        connectivity = self.mesh.connectivity
         boundary_count = int(
             np.count_nonzero(np.asarray(connectivity.boundary_faces, dtype=np.bool_))
         )
@@ -232,9 +250,7 @@ class BulkDGTransportPlan:
         )
 
     def prepare(self) -> PreparedBulkDGTransport:
-        connectivity = self.mesh.connectivity
-        if not isinstance(connectivity, TetrahedralConnectivity):
-            raise TypeError("Bulk DG0 transport requires tetrahedral connectivity.")
+        faces, cell_faces = _tetrahedral_faces(self.mesh)
         boundary_flux = self.boundary_volume_flux
         boundary_inflow = self.boundary_inflow_concentration
         removal = self.removal_rate
@@ -245,7 +261,6 @@ class BulkDGTransportPlan:
         tetrahedra = points[cells]
         volume = np.abs(np.linalg.det(tetrahedra[:, 1:] - tetrahedra[:, :1])) / 6.0
         centroids = np.mean(tetrahedra, axis=1)
-        faces = np.asarray(connectivity.faces)
         cross = np.cross(
             points[faces[:, 1]] - points[faces[:, 0]],
             points[faces[:, 2]] - points[faces[:, 0]],
@@ -256,7 +271,7 @@ class BulkDGTransportPlan:
         face_area = 0.5 * cross_norm
         face_normal = cross / cross_norm[:, None]
         incidents = [[] for _ in faces]
-        for cell_index, face_row in enumerate(np.asarray(connectivity.cell_faces)):
+        for cell_index, face_row in enumerate(cell_faces):
             for face_index in face_row:
                 incidents[int(face_index)].append(cell_index)
         owners = []

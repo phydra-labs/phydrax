@@ -131,6 +131,18 @@ def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, f
     )
 
 
+def _map_frame(frame: np.ndarray, matrix: np.ndarray, /) -> np.ndarray:
+    """Map each defined frame vector by ``matrix``; undefined vectors stay NaN.
+
+    Frames are partially defined by contract: an edge hit carries its curve
+    tangent and an undefined second slot, so definedness is per vector.
+    """
+    mapped = np.full((*frame.shape[:-1], matrix.shape[1]), np.nan, dtype=np.float64)
+    defined = np.all(np.isfinite(frame), axis=-1)
+    mapped[defined] = frame[defined] @ matrix
+    return mapped
+
+
 def _unresolved(dimension: int, index: int, path: tuple[str, ...] = ()) -> _Hit:
     return _Hit(
         dimension,
@@ -2916,11 +2928,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     if np.all(np.isfinite(hit.normal))
                     else hit.normal
                 )
-                tangents = (
-                    hit.tangents @ rotation.T
-                    if np.all(np.isfinite(hit.tangents))
-                    else hit.tangents
-                )
+                tangents = _map_frame(hit.tangents, rotation.T)
                 hit = _Hit(
                     hit.dimension,
                     hit.index,
@@ -3008,13 +3016,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             if np.any(finite_points):
                 points[finite_points] = self.embedding.to_planar(points_3d[finite_points])
             normals = np.full((len(hits), 2), np.nan, dtype=np.float64)
-            tangents = np.full((len(hits), 2, 2), np.nan, dtype=np.float64)
-            # Edge hits carry one tangent (the second row is NaN): map each finite
-            # tangent vector on its own so a curve keeps its in-plane frame.
-            finite_tangents = np.all(np.isfinite(tangents_3d), axis=2)
-            if np.any(finite_tangents):
-                basis = np.stack((self.embedding.x_axis, self.embedding.y_axis), axis=1)
-                tangents[finite_tangents] = tangents_3d[finite_tangents] @ basis
+            tangents = _map_frame(
+                tangents_3d,
+                np.stack((self.embedding.x_axis, self.embedding.y_axis), axis=1),
+            )
         occurrence_paths = tuple(hit.path for hit in hits)
         return BRepProjectionResult(
             self.source_id,

@@ -368,12 +368,13 @@ def test_brep_projection_scenario_2() -> None:
 
     np.testing.assert_allclose(edge.points, [[2**-0.5, 2**-0.5]])
     np.testing.assert_allclose(edge.residuals, [1.0 - 2**-0.5])
-    # The edge frame survives the planar embedding: one unit in-plane tangent
-    # orthogonal to the radius, the unused second tangent stays undefined.
-    tangent = np.asarray(edge.tangents)[0]
-    np.testing.assert_allclose(np.abs(tangent[0]), [2**-0.5, 2**-0.5])
-    assert tangent[0] @ np.asarray(edge.points)[0] == pytest.approx(0.0, abs=1e-12)
-    assert np.all(np.isnan(tangent[1]))
+    # The planar result keeps the edge's defined tangent; only its second
+    # frame slot is undefined.
+    edge_tangents = np.asarray(edge.tangents)
+    np.testing.assert_allclose(
+        np.abs(edge_tangents[0, 0]), [2**-0.5, 2**-0.5], atol=1e-12
+    )
+    assert np.all(np.isnan(edge_tangents[0, 1]))
     # Inside the hole the trimmed face's closest point lies on the hole boundary.
     np.testing.assert_allclose(face.points, [[2**-0.5, 2**-0.5], [1.5, 0.0]])
     np.testing.assert_allclose(face.residuals, [1.0 - 2**-0.5, 0.0], atol=1e-12)
@@ -652,7 +653,8 @@ def test_fixed_topology_brep_prepared_leaves_round_trip(query_box_model: Any) ->
     assert actual.represented_geometry_id == expected.represented_geometry_id
 
 
-def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> None:
+def _instanced_box(placement: BRepAffinePlacement) -> BRepModel:
+    """Unit box definition used twice: at the identity and under ``placement``."""
     definition = brep_box(
         (0.0, 0.0, 0.0),
         (1.0, 1.0, 1.0),
@@ -660,14 +662,6 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
         source_id="projection-instance-definition",
     )
     source = definition.geometry
-    translated = BRepAffinePlacement.from_matrix(
-        (
-            (1, 0, 0, 10),
-            (0, 1, 0, 0),
-            (0, 0, 1, 0),
-            (0, 0, 0, 1),
-        )
-    )
     graph = BRepAssemblyGraph(
         roots=(BRepAssemblyUse("pair", definition_id="two-copies"),),
         definitions=(
@@ -675,7 +669,7 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
                 "two-copies",
                 (
                     BRepAssemblyUse("left", solid_index=0),
-                    BRepAssemblyUse("right", placement=translated, solid_index=0),
+                    BRepAssemblyUse("right", placement=placement, solid_index=0),
                 ),
             ),
         ),
@@ -702,7 +696,7 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
         solid_shells=source.solid_shells,
         assembly_graph=graph,
     )
-    model = BRepModel(
+    return BRepModel(
         geometry=geometry,
         patches=definition.patches,
         parameter_bounds=definition.parameter_bounds,
@@ -711,6 +705,19 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
         coordinate_contract=definition.coordinate_contract,
         report=definition.report,
         trim_domains=definition.trim_domains,
+    )
+
+
+def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> None:
+    model = _instanced_box(
+        BRepAffinePlacement.from_matrix(
+            (
+                (1, 0, 0, 10),
+                (0, 1, 0, 0),
+                (0, 0, 1, 0),
+                (0, 0, 0, 1),
+            )
+        )
     )
     projection = phx.geometry.prepare_brep_projection(model)
     vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
@@ -745,6 +752,41 @@ def test_classification_restricts_duplicate_definitions_by_occurrence_path() -> 
     assert projected.occurrence_paths == (("pair", "left"),)
     located = projection.locate_solids(np.asarray(((0.5, 0.5, 0.5),)))
     assert located.occurrence_paths == (("pair", "left"),)
+
+
+def test_occurrence_projection_rotates_each_defined_edge_tangent() -> None:
+    # Edge frames are partial (curve tangent, undefined second slot); the
+    # occurrence rotation must still carry the defined tangent into the world.
+    model = _instanced_box(
+        BRepAffinePlacement.from_matrix(
+            (
+                (0, -1, 0, 0),
+                (1, 0, 0, 0),
+                (0, 0, 1, 0),
+                (0, 0, 0, 1),
+            )
+        )
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
+    ends = np.sort(vertices[np.asarray(model.geometry.edge_vertices)], axis=1)
+    edge = int(
+        np.flatnonzero(
+            np.all(ends[:, 0] == 0.0, axis=1)
+            & np.all(ends[:, 1] == np.asarray((1.0, 0.0, 0.0)), axis=1)
+        )[0]
+    )
+    projected = projection.project(
+        np.asarray(((0.0, 0.5, 0.0),)),
+        np.asarray((1,), dtype=np.int64),
+        np.asarray((edge,), dtype=np.int64),
+        occurrence_paths=(("pair", "right"),),
+    )
+    assert np.asarray(projected.status).tolist() == [_STATUS.UNIQUE]
+    np.testing.assert_allclose(projected.points, [[0.0, 0.5, 0.0]], atol=1e-12)
+    tangents = np.asarray(projected.tangents)
+    np.testing.assert_allclose(np.abs(tangents[0, 0]), [0.0, 1.0, 0.0], atol=1e-12)
+    assert np.all(np.isnan(tangents[0, 1]))
 
 
 def test_native_projection_exposes_reflexive_topology_incidence() -> None:
