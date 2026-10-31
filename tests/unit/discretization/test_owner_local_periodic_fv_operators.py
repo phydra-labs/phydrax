@@ -29,7 +29,7 @@ from phydrax.discretization.finite_volume._unstructured import (
 _COPIES = 2
 
 
-def _single_owner_periodic_geometry(component_names: tuple[str, ...], /) -> Any:
+def _single_owner_periodic_plan(component_names: tuple[str, ...], /) -> Any:
     from phydrax._execution_resources import ExecutionGroupSpec
     from phydrax._execution_runtime import ExecutionGroup
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
@@ -58,9 +58,16 @@ def _single_owner_periodic_geometry(component_names: tuple[str, ...], /) -> Any:
         .carrier
     )
     assert isinstance(view, OwnerLocalCellGeometry)
-    geometry = phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
+    plan = phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
         view, component_names=component_names
-    ).prepare()
+    )
+    assert plan.periodic_face_joins is not None
+    return view, plan, group
+
+
+def _single_owner_periodic_geometry(component_names: tuple[str, ...], /) -> Any:
+    view, plan, _ = _single_owner_periodic_plan(component_names)
+    geometry = plan.prepare()
     assert geometry.periodic_face_translations is not None
     assert np.any(np.asarray(geometry.periodic_face_translations) != 0.0)
     return view, geometry
@@ -125,11 +132,12 @@ class _TiledReference:
             periodic_image_key(translation, scale): copy
             for copy, translation in enumerate(self.translations)
         }
-        self.geometry = phx.discretization.UnstructuredFiniteVolumePlan(
+        self.plan = phx.discretization.UnstructuredFiniteVolumePlan(
             np.asarray(points),
             triangles=np.concatenate(cells, axis=0),
             component_names=geometry.component_names,
-        ).prepare()
+        )
+        self.geometry = self.plan.prepare()
         np.testing.assert_allclose(
             np.asarray(self.geometry.cell_centers)[:cell_count],
             np.asarray(geometry.cell_centers),
@@ -503,3 +511,187 @@ def test_owner_local_periodic_side_traces_match_tiled_serial(kind: str) -> None:
         np.asarray(geometry.face_centers)[facets],
         atol=1e-12,
     )
+
+
+def _equivariant_motion(lift: np.ndarray, /) -> Any:
+    """Lattice-periodic vertex displacement: every seam twin moves as a translate."""
+    inverse = jnp.asarray(np.linalg.inv(lift))
+
+    def motion(time: Any, vertices: Any, args: Any) -> Any:
+        del args
+        phase = 2.0 * jnp.pi * (vertices @ inverse)
+        displacement = jnp.stack(
+            (jnp.sin(phase[:, 0]) * jnp.cos(phase[:, 1]), jnp.sin(phase[:, 1])),
+            axis=-1,
+        )
+        return vertices + 0.02 * time * displacement + jnp.asarray((0.05, -0.03)) * time
+
+    return motion
+
+
+def test_owner_local_periodic_ale_geometry_matches_tiled_serial() -> None:
+    """Continuous ALE evaluates lifted faces, reduces them to the seam joins."""
+    system = phx.equations.EulerSystem(2)
+    view, plan, group = _single_owner_periodic_plan(system.component_names)
+    geometry = plan.prepare()
+    reference = _TiledReference(view, geometry)
+    n = geometry.cell_count
+    lift = np.asarray(view.periodic_lift_matrix, dtype=np.float64)[:, :2]
+    motion = _equivariant_motion(lift)
+    periodic = phx.discretization.FixedConnectivityMotionPlan(
+        plan, motion, mapping_id="periodic-ale"
+    )
+    tiled = phx.discretization.FixedConnectivityMotionPlan(
+        reference.plan, motion, mapping_id="tiled-ale"
+    )
+    np.testing.assert_array_equal(
+        np.asarray(periodic.owner_cells), np.asarray(geometry.owner_cells)
+    )
+    step = periodic.prepare_ssprk33_step(
+        0.0,
+        5.0e-4,
+        "periodic-ale-epoch",
+        0,
+        0,
+        prior_effective_cell_volumes=geometry.cell_volumes,
+    )
+    tiled_step = tiled.prepare_ssprk33_step(
+        0.0,
+        5.0e-4,
+        "tiled-ale-epoch",
+        0,
+        0,
+        prior_effective_cell_volumes=reference.geometry.cell_volumes,
+    )
+    assert bool(step.passed) and bool(tiled_step.passed)
+    for name in ("stage_1", "stage_2", "stage_3", "accepted_geometry"):
+        metrics, tiled_metrics = getattr(step, name), getattr(tiled_step, name)
+        for field in (
+            "effective_cell_volumes",
+            "coordinate_effective_cell_volumes",
+            "mesh_volume_rate",
+            "cell_centers",
+        ):
+            np.testing.assert_allclose(
+                np.asarray(getattr(metrics, field)),
+                np.asarray(getattr(tiled_metrics, field))[:n],
+                rtol=1e-11,
+                atol=1e-12,
+            )
+        # Every joined face carries one quotient face's measure and normal.
+        np.testing.assert_allclose(
+            float(np.sum(np.asarray(metrics.effective_cell_volumes))),
+            float(np.sum(np.asarray(geometry.cell_volumes))),
+            rtol=1e-12,
+        )
+    for name in ("g1", "g2", "g3"):
+        np.testing.assert_allclose(
+            np.asarray(getattr(step, name)),
+            np.asarray(getattr(tiled_step, name))[:n],
+            rtol=1e-11,
+            atol=1e-12,
+        )
+    assert float(np.max(np.abs(np.asarray(step.g2)))) > 1.0e-3
+    # The joined faces conserve volume: a periodic patch's mesh rates sum to zero.
+    np.testing.assert_allclose(np.sum(np.asarray(step.g1)), 0.0, atol=1e-13)
+
+    # Host epochs rejoin the seams on the moved vertices.
+    moved = periodic.evaluate_plan(jnp.asarray(0.25)).prepare()
+    np.testing.assert_allclose(
+        np.asarray(moved.cell_volumes),
+        np.asarray(tiled.evaluate_plan(jnp.asarray(0.25)).prepare().cell_volumes)[:n],
+        rtol=1e-12,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(moved.periodic_face_translations),
+        np.asarray(geometry.periodic_face_translations),
+    )
+
+    # A motion that tears a seam twin from its partner is not a periodic motion.
+    assert periodic.seam_vertex_pairs is not None
+    twin = periodic.seam_vertex_pairs[1][0]
+
+    def tearing(time: Any, vertices: Any, args: Any) -> Any:
+        return motion(time, vertices, args).at[twin].add(0.01 * time)
+
+    torn = phx.discretization.FixedConnectivityMotionPlan(
+        plan, tearing, mapping_id="periodic-ale-torn"
+    )
+    torn_step = torn.prepare_ssprk33_step(
+        0.0, 0.25, "torn", 0, 0, prior_effective_cell_volumes=geometry.cell_volumes
+    )
+    assert not bool(torn_step.passed)
+    with pytest.raises(ValueError, match="lattice translates"):
+        torn.evaluate_plan(jnp.asarray(0.25))
+
+
+@pytest.mark.parametrize("kind", ("constant", "polynomial"))
+def test_owner_local_periodic_moving_runtime_conserves_and_preserves_free_stream(
+    kind: str,
+) -> None:
+    """A moving owner-local periodic patch advances with seams as interior faces."""
+    from phydrax.solver._finite_volume_runtime import FiniteVolumeStepPolicy
+
+    system = phx.equations.EulerSystem(2)
+    view, plan, group = _single_owner_periodic_plan(system.component_names)
+    geometry = plan.prepare()
+    lift = np.asarray(view.periodic_lift_matrix, dtype=np.float64)[:, :2]
+    reconstruction: Any = (
+        phx.discretization.PiecewiseConstantReconstruction()
+        if kind == "constant"
+        else phx.discretization.CellPolynomialReconstructionPlan(1).prepare(geometry)
+    )
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        geometry.boundary_patch_names,
+        {
+            name: phx.discretization.ExtrapolationBoundary()
+            for name in geometry.boundary_patch_names
+        },
+    )
+    motion = phx.discretization.FixedConnectivityMotionPlan(
+        plan, _equivariant_motion(lift), mapping_id=f"periodic-moving-{kind}"
+    )
+    dynamics: Any = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR(
+            f"periodic-moving-{kind}", "state", system, boundaries
+        ),
+        geometry,
+        phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+            reconstruction, phx.discretization.RusanovFluxPlan()
+        ),
+        coupling=phx.discretization.UnstructuredFiniteVolumeCouplingPlan(motion=motion),
+    ).dynamics
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
+        FiniteVolumeStepPolicy(maximum_retries=2),
+        execution_group=group,
+        owner_local_geometry=view,
+        owner_local_axis_name=f"periodic_moving_{kind}",
+    )
+    uniform = np.asarray(
+        system.primitive_to_conserved(
+            jnp.broadcast_to(jnp.asarray((1.0, 0.3, -0.2, 1.0)), geometry.state_shape)
+        )
+    )
+    smooth = _euler_state(system, np.asarray(geometry.cell_centers), lift)
+    for state in (uniform, smooth):
+        initial = runtime.initialize_state(jnp.asarray(state), 0.0, 5.0e-4)
+        result = runtime.advance(initial)
+        assert bool(result.accepted)
+        before = np.asarray(initial.content_state.conservative_content)
+        content = result.runtime_state.content_state
+        after = np.asarray(content.conservative_content)
+        volumes = np.asarray(content.effective_cell_volumes)
+        assert float(np.max(np.abs(volumes - np.asarray(geometry.cell_volumes)))) > 1e-6
+        # No content leaves through a seam of the closed periodic patch.
+        np.testing.assert_allclose(
+            np.sum(after, axis=0), np.sum(before, axis=0), rtol=0.0, atol=1e-13
+        )
+        if state is uniform:
+            # Seam mesh fluxes close every cell's volume law: free stream holds.
+            np.testing.assert_allclose(
+                after / volumes[:, None], uniform, rtol=0.0, atol=1e-13
+            )
+        else:
+            assert float(np.max(np.abs(after - before))) > 1e-5

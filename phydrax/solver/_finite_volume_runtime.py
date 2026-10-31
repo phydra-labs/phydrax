@@ -772,68 +772,68 @@ def _require_owner_local_fv_geometry_current(
     )
     prepared_mesh = dynamics.discretization.mesh
     if isinstance(view, OwnerLocalCompositeCellGeometry):
-        # The FV lowering re-blocks the union by cell kind, so the carriers are
-        # compared through their stable vertex/cell identities and coordinates.
-        union_mesh = view.union_local_mesh()
-        if (union_mesh is None) != (prepared_mesh is None):
-            raise ValueError(
-                "Prepared FV mesh differs from the composite owner-local carrier."
-            )
-        if union_mesh is None or prepared_mesh is None:
+        carrier_mesh = view.union_local_mesh()
+    else:
+        carrier_mesh, local_geometry = view.reconstruct_local_geometry()
+        if carrier_mesh is None:
+            if (
+                prepared_mesh is not None
+                or local_geometry is not None
+                or view.local_mesh_id is not None
+                or np.asarray(view.cell_ids).size
+                or np.asarray(view.vertex_ids).size
+            ):
+                raise ValueError(
+                    "Empty owner-local FV geometry differs from its prepared carrier."
+                )
             return
-        union_vertices = np.asarray(union_mesh.vertex_global_ids, dtype=np.int64)
-        prepared_vertices = np.asarray(prepared_mesh.vertex_global_ids, dtype=np.int64)
-        union_order = np.argsort(union_vertices, kind="stable")
-        prepared_order = np.argsort(prepared_vertices, kind="stable")
-        dimension = union_mesh.topological_dimension
-        if (
-            not np.array_equal(
-                union_vertices[union_order], prepared_vertices[prepared_order]
-            )
-            or not np.array_equal(
-                np.asarray(union_mesh.coordinates)[union_order],
-                np.asarray(prepared_mesh.coordinates)[prepared_order],
-            )
-            or not np.array_equal(
-                np.sort(
-                    np.asarray(
-                        union_mesh.topology.entity_sets[dimension].entity_ids,
-                        dtype=np.int64,
-                    )
-                ),
-                np.sort(
-                    np.asarray(
-                        prepared_mesh.topology.entity_sets[dimension].entity_ids,
-                        dtype=np.int64,
-                    )
-                ),
-            )
-        ):
+        if local_geometry is None or view.local_mesh_id != carrier_mesh.mesh_id:
             raise ValueError(
-                "Prepared FV mesh differs from the composite owner-local carrier."
+                "Prepared FV mesh differs from the exact reconstructed owner geometry."
             )
-        return
-    local_mesh, local_geometry = view.reconstruct_local_geometry()
-    if local_mesh is None:
-        if (
-            prepared_mesh is not None
-            or local_geometry is not None
-            or view.local_mesh_id is not None
-            or np.asarray(view.cell_ids).size
-            or np.asarray(view.vertex_ids).size
-        ):
-            raise ValueError(
-                "Empty owner-local FV geometry differs from its prepared carrier."
-            )
-    elif (
-        prepared_mesh is None
-        or local_geometry is None
-        or local_mesh.mesh_id != prepared_mesh.mesh_id
-        or view.local_mesh_id != local_mesh.mesh_id
-    ):
+    # The FV lowering re-blocks carriers by cell kind (and a composite unions
+    # its parts), so carriers are compared through their stable vertex/cell
+    # identities, coordinates and cell-vertex incidence.
+    if (carrier_mesh is None) != (prepared_mesh is None):
         raise ValueError(
             "Prepared FV mesh differs from the exact reconstructed owner geometry."
         )
+    if carrier_mesh is None or prepared_mesh is None:
+        return
+    if not _same_cell_mesh_identities(carrier_mesh, prepared_mesh):
+        raise ValueError(
+            "Prepared FV mesh differs from the exact reconstructed owner geometry."
+        )
+
+
+def _same_cell_mesh_identities(first: Any, second: Any, /) -> bool:
+    """Equal vertex ids, coordinates by id, cell ids and cell vertex-id sets."""
+
+    def identities(mesh: Any, /) -> tuple[np.ndarray, np.ndarray, np.ndarray, list]:
+        vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        order = np.argsort(vertex_ids, kind="stable")
+        cells = sorted(
+            (int(identifier), tuple(sorted(vertex_ids[np.asarray(row)].tolist())))
+            for block in mesh.blocks
+            for identifier, row in zip(
+                np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
+            )
+        )
+        return (
+            vertex_ids[order],
+            np.asarray(mesh.coordinates)[order],
+            np.asarray([identifier for identifier, _ in cells], dtype=np.int64),
+            [vertices for _, vertices in cells],
+        )
+
+    first_ids = identities(first)
+    second_ids = identities(second)
+    return (
+        np.array_equal(first_ids[0], second_ids[0])
+        and np.array_equal(first_ids[1], second_ids[1])
+        and np.array_equal(first_ids[2], second_ids[2])
+        and first_ids[3] == second_ids[3]
+    )
 
 
 def _owner_local_reconstruction_stencil_depth(
@@ -7688,6 +7688,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 runtime_state.accepted_step,
                 stage_state_provider=self.stage_state_provider,
                 stage_decision_provider=self.owner_local_decision_provider,
+                stage_route_provider=self.owner_local_route_provider,
             )
             candidate = collective_branch(
                 initial_valid,
@@ -7926,6 +7927,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 stage_state_provider=self.stage_state_provider,
                 redistribution=redistribution,
                 stage_decision_provider=self.owner_local_decision_provider,
+                stage_route_provider=self.owner_local_route_provider,
             )
             metrics_success = jnp.all(
                 jnp.stack(
@@ -8215,6 +8217,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 current_dt,
                 runtime_state.accepted_step,
                 stage_state_provider=self.stage_state_provider,
+                stage_decision_provider=self.owner_local_decision_provider,
+                stage_route_provider=self.owner_local_route_provider,
             )
             geometry_success = geometry.passed & (
                 geometry.status == int(FiniteVolumeGeometryStatus.SUCCESS)

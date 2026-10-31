@@ -667,6 +667,49 @@ def periodic_image_key(image: ArrayLike, scale: float, /) -> tuple[int, ...]:
     return (int(np.any(rounded != 0)), *(int(value) for value in rounded))
 
 
+def periodic_seam_vertex_pairs(
+    plan: Any, joins: np.ndarray, translations: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vertex rows `(kept, twin, translation)` of every joined seam face pair.
+
+    The twin face's vertex `twin[i]` is the kept face's vertex `kept[i]`
+    resident at the neighbor's lattice image: its coordinates are
+    `coordinates[kept[i]] + translation[i]`. Matching is done once on the
+    plan's own coordinates; motions must preserve it.
+    """
+    connectivity = None if plan.mesh is None else plan.mesh.connectivity
+    if isinstance(connectivity, PolygonalConnectivity):
+        face_vertices = np.asarray(connectivity.edges, dtype=np.int64)
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
+    else:
+        raise TypeError("Periodic seam vertex pairs need edge or triangle faces.")
+    points = np.asarray(plan.vertices, dtype=np.float64)
+    scale = max(1.0, float(np.max(np.abs(points)))) if points.size else 1.0
+    kept_vertices = face_vertices[joins[:, 0]]
+    twin_vertices = face_vertices[joins[:, 1]]
+    distance = np.linalg.norm(
+        points[twin_vertices][:, :, None, :]
+        - translations[:, None, None, :]
+        - points[kept_vertices][:, None, :, :],
+        axis=-1,
+    )
+    order = np.argmin(distance, axis=-1)
+    if np.any(np.min(distance, axis=-1) > 1.0e-9 * scale) or np.any(
+        np.sort(order, axis=-1) != np.arange(order.shape[1])[None, :]
+    ):
+        raise ValueError("Periodic seam twins are not lattice translates of each other.")
+    kept = np.take_along_axis(kept_vertices, order, axis=1)
+    pair_translations = np.broadcast_to(
+        translations[:, None, :], twin_vertices.shape + (translations.shape[1],)
+    )
+    return (
+        kept.reshape(-1),
+        twin_vertices.reshape(-1),
+        pair_translations.reshape((-1, translations.shape[1])),
+    )
+
+
 def _triangle_measures(cell_points: Array, /) -> tuple[Array, Array]:
     """Signed areas (positive counterclockwise) and centroids of ``(..., 3, 2)``."""
     cross = (cell_points[..., 1, 0] - cell_points[..., 0, 0]) * (
@@ -2022,11 +2065,26 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             )
         if plan.cell_global_ids.shape != (local_cell_ids.size,):
             raise ValueError("Owner-local FV lowering changed the local cell count.")
+        return cls._with_owner_local_joins(plan, view, joins, translations)
+
+    @classmethod
+    def _with_owner_local_joins(
+        cls,
+        plan: UnstructuredFiniteVolumePlan,
+        view: Any,
+        joins: np.ndarray,
+        translations: np.ndarray,
+        /,
+    ) -> UnstructuredFiniteVolumePlan:
+        """Bind a lifted owner-local plan to `view` with its periodic seam joins.
+
+        `plan` labels every unwelded seam face with the seam patch only to
+        satisfy the boundary partition of the lifted patch; joined, those faces
+        are interior faces of the quotient, so the patch is dropped.
+        """
         patch_names = plan.patch_names
         patch_faces = plan.patch_faces
         if joins.size:
-            # Seam faces were labelled only to satisfy the boundary partition of
-            # the lifted patch; joined, they are interior faces of the quotient.
             seam = patch_names.index(_PERIODIC_SEAM_PATCH)
             if not np.array_equal(
                 np.sort(np.asarray(patch_faces[seam], dtype=np.int32)),
@@ -2045,7 +2103,6 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             plan_identity["periodic_face_translations"] = array_tree_fingerprint(
                 translations
             )
-        owner_plan_id = canonical_fingerprint(plan_identity)
         return cls(
             None,
             _prepared=_PreparedUnstructuredFiniteVolumeData(
@@ -2065,13 +2122,69 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 geometry_id=plan.geometry_id,
                 key=plan.key,
                 capabilities=plan.capabilities,
-                plan_id=owner_plan_id,
+                plan_id=canonical_fingerprint(plan_identity),
                 owner_local_view=view,
                 periodic_face_joins=jnp.asarray(joins) if joins.size else None,
                 periodic_face_translations=(
                     jnp.asarray(translations) if joins.size else None
                 ),
             ),
+        )
+
+    def with_periodic_seam_vertices(self, vertices: ArrayLike, /) -> Any:
+        """This owner-local periodic plan on moved, translation-equivariant vertices.
+
+        Seam joins and their lattice translations are topology: every joined
+        pair must stay an exact translate (``1e-9`` of the coordinate scale) of
+        the other, otherwise the moved patch is not a lifted periodic patch.
+        """
+        joins = self.periodic_face_joins
+        translations = self.periodic_face_translations
+        if joins is None or translations is None or self.owner_local_view is None:
+            raise ValueError("Only owner-local periodic seam plans rejoin moved seams.")
+        points = np.asarray(vertices, dtype=np.float64)
+        if points.shape != np.asarray(self.vertices).shape:
+            raise ValueError("Moved seam vertices must keep the plan's vertex shape.")
+        joins_host = np.asarray(joins, dtype=np.int32)
+        translations_host = np.asarray(translations, dtype=np.float64)
+        kept_rows, twin_rows, pair_translations = periodic_seam_vertex_pairs(
+            self, joins_host, translations_host
+        )
+        scale = max(1.0, float(np.max(np.abs(points)))) if points.size else 1.0
+        if np.any(
+            np.abs(points[twin_rows] - points[kept_rows] - pair_translations)
+            > 1.0e-9 * scale
+        ):
+            raise ValueError(
+                "Moved periodic seam vertices are not lattice translates of their twins."
+            )
+        connectivity = self.mesh.connectivity if self.mesh is not None else None
+        if isinstance(connectivity, PolygonalConnectivity):
+            face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
+        elif isinstance(connectivity, TetrahedralConnectivity):
+            face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
+        else:
+            raise TypeError("Moved periodic seams need edge or triangle faces.")
+        patches = {
+            name: face_vertices[np.asarray(faces, dtype=np.int32)]
+            for name, faces in zip(self.patch_names, self.patch_faces, strict=True)
+        }
+        patches[_PERIODIC_SEAM_PATCH] = face_vertices[np.sort(joins_host.reshape(-1))]
+        moved = UnstructuredFiniteVolumePlan(
+            points,
+            triangles=self.triangles,
+            quadrilaterals=self.quadrilaterals,
+            tetrahedra=self.tetrahedra,
+            vertex_global_ids=self.vertex_global_ids,
+            cell_global_ids=self.cell_global_ids,
+            boundary_patches=patches,
+            field_name=self.field_name,
+            component_names=self.component_names,
+        )
+        if moved.topology_id != self.topology_id:
+            raise ValueError("Moving periodic seam vertices changed topology identity.")
+        return self._with_owner_local_joins(
+            moved, self.owner_local_view, joins_host, translations_host
         )
 
     def prepare(self, /, *, numeric_version: str = "0") -> Any:
