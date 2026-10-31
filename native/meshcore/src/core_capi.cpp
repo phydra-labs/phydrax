@@ -693,6 +693,17 @@ int32_t phx_mc_plc3d_failure(
   return PHX_MC_OK;
 }
 
+int32_t phx_mc_plc3d_suppression_search(const phx_mc_plc3d_result* result, int64_t* values) {
+  if (result == nullptr || values == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  const auto& search = result->recovery.suppression_search;
+  values[0] = search.searches;
+  values[1] = search.fills;
+  values[2] = search.nodes;
+  values[3] = search.max_nodes;
+  values[4] = search.max_wedge_cells;
+  return PHX_MC_OK;
+}
+
 void phx_mc_plc3d_free(phx_mc_plc3d_result* result) { delete result; }
  
 

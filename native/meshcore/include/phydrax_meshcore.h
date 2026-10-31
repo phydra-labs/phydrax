@@ -1142,6 +1142,11 @@ PHX_MC_API int32_t phx_mc_plc3d_failure(
     const phx_mc_plc3d_result* result, int32_t* reason, int32_t* first_kind,
     int64_t* first, int32_t* second_kind, int64_t* second, double* certified_deviation,
     double* declared_bound);
+// Steiner-suppression search evidence: values[0..4] = wedges searched,
+// wedges filled, states expanded, most states in one wedge, largest searched
+// wedge (cells).
+PHX_MC_API int32_t phx_mc_plc3d_suppression_search(
+    const phx_mc_plc3d_result* result, int64_t* values);
 PHX_MC_API void phx_mc_plc3d_free(phx_mc_plc3d_result* result);
 
 enum phx_mc_intersection_class {

@@ -972,6 +972,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _P, _P, _P, _P),
     ),
     "phx_mc_plc3d_failure": (_I32, (_P, *(_P,) * 7)),
+    "phx_mc_plc3d_suppression_search": (_I32, (_P, _P)),
     "phx_mc_plc3d_free": (None, (_P,)),
     "phx_mc_tet_mesh_create": (
         _I32,
@@ -2428,6 +2429,21 @@ class NativeTetrahedraArrangement(NamedTuple):
     face_planes: np.ndarray
 
 
+class PlcSuppressionSearch(NamedTuple):
+    """Evidence of the exhaustive Steiner-free suppression search.
+
+    The search runs only for wedges that no polynomial fill handles:
+    wedges searched and filled, states expanded in total and at most per
+    wedge, and the largest searched wedge in cells.
+    """
+
+    searches: int
+    fills: int
+    nodes: int
+    max_nodes: int
+    max_wedge_cells: int
+
+
 class PlcSourceData(NamedTuple):
     """PLC result; nonempty witnesses index raw carrier rows, not source banks.
 
@@ -2453,6 +2469,7 @@ class PlcSourceData(NamedTuple):
     source_entities: np.ndarray
     source_parameters: np.ndarray
     source_deviations: np.ndarray
+    suppression_search: PlcSuppressionSearch
 
 
 class TetMeshEditKind(IntEnum):
@@ -2501,6 +2518,7 @@ class PlcRecovery3D(NamedTuple):
     witness_entities: np.ndarray
     witness_parameters: np.ndarray
     witness_deviations: np.ndarray
+    suppression_search: PlcSuppressionSearch
 
 
 class TetMeshSourceComplex(NamedTuple):
@@ -4748,6 +4766,11 @@ def _plc3d_build(
         point_count, tet_count, face_count, segment_count, edge_count, triangle_count = (
             map(int, sizes)
         )
+        search = np.zeros((5,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_plc3d_suppression_search"](handle, search.ctypes.data),
+            "plc3d_suppression_search",
+        )
         result = PlcSourceData(
             code,
             np.empty((point_count, 3), dtype=np.float64),
@@ -4767,6 +4790,7 @@ def _plc3d_build(
             np.empty((point_count,), dtype=np.int32),
             np.empty((point_count, 2), dtype=np.float64),
             np.empty((point_count,), dtype=np.float64),
+            PlcSuppressionSearch(*(int(value) for value in search)),
         )
         _raise_for_call(
             library["phx_mc_plc3d_export"](
@@ -4934,6 +4958,7 @@ def recover_plc_3d(
         recovered.source_entities,
         recovered.source_parameters,
         recovered.source_deviations,
+        recovered.suppression_search,
     )
 
 
@@ -7662,6 +7687,7 @@ __all__ = [
     "PlcFailureReason",
     "PlcRecovery3D",
     "PlcSourceData",
+    "PlcSuppressionSearch",
     "PlcSourceFailure",
     "prepare_plc_source",
     "recover_plc",
