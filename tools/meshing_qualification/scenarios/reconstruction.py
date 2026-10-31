@@ -335,14 +335,10 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
         size_controls=(UniformSizeControl(volume_scope, 2.0 * spacing),),
         maximum_deviation=envelope.maximum_deviation,
     )
-    # The certified envelope boundary is FIXED: no edit may split or move its
-    # marching-tetrahedra facets. Cells spanning only boundary vertices across a
-    # nearly flat fold then keep an arbitrarily large radius-edge ratio and the
-    # boundary's own dihedral angle, so no quality target is attainable a priori.
-    # The schedule declares none (sizes and the determinant floor still apply),
-    # and the result reports the achieved quality.
+    # The envelope volume keeps the scientific tetrahedral quality target; a
+    # residual unmet cell is a failed profile, not a relaxed schedule.
     volume_schedule = NativeVolumeSchedule(
-        radius_edge_bound=1.0e6, minimum_dihedral_degrees=0.0
+        radius_edge_bound=2.0, minimum_dihedral_degrees=10.0
     )
     volume_plan = NativeMeshingProvider(
         phx.meshing.NativeMeshingOptions(

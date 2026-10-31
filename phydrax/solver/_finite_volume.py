@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -44,6 +44,24 @@ from ..discretization.finite_volume._unstructured_motion import (
 )
 from ..typing import checked, parse
 from ._finite_volume_content import FiniteVolumeConservativeContentState
+
+
+def collective_branch(
+    predicate: ArrayLike,
+    true_branch: Callable[[None], Any],
+    false_branch: Callable[[None], Any],
+    /,
+) -> Any:
+    """Run one branch: eagerly for a concrete predicate, traced otherwise.
+
+    Owner-local stage providers run eager group collectives that cannot be
+    traced into a ``lax.cond`` branch. Their predicates are already reduced
+    over the owner group, so every owner selects the same eager branch. Inside
+    a traced program the selection stays a ``lax.cond``.
+    """
+    if isinstance(predicate, jax_core.Tracer):
+        return jax.lax.cond(predicate, true_branch, false_branch, operand=None)
+    return true_branch(None) if bool(jnp.asarray(predicate)) else false_branch(None)
 
 
 PreparedFVDynamics: TypeAlias = (
@@ -84,7 +102,6 @@ class FiniteVolumeStageStateProvider(StrictModule, NonTrainableState):
         return provided
 
 
-
 class FiniteVolumeStageDecisionProvider(StrictModule, NonTrainableState):
     """Collective decision hook used before distributed SSPRK branch points."""
 
@@ -114,6 +131,7 @@ class FiniteVolumeStageDecisionProvider(StrictModule, NonTrainableState):
         if result.shape != () or result.dtype != jnp.bool_:
             raise TypeError("Stage decision callback must return a scalar bool.")
         return result
+
 
 SplittingKind: TypeAlias = Literal["godunov", "strang"]
 
@@ -342,6 +360,7 @@ def unstructured_ssprk33_content_candidate(
         accepted_step,
         redistribution=redistribution,
         stage_state_provider=stage_state_provider,
+        stage_decision_provider=stage_decision_provider,
     )
     high_1 = dynamics.evaluate_stage(
         stage_initial, stage_1, args, cfl=cfl, redistribution=redistribution
@@ -534,25 +553,22 @@ def unstructured_ssprk33_content_candidate(
                 relative_cfl_step=relative_cfl_step,
                 candidate_id=candidate_id,
             )
-            return jax.lax.cond(
+            return collective_branch(
                 stage_3_valid,
                 lambda _: candidate,
                 lambda _: zero_candidate,
-                operand=None,
             )
 
-        return jax.lax.cond(
+        return collective_branch(
             stage_2_valid,
             continue_after_stage_2,
             lambda _: zero_candidate,
-            operand=None,
         )
 
-    return jax.lax.cond(
+    return collective_branch(
         stage_1_valid,
         continue_after_stage_1,
         lambda _: zero_candidate,
-        operand=None,
     )
 
 

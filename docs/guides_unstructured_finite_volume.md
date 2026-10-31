@@ -270,6 +270,18 @@ validates complete source/target coverage and applies conservative cell-integral
 transfer. A remesh is therefore a new topology and geometry plus an auditable remap,
 never an in-place mutation.
 
+`PreparedFiniteVolumeRuntime.commit_remesh(accepted_result, transition,
+successor_dynamics, content_semantics=...)` commits an accepted remesh or adaptation
+transition at the step boundary, and accepts two transfer semantics:
+
+- `"eulerian_physical_overlap"` transfers content by the exact physical overlap of
+  the endpoint geometries.
+- `"material_following_content"` moves extensive content along the transition's
+  accepted volume material chain; it is refused when the transition has no chain.
+
+The topology transaction prepares the transfer, checks coverage and conservation,
+and publishes the successor runtime only on commit.
+
 ## Owner-local conservative transfers
 
 `prepare_owner_local_conservative_remap(source_view, target_view, execution_group)`
@@ -325,6 +337,28 @@ Incomplete or double coverage remains diagnostic evidence and is not transportab
 accepted views, directory routes, and physical overlap evidence, then rejects any
 replay whose recomputed remap identity differs from the stored artifact.
 
+`OwnerLocalCompositeCellGeometry((donor_view, receptor_view), remote_ghosts=...)`
+compiles several owner-local part views into one disjoint local layout. Each part
+keeps its own rows and ownership. `OwnerLocalRemoteGhostCells` are donor cells
+fetched from their owners and placed in this rank's lattice image; their state is
+refreshed by the same per-stage owner exchange. The owner-local overset coupling
+works as follows:
+
+- `prepare_owner_local_finite_volume_overset(connectivity, views, donor, receptor,
+  execution_group, component_names=...)` builds the composite, its FV geometry, and
+  a conservative `UnstructuredOversetPlan` over composite rows.
+- Each rank's owned fringe receptor cells must be covered by live (non-hole) donor
+  cells, summed over every periodic lattice image.
+- A coverage gap expands the donor halo collectively. It first requests the native
+  winners of the fringe points, then the face neighbours of donor cells touching
+  uncovered receptors.
+- The coupling refuses only when no owner can add a cell. Every refusal names each
+  failing owner's reason.
+
+`commit_owner_local_repartition(..., owner_local_part_name=...)` migrates one named
+part of a composite runtime through the native graph migration. The owned cells of
+the other parts stay on their owners and keep their exact content.
+
 
 ## Embedded boundaries and VOF
 
@@ -353,7 +387,13 @@ returns a reprepared successor AMR runtime.
 fringe, donor-eligibility, global-ID, coverage, union-volume, and epoch evidence.
 Conservative runtime correction requires a separate certified receptor-face artifact:
 face quadrature points, unit normals, positive face measures, and receptor ownership.
-Volume-overlap CSR entries are never treated as synthetic faces.
+Volume-overlap CSR entries are never treated as synthetic faces. The static
+`receptor_route_faces` map assigns every overlap route to one certified face of its
+receptor cell, and several routes may share a face. That face's exterior trace is
+the overlap-weighted mean of its routes' donor traces. The route fractions of each
+face sum to one exactly; this is checked at preparation. Each route carries its
+fraction of the face flux, from its donor to its receptor. Sliding couplings use
+the same correction, with the interval overlap routes as the route-to-face map.
 
 This is a physical cell-overlap remap: each CSR measure is a donor/receptor
 intersection measure, and the map requires complete coverage evidence before its

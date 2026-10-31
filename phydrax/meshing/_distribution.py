@@ -18,7 +18,7 @@ import operator
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from math import prod
-from typing import Any, final, TYPE_CHECKING, TypedDict
+from typing import Any, final, NamedTuple, TYPE_CHECKING, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -1112,6 +1112,34 @@ def _owner_group_fail_if_any(
             if local_error is not None
             else f"Another owner failed {context} validation."
         )
+
+
+_OWNER_REASON_BYTES = 768
+
+
+def _owner_group_fail_with_reasons(
+    local_error: str | None,
+    execution_group: Any,
+    axis_name: str,
+    /,
+) -> None:
+    """Raise one refusal naming every failing owner's own reason on all owners."""
+    payload = np.zeros((_OWNER_REASON_BYTES + 1,), dtype=np.uint8)
+    if local_error is not None:
+        raw = local_error.encode("utf-8")[:_OWNER_REASON_BYTES]
+        payload[0] = 1
+        payload[1 : 1 + len(raw)] = np.frombuffer(raw, dtype=np.uint8)
+    rows = np.asarray(
+        _owner_group_allgather(payload, execution_group, axis_name), dtype=np.uint8
+    ).reshape((-1, _OWNER_REASON_BYTES + 1))
+    reasons = [
+        f"owner {rank}: "
+        + bytes(row[1:]).rstrip(b"\x00").decode("utf-8", errors="replace")
+        for rank, row in enumerate(rows)
+        if row[0]
+    ]
+    if reasons:
+        raise ValueError("; ".join(reasons))
 
 
 def _sharded_owner_directory_id(
@@ -3697,6 +3725,60 @@ class MeshDistribution(StrictModule, NonTrainableState):
             "geometry_layout_id": result.geometry.geometry_layout_id,
             "blocks": tuple(local_blocks),
         }
+
+    def owner_local_cell_shard_rows(self, rank: int, /) -> OwnerLocalCellShardRows:
+        """Select only ``rank``'s authored owned simplex rows for sharded publication.
+
+        The rows feed ``prepare_owner_local_cell_shard`` on that rank; halo cells
+        are not selected here and are resolved collectively from their owners.
+        """
+        if not isinstance(self.part.carrier, CellMeshingResult):
+            raise TypeError("Shard rows require a CellMeshingResult carrier.")
+        mesh = self.part.carrier.mesh
+        if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind not in (
+            _OWNER_LOCAL_SHARD_SIMPLICES
+        ):
+            raise ValueError("Shard rows require one simplex cell block.")
+        rank_ = operator.index(rank)
+        if not 0 <= rank_ < self.partition.part_count:
+            raise ValueError("Distribution rank is out of range.")
+        dimension = mesh.topological_dimension
+        rows = np.sort(np.asarray(self.owned_rows[rank_], dtype=np.int64))
+        block = mesh.blocks[0]
+        global_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        cell_vertex_ids = global_vertex_ids[
+            np.asarray(block.vertices, dtype=np.int64)[rows]
+        ]
+        cell_ids = np.asarray(block.global_ids, dtype=np.int64)[rows]
+        vertex_rows = np.unique(np.asarray(block.vertices, dtype=np.int64)[rows])
+        entity_vertices = _entity_vertex_rows(mesh)
+        entity_keys: list[np.ndarray] = []
+        entity_ids: list[np.ndarray] = []
+        for degree in range(1, dimension):
+            needed = set(_shard_entity_keys(cell_vertex_ids, degree))
+            identifiers = np.asarray(mesh.entity_set(degree).entity_ids, dtype=np.int64)
+            keys = []
+            ids = []
+            for entity_row, identifier in enumerate(identifiers.tolist()):
+                key = tuple(
+                    sorted(
+                        int(global_vertex_ids[vertex])
+                        for vertex in np.asarray(entity_vertices[degree][entity_row])
+                    )
+                )
+                if key in needed:
+                    keys.append(key)
+                    ids.append(identifier)
+            entity_keys.append(np.asarray(keys, dtype=np.int64).reshape((-1, degree + 1)))
+            entity_ids.append(np.asarray(ids, dtype=np.int64))
+        return OwnerLocalCellShardRows(
+            cell_ids,
+            cell_vertex_ids,
+            global_vertex_ids[vertex_rows],
+            np.asarray(mesh.coordinates, dtype=np.float64)[vertex_rows],
+            tuple(entity_keys),
+            tuple(entity_ids),
+        )
 
     def owner_local_geometry_record(
         self,
@@ -6764,7 +6846,747 @@ def partition_owner_local_graph(
     )
 
 
+class OwnerLocalCoordinateMap(NamedTuple):
+    """Exact coordinate rows of one owner-local shard under a group-wide map ID.
+
+    The map identity is the collective multiset identity of every owner's
+    exact rows; each rank stores only the rows resident in its local view.
+    """
+
+    source_id: str
+    source_revision: str
+    source_map_id: str
+    coordinate_rows: tuple[int, ...]
+    exact_coordinates: tuple[tuple[Any, ...], ...]
+
+    def source_coordinates(
+        self, rows: ArrayLike | None = None, /
+    ) -> tuple[tuple[Any, ...], ...]:
+        if len(self.coordinate_rows) != len(self.exact_coordinates) or len(
+            set(self.coordinate_rows)
+        ) != len(self.coordinate_rows):
+            raise ValueError("Owner-local coordinate-map rows are malformed.")
+        if rows is None:
+            return self.exact_coordinates
+        identifiers = np.asarray(rows)
+        if identifiers.ndim != 1 or identifiers.dtype.kind not in "iu":
+            raise ValueError("Owner-local coordinate-map lookups need integer rows.")
+        row_values = dict(zip(self.coordinate_rows, self.exact_coordinates, strict=True))
+        try:
+            return tuple(row_values[int(row)] for row in identifiers)
+        except KeyError as error:
+            raise ValueError(
+                "Owner-local coordinate map omits a requested source row."
+            ) from error
+
+
+class OwnerLocalCellShardRows(NamedTuple):
+    """One rank's authored owned simplex rows of an ordinary distributed mesh.
+
+    ``cell_vertex_ids`` names global vertex IDs per owned cell; ``vertex_ids``
+    and ``vertex_coordinates`` cover exactly the vertices of the owned cells.
+    ``entity_keys[k]``/``entity_ids[k]`` give the global IDs of every
+    intermediate entity of degree ``k`` in the owned-cell closure, keyed by its
+    sorted global vertex IDs. No row describes another owner's cells.
+    """
+
+    cell_ids: np.ndarray
+    cell_vertex_ids: np.ndarray
+    vertex_ids: np.ndarray
+    vertex_coordinates: np.ndarray
+    entity_keys: tuple[np.ndarray, ...]
+    entity_ids: tuple[np.ndarray, ...]
+
+
+_OWNER_LOCAL_SHARD_SIMPLICES = {"triangle": 2, "tetrahedron": 3}
+
+
+def _shard_entity_keys(
+    cell_vertex_ids: np.ndarray, degree: int, /
+) -> tuple[tuple[int, ...], ...]:
+    """Sorted global-vertex keys of each cell's degree entities, combination order."""
+    from itertools import combinations
+
+    arity = cell_vertex_ids.shape[1]
+    return tuple(
+        tuple(sorted(int(value) for value in cell_vertex_ids[row, list(combo)]))
+        for row in range(cell_vertex_ids.shape[0])
+        for combo in combinations(range(arity), degree + 1)
+    )
+
+
+def _shard_simplex_measure(points: np.ndarray, /) -> float:
+    edges = points[1:] - points[0]
+    return float(abs(np.linalg.det(edges)) / float(prod(range(1, edges.shape[0] + 1))))
+
+
+def prepare_owner_local_cell_shard(
+    part_name: str,
+    source_id: str,
+    source_revision: str,
+    coordinate_contract: Any,
+    block_name: str,
+    cell_kind: str,
+    rows: OwnerLocalCellShardRows,
+    execution_group: ExecutionGroup,
+    /,
+    *,
+    axis_name: str = "owner_local_cell_shard",
+) -> Any:
+    """Publish one rank's owned simplices plus their exact face-neighbor halo.
+
+    Each rank supplies only its owned rows. Face neighbors are resolved through
+    hash-sharded facet records and their rows are requested from their owners;
+    vertex owners are elected as the minimum incident-cell owner. No rank
+    gathers the global mesh, and the returned rank-local ``MeshAssembly``
+    carries a non-serial ``OwnerLocalCellGeometry`` with a bound owner
+    directory, coordinate map, and accepted part authority.
+    """
+    from fractions import Fraction
+    from itertools import combinations
+
+    import jax
+
+    from .._physical import SpatialCoordinateContract
+    from ..discretization._view_support import OwnerLocalCellGeometry
+    from ..discretization.fem._reference import lagrange_element
+    from ..lifecycle import Composition, CompositionEntry
+    from ._assembly import MeshAssembly, MeshPartManifest
+
+    if not isinstance(execution_group, ExecutionGroup):
+        raise TypeError("execution_group must be ExecutionGroup.")
+    members = execution_group.spec.process_indices
+    if not execution_group.is_member or jax.process_index() not in members:
+        raise ValueError("Owner-local shards require a member of the execution group.")
+    rank = members.index(jax.process_index())
+    parts = len(members)
+    axis = str(axis_name).strip()
+    if not axis:
+        raise ValueError("axis_name must be non-empty.")
+    declaration = {
+        "part_name": part_name,
+        "source_id": source_id,
+        "source_revision": source_revision,
+        "coordinate_contract": getattr(coordinate_contract, "spatial_id", None),
+        "block_name": block_name,
+        "cell_kind": cell_kind,
+    }
+    local_error = None
+    try:
+        if (
+            not isinstance(coordinate_contract, SpatialCoordinateContract)
+            or any(
+                not isinstance(value, str) or not value.strip()
+                for value in (part_name, source_id, source_revision, block_name)
+            )
+            or cell_kind not in _OWNER_LOCAL_SHARD_SIMPLICES
+            or not isinstance(rows, OwnerLocalCellShardRows)
+        ):
+            raise TypeError(
+                "Owner-local shards need typed simplex rows and full source identities."
+            )
+        dimension = _OWNER_LOCAL_SHARD_SIMPLICES[cell_kind]
+        arity = dimension + 1
+        owned_ids = np.asarray(rows.cell_ids)
+        owned_vertices = np.asarray(rows.cell_vertex_ids)
+        vertex_ids = np.asarray(rows.vertex_ids)
+        vertex_points = np.asarray(rows.vertex_coordinates)
+        if (
+            owned_ids.ndim != 1
+            or owned_ids.dtype.kind not in "iu"
+            or np.any(owned_ids < 0)
+            or np.unique(owned_ids).size != owned_ids.size
+            or owned_vertices.shape != (owned_ids.size, arity)
+            or owned_vertices.dtype.kind not in "iu"
+            or vertex_ids.ndim != 1
+            or vertex_ids.dtype.kind not in "iu"
+            or np.any(vertex_ids < 0)
+            or np.unique(vertex_ids).size != vertex_ids.size
+            or vertex_points.shape != (vertex_ids.size, dimension)
+            or vertex_points.dtype != np.float64
+            or not np.all(np.isfinite(vertex_points))
+            or set(owned_vertices.reshape(-1).tolist()) != set(vertex_ids.tolist())
+            or any(
+                np.unique(row).size != arity for row in owned_vertices.astype(np.int64)
+            )
+            or len(rows.entity_keys) != dimension - 1
+            or len(rows.entity_ids) != dimension - 1
+        ):
+            raise ValueError("Owner-local shard rows are malformed.")
+        owned_ids = owned_ids.astype(np.int64)
+        owned_vertices = owned_vertices.astype(np.int64)
+        vertex_ids = vertex_ids.astype(np.int64)
+        entity_tables: list[dict[tuple[int, ...], int]] = []
+        for degree, (keys_value, ids_value) in enumerate(
+            zip(rows.entity_keys, rows.entity_ids, strict=True), start=1
+        ):
+            keys = np.asarray(keys_value)
+            ids = np.asarray(ids_value)
+            if (
+                keys.ndim != 2
+                or keys.shape[1] != degree + 1
+                or keys.dtype.kind not in "iu"
+                or ids.shape != (keys.shape[0],)
+                or ids.dtype.kind not in "iu"
+                or np.any(ids < 0)
+                or np.unique(ids).size != ids.size
+                or np.any(np.diff(keys, axis=1) <= 0)
+            ):
+                raise ValueError("Owner-local shard entity tables are malformed.")
+            table = {
+                tuple(int(value) for value in key): int(identifier)
+                for key, identifier in zip(keys, ids, strict=True)
+            }
+            if len(table) != keys.shape[0] or any(
+                key not in table for key in _shard_entity_keys(owned_vertices, degree)
+            ):
+                raise ValueError(
+                    "Owner-local shard entity tables omit an owned-cell entity."
+                )
+            entity_tables.append(table)
+    except Exception as error:
+        local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_if_any(local_error, execution_group, f"{axis}_input", "shard input")
+    differing = _owner_group_differing_declarations(
+        declaration, execution_group, f"{axis}_declaration"
+    )
+    if differing:
+        raise ValueError(
+            "Owner-local shard declarations differ across owners: " + ", ".join(differing)
+        )
+    point_by_id = {
+        int(identifier): vertex_points[row] for row, identifier in enumerate(vertex_ids)
+    }
+
+    # Facet records route to a hash bucket by their smallest vertex ID; the
+    # bucket pairs the (at most two) incident cells and answers each owner.
+    facet_rows = np.asarray(
+        [
+            (*key, int(owned_ids[row]), rank)
+            for row in range(owned_ids.size)
+            for key in _shard_entity_keys(owned_vertices[row : row + 1], dimension - 1)
+        ],
+        dtype=np.int64,
+    ).reshape((-1, dimension + 2))
+    facet_buckets = _owner_directory_bucket(facet_rows[:, 0], parts)
+    incoming_facets = _owner_exchange_message_banks(
+        tuple(
+            facet_rows[facet_buckets == destination]
+            if destination != rank
+            else np.zeros((0, dimension + 2), dtype=np.int64)
+            for destination in range(parts)
+        ),
+        rank,
+        execution_group,
+        f"{axis}_facets",
+    )
+    incident: dict[tuple[int, ...], list[tuple[int, int]]] = {}
+    for bank in (facet_rows[facet_buckets == rank], *incoming_facets.values()):
+        for row in np.asarray(bank, dtype=np.int64).tolist():
+            incident.setdefault(tuple(row[:dimension]), []).append(
+                (int(row[dimension]), int(row[dimension + 1]))
+            )
+    local_error = (
+        "ValueError: Owner-local shard facets are shared by more than two cells."
+        if any(len(cells) > 2 for cells in incident.values())
+        else None
+    )
+    _owner_group_fail_if_any(
+        local_error, execution_group, f"{axis}_manifold", "shard facet manifold"
+    )
+    replies: list[list[tuple[int, ...]]] = [[] for _ in range(parts)]
+    for key, cells in incident.items():
+        for index, (cell, owner) in enumerate(cells):
+            neighbor, neighbor_owner = cells[1 - index] if len(cells) == 2 else (-1, -1)
+            replies[owner].append((cell, neighbor, neighbor_owner, *key))
+    reply_banks = tuple(
+        np.asarray(values, dtype=np.int64).reshape((-1, dimension + 3))
+        for values in replies
+    )
+    incoming_replies = _owner_exchange_message_banks(
+        tuple(
+            bank if destination != rank else np.zeros((0, dimension + 3), np.int64)
+            for destination, bank in enumerate(reply_banks)
+        ),
+        rank,
+        execution_group,
+        f"{axis}_facet_replies",
+    )
+    neighbors: dict[int, dict[int, int]] = {int(cell): {} for cell in owned_ids}
+    boundary_facets: set[tuple[int, ...]] = set()
+    for bank in (reply_banks[rank], *incoming_replies.values()):
+        for row in np.asarray(bank, dtype=np.int64).tolist():
+            cell, neighbor, neighbor_owner = (int(value) for value in row[:3])
+            if neighbor < 0:
+                boundary_facets.add(tuple(int(value) for value in row[3:]))
+            else:
+                neighbors[cell][neighbor] = neighbor_owner
+
+    # Halo rows (vertices, exact coordinate bits, and closure entity IDs) come
+    # only from each halo cell's owner.
+    halo_owner = {
+        neighbor: owner
+        for cell_neighbors in neighbors.values()
+        for neighbor, owner in cell_neighbors.items()
+        if owner != rank
+    }
+    request_banks = tuple(
+        np.asarray(
+            sorted(cell for cell, owner in halo_owner.items() if owner == destination),
+            dtype=np.int64,
+        ).reshape((-1, 1))
+        if destination != rank
+        else np.zeros((0, 1), dtype=np.int64)
+        for destination in range(parts)
+    )
+    incoming_requests = _owner_exchange_message_banks(
+        request_banks, rank, execution_group, f"{axis}_halo_requests"
+    )
+    entity_widths = tuple(
+        len(tuple(combinations(range(arity), degree + 1)))
+        for degree in range(1, dimension)
+    )
+    response_width = 1 + arity + arity * dimension + sum(entity_widths)
+    owned_row_by_id = {int(cell): row for row, cell in enumerate(owned_ids)}
+    local_error = None
+    responses: list[np.ndarray] = [
+        np.zeros((0, response_width), dtype=np.int64) for _ in range(parts)
+    ]
+    try:
+        for requester, requested in incoming_requests.items():
+            packed = []
+            for cell in np.asarray(requested, dtype=np.int64)[:, 0].tolist():
+                row = owned_row_by_id.get(int(cell))
+                if row is None:
+                    raise ValueError(
+                        "A halo request names a cell this rank does not own."
+                    )
+                cell_vertices = owned_vertices[row]
+                bits = np.stack([point_by_id[int(vertex)] for vertex in cell_vertices])
+                entities = [
+                    entity_tables[degree - 1][key]
+                    for degree in range(1, dimension)
+                    for key in _shard_entity_keys(cell_vertices[None, :], degree)
+                ]
+                packed.append(
+                    np.concatenate(
+                        (
+                            np.asarray((int(cell),), dtype=np.int64),
+                            cell_vertices,
+                            bits.reshape(-1).view(np.int64),
+                            np.asarray(entities, dtype=np.int64),
+                        )
+                    )
+                )
+            responses[int(requester)] = np.asarray(packed, dtype=np.int64).reshape(
+                (-1, response_width)
+            )
+    except Exception as error:
+        local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_if_any(
+        local_error, execution_group, f"{axis}_halo_rows", "shard halo rows"
+    )
+    incoming_halo = _owner_exchange_message_banks(
+        tuple(responses), rank, execution_group, f"{axis}_halo_responses"
+    )
+
+    local_error = None
+    try:
+        cell_vertex_by_id = {
+            int(cell): owned_vertices[row] for row, cell in enumerate(owned_ids)
+        }
+        cell_owner_by_id = {int(cell): rank for cell in owned_ids}
+        for owner, bank in incoming_halo.items():
+            for row in np.asarray(bank, dtype=np.int64):
+                cell = int(row[0])
+                if halo_owner.get(cell) != int(owner) or cell in cell_vertex_by_id:
+                    raise ValueError("A halo response names an unrequested cell.")
+                cell_vertices = row[1 : 1 + arity].astype(np.int64)
+                bits = row[1 + arity : 1 + arity + arity * dimension]
+                points = bits.view(np.float64).reshape((arity, dimension))
+                for vertex, point in zip(cell_vertices.tolist(), points, strict=True):
+                    previous = point_by_id.setdefault(int(vertex), point)
+                    if not np.array_equal(previous, point):
+                        raise ValueError("Halo vertex coordinates disagree with owners.")
+                cursor = 1 + arity + arity * dimension
+                for degree in range(1, dimension):
+                    keys = _shard_entity_keys(cell_vertices[None, :], degree)
+                    for key, identifier in zip(
+                        keys, row[cursor : cursor + len(keys)].tolist(), strict=True
+                    ):
+                        previous_id = entity_tables[degree - 1].setdefault(
+                            key, int(identifier)
+                        )
+                        if previous_id != int(identifier):
+                            raise ValueError("Halo entity IDs disagree with owners.")
+                    cursor += len(keys)
+                cell_vertex_by_id[cell] = cell_vertices
+                cell_owner_by_id[cell] = int(owner)
+        if set(cell_vertex_by_id) != set(owned_row_by_id) | set(halo_owner):
+            raise ValueError("Owner-local shard halo responses are incomplete.")
+    except Exception as error:
+        local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_if_any(
+        local_error, execution_group, f"{axis}_halo_merge", "shard halo merge"
+    )
+
+    cell_ids = np.asarray(sorted(cell_vertex_by_id), dtype=np.int64)
+    cell_owner_ranks = np.asarray(
+        [cell_owner_by_id[int(cell)] for cell in cell_ids], dtype=np.int32
+    )
+    owned = cell_owner_ranks == rank
+    resident_vertex_ids = np.asarray(
+        sorted(
+            {int(vertex) for cell in cell_ids for vertex in cell_vertex_by_id[int(cell)]}
+        ),
+        dtype=np.int64,
+    )
+    vertex_row = {int(vertex): row for row, vertex in enumerate(resident_vertex_ids)}
+    vertex_owner_ranks = _owner_group_minimum_owner_ranks(
+        resident_vertex_ids,
+        np.asarray(
+            [(int(vertex), rank) for vertex in vertex_ids.tolist()], dtype=np.int64
+        ).reshape((-1, 2)),
+        rank,
+        execution_group,
+        f"{axis}_vertex_owners",
+    ).astype(np.int32)
+    coordinates = np.asarray(
+        [point_by_id[int(vertex)] for vertex in resident_vertex_ids], dtype=np.float64
+    ).reshape((-1, dimension))
+    exact_coordinates = tuple(
+        tuple(Fraction.from_float(float(value)) for value in point)
+        for point in coordinates
+    )
+    local_cells = np.asarray(
+        [
+            [vertex_row[int(vertex)] for vertex in cell_vertex_by_id[int(cell)]]
+            for cell in cell_ids
+        ],
+        dtype=np.int32,
+    ).reshape((-1, arity))
+    cell_measures = np.asarray(
+        [_shard_simplex_measure(coordinates[row]) for row in local_cells],
+        dtype=np.float64,
+    )
+
+    topology_id = _owner_local_multiset_identity(
+        "owner-local-shard-topology",
+        {"cell_kind": cell_kind, "block": block_name},
+        tuple(
+            (
+                int(cell),
+                (
+                    tuple(int(value) for value in owned_vertices[row]),
+                    tuple(
+                        entity_tables[degree - 1][key]
+                        for degree in range(1, dimension)
+                        for key in _shard_entity_keys(
+                            owned_vertices[row : row + 1], degree
+                        )
+                    ),
+                ),
+            )
+            for row, cell in enumerate(owned_ids.tolist())
+        ),
+        source_id,
+        source_revision,
+        execution_group,
+        f"{axis}_topology",
+    )
+    map_id = _owner_local_multiset_identity(
+        "owner-local-shard-coordinate-map",
+        {"topology": topology_id, "coordinate_contract": coordinate_contract.spatial_id},
+        tuple(
+            (
+                int(vertex),
+                tuple(int(bits) for bits in coordinates[row].view(np.uint64)),
+            )
+            for row, vertex in enumerate(resident_vertex_ids.tolist())
+            if int(vertex_owner_ranks[row]) == rank
+        ),
+        source_id,
+        source_revision,
+        execution_group,
+        f"{axis}_coordinate_map",
+    )
+    element = lagrange_element(cell_kind, 1)
+    geometry_layout_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-shard-geometry-layout",
+            "topology": topology_id,
+            "block": block_name,
+            "element": element.element_id,
+        }
+    )
+    geometry_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-shard-geometry",
+            "topology": topology_id,
+            "coordinate_map": map_id,
+            "layout": geometry_layout_id,
+            "coordinate_contract": coordinate_contract.spatial_id,
+        }
+    )
+    source_mesh_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-shard-source-mesh",
+            "topology": topology_id,
+            "coordinate_map": map_id,
+        }
+    )
+    part_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-shard-part",
+            "source": source_id,
+            "revision": source_revision,
+            "topology": topology_id,
+            "geometry": geometry_id,
+        }
+    )
+    coordinate_map = OwnerLocalCoordinateMap(
+        source_id,
+        source_revision,
+        map_id,
+        tuple(range(resident_vertex_ids.size)),
+        exact_coordinates,
+    )
+    source_manifest = MeshPartManifest(
+        part_name,
+        part_id,
+        coordinate_contract,
+        dimension,
+        dimension,
+        source_topology_id=topology_id,
+        source_geometry_id=geometry_id,
+    )
+    vertex_owned = vertex_owner_ranks == rank
+    directory = ShardedOwnerDirectoryWitness(
+        execution_group,
+        rank,
+        source_manifest.manifest_id,
+        f"{part_name}/owner-directory",
+        resident_vertex_ids,
+        vertex_owner_ranks,
+        vertex_owned,
+        cell_ids,
+        cell_owner_ranks,
+        resident_vertex_ids,
+        vertex_owner_ranks,
+        source_map_id=map_id,
+        source_context_id=None,
+        axis_name=f"{axis}_directory",
+    )
+    source_entry = CompositionEntry(
+        coordinate_map,
+        entry_id=f"{part_name}/source",
+        role="topology",
+        owner_id="phydrax.meshing.distribution.owner_local_shard",
+        structure_id=source_mesh_id,
+        revision_id=source_revision,
+        semantics_id=map_id,
+    )
+    directory_entry = directory.composition_entry()
+    part_authority = CompositionEntry(
+        coordinate_map,
+        entry_id=f"{part_name}/part",
+        role="topology",
+        owner_id="phydrax.meshing.distribution.owner_local_shard",
+        structure_id=topology_id,
+        revision_id=part_id,
+        semantics_id=geometry_id,
+        dependencies=(
+            source_entry.binding("structure"),
+            source_entry.binding("revision"),
+            source_entry.binding("semantics"),
+            directory_entry.binding("structure"),
+        ),
+    )
+    bound_directory = directory.bind_source_authority(
+        part_authority.record_id,
+        execution_group,
+        axis_name=f"{axis}_directory_binding",
+    )
+    accepted_composition = Composition(
+        (source_entry, bound_directory.composition_entry(), part_authority),
+        boundary_id=part_id,
+    )
+
+    graph_ids = np.asarray(sorted(int(cell) for cell in owned_ids), dtype=np.int64)
+    graph_offsets = np.zeros((graph_ids.size + 1,), dtype=np.int64)
+    graph_neighbors: list[int] = []
+    graph_neighbor_owners: list[int] = []
+    for row, cell in enumerate(graph_ids.tolist()):
+        for neighbor in sorted(neighbors[int(cell)]):
+            graph_neighbors.append(neighbor)
+            graph_neighbor_owners.append(neighbors[int(cell)][neighbor])
+        graph_offsets[row + 1] = len(graph_neighbors)
+
+    entity_set_ids = {
+        degree: canonical_fingerprint(
+            {
+                "kind": "owner-local-shard-entity-set",
+                "topology": topology_id,
+                "dimension": degree,
+            }
+        )
+        for degree in range(dimension + 1)
+    }
+    local_entity_ids: dict[int, np.ndarray] = {0: resident_vertex_ids.copy()}
+    entity_vertex_offsets: dict[int, np.ndarray] = {
+        0: np.arange(resident_vertex_ids.size + 1, dtype=np.int64)
+    }
+    entity_vertex_values: dict[int, np.ndarray] = {
+        0: np.arange(resident_vertex_ids.size, dtype=np.int32)
+    }
+    for degree in range(1, dimension):
+        closure = sorted(
+            {
+                key
+                for cell in cell_ids.tolist()
+                for key in _shard_entity_keys(cell_vertex_by_id[cell][None, :], degree)
+            },
+            key=lambda key, table=entity_tables[degree - 1]: table[key],
+        )
+        local_entity_ids[degree] = np.asarray(
+            [entity_tables[degree - 1][key] for key in closure], dtype=np.int64
+        )
+        entity_vertex_offsets[degree] = np.arange(
+            0, (degree + 1) * (len(closure) + 1), degree + 1, dtype=np.int64
+        )
+        entity_vertex_values[degree] = np.asarray(
+            [vertex_row[vertex] for key in closure for vertex in key], dtype=np.int32
+        )
+    local_entity_ids[dimension] = cell_ids.copy()
+    entity_vertex_offsets[dimension] = np.arange(
+        0, arity * (cell_ids.size + 1), arity, dtype=np.int64
+    )
+    entity_vertex_values[dimension] = local_cells.reshape(-1).astype(np.int32)
+    cell_rows = np.arange(cell_ids.size, dtype=np.int64)
+    blocks: tuple[dict[str, Any], ...] = ()
+    if cell_ids.size:
+        blocks = (
+            {
+                "name": block_name,
+                "cell_kind": cell_kind,
+                "cell_rows": cell_rows,
+                "cell_ids": cell_ids,
+                "vertices": local_cells,
+                "vertex_valid": np.ones(local_cells.shape, dtype=np.bool_),
+                "coordinate_routes": local_cells,
+                "element": element,
+                "element_rows": cell_rows.astype(np.int32),
+                "source_cell_ids": cell_ids,
+                "chart_arguments": None,
+                "cell_measures": cell_measures,
+                "face_ids": None,
+                "cell_face_offsets": None,
+                "cell_face_values": None,
+                "cell_face_signs": None,
+                "face_vertex_offsets": None,
+                "face_vertex_values": None,
+                "cell_vertex_shifts": None,
+            },
+        )
+    record: dict[str, Any] = {
+        "part_name": part_name,
+        "part_id": part_id,
+        "distribution_id": bound_directory.directory_id,
+        "source_id": source_id,
+        "source_revision": source_revision,
+        "source_mesh_id": source_mesh_id,
+        "source_topology_id": topology_id,
+        "source_geometry_id": geometry_id,
+        "source_map_id": map_id,
+        "source_context_id": None,
+        "geometry_layout_id": geometry_layout_id,
+        "coordinate_contract_id": coordinate_contract.spatial_id,
+        "coordinate_contract": coordinate_contract,
+        "topological_dimension": dimension,
+        "cell_rows": cell_rows,
+        "cell_ids": cell_ids,
+        "owned": owned,
+        "cell_measures": cell_measures,
+        "cell_owner_ranks": cell_owner_ranks,
+        "owned_cell_ids": graph_ids,
+        "owned_cell_owner_ranks": np.full(graph_ids.shape, rank, dtype=np.int32),
+        "owned_cell_weights": np.ones(graph_ids.shape, dtype=np.int64),
+        "cell_neighbor_offsets": graph_offsets,
+        "cell_neighbor_ids": np.asarray(graph_neighbors, dtype=np.int64),
+        "cell_neighbor_owner_ranks": np.asarray(graph_neighbor_owners, dtype=np.int32),
+        "cell_neighbor_weights": np.ones((len(graph_neighbors),), dtype=np.int64),
+        # An owned cell's closure and its exact face halo are resident.
+        "support_cell_mask": owned.copy(),
+        "vertex_rows": np.arange(resident_vertex_ids.size, dtype=np.int64),
+        "vertex_ids": resident_vertex_ids,
+        "vertex_coordinates": coordinates,
+        "exact_vertex_coordinates": exact_coordinates if exact_coordinates else None,
+        "coordinate_rows": np.arange(resident_vertex_ids.size, dtype=np.int64),
+        "coordinates": coordinates.copy(),
+        "exact_coordinates": exact_coordinates,
+        "entity_set_ids": entity_set_ids,
+        "local_entity_ids": local_entity_ids,
+        "entity_vertex_offsets": entity_vertex_offsets,
+        "entity_vertex_values": entity_vertex_values,
+        "cell_key_offsets": np.arange(cell_ids.size + 1, dtype=np.int64),
+        "cell_key_source_ids": cell_ids.copy(),
+        "cell_key_relative_windings": np.empty((cell_ids.size, 0), dtype=np.int64),
+        "vertex_source_ids": resident_vertex_ids.copy(),
+        "source_point_ids": resident_vertex_ids.copy(),
+        "source_owner_ranks": vertex_owner_ranks,
+        "source_owned": vertex_owned,
+        "vertex_owner_ranks": vertex_owner_ranks,
+        "vertex_absolute_windings": np.empty(
+            (resident_vertex_ids.size, 0), dtype=np.int64
+        ),
+        # The published shard is its own accepted candidate revision.
+        "candidate_revision_id": canonical_fingerprint(
+            {"kind": "owner-local-shard-candidate", "part": part_id}
+        ),
+        "certified_periodic_margin": None,
+        "periodic_shell_certificate": None,
+        "periodic_topology_id": None,
+        "periodic_cell_ids": None,
+        "vertex_representative_ids": None,
+        "vertex_windings": None,
+        "cell_windings": None,
+        "periodic_lift_id": None,
+        "periodic_lift_matrix": None,
+        "coordinates_are_lifted": True,
+        "blocks": blocks,
+        "rank": rank,
+        "serial_source_view": False,
+        "part_authority": part_authority,
+        "accepted_composition": accepted_composition,
+        "owner_directory_witness": bound_directory,
+    }
+    local_error = None
+    assembly: Any = None
+    try:
+        view = OwnerLocalCellGeometry.from_owner_local_result(record)
+        part = MeshPart(part_name, view, coordinate_contract=coordinate_contract)
+        manifest = MeshPartManifest(
+            part_name,
+            part_id,
+            coordinate_contract,
+            dimension,
+            dimension,
+            source_topology_id=topology_id,
+            source_geometry_id=geometry_id,
+            distribution_id=bound_directory.directory_id,
+        )
+        assembly = MeshAssembly((part,), global_parts=(manifest,), local_rank=rank)
+    except Exception as error:
+        local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_with_reasons(local_error, execution_group, f"{axis}_publication")
+    if assembly is None:
+        raise RuntimeError("Owner-local shard publication returned no assembly.")
+    return assembly
+
+
 __all__ = [
+    "OwnerLocalCellShardRows",
+    "OwnerLocalCoordinateMap",
     "OwnerLocalGraphPartitionEvidence",
     "OwnerLocalGraphMigrationEvidence",
     "OwnerLocalGraphKeyedStateTransfer",
@@ -6775,6 +7597,7 @@ __all__ = [
     "MeshPartitionEvidence",
     "MeshPartitionKind",
     "MeshPartitionPolicy",
+    "prepare_owner_local_cell_shard",
     "prepare_distribution_transition",
     "prepare_mesh_distribution",
 ]

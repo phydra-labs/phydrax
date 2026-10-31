@@ -38,6 +38,7 @@ from ..geometry._supermesh import (
 from ._distribution import (
     _owner_exchange_message_banks,
     _owner_group_allgather,
+    _owner_group_fail_with_reasons,
 )
 from ._overset import _to_source, OversetCellStatus, OversetConnectivity
 from ._overset_exchange import _periodic_donor_image_frame, _periodic_donor_images
@@ -49,34 +50,6 @@ class OwnerLocalFiniteVolumeOverset(NamedTuple):
     composite: OwnerLocalCompositeCellGeometry
     geometry: UnstructuredFiniteVolumeDiscretization
     overset: UnstructuredOversetPlan
-
-
-_REASON_BYTES = 768
-
-
-def _refuse_collectively(
-    local_error: str | None,
-    execution_group: ExecutionGroup,
-    axis_name: str,
-    /,
-) -> None:
-    """Raise the same refusal, naming every failing owner's reason, on all owners."""
-    payload = np.zeros((_REASON_BYTES + 1,), dtype=np.uint8)
-    if local_error is not None:
-        raw = local_error.encode("utf-8")[:_REASON_BYTES]
-        payload[0] = 1
-        payload[1 : 1 + len(raw)] = np.frombuffer(raw, dtype=np.uint8)
-    rows = np.asarray(
-        _owner_group_allgather(payload, execution_group, axis_name), dtype=np.uint8
-    ).reshape((-1, _REASON_BYTES + 1))
-    reasons = [
-        f"owner {rank}: "
-        + bytes(row[1:]).rstrip(b"\x00").decode("utf-8", errors="replace")
-        for rank, row in enumerate(rows)
-        if row[0]
-    ]
-    if reasons:
-        raise ValueError("; ".join(reasons))
 
 
 def _encode_rows(rows: Sequence[Mapping[str, Any]], /) -> np.ndarray:
@@ -140,6 +113,11 @@ def _fringe_submesh(view: OwnerLocalCellGeometry, cell_ids: np.ndarray, /) -> Ce
     mesh = view.reconstruct_local_geometry()[0]
     if mesh is None:
         raise ValueError("Fringe receptor cells lack their owner-local carrier.")
+    return _cell_submesh(mesh, cell_ids)
+
+
+def _cell_submesh(mesh: CellMesh, cell_ids: np.ndarray, /) -> CellMesh:
+    """Compact submesh of the selected cells with their own vertex rows."""
     wanted = set(int(value) for value in cell_ids.tolist())
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
@@ -652,13 +630,27 @@ def prepare_owner_local_finite_volume_overset(
         local_error = None
         try:
             if fringe_ids.size:
-                donor_mesh = owner_local_union_mesh(((donor_name, donor_view),), ghosts)
-                if donor_mesh is None:
+                union = owner_local_union_mesh(((donor_name, donor_view),), ghosts)
+                # Blanked donor cells are not physical donors.
+                live_donors = np.asarray(
+                    [
+                        identifier
+                        for identifier in sorted(donor_resident.union(ghost_rows))
+                        if (
+                            int(ghost_rows[identifier]["status"])
+                            if identifier in ghost_rows
+                            else donor_status[identifier]
+                        )
+                        != int(OversetCellStatus.HOLE)
+                    ],
+                    dtype=np.int64,
+                )
+                if union is None or live_donors.size == 0:
                     covered = False
                     coverage_status = "no donor carrier"
                 else:
                     overlap_routes, coverage_status, uncovered = _periodic_image_overlap(
-                        donor_mesh,
+                        _cell_submesh(union, live_donors),
                         _fringe_submesh(receptor_view, fringe_ids),
                         _periodic_lattice(donor_view),
                     )
@@ -673,7 +665,7 @@ def prepare_owner_local_finite_volume_overset(
         except Exception as error:
             local_error = f"{type(error).__name__}: {error}"
             covered = False
-        _refuse_collectively(
+        _owner_group_fail_with_reasons(
             local_error, execution_group, f"{axis_name}_coverage_{expansion_round}"
         )
         pending = {}
@@ -688,7 +680,7 @@ def prepare_owner_local_finite_volume_overset(
         if np.all(flags[:, 0] == 1):
             break
         if not np.any(flags[:, 1]):
-            _refuse_collectively(
+            _owner_group_fail_with_reasons(
                 "Owner-local FV overlap cannot cover its fringe receptors: no owner "
                 "holds a further donor cell "
                 f"(round {expansion_round}, {fringe_ids.size} fringe cells, "
@@ -749,7 +741,7 @@ def prepare_owner_local_finite_volume_overset(
                 )
         except Exception as error:
             local_error = f"{type(error).__name__}: {error}"
-        _refuse_collectively(
+        _owner_group_fail_with_reasons(
             local_error, execution_group, f"{axis_name}_serve_{expansion_round}"
         )
         returned = _owner_exchange_message_banks(
@@ -794,7 +786,6 @@ def prepare_owner_local_finite_volume_overset(
     donor_ids = set(donor_resident).union(ghost_rows)
     receptor_ids = set(receptor_cells.tolist())
     count = geometry.cell_count
-    donor_hole = np.zeros((count,), dtype=np.bool_)
     donor_fringe = np.zeros((count,), dtype=np.bool_)
     donor_part = np.zeros((count,), dtype=np.bool_)
     receptor_hole = np.zeros((count,), dtype=np.bool_)
@@ -805,9 +796,8 @@ def prepare_owner_local_finite_volume_overset(
             if status is None:
                 raise ValueError("Native blanking omits a composite donor cell.")
             donor_part[row] = True
-            donor_hole[row] = status == int(OversetCellStatus.HOLE)
+            receptor_hole[row] = status == int(OversetCellStatus.HOLE)
             donor_fringe[row] = status == int(OversetCellStatus.FRINGE)
-            receptor_hole[row] = donor_hole[row]
         elif identifier in receptor_ids:
             status = receptor_status[identifier]
             receptor_hole[row] = status == int(OversetCellStatus.HOLE)
@@ -846,9 +836,12 @@ def prepare_owner_local_finite_volume_overset(
         np.asarray(donors, dtype=np.int32),
         np.asarray(measures, dtype=np.float64),
         native_connectivity_id=connectivity.connectivity_id,
-        donor_active_mask=donor_part & ~donor_hole,
-        donor_hole_mask=donor_hole,
+        # Donor and receptor share one compiled layout: every non-hole row is
+        # active on both sides, and only donor-part rows are eligible donors.
+        donor_active_mask=~receptor_hole,
+        donor_hole_mask=receptor_hole,
         donor_fringe_mask=donor_fringe,
+        donor_eligible_mask=donor_part & ~receptor_hole,
         receptor_active_mask=~receptor_hole,
         receptor_hole_mask=receptor_hole,
         receptor_fringe_mask=receptor_fringe,

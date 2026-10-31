@@ -34,6 +34,8 @@ _DEFERRED_EXPORTS = {
     "PreparedOwnerLocalOversetExchange": "._overset_exchange",
     "owner_local_overset_action": "._overset_exchange",
     "prepare_owner_local_overset_exchange": "._overset_exchange",
+    "OwnerLocalFiniteVolumeOverset": "._overset_finite_volume",
+    "prepare_owner_local_finite_volume_overset": "._overset_finite_volume",
     "providers": "module:.providers",
     "AdaptationAction": "._decision",
     "ErrorQuantity": "._decision",
@@ -654,6 +656,10 @@ if TYPE_CHECKING:
         prepare_owner_local_overset_exchange,
         PreparedOwnerLocalOversetExchange,
     )
+    from ._overset_finite_volume import (
+        OwnerLocalFiniteVolumeOverset,
+        prepare_owner_local_finite_volume_overset,
+    )
     from ._periodic import (
         PeriodicPointOrbits as PeriodicPointOrbits,
         PeriodicRefinementEdgeLock as PeriodicRefinementEdgeLock,
@@ -814,6 +820,8 @@ __all__ = [
     "prepare_overset_field_transfer",
     "prepare_overset_motion_rebind",
     "prepare_owner_local_overset_exchange",
+    "OwnerLocalFiniteVolumeOverset",
+    "prepare_owner_local_finite_volume_overset",
     "AbstractMeshProposer",
     "AbstractMeshingSession",
     "AdaptationAction",

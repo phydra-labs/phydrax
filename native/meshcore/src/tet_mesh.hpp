@@ -8,6 +8,8 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <limits>
 #include <optional>
 #include <set>
 #include <span>
@@ -260,11 +262,17 @@ struct TetEditResult {
   std::vector<std::uint64_t> accepted_vertex_ids;
   std::vector<std::uint64_t> accepted_cell_ids;
 };
+// Unmet-record apex vertex ID of a record without an acute-feature apex.
+inline constexpr std::uint64_t kNoUnmetApex = std::numeric_limits<std::uint64_t>::max();
 struct TetUnmetRecord {
   std::uint64_t cell_id = 0;
   std::int32_t criterion = 0;
   std::int32_t reason = 0;
   double value = 0.0;
+  // INPUT_ANGLE evidence: the acute input feature's apex vertex ID and its
+  // angle in degrees; kNoUnmetApex and NaN for every other reason.
+  std::uint64_t apex_vertex = kNoUnmetApex;
+  double apex_angle = std::numeric_limits<double>::quiet_NaN();
 };
 
 // Star-shaped cavity of a candidate interior point for cone insertion.
@@ -363,6 +371,15 @@ class TetMesh {
   bool protected_vertex(std::int32_t slot) const noexcept;
   const Tetrahedron& tet(std::int32_t slot) const noexcept;
   bool positive(const std::int32_t* vertices) const;
+  // The exact position of a live vertex: the source point S of its witness
+  // (authoritative; the carrier is its correctly rounded realization), else
+  // its carrier. False for a dead slot or an unaddressable witness.
+  bool exact_position(std::int32_t slot, Expansion* position) const;
+  bool witness_position(const SourceWitness& witness, const double* carrier,
+                        Expansion* position) const;
+  // Pointers into the source point bank: the two corners of source segment
+  // row `row` (corners[2] null) or the three of source face row `row`.
+  bool source_corners(SourceStratum stratum, std::int32_t row, const double** corners) const;
 
   // Algorithmic entry points share the same validation and transaction path.
   TetEditStatus split_edge(std::uint64_t first, std::uint64_t second,
@@ -384,6 +401,9 @@ class TetMesh {
                          std::span<const std::uint64_t> affected_cells);
 
  private:
+  friend std::int32_t flip_to_constrained_delaunay(
+      TetMesh&, detail::LocalIncidence&, std::span<const std::uint64_t>,
+      const std::function<bool(std::uint64_t, std::uint64_t)>&, std::vector<std::uint64_t>&);
   friend std::int32_t refine_mesh(TetMesh&, double, std::span<const double>,
                                   std::int64_t&, std::int64_t&);
   friend std::int32_t improve_mesh(TetMesh&, const TetQualityRequest&,
@@ -420,22 +440,27 @@ class TetMesh {
   TetEditStatus insert_local_cone(const TetEditVertex& vertex,
                                   std::span<const std::int32_t> cavity,
                                   std::vector<std::uint64_t>& created_cells);
-  // Called by refinement through LocalIncidence: splits the edge (`first`,
-  // `second`) (vertex slots) at the new source-witnessed vertex `vertex`.
-  // `edge_cells` is the edge's complete finite star; the commit touches only
-  // its cells and the hull ghosts around the edge. `facet_rows` must be the
-  // facets_ rows of every constrained face containing the edge and
-  // `segment_rows` the segments_ row of the edge when it is a segment. Each
-  // split facet row is overwritten by its first half and the second half is
-  // appended (likewise for the segment), so other rows keep their indices
-  // and the banks leave ID order until the caller restores it. Created
-  // finite cell IDs are returned.
-  TetEditStatus split_local_edge(std::int32_t first, std::int32_t second,
-                                 const TetEditVertex& vertex,
-                                 std::span<const std::int32_t> edge_cells,
-                                 std::span<const std::size_t> facet_rows,
-                                 std::span<const std::size_t> segment_rows,
-                                 std::vector<std::uint64_t>& created_cells);
+  // Called by refinement through LocalIncidence: inserts the source-witnessed
+  // vertex `vertex` into a constrained facet, or into the constrained segment
+  // of `segment_rows` (at most one row). `cavity` holds the finite and hull
+  // ghost cells to replace around it and `facet_rows` the facets_ rows of the
+  // constrained faces inside it (one disk per facet), which the fans of the
+  // vertex over the disk boundaries replace: the fans overwrite those rows in
+  // order and are appended beyond them; the segment row is overwritten by its
+  // first half and the second appended. Created finite cell IDs are returned.
+  TetEditStatus insert_local_boundary_point(const TetEditVertex& vertex,
+                                            std::span<const std::int32_t> cavity,
+                                            std::span<const std::size_t> facet_rows,
+                                            std::span<const std::size_t> segment_rows,
+                                            std::vector<std::uint64_t>& created_cells);
+  // Called by refinement: the cavity of the constrained boundary point
+  // `vertex` (carrier and source witness) whose disk faces are `disk_sides`
+  // (finite cell, face slot), cells on both sides of their facets, splitting
+  // the segment `split_segment` (vertex slots; {-1, -1} for a facet point);
+  // kFound or kRefused (see insert_local_boundary_point).
+  TetCavityStatus boundary_insertion_cavity(
+      const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
+      std::array<std::int32_t, 2> split_segment, std::vector<std::int32_t>& cells) const;
   // Called by refinement and improvement: the star-shaped cavity of `point`
   // reached by walking from cell slot `start`.
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,
@@ -474,6 +499,12 @@ class TetMesh {
                      const RelocationOverlay* overlay) const;
   bool positive_with_relocation(const std::int32_t* vertices,
                                 const RelocationOverlay& overlay) const;
+  // positive() on explicit carriers and witnesses (exact source positions).
+  bool carriers_positive(const double* const* carriers,
+                         const SourceWitness* const* witness_records) const;
+  // positive() of `vertices` with corner `apex` replaced by the unstaged
+  // vertex `point`.
+  bool cone_positive(const std::int32_t* vertices, int apex, const TetEditVertex& point) const;
   bool validate_regions_and_constraints(
       const TetEdit& operation, std::span<const std::int32_t> removed_slots,
       std::span<const TetSnapshotFacet> candidate_facets) const;

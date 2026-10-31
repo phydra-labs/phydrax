@@ -598,15 +598,6 @@ class ReconstructedGeometrySource(GeometrySource):
     scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
 
-    if not TYPE_CHECKING:
-
-        def __getattribute__(self, name: str, /) -> object:
-            # Equinox binds each method as a BoundMethod pytree whose construction
-            # flattens the whole receiver, including its MeshingDomain. Meshing
-            # routes resolve source keys once per row, so those loops became
-            # quadratic. Methods bind as plain Python methods.
-            return object.__getattribute__(self, name)
-
     @checked
     def __init__(
         self,

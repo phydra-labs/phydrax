@@ -4786,6 +4786,7 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
         /,
     ) -> OwnerLocalPeriodicAdaptiveResult:
         from .._execution_runtime import ExecutionGroup
+        from .._model._structure import model_archive_projection
         from ..discretization._view_support import OwnerLocalCellGeometry
         from ..graph._partition import GraphPartitionPlan
         from ._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
@@ -4920,17 +4921,23 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             graph_partition_plan=graph_partition_plan,
         )
         result = type(self)._from_execution_validated(execution, current_view)
-        if not _owner_local_periodic_values_equal(self, result):
-            changed = [
+        # A result restored from a model archive holds executable values (for
+        # example finite-element specs) in their canonical archive projection,
+        # so the replay is compared in that projected form.
+        stored_projection = model_archive_projection(self)
+        replay_projection = model_archive_projection(result)
+        if not _owner_local_periodic_values_equal(stored_projection, replay_projection):
+            changed = tuple(
                 name
-                for name in self._fields
+                for name in type(self)._fields
                 if not _owner_local_periodic_values_equal(
-                    getattr(self, name), getattr(result, name)
+                    model_archive_projection(getattr(self, name)),
+                    model_archive_projection(getattr(result, name)),
                 )
-            ]
+            )
             raise ValueError(
                 "Periodic adaptive result fields or identities changed on cold "
-                f"replay: {', '.join(changed) or 'structure'}."
+                f"replay: {changed}."
             )
         return result
 
