@@ -701,6 +701,10 @@ int32_t phx_mc_plc3d_suppression_search(const phx_mc_plc3d_result* result, int64
   values[2] = search.nodes;
   values[3] = search.max_nodes;
   values[4] = search.max_wedge_cells;
+  values[5] = search.merges;
+  values[6] = search.max_merge_layers;
+  values[7] = search.exhausted;
+  values[8] = search.max_exhausted_cells;
   return PHX_MC_OK;
 }
 

@@ -85,7 +85,14 @@ double up(double value, int steps = 1) noexcept {
   return value;
 }
 
-double product(double first, double second) noexcept { return first * second; }
+// Endpoint product. Interval endpoints bound real numbers; an infinite
+// endpoint marks an unbounded side, never a member, so an exact zero
+// endpoint times it contributes 0 (IEEE 1788 set-based multiplication), as
+// in the host interval multiply.
+double product(double first, double second) noexcept {
+  if ((first == 0.0 && std::isinf(second)) || (std::isinf(first) && second == 0.0)) return 0.0;
+  return first * second;
+}
 
 // Whether phase + 2 k pi may lie in [lower, upper] for an integer k.
 bool contains_phase(double lower, double upper, double phase) noexcept {
