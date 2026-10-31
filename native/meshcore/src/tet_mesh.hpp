@@ -478,6 +478,12 @@ class TetMesh {
       const TetEdit& operation, std::span<const std::int32_t> removed_slots,
       std::span<const TetSnapshotFacet> candidate_facets) const;
   bool validate_periodic_closure(const TetEdit& operation) const;
+  // Lifted vertex ID -> (orbit row, member row) in periodic_orbits_.
+  using PeriodicMemberIndex =
+      std::unordered_map<std::uint64_t, std::pair<std::size_t, std::size_t>>;
+  PeriodicMemberIndex periodic_member_index() const;
+  bool periodic_seam_facet(const TetSnapshotFacet& facet,
+                           const PeriodicMemberIndex& members) const;
   bool audit_state() const;
 
   BoundaryPolicy policy_;
