@@ -34,6 +34,7 @@ from phydrax.geometry.brep._assembly import (
 from phydrax.geometry.brep._constructors import (
     brep_box,
     brep_planar_face,
+    brep_sphere,
     BRepTessellationPolicy,
     PlanarProfile,
     ProfileLoop,
@@ -165,6 +166,40 @@ def test_brep_projection_scenario_1() -> None:
     assert np.asarray(
         projection.contains([2, 1, 1], [0, rim, rim], [1, 0, 2], [rim, corner, 0])
     ).tolist() == [True, True, False]
+
+
+def test_native_sphere_projects_interior_pole_seam_and_center_points() -> None:
+    # The native sphere is a revolved circle profile meeting the axis at its poles.
+    projection = phx.geometry.prepare_brep_projection(
+        brep_sphere(1.0, coordinate_contract=_CONTRACT)
+    )
+    query = np.asarray(
+        [
+            [0.3, 0.4, 0.5],
+            [-0.5, 0.0, 0.3],
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, -0.5],
+            [0.0, 0.6, 0.8],
+            [0.0, 0.0, 0.0],
+        ]
+    )
+    result = _project(projection, query, _FACE, 0)
+    radii = np.linalg.norm(query[:5], axis=1)
+    surface = query[:5] / radii[:, None]
+
+    assert np.asarray(result.status).tolist() == [
+        _STATUS.UNIQUE,
+        _STATUS.UNIQUE,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.NON_ISOLATED,
+    ]
+    np.testing.assert_allclose(result.points[:5], surface, atol=1e-12)
+    np.testing.assert_allclose(result.residuals, [*np.abs(radii - 1.0), 1.0], atol=1e-12)
+    # The oriented normal points out of the solid, also at the poles where the
+    # chart's tangent cross product vanishes.
+    np.testing.assert_allclose(result.normals[:5], surface, atol=1e-12)
 
 
 def test_brep_projection_scenario_2() -> None:
