@@ -4957,7 +4957,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
     ) -> FiniteVolumeOwnerLocalRepartitionResult:
         """Commit exact owner-local cell state to a graph-migrated FV partition."""
         from .._execution_runtime import ExecutionGroup
-        from ..discretization._view_support import OwnerLocalCellGeometry
+        from ..discretization._view_support import (
+            OwnerLocalCellGeometry,
+            OwnerLocalCompositeCellGeometry,
+        )
         from ..lifecycle import Composition, CompositionEntry, CompositionTransport
         from ..meshing._distribution import (
             _owner_group_allgather,
@@ -5139,6 +5142,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         source_plan_ids = source_owned_ids = target_plan_ids = target_owned_ids = None
         target_owned_mask: np.ndarray | None = None
         source_owned_rows = target_owned_rows = None
+        kept_source_rows = kept_target_rows = np.zeros((0,), dtype=np.int32)
+        target_layout: Any = None
         target_runtime: PreparedFiniteVolumeRuntime | None = None
         try:
             local_rank = members.index(jax.process_index())
@@ -5147,7 +5152,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 or not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics)
                 or self.dynamics.coupling.overset is None
                 or self.owner_local_geometry is None
-                or not isinstance(self.owner_local_geometry, OwnerLocalCellGeometry)
+                or not isinstance(
+                    self.owner_local_geometry,
+                    (OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry),
+                )
                 or not previous_connectivity.owner_local
                 or not candidate_connectivity.owner_local
                 or candidate_connectivity.epoch != previous_connectivity.epoch + 1
@@ -5172,21 +5180,36 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             source_geometry = source_dynamics.discretization
             if not isinstance(source_geometry, UnstructuredFiniteVolumeDiscretization):
                 raise TypeError("Owner-local source plan lacks unstructured cell IDs.")
-            source_view_candidate = self.owner_local_geometry
-            if not isinstance(source_view_candidate, OwnerLocalCellGeometry):
+            source_layout = self.owner_local_geometry
+            if not isinstance(
+                source_layout, (OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry)
+            ):
                 raise TypeError("Accepted runtime lost its owner-local source view.")
-            source_geometry_view = source_geometry.owner_local_view
-            if not isinstance(source_geometry_view, OwnerLocalCellGeometry):
+            source_geometry_layout = source_geometry.owner_local_view
+            if not isinstance(
+                source_geometry_layout,
+                (OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry),
+            ):
                 raise TypeError("Accepted FV geometry lost its owner-local source view.")
-            source_view = source_view_candidate
-            part_name = (
-                source_view.part_name
-                if owner_local_part_name is None
-                else str(owner_local_part_name)
-            )
-            if source_geometry_view.local_view_id != source_view.local_view_id:
+            if source_geometry_layout.local_view_id != source_layout.local_view_id:
                 raise ValueError(
                     "Accepted FV geometry differs from its owner-local source view."
+                )
+            if isinstance(source_layout, OwnerLocalCompositeCellGeometry):
+                # A composite layout migrates one named part; the other parts
+                # keep their owned cells and are carried by stable cell ID.
+                if owner_local_part_name is None:
+                    raise ValueError(
+                        "Composite FV repartition must name its migrated part."
+                    )
+                part_name = str(owner_local_part_name)
+                source_view = source_layout.part(part_name)
+            else:
+                source_view = source_layout
+                part_name = (
+                    source_view.part_name
+                    if owner_local_part_name is None
+                    else str(owner_local_part_name)
                 )
             target_view_candidate = candidate_connectivity.assembly.part(
                 part_name
@@ -5199,15 +5222,38 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             target_geometry = target_dynamics.discretization
             if not isinstance(target_geometry, UnstructuredFiniteVolumeDiscretization):
                 raise TypeError("Target FV plan lacks unstructured cell IDs.")
-            target_geometry_view = target_geometry.owner_local_view
-            if not isinstance(target_geometry_view, OwnerLocalCellGeometry):
+            target_layout_candidate = target_geometry.owner_local_view
+            if not isinstance(
+                target_layout_candidate,
+                (OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry),
+            ):
                 raise TypeError("Target FV geometry lacks its owner-local view.")
+            target_layout = target_layout_candidate
+            if isinstance(source_layout, OwnerLocalCompositeCellGeometry):
+                if (
+                    not isinstance(target_layout, OwnerLocalCompositeCellGeometry)
+                    or target_layout.part_names != source_layout.part_names
+                    or target_layout.part(part_name).local_view_id
+                    != target_view.local_view_id
+                    or any(
+                        target_layout.part(name).local_view_id
+                        != source_layout.part(name).local_view_id
+                        for name in source_layout.part_names
+                        if name != part_name
+                    )
+                ):
+                    raise ValueError(
+                        "Target composite layout must migrate only the named part."
+                    )
+            elif target_layout.local_view_id != target_view.local_view_id:
+                raise ValueError(
+                    "Target dynamics do not bind the candidate connectivity view."
+                )
             target_overset = target_dynamics.coupling.overset
             if (
                 target_overset is None
                 or target_overset.native_connectivity_id
                 != candidate_connectivity.connectivity_id
-                or target_geometry_view.local_view_id != target_view.local_view_id
             ):
                 raise ValueError(
                     "Target dynamics do not bind the candidate connectivity view."
@@ -5226,12 +5272,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 source_view.owner_rank != local_rank
                 or target_view.owner_rank != local_rank
                 or source_view.part_name != target_view.part_name
-                or source_view.source_topology_id != current_epoch.topology_id
-                or source_view.source_geometry_id != current_epoch.geometry_id
-                or target_view.source_topology_id != current_epoch.topology_id
-                or target_view.source_geometry_id != current_epoch.geometry_id
-                or source_view.distribution_id != current_epoch.partition_id
-                or target_view.distribution_id == current_epoch.partition_id
+                or source_layout.source_topology_id != current_epoch.topology_id
+                or source_layout.source_geometry_id != current_epoch.geometry_id
+                or target_layout.source_topology_id != current_epoch.topology_id
+                or target_layout.source_geometry_id != current_epoch.geometry_id
+                or source_layout.distribution_id != current_epoch.partition_id
+                or target_layout.distribution_id == current_epoch.partition_id
                 or graph_migration.local_rank != local_rank
                 or graph_migration.part_count != len(members)
                 or graph_migration.group_id != execution_group.spec.group_id
@@ -5255,32 +5301,24 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             if source_owned_plan_mask is None:
                 raise ValueError("Accepted owner-local runtime lacks its ownership mask.")
             source_owned_mask = np.asarray(source_owned_plan_mask, dtype=np.bool_)
-            target_view_ids = np.asarray(target_view.cell_ids, dtype=np.int64)
-            target_view_owned = np.asarray(target_view.owned, dtype=np.bool_)
-            target_view_row = {
-                int(identifier): row
-                for row, identifier in enumerate(target_view_ids.tolist())
-            }
-            target_owned_mask = np.asarray(
-                [
-                    target_view_owned[target_view_row[int(identifier)]]
-                    for identifier in target_plan_ids
-                ],
-                dtype=np.bool_,
-            )
-            source_view_ids = np.asarray(source_view.cell_ids, dtype=np.int64)
-            source_view_owned = np.asarray(source_view.owned, dtype=np.bool_)
-            source_view_row = {
-                int(identifier): row
-                for row, identifier in enumerate(source_view_ids.tolist())
-            }
-            source_view_owned_mask = np.asarray(
-                [
-                    source_view_owned[source_view_row[int(identifier)]]
-                    for identifier in source_plan_ids
-                ],
-                dtype=np.bool_,
-            )
+
+            def layout_owned_mask(layout: Any, plan_ids: np.ndarray, /) -> np.ndarray:
+                layout_ids = np.asarray(layout.cell_ids, dtype=np.int64)
+                layout_owned = np.asarray(layout.owned, dtype=np.bool_)
+                layout_row = {
+                    int(identifier): row
+                    for row, identifier in enumerate(layout_ids.tolist())
+                }
+                return np.asarray(
+                    [
+                        layout_owned[layout_row[int(identifier)]]
+                        for identifier in plan_ids
+                    ],
+                    dtype=np.bool_,
+                )
+
+            target_owned_mask = layout_owned_mask(target_layout, target_plan_ids)
+            source_view_owned_mask = layout_owned_mask(source_layout, source_plan_ids)
             if (
                 source_plan_ids.ndim != 1
                 or target_plan_ids.ndim != 1
@@ -5289,26 +5327,65 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 or np.unique(source_plan_ids).size != source_plan_ids.size
                 or np.unique(target_plan_ids).size != target_plan_ids.size
                 or not np.array_equal(
-                    np.sort(source_plan_ids), np.sort(np.asarray(source_view.cell_ids))
+                    np.sort(source_plan_ids),
+                    np.sort(np.asarray(source_layout.cell_ids, dtype=np.int64)),
                 )
                 or not np.array_equal(
-                    np.sort(target_plan_ids), np.sort(np.asarray(target_view.cell_ids))
+                    np.sort(target_plan_ids),
+                    np.sort(np.asarray(target_layout.cell_ids, dtype=np.int64)),
                 )
                 or not np.array_equal(source_owned_mask, source_view_owned_mask)
             ):
                 raise ValueError(
                     "FV plan rows do not match the accepted owner-local cell views."
                 )
-            source_owned_rows = np.flatnonzero(source_owned_mask)
-            target_owned_rows = np.flatnonzero(target_owned_mask)
+            source_part_mask = np.isin(
+                source_plan_ids, np.asarray(source_view.cell_ids, dtype=np.int64)
+            )
+            target_part_mask = np.isin(
+                target_plan_ids, np.asarray(target_view.cell_ids, dtype=np.int64)
+            )
+            source_owned_rows = np.flatnonzero(source_owned_mask & source_part_mask)
+            target_owned_rows = np.flatnonzero(target_owned_mask & target_part_mask)
             source_owned_ids = np.sort(source_plan_ids[source_owned_rows])
             target_owned_ids = np.sort(target_plan_ids[target_owned_rows])
+            # Owned cells of the parts that do not migrate stay on this owner.
+            source_kept_ids = np.sort(
+                source_plan_ids[source_owned_mask & ~source_part_mask]
+            )
+            target_kept_ids = np.sort(
+                target_plan_ids[target_owned_mask & ~target_part_mask]
+            )
+            if not np.array_equal(source_kept_ids, target_kept_ids):
+                raise ValueError(
+                    "Composite repartition changed the owned cells of a kept part."
+                )
+            source_plan_row_of = {
+                int(identifier): row
+                for row, identifier in enumerate(source_plan_ids.tolist())
+            }
+            target_plan_row_of = {
+                int(identifier): row
+                for row, identifier in enumerate(target_plan_ids.tolist())
+            }
+            kept_source_rows = np.asarray(
+                [source_plan_row_of[int(identifier)] for identifier in source_kept_ids],
+                dtype=np.int32,
+            )
+            kept_target_rows = np.asarray(
+                [target_plan_row_of[int(identifier)] for identifier in target_kept_ids],
+                dtype=np.int32,
+            )
             if (
                 not np.array_equal(
                     source_owned_ids,
                     np.sort(
                         np.asarray(graph_migration.result.entity_ids, dtype=np.int64)
                     ),
+                )
+                or not np.array_equal(
+                    source_owned_ids,
+                    np.sort(np.asarray(source_view.owned_cell_ids, dtype=np.int64)),
                 )
                 or not np.array_equal(
                     target_owned_ids,
@@ -5333,7 +5410,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 current_epoch.index + 1,
                 current_epoch.geometry_id,
                 current_epoch.topology_id,
-                target_view.distribution_id,
+                target_layout.distribution_id,
             )
             if candidate_epoch.partition_id == current_epoch.partition_id:
                 raise ValueError(
@@ -5757,6 +5834,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             or source_owned_rows is None
             or target_owned_rows is None
             or target_owned_mask is None
+            or target_layout is None
         ):
             return fail(
                 TopologyEventStatus.FAILED_MISSING_ARTIFACT,
@@ -5772,7 +5850,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 topology_epoch=candidate_epoch,
                 topology_artifacts=candidate_artifacts,
                 execution_group=execution_group,
-                owner_local_geometry=target_view,
+                owner_local_geometry=target_layout,
                 owner_local_axis_name=self.owner_local_axis_name,
             )
             runtime_sliding_plan_id = (
@@ -5989,10 +6067,25 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 target_active = np.asarray(
                     target_runtime.active_cell_mask, dtype=np.bool_
                 )
+                source_kept_content = np.asarray(source_content.conservative_content)[
+                    kept_source_rows
+                ]
                 if (
                     not np.array_equal(migrated_volumes, target_volumes[target_rows])
                     or not np.array_equal(migrated_active, target_active[target_rows])
                     or migrated_content.shape[0] != target_owned_ids.size
+                    or not np.array_equal(
+                        np.asarray(source_content.effective_cell_volumes)[
+                            kept_source_rows
+                        ],
+                        target_volumes[kept_target_rows],
+                    )
+                    or not np.array_equal(
+                        np.asarray(source_content.active_cell_mask, dtype=np.bool_)[
+                            kept_source_rows
+                        ],
+                        target_active[kept_target_rows],
+                    )
                 ):
                     raise ValueError(
                         "Migrated cell measures/activity differ from target geometry."
@@ -6002,6 +6095,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     dtype=migrated_content.dtype,
                 )
                 content_values[target_rows] = migrated_content
+                content_values[kept_target_rows] = source_kept_content
                 safe_volumes = np.where(target_active, target_volumes, 1.0)
                 trailing = (1,) * (content_values.ndim - 1)
                 owned_average = np.where(
@@ -6021,6 +6115,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     target_active.reshape((-1,) + trailing), refreshed_content, 0.0
                 )
                 refreshed_content[target_rows] = migrated_content
+                refreshed_content[kept_target_rows] = source_kept_content
                 target_content_state = FiniteVolumeConservativeContentState(
                     refreshed_content,
                     target_runtime.effective_cell_volumes,

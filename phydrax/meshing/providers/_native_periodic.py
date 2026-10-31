@@ -5468,12 +5468,20 @@ def _owner_local_periodic_delaunay_neighbor_halo(
     def referenced_source_points(
         cell: _PeriodicGraphCellPayload, /
     ) -> list[_PeriodicGraphSourcePointPayload]:
-        identifiers = set(int(value) for value in cell["key_source_ids"])
+        # Adapted vertices are their own quotient keys; their exact source-site
+        # roots are the active rows of the cumulative coordinate ancestry. Only
+        # ancestry-free (initial) vertices and their cell keys are source sites.
+        identifiers: set[int] = set()
+        ancestry_free = True
         for vertex in cell["vertices"]:
-            identifiers.add(int(vertex["source_id"]))
             ancestry = vertex["coordinate_ancestry"]
-            if ancestry is not None:
+            if ancestry is None:
+                identifiers.add(int(vertex["source_id"]))
+            else:
+                ancestry_free = False
                 identifiers.update(int(value) for value in ancestry["source_ids"])
+        if ancestry_free:
+            identifiers.update(int(value) for value in cell["key_source_ids"])
         absent = sorted(identifiers.difference(source_point_bank))
         if absent:
             raise ValueError(

@@ -1871,16 +1871,26 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     ) -> None:
         mesh = plan.mesh
         if mesh is None:
-            from .._view_support import OwnerLocalCellGeometry
+            from .._view_support import (
+                OwnerLocalCellGeometry,
+                OwnerLocalCompositeCellGeometry,
+            )
+
+            def genuinely_empty(view: Any, /) -> bool:
+                if isinstance(view, OwnerLocalCompositeCellGeometry):
+                    return view.remote_ghosts is None and all(
+                        genuinely_empty(part) for part in view.parts
+                    )
+                return isinstance(view, OwnerLocalCellGeometry) and not (
+                    np.asarray(view.cell_ids).size
+                    or np.asarray(view.vertex_ids).size
+                    or view.local_mesh_id is not None
+                    or view.local_topology_id is not None
+                    or view.local_geometry_id is not None
+                )
 
             view = plan.owner_local_view
-            if not isinstance(view, OwnerLocalCellGeometry) or (
-                np.asarray(view.cell_ids).size
-                or np.asarray(view.vertex_ids).size
-                or view.local_mesh_id is not None
-                or view.local_topology_id is not None
-                or view.local_geometry_id is not None
-            ):
+            if view is None or not genuinely_empty(view):
                 raise ValueError(
                     "A mesh-free FV plan requires a genuinely empty owner-local view."
                 )

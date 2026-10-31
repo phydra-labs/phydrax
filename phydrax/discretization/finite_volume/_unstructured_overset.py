@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Callable, cast
 
@@ -98,6 +99,8 @@ class _OversetFaceArtifact:
     face_normals: np.ndarray | None
     face_measures: np.ndarray | None
     face_cells: np.ndarray | None
+    route_faces: np.ndarray | None
+    route_face_fractions: np.ndarray | None
     artifact_id: str | None
 
 
@@ -526,6 +529,7 @@ def _prepare_overset_face_artifact(
     receptor_face_normals: ArrayLike | None,
     receptor_face_measures: ArrayLike | None,
     receptor_face_cells: ArrayLike | None,
+    receptor_route_faces: ArrayLike | None,
     face_artifact_id: str | None,
 ) -> _OversetFaceArtifact:
     receptors = routes_data.receptors
@@ -648,6 +652,9 @@ def _prepare_overset_face_artifact(
             raise ValueError(
                 "Overset receptor face artifacts require finite unit normals and positive measures."
             )
+        route_faces, route_face_fractions = _prepare_overset_route_faces(
+            routes_data, face_cells, receptor_route_faces
+        )
         face_artifact_id_ = (
             canonical_fingerprint(
                 {
@@ -660,6 +667,11 @@ def _prepare_overset_face_artifact(
                     "normals": array_tree_fingerprint(face_normals),
                     "measures": array_tree_fingerprint(face_measures),
                     "cells": array_tree_fingerprint(face_cells),
+                    "route_faces": (
+                        None
+                        if route_faces is None
+                        else array_tree_fingerprint(route_faces)
+                    ),
                 }
             )
             if face_artifact_id is None
@@ -668,11 +680,13 @@ def _prepare_overset_face_artifact(
         if not face_artifact_id_:
             raise ValueError("face_artifact_id must be non-empty.")
     else:
-        if face_artifact_id is not None:
+        if face_artifact_id is not None or receptor_route_faces is not None:
             raise ValueError(
-                "face_artifact_id requires a complete receptor face artifact."
+                "face_artifact_id and receptor_route_faces require a complete "
+                "receptor face artifact."
             )
         face_ids = face_points = face_normals = face_measures = face_cells = None
+        route_faces = route_face_fractions = None
         face_artifact_id_ = None
     return _OversetFaceArtifact(
         face_ids,
@@ -680,8 +694,63 @@ def _prepare_overset_face_artifact(
         face_normals,
         face_measures,
         face_cells,
+        route_faces,
+        route_face_fractions,
         face_artifact_id_,
     )
+
+
+def _prepare_overset_route_faces(
+    routes_data: _OversetRoutes,
+    face_cells: np.ndarray,
+    receptor_route_faces: ArrayLike | None,
+    /,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Validate the static route-to-face map and its exact per-face weights.
+
+    Each overlap route supplies its donor trace to one certified receptor face
+    of its own receptor cell; several routes may share a face. A face's donor
+    trace is the overlap-measure-weighted mean of its routes, so the route
+    fractions of every face must sum to one.
+    """
+    if receptor_route_faces is None:
+        return None, None
+    route_faces_raw = np.asarray(receptor_route_faces)
+    measures = routes_data.measures
+    if route_faces_raw.shape != measures.shape or route_faces_raw.dtype.kind not in "iu":
+        raise ValueError(
+            "receptor_route_faces must contain one integer face index per overlap route."
+        )
+    route_faces = route_faces_raw.astype(np.int64)
+    face_count = face_cells.size
+    if np.any(route_faces < 0) or np.any(route_faces >= face_count):
+        raise ValueError("receptor_route_faces must index certified receptor faces.")
+    route_receptors = routes_data.receptors[
+        np.repeat(
+            np.arange(routes_data.receptors.size, dtype=np.int64),
+            np.diff(routes_data.offsets),
+        )
+    ]
+    if not np.array_equal(face_cells[route_faces], route_receptors):
+        raise ValueError(
+            "Every overlap route must map to a certified face of its receptor cell."
+        )
+    face_route_counts = np.bincount(route_faces, minlength=face_count)
+    if np.any(face_route_counts == 0):
+        raise ValueError("Every certified receptor face must carry an overlap route.")
+    face_totals = np.bincount(route_faces, weights=measures, minlength=face_count)
+    fractions = measures / face_totals[route_faces]
+    order = np.argsort(route_faces, kind="stable")
+    starts = np.concatenate(([0], np.cumsum(face_route_counts)[:-1]))
+    for face, start, count in zip(
+        range(face_count), starts.tolist(), face_route_counts.tolist(), strict=True
+    ):
+        weight_sum = math.fsum(fractions[order[start : start + count]].tolist())
+        if abs(weight_sum - 1.0) > 4.0 * count * np.finfo(np.float64).eps:
+            raise ValueError(
+                f"Overset route weights of receptor face {face} do not sum to one."
+            )
+    return route_faces.astype(np.int32), fractions
 
 
 class UnstructuredOversetPlan(StrictModule, NonTrainableState):
@@ -691,8 +760,12 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
     prepared discretizations. The corresponding global IDs are retained in
     the artifact so that a route map remains auditable when a mesh's local
     ordering changes. Certified interface geometry additionally carries
-    explicit physical ``receptor_face_ids``. All route endpoints must be active,
-    non-hole cells; receptor routes must additionally be fringe cells.
+    explicit physical ``receptor_face_ids`` and, for the non-sliding
+    correction, a static ``receptor_route_faces`` map assigning every overlap
+    route to one face of its receptor cell; several routes may share a face,
+    whose donor trace is then their overlap-weighted mean. All route endpoints
+    must be active, non-hole cells; receptor routes must additionally be fringe
+    cells.
     """
 
     donor_topology_id: str = eqx.field(static=True)
@@ -730,6 +803,8 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
     receptor_face_normals: Array | None
     receptor_face_measures: Array | None
     receptor_face_cells: Array | None
+    receptor_route_faces: Array | None
+    receptor_route_face_fractions: Array | None
     report: UnstructuredOversetReport
     face_artifact_id: str | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -778,6 +853,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         receptor_face_normals: ArrayLike | None = None,
         receptor_face_measures: ArrayLike | None = None,
         receptor_face_cells: ArrayLike | None = None,
+        receptor_route_faces: ArrayLike | None = None,
         face_artifact_id: str | None = None,
         receptor_cells_are_global_ids: bool = False,
         union_volume_certificate: ArrayLike | None = None,
@@ -878,6 +954,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             receptor_face_normals=receptor_face_normals,
             receptor_face_measures=receptor_face_measures,
             receptor_face_cells=receptor_face_cells,
+            receptor_route_faces=receptor_route_faces,
             face_artifact_id=face_artifact_id,
         )
         face_ids = faces.face_ids
@@ -931,6 +1008,16 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         )
         self.receptor_face_cells = None if face_cells is None else jnp.asarray(face_cells)
         self.face_artifact_id = face_artifact_id_
+        self.receptor_route_faces = (
+            None
+            if faces.route_faces is None
+            else jnp.asarray(faces.route_faces, dtype=jnp.int32)
+        )
+        self.receptor_route_face_fractions = (
+            None
+            if faces.route_face_fractions is None
+            else jnp.asarray(faces.route_face_fractions)
+        )
         self.policy_id = policy_id_
         self.coverage_status_mask = jnp.asarray(coverage_status_mask)
         self.coverage_status = coverage_status_
@@ -1001,6 +1088,11 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 ),
                 "face_cells": (
                     None if face_cells is None else array_tree_fingerprint(face_cells)
+                ),
+                "route_faces": (
+                    None
+                    if faces.route_faces is None
+                    else array_tree_fingerprint(faces.route_faces)
                 ),
                 "policy": policy_id_,
                 "tolerance": tolerance_,
