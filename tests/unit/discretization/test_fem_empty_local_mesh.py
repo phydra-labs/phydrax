@@ -1510,7 +1510,7 @@ def _native_owner_local_fe_topology_worker() -> None:
     target_content = global_content(
         target_view,
         target_discretization,
-        moved.target_plans[1],
+        moved.target_identity_plans[1],
         moved.state.fields[1],
     )
     if (
