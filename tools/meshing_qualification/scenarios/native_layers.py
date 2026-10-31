@@ -268,7 +268,6 @@ def _layer_evidence(evidence: Any, /) -> dict[str, object]:
         "rim_vertices": evidence.rim_vertex_count,
         "minimum_visibility": evidence.minimum_visibility,
         "maximum_stretch": evidence.maximum_stretch,
-        "unconverged_visibility": evidence.unconverged_visibility_count,
         "collision_policy": evidence.collision_policy.value,
         "predicted_collision_vertices": evidence.predicted_collision_vertex_count,
         "detected_collisions": evidence.detected_collision_count,

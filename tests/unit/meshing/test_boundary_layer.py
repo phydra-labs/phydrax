@@ -458,6 +458,40 @@ def test_boundary_layer_scenario_2() -> None:
     _assert_certified(result)
 
 
+def test_visibility_optimum_is_exact_and_certified_at_sharp_ridges() -> None:
+    from phydrax.meshing._boundary_layer import _visibility_optimum
+
+    axes = np.eye(3)
+    # Duplicated coplanar normals at a box edge and a box corner, a fold, a flat column.
+    columns = np.asarray(
+        [
+            [axes[0], axes[0], axes[1], axes[1], axes[0], axes[1]],
+            [axes[0], axes[1], axes[2], axes[0], axes[1], axes[2]],
+            [axes[0], -axes[0], axes[1], axes[1], axes[1], axes[1]],
+            [axes[2]] * 6,
+        ]
+    )
+    weights, visibility, gap = _visibility_optimum(columns)
+    np.testing.assert_allclose(
+        visibility, (np.sqrt(0.5), np.sqrt(1.0 / 3.0), 0.0, 1.0), atol=1e-15
+    )
+    np.testing.assert_allclose(np.sum(weights, axis=1), 1.0)
+    assert np.all(gap[[0, 1, 3]] <= 1.0e-12)
+    rng = np.random.default_rng(7)
+    normals = rng.normal(size=(64, 7, 3)) + np.asarray((0.0, 0.0, 2.0))
+    normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+    weights, visibility, gap = _visibility_optimum(normals)
+    visible = visibility > 0.0
+    assert np.all(gap[visible] <= 1.0e-9)
+    hull = np.einsum("cw,cwd->cd", weights, normals)
+    np.testing.assert_allclose(np.linalg.norm(hull, axis=1)[visible], visibility[visible])
+    probes = rng.normal(size=(20000, 3))
+    probes /= np.linalg.norm(probes, axis=1, keepdims=True)
+    sampled = np.max(np.min(np.einsum("cwd,pd->cwp", normals, probes), axis=1), axis=1)
+    assert np.all(sampled[visible] <= visibility[visible] + 1.0e-12)
+    assert np.all(sampled[~visible] <= 1.0e-12)
+
+
 def test_boundary_layer_scenario_3() -> None:
     count = 3
     values = np.linspace(0.0, 1.0, count + 1)
