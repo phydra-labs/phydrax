@@ -679,7 +679,6 @@ class TSplineH1FieldSpec(StrictModule):
     maximum_conversion_error: float = eqx.field(static=True)
     field_spec_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         name: str,
@@ -1433,8 +1432,6 @@ class TSplineIsogeometricPlan(AbstractDiscretizationPlan):
             raise TypeError(
                 "geometry must be TSplineGeometryState or TSplineSurfacePatch."
             )
-        if not isinstance(quadrature_policy, IsogeometricQuadraturePolicy):
-            raise TypeError("quadrature_policy must be IsogeometricQuadraturePolicy.")
         control_points, raw_weights = geometry.geometry_bank()
         if _numeric_bank_id(control_points, raw_weights) != geometry.numeric_bank_id:
             raise ValueError(

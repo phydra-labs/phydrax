@@ -1051,8 +1051,6 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         """Rebuild quotient topology from its current canonical lifted mesh."""
         if not isinstance(stored, cls):
             raise TypeError("stored must be PeriodicMeshTopology.")
-        if not isinstance(lifted_mesh, CellMesh):
-            raise TypeError("lifted_mesh must be CellMesh.")
         if actual_geometry is not None and not isinstance(
             actual_geometry, CellGeometrySpec
         ):

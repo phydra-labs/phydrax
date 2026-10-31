@@ -103,7 +103,6 @@ class MappedLocationPolicy(StrictModule, NonTrainableState):
     parameter_resolution: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         *,

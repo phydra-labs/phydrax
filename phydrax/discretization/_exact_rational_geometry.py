@@ -43,8 +43,6 @@ class ExactRationalCellGeometrySource(StrictModule, NonTrainableState):
         source_revision: str,
         /,
     ) -> None:
-        if not isinstance(parent, CellGeometrySpec):
-            raise TypeError("parent must be a CellGeometrySpec.")
         if not isinstance(source_id, str) or not source_id.strip():
             raise ValueError("source_id must be a non-empty string.")
         if not isinstance(source_revision, str) or not source_revision.strip():
