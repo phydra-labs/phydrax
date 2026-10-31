@@ -19,14 +19,7 @@ import phydrax.ein as ein
 from ..._coordinate_measure import CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ...linalg import (
-    ArraySpace,
-    DenseLinearOperator,
-    FactorizationPolicy,
-    factorize,
-    inverse_small_linear,
-    SmallLinearSolvePlan,
-)
+from .._cell_geometry_validity import cell_jacobian_inverse_and_measure
 from .._integration_domain import IntegrationDomain
 from .._local_variational import (
     LocalFieldBinding,
@@ -324,36 +317,12 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
         points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
-        metric = ein.contract("cqdi,cqdj->cqij", jacobian, jacobian)
-        dimension = metric.shape[-1]
-        if dimension <= 4:
-            result = inverse_small_linear(SmallLinearSolvePlan(dimension), metric)
-            inverse_metric = result.value
-            successful = result.successful
-            measure = jnp.sqrt(jnp.where(successful, result.determinant, 0.0))
-        else:
-            space = ArraySpace(
-                (dimension,),
-                dtype=metric.dtype,
-                space_id=f"{self.action_id}:reference-tangent",
-            )
-            operator = DenseLinearOperator(
-                metric,
-                source=space,
-                target=space,
-                operator_id=f"{self.action_id}:metric",
-            )
-            prepared = factorize(operator, FactorizationPolicy("lu"))
-            result = prepared.materialize_inverse()
-            inverse_metric = result.value
-            successful = result.successful & (prepared.determinant_sign() > 0.0)
-            measure = jnp.exp(0.5 * prepared.log_abs_determinant())
+        inverse, _, measure, _, successful = cell_jacobian_inverse_and_measure(jacobian)
         measure = eqx.error_if(
             measure,
             jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),
             "Finite-element metric measure must be positive and finite.",
         )
-        inverse = ein.contract("cqij,cqdj->cqid", inverse_metric, jacobian)
         inverse_hessian = None
         if self.coordinate_hessians.size:
             mapping_hessian = ein.contract(

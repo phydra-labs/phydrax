@@ -678,6 +678,87 @@ def test_relative_determinant_floor_requires_strict_margin() -> None:
     assert int(certificates[2].status[0]) == Status.INVALID
 
 
+def _flat_tetrahedron_points(relative: float) -> np.ndarray:
+    # Jacobian columns e1, e2 and (1, 1, h): det = h and the Hadamard bound is
+    # sqrt(2 + h^2), so the relative determinant is h / sqrt(2 + h^2).
+    height = relative * np.sqrt(2.0 / (1.0 - relative * relative))
+    return np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 1.0, height)),
+        dtype=np.float64,
+    )
+
+
+@pytest.mark.parametrize("orientation", (1.0, -1.0), ids=("positive", "reflected"))
+def test_near_flat_full_dimensional_jacobian_keeps_its_sign(orientation: float) -> None:
+    # Relative determinant 1e-9: its square (1e-18) is below binary64
+    # resolution of the metric (Gram) determinant, so the sign must come from
+    # det(J) itself.
+    points = _flat_tetrahedron_points(1.0e-9)
+    jacobian = (points[1:] - points[0]).T
+    jacobian[:, 2] *= orientation
+    height = points[3, 2]
+    inverse, _, measure, determinant, successful = (
+        validity_module.cell_jacobian_inverse_and_measure(jacobian)
+    )
+    assert bool(successful)
+    assert np.sign(float(determinant)) == orientation
+    np.testing.assert_allclose(float(determinant), orientation * height, rtol=1.0e-9)
+    np.testing.assert_allclose(float(measure), height, rtol=1.0e-9)
+    np.testing.assert_allclose(np.asarray(inverse) @ jacobian, np.eye(3), atol=1.0e-6)
+
+
+def test_finite_element_preparation_accepts_a_near_flat_positive_tetrahedron() -> None:
+    # Relative determinant 1e-9: positive, but the binary64 metric (Gram)
+    # determinant of this cell has no reliable sign. Finite-element
+    # preparation and its cell map must evaluate det(J) and accept it.
+    points = _flat_tetrahedron_points(1.0e-9)
+    mesh = D.CellMesh(
+        points,
+        (D.CellBlock("tet", "tetrahedron", np.asarray(((0, 1, 2, 3),))),),
+    )
+    discretization = D.FiniteElementPlan(
+        mesh, D.FiniteElementFieldSpec("u", D.lagrange_element("tetrahedron", 1))
+    ).prepare()
+    cell_map = D.fem.prepare_finite_element_cell_map(discretization, 0)
+    evaluation = cell_map.evaluate(
+        discretization.default_runtime.coordinates,
+        np.zeros((1,), dtype=np.int32),
+        np.full((1, 3), 0.25, dtype=np.float64),
+    )
+    assert bool(np.asarray(evaluation.valid)[0])
+    np.testing.assert_allclose(
+        np.asarray(evaluation.determinant)[0], points[3, 2], rtol=1.0e-9
+    )
+    assert float(np.asarray(evaluation.minimum_metric_eigenvalue)[0]) > 0.0
+
+
+def test_default_floor_refuses_exactly_what_jacobian_consumers_cannot_evaluate() -> None:
+    floor = D.CellValidityPolicy().relative_determinant_floor
+
+    def tetrahedron_status(relative: float) -> int:
+        mesh = D.CellMesh(
+            _flat_tetrahedron_points(relative),
+            (D.CellBlock("cells", "tetrahedron", np.asarray(((0, 1, 2, 3),))),),
+        )
+        geometry = D.CellGeometrySpec.affine(mesh)
+        certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+        return int(certificate.status[0])
+
+    assert tetrahedron_status(0.5 * floor) == Status.INVALID
+    assert tetrahedron_status(2.0 * floor) == Status.CERTIFIED_VALID
+    # Every certified cell is evaluable by the consumers: full-dimensional and
+    # embedded Jacobians whose relative determinant just clears the floor.
+    relative = floor * (1.0 + 1.0e-6)
+    square = (
+        _flat_tetrahedron_points(relative)[1:] - _flat_tetrahedron_points(relative)[0]
+    ).T
+    height = relative / np.sqrt(1.0 - relative * relative)
+    embedded = np.asarray(((1.0, 1.0), (0.0, height), (0.0, 0.0)), dtype=np.float64)
+    for jacobian in (square, embedded):
+        *_, successful = validity_module.cell_jacobian_inverse_and_measure(jacobian)
+        assert bool(successful)
+
+
 @pytest.mark.parametrize("ambient_dimension", (2, 3), ids=("square-map", "embedded-map"))
 @pytest.mark.parametrize(
     ("floor", "square_status", "embedded_status"),
