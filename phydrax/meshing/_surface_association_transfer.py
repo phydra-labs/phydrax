@@ -37,7 +37,7 @@ from ._association_routes import (
     require_transfer_lineage,
     target_dimension,
 )
-from ._lineage import MeshLineage, VertexInterpolationStencil
+from ._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
 from ._result import CellMeshingResult
 
 
@@ -128,6 +128,58 @@ def _target_edge_parameter(
             "A trim-edge split parameter must lie strictly inside its source interval."
         )
     return parameter
+
+
+def _merged_curve_interval(
+    parent: GeometryAssociation,
+    edge_rows: np.ndarray,
+    edge_ids: np.ndarray,
+    source_edges: np.ndarray,
+    source_vertex_ids: np.ndarray,
+    target_endpoint_ids: tuple[int, int],
+    /,
+) -> tuple[tuple[Fraction, Fraction], int]:
+    """Exact hull interval and orientation of curve edges coarsened into one edge.
+
+    The parents' intervals must tile the hull contiguously, and the target's
+    endpoints must be the hull's ends.
+    """
+    association_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(parent.target_global_ids, dtype=np.int64).tolist()
+        )
+    }
+    orientations = np.asarray(parent.orientations, dtype=np.int8)
+    parameter_at: dict[int, Fraction] = {}
+    spans: list[tuple[Fraction, Fraction]] = []
+    for identifier, edge_row in zip(edge_ids.tolist(), edge_rows.tolist(), strict=True):
+        row = association_rows.get(int(identifier))
+        if row is None or edge_row < 0:
+            raise ValueError("A coarsened curve edge lacks its source association row.")
+        interval = parent.source_parameter_intervals[row]
+        sign = int(orientations[row])
+        if interval is None or sign not in (-1, 1):
+            raise ValueError(
+                "Coarsened curve edges require exact oriented source intervals."
+            )
+        first, last = (int(source_vertex_ids[value]) for value in source_edges[edge_row])
+        low, high = (first, last) if sign > 0 else (last, first)
+        for vertex, value in ((low, interval[0]), (high, interval[1])):
+            if parameter_at.setdefault(vertex, value) != value:
+                raise ValueError(
+                    "Coarsened curve edges assign one vertex two source parameters."
+                )
+        spans.append((interval[0], interval[1]))
+    spans.sort()
+    if any(left[1] != right[0] for left, right in zip(spans, spans[1:])):
+        raise ValueError("Coarsened curve-edge intervals must tile their hull exactly.")
+    hull = (spans[0][0], spans[-1][1])
+    start = parameter_at.get(target_endpoint_ids[0])
+    end = parameter_at.get(target_endpoint_ids[1])
+    if start is None or end is None or {start, end} != set(hull):
+        raise ValueError("A coarsened curve edge must span its merged source interval.")
+    return hull, 1 if end > start else -1
 
 
 def _trim_child_parameter(
@@ -903,7 +955,9 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         parent: GeometryAssociation,
         /,
     ) -> GeometryAssociation | None:
-        rows = lineage_association_rows(parent, source.mesh, lineage, target, 1)
+        rows = lineage_association_rows(
+            parent, source.mesh, lineage, target, 1, merge_coarsened_intervals=True
+        )
         if rows.target_ids.size == 0:
             return None
         source_edges = _simplex_edges(source.mesh)
@@ -917,14 +971,43 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         orientations = np.empty(rows.target_ids.shape, dtype=np.int8)
         old_orientations = np.asarray(parent.orientations, dtype=np.int8)
         old_intervals = parent.source_parameter_intervals
-        for output_row, (target_row, source_row, edge_row) in enumerate(
+        record = lineage.entity_lineage(1)
+        coarsened = np.asarray(record.relation_kinds, dtype=np.int32) == int(
+            EntityLineageKind.COARSENED_INTO
+        )
+        coarsened_sources = np.asarray(record.source_global_ids, dtype=np.int64)[
+            coarsened
+        ]
+        coarsened_targets = np.asarray(record.target_global_ids, dtype=np.int64)[
+            coarsened
+        ]
+        for output_row, (target_id, target_row, source_row, edge_row) in enumerate(
             zip(
+                rows.target_ids.tolist(),
                 target_edge_row.tolist(),
                 source_assoc_rows.tolist(),
                 parent_edge_row.tolist(),
                 strict=True,
             )
         ):
+            target_edge_vertices = target_edges[target_row]
+            target_endpoints = (
+                int(target_vertex_ids[target_edge_vertices[0]]),
+                int(target_vertex_ids[target_edge_vertices[1]]),
+            )
+            merged_ids = coarsened_sources[coarsened_targets == target_id]
+            if merged_ids.size > 1:
+                hull, orientation = _merged_curve_interval(
+                    parent,
+                    entity_rows(source.mesh, 1, merged_ids),
+                    merged_ids,
+                    source_edges,
+                    source_vertex_ids,
+                    target_endpoints,
+                )
+                target_parameters.append(hull)
+                orientations[output_row] = orientation
+                continue
             interval = old_intervals[source_row]
             if interval is None:
                 raise ValueError(
@@ -938,11 +1021,6 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             source_endpoints = (
                 int(source_vertex_ids[source_edge_vertices[0]]),
                 int(source_vertex_ids[source_edge_vertices[1]]),
-            )
-            target_edge_vertices = target_edges[target_row]
-            target_endpoints = (
-                int(target_vertex_ids[target_edge_vertices[0]]),
-                int(target_vertex_ids[target_edge_vertices[1]]),
             )
             sign = int(old_orientations[source_row])
             if sign not in (-1, 1):

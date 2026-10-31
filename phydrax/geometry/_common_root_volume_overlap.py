@@ -3168,6 +3168,49 @@ def _integrate_classified_overlap(
             add_leaf(record(child))
 
 
+def _affine_reference_preimages(
+    chart_arguments: Sequence[Expression], pieces: Sequence[Tet], /
+) -> tuple[Tet, ...] | None:
+    """Exact endpoint-reference preimages of root pieces under an affine chart.
+
+    Returns ``None`` when the chart is not affine with a rational invertible
+    matrix or a piece leaves the endpoint reference tetrahedron.
+    """
+    affine = affine_map(tuple(chart_arguments), 3)
+    if affine is None:
+        return None
+    offsets, rows = affine
+    if not all(
+        isinstance(value, Fraction) for value in (*offsets, *(v for r in rows for v in r))
+    ):
+        return None
+    preimages: list[Tet] = []
+    for piece in pieces:
+        local: list[Point] = []
+        for point in piece:
+            try:
+                solved = solve_exact(
+                    rows, tuple((point[axis] - offsets[axis],) for axis in range(3))
+                )
+            except ValueError:
+                return None
+            values: list[Fraction] = []
+            for axis in range(3):
+                value = solved[axis][0]
+                if not isinstance(value, Fraction):
+                    return None
+                values.append(value)
+            coordinates = _as_point(values)
+            if (
+                any(value < 0 for value in coordinates)
+                or sum(coordinates, Fraction(0)) > 1
+            ):
+                return None
+            local.append(coordinates)
+        preimages.append(_as_tetrahedron(local))
+    return tuple(preimages)
+
+
 def _integrate_pulled_reference_overlap(
     chart_arguments: Sequence[Expression],
     physical_jacobian: Expression,
@@ -3177,9 +3220,20 @@ def _integrate_pulled_reference_overlap(
     rule_weights: np.ndarray,
     /,
 ) -> tuple[float, float, int, int]:
-    """Integrate a nonnegative endpoint Jacobian over clipped reference pieces."""
+    """Integrate a nonnegative endpoint Jacobian over clipped reference pieces.
+
+    An affine endpoint chart pulls every piece back exactly to an endpoint
+    reference tetrahedron, integrated exactly where the Jacobian is polynomial;
+    other charts classify dyadic endpoint reference leaves against the pieces.
+    """
     if not reference_pieces:
         return 0.0, 0.0, 0, 0
+    preimages = _affine_reference_preimages(chart_arguments, reference_pieces)
+    if preimages is not None:
+        values, errors, exact_count, enclosed_count = _integrate_piece_bank(
+            preimages, (physical_jacobian,), policy, rule_points, rule_weights
+        )
+        return float(values[0]), float(errors[0]), exact_count, enclosed_count
 
     def classify(vertices: Tet) -> str:
         local_arguments = _chart_arguments(vertices)
@@ -3205,7 +3259,9 @@ def _integrate_pulled_reference_overlap(
                 if lower >= 0.0:
                     excluded = True
                     break
-            if contained:
+            # A leaf excluded by one plane is outside this piece even when the
+            # planes checked before it contained the leaf.
+            if contained and not excluded:
                 return "inside"
             possible |= not excluded
         return "boundary" if possible else "outside"

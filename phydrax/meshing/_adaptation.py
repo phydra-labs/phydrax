@@ -117,6 +117,7 @@ from ._association_composition import ComposedAssociationTransfer
 from ._association_transfer import propagate_material_association_rows
 from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from ._bisection import (
+    _SUBDIVISION,
     BisectionCompatibility,
     BisectionEvidence,
     BisectionHierarchy,
@@ -2254,6 +2255,18 @@ def _bisection_coarsening_witness(
         or record_midpoints.shape != (len(records),)
     ):
         raise ValueError("Bisection hierarchy exact parent/child banks are misaligned.")
+    subdivisions = {
+        int(parent): row
+        for row, parent in enumerate(
+            np.asarray(hierarchy.subdivision_parent_ids, dtype=np.int64)
+        )
+    }
+    subdivision_rows = np.sort(
+        np.asarray(hierarchy.subdivision_parent_rows, dtype=np.int64), axis=1
+    )
+    subdivision_children = np.asarray(hierarchy.subdivision_child_ids, dtype=np.int64)
+    subdivision_vertices = np.asarray(hierarchy.subdivision_vertex_ids, dtype=np.int64)
+    subsets = _SUBDIVISION[source.topological_dimension][0]
     target_cells = {
         int(identifier): (block, row)
         for block in target.blocks
@@ -2268,9 +2281,9 @@ def _bisection_coarsening_witness(
     fine_reference: dict[int, tuple[tuple[Fraction, ...], ...]] = {}
     for coarse_id in sorted(set(fine_to_coarse.values())):
         root = target_cells.get(coarse_id)
-        record_row = records.get(coarse_id)
+        record_row = records.get(coarse_id, subdivisions.get(coarse_id))
         if root is None or record_row is None:
-            raise ValueError("Coarsening target is not a retained bisection parent.")
+            raise ValueError("Coarsening target is not a retained refinement parent.")
         root_block, root_row = root
         if root_block.cell_kind not in ("triangle", "tetrahedron"):
             raise ValueError("Exact bisection coarsening maps require simplex parents.")
@@ -2291,6 +2304,36 @@ def _bisection_coarsening_witness(
             visited.add(parent_id)
             row = records.get(parent_id)
             if row is None:
+                row = subdivisions.get(parent_id)
+                if row is None:
+                    continue
+                parent_corners: list[tuple[Fraction, ...]] = []
+                for vertex in subdivision_rows[row]:
+                    corner = reference_by_vertex.get(int(vertex))
+                    if corner is None:
+                        raise ValueError(
+                            "Subdivision corner lacks exact parent coordinates."
+                        )
+                    parent_corners.append(corner)
+                for subset, created in zip(
+                    subsets, subdivision_vertices[row], strict=True
+                ):
+                    share = Fraction(1, len(subset))
+                    created_reference = tuple(
+                        share * sum(values, Fraction(0))
+                        for values in zip(
+                            *(parent_corners[position] for position in subset),
+                            strict=True,
+                        )
+                    )
+                    previous = reference_by_vertex.get(int(created))
+                    if previous is not None and previous != created_reference:
+                        raise ValueError(
+                            "Bisection hierarchy assigns one vertex two exact parent "
+                            "locations."
+                        )
+                    reference_by_vertex[int(created)] = created_reference
+                parent_queue.extend(int(value) for value in subdivision_children[row])
                 continue
             tag = int(record_parent_tags[row])
             vertices = record_parent_vertices[row]

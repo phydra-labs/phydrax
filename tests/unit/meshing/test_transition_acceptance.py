@@ -700,7 +700,8 @@ def _tiny_chart_domain() -> MeshingDomain:
     )
 
 
-def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> None:
+def tiny_chart_source() -> tuple[MeshingDomain, CellMeshingResult]:
+    """Certified one-triangle parametric chart surface with exact curve intervals."""
     domain = _tiny_chart_domain()
     scope = MeshingScope(
         domain.source_id,
@@ -770,6 +771,11 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
         region_boundary_evidence=organization.region_boundary_evidence,
         planar_embedding=construction.planar_embedding,
     )
+    return domain, source
+
+
+def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> None:
+    domain, source = tiny_chart_source()
     assert source.certification is not None and source.certification.passed
     original = source.certification.inputs.fidelity_witness
     assert isinstance(original, SurfaceChartWitness)
