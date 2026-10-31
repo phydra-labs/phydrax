@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from fractions import Fraction
 from itertools import combinations
 from types import MappingProxyType
-from typing import assert_never
+from typing import assert_never, cast, Literal
 
 import equinox as eqx
 import numpy as np
@@ -101,7 +102,7 @@ from ._intersection_curve import (
 )
 from ._model import BRepCurve, BRepEntityId, BRepModel
 from ._partition import cad_revision_from_brep_model
-from ._patches import AbstractCurve, AbstractSurfacePatch
+from ._patches import AbstractCurve, AbstractSurfacePatch, PlanePatch
 from ._projection import prepare_brep_projection
 from ._projection_contracts import brep_entity_id
 from ._root_bindings import BRepCurveSurfaceLift, BRepRootSupport, BRepVertexRoot
@@ -783,6 +784,157 @@ def _joint_vertex(
     return vertex
 
 
+def _plane_rectangle_line_segment(
+    region: SurfaceRegion,
+    normal: tuple[Fraction, Fraction, Fraction],
+    offset: Fraction,
+    direction: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> tuple[Fraction, Fraction] | Literal[False] | None:
+    """Clip the line ``plane(region) ∩ {normal·x = offset}`` to the region box.
+
+    Returns the exact range of ``direction·x`` over the clipped segment, False
+    when the box misses the line, or None when the planes do not cross.
+    """
+    from .._rational import rational_dot, rational_vector
+
+    plane = region.patch
+    if not isinstance(plane, PlanePatch):
+        return None
+    origin = rational_vector(np.asarray(plane.origin))
+    first_axis = rational_vector(np.asarray(plane.first_axis))
+    second_axis = rational_vector(np.asarray(plane.second_axis))
+    box = [
+        [Fraction.from_float(float(value)) for value in row]
+        for row in np.asarray(region.parameter_box, dtype=np.float64)
+    ]
+    alpha = rational_dot(normal, first_axis)
+    beta = rational_dot(normal, second_axis)
+    gamma = offset - rational_dot(normal, origin)
+    if alpha == 0 and beta == 0:
+        return None
+    # Points of the chart line ``alpha s + beta t = gamma`` inside the box.
+    candidates = []
+    for fixed, other, fixed_rate, other_rate in (
+        (0, 1, alpha, beta),
+        (1, 0, beta, alpha),
+    ):
+        if other_rate == 0:
+            continue
+        for value in (box[0][fixed], box[1][fixed]):
+            solved = (gamma - fixed_rate * value) / other_rate
+            if box[0][other] <= solved <= box[1][other]:
+                chart = [Fraction(0), Fraction(0)]
+                chart[fixed], chart[other] = value, solved
+                candidates.append(
+                    tuple(
+                        origin[axis]
+                        + chart[0] * first_axis[axis]
+                        + chart[1] * second_axis[axis]
+                        for axis in range(3)
+                    )
+                )
+    if not candidates:
+        return False
+    projections = [rational_dot(direction, point) for point in candidates]
+    return min(projections), max(projections)
+
+
+def _branches_meet_on_shared_edge(
+    state: Arrangement, owner: FaceOwner, first: Arc, second: Arc, /
+) -> bool:
+    """Prove two branches on one face meet only at roots of a shared plane edge.
+
+    Branch points lie on this face and on their own opposite face region. With
+    two plane regions of one model, a common point lies on both region boxes,
+    hence on the exact segment they share on their common line. When a source
+    edge of both regions covers that segment, every common point is a root of
+    that edge with this face, which spatial events already cut into each
+    branch at one vertex; no further trim root can exist.
+    """
+    from .._rational import rational_cross, rational_dot, rational_vector
+    from ._patches import ExactLineCurve, LineCurve
+
+    others = []
+    for arc in (first, second):
+        owners = state.branch_owners.get(arc.token)
+        if owners is None or owner not in owners:
+            return False
+        others.append(owners[1] if owners[0] == owner else owners[0])
+    other_a, other_b = others
+    if other_a[0] != other_b[0] or other_a == other_b:
+        return False
+    model = state.models[other_a[0]]
+    geometry = model.geometry
+    regions = state.face_region(other_a), state.face_region(other_b)
+    if geometry is None:
+        return False
+    normals = []
+    offsets = []
+    for region in regions:
+        plane = region.patch
+        if not isinstance(plane, PlanePatch):
+            return False
+        normal = rational_cross(
+            rational_vector(np.asarray(plane.first_axis)),
+            rational_vector(np.asarray(plane.second_axis)),
+        )
+        normals.append(normal)
+        offsets.append(rational_dot(normal, rational_vector(np.asarray(plane.origin))))
+    direction = rational_cross(normals[0], normals[1])
+    if all(value == 0 for value in direction):
+        return False
+    segments = [
+        _plane_rectangle_line_segment(regions[0], normals[1], offsets[1], direction),
+        _plane_rectangle_line_segment(regions[1], normals[0], offsets[0], direction),
+    ]
+    if any(segment is None for segment in segments):
+        return False
+    if any(segment is False for segment in segments):
+        return True
+    ranges = [cast(tuple[Fraction, Fraction], segment) for segment in segments]
+    lower = max(ranges[0][0], ranges[1][0])
+    upper = min(ranges[0][1], ranges[1][1])
+    if lower > upper:
+        return True
+    for edge, faces in enumerate(geometry.topology.edge_faces):
+        if set(faces) != {other_a[1], other_b[1]}:
+            continue
+        curve = geometry.curves[geometry.edge_curves[edge]]
+        start, stop = (
+            Fraction.from_float(float(value))
+            for value in np.asarray(geometry.edge_ranges)[edge]
+        )
+        if isinstance(curve, LineCurve):
+            origin = cast(tuple[Fraction, ...], curve.origin_exact)
+            rate = cast(tuple[Fraction, ...], curve.direction_exact)
+            ends = [
+                tuple(origin[axis] + value * rate[axis] for axis in range(3))
+                for value in (start, stop)
+            ]
+        elif isinstance(curve, ExactLineCurve):
+            head = curve.first_exact
+            tail = curve.last_exact
+            ends = [
+                tuple((1 - value) * head[axis] + value * tail[axis] for axis in range(3))
+                for value in (start, stop)
+            ]
+        else:
+            continue
+        if not all(isinstance(value, Fraction) for end in ends for value in end):
+            continue
+        if any(
+            rational_dot(normal, end) != offset
+            for normal, offset in zip(normals, offsets, strict=True)
+            for end in ends
+        ):
+            continue
+        projections = sorted(rational_dot(direction, end) for end in ends)
+        if projections[0] <= lower and upper <= projections[1]:
+            return True
+    return False
+
+
 def _full_trim_events(
     state: Arrangement,
 ) -> None:
@@ -798,6 +950,8 @@ def _full_trim_events(
                     first.branch,
                     second.branch,
                 ):
+                    continue
+                if _branches_meet_on_shared_edge(state, owner, first, second):
                     continue
             if tuple(sorted((first.token, second.token))) in state.spatial_pairs:
                 continue
