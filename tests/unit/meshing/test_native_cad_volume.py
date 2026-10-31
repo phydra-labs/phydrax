@@ -14,7 +14,10 @@ from phydrax.geometry._approximate_source_coverage import (
     cad_material_sides,
 )
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
-from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+from phydrax.geometry._domain_boundary import (
+    exact_plane_chart,
+    MeshingDomainBoundarySource,
+)
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
@@ -23,6 +26,7 @@ from phydrax.geometry._source_boundary_records import (
 from phydrax.geometry._surface_source_support import SurfaceSourceCharts
 from phydrax.geometry.brep._constructors import (
     brep_box,
+    brep_cylinder,
     brep_sphere,
     BRepTessellationPolicy,
 )
@@ -148,7 +152,9 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     edge_faces: dict[tuple[int, int], set[int]] = {}
     for face, triangle in enumerate(triangles.tolist()):
         for first, second in combinations(triangle, 2):
-            edge_faces.setdefault((min(first, second), max(first, second)), set()).add(face)
+            edge_faces.setdefault((min(first, second), max(first, second)), set()).add(
+                face
+            )
     source_curve_by_vertex_pair: dict[tuple[int, int], int] = {}
     source_edge_vertices = np.asarray(model.geometry.edge_vertices, dtype=np.int64)
     for edge, vertices in enumerate(source_edge_vertices.tolist()):
@@ -280,7 +286,9 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
         source_dimensions=np.asarray(edge_dimensions, dtype=np.int8)[curve_rows],
         source_indices=np.asarray(edge_indices, dtype=np.int32)[curve_rows],
         source_roles=tuple(edge_roles[int(row)] for row in curve_rows.tolist()),
-        source_occurrence_paths=tuple(edge_paths[int(row)] for row in curve_rows.tolist()),
+        source_occurrence_paths=tuple(
+            edge_paths[int(row)] for row in curve_rows.tolist()
+        ),
         source_parameter_intervals=tuple(
             edge_parameter_intervals[int(row)] for row in curve_rows.tolist()
         ),
@@ -298,14 +306,13 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
         dtype=np.int32,
     )
     face_source_paths = tuple(
-        source_paths_by_dimension[2][int(index)]
-        for index in face_source_indices.tolist()
+        source_paths_by_dimension[2][int(index)] for index in face_source_indices.tolist()
     )
     face_sources = tuple(
-        brep_entity_id(
-            source_id, revision, 2, int(index), occurrence_path=path
+        brep_entity_id(source_id, revision, 2, int(index), occurrence_path=path)
+        for index, path in zip(
+            face_source_indices.tolist(), face_source_paths, strict=True
         )
-        for index, path in zip(face_source_indices.tolist(), face_source_paths, strict=True)
     )
     patch_by_source_index = {
         int(source_index): patch
@@ -318,8 +325,7 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     first_edges = root_parameters[:, 1] - root_parameters[:, 0]
     second_edges = root_parameters[:, 2] - root_parameters[:, 0]
     root_orientations = np.where(
-        first_edges[:, 0] * second_edges[:, 1]
-        - first_edges[:, 1] * second_edges[:, 0]
+        first_edges[:, 0] * second_edges[:, 1] - first_edges[:, 1] * second_edges[:, 0]
         > 0.0,
         1,
         -1,
@@ -327,9 +333,7 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     face_orientations_by_cell = np.asarray(
         [
             int(domain.patches[int(patch)].orientation) * int(orientation)
-            for patch, orientation in zip(
-                root_patches, root_orientations, strict=True
-            )
+            for patch, orientation in zip(root_patches, root_orientations, strict=True)
         ],
         dtype=np.int8,
     )
@@ -379,8 +383,7 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     )
     source_root_cell_ids = patch_scope_ids[root_patches]
     source_piece_ids = tuple(
-        (int(patch), int(domain.source_indices[2][int(patch)]))
-        for patch in root_patches
+        (int(patch), int(domain.source_indices[2][int(patch)])) for patch in root_patches
     )
     boundary_source = MeshingDomainBoundarySource(
         domain, tuple(range(len(domain.patches)))
@@ -427,7 +430,9 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
         source.source_triangle_parameters,
         strict=True,
     ):
-        assert all(isinstance(value, Fraction) for point in exact_triangle for value in point)
+        assert all(
+            isinstance(value, Fraction) for point in exact_triangle for value in point
+        )
         np.testing.assert_array_equal(
             np.asarray([[float(value) for value in point] for point in exact_triangle]),
             numeric_triangle,
@@ -547,9 +552,7 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
         construction.organization.labels,
         construction.organization.patches,
     )
-    patch_by_id = {
-        patch.patch_id: patch for patch in construction.organization.patches
-    }
+    patch_by_id = {patch.patch_id: patch for patch in construction.organization.patches}
     for patch_id, side in region_evidence.patch_sides:
         patch = patch_by_id[patch_id]
         source_side = 0 if side > 0 else 1
@@ -570,13 +573,16 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
     assert isinstance(witness, SourceBoundaryChartWitness)
     assert witness.source_query_id == fidelity_source.source_scope_id
     witness.require_current(construction.mesh, construction.geometry, fidelity_source)
-    assert construction.certification.protected_features == specification.protected_features
+    assert (
+        construction.certification.protected_features == specification.protected_features
+    )
     assert construction.certification.feature_source is domain
     scoped = construction.certification.scoped_fidelity
     assert len(scoped) == 3
     surface_query, surface_witness, surface_tolerance = next(
-        row for row in scoped if isinstance(row[1], SourceBoundaryChartWitness)
-        and row[1].chart_dimension == 2
+        row
+        for row in scoped
+        if isinstance(row[1], SourceBoundaryChartWitness) and row[1].chart_dimension == 2
     )
     if not isinstance(surface_query, MeshingDomainBoundarySource):
         raise AssertionError("CAD surface witness must use the original BRep query.")
@@ -589,8 +595,9 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
         for identifier in scope.entity_ids.tolist()
     }
     curve_query, curve_witness, curve_tolerance = next(
-        row for row in scoped if isinstance(row[1], SourceBoundaryChartWitness)
-        and row[1].chart_dimension == 1
+        row
+        for row in scoped
+        if isinstance(row[1], SourceBoundaryChartWitness) and row[1].chart_dimension == 1
     )
     if not isinstance(curve_query, ParametricCurveBoundarySource):
         raise AssertionError("CAD curve feature must retain its parametric query.")
@@ -885,3 +892,79 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
         label = _cad_chart_vertex_key(domain, patch, point)
         assert label[0] == "curve"
         assert label == _cad_chart_vertex_key(domain, patch, (Fraction(0), point[1]))
+
+
+def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
+    # Each cap revolves a radial profile line: its authored polar chart has a
+    # pole and a seam, but the carrier proves it exactly planar. The cap is a
+    # declared PLC plane, and its witness rows use the exact affine plane chart
+    # (pole and seam interior), whose trim points take their rim curve and corner
+    # labels from the lateral face.
+    contract = phx.SpatialCoordinateContract.si()
+    model = brep_cylinder(
+        0.5, 1.0, coordinate_contract=contract, source_id="cad-volume-cylinder"
+    )
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.3),),
+        maximum_deviation=0.05,
+    )
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            NativeMeshingOptions(
+                "cad_tetrahedral",
+                volume_schedule=NativeVolumeSchedule(
+                    radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+                ),
+            )
+        )
+        .plan(model, specification)
+        .execute()
+    )
+
+    assert result.certification is not None and result.certification.passed
+    assert result.compliance.issues == ()
+    witness = result.certification.inputs.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    domain = MeshingDomain.from_brep(model)
+    planes = {
+        chart.chart_id: chart
+        for chart in (
+            exact_plane_chart(domain, patch) for patch in range(len(domain.patches))
+        )
+        if chart is not None
+    }
+    assert len(planes) == 2
+    assert set(planes) <= set(witness.source_chart_ids)
+    coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    block = result.mesh.blocks[0]
+    cell_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(block.global_ids).tolist())
+    }
+    cells = np.asarray(block.vertices, dtype=np.int64)
+    plane_rows = 0
+    for row, chart_id in enumerate(witness.source_chart_ids):
+        chart = planes.get(chart_id)
+        if chart is None:
+            continue
+        plane_rows += 1
+        origin, first, second = (
+            np.asarray([float(value) for value in axis], dtype=np.float64)
+            for axis in (chart.origin, chart.first_axis, chart.second_axis)
+        )
+        references = np.asarray(witness.target_reference_vertices)[row]
+        for reference, (s, t) in zip(
+            references, witness.source_parameter_chart(row), strict=True
+        ):
+            local = 0 if not np.any(reference) else int(np.argmax(reference)) + 1
+            point = coordinates[
+                cells[cell_rows[int(witness.cell_global_ids[row])], local]
+            ]
+            np.testing.assert_allclose(
+                origin + float(s) * first + float(t) * second, point, atol=1.0e-12
+            )
+    assert plane_rows > 0

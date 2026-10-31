@@ -281,6 +281,7 @@ def _register_brep_types() -> None:
     )
     from ..geometry.brep._placed import PlacedCurve, PlacedSurface
     from ..geometry.brep._root_bindings import (
+        BRepBranchNodeRoots,
         BRepConicVertex,
         BRepCurveSurfaceLift,
         BRepPlacedVertex,
@@ -308,6 +309,7 @@ def _register_brep_types() -> None:
         BRepPlacedVertex,
         BRepRootSupport,
         BRepVertexRoot,
+        BRepBranchNodeRoots,
         BRepConicVertex,
         BRepAssemblyContainer,
         AffinePCurve,
@@ -483,6 +485,7 @@ def _construct_intersection_dataclass(
         SurfaceRegion,
     )
     from ..geometry.brep._root_bindings import (
+        BRepBranchNodeRoots,
         BRepConicVertex,
         BRepCurveSurfaceLift,
         BRepPlacedVertex,
@@ -699,6 +702,11 @@ def _construct_intersection_dataclass(
     if model_type is BRepConicVertex:
         return BRepConicVertex(fields["root"], offset_exact=fields["offset_exact"])
 
+    if model_type is BRepBranchNodeRoots:
+        branch_node = BRepBranchNodeRoots(fields["node"], fields["endpoints"])
+        if branch_node.root_id != fields["root_id"]:
+            raise ValueError("Stored B-Rep branch-node roots differ from their proof.")
+        return branch_node
     if model_type is BRepVertexRoot:
         return BRepVertexRoot(
             fields["primary"],
@@ -706,6 +714,7 @@ def _construct_intersection_dataclass(
             spatial_root=fields["spatial_root"],
             joint_root=fields["joint_root"],
             source_edge_lifts=fields["source_edge_lifts"],
+            branch_node=fields["branch_node"],
         )
     if model_type is BRepPlacedVertex:
         return BRepPlacedVertex(
@@ -1451,6 +1460,27 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
         )
         patch.validate_exact_transfer_chain()
         return patch
+    from ..geometry._meshing_domain import _PlacedSurfacePatch
+
+    if model_type is _PlacedSurfacePatch:
+        if set(fields) != {
+            "source",
+            "placement",
+            "linear",
+            "offset",
+            "orientation_sign",
+        }:
+            raise ValueError("Stored placed surface field set is not canonical.")
+        placed = _PlacedSurfacePatch(fields["source"], fields["placement"])
+        if (
+            placed.orientation_sign != fields["orientation_sign"]
+            or not np.array_equal(np.asarray(placed.linear), np.asarray(fields["linear"]))
+            or not np.array_equal(np.asarray(placed.offset), np.asarray(fields["offset"]))
+        ):
+            raise ValueError(
+                "Stored placed surface realization differs from its exact placement."
+            )
+        return placed
     raise TypeError(f"No explicit CAD constructor for {model_type.__qualname__}.")
 
 

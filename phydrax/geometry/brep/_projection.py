@@ -160,6 +160,192 @@ def _failed(ambient: int, /) -> _Hit:
     )
 
 
+@dataclass(frozen=True)
+class _CircleRevolutionFrame:
+    """Meridian coordinates of a circle profile whose plane contains the axis.
+
+    A profile point is ``origin + x meridian + y axis`` with
+    ``(x, y) = center + radius (cos t first + sin t second)``; the revolution
+    turns it to ``origin + x (cos u meridian + sin u binormal) + y axis``.
+    """
+
+    origin: np.ndarray
+    axis: np.ndarray
+    meridian: np.ndarray
+    binormal: np.ndarray
+    center: np.ndarray
+    first: np.ndarray
+    second: np.ndarray
+    radius: float
+
+    def profile(self, parameter: float, /) -> np.ndarray:
+        return self.center + self.radius * (
+            np.cos(parameter) * self.first + np.sin(parameter) * self.second
+        )
+
+    def turned(self, angle: float, /) -> np.ndarray:
+        return np.cos(angle) * self.meridian + np.sin(angle) * self.binormal
+
+
+def _circle_revolution_frame(
+    patch: RevolutionSurface, /
+) -> _CircleRevolutionFrame | None:
+    curve = patch.curve
+    if not isinstance(curve, CircleCurve):
+        return None
+    tolerance = 256.0 * np.finfo(np.float64).eps
+    axis = np.asarray(patch.axis_direction, dtype=np.float64)
+    origin = np.asarray(patch.axis_origin, dtype=np.float64)
+    first = np.asarray(curve.first_axis, dtype=np.float64)
+    second = np.asarray(curve.second_axis, dtype=np.float64)
+    center = np.asarray(curve.center, dtype=np.float64) - origin
+    radius = float(np.asarray(curve.radius))
+    normal = np.cross(first, second)
+    scale = max(1.0, float(np.max(np.abs(center))), radius)
+    if (
+        not radius > 0.0
+        or abs(float(axis @ axis) - 1.0) > tolerance
+        or abs(float(first @ first) - 1.0) > tolerance
+        or abs(float(second @ second) - 1.0) > tolerance
+        or abs(float(first @ second)) > tolerance
+        or abs(float(normal @ axis)) > tolerance
+        or abs(float(normal @ center)) > tolerance * scale
+    ):
+        return None
+    meridian = np.cross(normal, axis)
+    meridian /= np.linalg.norm(meridian)
+    return _CircleRevolutionFrame(
+        origin,
+        axis,
+        meridian,
+        np.cross(axis, meridian),
+        np.asarray((center @ meridian, center @ axis)),
+        np.asarray((first @ meridian, first @ axis)),
+        np.asarray((second @ meridian, second @ axis)),
+        radius,
+    )
+
+
+def _circle_revolution_closest(
+    patch: RevolutionSurface, bounds: np.ndarray, point: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, bool] | None:
+    """Closest point of a circle-profile revolution chart rectangle to ``point``.
+
+    The distance from the point at meridian coordinates ``(rho, z)`` to the
+    turned profile point ``(x(t), y(t))`` is least at the turn aligning their
+    meridian half-planes, where it is the meridian distance from
+    ``(sign(x(t)) rho, z)`` to the profile point. The closest point of the
+    whole revolution is therefore the closer of the profile-circle points
+    nearest to ``(rho, z)`` and ``(-rho, z)``. A tied closest point outside the
+    chart's profile interval is not on the face; the face-closest point is a
+    tied one inside it, and none inside leaves the query unresolved (the angle
+    is checked against the rectangle by the caller). A point whose closest set
+    is a circle about the axis or a whole profile returns a representative with
+    the non-isolated flag.
+    """
+    frame = _circle_revolution_frame(patch)
+    if frame is None:
+        return None
+    relative = point - frame.origin
+    height = float(relative @ frame.axis)
+    radial = relative - height * frame.axis
+    rho = float(np.linalg.norm(radial))
+    angle = (
+        float(bounds[0, 0])
+        if rho == 0.0
+        else float(np.arctan2(radial @ frame.binormal, radial @ frame.meridian))
+    )
+    period = patch.periods[1]
+    first_parameter, last_parameter = (float(value) for value in bounds[:, 1])
+    tolerance = (
+        256.0
+        * np.finfo(np.float64).eps
+        * max(1.0, float(np.max(np.abs(relative))), frame.radius)
+    )
+    options: list[tuple[float, float | None, bool]] = []
+    for sign in (1.0, -1.0):
+        offset = np.asarray((sign * rho, height)) - frame.center
+        length = float(np.linalg.norm(offset))
+        if length == 0.0:
+            # Every profile point is equidistant.
+            options.append((frame.radius, first_parameter, True))
+            continue
+        parameter: float | None = float(
+            np.arctan2(offset @ frame.second, offset @ frame.first)
+        )
+        if period is not None:
+            parameter = _periodic_parameter(
+                parameter, first_parameter, last_parameter, period
+            )
+        elif not first_parameter <= parameter <= last_parameter:
+            parameter = None
+        options.append((abs(length - frame.radius), parameter, False))
+    nearest = min(distance for distance, _, _ in options)
+    closest = [
+        (parameter, whole)
+        for distance, parameter, whole in options
+        if distance <= nearest + tolerance and parameter is not None
+    ]
+    if not closest:
+        return None
+    located: list[tuple[np.ndarray, np.ndarray, bool]] = []
+    for parameter, whole in closest:
+        profile = frame.profile(parameter)
+        turn = angle if rho == 0.0 or profile[0] >= 0.0 else angle + pi
+        spatial = frame.origin + profile[0] * frame.turned(turn) + profile[1] * frame.axis
+        around_axis = rho == 0.0 and abs(float(profile[0])) > tolerance
+        located.append(
+            (
+                np.asarray((turn, parameter), dtype=np.float64),
+                spatial,
+                whole or around_axis,
+            )
+        )
+    uv, expected, nonisolated = located[0]
+    if any(np.linalg.norm(value - expected) > tolerance for _, value, _ in located[1:]):
+        return None
+    candidate = np.asarray(
+        patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64
+    )
+    if np.linalg.norm(candidate - expected) > tolerance:
+        return None
+    return uv, candidate, nonisolated
+
+
+def _circle_revolution_normal(
+    patch: RevolutionSurface,
+    parameters: np.ndarray,
+    profile_interval: tuple[float, float],
+    /,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Regular normal and turn tangent of a circle-profile revolution chart.
+
+    ``X_u x X_v`` is ``x(t)`` times the turned profile normal, which stays
+    regular on the axis where ``x`` vanishes. ``x`` keeps one sign over the
+    open profile interval of a chart that does not cross the axis; its sign at
+    the interval midpoint orients the normal also at an axis point.
+    """
+    frame = _circle_revolution_frame(patch)
+    if frame is None:
+        return None
+    angle, parameter = (float(value) for value in parameters)
+    middle = 0.5 * (profile_interval[0] + profile_interval[1])
+    side = float(np.sign(frame.profile(middle)[0]))
+    if side == 0.0:
+        return None
+    derivative = frame.radius * (
+        -np.sin(parameter) * frame.first + np.cos(parameter) * frame.second
+    )
+    # (a . q') w - (w . q') a in meridian coordinates, turned by the angle.
+    turned = frame.turned(angle)
+    normal = side * (derivative[1] * turned - derivative[0] * frame.axis)
+    length = float(np.linalg.norm(normal))
+    if not length > 0.0:
+        return None
+    tangent = -np.sin(angle) * frame.meridian + np.cos(angle) * frame.binormal
+    return normal / length, tangent
+
+
 def _face_normal_and_frame(
     patch: AbstractSurfacePatch,
     parameters: np.ndarray,
@@ -167,6 +353,7 @@ def _face_normal_and_frame(
     /,
     *,
     embedding: PlanarEmbedding | None,
+    profile_interval: tuple[float, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, bool]:
     jacobian = np.asarray(
         jax.jacfwd(lambda uv: patch.evaluate(uv))(
@@ -192,6 +379,16 @@ def _face_normal_and_frame(
                 normal = orientation * radial / radial_length
                 first = -np.sin(longitude) * first_axis + np.cos(longitude) * second_axis
                 first /= np.linalg.norm(first)
+                frame = np.stack((first, np.cross(normal, first)))
+                if embedding is None:
+                    return normal, frame, True
+                basis = np.stack((embedding.x_axis, embedding.y_axis), axis=1)
+                return np.full((2,), np.nan), frame @ basis, True
+        if isinstance(patch, RevolutionSurface) and profile_interval is not None:
+            regular = _circle_revolution_normal(patch, parameters, profile_interval)
+            if regular is not None:
+                direction, first = regular
+                normal = orientation * direction
                 frame = np.stack((first, np.cross(normal, first)))
                 if embedding is None:
                     return normal, frame, True
@@ -319,9 +516,12 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
 
     Trim sides are chart lines: rational lines or exact conic-root angle
     isolines, whose bounds are outward enclosures of the exact root. A seam
-    side may carry an integer native-period gauge over its line.
+    side may carry an integer native-period gauge over its line, and a side
+    may be an exact affine chart transport of a line, which is again a line;
+    a doubly periodic face (a full torus) is the rectangle of one period in
+    each direction traced by such sides.
     """
-    from ._boolean_core import PeriodicPCurve
+    from ._boolean_core import AffinePCurve, PeriodicPCurve
 
     geometry = model.geometry
     loops = geometry.face_loops[face]
@@ -338,8 +538,8 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
         edge = geometry.coedge_edges[coedge]
         curve = geometry.pcurves[coedge]
         line = curve
-        while isinstance(line, PeriodicPCurve):
-            line = line.source_curve
+        while isinstance(line, (PeriodicPCurve, AffinePCurve)):
+            line = line.source_curve if isinstance(line, PeriodicPCurve) else line.curve
         if (
             not isinstance(line, (LineCurve, ExactLineCurve, ConicRootLinePCurve))
             or curve.ambient_dimension != 2
@@ -1605,6 +1805,16 @@ def _project_face(
             and float(np.linalg.norm(candidate_relative - candidate_height * axis)) > 0.0
         )
         rectangle_closest = True
+    elif isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve):
+        projected = _circle_revolution_closest(
+            patch,
+            np.asarray(model.parameter_bounds[face], dtype=np.float64),
+            point,
+        )
+        if projected is None:
+            return _unresolved(2, face, path)
+        uv, candidate, nonisolated = projected
+        rectangle_closest = True
     else:
         return _unresolved(2, face, path)
     if uv is None or candidate is None:
@@ -1693,7 +1903,11 @@ def _project_face(
             path,
         )
     normal, tangents, regular = _face_normal_and_frame(
-        patch, uv, orientation, embedding=embedding
+        patch,
+        uv,
+        orientation,
+        embedding=embedding,
+        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
     )
     if affine_distance_squared is None:
         lower, upper = _distance_bounds(point, candidate)

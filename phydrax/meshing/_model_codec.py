@@ -210,6 +210,7 @@ def _register_model_archive_types() -> None:
     from ..geometry._mapped_reference_domain import MappedReferenceDomain
     from ..geometry._mesh_certificates import MeshCertificateBinding
     from ..geometry._meshing_domain import (
+        _PlacedSurfacePatch,
         DomainCurveMap,
         MeshingDomain,
         MeshingDomainCurve,
@@ -420,6 +421,7 @@ def _register_model_archive_types() -> None:
         VolumeFillStrategy,
         VolumeMeshingSpec,
     )
+    from ._curving import _ExactCoordinateBankMap
     from ._device_adaptation import (
         OwnerLocalPeriodicAdaptiveResult,
         OwnerLocalPeriodicCellMetadata,
@@ -529,6 +531,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry", MeshingDomainCurve),
         ("phydrax.geometry", MeshingDomainRegion),
         ("phydrax.geometry", MeshingSurfacePatch),
+        ("phydrax.geometry.internal", _PlacedSurfacePatch),
         ("phydrax.geometry", MappedReferenceDomain),
         ("phydrax.geometry", ParametricCurveBoundarySource),
         ("phydrax.geometry", PatchCurveUse),
@@ -584,6 +587,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", NativeHexGridSchedule),
         ("phydrax.meshing", HexFrameIntegerLayout),
         ("phydrax.meshing.internal", _RestrictedCoordinateMap),
+        ("phydrax.meshing.internal", _ExactCoordinateBankMap),
         ("phydrax.discretization", RationalComposedCellGeometryElement),
         ("phydrax.discretization", CellValidityPolicy),
         ("phydrax.discretization", CellGeometryTransition),

@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import cache
 from itertools import combinations
 from typing import cast
 
@@ -41,12 +43,94 @@ class UnsupportedEmbeddingMap(ValueError):
     """The exact source map has no certified representation for this proof route."""
 
 
+@cache
 def _reference_rows(kind: str) -> tuple[tuple[Fraction, ...], ...]:
     topology = reference_cell_topology(kind)
     return tuple(
         tuple(Fraction(float(value)) for value in row)
         for row in np.asarray(topology.vertices, dtype=np.float64)
     )
+
+
+@cache
+def _reference_facets(kind: str, dimension: int, /) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(int(index) for index in face)
+        for face in reference_cell_topology(kind).entities[dimension - 1]
+    )
+
+
+_ZERO = Fraction(0)
+
+
+@cache
+def _unit_simplex_corners(dimension: int, /) -> frozenset[tuple[Fraction, ...]]:
+    return frozenset(
+        tuple(Fraction(int(axis == corner)) for axis in range(dimension))
+        for corner in range(-1, dimension)
+    )
+
+
+def _linear_simplex_chart(
+    coordinates: tuple[Expression, ...],
+    references: tuple[tuple[Fraction, ...], ...],
+    dimension: int,
+    /,
+) -> (
+    tuple[
+        tuple[tuple[ExactScalar, ...], ...],
+        tuple[ExactScalar, ...],
+        tuple[tuple[ExactScalar, ...], ...],
+        tuple[tuple[float, float], ...],
+    ]
+    | None
+):
+    """Exact corners, chart and outward bounds of rational degree-one simplex maps.
+
+    On the unit simplex the corner images are the constant term plus at most one
+    linear coefficient, the affine map through them is the polynomial itself (the
+    chart `_solve_affine` returns), and the degree-one Bernstein controls are
+    exactly the corner images.  `None` for any other map.
+    """
+    if len(references) != dimension + 1 or frozenset(references) != _unit_simplex_corners(
+        dimension
+    ):
+        return None
+    polynomials: list[Mapping[tuple[int, ...], ExactScalar]] = []
+    for expression in coordinates:
+        if isinstance(expression, RationalPolynomial) or any(
+            sum(exponent) > 1 or not isinstance(value, Fraction)
+            for exponent, value in expression.items()
+        ):
+            return None
+        polynomials.append(expression)
+    zero = (0,) * dimension
+    units = tuple(
+        tuple(int(axis == column) for axis in range(dimension))
+        for column in range(dimension)
+    )
+    offset = tuple(polynomial.get(zero, _ZERO) for polynomial in polynomials)
+    matrix = tuple(
+        tuple(polynomial.get(unit, _ZERO) for unit in units) for polynomial in polynomials
+    )
+    corners = tuple(
+        tuple(
+            sum(
+                (row[column] for column, value in enumerate(point) if value),
+                offset[axis],
+            )
+            for axis, row in enumerate(matrix)
+        )
+        for point in references
+    )
+    bounds = tuple(
+        (
+            coefficient_endpoint(min(values), upper=False, saturate=True),
+            coefficient_endpoint(max(values), upper=True, saturate=True),
+        )
+        for values in zip(*corners, strict=True)
+    )
+    return corners, offset, matrix, bounds
 
 
 def _pyramid_box_reference(
@@ -347,10 +431,7 @@ def prepare_embedding_cells(
                     raise UnsupportedEmbeddingMap(
                         "Padded fixed-reference cells are not supported by this map."
                     )
-                facet_routes = tuple(
-                    tuple(int(index) for index in face)
-                    for face in reference_cell_topology(kind).entities[dimension - 1]
-                )
+                facet_routes = _reference_facets(kind, dimension)
                 domain = _map_domain(kind, dimension)
                 cell_domain = domain
                 references = _reference_rows(kind)
@@ -388,13 +469,30 @@ def prepare_embedding_cells(
                         for normalization in pyramid_normalizations
                     )
                     proof_domain = "box"
-                corners = tuple(
-                    tuple(
-                        _evaluate(expression, point) for expression in proof_coordinates
-                    )
-                    for point in proof_references
+                linear_chart = (
+                    _linear_simplex_chart(coordinates, references, dimension)
+                    if proof_domain == "simplex"
+                    else None
                 )
-                offset, matrix = _solve_affine(references, corners)
+                if linear_chart is None:
+                    corners = tuple(
+                        tuple(
+                            _evaluate(expression, point)
+                            for expression in proof_coordinates
+                        )
+                        for point in proof_references
+                    )
+                    offset, matrix = _solve_affine(references, corners)
+                    bounds = tuple(
+                        polynomial_bounds(
+                            expression,
+                            cast(BernsteinDomain, proof_domain),
+                            dimension,
+                        )
+                        for expression in proof_coordinates
+                    )
+                else:
+                    corners, offset, matrix, bounds = linear_chart
                 affine_expressions = _affine_expressions(offset, matrix)
                 if not (
                     len(affine_expressions) == len(coordinates)
@@ -407,14 +505,6 @@ def prepare_embedding_cells(
                 ):
                     offset = None
                     matrix = None
-                bounds = tuple(
-                    polynomial_bounds(
-                        expression,
-                        cast(BernsteinDomain, proof_domain),
-                        dimension,
-                    )
-                    for expression in proof_coordinates
-                )
             lower = tuple(value[0] for value in bounds)
             upper = tuple(value[1] for value in bounds)
             if not all(np.isfinite((*lower, *upper))):

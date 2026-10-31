@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
@@ -80,6 +81,7 @@ from ._projection import NativeBRepProjection, prepare_brep_projection
 from ._projection_contracts import brep_entity_id, BRepProjectionStatus
 from ._root_bindings import (
     _curve_surface_root_shares_trim_support,
+    BRepBranchNodeRoots,
     BRepCurveSurfaceLift,
     BRepRootSupport,
     BRepVertexRoot,
@@ -545,8 +547,10 @@ def branch_arc(
     *,
     owners: tuple[FaceOwner, FaceOwner],
 ) -> None:
-    pcurve = curve.p_curve(side)
     local = IntersectionPCurve(curve, side, first=float(first), last=float(last))
+    # A span between periodic transitions owns its source sheet; the whole
+    # branch p-curve would evaluate a terminal node in the next span's sheet.
+    pcurve = local
     first_vertex = f"branch:{curve.branch_id}:node:{first}"
     final = 0 if curve.closed and last == curve.num_charts else last
     last_vertex = f"branch:{curve.branch_id}:node:{final}"
@@ -1367,6 +1371,7 @@ def event_vertex(
                 spatial_root=prior_binding.spatial_root or spatial,
                 joint_root=prior_binding.joint_root,
                 source_edge_lifts=vertex_lifts,
+                branch_node=prior_binding.branch_node,
             )
     elif first.branch is not None and second.branch is not None:
         first_owners = state.branch_owners[first.token]
@@ -2578,29 +2583,63 @@ def _append_spatial_root_cuts(
     )
     # A source root may sit on a chart node; its isolation box then meets both
     # adjacent charts. Select the first meeting chart whose endpoint certifies
-    # the branch parameter (inside the chart or as the identified node).
+    # the branch parameter (inside the chart or as the identified node). A root
+    # on the opposite face's seam is seen in one native sheet; the chart may
+    # use another, so each exact opposite deck turn is tried, untouched first.
+    opposite_patch = (branch.second if side == "first" else branch.first).patch
+    opposite_offset = 2 if side == "first" else 0
+    periodic_axes = tuple(
+        opposite_offset + local
+        for local, (period, symbol) in enumerate(
+            zip(
+                opposite_patch.periods,
+                opposite_patch.native_period_symbols(),
+                strict=True,
+            )
+        )
+        if period is not None and symbol == "two_pi"
+    )
+    gauges = []
+    for turns in itertools.product((0, 1, -1), repeat=len(periodic_axes)):
+        gauge = [0, 0, 0, 0]
+        for axis, turn in zip(periodic_axes, turns, strict=True):
+            gauge[axis] = turn
+        gauges.append((gauge[0], gauge[1], gauge[2], gauge[3]))
     branch_endpoint: BranchRootEndpoint | None = None
     enclosure: tuple[float, float] | None = None
-    for chart in range(int(span_first), int(span_last)):
-        if np.any(image[1] < branch.chart_lower[chart]) or np.any(
-            image[0] > branch.chart_upper[chart]
-        ):
-            continue
-        candidate = BranchRootEndpoint(
-            spatial,
-            branch,
-            chart,
-            source_pcurve=source_pcurve,
-            source_side=side,
-            source_first=pair.whole_first,
-            source_last=pair.whole_last,
+    for gauge in gauges:
+        shift_lower, shift_upper = branch.shift_parameter_bounds(
+            np.asarray(gauge, dtype=np.int64)
         )
-        try:
-            enclosure = candidate.parameter_enclosure()
-        except ValueError:
-            continue
-        branch_endpoint = candidate
-        break
+        gauged = np.stack(
+            (
+                np.nextafter(image[0] + shift_lower, -np.inf),
+                np.nextafter(image[1] + shift_upper, np.inf),
+            )
+        )
+        for chart in range(int(span_first), int(span_last)):
+            if np.any(gauged[1] < branch.chart_lower[chart]) or np.any(
+                gauged[0] > branch.chart_upper[chart]
+            ):
+                continue
+            candidate = BranchRootEndpoint(
+                spatial,
+                branch,
+                chart,
+                source_pcurve=source_pcurve,
+                source_side=side,
+                source_first=pair.whole_first,
+                source_last=pair.whole_last,
+                periodic_shifts=gauge,
+            )
+            try:
+                enclosure = candidate.parameter_enclosure()
+            except ValueError:
+                continue
+            branch_endpoint = candidate
+            break
+        if branch_endpoint is not None:
+            break
     if branch_endpoint is None or enclosure is None:
         return
     lower, upper = enclosure
@@ -2631,11 +2670,8 @@ def _append_spatial_root_cuts(
     binding = BRepVertexRoot(spatial)
     root_box = binding.point_enclosure()
     point = root_box[0] + 0.5 * (root_box[1] - root_box[0])
-    state.vertex_spatial[vertex] = spatial
-    state.vertex_aliases.setdefault(vertex, [])
-    state.vertex_bindings[vertex] = binding
     node = f"spatial:{spatial.root_id}:face:{owner}"
-    alias_node = _bind_fixed_branch_alias(
+    alias = _bind_fixed_branch_alias(
         state,
         branch_arc,
         branch_endpoint,
@@ -2643,8 +2679,16 @@ def _append_spatial_root_cuts(
         binding,
         point,
     )
-    if alias_node is not None:
-        node = alias_node
+    if alias is not None and alias[1] != vertex:
+        # Another source root already certified as this branch node: one vertex.
+        node, vertex = alias
+        binding = _bind_second_source_root(state, vertex, branch_arc, branch_endpoint)
+    else:
+        state.vertex_spatial[vertex] = spatial
+        state.vertex_aliases.setdefault(vertex, [])
+        state.vertex_bindings[vertex] = binding
+        if alias is not None:
+            node = alias[0]
     state.cuts[source_arc.token].append(
         Cut(
             source_parameter,
@@ -2660,6 +2704,70 @@ def _append_spatial_root_cuts(
     state.cuts[branch_arc.token].append(
         Cut(parameter, lower, upper, node, vertex, branch_endpoint, binding, point)
     )
+
+
+def _bind_second_source_root(
+    state: Arrangement, vertex: str, arc: Arc, endpoint: BranchRootEndpoint
+) -> BRepVertexRoot:
+    """Bind a second source-edge root certified as an existing branch-node vertex.
+
+    Both roots are proved to be the same isolated branch node, as where two
+    periodic seams cross on the branch; the vertex records that proof.
+    """
+    existing = state.vertex_bindings[vertex]
+    if existing is None or not isinstance(existing.primary, CurveSurfaceIntersectionRoot):
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias must share a source-root vertex binding",
+            (vertex,),
+        )
+    if existing.primary.root_id == endpoint.root.root_id or (
+        existing.branch_node is not None and existing.branch_node.binds(endpoint.root)
+    ):
+        return existing
+    lower, upper = endpoint.parameter_enclosure()
+    primary_endpoints = tuple(
+        cut.endpoint
+        for cut in state.cuts[arc.token]
+        if cut.vertex == vertex
+        and isinstance(cut.endpoint, BranchRootEndpoint)
+        and cut.endpoint.root.root_id == existing.primary.root_id
+    )
+    if lower != upper or not float(lower).is_integer() or not primary_endpoints:
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias must retain both certified node endpoints",
+            (vertex,),
+        )
+    curve = endpoint.curve
+    parameter = 0.0 if curve.closed and lower == curve.num_charts else float(lower)
+    endpoints = (
+        (primary_endpoints[0], endpoint)
+        if existing.branch_node is None
+        else (*existing.branch_node.endpoints, endpoint)
+    )
+    try:
+        branch_node = BRepBranchNodeRoots(
+            IntersectionCurvePointRoot(curve, parameter), endpoints
+        )
+    except ValueError as error:
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias must certify every source root as the branch node",
+            (vertex,),
+        ) from error
+    binding = BRepVertexRoot(
+        existing.primary,
+        aliases=existing.aliases,
+        spatial_root=existing.spatial_root,
+        joint_root=existing.joint_root,
+        source_edge_lifts=existing.source_edge_lifts,
+        branch_node=branch_node,
+    )
+    state.vertex_bindings[vertex] = binding
+    for token, cuts in state.cuts.items():
+        state.cuts[token] = [
+            replace(cut, vertex_root=binding) if cut.vertex == vertex else cut
+            for cut in cuts
+        ]
+    return binding
 
 
 @checked
@@ -2799,6 +2907,12 @@ def _certify_source_node_gauge(
         if not same_node:
             continue
         shifts = _branch_node_gauge(branch, node, endpoint.chart)
+        closing = branch.closed and node == branch.num_charts
+        # The endpoint's own exact deck already places its root in this
+        # chart's frame; the node gauge on this chart side relates that frame
+        # to the node's.
+        if endpoint.certifies_point_root(matched_root):
+            return _SourceNodeGauge(shifts=shifts, closing=closing)
         candidate = BranchRootEndpoint(
             endpoint.root,
             branch,
@@ -2816,9 +2930,7 @@ def _certify_source_node_gauge(
             affine_transforms=endpoint.affine_transforms,
         )
         if candidate.certifies_point_root(matched_root):
-            return _SourceNodeGauge(
-                shifts=shifts, closing=branch.closed and node == branch.num_charts
-            )
+            return _SourceNodeGauge(shifts=shifts, closing=closing)
     raise BRepBooleanFailure(
         "BRepBoolean.branch_alias must retain a source-node gauge; got no matching gauge"
     )
@@ -2906,7 +3018,8 @@ def _bind_fixed_branch_alias(
     vertex: str,
     binding: BRepVertexRoot,
     point: np.ndarray,
-) -> str | None:
+) -> tuple[str, str] | None:
+    """Return the node and vertex a source root shares with a fixed branch node."""
 
     first_owner, _ = state.branch_owners[arc.token]
     columns = slice(0, 2) if arc.owner == first_owner else slice(2, 4)
@@ -2930,7 +3043,25 @@ def _bind_fixed_branch_alias(
                 existing,
             )
         ):
-            return cut.node
+            return cut.node, cut.vertex
+    lower, upper = endpoint.parameter_enclosure()
+    if lower == upper and float(lower).is_integer():
+        for cut in state.cuts[arc.token]:
+            existing = cut.endpoint
+            # A different source root already certified as the same isolated
+            # branch node on this chart sheet names the same vertex.
+            if (
+                isinstance(existing, BranchRootEndpoint)
+                and existing.root.root_id != endpoint.root.root_id
+                and existing.curve.branch_id == endpoint.curve.branch_id
+                and existing.chart == endpoint.chart
+                and cut.lower == cut.upper == cut.parameter == lower
+                and np.array_equal(
+                    existing.source_gauges()[columns],
+                    endpoint.source_gauges()[columns],
+                )
+            ):
+                return cut.node, cut.vertex
 
     matches: list[_FixedBranchCut] = []
     for cut in state.cuts[arc.token]:
@@ -2970,4 +3101,4 @@ def _bind_fixed_branch_alias(
                 changes.append((other.token, index, transported_cut))
     for token, index, cut in changes:
         state.cuts[token][index] = cut
-    return matched_cut.cut.node
+    return matched_cut.cut.node, vertex

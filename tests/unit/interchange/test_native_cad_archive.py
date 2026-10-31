@@ -12,8 +12,9 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax._array_archive import ArrayArchiveCorruptionError
+from phydrax._array_archive import ArrayArchiveCorruptionError, write_array_archive
 from phydrax._meshcore import meshcore_available
+from phydrax._model import _structure as model_structure
 from phydrax._model._structure import (
     model_from_structure_recipe,
     model_recipe_array_inventory,
@@ -834,9 +835,10 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
         if "source_root_cell_ids" in entry.path and arrays[entry.name].size
     )
     assert row_leaves
-    row_payload = arrays[row_leaves[0].name]
+    row_payload = arrays[row_leaves[0].name].copy()
     assert row_payload.size
     row_payload[0] += 1
+    arrays[row_leaves[0].name] = row_payload
     changed_rows = tmp_path / "changed-layer-source-root-cell-ids.phx"
     write_model_archive(
         changed_rows, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
@@ -931,7 +933,9 @@ def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
     )
     assert restored.stdout.strip() == "layer-curving-evidence-cold-restored"
 
-    manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
+    # The worker writes this composition without limits (its manifest exceeds
+    # MODEL_ARCHIVE_LIMITS); the harness reads and rewrites it the same way.
+    manifest, arrays = read_model_archive(source, limits=None)
 
     def find_mapped_trace(node: object) -> dict[object, object] | None:
         if isinstance(node, dict):
@@ -971,9 +975,7 @@ def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
     assert isinstance(fields, dict)
     assert tamper_first_fraction(fields["source_parameters"])
     corrupted = tmp_path / "changed-mapped-layer-source-parameters.phx"
-    write_model_archive(
-        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
-    )
+    write_model_archive(corrupted, manifest=manifest, arrays=arrays, limits=None)
     refused = subprocess.run(
         [
             sys.executable,
@@ -1008,8 +1010,11 @@ def test_restricted_layer_curving_archive_replays_exact_reference_points(
         text=True,
     )
     expected = json.loads(written.stdout)
-    assert expected["target_reference_points"]
-    assert np.all(np.asarray(expected["geometry_node_rows"]) == -1)
+    # The per-cell restricted map keeps direct source-chart authority: its exact
+    # reference points are the chart witness rows, not a projection trace.
+    assert expected["trace_id"] is None
+    assert expected["chart_target_reference_tokens"]
+    assert expected["chart_source_parameter_tokens"]
     source = tmp_path / "restricted-layer-curving-source-evidence.phx"
     restored = subprocess.run(
         [
@@ -2006,14 +2011,14 @@ def test_brep_curve_surface_lift_archive_recomputes_chart_bounds_cold(
     assert "incompatible with its registered recipe" in refused.stderr
 
 
-def test_sphere_chamfer_archive_cold_restores_exact_isoparametric_rail(
+def test_sphere_chamfer_archive_cold_restores_exact_conic_root_rail(
     tmp_path: Path,
 ) -> None:
     written = subprocess.run(
         [
             sys.executable,
             str(_WORKER),
-            "write-sphere-chamfer-isoparametric",
+            "write-sphere-chamfer-conic-root",
             str(tmp_path),
         ],
         cwd=_REPOSITORY_ROOT,
@@ -2028,7 +2033,7 @@ def test_sphere_chamfer_archive_cold_restores_exact_isoparametric_rail(
         [
             sys.executable,
             str(_WORKER),
-            "read-sphere-chamfer-isoparametric",
+            "read-sphere-chamfer-conic-root",
             str(tmp_path),
             json.dumps(expected),
         ],
@@ -2038,47 +2043,44 @@ def test_sphere_chamfer_archive_cold_restores_exact_isoparametric_rail(
         text=True,
     )
     assert restored.returncode == 0, restored.stderr
-    assert restored.stdout.strip() == "sphere-chamfer-isoparametric-cold-restored"
+    assert restored.stdout.strip() == "sphere-chamfer-conic-root-cold-restored"
 
     manifest, arrays = read_model_archive(source, limits=None)
 
-    def find_exact_isoparametric_curve(node: object, /) -> dict[str, Any] | None:
+    def find_exact_conic_root_pcurve(node: object, /) -> dict[str, Any] | None:
         if isinstance(node, dict):
             if (
                 node.get("kind") == "dataclass"
-                and str(node.get("type", "")).rsplit(":", 1)[-1]
-                == "SurfaceIsoparametricCurve"
+                and str(node.get("type", "")).rsplit(":", 1)[-1] == "ConicRootLinePCurve"
             ):
-                exact = node["fields"]["fixed_value_exact"]
-                if not (exact.get("kind") == "literal" and exact.get("value") is None):
+                exact = node["fields"]["phase_shift_exact"]
+                if exact.get("kind") in ("fraction", "radical"):
                     return node
             for child in node.values():
-                found = find_exact_isoparametric_curve(child)
+                found = find_exact_conic_root_pcurve(child)
                 if found is not None:
                     return found
         elif isinstance(node, list):
             for child in node:
-                found = find_exact_isoparametric_curve(child)
+                found = find_exact_conic_root_pcurve(child)
                 if found is not None:
                     return found
         return None
 
-    curve = find_exact_isoparametric_curve(manifest["model_recipe"])
+    curve = find_exact_conic_root_pcurve(manifest["model_recipe"])
     assert curve is not None
     tampered = copy.deepcopy(manifest)
-    tampered_curve = find_exact_isoparametric_curve(tampered["model_recipe"])
+    tampered_curve = find_exact_conic_root_pcurve(tampered["model_recipe"])
     assert tampered_curve is not None
-    exact = tampered_curve["fields"]["fixed_value_exact"]
+    exact = tampered_curve["fields"]["phase_shift_exact"]
     if exact["kind"] == "fraction":
         exact["numerator"] += exact["denominator"]
-    elif exact["kind"] == "radical":
+    else:
         terms = exact["terms"]
         assert terms
         terms[0][1] += terms[0][2]
         if terms[0][1] == 0:
             terms[0][1] += terms[0][2]
-    else:
-        raise ValueError("Sphere chamfer archive has an unsupported exact rail scalar.")
     corrupted_directory = tmp_path / "changed-sphere-chamfer-exact-rail"
     corrupted_directory.mkdir()
     corrupted = corrupted_directory / "sphere-chamfer.phx"
@@ -2389,8 +2391,10 @@ def test_brep_archive_cold_restores_orthogonal_quadric_intersection_period_shift
     assert written.returncode == 0, written.stderr
     expected = json.loads(written.stdout)
     assert expected["branches"]
-    assert any(
-        np.any(np.asarray(branch["node_period_shifts"], dtype=np.int64))
+    # Each closed loop winds once around the x-axis cylinder: it closes at the
+    # far end of that native period box under one exact deck turn.
+    assert all(
+        np.any(np.asarray(branch["closure_period_shifts"], dtype=np.int64))
         for branch in expected["branches"]
     )
     restored = subprocess.run(
@@ -2419,7 +2423,7 @@ def test_brep_archive_cold_restores_orthogonal_quadric_intersection_period_shift
             for entry in model_recipe_array_inventory(
                 manifest["model_recipe"], prefix="model/leaves", limits=None
             )
-            if entry.path.endswith(".node_period_shifts") and np.any(arrays[entry.name])
+            if entry.path.endswith(".node_period_shifts")
         ),
         None,
     )
@@ -2927,6 +2931,7 @@ def test_brep_archive_rejects_tampered_exact_offset_carrier_distance(
 
 def test_brep_archive_rejects_forged_absent_sphere_revolution_witness(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     subprocess.run(
         [sys.executable, str(_WORKER), "write", str(tmp_path)],
@@ -2976,18 +2981,30 @@ def test_brep_archive_rejects_forged_absent_sphere_revolution_witness(
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
 
+    # The canonical writer orders arrays by restoring each registered type, so
+    # it cannot express a recipe without a declared field. Forge the archive
+    # one layer down: keep the original per-occurrence array order (the
+    # removed field holds no arrays) and share the forged recipe canonically.
     missing_directory = tmp_path / "missing-absent-offset-witness"
     missing_directory.mkdir()
     missing_manifest, missing_arrays = read_model_archive(source, limits=None)
-
-    missing_offset = find_offset(missing_manifest["model_recipe"])
+    missing_recipe = missing_manifest["model_recipe"]
+    array_nodes = model_structure._recipe_array_nodes(missing_recipe)
+    missing_offset = find_offset(missing_recipe)
     assert missing_offset is not None
     del missing_offset["fields"]["_sphere_revolution_witness"]
-    write_model_archive(
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            model_structure, "_recipe_array_nodes", lambda _recipe: array_nodes
+        )
+        shared_recipe, members = model_structure.share_model_archive_recipe(
+            missing_recipe, missing_arrays, prefix="model/leaves"
+        )
+    write_array_archive(
         missing_directory / "offset.phx",
-        manifest=missing_manifest,
-        arrays=missing_arrays,
+        manifest={"kind": missing_manifest["kind"], "model_recipe": shared_recipe},
         limits=None,
+        arrays=members,
     )
     refused_missing = subprocess.run(
         [
@@ -3002,6 +3019,8 @@ def test_brep_archive_rejects_forged_absent_sphere_revolution_witness(
         text=True,
     )
     assert refused_missing.returncode != 0
+    assert "incompatible with its registered recipe" in refused_missing.stderr
+    assert "dataclass fields do not match their type" in refused_missing.stderr
 
 
 def test_brep_archive_recomputes_revolution_offset_witness_cold(
@@ -3169,7 +3188,9 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
     assert "incompatible with its registered recipe" in refused_evidence.stderr
 
     def quality_recipes(node: object, /) -> tuple[dict[str, Any], ...]:
-        found: list[dict[str, Any]] = []
+        # The expanded recipe reuses one node per shared definition, so an
+        # equal quality report reached through several parents is one node.
+        found: dict[int, dict[str, Any]] = {}
         pending = [node]
         while pending:
             current = pending.pop()
@@ -3177,11 +3198,11 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
                 if current.get("kind") == "namedtuple" and str(
                     current.get("type", "")
                 ).endswith(":CellQualityReportArchiveRecipe"):
-                    found.append(current)
+                    found[id(current)] = current
                 pending.extend(current.values())
             elif isinstance(current, list):
                 pending.extend(current)
-        return tuple(found)
+        return tuple(found.values())
 
     quality_manifest, quality_arrays = read_model_archive(
         source, limits=MODEL_ARCHIVE_LIMITS
@@ -3239,45 +3260,55 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
     validity_inventory = model_recipe_array_inventory(
         proof_manifest["model_recipe"], prefix="model/leaves", limits=None
     )
+    # The computed audit, the report's audit and the report's embedding each
+    # retain the validity proof; a damaged field in any occurrence is refused.
+    validity_owners = (
+        ".audit.validity",
+        ".certification.audit.validity",
+        ".certification.embedding.validity",
+    )
     for validity_field in validity_fields:
         matches = tuple(
             entry
             for entry in validity_inventory
             if "validity" in entry.path and entry.path.endswith(f".{validity_field}")
         )
-        assert len(matches) == 1, validity_field
-        damaged_arrays = {name: array.copy() for name, array in proof_arrays.items()}
-        damaged = damaged_arrays[matches[0].name]
-        assert damaged.size
-        if np.issubdtype(damaged.dtype, np.integer):
-            damaged.flat[0] += 1
-        else:
-            damaged.flat[0] += 1.0
-        field_directory = tmp_path / f"changed-validity-{validity_field}"
-        field_directory.mkdir()
-        write_model_archive(
-            field_directory / "certification.phx",
-            manifest=copy.deepcopy(proof_manifest),
-            arrays=damaged_arrays,
-            limits=None,
-        )
-        refused_field = subprocess.run(
-            [
-                sys.executable,
-                str(_WORKER),
-                "read-certification",
-                str(field_directory),
-                json.dumps(expected),
-            ],
-            cwd=_REPOSITORY_ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        assert refused_field.returncode != 0, validity_field
-        assert "incompatible with its registered recipe" in refused_field.stderr, (
-            validity_field
-        )
+        assert tuple(entry.path for entry in matches) == tuple(
+            f"{owner}.{validity_field}" for owner in validity_owners
+        ), validity_field
+        for occurrence, match in enumerate(matches):
+            damaged_arrays = {name: array.copy() for name, array in proof_arrays.items()}
+            damaged = damaged_arrays[match.name]
+            assert damaged.size
+            if np.issubdtype(damaged.dtype, np.integer):
+                damaged.flat[0] += 1
+            else:
+                damaged.flat[0] += 1.0
+            field_directory = tmp_path / f"changed-validity-{validity_field}-{occurrence}"
+            field_directory.mkdir()
+            write_model_archive(
+                field_directory / "certification.phx",
+                manifest=copy.deepcopy(proof_manifest),
+                arrays=damaged_arrays,
+                limits=None,
+            )
+            refused_field = subprocess.run(
+                [
+                    sys.executable,
+                    str(_WORKER),
+                    "read-certification",
+                    str(field_directory),
+                    json.dumps(expected),
+                ],
+                cwd=_REPOSITORY_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert refused_field.returncode != 0, match.path
+            assert "incompatible with its registered recipe" in refused_field.stderr, (
+                match.path
+            )
 
 
 def test_restricted_coverage_witness_archive_replays_proof_cold(
@@ -4600,8 +4631,9 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
     assert expected["source_query_id"]
     assert expected["deformation_id"]
 
+    # The worker writes and reads this Composition without archive limits.
     manifest, arrays = read_model_archive(
-        tmp_path / "surface-chart-boundary-query.phx", limits=MODEL_ARCHIVE_LIMITS
+        tmp_path / "surface-chart-boundary-query.phx", limits=None
     )
 
     def find_query_recipe(node: object) -> dict[str, Any] | None:
@@ -4632,7 +4664,7 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
         corrupt_directory / "surface-chart-boundary-query.phx",
         manifest=manifest,
         arrays=arrays,
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=None,
     )
     refused = subprocess.run(
         [

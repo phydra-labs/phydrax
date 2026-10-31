@@ -412,6 +412,8 @@ class _IntervalBoxProgram(ctypes.Structure):
         ("workspace_size", _I64),
         ("outputs", _P),
         ("output_count", _I64),
+        ("guards", _P),
+        ("guard_count", _I64),
     )
 
 
@@ -3396,6 +3398,8 @@ class IntervalBoxProgram(NamedTuple):
     workspace_lower: np.ndarray
     workspace_upper: np.ndarray
     outputs: np.ndarray
+    guards: np.ndarray
+    """Workspace entries (real-power bases) whose lower bound must be >= 0."""
 
 
 class ZeroSetRemeshResult(NamedTuple):
@@ -3418,6 +3422,9 @@ def _interval_box_program(
     locations = _native_integer_array(
         program.outputs, f"{name}.outputs", np.dtype(np.int64)
     )
+    guards = _native_integer_array(
+        program.guards, f"{name}.guards", np.dtype(np.int64)
+    ).reshape((-1,))
     parameters = np.ascontiguousarray(program.parameters, dtype=np.float64)
     lower = np.ascontiguousarray(program.workspace_lower, dtype=np.float64)
     upper = np.ascontiguousarray(program.workspace_upper, dtype=np.float64)
@@ -3446,8 +3453,10 @@ def _interval_box_program(
         lower.shape[0],
         locations.ctypes.data,
         locations.shape[0],
+        guards.ctypes.data,
+        guards.shape[0],
     )
-    return view, (instructions, indices, locations, parameters, lower, upper)
+    return view, (instructions, indices, locations, guards, parameters, lower, upper)
 
 
 def zero_set_remesh(

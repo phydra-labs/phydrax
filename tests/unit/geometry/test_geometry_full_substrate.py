@@ -378,6 +378,7 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
         bd.Box(2.0, 2.0, 3.0).wrapped,
         destination,
         coordinate_contract=_SI_COORDINATES,
+        overwrite=True,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1,
             angular_deflection=0.3,

@@ -1054,6 +1054,62 @@ def test_parametric_surface_route_grades_planar_disk_poles_without_thin_bands() 
     assert float(np.min(angles)) >= 10.0
 
 
+def test_parametric_surface_route_flips_anisotropic_chart_cells_to_physical_shape() -> (
+    None
+):
+    # A sphere chart is anisotropic away from its equator: a chart triangle of
+    # good chart angles near the seam at latitude 62 degrees mapped to a physical
+    # cell of 12.5 degrees, beyond the default tetrahedral radius-edge bound 2 on
+    # a fixed boundary face. Interior chart edges flip to the physically better
+    # diagonal before each refinement round.
+    contract = SpatialCoordinateContract.si()
+    domain = MeshingDomain.from_brep(brep_sphere(1.0, coordinate_contract=contract))
+    scope = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        domain.scope_entity_ids(2),
+    )
+    construction = prepare_native_surface(
+        domain,
+        SurfaceMeshingSpec(
+            CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+            scope,
+            size_controls=(
+                UniformSizeControl(scope, 0.7, strength=SizeControlStrength.SOFT),
+            ),
+            maximum_deviation=0.08,
+        ),
+        NativeMeshingOptions("parametric_surface"),
+        contract,
+    ).execute()
+
+    assert construction.compliance.passed
+    coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    corners = coordinates[
+        np.concatenate(
+            tuple(
+                np.asarray(block.vertices, dtype=np.int64)
+                for block in construction.mesh.blocks
+            )
+        )
+    ]
+    lengths = np.stack(
+        tuple(
+            np.linalg.norm(corners[:, (corner + 1) % 3] - corners[:, corner], axis=1)
+            for corner in range(3)
+        ),
+        axis=1,
+    )
+    areas = 0.5 * np.linalg.norm(
+        np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1
+    )
+    circumradii = np.prod(lengths, axis=1) / (4.0 * areas)
+    assert float(np.max(circumradii / np.min(lengths, axis=1))) <= 2.0
+
+
 def test_parametric_surface_route_samples_seams_at_the_curvature_rate() -> None:
     # A first-order chord bound samples a curved seam down to edges near the
     # deviation tolerance itself and leaves needle cells along the seam. The

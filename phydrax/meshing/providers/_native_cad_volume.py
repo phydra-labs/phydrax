@@ -18,7 +18,11 @@ from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._cell_mesh import SimplicialConnectivity
 from ...discretization._coordinate_enclosure import ExactScalar
 from ...discretization._reference_cell import reference_cell_topology
-from ...geometry._domain_boundary import MeshingDomainBoundarySource
+from ...geometry._domain_boundary import (
+    exact_plane_chart,
+    ExactPlaneChart,
+    MeshingDomainBoundarySource,
+)
 from ...geometry._meshing_domain import _PlacedSurfacePatch, MeshingDomain, PatchCurveUse
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
@@ -121,9 +125,7 @@ def _association_for(
 ) -> GeometryAssociation | None:
     entity_set = surface.mesh.entity_set(dimension)
     expected_kind = (
-        GeometryAssociationKind.CURVE
-        if dimension == 1
-        else GeometryAssociationKind.BREP
+        GeometryAssociationKind.CURVE if dimension == 1 else GeometryAssociationKind.BREP
     )
     matches = tuple(
         association
@@ -162,7 +164,10 @@ def _association_for(
         if (
             dimensions.shape != identifiers.shape
             or np.any(dimensions != 1)
-            or any(role is not GeometrySourceEntityRole.EDGE for role in association.source_roles)
+            or any(
+                role is not GeometrySourceEntityRole.EDGE
+                for role in association.source_roles
+            )
             or any(value is None for value in association.source_parameter_intervals)
             or any(value is not None for value in association.source_parameter_points)
         ):
@@ -264,9 +269,8 @@ class _CadPlcData:
     source_triangle_cell_ids: np.ndarray
     source_triangle_patches: np.ndarray
     source_triangle_parameters: np.ndarray
-    source_triangle_parameter_exact: tuple[
-        tuple[tuple[Fraction, Fraction], ...], ...
-    ]
+    source_triangle_parameter_exact: tuple[tuple[tuple[Fraction, Fraction], ...], ...]
+
 
 def _cad_plc_data(
     domain: MeshingDomain,
@@ -310,9 +314,7 @@ def _cad_plc_data(
         raise TypeError("CAD volume construction requires retained SurfaceSourceCharts.")
     source_chart_cell_ids = np.asarray(surface_source.cell_global_ids, dtype=np.int64)
     source_chart_patches = np.asarray(surface_source.root_patches, dtype=np.int64)
-    source_chart_parameters = np.asarray(
-        surface_source.root_parameters, dtype=np.float64
-    )
+    source_chart_parameters = np.asarray(surface_source.root_parameters, dtype=np.float64)
     source_chart_parameter_exact = surface_source.root_parameter_exact
     chart_row_by_cell_id = {
         int(identifier): row
@@ -469,7 +471,9 @@ def _cad_plc_data(
                     "CAD surface triangle association lost its source chart ancestry."
                 ) from error
             if int(source_chart_patches[chart_row]) != patch:
-                raise ValueError("CAD surface chart and source-face patch ancestry disagree.")
+                raise ValueError(
+                    "CAD surface chart and source-face patch ancestry disagree."
+                )
             orientation = int(face_orientations[association_row])
             if len(cell) != 3:
                 raise ValueError("Every accepted CAD source cell must be a triangle.")
@@ -485,7 +489,9 @@ def _cad_plc_data(
                 dtype=np.float64,
             )
             if not np.array_equal(exact_numeric, source_chart_parameters[chart_row]):
-                raise ValueError("CAD source UV values differ from their exact root chart bank.")
+                raise ValueError(
+                    "CAD source UV values differ from their exact root chart bank."
+                )
             if orientation < 0:
                 polygon = (polygon[0], polygon[2], polygon[1])
                 parameters = parameters[[0, 2, 1]]
@@ -540,7 +546,9 @@ def _cad_plc_data(
         elif isinstance(connectivity, SimplicialConnectivity):
             connectivity_edges = np.asarray(connectivity.entities[1], dtype=np.int64)
         else:
-            raise ValueError("CAD boundary charts require canonical surface edge incidence.")
+            raise ValueError(
+                "CAD boundary charts require canonical surface edge incidence."
+            )
         source_edge_keys: dict[tuple[int, int], tuple[str, tuple[str, ...]]] = {}
         for edge_row, edge in enumerate(connectivity_edges.tolist()):
             global_id = int(np.asarray(mesh.entity_set(1).entity_ids)[edge_row])
@@ -802,9 +810,7 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
     source_triangle_cell_ids: np.ndarray
     source_triangle_patches: np.ndarray
     source_triangle_parameters: np.ndarray
-    source_triangle_parameter_exact: tuple[
-        tuple[tuple[Fraction, Fraction], ...], ...
-    ]
+    source_triangle_parameter_exact: tuple[tuple[tuple[Fraction, Fraction], ...], ...]
     maximum_deviation: float | None = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
@@ -958,9 +964,7 @@ def _plc_scope(
 
 def _region_row(domain: MeshingDomain, name: str, /) -> int:
     matches = tuple(
-        row
-        for row, region in enumerate(domain.regions)
-        if region.name == name
+        row for row, region in enumerate(domain.regions) if region.name == name
     )
     if len(matches) != 1:
         raise ValueError("CAD region names must resolve one exact source occurrence.")
@@ -1102,7 +1106,9 @@ def _translate_specification(
             )
         row = int(selected_rows[0])
         if domain.regions[row].name != control.region_name:
-            raise ValueError("CAD region control name differs from its scoped source region.")
+            raise ValueError(
+                "CAD region control name differs from its scoped source region."
+            )
         region_controls.append(
             RegionControl(
                 _plc_scope(
@@ -1303,7 +1309,9 @@ def _cad_entity_maps(source: NativeCadVolumeSource, /) -> _CadEntityMaps:
         segment_curve_rows.shape != (len(complex_.segment_ids),)
         or segment_brep_indices.shape != segment_curve_rows.shape
     ):
-        raise ValueError("CAD source curve rows and B-Rep edge identities are misaligned.")
+        raise ValueError(
+            "CAD source curve rows and B-Rep edge identities are misaligned."
+        )
     for row, key in enumerate(
         zip(complex_.plc_edge_ids, complex_.plc_edge_occurrence_paths, strict=True)
     ):
@@ -1420,10 +1428,17 @@ def _exact_patch_chart(domain: MeshingDomain, patch: int, /) -> _ExactPlaneChart
 
 
 def _exact_patch_plane(domain: MeshingDomain, patch: int, /) -> np.ndarray | None:
-    """Binary64 rows of `_exact_patch_chart`, each component rounded once."""
+    """Binary64 rows of a patch's exact plane, each component rounded once.
+
+    The plane is the affine chart of a ``PlanePatch`` or, for a patch proved
+    planar by its carrier, its `exact_plane_chart`.
+    """
     chart = _exact_patch_chart(domain, patch)
     if chart is None:
-        return None
+        plane = exact_plane_chart(domain, patch)
+        if plane is None:
+            return None
+        chart = (plane.origin, plane.first_axis, plane.second_axis)
     return np.asarray(
         [[float(value) for value in row] for row in chart], dtype=np.float64
     )
@@ -1485,9 +1500,7 @@ def _cad_volume_chart_witness(
     surface_source.require_bound(source.surface.mesh, source.surface.geometry, query)
 
     source_triangle_ids = source.source_triangle_ids
-    source_triangle_cell_ids = np.asarray(
-        source.source_triangle_cell_ids, dtype=np.int64
-    )
+    source_triangle_cell_ids = np.asarray(source.source_triangle_cell_ids, dtype=np.int64)
     source_triangle_patches = np.asarray(source.source_triangle_patches, dtype=np.int64)
     source_triangle_parameters = np.asarray(
         source.source_triangle_parameters, dtype=np.float64
@@ -1517,9 +1530,13 @@ def _cad_volume_chart_witness(
         )
         for row, exact_triangle in enumerate(source_triangle_parameter_exact)
     ):
-        raise ValueError("CAD UV values differ from their retained exact surface chart roots.")
+        raise ValueError(
+            "CAD UV values differ from their retained exact surface chart roots."
+        )
     if set(source_triangle_cell_ids.tolist()) != set(surface_source.cell_global_ids):
-        raise ValueError("CAD volume source roots omit an original surface triangle cell.")
+        raise ValueError(
+            "CAD volume source roots omit an original surface triangle cell."
+        )
     source_chart_by_face_id = {
         identifier: row for row, identifier in enumerate(source_triangle_ids)
     }
@@ -1568,9 +1585,7 @@ def _cad_volume_chart_witness(
     target_face_ids = np.asarray(
         _boundary_face_entities(mesh, construction), dtype=np.int64
     )
-    face_source_facets = np.asarray(
-        construction.face_source_facets, dtype=np.int64
-    )
+    face_source_facets = np.asarray(construction.face_source_facets, dtype=np.int64)
     face_sources = np.asarray(construction.face_sources, dtype=np.int64)
     face_orientations = np.asarray(construction.face_orientations, dtype=np.int64)
     source_faces = np.asarray(construction.source_faces, dtype=np.int64)
@@ -1626,15 +1641,11 @@ def _cad_volume_chart_witness(
     ):
         raise ValueError("CAD volume vertices lost their source witness parameters.")
 
-    chart_parameters_by_source_face: list[
-        tuple[tuple[Fraction, Fraction], ...]
-    ] = []
+    chart_parameters_by_source_face: list[tuple[tuple[Fraction, Fraction], ...]] = []
     triangles_by_patch: dict[int, set[int]] = {}
     triangles_by_vertex: dict[int, set[int]] = {}
     triangles_by_edge: dict[tuple[int, int], set[int]] = {}
-    patch_vertex_parameters: dict[
-        int, dict[int, set[tuple[Fraction, Fraction]]]
-    ] = {}
+    patch_vertex_parameters: dict[int, dict[int, set[tuple[Fraction, Fraction]]]] = {}
     patch_root_orientations: dict[int, set[int]] = {}
     for row, (face_id, facet) in enumerate(
         zip(source_face_ids, source_face_facets.tolist(), strict=True)
@@ -1644,9 +1655,7 @@ def _cad_volume_chart_witness(
             raise ValueError("CAD source triangle ID changed its B-Rep patch.")
         if source_face_paths[row] != domain.source_occurrences[2][int(facet)]:
             raise ValueError("CAD source triangle changed its patch occurrence path.")
-        chart_parameters_by_source_face.append(
-            source_triangle_parameter_exact[chart_row]
-        )
+        chart_parameters_by_source_face.append(source_triangle_parameter_exact[chart_row])
         triangle = (
             int(source_faces[row, 0]),
             int(source_faces[row, 1]),
@@ -1675,13 +1684,13 @@ def _cad_volume_chart_witness(
             edge_key = (min(first, second), max(first, second))
             triangles_by_edge.setdefault(edge_key, set()).add(row)
 
-    region_signs_by_patch: list[dict[int, int]] = [
-        {} for _ in range(len(domain.patches))
-    ]
+    region_signs_by_patch: list[dict[int, int]] = [{} for _ in range(len(domain.patches))]
     for region_row, region in enumerate(domain.regions):
         for patch, sign in region.boundary:
             if sign not in (-1, 1) or patch < 0 or patch >= len(domain.patches):
-                raise ValueError("CAD region boundary has invalid oriented patch incidence.")
+                raise ValueError(
+                    "CAD region boundary has invalid oriented patch incidence."
+                )
             if region_row in region_signs_by_patch[patch]:
                 raise ValueError("CAD region repeats one oriented source patch.")
             region_signs_by_patch[patch][region_row] = int(sign)
@@ -1694,10 +1703,13 @@ def _cad_volume_chart_witness(
             or len(signs) > 2
         ):
             raise ValueError("CAD patch material incidence is incomplete or ambiguous.")
-        if len(signs) == 2 and {
-            patch_orientation * sign for sign in signs.values()
-        } != {-1, 1}:
-            raise ValueError("CAD material-interface sides do not have opposite orientation.")
+        if len(signs) == 2 and {patch_orientation * sign for sign in signs.values()} != {
+            -1,
+            1,
+        }:
+            raise ValueError(
+                "CAD material-interface sides do not have opposite orientation."
+            )
 
     reference_rows: list[np.ndarray] = []
     reference_rational_rows: list[tuple[tuple[Fraction, ...], ...]] = []
@@ -1711,6 +1723,12 @@ def _cad_volume_chart_witness(
     orientations: list[int] = []
     declared_planes = source.plc_source.complex.facet_planes
     exact_charts: dict[int, _ExactPlaneChart | None] = {}
+    plane_charts: dict[int, ExactPlaneChart | None] = {}
+
+    def revolution_plane(patch: int, /) -> ExactPlaneChart | None:
+        if patch not in plane_charts:
+            plane_charts[patch] = exact_plane_chart(domain, patch)
+        return plane_charts[patch]
 
     def patch_witness_row(vertex: int, patch: int, /) -> int:
         row = int(witness_entities[vertex])
@@ -1720,10 +1738,15 @@ def _cad_volume_chart_witness(
             raise ValueError("CAD facet witness changed its source patch.")
         return row
 
-    def patch_input_uv(input_vertex: int, patch: int, /) -> tuple[Fraction, Fraction]:
+    def patch_input_uv(
+        input_vertex: int, patch: int, plane: ExactPlaneChart | None, /
+    ) -> tuple[Fraction, Fraction]:
         parameter_candidates = patch_vertex_parameters.get(patch, {}).get(
             input_vertex, set()
         )
+        if plane is not None:
+            # Seam copies of one authored vertex meet in the plane chart.
+            parameter_candidates = {plane.chart_point(uv) for uv in parameter_candidates}
         if input_vertex < 0 or len(parameter_candidates) != 1:
             raise ValueError(
                 "CAD planar patch lacks one exact root parameter per output vertex."
@@ -1731,19 +1754,27 @@ def _cad_volume_chart_witness(
         return next(iter(parameter_candidates))
 
     def planar_vertex_uv(
-        vertex: int, patch: int, chart: _ExactPlaneChart, /
+        vertex: int,
+        patch: int,
+        chart: _ExactPlaneChart,
+        plane: ExactPlaneChart | None,
+        /,
     ) -> tuple[Fraction, Fraction]:
-        """Chart parameters of a face vertex in its planar patch's one exact chart."""
+        """Chart parameters of a face vertex in its planar patch's one exact chart.
+
+        The chart is the patch's own affine chart, or with ``plane`` its exact
+        plane chart, where straight source segments and triangles stay affine.
+        """
         input_vertex = int(input_vertices[vertex])
         stratum = int(witness_strata[vertex])
         if input_vertex >= 0:
-            return patch_input_uv(input_vertex, patch)
+            return patch_input_uv(input_vertex, patch, plane)
         if stratum == 1:
             edge_row = int(witness_entities[vertex])
             if not 0 <= edge_row < source_segment_vertices.shape[0]:
                 raise ValueError("CAD edge witness names an absent source segment.")
             first, second = (
-                patch_input_uv(int(input_vertices[int(value)]), patch)
+                patch_input_uv(int(input_vertices[int(value)]), patch, plane)
                 for value in source_segment_vertices[edge_row]
             )
             parameter = Fraction.from_float(float(witness_parameters[vertex, 0]))
@@ -1755,6 +1786,8 @@ def _cad_volume_chart_witness(
             )
         if stratum == 2:
             root = chart_parameters_by_source_face[patch_witness_row(vertex, patch)]
+            if plane is not None:
+                root = tuple(plane.chart_point(uv) for uv in root)
             u, v = (
                 Fraction.from_float(float(value)) for value in witness_parameters[vertex]
             )
@@ -1770,12 +1803,12 @@ def _cad_volume_chart_witness(
             )
         if stratum == 3:
             patch_witness_row(vertex, patch)
-            plane = (
+            plane_rows = (
                 None if declared_planes is None else np.asarray(declared_planes[patch])
             )
-            if plane is None or not np.all(np.isfinite(plane)):
+            if plane_rows is None or not np.all(np.isfinite(plane_rows)):
                 raise ValueError("CAD plane witness lies on an undeclared source patch.")
-            return _cad_plane_witness_uv(chart, plane, witness_parameters[vertex])
+            return _cad_plane_witness_uv(chart, plane_rows, witness_parameters[vertex])
         raise ValueError(
             "CAD boundary vertex has no exact source vertex, edge, facet, or plane witness."
         )
@@ -1809,12 +1842,16 @@ def _cad_volume_chart_witness(
             or {owner[3] for owner in owners} != set(expected_region_signs)
             or len({owner[3] for owner in owners}) != len(owners)
         ):
-            raise ValueError("CAD output face does not retain its material-side incidence.")
+            raise ValueError(
+                "CAD output face does not retain its material-side incidence."
+            )
         target_row = face_row_by_id.get(int(target_face_id))
         if target_row is None or bool(boundary_mask[target_row]) != (
             len(expected_region_signs) == 1
         ):
-            raise ValueError("CAD source face is not an actual exterior or interface facet.")
+            raise ValueError(
+                "CAD source face is not an actual exterior or interface facet."
+            )
         if len(expected_region_signs) == 1:
             selected_region = next(iter(expected_region_signs))
         else:
@@ -1824,7 +1861,9 @@ def _cad_volume_chart_witness(
                 if int(domain.patches[patch].orientation) * sign == 1
             )
             if len(positive_regions) != 1:
-                raise ValueError("CAD material interface has no unique positive source side.")
+                raise ValueError(
+                    "CAD material interface has no unique positive source side."
+                )
             selected_region = positive_regions[0]
         selected_owners = tuple(owner for owner in owners if owner[3] == selected_region)
         if len(selected_owners) != 1:
@@ -1875,7 +1914,9 @@ def _cad_volume_chart_witness(
                 )
                 edge_inputs = tuple(int(input_vertices[value]) for value in edge_vertices)
                 if min(edge_inputs) < 0 or edge_inputs[0] == edge_inputs[1]:
-                    raise ValueError("CAD source edge lost its original endpoint ancestry.")
+                    raise ValueError(
+                        "CAD source edge lost its original endpoint ancestry."
+                    )
                 vertex_candidates = triangles_by_edge.get(
                     tuple(sorted(edge_inputs)), set()
                 )
@@ -1899,27 +1940,33 @@ def _cad_volume_chart_witness(
             )
         patch_orientation = int(domain.patches[patch].orientation)
         planar_parameters: list[tuple[Fraction, Fraction]] | None = None
-        if candidates:
+        # Every face of a patch with an exact plane chart takes that chart, so
+        # its target triangles partition one chart of the patch.
+        plane = revolution_plane(patch)
+        if candidates and plane is None:
             source_face_row = next(iter(candidates))
             root_parameters = chart_parameters_by_source_face[source_face_row]
             root_orientation = _cad_uv_triangle_orientation(root_parameters)
-            source_triangle = tuple(
-                int(value) for value in source_faces[source_face_row]
-            )
+            source_triangle = tuple(int(value) for value in source_faces[source_face_row])
         else:
-            if patch not in exact_charts:
-                exact_charts[patch] = _exact_patch_chart(domain, patch)
-            chart = exact_charts[patch]
-            if chart is None:
-                raise ValueError(
-                    "CAD output face spans source triangles without an exact planar patch chart."
-                )
+            if plane is not None:
+                chart = (plane.origin, plane.first_axis, plane.second_axis)
+            else:
+                if patch not in exact_charts:
+                    exact_charts[patch] = _exact_patch_chart(domain, patch)
+                exact_chart = exact_charts[patch]
+                if exact_chart is None:
+                    raise ValueError(
+                        "CAD output face spans source triangles without an exact planar patch chart."
+                    )
+                chart = exact_chart
             if patch_root_orientations.get(patch) != {patch_orientation}:
                 raise ValueError(
                     "CAD planar patch source triangles do not share one exact oriented chart."
                 )
             planar_parameters = [
-                planar_vertex_uv(vertex, patch, chart) for vertex in face_vertex_rows
+                planar_vertex_uv(vertex, patch, chart, plane)
+                for vertex in face_vertex_rows
             ]
             source_triangle = ()
             root_parameters = ()
@@ -1947,13 +1994,17 @@ def _cad_volume_chart_witness(
                 uv = tuple(root_parameters[corner])
             elif int(witness_strata[vertex]) == 2:
                 if int(witness_entities[vertex]) != source_face_row:
-                    raise ValueError("CAD facet witness changed its source triangle parent.")
+                    raise ValueError(
+                        "CAD facet witness changed its source triangle parent."
+                    )
                 u, v = (
                     Fraction.from_float(float(value))
                     for value in witness_parameters[vertex]
                 )
                 if u < 0 or v < 0 or u + v > 1:
-                    raise ValueError("CAD facet witness lies outside its source triangle.")
+                    raise ValueError(
+                        "CAD facet witness lies outside its source triangle."
+                    )
                 uv = (
                     root_parameters[0][0]
                     + u * (root_parameters[1][0] - root_parameters[0][0])
@@ -1972,9 +2023,7 @@ def _cad_volume_chart_witness(
                 edge_inputs = tuple(int(input_vertices[value]) for value in edge_vertices)
                 first_corner = source_corner_by_vertex.get(edge_inputs[0])
                 second_corner = source_corner_by_vertex.get(edge_inputs[1])
-                parameter = Fraction.from_float(
-                    float(witness_parameters[vertex, 0])
-                )
+                parameter = Fraction.from_float(float(witness_parameters[vertex, 0]))
                 if (
                     first_corner is None
                     or second_corner is None
@@ -2025,7 +2074,7 @@ def _cad_volume_chart_witness(
         source_rational_rows.append(tuple(child_parameters))
         parent_cells.append(parent_id)
         local_facets.append(local_facet)
-        source_chart_ids.append(entity_id)
+        source_chart_ids.append(entity_id if plane is None else plane.chart_id)
         source_entity_ids.append(entity_id)
         occurrence_paths.append(occurrence)
         orientations.append(source_orientation * target_orientation)
@@ -2053,7 +2102,6 @@ def _cad_volume_chart_witness(
         source_parameter_rational_tokens=rational_chart_tokens(source_rational_rows),
         orientations=np.asarray(orientations, dtype=np.int8),
     )
-
 
 
 def _cad_surface_feature_witness(
@@ -2093,7 +2141,9 @@ def _cad_surface_feature_witness(
         dtype=np.int64,
     )
     if rows.size == 0:
-        raise ValueError("CAD surface feature has no witnessed source-face output facets.")
+        raise ValueError(
+            "CAD surface feature has no witnessed source-face output facets."
+        )
     witness = SourceBoundaryChartWitness(
         mesh_id=full_witness.mesh_id,
         geometry_id=full_witness.geometry_id,
@@ -2104,9 +2154,15 @@ def _cad_surface_feature_witness(
         chart_dimension=full_witness.chart_dimension,
         reference_dimension=full_witness.reference_dimension,
         cell_global_ids=np.asarray(full_witness.cell_global_ids, dtype=np.int64)[rows],
-        entity_global_ids=np.asarray(full_witness.entity_global_ids, dtype=np.int64)[rows],
-        local_entity_indices=np.asarray(full_witness.local_entity_indices, dtype=np.int32)[rows],
-        target_reference_vertices=np.asarray(full_witness.target_reference_vertices)[rows],
+        entity_global_ids=np.asarray(full_witness.entity_global_ids, dtype=np.int64)[
+            rows
+        ],
+        local_entity_indices=np.asarray(
+            full_witness.local_entity_indices, dtype=np.int32
+        )[rows],
+        target_reference_vertices=np.asarray(full_witness.target_reference_vertices)[
+            rows
+        ],
         target_reference_rational_tokens=tuple(
             full_witness.target_reference_rational_tokens[int(row)] for row in rows
         ),
@@ -2132,9 +2188,15 @@ def _cad_corner_feature_witness(
     domain = source.domain
     query = source.fidelity_source
     if not isinstance(query, MeshingDomainBoundarySource):
-        raise TypeError("CAD corner witnesses require the original domain boundary query.")
+        raise TypeError(
+            "CAD corner witnesses require the original domain boundary query."
+        )
     identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
-    if feature.scope.entity_dimension != 0 or identifiers.ndim != 1 or identifiers.size == 0:
+    if (
+        feature.scope.entity_dimension != 0
+        or identifiers.ndim != 1
+        or identifiers.size == 0
+    ):
         raise ValueError("CAD corner features must name authored source point scopes.")
     mesh = construction.mesh
     input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
@@ -2157,14 +2219,22 @@ def _cad_corner_feature_witness(
                     strict=True,
                 )
             )
-            if dimension == 0 and index == source_index and tuple(path) == source_occurrence
+            if dimension == 0
+            and index == source_index
+            and tuple(path) == source_occurrence
         )
         if len(plc_rows) != 1:
-            raise ValueError("CAD source corner has no unique original PLC vertex ancestry.")
+            raise ValueError(
+                "CAD source corner has no unique original PLC vertex ancestry."
+            )
         target_rows = np.flatnonzero(input_vertices == plc_rows[0])
         if target_rows.size != 1:
-            raise ValueError("CAD source corner does not map to one retained volume vertex.")
-        target_ids.append(int(np.asarray(mesh.vertex_global_ids, dtype=np.int64)[target_rows[0]]))
+            raise ValueError(
+                "CAD source corner does not map to one retained volume vertex."
+            )
+        target_ids.append(
+            int(np.asarray(mesh.vertex_global_ids, dtype=np.int64)[target_rows[0]])
+        )
         source_ids.append(entity_id)
         occurrences.append(occurrence)
     return SourceBoundaryPointWitness(
@@ -2179,6 +2249,7 @@ def _cad_corner_feature_witness(
         occurrence_paths=tuple(occurrences),
     )
 
+
 def _cad_curve_feature_witness(
     source: NativeCadVolumeSource,
     construction: VolumeConstruction,
@@ -2192,14 +2263,20 @@ def _cad_curve_feature_witness(
 
     domain = source.domain
     identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
-    if feature.scope.entity_dimension != 1 or identifiers.ndim != 1 or identifiers.size == 0:
+    if (
+        feature.scope.entity_dimension != 1
+        or identifiers.ndim != 1
+        or identifiers.size == 0
+    ):
         raise ValueError("CAD curve features must name authored source-edge scopes.")
     query = _domain_curve_source_query(domain, identifiers)
     domain.validate_curve_boundary_query(query, identifiers)
     from ...geometry._curve_boundary import ParametricCurveBoundarySource
 
     if not isinstance(query, ParametricCurveBoundarySource):
-        raise TypeError("CAD curve feature preparation requires ParametricCurveBoundarySource.")
+        raise TypeError(
+            "CAD curve feature preparation requires ParametricCurveBoundarySource."
+        )
 
     scope_id_by_key = {
         domain.source_entity_key_for_scope(1, int(scope_id)): int(scope_id)
@@ -2256,8 +2333,7 @@ def _cad_curve_feature_witness(
         len(canonical_edge_row_by_key) != canonical_edges.shape[0]
         or source_segment_vertices_all.ndim != 2
         or source_segment_vertices_all.shape[1] != 2
-        or source_segment_complex_rows.shape
-        != (source_segment_vertices_all.shape[0],)
+        or source_segment_complex_rows.shape != (source_segment_vertices_all.shape[0],)
         or len(source_bank_row_by_complex_edge) != source_segment_complex_rows.size
         or complex_segments.shape != (len(complex_.segment_ids), 2)
         or curve_rows.shape != (len(complex_.segment_ids),)
@@ -2275,10 +2351,14 @@ def _cad_curve_feature_witness(
         key = (identifier, tuple(path))
         complex_edge_row = canonical_edge_row_by_key.get(key)
         if complex_edge_row is None:
-            raise ValueError("An authored CAD curve is absent from its canonical PLC edge bank.")
+            raise ValueError(
+                "An authored CAD curve is absent from its canonical PLC edge bank."
+            )
         source_row = source_bank_row_by_complex_edge.get(complex_edge_row)
         if source_row is None:
-            raise ValueError("An authored CAD curve is absent from the canonical recovery bank.")
+            raise ValueError(
+                "An authored CAD curve is absent from the canonical recovery bank."
+            )
         if tuple(int(value) for value in complex_segments[curve_segment_row]) != tuple(
             int(value) for value in canonical_edges[complex_edge_row]
         ):
@@ -2294,8 +2374,7 @@ def _cad_curve_feature_witness(
     segment_source_rows = np.asarray(actual_segment_source_rows, dtype=np.int64)
     segment_vertices = source_segment_vertices_all[segment_source_rows]
     segment_row_by_source_row = {
-        int(source_row): row
-        for row, source_row in enumerate(actual_segment_source_rows)
+        int(source_row): row for row, source_row in enumerate(actual_segment_source_rows)
     }
     segment_curve_rows = np.asarray(segment_curves, dtype=np.int64)
     segment_brep_edge_rows = np.asarray(segment_edges, dtype=np.int64)
@@ -2319,19 +2398,27 @@ def _cad_curve_feature_witness(
     if authority is None:
         raise ValueError("CAD curve witnesses require the authoritative BRep source.")
     brep = authority.geometry if isinstance(authority, BRepModel) else authority
-    edge_vertices = tuple(tuple(int(value) for value in pair) for pair in brep.edge_vertices)
+    edge_vertices = tuple(
+        tuple(int(value) for value in pair) for pair in brep.edge_vertices
+    )
 
-    def edge_parameter_range(edge_index: int, occurrence_path: tuple[str, ...], /) -> tuple[float, float]:
+    def edge_parameter_range(
+        edge_index: int, occurrence_path: tuple[str, ...], /
+    ) -> tuple[float, float]:
         if isinstance(authority, BRepModel):
             bounds = authority.source_curve_parameter_domain(
                 edge_index, occurrence_path=occurrence_path
             )
         elif isinstance(authority, BRepGeometry):
             if occurrence_path:
-                raise ValueError("Placed BRep curve intervals require their BRepModel owner.")
+                raise ValueError(
+                    "Placed BRep curve intervals require their BRepModel owner."
+                )
             bounds = authority.source_curve_parameter_domain(edge_index)
         else:
-            raise TypeError("MeshingDomain.brep_authority has no exact BRep curve interval.")
+            raise TypeError(
+                "MeshingDomain.brep_authority has no exact BRep curve interval."
+            )
         first, last = bounds
         return float(first), float(last)
 
@@ -2347,7 +2434,9 @@ def _cad_curve_feature_witness(
     for segment_row, (curve_row, edge_index) in enumerate(
         zip(segment_curve_rows.tolist(), segment_brep_edge_rows.tolist(), strict=True)
     ):
-        if not 0 <= curve_row < len(domain.curves) or not 0 <= edge_index < len(edge_vertices):
+        if not 0 <= curve_row < len(domain.curves) or not 0 <= edge_index < len(
+            edge_vertices
+        ):
             raise ValueError("CAD PLC segment names an absent BRep edge definition.")
         source_occurrence = domain.source_occurrences[1][curve_row]
         if (
@@ -2376,13 +2465,17 @@ def _cad_curve_feature_witness(
                     return first
                 if source_index == endpoints[1]:
                     return last
-            raise ValueError("CAD PLC curve endpoint lacks exact source parameter ancestry.")
+            raise ValueError(
+                "CAD PLC curve endpoint lacks exact source parameter ancestry."
+            )
 
         first_parameter, last_parameter = (
             endpoint_parameter(int(value)) for value in segment_vertices[segment_row]
         )
         if first_parameter == last_parameter:
-            raise ValueError("CAD PLC source segment collapses a positive curve interval.")
+            raise ValueError(
+                "CAD PLC source segment collapses a positive curve interval."
+            )
         segment_parameters[segment_row] = (first_parameter, last_parameter)
         segment_rows_by_curve.setdefault(curve_row, []).append(segment_row)
         for plc_vertex in segment_vertices[segment_row].tolist():
@@ -2395,7 +2488,9 @@ def _cad_curve_feature_witness(
         elif int(strata[vertex_row]) == 1:
             source_segment_row = int(entities[vertex_row])
             if not 0 <= source_segment_row < source_segment_vertices_all.shape[0]:
-                raise ValueError("CAD edge witness names an absent canonical source segment.")
+                raise ValueError(
+                    "CAD edge witness names an absent canonical source segment."
+                )
             actual_segment_row = segment_row_by_source_row.get(source_segment_row)
             vertex_segment_rows.append(
                 set() if actual_segment_row is None else {actual_segment_row}
@@ -2420,7 +2515,9 @@ def _cad_curve_feature_witness(
             raise ValueError("CAD generated curve vertex changed its source segment.")
         fraction = float(parameters[vertex_row, 0])
         if not 0.0 <= fraction <= 1.0:
-            raise ValueError("CAD generated curve vertex lies outside its source segment.")
+            raise ValueError(
+                "CAD generated curve vertex lies outside its source segment."
+            )
         return first_parameter + fraction * (last_parameter - first_parameter)
 
     mesh = construction.mesh
@@ -2429,7 +2526,9 @@ def _cad_curve_feature_witness(
     if target_edges.shape != (target_edge_ids.size, 2):
         raise ValueError("CAD target edge identities are misaligned.")
     boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
-    boundary_face_ids = np.asarray(_boundary_face_entities(mesh, construction), dtype=np.int64)
+    boundary_face_ids = np.asarray(
+        _boundary_face_entities(mesh, construction), dtype=np.int64
+    )
     face_patches = np.asarray(construction.face_source_facets, dtype=np.int64)
     if (
         boundary_faces.ndim != 2
@@ -2453,11 +2552,15 @@ def _cad_curve_feature_witness(
     }
     cell_rows = {
         int(identifier): row
-        for row, identifier in enumerate(np.asarray(mesh.blocks[0].global_ids, dtype=np.int64).tolist())
+        for row, identifier in enumerate(
+            np.asarray(mesh.blocks[0].global_ids, dtype=np.int64).tolist()
+        )
     }
     tetrahedron = reference_cell_topology("tetrahedron")
     reference_vertices = np.asarray(tetrahedron.vertices, dtype=np.float64)
-    local_edges = tuple(tuple(int(value) for value in pair) for pair in tetrahedron.entities[1])
+    local_edges = tuple(
+        tuple(int(value) for value in pair) for pair in tetrahedron.entities[1]
+    )
     source_chart_ids = []
     source_entity_ids = []
     occurrences = []
@@ -2476,14 +2579,20 @@ def _cad_curve_feature_witness(
         )
         query_range = tuple(float(value) for value in query.parameter_ranges[query_row])
         if tuple(sorted(query_range)) != tuple(sorted(edge_range)):
-            raise ValueError("CAD p-curve and BRep edge parameter intervals lack a shared exact scale.")
+            raise ValueError(
+                "CAD p-curve and BRep edge parameter intervals lack a shared exact scale."
+            )
         if curve_row not in segment_rows_by_curve:
-            raise ValueError("CAD curve feature has no retained source PLC segment chain.")
+            raise ValueError(
+                "CAD curve feature has no retained source PLC segment chain."
+            )
         entity_id = query.curve_entity_ids[query_row]
         occurrence = query.occurrence_paths[query_row]
         for target_edge_row, target_pair in enumerate(target_edges.tolist()):
             first_vertex, second_vertex = (int(value) for value in target_pair)
-            candidates = vertex_segment_rows[first_vertex] & vertex_segment_rows[second_vertex]
+            candidates = (
+                vertex_segment_rows[first_vertex] & vertex_segment_rows[second_vertex]
+            )
             candidates = {
                 segment_row
                 for segment_row in candidates
@@ -2501,7 +2610,9 @@ def _cad_curve_feature_witness(
             if not adjacent:
                 continue
             if len(candidates) != 1:
-                raise ValueError("CAD target edge has ambiguous source curve segment ancestry.")
+                raise ValueError(
+                    "CAD target edge has ambiguous source curve segment ancestry."
+                )
             segment_row = next(iter(candidates))
             face_id = min(adjacent)
             try:
@@ -2509,15 +2620,23 @@ def _cad_curve_feature_witness(
                 parent_id = int(surface_witness.cell_global_ids[face_witness_row])
                 parent_row = cell_rows[parent_id]
             except KeyError as error:
-                raise ValueError("CAD curve edge lacks a selected material-side volume cell.") from error
-            cell_vertices = tuple(int(value) for value in np.asarray(mesh.blocks[0].vertices[parent_row]).tolist())
+                raise ValueError(
+                    "CAD curve edge lacks a selected material-side volume cell."
+                ) from error
+            cell_vertices = tuple(
+                int(value)
+                for value in np.asarray(mesh.blocks[0].vertices[parent_row]).tolist()
+            )
             local_matches = tuple(
                 (local_edge, pair)
                 for local_edge, pair in enumerate(local_edges)
-                if tuple(sorted((cell_vertices[pair[0]], cell_vertices[pair[1]]))) == edge_key
+                if tuple(sorted((cell_vertices[pair[0]], cell_vertices[pair[1]])))
+                == edge_key
             )
             if len(local_matches) != 1:
-                raise ValueError("CAD target curve edge has no unique local tetrahedron edge.")
+                raise ValueError(
+                    "CAD target curve edge has no unique local tetrahedron edge."
+                )
             local_edge, local_pair = local_matches[0]
             first_target, last_target = local_pair
             edge_range_low = min(edge_range)
@@ -2526,9 +2645,12 @@ def _cad_curve_feature_witness(
                 edge_range_low
             )
             if edge_width <= 0:
-                raise ValueError("CAD source curve has a degenerate edge parameter range.")
+                raise ValueError(
+                    "CAD source curve has a degenerate edge parameter range."
+                )
             query_first = Fraction.from_float(query_range[0])
             query_last = Fraction.from_float(query_range[1])
+
             def chart_parameter(native_parameter: float, /) -> float:
                 fraction = (
                     Fraction.from_float(float(native_parameter))
@@ -2537,6 +2659,7 @@ def _cad_curve_feature_witness(
                 if use.sense < 0:
                     fraction = 1 - fraction
                 return float(query_first + fraction * (query_last - query_first))
+
             edge_parameters = tuple(
                 chart_parameter(value)
                 for value in (
@@ -2544,8 +2667,13 @@ def _cad_curve_feature_witness(
                     vertex_parameter_on_segment(cell_vertices[last_target], segment_row),
                 )
             )
-            if any(not min(edge_range) <= value <= max(edge_range) for value in edge_parameters):
-                raise ValueError("CAD curve witness parameters leave the authored BRep edge interval.")
+            if any(
+                not min(edge_range) <= value <= max(edge_range)
+                for value in edge_parameters
+            ):
+                raise ValueError(
+                    "CAD curve witness parameters leave the authored BRep edge interval."
+                )
             source_chart_ids.append(chart_id)
             source_entity_ids.append(entity_id)
             occurrences.append(tuple(occurrence))
@@ -2582,14 +2710,20 @@ def _cad_curve_feature_witness(
         entity_global_ids=np.asarray(target_entity_ids, dtype=np.int64),
         local_entity_indices=np.asarray(local_edge_indices, dtype=np.int32),
         target_reference_vertices=np.asarray(target_references, dtype=np.float64),
-        target_reference_rational_tokens=rational_chart_tokens(target_reference_rational_rows),
+        target_reference_rational_tokens=rational_chart_tokens(
+            target_reference_rational_rows
+        ),
         source_chart_ids=tuple(source_chart_ids),
         source_entity_ids=tuple(source_entity_ids),
         occurrence_paths=tuple(occurrences),
         source_parameters=np.asarray(source_parameters, dtype=np.float64)[:, :, None],
-        source_parameter_rational_tokens=rational_chart_tokens(source_parameter_rational_rows),
+        source_parameter_rational_tokens=rational_chart_tokens(
+            source_parameter_rational_rows
+        ),
         orientations=np.asarray(orientations, dtype=np.int8),
     )
+
+
 def _brep_associations(
     source: NativeCadVolumeSource,
     construction: VolumeConstruction,
@@ -2875,9 +3009,7 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
         if segment_edges.shape != (len(segment_keys), 2):
             raise ValueError("CAD source segment identity rows are misaligned.")
         try:
-            segment_edge_rows = tuple(
-                plc_edge_row_by_key[key] for key in segment_keys
-            )
+            segment_edge_rows = tuple(plc_edge_row_by_key[key] for key in segment_keys)
         except KeyError as error:
             raise ValueError(
                 "A CAD curve identity is absent from its canonical PLC source edge bank."
@@ -2939,7 +3071,10 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
         for feature in self.specification.protected_features:
             if not feature.hard:
                 continue
-            if feature.feature_kind in (FeatureKind.SURFACE, FeatureKind.MATERIAL_INTERFACE):
+            if feature.feature_kind in (
+                FeatureKind.SURFACE,
+                FeatureKind.MATERIAL_INTERFACE,
+            ):
                 feature_query, feature_witness = _cad_surface_feature_witness(
                     self.source.domain, feature, fidelity_witness
                 )
@@ -2960,7 +3095,9 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     fidelity_witness,
                 )
             else:
-                raise ValueError("CAD feature has no supported source chart witness route.")
+                raise ValueError(
+                    "CAD feature has no supported source chart witness route."
+                )
             scoped_fidelity.append(
                 (feature_query, feature_witness, feature.maximum_deviation)
             )

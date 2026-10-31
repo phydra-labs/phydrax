@@ -25,6 +25,10 @@ from phydrax.discretization._cell_mesh import (
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization._tensor_support import PreparedTensorGrid
 from phydrax.geometry import Sphere, Torus
+from phydrax.geometry._approximate_source_coverage import (
+    _single_sheet_preimages,
+    SourceCoverageUnavailable,
+)
 from phydrax.geometry._contracts import CompiledGeometry
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
@@ -66,6 +70,7 @@ from phydrax.meshing._implicit_volume import (
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing.providers._native import NativeMeshingProvider
 from phydrax.meshing.providers._native_implicit import (
     _NativeImplicitBoundaryQuery,
     prepare_native_implicit,
@@ -798,6 +803,96 @@ def test_implicit_boundary_degree_refuses_a_duplicated_sheet() -> None:
             doubled_witness,
             tolerance=0.8,
             maximum_normal_deviation=np.pi,
+        )
+
+
+def test_remeshed_implicit_carrier_certifies_charts_and_coverage() -> None:
+    # Remeshed vertices are generally not their witnessed scaffold roots, so
+    # those chart corners lift from their points and coverage proves degree
+    # one from one certified preimage per component.
+    geometry, grid = _geometry_and_grid()
+    policy = AdaptiveImplicitSurfacePolicy(
+        relative_cell_diameter=0.08, root_tolerance=1.0e-8
+    )
+    discovery = discover_adaptive_implicit_surface(
+        geometry, domain=_grid_domain(grid), policy=policy, source_id="sheet-sphere"
+    )
+    profile = AnalyticImplicitProfile(
+        geometry,
+        SpatialCoordinateContract.si(),
+        source_id="sheet-sphere",
+        source_revision="r1",
+    )
+    source = NativeImplicitSource(
+        geometry, "sheet-sphere", "r1", discovery=discovery, authoring_profile=profile
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        MeshingScope.whole(source, 2),
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=0.8,
+    )
+    result = (
+        NativeMeshingProvider(
+            NativeMeshingOptions(
+                "implicit_adaptive_tetrahedral",
+                implicit_policy=policy,
+                volume_schedule=NativeVolumeSchedule(radius_edge_bound=2.0),
+            )
+        )
+        .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
+        .execute()
+    )
+    achieved = dict(result.compliance.achieved)
+
+    assert achieved["carrier_remeshed"] == 1.0
+    assert achieved["carrier_maximum_radius_edge_ratio_after"] <= 2.0
+    certification = result.certification
+    assert certification is not None and certification.passed
+    assert certification.fidelity is not None
+    assert certification.fidelity.status == "certified"
+    assert certification.coverage is not None
+
+
+def test_remeshed_implicit_duplicated_sheet_is_refused_by_single_preimage_proof() -> None:
+    construction, _ = _adaptive_volume_construction(NativeVolumeSchedule())
+    assert dict(construction.compliance.achieved)["carrier_remeshed"] == 1.0
+    source = construction.certification.fidelity_source
+    assert isinstance(source, _NativeImplicitBoundaryQuery)
+    witness = construction.certification.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    mesh = construction.mesh
+    geometry = construction.geometry
+    single = prepare_adaptive_implicit_root_charts(
+        mesh, geometry, source, witness, tolerance=0.8, maximum_normal_deviation=np.pi
+    )
+    assert single.status == "certified"
+    preimages = _single_sheet_preimages(
+        mesh, geometry, np.zeros(mesh.blocks[0].cell_count, np.int64), single, witness
+    )
+    assert len(preimages) == 1
+
+    # Remeshed rows may repeat their seeding scaffold triangle, so the doubled
+    # witness is admitted and every chart certifies; only the preimage count
+    # sees the coincident second sheet.
+    doubled, doubled_geometry, doubled_witness = _duplicated_sheet(construction)
+    root_map = prepare_adaptive_implicit_root_charts(
+        doubled,
+        doubled_geometry,
+        source,
+        doubled_witness,
+        tolerance=0.8,
+        maximum_normal_deviation=np.pi,
+    )
+    assert root_map.status == "certified"
+    with pytest.raises(SourceCoverageUnavailable, match="second implicit target sheet"):
+        _single_sheet_preimages(
+            doubled,
+            doubled_geometry,
+            np.zeros(doubled.blocks[0].cell_count, np.int64),
+            root_map,
+            doubled_witness,
         )
 
 

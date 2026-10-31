@@ -60,12 +60,11 @@ type MeshingSourceAccuracy = Literal[
 type _ExactUVChart = tuple[tuple[Fraction, Fraction], ...]
 type _ExactChartInput = Sequence[
     Sequence[
-        Sequence[
-            Fraction | int | float | np.integer | np.floating | bool | np.bool_
-        ]
+        Sequence[Fraction | int | float | np.integer | np.floating | bool | np.bool_]
     ]
 ]
 type _MeshingChartInput = ConvertibleToArray | _ExactChartInput
+
 
 def _outward_surface_parameter_box(
     surface: AbstractSurfacePatch,
@@ -128,14 +127,27 @@ class PatchCurveUse(StrictModule, NonTrainableState):
         sense: int = 1,
     ) -> None:
         if not isinstance(pcurve, AbstractCurve) or pcurve.ambient_dimension != 2:
-            raise TypeError("PatchCurveUse.pcurve must be a two-dimensional source curve.")
-        if isinstance(curve, (bool, np.bool_)) or not isinstance(curve, (int, np.integer)):
-            raise TypeError("PatchCurveUse.curve must be an integer source stratum index.")
+            raise TypeError(
+                "PatchCurveUse.pcurve must be a two-dimensional source curve."
+            )
+        if isinstance(curve, (bool, np.bool_)) or not isinstance(
+            curve, (int, np.integer)
+        ):
+            raise TypeError(
+                "PatchCurveUse.curve must be an integer source stratum index."
+            )
         curve_ = int(curve)
         first_ = float(first)
         last_ = float(last)
-        if curve_ < 0 or not math.isfinite(first_) or not math.isfinite(last_) or first_ == last_:
-            raise ValueError("PatchCurveUse requires a source curve and distinct finite parameters.")
+        if (
+            curve_ < 0
+            or not math.isfinite(first_)
+            or not math.isfinite(last_)
+            or first_ == last_
+        ):
+            raise ValueError(
+                "PatchCurveUse requires a source curve and distinct finite parameters."
+            )
         if sense not in (-1, 1):
             raise ValueError("PatchCurveUse.sense must be +1 or -1.")
         self.curve = curve_
@@ -146,10 +158,14 @@ class PatchCurveUse(StrictModule, NonTrainableState):
 
     def charts(self, parameters: ConvertibleToArray, /) -> np.ndarray:
         values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
-        return np.asarray(self.pcurve.evaluate(jnp.asarray(values)), dtype=np.float64).reshape((-1, 2))
+        return np.asarray(
+            self.pcurve.evaluate(jnp.asarray(values)), dtype=np.float64
+        ).reshape((-1, 2))
 
     def traversal_endpoints(self) -> np.ndarray:
-        parameters = (self.first, self.last) if self.sense > 0 else (self.last, self.first)
+        parameters = (
+            (self.first, self.last) if self.sense > 0 else (self.last, self.first)
+        )
         return self.charts(parameters)
 
     def closes_native_turn(self) -> bool:
@@ -197,7 +213,9 @@ class PatchPoleUse(StrictModule, NonTrainableState):
             or not math.isfinite(last_)
             or first_ == last_
         ):
-            raise ValueError("PatchPoleUse requires one corner and a finite parameter interval.")
+            raise ValueError(
+                "PatchPoleUse requires one corner and a finite parameter interval."
+            )
         if sense not in (-1, 1):
             raise ValueError("PatchPoleUse.sense must be +1 or -1.")
         self.corner = int(corner)
@@ -207,8 +225,12 @@ class PatchPoleUse(StrictModule, NonTrainableState):
         self.sense = sense
 
     def traversal_endpoints(self) -> np.ndarray:
-        parameters = (self.first, self.last) if self.sense > 0 else (self.last, self.first)
-        return np.asarray(self.pcurve.evaluate(jnp.asarray(parameters)), dtype=np.float64).reshape((-1, 2))
+        parameters = (
+            (self.first, self.last) if self.sense > 0 else (self.last, self.first)
+        )
+        return np.asarray(
+            self.pcurve.evaluate(jnp.asarray(parameters)), dtype=np.float64
+        ).reshape((-1, 2))
 
 
 def use_endpoints(use: PatchBoundaryUse, /) -> np.ndarray:
@@ -273,11 +295,17 @@ class MeshingSurfacePatch(StrictModule, NonTrainableState):
         orientation: int = 1,
     ) -> None:
         if not isinstance(surface, AbstractSurfacePatch):
-            raise TypeError("MeshingSurfacePatch.surface must be an AbstractSurfacePatch.")
+            raise TypeError(
+                "MeshingSurfacePatch.surface must be an AbstractSurfacePatch."
+            )
         loops_ = tuple(tuple(loop) for loop in loops)
         if not loops_ or any(not loop for loop in loops_):
             raise ValueError("MeshingSurfacePatch requires nonempty trim loops.")
-        if any(not isinstance(use, (PatchCurveUse, PatchPoleUse)) for loop in loops_ for use in loop):
+        if any(
+            not isinstance(use, (PatchCurveUse, PatchPoleUse))
+            for loop in loops_
+            for use in loop
+        ):
             raise TypeError("MeshingSurfacePatch loops must contain curve or pole uses.")
         if orientation not in (-1, 1):
             raise ValueError("MeshingSurfacePatch.orientation must be +1 or -1.")
@@ -293,8 +321,13 @@ class MeshingDomainCurve(StrictModule, NonTrainableState):
     end: int = eqx.field(static=True)
 
     def __init__(self, start: int, end: int, /) -> None:
-        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (start, end)):
-            raise ValueError("MeshingDomainCurve endpoints must be nonnegative corner indices.")
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (start, end)
+        ):
+            raise ValueError(
+                "MeshingDomainCurve endpoints must be nonnegative corner indices."
+            )
         self.start, self.end = start, end
 
 
@@ -307,8 +340,12 @@ class MeshingDomainRegion(StrictModule, NonTrainableState):
     def __init__(self, name: str, boundary: tuple[tuple[int, int], ...], /) -> None:
         name_ = canonical_identifier(name, "region_name")
         rows = tuple((int(patch), int(orientation)) for patch, orientation in boundary)
-        if not rows or any(patch < 0 or orientation not in (-1, 1) for patch, orientation in rows):
-            raise ValueError("MeshingDomainRegion requires valid patch/orientation incidences.")
+        if not rows or any(
+            patch < 0 or orientation not in (-1, 1) for patch, orientation in rows
+        ):
+            raise ValueError(
+                "MeshingDomainRegion requires valid patch/orientation incidences."
+            )
         if len({patch for patch, _ in rows}) != len(rows):
             raise ValueError("MeshingDomainRegion cannot repeat one patch boundary.")
         self.name, self.boundary = name_, rows
@@ -322,7 +359,14 @@ class MeshingDomainProjection(StrictModule, NonTrainableState):
     distances: Array
     converged: Array
 
-    def __init__(self, points: ArrayLike, parameters: ArrayLike, distances: ArrayLike, converged: ArrayLike, /) -> None:
+    def __init__(
+        self,
+        points: ArrayLike,
+        parameters: ArrayLike,
+        distances: ArrayLike,
+        converged: ArrayLike,
+        /,
+    ) -> None:
         self.points = jnp.asarray(points, dtype=jnp.float64)
         self.parameters = jnp.asarray(parameters, dtype=jnp.float64)
         self.distances = jnp.asarray(distances, dtype=jnp.float64)
@@ -344,7 +388,9 @@ class DomainCurveMap(AbstractBoundaryMap):
         /,
     ) -> None:
         if not (len(surfaces) == len(pcurves) == len(ranges)):
-            raise ValueError("DomainCurveMap banks must have one surface, p-curve, and range per chart.")
+            raise ValueError(
+                "DomainCurveMap banks must have one surface, p-curve, and range per chart."
+            )
         if any(curve.ambient_dimension != 2 for curve in pcurves):
             raise ValueError("DomainCurveMap p-curves must be two-dimensional.")
         self.surfaces, self.pcurves, self.ranges = surfaces, pcurves, ranges
@@ -417,17 +463,24 @@ class _PlacedSurfacePatch(AbstractSurfacePatch):
     offset: Array
     orientation_sign: int = eqx.field(static=True)
 
-    def __init__(self, source: AbstractSurfacePatch, placement: BRepAffinePlacement, /) -> None:
+    def __init__(
+        self, source: AbstractSurfacePatch, placement: BRepAffinePlacement, /
+    ) -> None:
         matrix = placement.matrix
-        linear_exact = tuple(tuple(matrix[row][column] for column in range(3)) for row in range(3))
+        linear_exact = tuple(
+            tuple(matrix[row][column] for column in range(3)) for row in range(3)
+        )
         orientation = determinant_exact(linear_exact)
-        numeric = np.asarray([[float(value) for value in row] for row in linear_exact], dtype=np.float64)
+        numeric = np.asarray(
+            [[float(value) for value in row] for row in linear_exact], dtype=np.float64
+        )
         offset = np.asarray([float(matrix[row][3]) for row in range(3)], dtype=np.float64)
         if not np.all(np.isfinite(numeric)) or not np.all(np.isfinite(offset)):
-            raise ValueError("Placed source patch must have a finite binary64 query realization.")
+            raise ValueError(
+                "Placed source patch must have a finite binary64 query realization."
+            )
         numeric_exact = tuple(
-            tuple(Fraction.from_float(float(value)) for value in row)
-            for row in numeric
+            tuple(Fraction.from_float(float(value)) for value in row) for row in numeric
         )
         numeric_orientation = determinant_exact(numeric_exact)
         if numeric_orientation == 0:
@@ -457,7 +510,6 @@ class _PlacedSurfacePatch(AbstractSurfacePatch):
     def evaluate(self, parameters: Array, /) -> Array:
         points = self.source.evaluate(parameters)
         return points @ self.linear.T + self.offset
-
 
 
 def _placed_homogeneous_surface_coefficients(
@@ -554,10 +606,7 @@ def _exact_rational_surface_spans(
                     "A bicubic T-spline extraction must retain sixteen homogeneous controls."
                 )
             homogeneous_net = tuple(
-                tuple(
-                    homogeneous_controls[u_index * 4 + v_index]
-                    for v_index in range(4)
-                )
+                tuple(homogeneous_controls[u_index * 4 + v_index] for v_index in range(4))
                 for u_index in range(4)
             )
             u0, u1, v0, v1 = extraction.parameter_bounds
@@ -574,9 +623,7 @@ def _exact_rational_surface_spans(
             )
         spans = tuple(spans_list)
     for placement in reversed(placements):
-        spans = tuple(
-            _placed_rational_surface_span(span, placement) for span in spans
-        )
+        spans = tuple(_placed_rational_surface_span(span, placement) for span in spans)
     return spans
 
 
@@ -686,9 +733,7 @@ def _span_enclosures_for_chart(
             raise TypeError(
                 "MeshingDomain spline parameter span bounds must be exact Fractions."
             )
-        rational_span_bounds.append(
-            ((lower_u, upper_u), (lower_v, upper_v))
-        )
+        rational_span_bounds.append(((lower_u, upper_u), (lower_v, upper_v)))
     if not rational_span_bounds:
         return ()
     active_lower = (
@@ -716,9 +761,7 @@ def _span_enclosures_for_chart(
             (1, lower_v, True),
             (1, upper_v, False),
         ):
-            clipped = _clip_parameter_polygon(
-                clipped, axis, bound, keep_greater
-            )
+            clipped = _clip_parameter_polygon(clipped, axis, bound, keep_greater)
             if not clipped:
                 break
         if not clipped:
@@ -740,8 +783,6 @@ def _span_enclosures_for_chart(
             )
         enclosures.append(enclosure)
     return tuple(enclosures)
-
-
 
 
 def _spline_interpolation_bound_from_enclosures(
@@ -809,9 +850,7 @@ def _exact_spline_normal_turn_bounds(
         jacobian_intervals: list[list[list[tuple[Fraction, Fraction]]]] = [
             [[], []] for _ in range(3)
         ]
-        hessian_magnitudes = [
-            [Fraction(0), Fraction(0), Fraction(0)] for _ in range(3)
-        ]
+        hessian_magnitudes = [[Fraction(0), Fraction(0), Fraction(0)] for _ in range(3)]
         for enclosure in enclosures:
             if (
                 len(enclosure.du_bounds) != 3
@@ -824,12 +863,8 @@ def _exact_spline_normal_turn_bounds(
                     "MeshingDomain surface spline spans must map into three-space."
                 )
             for physical in range(3):
-                jacobian_intervals[physical][0].append(
-                    enclosure.du_bounds[physical]
-                )
-                jacobian_intervals[physical][1].append(
-                    enclosure.dv_bounds[physical]
-                )
+                jacobian_intervals[physical][0].append(enclosure.du_bounds[physical])
+                jacobian_intervals[physical][1].append(enclosure.dv_bounds[physical])
                 for index, bounds in enumerate(
                     (
                         enclosure.duu_bounds[physical],
@@ -862,9 +897,7 @@ def _exact_spline_normal_turn_bounds(
         trace = g00 + g11
         if gram_determinant <= 0 or trace <= 0:
             continue
-        center_singular_lower = fraction_sqrt_interval(
-            gram_determinant / trace
-        )[0]
+        center_singular_lower = fraction_sqrt_interval(gram_determinant / trace)[0]
         singular_lower = center_singular_lower - radius
         if singular_lower <= 0:
             continue
@@ -877,9 +910,7 @@ def _exact_spline_normal_turn_bounds(
         jacobian_norm = jacobian_center_norm + radius
         hessian_squared = sum(
             (
-                values[0] * values[0]
-                + 2 * values[1] * values[1]
-                + values[2] * values[2]
+                values[0] * values[0] + 2 * values[1] * values[1] + values[2] * values[2]
                 for values in hessian_magnitudes
             ),
             Fraction(0),
@@ -905,11 +936,313 @@ def _exact_spline_normal_turn_bounds(
         diameter = fraction_sqrt_interval(diameter_squared)[1]
         chord = min(
             Fraction(2),
-            2 * hessian_norm * jacobian_norm * diameter / (singular_lower * singular_lower),
+            2
+            * hessian_norm
+            * jacobian_norm
+            * diameter
+            / (singular_lower * singular_lower),
         )
         angle = min(pi_upper, pi_upper * chord / 2)
         result[row] = fraction_endpoint(angle, upper=True, saturate=True)
     return result
+
+
+type _Barycentric = tuple[Fraction, Fraction, Fraction]
+type _BarycentricTriangle = tuple[_Barycentric, _Barycentric, _Barycentric]
+# Leaf: (barycentric triangle, Hessian term, leaf upper bound, vertex resolution).
+type _InterpolationLeaf = tuple[
+    _BarycentricTriangle, Fraction | None, Fraction | None, Fraction
+]
+_UNIT_BARYCENTRICS: tuple[_Barycentric, _Barycentric, _Barycentric] = (
+    (Fraction(1), Fraction(0), Fraction(0)),
+    (Fraction(0), Fraction(1), Fraction(0)),
+    (Fraction(0), Fraction(0), Fraction(1)),
+)
+
+
+def _barycentric_midpoint(first: _Barycentric, second: _Barycentric, /) -> _Barycentric:
+    return (
+        (first[0] + second[0]) / 2,
+        (first[1] + second[1]) / 2,
+        (first[2] + second[2]) / 2,
+    )
+
+
+def _fraction_magnitude(lower: float, upper: float, /) -> Fraction:
+    return max(abs(Fraction(lower)), abs(Fraction(upper)))
+
+
+def _adaptive_triangle_interpolation_bounds(
+    surface: AbstractSurfacePatch,
+    charts: Sequence[_ExactUVChart],
+    budgets: Sequence[Fraction],
+    /,
+) -> tuple[Fraction | None, ...]:
+    """Bound ``|S - I_T S|`` on exact UV triangles ``T``, refining each until decided.
+
+    On a leaf ``L`` of a midpoint refinement of ``T``,
+    ``S - I_T S = (S - I_L S) + (I_L S - I_T S)``. The first term is bounded by the
+    leaf's interval Hessian, the second is affine on ``L`` and so bounded by its
+    largest norm at the leaf vertices, where ``S`` is enclosed pointwise and
+    ``I_T S`` is the barycentric combination of the enclosed corner values. A row
+    refines its leaves above its budget until its bound meets the budget, a vertex
+    lower bound exceeds it, or a leaf above it reaches binary64 enclosure resolution.
+    ``None`` marks a row whose Hessian enclosure is nonfinite.
+    """
+    if len(charts) != len(budgets):
+        raise ValueError("Every interpolation chart needs exactly one budget.")
+    if any(len(chart) != 3 for chart in charts):
+        raise ValueError("Adaptive interpolation bounds require triangular UV charts.")
+    if not charts:
+        return ()
+    point_program = prepare_interval_function(surface.evaluate, 2)
+    hessian_program = prepare_interval_function(
+        jax.jacfwd(jax.jacfwd(surface.evaluate)), 2
+    )
+
+    def chart_point(row: int, weights: _Barycentric, /) -> tuple[Fraction, Fraction]:
+        chart = charts[row]
+        return (
+            weights[0] * chart[0][0]
+            + weights[1] * chart[1][0]
+            + weights[2] * chart[2][0],
+            weights[0] * chart[0][1]
+            + weights[1] * chart[1][1]
+            + weights[2] * chart[2][1],
+        )
+
+    def point_enclosures(
+        points: Sequence[tuple[Fraction, Fraction]], /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        boxes = np.asarray(
+            [
+                _outward_surface_parameter_box(
+                    surface,
+                    (float(point[0]), float(point[1])),
+                    (float(point[0]), float(point[1])),
+                )
+                for point in points
+            ],
+            dtype=np.float64,
+        )
+        lower, upper = point_program.evaluate(boxes[:, 0], boxes[:, 1])
+        lower_ = np.asarray(lower, dtype=np.float64).reshape(len(points), -1)
+        upper_ = np.asarray(upper, dtype=np.float64).reshape(len(points), -1)
+        if not np.all(np.isfinite(lower_)) or not np.all(np.isfinite(upper_)):
+            raise ValueError("Source surface point enclosures must be finite.")
+        return lower_, upper_
+
+    corner_lower, corner_upper = point_enclosures(
+        [point for chart in charts for point in chart]
+    )
+    corner_values = tuple(
+        tuple(
+            tuple(
+                (
+                    Fraction(float(corner_lower[3 * row + corner, axis])),
+                    Fraction(float(corner_upper[3 * row + corner, axis])),
+                )
+                for axis in range(corner_lower.shape[1])
+            )
+            for corner in range(3)
+        )
+        for row in range(len(charts))
+    )
+    resolution_floors = tuple(
+        max(
+            (
+                max(abs(bounds[0]), abs(bounds[1]))
+                for corner in values
+                for bounds in corner
+            ),
+            default=Fraction(0),
+        )
+        * Fraction(1, 2**48)
+        + Fraction(1, 2**1022)
+        for values in corner_values
+    )
+    # (upper, lower) of |S(q) - I_T S(q)| at each refinement vertex; zero at corners.
+    vertex_terms: dict[tuple[int, _Barycentric], tuple[Fraction, Fraction]] = {
+        (row, weights): (Fraction(0), Fraction(0))
+        for row in range(len(charts))
+        for weights in _UNIT_BARYCENTRICS
+    }
+
+    def evaluate_vertices(keys: Sequence[tuple[int, _Barycentric]], /) -> None:
+        missing = tuple(dict.fromkeys(key for key in keys if key not in vertex_terms))
+        if not missing:
+            return
+        lower, upper = point_enclosures(
+            [chart_point(row, weights) for row, weights in missing]
+        )
+        for index, (row, weights) in enumerate(missing):
+            upper_squared = Fraction(0)
+            lower_squared = Fraction(0)
+            for axis, corner_axis in enumerate(zip(*corner_values[row], strict=True)):
+                interpolated_lower = sum(
+                    (
+                        weight * bounds[0]
+                        for weight, bounds in zip(weights, corner_axis, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                interpolated_upper = sum(
+                    (
+                        weight * bounds[1]
+                        for weight, bounds in zip(weights, corner_axis, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                difference_lower = (
+                    Fraction(float(lower[index, axis])) - interpolated_upper
+                )
+                difference_upper = (
+                    Fraction(float(upper[index, axis])) - interpolated_lower
+                )
+                magnitude = max(abs(difference_lower), abs(difference_upper))
+                upper_squared += magnitude * magnitude
+                if difference_lower > 0:
+                    lower_squared += difference_lower * difference_lower
+                elif difference_upper < 0:
+                    lower_squared += difference_upper * difference_upper
+            vertex_terms[(row, weights)] = (
+                fraction_sqrt_interval(upper_squared)[1],
+                fraction_sqrt_interval(lower_squared)[0],
+            )
+
+    def hessian_terms(
+        leaves: Sequence[tuple[int, _BarycentricTriangle]], /
+    ) -> list[Fraction | None]:
+        boxes = []
+        for row, triangle in leaves:
+            points = [chart_point(row, weights) for weights in triangle]
+            boxes.append(
+                _outward_surface_parameter_box(
+                    surface,
+                    tuple(
+                        float(min(point[axis] for point in points)) for axis in range(2)
+                    ),
+                    tuple(
+                        float(max(point[axis] for point in points)) for axis in range(2)
+                    ),
+                )
+            )
+        boxes_ = np.asarray(boxes, dtype=np.float64)
+        lower, upper = hessian_program.evaluate(boxes_[:, 0], boxes_[:, 1])
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
+        terms: list[Fraction | None] = []
+        for index in range(len(leaves)):
+            low = lower_[index]
+            high = upper_[index]
+            if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
+                terms.append(None)
+                continue
+            widths = tuple(
+                Fraction(float(boxes_[index, 1, axis]))
+                - Fraction(float(boxes_[index, 0, axis]))
+                for axis in range(2)
+            )
+            squared = Fraction(0)
+            for physical in range(low.shape[0]):
+                component = (
+                    sum(
+                        (
+                            _fraction_magnitude(
+                                float(low[physical, first, second]),
+                                float(high[physical, first, second]),
+                            )
+                            * widths[first]
+                            * widths[second]
+                            for first in range(2)
+                            for second in range(2)
+                        ),
+                        Fraction(0),
+                    )
+                    / 2
+                )
+                squared += component * component
+            terms.append(fraction_sqrt_interval(squared)[1])
+        return terms
+
+    def make_leaves(
+        pending: Sequence[tuple[int, _BarycentricTriangle]], /
+    ) -> list[tuple[int, _InterpolationLeaf]]:
+        evaluate_vertices(
+            [(row, weights) for row, triangle in pending for weights in triangle]
+        )
+        result: list[tuple[int, _InterpolationLeaf]] = []
+        for (row, triangle), hessian in zip(pending, hessian_terms(pending), strict=True):
+            terms = [vertex_terms[(row, weights)] for weights in triangle]
+            vertex_upper = max(term[0] for term in terms)
+            resolution = max(term[0] - term[1] for term in terms) + resolution_floors[row]
+            result.append(
+                (
+                    row,
+                    (
+                        triangle,
+                        hessian,
+                        None if hessian is None else hessian + vertex_upper,
+                        resolution,
+                    ),
+                )
+            )
+        return result
+
+    leaves: list[list[_InterpolationLeaf]] = [[] for _ in charts]
+    for row, leaf in make_leaves(
+        [(row, _UNIT_BARYCENTRICS) for row in range(len(charts))]
+    ):
+        leaves[row].append(leaf)
+    row_lower = [Fraction(0) for _ in charts]
+    active = set(range(len(charts)))
+    while active:
+        pending: list[tuple[int, _BarycentricTriangle]] = []
+        for row in sorted(active):
+            budget = budgets[row]
+            above = [leaf for leaf in leaves[row] if leaf[2] is None or leaf[2] > budget]
+            if (
+                not above
+                or row_lower[row] > budget
+                or any(leaf[1] is None or leaf[1] <= leaf[3] for leaf in above)
+            ):
+                active.discard(row)
+                continue
+            leaves[row] = [
+                leaf for leaf in leaves[row] if not (leaf[2] is None or leaf[2] > budget)
+            ]
+            for triangle, _, _, _ in above:
+                first, second, third = triangle
+                first_second = _barycentric_midpoint(first, second)
+                second_third = _barycentric_midpoint(second, third)
+                third_first = _barycentric_midpoint(third, first)
+                pending.extend(
+                    (
+                        (row, (first, first_second, third_first)),
+                        (row, (first_second, second, second_third)),
+                        (row, (third_first, second_third, third)),
+                        (row, (first_second, second_third, third_first)),
+                    )
+                )
+        if not pending:
+            break
+        for row, leaf in make_leaves(pending):
+            leaves[row].append(leaf)
+            row_lower[row] = max(
+                row_lower[row],
+                *(vertex_terms[(row, weights)][1] for weights in leaf[0]),
+            )
+    result: list[Fraction | None] = []
+    for row_leaves in leaves:
+        bounds = [leaf[2] for leaf in row_leaves]
+        result.append(
+            None
+            if any(bound is None for bound in bounds)
+            else max(
+                (bound for bound in bounds if bound is not None), default=Fraction(0)
+            )
+        )
+    return tuple(result)
 
 
 def _source_tree_payload(value: object, /) -> dict[str, object]:
@@ -984,9 +1317,26 @@ def _brep_corner_realization(
         source_point = placement.apply(source_point)
     elif placement is not None:
         raise ValueError("Unplaced BRep corners cannot have an occurrence placement.")
-    return np.asarray(
-        tuple(float(value) for value in source_point), dtype=np.float64
+    return np.asarray(tuple(float(value) for value in source_point), dtype=np.float64)
+
+
+def _same_placed_copy(
+    placements: dict[tuple[str, ...], BRepAffinePlacement],
+    first: tuple[str, ...],
+    second: tuple[str, ...],
+    /,
+) -> bool:
+    """Whether two occurrence paths realize one exactly placed copy of the source."""
+    if first == second:
+        return True
+    first_placement = placements.get(first)
+    second_placement = placements.get(second)
+    return (
+        first_placement is not None
+        and second_placement is not None
+        and first_placement.matrix == second_placement.matrix
     )
+
 
 def _require_brep_source_scope(
     authority: BRepModel,
@@ -1009,9 +1359,7 @@ def _require_brep_source_scope(
         if solid in incidence:
             continue
         faces = frozenset(topology.solid_faces[solid])
-        edges = frozenset(
-            edge for face in faces for edge in topology.face_edges[face]
-        )
+        edges = frozenset(edge for face in faces for edge in topology.face_edges[face])
         vertices = frozenset(
             vertex for edge in edges for vertex in geometry.edge_vertices[edge]
         )
@@ -1046,6 +1394,7 @@ def _require_brep_region_bindings(
     region_indices: tuple[int, ...],
     region_occurrences: tuple[tuple[str, ...], ...],
     occurrences_by_path: dict[tuple[str, ...], BRepAssemblyOccurrence],
+    placements: dict[tuple[str, ...], BRepAffinePlacement],
     /,
 ) -> None:
     topology = authority.topology
@@ -1084,7 +1433,7 @@ def _require_brep_region_bindings(
         )
         observed: list[tuple[int, int]] = []
         for patch, sign in region.boundary:
-            if source_occurrences[2][patch] != path:
+            if not _same_placed_copy(placements, source_occurrences[2][patch], path):
                 raise ValueError(
                     "Domain region boundary changes its authoritative BRep occurrence."
                 )
@@ -1109,9 +1458,7 @@ def _require_brep_corner_bindings(
     for corner, (vertex, path) in enumerate(zip(indices[0], paths[0], strict=True)):
         if vertex >= geometry.topology.num_vertices:
             raise ValueError("Domain corner names an absent authoritative BRep vertex.")
-        expected = _brep_corner_realization(
-            authority, vertex, path, placements.get(path)
-        )
+        expected = _brep_corner_realization(authority, vertex, path, placements.get(path))
         if not np.array_equal(points[corner], expected):
             raise ValueError("Domain corner changes its authoritative BRep realization.")
     for row, curve in enumerate(curves):
@@ -1120,8 +1467,8 @@ def _require_brep_corner_bindings(
         if edge >= len(geometry.edge_vertices) or (
             (indices[0][curve.start], indices[0][curve.end])
             != geometry.edge_vertices[edge]
-            or paths[0][curve.start] != path
-            or paths[0][curve.end] != path
+            or not _same_placed_copy(placements, paths[0][curve.start], path)
+            or not _same_placed_copy(placements, paths[0][curve.end], path)
         ):
             raise ValueError(
                 "Domain curve changes its authoritative BRep vertex incidence."
@@ -1137,6 +1484,7 @@ def _require_brep_use_binding(
     indices: _SourceIndexBanks,
     paths: _SourceOccurrenceBanks,
     path: tuple[str, ...],
+    placements: dict[tuple[str, ...], BRepAffinePlacement],
     /,
 ) -> None:
     from ._mesh_certificates import _same_tree_content
@@ -1155,7 +1503,7 @@ def _require_brep_use_binding(
         if (
             geometry.edge_curves[edge] >= 0
             or indices[0][use.corner] != source_vertex
-            or paths[0][use.corner] != path
+            or not _same_placed_copy(placements, paths[0][use.corner], path)
         ):
             raise ValueError("Domain pole changes its authoritative BRep corner.")
         from .brep._correspondence import _exact_brep_pole_collapse
@@ -1176,7 +1524,7 @@ def _require_brep_use_binding(
     elif (
         geometry.edge_curves[edge] < 0
         or indices[1][use.curve] != edge
-        or paths[1][use.curve] != path
+        or not _same_placed_copy(placements, paths[1][use.curve], path)
     ):
         raise ValueError("Domain trim use changes its authoritative BRep edge.")
     original = geometry.pcurves[coedge]
@@ -1260,15 +1608,11 @@ def _require_brep_domain_binding(
     occurrences_by_path = {occurrence.path: occurrence for occurrence in occurrences}
     if len(occurrences_by_path) != len(occurrences):
         raise ValueError("BRep source occurrence paths must identify unique occurrences.")
-    placements = {
-        occurrence.path: occurrence.placement for occurrence in occurrences
-    }
+    placements = {occurrence.path: occurrence.placement for occurrence in occurrences}
     _require_brep_source_scope(
         authority, indices, paths, source_kinds, occurrences_by_path
     )
-    _require_brep_corner_bindings(
-        authority, curves, points, indices, paths, placements
-    )
+    _require_brep_corner_bindings(authority, curves, points, indices, paths, placements)
     ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
     orientations = np.asarray(authority.orientation)
     for row, patch in enumerate(patches):
@@ -1294,7 +1638,15 @@ def _require_brep_domain_binding(
                 raise ValueError("Domain loop changes its authoritative BRep uses.")
             for slot, (use, coedge) in enumerate(zip(uses, coedges, strict=True)):
                 _require_brep_use_binding(
-                    use, coedge, geometry, ranges, source, indices, paths, path
+                    use,
+                    coedge,
+                    geometry,
+                    ranges,
+                    source,
+                    indices,
+                    paths,
+                    path,
+                    placements,
                 )
                 next_slot = (slot + 1) % len(uses)
                 next_use = uses[next_slot]
@@ -1314,6 +1666,7 @@ def _require_brep_domain_binding(
         region_indices,
         region_paths,
         occurrences_by_path,
+        placements,
     )
 
 
@@ -1386,12 +1739,20 @@ class MeshingDomain(StrictModule, NonTrainableState):
         patches_ = tuple(patches)
         curves_ = tuple(curves)
         regions_ = tuple(regions)
-        if not patches_ or not all(isinstance(value, MeshingSurfacePatch) for value in patches_):
-            raise TypeError("MeshingDomain.patches must be a nonempty tuple of MeshingSurfacePatch values.")
+        if not patches_ or not all(
+            isinstance(value, MeshingSurfacePatch) for value in patches_
+        ):
+            raise TypeError(
+                "MeshingDomain.patches must be a nonempty tuple of MeshingSurfacePatch values."
+            )
         if not all(isinstance(value, MeshingDomainCurve) for value in curves_):
-            raise TypeError("MeshingDomain.curves must contain MeshingDomainCurve values.")
+            raise TypeError(
+                "MeshingDomain.curves must contain MeshingDomainCurve values."
+            )
         if not all(isinstance(value, MeshingDomainRegion) for value in regions_):
-            raise TypeError("MeshingDomain.regions must contain MeshingDomainRegion values.")
+            raise TypeError(
+                "MeshingDomain.regions must contain MeshingDomainRegion values."
+            )
         if isinstance(brep_authority, BRepGeometry):
             raise TypeError(
                 "Bare BRepGeometry cannot authorize an exact meshing-domain binding."
@@ -1422,8 +1783,12 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for loop_index, loop in enumerate(patch.loops):
                 for use_index, use in enumerate(loop):
                     uv_endpoints = use_endpoints(use)
-                    if uv_endpoints.shape != (2, 2) or not np.all(np.isfinite(uv_endpoints)):
-                        raise ValueError("MeshingDomain trim endpoints must be finite UV points.")
+                    if uv_endpoints.shape != (2, 2) or not np.all(
+                        np.isfinite(uv_endpoints)
+                    ):
+                        raise ValueError(
+                            "MeshingDomain trim endpoints must be finite UV points."
+                        )
                     next_use = loop[(use_index + 1) % len(loop)]
                     next_start = use_endpoints(next_use)[0]
                     if (
@@ -1431,36 +1796,57 @@ class MeshingDomain(StrictModule, NonTrainableState):
                         and float(np.linalg.norm(uv_endpoints[1] - next_start))
                         > tolerance_
                     ):
-                        raise ValueError("MeshingDomain trim loop uses do not connect in source parameter space.")
+                        raise ValueError(
+                            "MeshingDomain trim loop uses do not connect in source parameter space."
+                        )
                     if isinstance(use, PatchPoleUse):
                         for uv in uv_endpoints:
-                            point = np.asarray(patch.surface.evaluate(jnp.asarray(uv)), dtype=np.float64)
+                            point = np.asarray(
+                                patch.surface.evaluate(jnp.asarray(uv)), dtype=np.float64
+                            )
                             endpoint_images[use.corner].append((patch_index, point))
                         continue
                     if use.curve >= len(curves_):
-                        raise ValueError("PatchCurveUse references an absent domain curve.")
+                        raise ValueError(
+                            "PatchCurveUse references an absent domain curve."
+                        )
                     if owners[use.curve] == (-1, -1, -1):
                         owners[use.curve] = (patch_index, loop_index, use_index)
                         chart_curves.append((use.curve, patch_index, loop_index, use))
                     source_curve = curves_[use.curve]
-                    physical_start = source_curve.start if use.sense > 0 else source_curve.end
-                    physical_end = source_curve.end if use.sense > 0 else source_curve.start
-                    for corner, uv in ((physical_start, uv_endpoints[0]), (physical_end, uv_endpoints[1])):
-                        point = np.asarray(patch.surface.evaluate(jnp.asarray(uv)), dtype=np.float64)
+                    physical_start = (
+                        source_curve.start if use.sense > 0 else source_curve.end
+                    )
+                    physical_end = (
+                        source_curve.end if use.sense > 0 else source_curve.start
+                    )
+                    for corner, uv in (
+                        (physical_start, uv_endpoints[0]),
+                        (physical_end, uv_endpoints[1]),
+                    ):
+                        point = np.asarray(
+                            patch.surface.evaluate(jnp.asarray(uv)), dtype=np.float64
+                        )
                         endpoint_images[corner].append((patch_index, point))
         for region in regions_:
             if any(patch >= len(patches_) for patch, _ in region.boundary):
-                raise ValueError("MeshingDomainRegion references an absent surface patch.")
+                raise ValueError(
+                    "MeshingDomainRegion references an absent surface patch."
+                )
         if corner_points is None:
             points = np.full((corners, 3), np.nan, dtype=np.float64)
             for corner, images in enumerate(endpoint_images):
                 if not images:
-                    raise ValueError(f"MeshingDomain corner {corner} has no source patch endpoint.")
+                    raise ValueError(
+                        f"MeshingDomain corner {corner} has no source patch endpoint."
+                    )
                 points[corner] = images[0][1]
         else:
             points = np.asarray(corner_points, dtype=np.float64)
             if points.shape != (corners, 3) or not np.all(np.isfinite(points)):
-                raise ValueError("MeshingDomain.corner_points must be finite with shape (corner_count, 3).")
+                raise ValueError(
+                    "MeshingDomain.corner_points must be finite with shape (corner_count, 3)."
+                )
         if not np.all(np.isfinite(points)):
             raise ValueError("MeshingDomain corner source points must be finite.")
         scale_ = max(float(np.max(np.abs(points), initial=0.0)), 1.0)
@@ -1479,7 +1865,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             len(curves_),
             len(patches_),
         ):
-            raise ValueError("MeshingDomain.source_indices must align with each declared stratum.")
+            raise ValueError(
+                "MeshingDomain.source_indices must align with each declared stratum."
+            )
         if any(
             isinstance(value, (bool, np.bool_))
             or not isinstance(value, (int, np.integer))
@@ -1502,14 +1890,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
             len(curves_),
             len(patches_),
         ):
-            raise ValueError("MeshingDomain.source_occurrences must align with each source stratum.")
+            raise ValueError(
+                "MeshingDomain.source_occurrences must align with each source stratum."
+            )
         if any(
             not isinstance(name, str) or not name
             for row in raw_paths
             for path in row
             for name in path
         ):
-            raise ValueError("MeshingDomain occurrence paths must contain nonempty names.")
+            raise ValueError(
+                "MeshingDomain occurrence paths must contain nonempty names."
+            )
         paths = tuple(tuple(tuple(path) for path in row) for row in raw_paths)
         if not isinstance(brep_authority, BRepModel):
             for corner, images in enumerate(endpoint_images):
@@ -1520,7 +1912,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                         )
         for ids, occurrence_paths in zip(indices, paths, strict=True):
             if len(set(zip(ids, occurrence_paths, strict=True))) != len(ids):
-                raise ValueError("MeshingDomain source indices and occurrence paths must be unique.")
+                raise ValueError(
+                    "MeshingDomain source indices and occurrence paths must be unique."
+                )
         raw_region_indices = (
             tuple(range(len(regions_)))
             if region_source_indices is None
@@ -1531,25 +1925,37 @@ class MeshingDomain(StrictModule, NonTrainableState):
             if region_source_occurrences is None
             else tuple(tuple(path) for path in region_source_occurrences)
         )
-        if len(raw_region_indices) != len(regions_) or len(raw_region_paths) != len(regions_):
-            raise ValueError("MeshingDomain region source strata must align with regions.")
+        if len(raw_region_indices) != len(regions_) or len(raw_region_paths) != len(
+            regions_
+        ):
+            raise ValueError(
+                "MeshingDomain region source strata must align with regions."
+            )
         if any(
             isinstance(value, (bool, np.bool_))
             or not isinstance(value, (int, np.integer))
             or int(value) < 0
             for value in raw_region_indices
         ):
-            raise ValueError("MeshingDomain region source indices must be nonnegative integers.")
+            raise ValueError(
+                "MeshingDomain region source indices must be nonnegative integers."
+            )
         if any(
             not isinstance(name, str) or not name
             for path in raw_region_paths
             for name in path
         ):
-            raise ValueError("MeshingDomain region occurrence paths must contain nonempty names.")
+            raise ValueError(
+                "MeshingDomain region occurrence paths must contain nonempty names."
+            )
         region_indices = tuple(int(value) for value in raw_region_indices)
         region_paths = tuple(tuple(path) for path in raw_region_paths)
-        if len(set(zip(region_indices, region_paths, strict=True))) != len(region_indices):
-            raise ValueError("MeshingDomain region source indices and occurrence paths must be unique.")
+        if len(set(zip(region_indices, region_paths, strict=True))) != len(
+            region_indices
+        ):
+            raise ValueError(
+                "MeshingDomain region source indices and occurrence paths must be unique."
+            )
         if isinstance(brep_authority, BRepModel):
             _require_brep_domain_binding(
                 brep_authority,
@@ -1568,7 +1974,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 tolerance_,
             )
         patch_regions = tuple(
-            tuple(index for index, region in enumerate(regions_) if any(patch == patch_index for patch, _ in region.boundary))
+            tuple(
+                index
+                for index, region in enumerate(regions_)
+                if any(patch == patch_index for patch, _ in region.boundary)
+            )
             for patch_index in range(len(patches_))
         )
         regular_curves = tuple(chart_curves)
@@ -1581,7 +1991,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             curve_map,
             source_entity_ids=jnp.arange(len(regular_curves), dtype=jnp.int32),
             source_id=source_id_,
-            physical_tags=tuple(f"curve:{source_indices[1][curve]}" for curve, _, _, _ in regular_curves)
+            physical_tags=tuple(
+                f"curve:{source_indices[1][curve]}" for curve, _, _, _ in regular_curves
+            )
             if source_indices is not None
             else tuple(f"curve:{curve}" for curve, _, _, _ in regular_curves),
         )
@@ -1597,7 +2009,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
         self.curve_atlas = atlas
         self.brep_authority = brep_authority
         self.source_indices = tuple(tuple(int(value) for value in row) for row in indices)
-        self.source_occurrences = tuple(tuple(tuple(path) for path in row) for row in paths)
+        self.source_occurrences = tuple(
+            tuple(tuple(path) for path in row) for row in paths
+        )
         self.region_source_indices = tuple(int(value) for value in region_indices)
         self.region_source_occurrences = tuple(tuple(path) for path in region_paths)
         self.source_kinds = source_kinds
@@ -1655,11 +2069,15 @@ class MeshingDomain(StrictModule, NonTrainableState):
         if len(surfaces) != len(geometry.face_loops):
             raise ValueError("BRep surfaces must align with source face loops.")
         orientations = np.asarray(orientation, dtype=np.float64).reshape((-1,))
-        if orientations.shape != (len(surfaces),) or not np.all(np.isin(orientations, (-1.0, 1.0))):
+        if orientations.shape != (len(surfaces),) or not np.all(
+            np.isin(orientations, (-1.0, 1.0))
+        ):
             raise ValueError("BRep face orientations must align with source surfaces.")
         if _authority is not None and not isinstance(_authority, BRepModel):
             raise TypeError("_authority must be the owning BRepModel.")
-        curves = tuple(MeshingDomainCurve(*endpoints) for endpoints in geometry.edge_vertices)
+        curves = tuple(
+            MeshingDomainCurve(*endpoints) for endpoints in geometry.edge_vertices
+        )
         patches: list[MeshingSurfacePatch] = []
         for face, loops in enumerate(geometry.face_loops):
             patch_loops: list[tuple[PatchBoundaryUse, ...]] = []
@@ -1667,7 +2085,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 uses: list[PatchBoundaryUse] = []
                 for coedge in loop:
                     edge = geometry.coedge_edges[coedge]
-                    first, last = (float(value) for value in np.asarray(geometry.edge_ranges[edge]))
+                    first, last = (
+                        float(value) for value in np.asarray(geometry.edge_ranges[edge])
+                    )
                     sense = geometry.coedge_senses[coedge]
                     if geometry.edge_curves[edge] < 0:
                         vertex = geometry.edge_vertices[edge][0]
@@ -1691,15 +2111,23 @@ class MeshingDomain(StrictModule, NonTrainableState):
                                     "full-interval source proof."
                                 )
                         uses.append(
-                            PatchPoleUse(vertex, geometry.pcurves[coedge], first, last, sense=sense)
+                            PatchPoleUse(
+                                vertex, geometry.pcurves[coedge], first, last, sense=sense
+                            )
                         )
                     else:
                         uses.append(
-                            PatchCurveUse(edge, geometry.pcurves[coedge], first, last, sense=sense)
+                            PatchCurveUse(
+                                edge, geometry.pcurves[coedge], first, last, sense=sense
+                            )
                         )
                 patch_loops.append(_lift_native_period_loop(surfaces[face], tuple(uses)))
             patches.append(
-                MeshingSurfacePatch(surfaces[face], tuple(patch_loops), orientation=int(orientations[face]))
+                MeshingSurfacePatch(
+                    surfaces[face],
+                    tuple(patch_loops),
+                    orientation=int(orientations[face]),
+                )
             )
         regions = tuple(
             MeshingDomainRegion(
@@ -1710,7 +2138,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 ),
             )
             for solid, (faces, signs) in enumerate(
-                zip(geometry.topology.solid_faces, geometry.topology.solid_face_orientations, strict=True)
+                zip(
+                    geometry.topology.solid_faces,
+                    geometry.topology.solid_face_orientations,
+                    strict=True,
+                )
             )
         )
         authority = _authority
@@ -1762,7 +2194,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 "source_kinds": self.source_kinds,
                 "patches": tuple(_patch_payload(patch) for patch in self.patches),
                 "curves": tuple((curve.start, curve.end) for curve in self.curves),
-                "regions": tuple((region.name, region.boundary) for region in self.regions),
+                "regions": tuple(
+                    (region.name, region.boundary) for region in self.regions
+                ),
                 "corners": array_tree_fingerprint(self.corner_points),
                 "corner_points_authored": self.corner_points_authored,
                 "scope_entity_id_banks": array_tree_fingerprint(
@@ -1773,7 +2207,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             }
         )
 
-    def require_current(self, source_id: str | None = None, source_revision: str | None = None, /) -> None:
+    def require_current(
+        self, source_id: str | None = None, source_revision: str | None = None, /
+    ) -> None:
         if source_id is not None and source_id != self.source_id:
             raise ValueError("MeshingDomain source_id changed.")
         if source_revision is not None and source_revision != self.source_revision:
@@ -1804,7 +2240,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
         if dimension not in (0, 1, 2, 3):
             raise ValueError("MeshingDomain entity dimension must be in 0..3.")
         if dimension == 3:
-            kind = "solid" if self.source_kinds == ("vertex", "edge", "face") else "region"
+            kind = (
+                "solid" if self.source_kinds == ("vertex", "edge", "face") else "region"
+            )
             return kind, self.region_source_indices, self.region_source_occurrences
         return (
             self.source_kinds[dimension],
@@ -1874,7 +2312,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             )
         return matches[0]
 
-    def entity_ids(self, dimensions: np.ndarray, indices: np.ndarray, /) -> tuple[str, ...]:
+    def entity_ids(
+        self, dimensions: np.ndarray, indices: np.ndarray, /
+    ) -> tuple[str, ...]:
         dimensions_ = np.asarray(dimensions)
         indices_ = np.asarray(indices)
         if dimensions_.ndim != 1 or indices_.shape != dimensions_.shape:
@@ -1934,29 +2374,30 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for source_index, path, entity_key in zip(
                 source_ids, occurrence_paths, entity_keys, strict=True
             ):
-                numeric_id = int(
-                    canonical_fingerprint(
-                        {
-                            "kind": "meshing-domain-scope-entity",
-                            "source_id": source_id,
-                            "source_revision": source_revision,
-                            "dimension": dimension,
-                            "source_index": source_index,
-                            "source_entity_id": entity_key,
-                            "occurrence_path": path,
-                        }
-                    )[:16],
-                    16,
-                ) & maximum
+                numeric_id = (
+                    int(
+                        canonical_fingerprint(
+                            {
+                                "kind": "meshing-domain-scope-entity",
+                                "source_id": source_id,
+                                "source_revision": source_revision,
+                                "dimension": dimension,
+                                "source_index": source_index,
+                                "source_entity_id": entity_key,
+                                "occurrence_path": path,
+                            }
+                        )[:16],
+                        16,
+                    )
+                    & maximum
+                )
                 records.append((numeric_id, entity_key, path))
             if len({record[0] for record in records}) != len(records):
                 raise ValueError(
                     f"MeshingDomain dimension-{dimension} scope IDs collide in int64."
                 )
             records.sort(key=lambda record: record[0])
-            identifiers = np.asarray(
-                [record[0] for record in records], dtype=np.int64
-            )
+            identifiers = np.asarray([record[0] for record in records], dtype=np.int64)
             identifiers.setflags(write=False)
             keys = tuple((entity_key, path) for _, entity_key, path in records)
             id_banks.append(identifiers)
@@ -2041,7 +2482,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
                         if int(corner) != index:
                             continue
                         parameters = (use.first, use.last)
-                        parameter = parameters[endpoint] if use.sense > 0 else parameters[1 - endpoint]
+                        parameter = (
+                            parameters[endpoint]
+                            if use.sense > 0
+                            else parameters[1 - endpoint]
+                        )
                         try:
                             pcurve_bounds = np.asarray(
                                 use.pcurve.bounding_box(parameter, parameter),
@@ -2052,7 +2497,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                                 or not np.all(np.isfinite(pcurve_bounds))
                                 or np.any(pcurve_bounds[0] > pcurve_bounds[1])
                             ):
-                                raise ValueError("Source p-curve endpoint has no finite ordered UV box.")
+                                raise ValueError(
+                                    "Source p-curve endpoint has no finite ordered UV box."
+                                )
                             uv_bounds = _outward_surface_parameter_box(
                                 patch.surface,
                                 pcurve_bounds[0],
@@ -2067,8 +2514,16 @@ class MeshingDomain(StrictModule, NonTrainableState):
                                 or not np.all(np.isfinite(point_bounds))
                                 or np.any(point_bounds[0] > point_bounds[1])
                             ):
-                                raise ValueError("Source trim endpoint has no finite ordered physical point box.")
-                        except (ArithmeticError, FloatingPointError, NotImplementedError, TypeError, ValueError) as error:
+                                raise ValueError(
+                                    "Source trim endpoint has no finite ordered physical point box."
+                                )
+                        except (
+                            ArithmeticError,
+                            FloatingPointError,
+                            NotImplementedError,
+                            TypeError,
+                            ValueError,
+                        ) as error:
                             raise ValueError(
                                 "Source trim endpoint has no finite continuous point enclosure."
                             ) from error
@@ -2076,15 +2531,16 @@ class MeshingDomain(StrictModule, NonTrainableState):
                         high = point_bounds[1]
                         endpoint_records.append((low, high))
         if not endpoint_records:
-            raise ValueError("MeshingDomain corner has no source point enclosure authority.")
+            raise ValueError(
+                "MeshingDomain corner has no source point enclosure authority."
+            )
         lower_float = np.max(np.stack([record[0] for record in endpoint_records]), axis=0)
         upper_float = np.min(np.stack([record[1] for record in endpoint_records]), axis=0)
         if np.any(lower_float > upper_float):
             raise ValueError("Source trim endpoint enclosures disagree at this corner.")
         if self.corner_points_authored:
             authored = tuple(
-                Fraction.from_float(float(value))
-                for value in self.corner_points[index]
+                Fraction.from_float(float(value)) for value in self.corner_points[index]
             )
             if any(
                 value < Fraction.from_float(float(low))
@@ -2102,7 +2558,6 @@ class MeshingDomain(StrictModule, NonTrainableState):
             tuple(Fraction.from_float(float(value)) for value in upper_float),
         )
 
-
     def curve_uses(self, curve: int, /) -> tuple[tuple[int, PatchCurveUse], ...]:
         return tuple(
             (patch_index, use)
@@ -2111,6 +2566,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for use in loop
             if isinstance(use, PatchCurveUse) and use.curve == curve
         )
+
     def source_curve_chart_uses(
         self, entity_id: int, /
     ) -> tuple[tuple[str, int, int, int, PatchCurveUse], ...]:
@@ -2147,8 +2603,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
                     )
                     result.append((chart_id, patch_row, loop_row, use_row, use))
         if not result:
-            raise ValueError("MeshingDomain source curve has no authored surface trim chart.")
+            raise ValueError(
+                "MeshingDomain source curve has no authored surface trim chart."
+            )
         return tuple(result)
+
     def validate_curve_boundary_query(
         self,
         query: ParametricCurveBoundarySource,
@@ -2158,31 +2617,48 @@ class MeshingDomain(StrictModule, NonTrainableState):
         from ._curve_boundary import ParametricCurveBoundarySource
 
         if not isinstance(query, ParametricCurveBoundarySource):
-            raise TypeError("MeshingDomain curve validation requires ParametricCurveBoundarySource.")
-        if (query.source_id, query.source_revision) != (self.source_id, self.source_revision):
+            raise TypeError(
+                "MeshingDomain curve validation requires ParametricCurveBoundarySource."
+            )
+        if (query.source_id, query.source_revision) != (
+            self.source_id,
+            self.source_revision,
+        ):
             raise ValueError("MeshingDomain curve query must bind this source revision.")
         query.require_current()
         raw_ids = np.asarray(requested_entity_ids)
         if raw_ids.ndim != 1 or raw_ids.dtype.kind not in "iu":
             raise TypeError("requested_entity_ids must be an integer vector.")
-        if raw_ids.dtype.kind == "u" and raw_ids.size and np.any(
-            raw_ids > np.iinfo(np.int64).max
+        if (
+            raw_ids.dtype.kind == "u"
+            and raw_ids.size
+            and np.any(raw_ids > np.iinfo(np.int64).max)
         ):
             raise ValueError("requested_entity_ids must fit int64.")
         identifiers = np.asarray(raw_ids, dtype=np.int64)
         if identifiers.size == 0 or np.unique(identifiers).size != identifiers.size:
-            raise ValueError("requested_entity_ids must be a nonempty set of unique curve IDs.")
+            raise ValueError(
+                "requested_entity_ids must be a nonempty set of unique curve IDs."
+            )
         expected: dict[
             str,
-            tuple[str, tuple[str, ...], tuple[float, float], int, int, int, PatchCurveUse],
+            tuple[
+                str, tuple[str, ...], tuple[float, float], int, int, int, PatchCurveUse
+            ],
         ] = {}
         for identifier in identifiers.tolist():
             entity_id, occurrence = self.source_entity_key_for_scope(1, int(identifier))
-            for chart_id, patch_row, loop_row, use_row, use in self.source_curve_chart_uses(
-                int(identifier)
-            ):
+            for (
+                chart_id,
+                patch_row,
+                loop_row,
+                use_row,
+                use,
+            ) in self.source_curve_chart_uses(int(identifier)):
                 if chart_id in expected:
-                    raise ValueError("MeshingDomain source curve chart identities are not unique.")
+                    raise ValueError(
+                        "MeshingDomain source curve chart identities are not unique."
+                    )
                 expected[chart_id] = (
                     entity_id,
                     occurrence,
@@ -2193,7 +2669,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                     use,
                 )
         if not expected:
-            raise ValueError("Requested MeshingDomain curve scope has no authored trim charts.")
+            raise ValueError(
+                "Requested MeshingDomain curve scope has no authored trim charts."
+            )
         actual: dict[str, tuple[str, tuple[str, ...], tuple[float, float]]] = {}
         for entity_id, occurrence, chart_id, parameter_range in zip(
             query.curve_entity_ids,
@@ -2216,10 +2694,17 @@ class MeshingDomain(StrictModule, NonTrainableState):
             )
         expected_records = {
             chart_id: (entity_id, occurrence, parameter_range)
-            for chart_id, (entity_id, occurrence, parameter_range, *_rest) in expected.items()
+            for chart_id, (
+                entity_id,
+                occurrence,
+                parameter_range,
+                *_rest,
+            ) in expected.items()
         }
         if actual != expected_records:
-            raise ValueError("MeshingDomain curve query must cover every actual trim chart and full range.")
+            raise ValueError(
+                "MeshingDomain curve query must cover every actual trim chart and full range."
+            )
 
         expected_point_bounds: dict[
             tuple[str, tuple[str, ...]], tuple[np.ndarray, np.ndarray]
@@ -2234,7 +2719,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 or curve.surface is not patch.surface
                 or curve.pcurve is not use.pcurve
             ):
-                raise ValueError("MeshingDomain curve query changed its surface/pcurve source map.")
+                raise ValueError(
+                    "MeshingDomain curve query changed its surface/pcurve source map."
+                )
             source_curve = self.curves[use.curve]
             # Coedge sense reverses loop traversal, not the chart's parameter order.
             corners = (source_curve.start, source_curve.end)
@@ -2243,44 +2730,70 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 for corner in corners
             )
             if query.endpoint_source_keys[query_row] != expected_endpoint_keys:
-                raise ValueError("MeshingDomain curve query changed its trim endpoint source identities.")
+                raise ValueError(
+                    "MeshingDomain curve query changed its trim endpoint source identities."
+                )
             if query.parameter_ranges[query_row] != (first, last):
-                raise ValueError("MeshingDomain curve query changed its trim parameter range.")
+                raise ValueError(
+                    "MeshingDomain curve query changed its trim parameter range."
+                )
             supplied_bounds = query.endpoint_point_bounds[query_row]
             for side, (key, corner, parameter, supplied) in enumerate(
-                zip(expected_endpoint_keys, corners, (first, last), supplied_bounds, strict=True)
+                zip(
+                    expected_endpoint_keys,
+                    corners,
+                    (first, last),
+                    supplied_bounds,
+                    strict=True,
+                )
             ):
                 source_lower, source_upper = self.source_corner_point_bounds(corner)
                 if supplied is None:
-                    raise ValueError("MeshingDomain curve query omits an authored trim point enclosure.")
+                    raise ValueError(
+                        "MeshingDomain curve query omits an authored trim point enclosure."
+                    )
                 for value, bound in zip(supplied[0], source_lower, strict=True):
                     if Fraction.from_float(float(value)) > bound:
-                        raise ValueError("MeshingDomain curve endpoint lower bound excludes its source corner.")
+                        raise ValueError(
+                            "MeshingDomain curve endpoint lower bound excludes its source corner."
+                        )
                 for value, bound in zip(supplied[1], source_upper, strict=True):
                     if Fraction.from_float(float(value)) < bound:
-                        raise ValueError("MeshingDomain curve endpoint upper bound excludes its source corner.")
+                        raise ValueError(
+                            "MeshingDomain curve endpoint upper bound excludes its source corner."
+                        )
                 lower, upper = query.chart_point_bounds(chart_id, parameter)
                 lower = np.maximum(lower, np.asarray(supplied[0], dtype=np.float64))
                 upper = np.minimum(upper, np.asarray(supplied[1], dtype=np.float64))
                 if np.any(lower > upper):
-                    raise ValueError("MeshingDomain trim endpoint enclosures have empty intersection.")
+                    raise ValueError(
+                        "MeshingDomain trim endpoint enclosures have empty intersection."
+                    )
                 previous = expected_point_bounds.get(key)
                 if previous is not None:
                     lower = np.maximum(lower, previous[0])
                     upper = np.minimum(upper, previous[1])
                     if np.any(lower > upper):
-                        raise ValueError("Repeated MeshingDomain point identities have disjoint enclosures.")
+                        raise ValueError(
+                            "Repeated MeshingDomain point identities have disjoint enclosures."
+                        )
                 expected_point_bounds[key] = (lower, upper)
         expected_keys = tuple(sorted(expected_point_bounds))
-        actual_keys = tuple(zip(query.point_entity_ids, query.point_occurrence_paths, strict=True))
+        actual_keys = tuple(
+            zip(query.point_entity_ids, query.point_occurrence_paths, strict=True)
+        )
         if actual_keys != expected_keys:
-            raise ValueError("MeshingDomain curve query point bank differs from its authored trim endpoints.")
+            raise ValueError(
+                "MeshingDomain curve query point bank differs from its authored trim endpoints."
+            )
         for key, (expected_lower, expected_upper) in expected_point_bounds.items():
             actual_lower, actual_upper = query.source_point_bounds(*key)
             if not np.array_equal(actual_lower, expected_lower) or not np.array_equal(
                 actual_upper, expected_upper
             ):
-                raise ValueError("MeshingDomain curve query changed its continuous point enclosures.")
+                raise ValueError(
+                    "MeshingDomain curve query changed its continuous point enclosures."
+                )
 
     def validate_point_boundary_query(
         self,
@@ -2291,17 +2804,23 @@ class MeshingDomain(StrictModule, NonTrainableState):
         from ._curve_boundary import ParametricCurveBoundarySource
 
         if not isinstance(query, ParametricCurveBoundarySource):
-            raise TypeError("MeshingDomain point validation requires ParametricCurveBoundarySource.")
+            raise TypeError(
+                "MeshingDomain point validation requires ParametricCurveBoundarySource."
+            )
         raw_ids = np.asarray(requested_point_ids)
         if raw_ids.ndim != 1 or raw_ids.dtype.kind not in "iu":
             raise TypeError("requested_point_ids must be an integer vector.")
-        if raw_ids.dtype.kind == "u" and raw_ids.size and np.any(
-            raw_ids > np.iinfo(np.int64).max
+        if (
+            raw_ids.dtype.kind == "u"
+            and raw_ids.size
+            and np.any(raw_ids > np.iinfo(np.int64).max)
         ):
             raise ValueError("requested_point_ids must fit int64.")
         identifiers = np.asarray(raw_ids, dtype=np.int64)
         if identifiers.size == 0 or np.unique(identifiers).size != identifiers.size:
-            raise ValueError("requested_point_ids must be a nonempty set of unique corner IDs.")
+            raise ValueError(
+                "requested_point_ids must be a nonempty set of unique corner IDs."
+            )
         curve_ids_by_key = {
             self.source_entity_key_for_scope(1, int(identifier)): int(identifier)
             for identifier in self.scope_entity_ids(1).tolist()
@@ -2319,7 +2838,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 dtype=np.int64,
             )
         except KeyError as error:
-            raise ValueError("MeshingDomain point query names an unauthored source curve.") from error
+            raise ValueError(
+                "MeshingDomain point query names an unauthored source curve."
+            ) from error
         self.validate_curve_boundary_query(query, query_curve_ids)
         query_point_keys = set(
             zip(query.point_entity_ids, query.point_occurrence_paths, strict=True)
@@ -2329,7 +2850,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for identifier in identifiers.tolist()
         )
         if any(key not in query_point_keys for key in requested_keys):
-            raise ValueError("Requested corner scope is absent from the complete trim endpoint query.")
+            raise ValueError(
+                "Requested corner scope is absent from the complete trim endpoint query."
+            )
 
     def patch_curves(self, patch: int, /) -> np.ndarray:
         return np.asarray(
@@ -2344,11 +2867,15 @@ class MeshingDomain(StrictModule, NonTrainableState):
             dtype=np.int64,
         )
 
-    def _batch(self, patches: ArrayLike, charts: ArrayLike, /) -> tuple[np.ndarray, np.ndarray]:
+    def _batch(
+        self, patches: ArrayLike, charts: ArrayLike, /
+    ) -> tuple[np.ndarray, np.ndarray]:
         rows = np.asarray(patches, dtype=np.int64).reshape((-1,))
         points = np.asarray(charts, dtype=np.float64).reshape((-1, 2))
         if rows.shape != (points.shape[0],) or not np.all(np.isfinite(points)):
-            raise ValueError("MeshingDomain patch indices and finite UV charts must align.")
+            raise ValueError(
+                "MeshingDomain patch indices and finite UV charts must align."
+            )
         if np.any(rows < 0) or np.any(rows >= len(self.patches)):
             raise ValueError("MeshingDomain query references an absent patch.")
         return rows, points
@@ -2364,7 +2891,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             )
         return result
 
-    def oriented_normals(self, patches: ArrayLike, charts: ArrayLike, /) -> tuple[np.ndarray, np.ndarray]:
+    def oriented_normals(
+        self, patches: ArrayLike, charts: ArrayLike, /
+    ) -> tuple[np.ndarray, np.ndarray]:
         rows, charts_ = self._batch(patches, charts)
         normals = np.zeros((rows.size, 3), dtype=np.float64)
         regular = np.zeros((rows.size,), dtype=np.bool_)
@@ -2375,16 +2904,22 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 surface_differential(patch.surface, jnp.asarray(charts_[selected])),
                 dtype=np.float64,
             )
-            raw = patch.orientation * np.cross(differential[..., :, 0], differential[..., :, 1])
+            raw = patch.orientation * np.cross(
+                differential[..., :, 0], differential[..., :, 1]
+            )
             magnitude = np.linalg.norm(raw, axis=-1)
             speed = np.linalg.norm(differential, axis=-2)
             bound = 64.0 * np.finfo(np.float64).eps * np.prod(speed, axis=-1)
             valid = np.isfinite(magnitude) & (magnitude > bound)
-            normals[selected] = np.where(valid[:, None], raw / np.where(valid, magnitude, 1.0)[:, None], 0.0)
+            normals[selected] = np.where(
+                valid[:, None], raw / np.where(valid, magnitude, 1.0)[:, None], 0.0
+            )
             regular[selected] = valid
         return normals, regular
 
-    def interpolation_bounds(self, patch: int, charts: _MeshingChartInput, /) -> np.ndarray:
+    def interpolation_bounds(
+        self, patch: int, charts: _MeshingChartInput, /
+    ) -> np.ndarray:
         """Bound surface-to-affine interpolation over complete UV chart cells."""
         if (
             isinstance(patch, bool)
@@ -2400,16 +2935,16 @@ class MeshingDomain(StrictModule, NonTrainableState):
             or cells.shape[2] != 2
             or not np.all(np.isfinite(cells))
         ):
-            raise ValueError("interpolation_bounds.charts must contain finite UV cell corners.")
+            raise ValueError(
+                "interpolation_bounds.charts must contain finite UV cell corners."
+            )
         if cells.shape[0] == 0:
             return np.empty((0,), dtype=np.float64)
         surface = self.patches[patch].surface
         spans = _exact_rational_surface_spans(surface)
         if spans is not None:
             exact_charts = _exact_uv_chart_bank(charts, cells)
-            return _exact_spline_interpolation_bounds(
-                cells, spans, exact_charts
-            )
+            return _exact_spline_interpolation_bounds(cells, spans, exact_charts)
         lower = np.min(cells, axis=1)
         upper = np.max(cells, axis=1)
         second = jax.jacfwd(jax.jacfwd(surface.evaluate))
@@ -2422,31 +2957,79 @@ class MeshingDomain(StrictModule, NonTrainableState):
             if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
                 continue
             widths = tuple(
-                Fraction(float(upper[row, axis]))
-                - Fraction(float(lower[row, axis]))
+                Fraction(float(upper[row, axis])) - Fraction(float(lower[row, axis]))
                 for axis in range(2)
             )
             components = []
             for physical in range(low.shape[0]):
-                value = sum(
-                    (
-                        max(
-                            abs(Fraction(float(low[physical, first, second_axis]))),
-                            abs(Fraction(float(high[physical, first, second_axis]))),
-                        )
-                        * widths[first]
-                        * widths[second_axis]
-                        for first in range(2)
-                        for second_axis in range(2)
-                    ),
-                    Fraction(0),
-                ) / 2
+                value = (
+                    sum(
+                        (
+                            max(
+                                abs(Fraction(float(low[physical, first, second_axis]))),
+                                abs(Fraction(float(high[physical, first, second_axis]))),
+                            )
+                            * widths[first]
+                            * widths[second_axis]
+                            for first in range(2)
+                            for second_axis in range(2)
+                        ),
+                        Fraction(0),
+                    )
+                    / 2
+                )
                 components.append(value)
             squared = sum((value * value for value in components), Fraction(0))
             result[row] = fraction_endpoint(
                 fraction_sqrt_interval(squared)[1], upper=True, saturate=True
             )
         return result
+
+    def adaptive_interpolation_bounds(
+        self,
+        patch: int,
+        charts: Sequence[_ExactUVChart],
+        budgets: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction | None, ...]:
+        """Bound surface-to-affine interpolation over exact UV triangles to a budget.
+
+        Exact spline carriers keep their span Hessian bound. Other carriers refine
+        each triangle adaptively until its bound meets ``budgets[row]``, a vertex
+        lower bound exceeds it, or binary64 enclosure resolution is reached.
+        ``None`` marks a row without a finite bound.
+        """
+        if (
+            isinstance(patch, bool)
+            or not isinstance(patch, int)
+            or patch < 0
+            or patch >= len(self.patches)
+        ):
+            raise ValueError(
+                "adaptive_interpolation_bounds.patch must name a source surface."
+            )
+        exact_charts = tuple(
+            tuple((Fraction(point[0]), Fraction(point[1])) for point in chart)
+            for chart in charts
+        )
+        surface = self.patches[patch].surface
+        spans = _exact_rational_surface_spans(surface)
+        if spans is None:
+            return _adaptive_triangle_interpolation_bounds(
+                surface, exact_charts, tuple(Fraction(value) for value in budgets)
+            )
+        cells = np.asarray(
+            [
+                [[float(value) for value in point] for point in chart]
+                for chart in exact_charts
+            ],
+            dtype=np.float64,
+        ).reshape(len(exact_charts), -1, 2)
+        bounds = _exact_spline_interpolation_bounds(cells, spans, exact_charts)
+        return tuple(
+            Fraction(float(value)) if math.isfinite(float(value)) else None
+            for value in bounds
+        )
 
     def normal_turn_bounds(self, patch: int, charts: _MeshingChartInput, /) -> np.ndarray:
         """Bound normal rotation in radians over complete UV chart cells."""
@@ -2464,16 +3047,16 @@ class MeshingDomain(StrictModule, NonTrainableState):
             or cells.shape[2] != 2
             or not np.all(np.isfinite(cells))
         ):
-            raise ValueError("normal_turn_bounds.charts must contain finite UV cell corners.")
+            raise ValueError(
+                "normal_turn_bounds.charts must contain finite UV cell corners."
+            )
         if cells.shape[0] == 0:
             return np.empty((0,), dtype=np.float64)
         surface = self.patches[patch].surface
         spans = _exact_rational_surface_spans(surface)
         if spans is not None:
             exact_charts = _exact_uv_chart_bank(charts, cells)
-            return _exact_spline_normal_turn_bounds(
-                cells, spans, exact_charts
-            )
+            return _exact_spline_normal_turn_bounds(cells, spans, exact_charts)
         lower = np.min(cells, axis=1)
         upper = np.max(cells, axis=1)
         first = prepare_interval_function(jax.jacfwd(surface.evaluate), 2)
@@ -2492,10 +3075,15 @@ class MeshingDomain(StrictModule, NonTrainableState):
             high_j = jacobian_upper[row]
             low_h = hessian_lower[row]
             high_h = hessian_upper[row]
-            if not all(np.all(np.isfinite(value)) for value in (center, low_j, high_j, low_h, high_h)):
+            if not all(
+                np.all(np.isfinite(value))
+                for value in (center, low_j, high_j, low_h, high_h)
+            ):
                 continue
             exact_center = tuple(
-                tuple(Fraction(float(center[physical, parameter])) for parameter in range(2))
+                tuple(
+                    Fraction(float(center[physical, parameter])) for parameter in range(2)
+                )
                 for physical in range(3)
             )
             radius_squared = Fraction(0)
@@ -2504,21 +3092,19 @@ class MeshingDomain(StrictModule, NonTrainableState):
                     nominal = exact_center[physical][parameter]
                     interval_lower = Fraction(float(low_j[physical, parameter]))
                     interval_upper = Fraction(float(high_j[physical, parameter]))
-                    radius = max(abs(interval_lower - nominal), abs(interval_upper - nominal))
+                    radius = max(
+                        abs(interval_lower - nominal), abs(interval_upper - nominal)
+                    )
                     radius_squared += radius * radius
             radius = fraction_sqrt_interval(radius_squared)[1]
             g00 = sum((entry[0] * entry[0] for entry in exact_center), Fraction(0))
             g11 = sum((entry[1] * entry[1] for entry in exact_center), Fraction(0))
-            g01 = sum(
-                (entry[0] * entry[1] for entry in exact_center), Fraction(0)
-            )
+            g01 = sum((entry[0] * entry[1] for entry in exact_center), Fraction(0))
             gram_determinant = g00 * g11 - g01 * g01
             trace = g00 + g11
             if gram_determinant <= 0 or trace <= 0:
                 continue
-            center_singular_lower = fraction_sqrt_interval(
-                gram_determinant / trace
-            )[0]
+            center_singular_lower = fraction_sqrt_interval(gram_determinant / trace)[0]
             singular_lower = center_singular_lower - radius
             if singular_lower <= 0:
                 continue
@@ -2533,7 +3119,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for low_value, high_value in zip(
                 low_h.reshape((-1,)), high_h.reshape((-1,)), strict=True
             ):
-                absolute = max(abs(Fraction(float(low_value))), abs(Fraction(float(high_value))))
+                absolute = max(
+                    abs(Fraction(float(low_value))), abs(Fraction(float(high_value)))
+                )
                 hessian_squared += absolute * absolute
             hessian_norm = fraction_sqrt_interval(hessian_squared)[1]
             exact_vertices = tuple(rational_vector(point) for point in cells[row])
@@ -2556,7 +3144,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
             diameter = fraction_sqrt_interval(diameter_squared)[1]
             chord = min(
                 Fraction(2),
-                2 * hessian_norm * jacobian_norm * diameter / (singular_lower * singular_lower),
+                2
+                * hessian_norm
+                * jacobian_norm
+                * diameter
+                / (singular_lower * singular_lower),
             )
             angle = min(pi_upper, pi_upper * chord / 2)
             result[row] = fraction_endpoint(angle, upper=True, saturate=True)
@@ -2572,10 +3164,14 @@ class MeshingDomain(StrictModule, NonTrainableState):
         points_ = np.asarray(points, dtype=np.float64).reshape((-1, 3))
         rows, seeds_ = self._batch(patches, seeds)
         if points_.shape[0] != rows.size or not np.all(np.isfinite(points_)):
-            raise ValueError("MeshingDomain projection points must be finite and align with seeds.")
+            raise ValueError(
+                "MeshingDomain projection points must be finite and align with seeds."
+            )
         from ..nonlinear import VectorLocalRootPlan
 
-        plan = VectorLocalRootPlan(2, maximum_steps=32, tolerance=1.0e-12, plan_id="meshing-domain-projection")
+        plan = VectorLocalRootPlan(
+            2, maximum_steps=32, tolerance=1.0e-12, plan_id="meshing-domain-projection"
+        )
         parameters = np.array(seeds_, copy=True)
         converged = np.zeros((rows.size,), dtype=np.bool_)
         for patch_index in np.unique(rows):
@@ -2585,12 +3181,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
             def solve(point: Array, seed: Array) -> tuple[Array, Array]:
                 def residual(uv: Array) -> Array:
                     jacobian = jax.jacfwd(surface.evaluate)(uv)
-                    return jacobian.T @ (surface.evaluate(uv) - point) / (self.scale * self.scale)
+                    return (
+                        jacobian.T
+                        @ (surface.evaluate(uv) - point)
+                        / (self.scale * self.scale)
+                    )
 
                 root, diagnostics = plan.solve_with_diagnostics(residual, seed)
                 return root, diagnostics.converged
 
-            roots, status = jax.vmap(solve)(jnp.asarray(points_[selected]), jnp.asarray(seeds_[selected]))
+            roots, status = jax.vmap(solve)(
+                jnp.asarray(points_[selected]), jnp.asarray(seeds_[selected])
+            )
             parameters[selected] = np.asarray(roots, dtype=np.float64)
             converged[selected] = np.asarray(status, dtype=np.bool_)
         projected = self.evaluate(rows, parameters)
@@ -2602,9 +3204,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
         return len(self.curves)
 
 
-
 def _placed_brep_domain(
-    domain_type: type[MeshingDomain], model: BRepModel, occurrences: tuple[BRepAssemblyOccurrence, ...], /
+    domain_type: type[MeshingDomain],
+    model: BRepModel,
+    occurrences: tuple[BRepAssemblyOccurrence, ...],
+    /,
 ) -> MeshingDomain:
     """Expand source-defined solid occurrences while preserving their exact paths."""
     geometry = model.geometry
@@ -2621,7 +3225,15 @@ def _placed_brep_domain(
     source_face_paths: list[tuple[str, ...]] = []
     region_sources: list[int] = []
     region_paths: list[tuple[str, ...]] = []
+    # Occurrences with the same exact placement realize one placed copy of each
+    # shared source entity: a face, edge, or corner incident to several solids of
+    # that copy is one domain slot, recorded under its first occurrence path, and
+    # each region references the shared patch with its own shell sign.
+    vertex_slots: dict[tuple[int, tuple[tuple[Fraction, ...], ...]], int] = {}
+    edge_slots: dict[tuple[int, tuple[tuple[Fraction, ...], ...]], int] = {}
+    face_slots: dict[tuple[int, tuple[tuple[Fraction, ...], ...]], int] = {}
     for occurrence in occurrences:
+        placement = occurrence.placement.matrix
         solid = occurrence.solid_index
         face_ids = topology.solid_faces[solid]
         edge_ids = sorted(
@@ -2633,53 +3245,70 @@ def _placed_brep_domain(
             }
         )
         vertex_ids = sorted(
-            {
-                vertex
-                for edge in edge_ids
-                for vertex in geometry.edge_vertices[edge]
-            }
+            {vertex for edge in edge_ids for vertex in geometry.edge_vertices[edge]}
         )
         vertex_map: dict[int, int] = {}
         for vertex in vertex_ids:
-            vertex_map[vertex] = len(corner_points)
+            if (vertex, placement) in vertex_slots:
+                vertex_map[vertex] = vertex_slots[(vertex, placement)]
+                continue
+            vertex_map[vertex] = vertex_slots[(vertex, placement)] = len(corner_points)
             point = _brep_corner_realization(
                 model, vertex, occurrence.path, occurrence.placement
             )
-            corner_points.append(
-                (float(point[0]), float(point[1]), float(point[2]))
-            )
+            corner_points.append((float(point[0]), float(point[1]), float(point[2])))
             source_vertices.append(vertex)
             source_vertex_paths.append(occurrence.path)
         edge_map: dict[int, int] = {}
         for edge in edge_ids:
-            edge_map[edge] = len(curves)
+            if (edge, placement) in edge_slots:
+                edge_map[edge] = edge_slots[(edge, placement)]
+                continue
+            edge_map[edge] = edge_slots[(edge, placement)] = len(curves)
             start, end = geometry.edge_vertices[edge]
             curves.append(MeshingDomainCurve(vertex_map[start], vertex_map[end]))
             source_edges.append(edge)
             source_edge_paths.append(occurrence.path)
         local_face_map: dict[int, int] = {}
         for face in face_ids:
-            local_face_map[face] = len(patches)
+            if (face, placement) in face_slots:
+                local_face_map[face] = face_slots[(face, placement)]
+                continue
+            local_face_map[face] = face_slots[(face, placement)] = len(patches)
             loops: list[tuple[PatchBoundaryUse, ...]] = []
             for loop in geometry.face_loops[face]:
                 uses: list[PatchBoundaryUse] = []
                 for coedge in loop:
                     edge = geometry.coedge_edges[coedge]
-                    first, last = (float(value) for value in np.asarray(geometry.edge_ranges[edge]))
+                    first, last = (
+                        float(value) for value in np.asarray(geometry.edge_ranges[edge])
+                    )
                     sense = geometry.coedge_senses[coedge]
                     pcurve = geometry.pcurves[coedge]
                     if geometry.edge_curves[edge] < 0:
                         uses.append(
-                            PatchPoleUse(vertex_map[geometry.edge_vertices[edge][0]], pcurve, first, last, sense=sense)
+                            PatchPoleUse(
+                                vertex_map[geometry.edge_vertices[edge][0]],
+                                pcurve,
+                                first,
+                                last,
+                                sense=sense,
+                            )
                         )
                     else:
                         uses.append(
-                            PatchCurveUse(edge_map[edge], pcurve, first, last, sense=sense)
+                            PatchCurveUse(
+                                edge_map[edge], pcurve, first, last, sense=sense
+                            )
                         )
                 loops.append(_lift_native_period_loop(model.patches[face], tuple(uses)))
             surface = _PlacedSurfacePatch(model.patches[face], occurrence.placement)
-            face_orientation = int(np.asarray(model.orientation)[face]) * surface.orientation_sign
-            patches.append(MeshingSurfacePatch(surface, tuple(loops), orientation=face_orientation))
+            face_orientation = (
+                int(np.asarray(model.orientation)[face]) * surface.orientation_sign
+            )
+            patches.append(
+                MeshingSurfacePatch(surface, tuple(loops), orientation=face_orientation)
+            )
             source_faces.append(face)
             source_face_paths.append(occurrence.path)
         signs = topology.solid_face_orientations[solid]
@@ -2703,7 +3332,9 @@ def _placed_brep_domain(
         regions=tuple(regions),
         source_indices=(tuple(source_vertices), tuple(source_edges), tuple(source_faces)),
         source_occurrences=(
-            tuple(source_vertex_paths), tuple(source_edge_paths), tuple(source_face_paths)
+            tuple(source_vertex_paths),
+            tuple(source_edge_paths),
+            tuple(source_face_paths),
         ),
         region_source_indices=tuple(region_sources),
         region_source_occurrences=tuple(region_paths),

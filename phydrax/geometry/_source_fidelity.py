@@ -39,7 +39,11 @@ from ..discretization._surface_chart_records import (
     SurfaceChartWitness,
 )
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
-from ._domain_boundary import CurvedTrimLens, MeshingDomainBoundarySource
+from ._domain_boundary import (
+    CurvedTrimLens,
+    exact_plane_chart,
+    MeshingDomainBoundarySource,
+)
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import (
     Interval,
@@ -92,6 +96,7 @@ if TYPE_CHECKING:
         AdaptiveImplicitBoundarySource,
         AdaptiveImplicitSurface,
     )
+    from .implicit._source_charts import AdaptiveImplicitRootChartMap
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
 
@@ -293,7 +298,12 @@ def _surface_source_chart_rows(
     source: MeshingDomainBoundarySource,
     witness: SourceBoundaryChartWitness,
     /,
-) -> tuple[np.ndarray, tuple[Triangle2, ...]]:
+) -> tuple[np.ndarray, tuple[Triangle2, ...], frozenset[int]]:
+    """Patch rows, exact chart triangles, and the patches charted in their plane.
+
+    A row's chart is its patch's authored chart, or the `exact_plane_chart` of a
+    patch proved planar; every row of one patch uses the same chart.
+    """
     if (
         witness.chart_dimension != 2
         or witness.source_id != source.source_id
@@ -305,6 +315,8 @@ def _surface_source_chart_rows(
         )
     domain = source.domain
     patch_rows = np.empty((len(witness.source_entity_ids),), dtype=np.int64)
+    plane_by_patch: dict[int, bool] = {}
+    plane_chart_ids: dict[int, str | None] = {}
     for row, (chart_id, entity_id, occurrence) in enumerate(
         zip(
             witness.source_chart_ids,
@@ -318,17 +330,37 @@ def _surface_source_chart_rows(
             patch not in source.patches
             or domain.entity_id(2, patch) != entity_id
             or domain.source_occurrences[2][patch] != occurrence
-            or chart_id != entity_id
         ):
             raise ValueError(
                 "Source surface witness changes its authored chart or occurrence."
             )
+        if chart_id == entity_id:
+            plane = False
+        else:
+            if patch not in plane_chart_ids:
+                plane_chart = exact_plane_chart(domain, patch)
+                plane_chart_ids[patch] = (
+                    None if plane_chart is None else plane_chart.chart_id
+                )
+            if chart_id != plane_chart_ids[patch]:
+                raise ValueError(
+                    "Source surface witness changes its authored chart or occurrence."
+                )
+            plane = True
+        if plane_by_patch.setdefault(patch, plane) != plane:
+            raise ValueError("Source surface witness mixes charts of one source patch.")
         patch_rows[row] = patch
-    return patch_rows, tuple(
-        _exact_triangle2(
-            _fractions_from_chart_tokens(witness.source_parameter_rational_tokens, row)
-        )
-        for row in range(len(patch_rows))
+    return (
+        patch_rows,
+        tuple(
+            _exact_triangle2(
+                _fractions_from_chart_tokens(
+                    witness.source_parameter_rational_tokens, row
+                )
+            )
+            for row in range(len(patch_rows))
+        ),
+        frozenset(patch for patch, plane in plane_by_patch.items() if plane),
     )
 
 
@@ -340,6 +372,32 @@ def _surface_query_root(source: SourceBoundaryQuery, /) -> MeshingDomainBoundary
     if isinstance(source, SurfaceNativeRestrictionBoundarySource):
         return source.root
     raise TypeError("Surface fidelity requires a retained MeshingDomain source query.")
+
+
+def _surface_chart_witness_root(
+    source: SourceBoundaryQuery,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+) -> MeshingDomainBoundarySource | None:
+    """Return the current domain authority of a surface chart witness source."""
+    from ..meshing._surface_boundary_sources import SurfaceChartBoundarySource
+    from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
+
+    if isinstance(source, MeshingDomainBoundarySource):
+        source.require_current()
+        return source
+    if isinstance(source, SurfaceNativeRestrictionBoundarySource):
+        source.require_current()
+        return source.root
+    if isinstance(source, SurfaceChartBoundarySource) and isinstance(
+        source.root, MeshingDomainBoundarySource
+    ):
+        # A chart-deformation query answers boundary queries through its domain root,
+        # so that root is the authority; the query must still bind this target map.
+        source.require_target_binding(mesh, geometry)
+        return source.root
+    return None
 
 
 def _validate_surface_root_mesh_bindings(
@@ -487,8 +545,9 @@ def _partition_findings(
             _exact_chart_from_tokens(witness.chart_rational_tokens, row)
             for row in range(len(patches))
         )
+        plane_patches: frozenset[int] = frozenset()
     else:
-        patches, charts = _surface_source_chart_rows(source, witness)
+        patches, charts, plane_patches = _surface_source_chart_rows(source, witness)
     target_triangles: dict[int, list[Triangle2]] = {}
     for patch, chart in zip(patches, charts, strict=True):
         target_triangles.setdefault(int(patch), []).append(chart)
@@ -534,12 +593,16 @@ def _partition_findings(
                 )
             )
             continue
-        # Collapsed pole slivers are part of their owner cells' chart preimages.
-        target = (
-            *target,
-            *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+        plane = patch in plane_patches
+        if not plane:
+            # Collapsed pole slivers are part of their owner cells' chart preimages.
+            target = (
+                *target,
+                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+            )
+        declared, _ = source._trim_partition_reference_unchecked(
+            patch, target, plane=plane
         )
-        declared, _ = source._trim_partition_reference_unchecked(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -1219,11 +1282,11 @@ def validate_source_fidelity_witness(
         _source_point_correspondences(mesh, geometry, source, witness)
         return
     if isinstance(witness, SurfaceChartWitness):
-        domain_source = _surface_query_root(source)
-        if isinstance(source, SurfaceNativeRestrictionBoundarySource):
-            source.require_current()
-        else:
-            domain_source.require_current()
+        domain_source = _surface_chart_witness_root(source, mesh, geometry)
+        if domain_source is None:
+            raise TypeError(
+                "Surface fidelity requires a retained MeshingDomain source query."
+            )
         _validate_surface_root_mesh_bindings(mesh, geometry, source, witness)
         renewed = SurfaceChartWitness(
             geometry_id=witness.geometry_id,
@@ -1407,7 +1470,7 @@ def validate_source_fidelity_witness(
             raise ValueError(
                 "Reconstructed chart witness changes its persistent source scope."
             )
-        _, charts = _surface_source_chart_rows(domain_source, witness)
+        _, charts, _ = _surface_source_chart_rows(domain_source, witness)
         findings = _partition_findings(domain_source, witness)
         if any(finding.status != "certified" for finding in findings):
             raise ValueError(
@@ -1446,7 +1509,7 @@ def validate_source_fidelity_witness(
                 source.require_current()
             else:
                 domain_source.require_current()
-            patch_rows, charts = _surface_source_chart_rows(domain_source, witness)
+            patch_rows, charts, _ = _surface_source_chart_rows(domain_source, witness)
             findings = _partition_findings(domain_source, witness)
             if any(finding.status != "certified" for finding in findings):
                 raise ValueError(
@@ -3903,8 +3966,22 @@ def _plane_normal_deviation(
     exact_points = tuple(_exact_surface_point(surface, point) for point in uv_triangle)
     if any(point is None for point in exact_points):
         return None
-    first = rational_vector(np.asarray(surface.first_axis))
-    second = rational_vector(np.asarray(surface.second_axis))
+    return _plane_axes_normal_deviation(
+        rational_vector(np.asarray(surface.first_axis)),
+        rational_vector(np.asarray(surface.second_axis)),
+        orientation,
+        target_cross,
+    )
+
+
+def _plane_axes_normal_deviation(
+    first: tuple[Fraction, ...],
+    second: tuple[Fraction, ...],
+    orientation: int,
+    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    """Normal deviation from the oriented normal of exact plane chart axes."""
     source_cross = (
         first[1] * second[2] - first[2] * second[1],
         first[2] * second[0] - first[0] * second[2],
@@ -5068,7 +5145,7 @@ def _certify_domain_surface_chart_fidelity(
     domain_source = _surface_query_root(source)
 
     validate_source_fidelity_witness(mesh, geometry, source, witness)
-    patch_rows, charts = _surface_source_chart_rows(domain_source, witness)
+    patch_rows, charts, plane_patches = _surface_source_chart_rows(domain_source, witness)
     target_rows, _, _ = _surface_target_chart_rows(mesh, geometry, domain_source, witness)
     evidence = certify_domain_surface_charts(
         mesh,
@@ -5078,6 +5155,7 @@ def _certify_domain_surface_chart_fidelity(
         patch_rows,
         target_rows,
         tolerance=tolerance,
+        plane_patches=plane_patches,
     )
     coverage = domain_source.boundary_chart_cover()
     findings = [*coverage.findings, *evidence.findings]
@@ -5112,14 +5190,25 @@ def _certify_domain_surface_chart_fidelity(
                 continue
             target_cross = _triangle_physical_normal(evidence.target_corners[row])
             try:
-                normal_evidence = _normal_deviation_for_cell(
-                    domain_source.domain,
-                    int(patch),
-                    chart,
-                    target_cross,
-                    derivatives,
-                    normal_limit,
-                )
+                if int(patch) in plane_patches:
+                    plane_chart = exact_plane_chart(domain_source.domain, int(patch))
+                    if plane_chart is None:
+                        raise ValueError("Source patch lost its exact plane chart.")
+                    normal_evidence = _plane_axes_normal_deviation(
+                        plane_chart.first_axis,
+                        plane_chart.second_axis,
+                        int(domain_source.domain.patches[int(patch)].orientation),
+                        target_cross,
+                    )
+                else:
+                    normal_evidence = _normal_deviation_for_cell(
+                        domain_source.domain,
+                        int(patch),
+                        chart,
+                        target_cross,
+                        derivatives,
+                        normal_limit,
+                    )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None
             if normal_evidence is None:
@@ -5552,8 +5641,29 @@ def certify_source_fidelity(
     tolerance: float,
     maximum_normal_deviation: float | None = None,
     witness: SourceFidelityWitness | None = None,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> SourceFidelityCertificate:
-    """Certify continuous physical source fidelity from one typed witness."""
+    """Certify continuous physical source fidelity from one typed witness.
+
+    ``root_charts`` passes adaptive implicit root charts the caller already
+    prepared for exactly this request; other sources and witnesses refuse it.
+    """
+    if root_charts is not None:
+        from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
+        from .implicit._source_charts import _AdaptiveImplicitBoundaryCarrier
+
+        if (
+            not isinstance(witness, SourceBoundaryChartWitness)
+            or witness.chart_dimension != 2
+            or not isinstance(
+                source,
+                (AdaptiveImplicitBoundarySource, _AdaptiveImplicitBoundaryCarrier),
+            )
+        ):
+            raise ValueError(
+                "Prepared implicit root charts require an adaptive implicit source "
+                "and a face chart witness."
+            )
     tolerance_ = float(tolerance)
     if not math.isfinite(tolerance_) or tolerance_ < 0.0:
         raise ValueError("source fidelity tolerance must be finite and nonnegative.")
@@ -5682,6 +5792,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    root_charts=root_charts,
                 )
         return _unresolved_fidelity(
             mesh,
@@ -5722,11 +5833,8 @@ def certify_source_fidelity(
         raise TypeError(
             "witness must be a member of the exported SourceFidelityWitness union."
         )
-    from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
-
-    if not isinstance(
-        source, (MeshingDomainBoundarySource, SurfaceNativeRestrictionBoundarySource)
-    ):
+    domain_source = _surface_chart_witness_root(source, mesh, geometry)
+    if domain_source is None:
         return _unresolved_fidelity(
             mesh,
             geometry,
@@ -5744,11 +5852,6 @@ def certify_source_fidelity(
                 ),
             ),
         )
-    domain_source = _surface_query_root(source)
-    if isinstance(source, SurfaceNativeRestrictionBoundarySource):
-        source.require_current()
-    else:
-        domain_source.require_current()
     coverage = domain_source.boundary_chart_cover()
     findings = list(coverage.findings)
     if not coverage.complete or coverage.semantics != "certified" or findings:
@@ -5890,13 +5993,6 @@ def certify_source_fidelity(
     ):
         by_patch.setdefault(patch, []).append((cell_id, chart))
     for patch, chart_rows in by_patch.items():
-        charts_float = np.asarray(
-            [
-                [[float(value) for value in point] for point in chart]
-                for _, chart in chart_rows
-            ],
-            dtype=np.float64,
-        )
         surface = domain_source.domain.patches[patch].surface
         from ._meshing_domain import _outward_surface_parameter_box
         from ._source_interpolation import (
@@ -5934,6 +6030,8 @@ def certify_source_fidelity(
                 if exact_surface_map is not None
                 else derivatives.patch_spans(patch, surface)
             )
+            # Generic carriers are bounded after the endpoint errors fix each row's budget.
+            interpolation: np.ndarray | None = None
             if exact_surface_map is not None:
                 interpolation = np.asarray(
                     [
@@ -5954,11 +6052,6 @@ def certify_source_fidelity(
                         )
                         for _, chart in chart_rows
                     ],
-                    dtype=np.float64,
-                )
-            else:
-                interpolation = np.asarray(
-                    domain_source.domain.interpolation_bounds(patch, charts_float),
                     dtype=np.float64,
                 )
             # Adjacent cells share corners; each source corner box is computed once.
@@ -6049,10 +6142,12 @@ def certify_source_fidelity(
                 source_intervals_valid = False
                 break
         if (
-            interpolation.shape != (len(chart_rows),)
-            or np.any(~np.isfinite(interpolation))
-            or not source_intervals_valid
-        ):
+            interpolation is not None
+            and (
+                interpolation.shape != (len(chart_rows),)
+                or np.any(~np.isfinite(interpolation))
+            )
+        ) or not source_intervals_valid:
             findings.append(
                 MeshCertificateFinding(
                     "source_chart_interpolation",
@@ -6063,7 +6158,8 @@ def certify_source_fidelity(
                 )
             )
             continue
-        for chart_row, (cell_id, chart) in enumerate(chart_rows):
+        endpoint_errors: dict[int, Fraction] = {}
+        for chart_row, (cell_id, _) in enumerate(chart_rows):
             corners = target_corners.get(cell_id)
             if corners is None:
                 continue
@@ -6127,7 +6223,63 @@ def certify_source_fidelity(
                     ),
                     default=Fraction(0),
                 )
-            interpolation_bound = Fraction(float(interpolation[chart_row]))
+            endpoint_errors[chart_row] = endpoint_error
+        interpolation_bounds: dict[int, Fraction]
+        if interpolation is not None:
+            interpolation_bounds = {
+                chart_row: Fraction(float(interpolation[chart_row]))
+                for chart_row in endpoint_errors
+            }
+        else:
+            budget_rows = tuple(endpoint_errors)
+            try:
+                adaptive_bounds = domain_source.domain.adaptive_interpolation_bounds(
+                    patch,
+                    tuple(chart_rows[chart_row][1] for chart_row in budget_rows),
+                    tuple(
+                        Fraction(tolerance_)
+                        - endpoint_errors[chart_row]
+                        - lens_caps.get(chart_rows[chart_row][0], Fraction(0))
+                        for chart_row in budget_rows
+                    ),
+                )
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                IntervalExtensionError,
+                NotImplementedError,
+                TypeError,
+                ValueError,
+            ) as error:
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_chart_interpolation",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail=f"Continuous source interpolation enclosure is unavailable: {error}",
+                    )
+                )
+                continue
+            interpolation_bounds = {}
+            for chart_row, bound in zip(budget_rows, adaptive_bounds, strict=True):
+                if bound is not None:
+                    interpolation_bounds[chart_row] = bound
+            if len(interpolation_bounds) != len(budget_rows):
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_chart_interpolation",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail="Source interval enclosure has invalid shape or nonfinite endpoints.",
+                    )
+                )
+                continue
+        for chart_row, endpoint_error in endpoint_errors.items():
+            cell_id, chart = chart_rows[chart_row]
+            corners = target_corners[cell_id]
+            interpolation_bound = interpolation_bounds[chart_row]
             deviation = interpolation_bound + endpoint_error
             cap = sliver_caps.get(cell_id)
             if cap is not None:

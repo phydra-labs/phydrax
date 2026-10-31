@@ -824,6 +824,7 @@ def _rebuild_vertex_root(
         return cache[key]
     from ._intersection_curve import SurfaceRegion
     from ._root_bindings import (
+        BRepBranchNodeRoots,
         BRepConicVertex,
         BRepCurveSurfaceLift,
         BRepPlacedVertex,
@@ -897,12 +898,27 @@ def _rebuild_vertex_root(
         _same_recomputed_evidence(lift, rebuilt_lift, "BRepCurveSurfaceLift")
         cache[lift_key] = rebuilt_lift
         lifts.append(rebuilt_lift)
+    branch_node = None
+    if root.branch_node is not None:
+        from ._intersection import BranchRootEndpoint
+
+        endpoints = []
+        for endpoint in root.branch_node.endpoints:
+            rebuilt_endpoint = _rebuild_endpoint_root(endpoint, cache)
+            if not isinstance(rebuilt_endpoint, BranchRootEndpoint):
+                raise TypeError("A branch-node witness must keep branch endpoints.")
+            endpoints.append(rebuilt_endpoint)
+        branch_node = BRepBranchNodeRoots(
+            _rebuild_intersection_root(root.branch_node.node, cache), tuple(endpoints)
+        )
+        _same_recomputed_evidence(root.branch_node, branch_node, "BRepBranchNodeRoots")
     rebuilt = BRepVertexRoot(
         primary(root.primary),
         aliases=aliases,
         spatial_root=spatial,
         joint_root=joint,
         source_edge_lifts=tuple(lifts),
+        branch_node=branch_node,
     )
     _same_recomputed_evidence(root, rebuilt, "BRepVertexRoot")
     cache[key] = rebuilt

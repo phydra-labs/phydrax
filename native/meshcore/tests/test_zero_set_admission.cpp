@@ -48,13 +48,15 @@ struct Program {
             parameters.data(), static_cast<int64_t>(parameters.size()),
             lower.data(),      upper.data(),
             static_cast<int64_t>(lower.size()),
-            outputs.data(),    static_cast<int64_t>(outputs.size())};
+            outputs.data(),    static_cast<int64_t>(outputs.size()),
+            nullptr,           0};
   }
   bool bind(IntervalBoxProgram& program) const {
     const auto v = view();
     return program.bind(v.instructions, v.instruction_count, v.indices, v.index_count,
                         v.parameters, v.parameter_count, v.workspace_lower, v.workspace_upper,
-                        v.workspace_size, v.outputs, v.output_count) == PHX_MC_OK;
+                        v.workspace_size, v.outputs, v.output_count, v.guards,
+                        v.guard_count) == PHX_MC_OK;
   }
 };
 

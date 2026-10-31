@@ -272,7 +272,6 @@ from phydrax.geometry.brep._patches import (
     PlanePatch,
     RevolutionSurface,
     RuledSurface,
-    SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
     TorusPatch,
 )
@@ -340,6 +339,7 @@ from phydrax.meshing._contracts import (
     VolumeMeshingSpec,
 )
 from phydrax.meshing._controls import ProtectedFeature
+from phydrax.meshing._curving import _ExactCoordinateBankMap
 from phydrax.meshing._distribution import MeshDistribution, MeshPartitionKind
 from phydrax.meshing._dual_extraction import _RestrictedCoordinateMap
 from phydrax.meshing._hex_cut_generation import (
@@ -1160,7 +1160,7 @@ def _read_brep_curve_surface_lift(
     print("brep-curve-surface-lift-cold-restored")
 
 
-def _sphere_chamfer_isoparametric_model() -> BRepModel:
+def _sphere_chamfer_conic_root_model() -> BRepModel:
     from phydrax.geometry.brep._fillet import brep_chamfer
     from tests.unit.geometry.test_brep_blend import _fixture
 
@@ -1176,29 +1176,36 @@ def _sphere_chamfer_isoparametric_model() -> BRepModel:
     return result.model
 
 
-def _sphere_chamfer_isoparametric_state(model: BRepModel, /) -> dict[str, object]:
-    rails = tuple(
-        patch.second
-        for patch in model.patches
-        if isinstance(patch, RuledSurface)
-        and isinstance(patch.second, SurfaceIsoparametricCurve)
-        and patch.second.fixed_value_exact is not None
-    )
-    if not rails:
-        raise ValueError("Sphere chamfer lost its exact isoparametric revolution rail.")
+def _sphere_chamfer_conic_root_state(model: BRepModel, /) -> dict[str, object]:
+    """Exact sphere-side chamfer rails: Revolution-mapped conic-root p-curves."""
     rail_records = []
-    for rail in rails:
-        exact_value = rail.fixed_value_exact
-        if exact_value is None:
-            raise TypeError("Sphere chamfer rail lost its exact source parameter.")
+    for patch in model.patches:
+        if not isinstance(patch, RuledSurface):
+            continue
+        rail = patch.second
+        if not (
+            isinstance(rail, SurfaceMappedCurve)
+            and isinstance(rail.surface, RevolutionSurface)
+            and isinstance(rail.pcurve, AffinePCurve)
+        ):
+            continue
+        conic = rail.pcurve.curve
+        if not isinstance(conic, ConicRootLinePCurve):
+            continue
         rail_records.append(
-            {
-                "fixed_axis": rail.fixed_axis,
-                "fixed_value": float(rail.fixed_value).hex(),
-                "fixed_value_exact": coefficient_payload(exact_value),
-                "identity_payload": _json_payload(rail.identity_payload()),
-            }
+            _json_payload(
+                {
+                    "phase_shift_exact": coefficient_payload(conic.phase_shift_exact),
+                    "height_origin_exact": coefficient_payload(conic.height_origin_exact),
+                    "height_direction_exact": coefficient_payload(
+                        conic.height_direction_exact
+                    ),
+                    "identity_payload": rail.identity_payload(),
+                }
+            )
         )
+    if not rail_records:
+        raise ValueError("Sphere chamfer lost its exact conic-root revolution rail.")
     return {
         "model_id": model.model_id,
         "source_revision": model.source_revision,
@@ -1314,21 +1321,19 @@ def _read_torus_exact_source_archive(
     print("exact-torus-source-cold-restored")
 
 
-def _write_sphere_chamfer_isoparametric_archive(directory: Path, /) -> None:
-    model = _sphere_chamfer_isoparametric_model()
+def _write_sphere_chamfer_conic_root_archive(directory: Path, /) -> None:
+    model = _sphere_chamfer_conic_root_model()
     save_brep_archive(model, directory / "sphere-chamfer.phx")
-    print(json.dumps(_sphere_chamfer_isoparametric_state(model), sort_keys=True))
+    print(json.dumps(_sphere_chamfer_conic_root_state(model), sort_keys=True))
 
 
-def _read_sphere_chamfer_isoparametric_archive(
+def _read_sphere_chamfer_conic_root_archive(
     directory: Path, expected: dict[str, object], /
 ) -> None:
     model = load_brep_archive(directory / "sphere-chamfer.phx")
-    if _sphere_chamfer_isoparametric_state(model) != expected:
-        raise ValueError(
-            "Cold sphere chamfer changed its exact isoparametric source rail."
-        )
-    print("sphere-chamfer-isoparametric-cold-restored")
+    if _sphere_chamfer_conic_root_state(model) != expected:
+        raise ValueError("Cold sphere chamfer changed its exact conic-root source rail.")
+    print("sphere-chamfer-conic-root-cold-restored")
 
 
 def _parallel_cylinder_chamfer_model() -> BRepModel:
@@ -1409,7 +1414,13 @@ def _orthogonal_quadric_boolean_state(model: BRepModel, /) -> dict[str, object]:
     shifts = tuple(
         np.asarray(curve.node_period_shifts, dtype=np.int64).tolist() for curve in curves
     )
-    if not any(np.any(np.asarray(curve.node_period_shifts)) for curve in curves):
+    # Closed loops may close at the far end of a native period box: their deck
+    # is the closure turn between the first and last node enclosures.
+    closures = tuple(curve.closure_period_shifts().tolist() for curve in curves)
+    if not any(
+        np.any(np.asarray(shift)) or np.any(np.asarray(closure))
+        for shift, closure in zip(shifts, closures, strict=True)
+    ):
         raise ValueError(
             "Orthogonal quadric intersection lost its nonzero exact deck shifts."
         )
@@ -1418,8 +1429,12 @@ def _orthogonal_quadric_boolean_state(model: BRepModel, /) -> dict[str, object]:
         "geometry_id": geometry.geometry_id,
         "source_revision": model.source_revision,
         "branches": [
-            {"branch_id": curve.branch_id, "node_period_shifts": shift}
-            for curve, shift in zip(curves, shifts, strict=True)
+            {
+                "branch_id": curve.branch_id,
+                "node_period_shifts": shift,
+                "closure_period_shifts": closure,
+            }
+            for curve, shift, closure in zip(curves, shifts, closures, strict=True)
         ],
     }
 
@@ -3475,7 +3490,9 @@ def _rebuild_layer_curving_source_evidence(
     charts = None
     if value.source_surface_charts is not None:
         stored_charts = _rebuild_continuation_value(value.source_surface_charts)
-        if not isinstance(stored_charts, SurfaceSourceCharts):
+        if not isinstance(stored_charts, SurfaceSourceCharts) or not isinstance(
+            source_query, MeshingDomainBoundarySource
+        ):
             raise TypeError(
                 "Layer source evidence lost its reconstructed SurfaceSourceCharts authority."
             )
@@ -3487,7 +3504,7 @@ def _rebuild_layer_curving_source_evidence(
             stored_charts.root_parameters,
             stored_charts.root_patches,
             stored_charts.associations,
-            _rebuild_as(source_query, MeshingDomainBoundarySource),
+            source_query,
             source_root_cell_ids=stored_charts.source_root_cell_ids,
             source_piece_ids=stored_charts.source_piece_ids,
             root_parameter_exact=stored_charts.root_parameter_exact,
@@ -4530,11 +4547,37 @@ def _expected_array(value: object, /) -> np.ndarray:
 def _rebuild_cell_validity_certificate(
     value: object, mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> CellValidityCertificate:
+    import dataclasses
+
+    from phydrax._model._structure import _restore_dataclass
+
     if type(value) is not CellValidityCertificate:
         raise TypeError("Stored chart validity proof has an unexpected concrete type.")
     policy = _rebuild_as(value.policy, CellValidityPolicy)
+    # The stored proof carries its coordinate map in archive form; renew it on the
+    # same mesh, require the exact renewed operands, then recompute every proof.
+    stored_mesh = None if value.mesh is None else _rebuild_as(value.mesh, CellMesh)
+    stored_geometry = _rebuild_geometry_for_mesh(
+        value.geometry, mesh if stored_mesh is None else stored_mesh
+    )
+    if not _same_tree_content(stored_geometry, geometry) or (
+        stored_mesh is not None and not _same_tree_content(stored_mesh, mesh)
+    ):
+        raise ValueError("Stored chart validity proof names different operands.")
+    fields = {
+        field.name: object.__getattribute__(value, field.name)
+        for field in dataclasses.fields(value)
+    }
+    fields.update(
+        geometry=geometry,
+        mesh=None if stored_mesh is None else mesh,
+        policy=policy,
+    )
     return CellValidityCertificate.from_stored_fields(
-        value, mesh, geometry, policy=policy
+        _restore_dataclass(CellValidityCertificate, fields),
+        None if stored_mesh is None else mesh,
+        geometry,
+        policy=policy,
     )
 
 
@@ -6327,6 +6370,10 @@ def _rebuild_continuation_value(
                         "Stored restricted map has a noncanonical owner type."
                     )
                 source_map = _rebuild_restricted_coordinate_map(source_map, source_mesh)
+            elif type(source_map) is _ExactCoordinateBankMap:
+                source_map = _ExactCoordinateBankMap.from_stored_fields(
+                    source_map, mesh=source_mesh
+                )
             else:
                 raise TypeError(
                     f"No explicit coordinate-map archive constructor is registered for {type(source_map).__name__}."
@@ -7515,177 +7562,183 @@ def _write_layer_curving_archive_case(
     )
     path = directory / archive_name
     write_model_artifact(path, composition, limits=None)
+    print(
+        json.dumps(
+            _layer_curving_archive_state(composition, mesh, geometry, result, evidence),
+            sort_keys=True,
+        )
+    )
+
+
+def _layer_curving_archive_state(
+    composition: Composition,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    result: CellMeshingResult,
+    evidence: LayerCurvingSourceEvidence,
+    /,
+) -> dict[str, object]:
+    """JSON-normalized writer/reader state of one layer-curving archive."""
     mapped_trace = evidence.mapped_chart_trace
     mapped_reference_map_bindings = (
         None
         if not evidence.mapped_reference_maps
         else _mapped_reference_map_bindings_for_archive(evidence.mapped_reference_maps)
     )
-    print(
-        json.dumps(
-            {
-                "composition_id": composition.composition_id,
-                "cell_result_id": result.result_id,
-                "mesh_id": mesh.mesh_id,
-                "geometry_id": cell_geometry_id(geometry),
-                "source_id": evidence.source_id,
-                "source_revision": evidence.source_revision,
-                "frame_id": evidence.frame_id,
-                "source_chart_id": evidence.source_chart_id,
-                "layer_result_id": evidence.layer_result_id,
-                "layer_evidence_id": evidence.layer_evidence.evidence_id,
-                "evidence_id": evidence.evidence_id,
-                "fidelity_certificate_id": evidence.fidelity.certificate_id,
-                "trace_id": (
-                    None
-                    if evidence.projection_trace is None
-                    else evidence.projection_trace.trace_id
-                ),
-                "chart_witness_rows": (
-                    None
-                    if evidence.projection_trace is None
-                    else evidence.projection_trace.chart_witness_rows.tolist()
-                ),
-                "geometry_node_rows": (
-                    None
-                    if evidence.projection_trace is None
-                    else evidence.projection_trace.geometry_node_rows.tolist()
-                ),
-                "target_reference_points": (
-                    None
-                    if evidence.projection_trace is None
-                    else _exact_scalar_rows_for_archive(
-                        evidence.projection_trace.target_reference_points
-                    )
-                ),
-                "mapped_trace_id": (
-                    None if mapped_trace is None else mapped_trace.trace_id
-                ),
-                "mapped_query_id": (
-                    None if mapped_trace is None else mapped_trace.query_id
-                ),
-                "mapped_geometry_node_rows": (
-                    None
-                    if mapped_trace is None
-                    else mapped_trace.geometry_node_rows.tolist()
-                ),
-                "mapped_chart_witness_rows": (
-                    None
-                    if mapped_trace is None
-                    else mapped_trace.chart_witness_rows.tolist()
-                ),
-                "mapped_target_reference_points": (
-                    None
-                    if mapped_trace is None
-                    else _exact_scalar_rows_for_archive(
-                        mapped_trace.target_reference_points
-                    )
-                ),
-                "mapped_root_reference_points": (
-                    None
-                    if mapped_trace is None
-                    else _exact_scalar_rows_for_archive(
-                        mapped_trace.root_reference_points
-                    )
-                ),
-                "mapped_source_parameters": (
-                    None
-                    if mapped_trace is None
-                    else _exact_scalar_rows_for_archive(mapped_trace.source_parameters)
-                ),
-                "mapped_source_chart_ids": (
-                    None if mapped_trace is None else list(mapped_trace.source_chart_ids)
-                ),
-                "mapped_source_entity_ids": (
-                    None if mapped_trace is None else list(mapped_trace.source_entity_ids)
-                ),
-                "mapped_occurrence_paths": (
-                    None
-                    if mapped_trace is None
-                    else [list(path) for path in mapped_trace.occurrence_paths]
-                ),
-                "mapped_root_face_global_ids": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.root_face_global_ids).tolist()
-                ),
-                "mapped_root_cell_global_ids": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.root_cell_global_ids).tolist()
-                ),
-                "mapped_root_local_face_indices": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.root_local_face_indices).tolist()
-                ),
-                "mapped_target_points": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.target_points).tolist()
-                ),
-                "mapped_source_points": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.source_points).tolist()
-                ),
-                "mapped_distance_lower_bounds": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.distance_lower_bounds).tolist()
-                ),
-                "mapped_distance_upper_bounds": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.distance_upper_bounds).tolist()
-                ),
-                "mapped_normals": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.normals).tolist()
-                ),
-                "mapped_tangents": (
-                    None
-                    if mapped_trace is None
-                    else np.asarray(mapped_trace.tangents).tolist()
-                ),
-                "mapped_column_identity_id": (
-                    None
-                    if mapped_trace is None
-                    else mapped_trace.column_identity.identity_id
-                ),
-                "mapped_reference_map_bindings": mapped_reference_map_bindings,
-                "implicit_trace_id": (
-                    None
-                    if evidence.implicit_root_trace is None
-                    else evidence.implicit_root_trace.trace_id
-                ),
-                "implicit_map_witness_id": evidence.implicit_map_witness_id,
-                "chart_witness_id": evidence.chart_witness.witness_id,
-                "column_identity_id": evidence.column_identity.identity_id,
-                "chart_column_identity_id": evidence.chart_column_identity.identity_id,
-                "chart_column_row_count": evidence.chart_column_identity.row_count,
-                "source_root_cell_ids": evidence.source_root_cell_ids.tolist(),
-                "source_piece_ids": [list(row) for row in evidence.source_piece_ids],
-                "source_wall_cell_ids": evidence.column_identity.source_wall_cell_ids.tolist(),
-                "front_row_identities": list(
-                    evidence.column_identity.front_row_identities
-                ),
-                "implicit_root_chart_witness_id": (
-                    None
-                    if evidence.implicit_root_chart_witness is None
-                    else evidence.implicit_root_chart_witness.witness_id
-                ),
-                "implicit_root_cell_vertex_global_ids": (
-                    None
-                    if evidence.implicit_root_cell_vertex_global_ids is None
-                    else np.asarray(
-                        evidence.implicit_root_cell_vertex_global_ids
-                    ).tolist()
-                ),
-            }
-        )
+    state = _json_payload(
+        {
+            "composition_id": composition.composition_id,
+            "cell_result_id": result.result_id,
+            "mesh_id": mesh.mesh_id,
+            "geometry_id": cell_geometry_id(geometry),
+            "source_id": evidence.source_id,
+            "source_revision": evidence.source_revision,
+            "frame_id": evidence.frame_id,
+            "source_chart_id": evidence.source_chart_id,
+            "layer_result_id": evidence.layer_result_id,
+            "layer_evidence_id": evidence.layer_evidence.evidence_id,
+            "evidence_id": evidence.evidence_id,
+            "fidelity_certificate_id": evidence.fidelity.certificate_id,
+            "trace_id": (
+                None
+                if evidence.projection_trace is None
+                else evidence.projection_trace.trace_id
+            ),
+            "chart_witness_rows": (
+                None
+                if evidence.projection_trace is None
+                else evidence.projection_trace.chart_witness_rows.tolist()
+            ),
+            "geometry_node_rows": (
+                None
+                if evidence.projection_trace is None
+                else evidence.projection_trace.geometry_node_rows.tolist()
+            ),
+            "target_reference_points": (
+                None
+                if evidence.projection_trace is None
+                else _exact_scalar_rows_for_archive(
+                    evidence.projection_trace.target_reference_points
+                )
+            ),
+            "mapped_trace_id": (None if mapped_trace is None else mapped_trace.trace_id),
+            "mapped_query_id": (None if mapped_trace is None else mapped_trace.query_id),
+            "mapped_geometry_node_rows": (
+                None if mapped_trace is None else mapped_trace.geometry_node_rows.tolist()
+            ),
+            "mapped_chart_witness_rows": (
+                None if mapped_trace is None else mapped_trace.chart_witness_rows.tolist()
+            ),
+            "mapped_target_reference_points": (
+                None
+                if mapped_trace is None
+                else _exact_scalar_rows_for_archive(mapped_trace.target_reference_points)
+            ),
+            "mapped_root_reference_points": (
+                None
+                if mapped_trace is None
+                else _exact_scalar_rows_for_archive(mapped_trace.root_reference_points)
+            ),
+            "mapped_source_parameters": (
+                None
+                if mapped_trace is None
+                else _exact_scalar_rows_for_archive(mapped_trace.source_parameters)
+            ),
+            "mapped_source_chart_ids": (
+                None if mapped_trace is None else list(mapped_trace.source_chart_ids)
+            ),
+            "mapped_source_entity_ids": (
+                None if mapped_trace is None else list(mapped_trace.source_entity_ids)
+            ),
+            "mapped_occurrence_paths": (
+                None
+                if mapped_trace is None
+                else [list(path) for path in mapped_trace.occurrence_paths]
+            ),
+            "mapped_root_face_global_ids": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.root_face_global_ids).tolist()
+            ),
+            "mapped_root_cell_global_ids": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.root_cell_global_ids).tolist()
+            ),
+            "mapped_root_local_face_indices": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.root_local_face_indices).tolist()
+            ),
+            "mapped_target_points": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.target_points).tolist()
+            ),
+            "mapped_source_points": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.source_points).tolist()
+            ),
+            "mapped_distance_lower_bounds": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.distance_lower_bounds).tolist()
+            ),
+            "mapped_distance_upper_bounds": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.distance_upper_bounds).tolist()
+            ),
+            "mapped_normals": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.normals).tolist()
+            ),
+            "mapped_tangents": (
+                None
+                if mapped_trace is None
+                else np.asarray(mapped_trace.tangents).tolist()
+            ),
+            "mapped_column_identity_id": (
+                None if mapped_trace is None else mapped_trace.column_identity.identity_id
+            ),
+            "mapped_reference_map_bindings": mapped_reference_map_bindings,
+            "implicit_trace_id": (
+                None
+                if evidence.implicit_root_trace is None
+                else evidence.implicit_root_trace.trace_id
+            ),
+            "implicit_map_witness_id": evidence.implicit_map_witness_id,
+            "chart_witness_id": evidence.chart_witness.witness_id,
+            "chart_target_reference_tokens": _json_payload(
+                evidence.chart_witness.target_reference_rational_tokens
+            ),
+            "chart_source_parameter_tokens": _json_payload(
+                evidence.chart_witness.source_parameter_rational_tokens
+            ),
+            "column_identity_id": evidence.column_identity.identity_id,
+            "chart_column_identity_id": evidence.chart_column_identity.identity_id,
+            "chart_column_row_count": evidence.chart_column_identity.row_count,
+            "source_root_cell_ids": evidence.source_root_cell_ids.tolist(),
+            "source_piece_ids": [list(row) for row in evidence.source_piece_ids],
+            "source_wall_cell_ids": evidence.column_identity.source_wall_cell_ids.tolist(),
+            "front_row_identities": list(evidence.column_identity.front_row_identities),
+            "implicit_root_chart_witness_id": (
+                None
+                if evidence.implicit_root_chart_witness is None
+                else evidence.implicit_root_chart_witness.witness_id
+            ),
+            "implicit_root_cell_vertex_global_ids": (
+                None
+                if evidence.implicit_root_cell_vertex_global_ids is None
+                else np.asarray(evidence.implicit_root_cell_vertex_global_ids).tolist()
+            ),
+        }
     )
+    if not isinstance(state, dict):
+        raise TypeError("Layer-curving archive state must be a JSON object.")
+    return state
 
 
 def _read_layer_curving_evidence(path: Path, expected: dict[str, object], /) -> None:
@@ -7703,169 +7756,16 @@ def _read_layer_curving_evidence(path: Path, expected: dict[str, object], /) -> 
     if not isinstance(result, CellMeshingResult) or result.layer_curving_evidence is None:
         raise TypeError("Layer-curving cold restore lost its accepted result evidence.")
     evidence = result.layer_curving_evidence
-    mapped_trace = evidence.mapped_chart_trace
-    mapped_reference_map_bindings = (
-        None
-        if not evidence.mapped_reference_maps
-        else _mapped_reference_map_bindings_for_archive(evidence.mapped_reference_maps)
-    )
-    if (
-        composition.composition_id != expected["composition_id"]
-        or result.result_id != expected["cell_result_id"]
-        or mesh.mesh_id != expected["mesh_id"]
-        or cell_geometry_id(geometry) != expected["geometry_id"]
-        or evidence.source_id != expected["source_id"]
-        or evidence.source_revision != expected["source_revision"]
-        or evidence.frame_id != expected["frame_id"]
-        or evidence.source_chart_id != expected["source_chart_id"]
-        or evidence.layer_result_id != expected["layer_result_id"]
-        or evidence.layer_evidence.evidence_id != expected["layer_evidence_id"]
-        or evidence.evidence_id != expected["evidence_id"]
-        or evidence.fidelity.certificate_id != expected["fidelity_certificate_id"]
-        or (
-            None
-            if evidence.projection_trace is None
-            else evidence.projection_trace.trace_id
+    state = _layer_curving_archive_state(composition, mesh, geometry, result, evidence)
+    if state != expected:
+        changed = sorted(
+            name
+            for name in set(state) | set(expected)
+            if state.get(name) != expected.get(name)
         )
-        != expected["trace_id"]
-        or (
-            None
-            if evidence.projection_trace is None
-            else evidence.projection_trace.chart_witness_rows.tolist()
+        raise ValueError(
+            f"Layer-curving cold restore differs from its writer evidence: {changed}."
         )
-        != expected["chart_witness_rows"]
-        or (
-            None
-            if evidence.projection_trace is None
-            else evidence.projection_trace.geometry_node_rows.tolist()
-        )
-        != expected["geometry_node_rows"]
-        or (
-            None
-            if evidence.projection_trace is None
-            else _exact_scalar_rows_for_archive(
-                evidence.projection_trace.target_reference_points
-            )
-        )
-        != expected["target_reference_points"]
-        or (None if mapped_trace is None else mapped_trace.trace_id)
-        != expected["mapped_trace_id"]
-        or (None if mapped_trace is None else mapped_trace.query_id)
-        != expected["mapped_query_id"]
-        or (None if mapped_trace is None else mapped_trace.geometry_node_rows.tolist())
-        != expected["mapped_geometry_node_rows"]
-        or (None if mapped_trace is None else mapped_trace.chart_witness_rows.tolist())
-        != expected["mapped_chart_witness_rows"]
-        or (
-            None
-            if mapped_trace is None
-            else _exact_scalar_rows_for_archive(mapped_trace.target_reference_points)
-        )
-        != expected["mapped_target_reference_points"]
-        or (
-            None
-            if mapped_trace is None
-            else _exact_scalar_rows_for_archive(mapped_trace.root_reference_points)
-        )
-        != expected["mapped_root_reference_points"]
-        or (
-            None
-            if mapped_trace is None
-            else _exact_scalar_rows_for_archive(mapped_trace.source_parameters)
-        )
-        != expected["mapped_source_parameters"]
-        or (None if mapped_trace is None else list(mapped_trace.source_chart_ids))
-        != expected["mapped_source_chart_ids"]
-        or (None if mapped_trace is None else list(mapped_trace.source_entity_ids))
-        != expected["mapped_source_entity_ids"]
-        or (
-            None
-            if mapped_trace is None
-            else [list(path) for path in mapped_trace.occurrence_paths]
-        )
-        != expected["mapped_occurrence_paths"]
-        or (
-            None
-            if mapped_trace is None
-            else np.asarray(mapped_trace.root_face_global_ids).tolist()
-        )
-        != expected["mapped_root_face_global_ids"]
-        or (
-            None
-            if mapped_trace is None
-            else np.asarray(mapped_trace.root_cell_global_ids).tolist()
-        )
-        != expected["mapped_root_cell_global_ids"]
-        or (
-            None
-            if mapped_trace is None
-            else np.asarray(mapped_trace.root_local_face_indices).tolist()
-        )
-        != expected["mapped_root_local_face_indices"]
-        or (
-            None
-            if mapped_trace is None
-            else np.asarray(mapped_trace.target_points).tolist()
-        )
-        != expected["mapped_target_points"]
-        or (
-            None
-            if mapped_trace is None
-            else np.asarray(mapped_trace.source_points).tolist()
-        )
-        != expected["mapped_source_points"]
-        or (
-            None
-            if mapped_trace is None
-            else np.asarray(mapped_trace.distance_lower_bounds).tolist()
-        )
-        != expected["mapped_distance_lower_bounds"]
-        or (
-            None
-            if mapped_trace is None
-            else np.asarray(mapped_trace.distance_upper_bounds).tolist()
-        )
-        != expected["mapped_distance_upper_bounds"]
-        or (None if mapped_trace is None else np.asarray(mapped_trace.normals).tolist())
-        != expected["mapped_normals"]
-        or (None if mapped_trace is None else np.asarray(mapped_trace.tangents).tolist())
-        != expected["mapped_tangents"]
-        or (None if mapped_trace is None else mapped_trace.column_identity.identity_id)
-        != expected["mapped_column_identity_id"]
-        or mapped_reference_map_bindings != expected["mapped_reference_map_bindings"]
-        or (
-            None
-            if evidence.implicit_root_trace is None
-            else evidence.implicit_root_trace.trace_id
-        )
-        != expected["implicit_trace_id"]
-        or evidence.implicit_map_witness_id != expected["implicit_map_witness_id"]
-        or evidence.chart_witness.witness_id != expected["chart_witness_id"]
-        or evidence.column_identity.identity_id != expected["column_identity_id"]
-        or evidence.chart_column_identity.identity_id
-        != expected["chart_column_identity_id"]
-        or evidence.chart_column_identity.row_count != expected["chart_column_row_count"]
-        or evidence.source_root_cell_ids.tolist() != expected["source_root_cell_ids"]
-        or [list(row) for row in evidence.source_piece_ids]
-        != expected["source_piece_ids"]
-        or evidence.column_identity.source_wall_cell_ids.tolist()
-        != expected["source_wall_cell_ids"]
-        or list(evidence.column_identity.front_row_identities)
-        != expected["front_row_identities"]
-        or (
-            None
-            if evidence.implicit_root_chart_witness is None
-            else evidence.implicit_root_chart_witness.witness_id
-        )
-        != expected["implicit_root_chart_witness_id"]
-        or (
-            None
-            if evidence.implicit_root_cell_vertex_global_ids is None
-            else np.asarray(evidence.implicit_root_cell_vertex_global_ids).tolist()
-        )
-        != expected["implicit_root_cell_vertex_global_ids"]
-    ):
-        raise ValueError("Layer-curving cold restore differs from its writer evidence.")
     evidence.require_current(mesh, geometry)
     print("layer-curving-evidence-cold-restored")
 
@@ -12669,7 +12569,8 @@ def _source_chart_rational_witness() -> SourceBoundaryChartWitness:
         reference_dimension=2,
         cell_global_ids=np.asarray((700,), dtype=np.int64),
         entity_global_ids=np.asarray((800,), dtype=np.int64),
-        local_entity_indices=np.asarray((0,), dtype=np.int32),
+        # A chart of the full reference dimension has no local boundary entity.
+        local_entity_indices=np.asarray((-1,), dtype=np.int32),
         target_reference_vertices=np.asarray(
             (((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),), dtype=np.float64
         ),
@@ -14653,10 +14554,10 @@ if __name__ == "__main__":
         _write_brep_curve_surface_lift(archive_directory)
     elif operation == "read-brep-curve-surface-lift":
         _read_brep_curve_surface_lift(archive_directory, json.loads(sys.argv[3]))
-    elif operation == "write-sphere-chamfer-isoparametric":
-        _write_sphere_chamfer_isoparametric_archive(archive_directory)
-    elif operation == "read-sphere-chamfer-isoparametric":
-        _read_sphere_chamfer_isoparametric_archive(
+    elif operation == "write-sphere-chamfer-conic-root":
+        _write_sphere_chamfer_conic_root_archive(archive_directory)
+    elif operation == "read-sphere-chamfer-conic-root":
+        _read_sphere_chamfer_conic_root_archive(
             archive_directory, json.loads(sys.argv[3])
         )
     elif operation == "write-parallel-cylinder-chamfer":
@@ -14749,7 +14650,7 @@ if __name__ == "__main__":
             "write-piecewise-region-occurrences, read-piecewise-region-occurrences, "
             "write-mapped-reference-boundary-query, read-mapped-reference-boundary-query, "
             "write-brep-curve-surface-lift, read-brep-curve-surface-lift, "
-            "write-sphere-chamfer-isoparametric, read-sphere-chamfer-isoparametric, "
+            "write-sphere-chamfer-conic-root, read-sphere-chamfer-conic-root, "
             "write-parallel-cylinder-chamfer, read-parallel-cylinder-chamfer, "
             "write-orthogonal-quadric-boolean, read-orthogonal-quadric-boolean, "
             "write-torus-exact-source, read-torus-exact-source, "

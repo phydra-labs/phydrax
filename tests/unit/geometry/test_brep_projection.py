@@ -34,6 +34,8 @@ from phydrax.geometry.brep._assembly import (
 from phydrax.geometry.brep._constructors import (
     brep_box,
     brep_planar_face,
+    brep_sphere,
+    brep_torus,
     BRepTessellationPolicy,
     PlanarProfile,
     ProfileLoop,
@@ -165,6 +167,86 @@ def test_brep_projection_scenario_1() -> None:
     assert np.asarray(
         projection.contains([2, 1, 1], [0, rim, rim], [1, 0, 2], [rim, corner, 0])
     ).tolist() == [True, True, False]
+
+
+def test_native_sphere_projects_interior_pole_seam_and_center_points() -> None:
+    # The native sphere is a revolved circle profile meeting the axis at its poles.
+    projection = phx.geometry.prepare_brep_projection(
+        brep_sphere(1.0, coordinate_contract=_CONTRACT)
+    )
+    query = np.asarray(
+        [
+            [0.3, 0.4, 0.5],
+            [-0.5, 0.0, 0.3],
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, -0.5],
+            [0.0, 0.6, 0.8],
+            [0.0, 0.0, 0.0],
+        ]
+    )
+    result = _project(projection, query, _FACE, 0)
+    radii = np.linalg.norm(query[:5], axis=1)
+    surface = query[:5] / radii[:, None]
+
+    assert np.asarray(result.status).tolist() == [
+        _STATUS.UNIQUE,
+        _STATUS.UNIQUE,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.NON_ISOLATED,
+    ]
+    np.testing.assert_allclose(result.points[:5], surface, atol=1e-12)
+    np.testing.assert_allclose(result.residuals, [*np.abs(radii - 1.0), 1.0], atol=1e-12)
+    # The oriented normal points out of the solid, also at the poles where the
+    # chart's tangent cross product vanishes.
+    np.testing.assert_allclose(result.normals[:5], surface, atol=1e-12)
+
+
+def test_native_torus_projects_interior_and_both_seam_points() -> None:
+    # A full torus face is one period in each direction of its doubly periodic chart.
+    projection = phx.geometry.prepare_brep_projection(
+        brep_torus(2.0, 0.5, coordinate_contract=_CONTRACT)
+    )
+    query = np.asarray(
+        [
+            [1.5, 0.0, 0.3],
+            [-1.0, -2.0, -0.4],
+            [0.0, 2.3, 0.2],
+            [-3.0, 0.0, 0.0],
+            [0.0, 3.0, 0.0],
+            [2.0, 0.0, 0.0],
+        ]
+    )
+    result = _project(projection, query, _FACE, 0)
+    planar = np.linalg.norm(query[:5, :2], axis=1)
+    tube_centers = np.column_stack(
+        (2.0 * query[:5, :2] / planar[:, None], np.zeros((5,)))
+    )
+    offsets = query[:5] - tube_centers
+    distances = np.linalg.norm(offsets, axis=1)
+    outward = offsets / distances[:, None]
+
+    # The angle seam is the profile's half-plane (+y) and the profile seam is
+    # the outer equator; the last surface point lies on both.
+    assert np.asarray(result.status).tolist() == [
+        _STATUS.UNIQUE,
+        _STATUS.UNIQUE,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.NON_ISOLATED,
+    ]
+    np.testing.assert_allclose(result.parameters[2, 0], 0.0, atol=1e-12)
+    np.testing.assert_allclose(result.parameters[3, 1], 0.0, atol=1e-12)
+    np.testing.assert_allclose(result.parameters[4], [0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(
+        result.points[:5], tube_centers + 0.5 * outward, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        result.residuals, [*np.abs(distances - 0.5), 0.5], atol=1e-12
+    )
+    np.testing.assert_allclose(result.normals[:5], outward, atol=1e-12)
 
 
 def test_brep_projection_scenario_2() -> None:

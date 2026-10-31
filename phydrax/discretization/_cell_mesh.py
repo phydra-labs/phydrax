@@ -1089,9 +1089,10 @@ def _rebuild_polyhedral_connectivity_from_stored(
                 cell_id = int(identifier)
                 if cell_id not in cell_rows:
                     raise ValueError("Polyhedral connectivity lost a standard cell row.")
+                # Dimension-qualified kinds (simplex:3) share their family's routes.
                 entries.append(
                     (
-                        block.cell_kind,
+                        reference_cell_topology(block.cell_kind).family,
                         np.asarray(block.vertices[row : row + 1], dtype=np.int32),
                     )
                 )

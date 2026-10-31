@@ -326,6 +326,32 @@ the cap deviation bound while constructing positive fan triangles. Periodic
 chart seams identify their equivalent endpoint vertices, so a singular chart
 does not create zero-area output cells or duplicate seam nodes.
 
+Chart triangulation shapes cells in parameters, and an anisotropic chart can
+map a well-shaped chart triangle to a physical sliver (a sphere chart away from
+its equator). Before each refinement round, an interior chart edge flips to the
+other diagonal of its convex chart quad when that raises the smaller physical
+minimum angle of the two cells. Trim edges, source-piece root-cell boundaries
+and pole fans never flip. This keeps boundary faces within the radius-edge bound
+that a tetrahedral fill must meet on them.
+
+A surface of revolution whose profile is an exact line perpendicular to the
+axis, with its radial offset along that line (a cylinder or cone cap, a flat
+annulus), is proved planar from its carrier alone. CAD tetrahedral filling
+declares the exact plane of such a patch on the PLC, and the volume chart
+witness charts its faces in that exact affine plane chart (chart ID
+`<face>#plane`). In the plane chart the rim circles are the trims, and the
+authored seam and pole are interior points. Region containment is proved there
+against the rim circles mapped exactly. Trim points take the curve and corner
+labels that the neighboring faces give the shared rim.
+
+Limitation: the cap surface itself is still meshed in its authored (angle,
+profile) chart with graded pole rings. A plane-chart triangulation cannot be
+stored in those authored rows: three rim vertices are collinear in
+(angle, profile), and triangles that span a large angle invert. Isotropic
+plane-chart surface meshing therefore needs explicit per-row chart identity in
+the surface chart records (`SurfaceSourceCharts`, `SurfaceChartWitness`), not an
+implicit rule that every consumer would have to re-derive.
+
 
 An empty `size_controls` tuple declares no physical size obligation. Routes
 whose discretization is already defined by authored sites, blocks, stations,
@@ -525,10 +551,19 @@ mixed `prism`/`tetrahedron` cells (transition pyramids optional) and use the
 `SIMPLEX` fill. Rim columns slide along the adjacent surfaces. A schedule
 whose fronts meet those surfaces before the collision policy can resolve them is
 refused with the colliding wall vertices and their locations, so choose
-thicknesses that are small relative to the surface size. Source fidelity covers
-every exterior facet: the grown cells keep their charts, and fixed cells and
-layer side strips take the closest-point charts of their source face. A column
-shared by two faces lies exactly on their common trim. The `wall` patch is only
+thicknesses that are small relative to the surface size. That refusal is a
+per-column quality predictor: each interior column ray stays below
+`proximity_fraction` of the sampled height at which it becomes nearer another
+boundary triangle than its own wall fan, so it depends on where the surface
+mesh places wall vertices near the rim. Soundness does not rest on it: every
+layer is accepted only after Bernstein validity and exact-predicate intersection
+of its cell faces against earlier layers, the wall, and obstacles (rim side
+sheets touching their adjacent plane are contact, not penetration), and the
+result then carries the global embedding and domain coverage certificates.
+Source fidelity covers every exterior facet: the grown cells keep their charts,
+and fixed cells and layer side strips take the closest-point charts of their
+source face. A column shared by two faces lies exactly on their common trim.
+The `wall` patch is only
 the exterior layer faces that lie on the wall. A side strip rising from rim edge
 `(a, b)` joins the `facet:` patch of the fixed core polygon holding the tops of
 the columns of `a` and `b`. Strips without such a unique polygon form the
@@ -768,19 +803,24 @@ contracts:
   determinant above its floor, source constraints preserved) and the size
   gate, and the affected cells' worst-first sorted scores strictly improve. An
   interior insertion either cones a circumsphere cavity to a candidate point
-  or, for a cell whose edits are otherwise exhausted, cones the closed ring of
-  one of its unconstrained edges to a point in the ring's kernel. The latter
-  removes a flat cell whose four vertices lie on a fixed boundary (two
-  constrained faces splitting a planar or slightly folded quad) without
-  moving the boundary: no flip can remove such a cell and no circumsphere
-  cavity contains it. The ring point is searched over the kernel in the
-  edit's own order (a cone passing the gates beats one that does not, then
-  the larger sorted score vector wins), since a point merely clear of the
-  ring faces can cone a nearly flat ring into worse or oversized cells. A
-  relocation must also make sufficient progress: at the first position where
-  its star's sorted scores change, the new score meets the target or closes at
-  least an eighth of that score's gap to the target (at least one quantum). A
-  cell's gap therefore shrinks geometrically rather than one quantum per move.
+  or, for a cell whose edits are otherwise exhausted, cones a kernel cavity to
+  a point in its kernel: the closed ring of one of the cell's unconstrained
+  edges, else the star of one of its vertices (a boundary vertex stays, held
+  by its constrained faces; the commit refuses a star whose removal would
+  drop a vertex, a constrained face or segment, or mix regions). These remove
+  a flat cell whose four vertices lie on a fixed boundary (two constrained
+  faces splitting a planar or slightly folded quad) without moving the
+  boundary: no flip can remove such a cell and no circumsphere cavity
+  contains it, and at a folded rim the ring of its single free edge may admit
+  no better cone while a vertex star does. The kernel point is searched in
+  the edit's own order (a cone passing the gates beats one that does not,
+  then the larger sorted score vector wins), since a point merely clear of
+  the cavity faces can cone a nearly flat cavity into worse or oversized
+  cells. A relocation must also make sufficient progress: at the first
+  position where its star's sorted scores change, the new score meets the
+  target or closes at least an eighth of that score's gap to the target (at
+  least one quantum). A cell's gap therefore shrinks geometrically rather than
+  one quantum per move.
 - **Precedence.** The determinant floor binds every edit. The size gate is
   relative to the cells an edit removes: no created cell may exceed its target
   by more than the largest excess (circumradius over target) among them, or at
