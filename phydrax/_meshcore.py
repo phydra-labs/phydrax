@@ -7585,10 +7585,13 @@ class TetMesh3D:
         minimum_relative_determinant: float = 0.0,
         sizes: object | None = None,
     ) -> TetMeshRun:
-        """Quality improvement with the size field as a hard gate for every edit.
+        """Quality improvement gated by the determinant floor and the size field.
 
-        ``sizes`` follows :meth:`refine` (``None`` keeps the retained field, e.g.
-        refinement's). The run reports its score quantum.
+        No edit creates a cell whose circumradius exceeds its size target by more
+        than the largest excess among the cells it removes (none where they were
+        within target), except one removing a degenerate cell. ``sizes`` follows
+        :meth:`refine` (``None`` keeps the retained field, e.g. refinement's). The
+        run reports its score quantum.
         """
         radius_edge = finite_real_scalar(radius_edge_bound, "radius_edge_bound")
         minimum_angle = finite_real_scalar(min_dihedral_degrees, "min_dihedral_degrees")
