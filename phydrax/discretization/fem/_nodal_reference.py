@@ -607,6 +607,7 @@ def _equilateral_shift_2d(
     return result[0], result[1]
 
 
+@cache
 def _warp_and_blend_barycentric(
     order: int,
     dimension: int,
@@ -863,10 +864,11 @@ def _reorder_tabulator_free_lagrange_data(
         return data
     source_nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     if source_nodes.ndim != 2 or source_nodes.shape[0] != len(data):
-        raise ValueError("Tabulator-free Lagrange nodes do not match canonical family data.")
+        raise ValueError(
+            "Tabulator-free Lagrange nodes do not match canonical family data."
+        )
     source_points = tuple(
-        tuple(Fraction.from_float(float(value)) for value in row)
-        for row in source_nodes
+        tuple(Fraction.from_float(float(value)) for value in row) for row in source_nodes
     )
     if len(set(source_points)) != len(source_points):
         raise ValueError("Tabulator-free Lagrange reference nodes are not unique.")
@@ -879,7 +881,9 @@ def _reorder_tabulator_free_lagrange_data(
             )
         exact_point = tuple(value for value in exact_values if value is not None)
         if len(exact_point) != source_nodes.shape[1] or exact_point in owner_rows:
-            raise ValueError("Canonical Lagrange basis nodes are not uniquely identifiable.")
+            raise ValueError(
+                "Canonical Lagrange basis nodes are not uniquely identifiable."
+            )
         owner_rows[exact_point] = owner_row
     if set(owner_rows) != set(source_points):
         raise ValueError(
