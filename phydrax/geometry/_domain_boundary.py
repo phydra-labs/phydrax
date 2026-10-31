@@ -620,6 +620,141 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             result.append((patch, tuple(exact_triangles)))
         return tuple(result)
 
+    def collapsed_pole_slivers(
+        self, patch: int, triangles: tuple[_Triangle2, ...], /
+    ) -> tuple[tuple[int, _Triangle2], ...]:
+        """Chart slivers that a target pole fan collapses onto one source corner.
+
+        A collapsed pole trim side maps to one physical corner. Between consecutive
+        chart points ``p, q`` of that side that share no target triangle, a pole fan
+        leaves the chart triangle ``(p, q, w)`` whose image degenerates to the mesh
+        edge from the pole to the fan apex ``w``. Its two other sides are target
+        boundary edges or source trim sides. Each sliver is returned with the target
+        row holding a pole-side edge to ``w``: that cell's chart preimage is its
+        affine triangle together with the sliver.
+        """
+        chart = _patch_chart_polygon(self.domain, patch)
+        if chart is None:
+            return ()
+        _, _, loops = chart
+        trim_sides = tuple(
+            (first, last)
+            for loop in loops
+            for first, last in zip(loop, (*loop[1:], loop[0]), strict=True)
+        )
+        edge_rows: dict[frozenset[_Point2], list[int]] = {}
+        neighbors: dict[_Point2, set[_Point2]] = {}
+        for row, triangle in enumerate(triangles):
+            for first, second in ((0, 1), (1, 2), (2, 0)):
+                start, stop = triangle[first], triangle[second]
+                edge_rows.setdefault(frozenset((start, stop)), []).append(row)
+                neighbors.setdefault(start, set()).add(stop)
+                neighbors.setdefault(stop, set()).add(start)
+
+        def on_segment(point: _Point2, start: _Point2, stop: _Point2, /) -> bool:
+            direction = (stop[0] - start[0], stop[1] - start[1])
+            offset = (point[0] - start[0], point[1] - start[1])
+            along = offset[0] * direction[0] + offset[1] * direction[1]
+            return (
+                offset[0] * direction[1] == offset[1] * direction[0]
+                and 0 <= along <= direction[0] ** 2 + direction[1] ** 2
+            )
+
+        def sliver_side(start: _Point2, stop: _Point2, /) -> bool:
+            rows = edge_rows.get(frozenset((start, stop)))
+            if rows is not None:
+                return len(rows) == 1
+            return any(
+                on_segment(start, first, last) and on_segment(stop, first, last)
+                for first, last in trim_sides
+            )
+
+        orientation = int(self.domain.patches[patch].orientation)
+        slivers: list[tuple[int, _Triangle2]] = []
+        for loop in self.domain.patches[patch].loops:
+            for use in loop:
+                if not isinstance(use, PatchPoleUse) or not isinstance(
+                    use.pcurve, (ExactLineCurve, LineCurve)
+                ):
+                    continue
+                start, stop = _line_endpoints(use)
+                direction = (stop[0] - start[0], stop[1] - start[1])
+                side = sorted(
+                    {
+                        point
+                        for point in (start, stop, *neighbors)
+                        if on_segment(point, start, stop)
+                    },
+                    key=lambda point: (
+                        (point[0] - start[0]) * direction[0]
+                        + (point[1] - start[1]) * direction[1]
+                    ),
+                )
+                side_points = set(side)
+                for first, second in zip(side[:-1], side[1:], strict=True):
+                    if frozenset((first, second)) in edge_rows:
+                        continue
+                    apexes = [
+                        apex
+                        for apex in neighbors.get(first, set())
+                        | neighbors.get(second, set())
+                        if apex not in side_points
+                        and sliver_side(first, apex)
+                        and sliver_side(second, apex)
+                    ]
+                    if len(apexes) != 1:
+                        continue
+                    apex = apexes[0]
+                    owners = edge_rows.get(frozenset((first, apex))) or edge_rows.get(
+                        frozenset((second, apex))
+                    )
+                    area = _signed_area2((first, second, apex))
+                    if not owners or not area:
+                        continue
+                    sliver = (
+                        (first, second, apex)
+                        if orientation * area > 0
+                        else (second, first, apex)
+                    )
+                    slivers.append((owners[0], sliver))
+        return tuple(slivers)
+
+    def pole_sliver_cap_bound(self, patch: int, sliver: _Triangle2, /) -> Fraction:
+        """Upper bound on the source-image diameter of one collapsed pole sliver.
+
+        The sliver contains its owner's pole chart corner, so every source point of
+        the sliver lies within this bound of that corner's exact source point.
+        """
+        from ._meshing_domain import _outward_surface_parameter_box
+        from ._source_interpolation import _fraction_float_interval
+
+        surface = self.domain.patches[patch].surface
+        lower = tuple(
+            _fraction_float_interval(min(point[axis] for point in sliver))[0]
+            for axis in range(2)
+        )
+        upper = tuple(
+            _fraction_float_interval(max(point[axis] for point in sliver))[1]
+            for axis in range(2)
+        )
+        bounds = np.asarray(
+            surface.bounding_box(_outward_surface_parameter_box(surface, lower, upper)),
+            dtype=np.float64,
+        )
+        if (
+            bounds.shape != (2, 3)
+            or np.any(~np.isfinite(bounds))
+            or np.any(bounds[0] > bounds[1])
+        ):
+            raise ValueError("Collapsed pole sliver has no finite ordered source box.")
+        widths = tuple(
+            Fraction(float(bounds[1, axis])) - Fraction(float(bounds[0, axis]))
+            for axis in range(3)
+        )
+        return fraction_sqrt_interval(
+            sum((width * width for width in widths), Fraction(0))
+        )[1]
+
     def boundary_chart_cover(self, /) -> SourceBoundaryChartCover:
         images: list[np.ndarray] = []
         deviations: list[np.ndarray] = []
