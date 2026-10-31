@@ -6582,6 +6582,13 @@ def _rebuild_finite_volume_runtime_state_archive_recipe(
     return restored
 
 
+def _canonical_dependencies(
+    dependencies: tuple[CompositionDependency, ...], /
+) -> tuple[CompositionDependency, ...]:
+    """Authored bindings in the canonical (entry_id, facet) order an entry stores."""
+    return tuple(sorted(dependencies, key=lambda item: (item.entry_id, item.facet)))
+
+
 def _rebuild_composition(value: object, /) -> Composition:
     if not isinstance(value, Composition):
         raise TypeError("value must be the Composition root type.")
@@ -7076,7 +7083,7 @@ def _rebuild_composition(value: object, /) -> Composition:
         ),
     )
     if any(
-        entries[entry_id].dependencies != dependencies
+        entries[entry_id].dependencies != _canonical_dependencies(dependencies)
         for entry_id, dependencies in expected_material_dependencies
     ):
         raise ValueError(
@@ -7188,7 +7195,8 @@ def _rebuild_layer_curving_composition(value: object, /) -> Composition:
         ),
     )
     if any(
-        entries[entry_id].dependencies != expected for entry_id, expected in dependencies
+        entries[entry_id].dependencies != _canonical_dependencies(expected)
+        for entry_id, expected in dependencies
     ):
         raise ValueError("Layer-curving result dependencies differ from endpoint owners.")
     values = {
