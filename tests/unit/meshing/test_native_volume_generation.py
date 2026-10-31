@@ -48,6 +48,7 @@ from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_sources import NativePlcSource
 from phydrax.meshing.providers._native_volume import (
     _organization,
+    _source_associations,
     prepare_native_plc_volume,
 )
 
@@ -1111,6 +1112,25 @@ def test_conforming_refinement_splits_declared_rotated_cube_faces_on_their_plane
         if len(facets) == 2
     }
     assert set(construction.segment_source_ids) == boundary_ids
+    # Plane points are facet-stratum vertices of their row's facet, with the
+    # facet's region sides and their nonzero rounding deviation.
+    vertex_association = _source_associations(source, construction)[0]
+    on_plane = np.flatnonzero(np.asarray(construction.witness_strata) == 3)
+    facets = np.asarray(construction.source_face_facets)[
+        np.asarray(construction.witness_entities)[on_plane]
+    ]
+    assert all(
+        vertex_association.source_roles[row] is GeometrySourceEntityRole.FACET
+        for row in on_plane.tolist()
+    )
+    assert [construction.vertex_source_ids[row] for row in on_plane.tolist()] == [
+        complex_.facet_ids[facet] for facet in facets.tolist()
+    ]
+    assert all(
+        vertex_association.source_region_sides[row] != (None, None)
+        for row in on_plane.tolist()
+    )
+    assert not vertex_association.exact
 
 
 def test_conforming_refinement_splits_declared_rotated_bipyramid_on_its_planes() -> None:

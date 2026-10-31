@@ -686,6 +686,83 @@ def test_declared_facet_plane_admits_records_and_refuses_boundary_vertices() -> 
         state.close()
 
 
+def _restored_tet_mesh(
+    arrays: TetMeshArrays, witness_parameters: np.ndarray
+) -> TetMesh3D:
+    return TetMesh3D(
+        arrays.points,
+        arrays.tetrahedra,
+        arrays.tetrahedron_regions,
+        arrays.faces,
+        arrays.face_sources,
+        arrays.segments,
+        arrays.segment_sources,
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
+        protection_radii=arrays.protection_radii,
+        protected_vertices=arrays.protected_vertices,
+        vertex_ids=arrays.vertex_ids,
+        cell_ids=arrays.cell_ids,
+        facet_ids=arrays.facet_ids,
+        face_orientations=arrays.facet_orientations,
+        segment_ids=arrays.segment_ids,
+        source=TetMeshSourceComplex(
+            arrays.source_points,
+            arrays.source_faces,
+            arrays.source_face_group_rows,
+            arrays.source_face_tolerances,
+            arrays.source_segments,
+            arrays.source_segment_group_rows,
+            arrays.source_segment_tolerances,
+            arrays.witness_strata,
+            arrays.witness_entities,
+            witness_parameters,
+            arrays.source_face_ids,
+            arrays.source_segment_ids,
+            arrays.source_face_planes,
+            arrays.source_face_plane_tolerances,
+        ),
+    )
+
+
+def test_plane_witnesses_and_records_round_trip_through_tet_mesh_arrays() -> None:
+    exact = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    state = _declared_unit_tet(exact, 0.0)
+    try:
+        state.refine(radius_edge_bound=2.0, sizes=np.full((4,), 0.2))
+        arrays = state.arrays()
+        records = state.plane_records()
+    finally:
+        state.close()
+    on_plane = arrays.witness_strata == 3
+    assert np.count_nonzero(on_plane) > 0
+    # A new mesh from the copied banks re-derives every plane witness
+    # deviation and the plane records from the declared plane alone.
+    restored = _restored_tet_mesh(arrays, arrays.witness_parameters)
+    try:
+        again = restored.arrays()
+        for name in (
+            "points",
+            "witness_strata",
+            "witness_entities",
+            "witness_parameters",
+            "witness_deviations",
+        ):
+            np.testing.assert_array_equal(getattr(again, name), getattr(arrays, name))
+        np.testing.assert_array_equal(again.source_face_planes, arrays.source_face_planes)
+        restored_records = restored.plane_records()
+        for name in records._fields:
+            np.testing.assert_array_equal(
+                getattr(restored_records, name), getattr(records, name)
+            )
+    finally:
+        restored.close()
+    # A plane witness moved off its carrier's plane point is refused.
+    tampered = arrays.witness_parameters.copy()
+    tampered[np.flatnonzero(on_plane)[0], 0] += 1e-3
+    with pytest.raises(ValueError, match="tet_mesh_create: invalid input"):
+        _restored_tet_mesh(arrays, tampered)
+
+
 def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
     mesh_points = UNIT_TET.copy()
     source_points = UNIT_TET.copy()
