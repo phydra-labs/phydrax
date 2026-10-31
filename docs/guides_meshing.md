@@ -658,6 +658,25 @@ contracts:
   bounded domain, so finitely many are inserted, and densely only near small
   features. A cell the guard blocks is reported as `REFUSED`; one whose
   circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
+- **Conforming boundary refinement.** Under `CONFORMING`, an encroached
+  subsegment is split at its midpoint and an encroached subfacet at its
+  circumcenter, each inserted with the Bowyer-Watson cavity of its subfacet
+  disk (Shewchuk's order: a subsegment the point encroaches is split
+  instead). Size-driven boundary splits come first; a facet edge whose
+  midpoint would encroach a subsegment splits that subsegment first. Every
+  split point is an exact source point: the mean of the edge endpoints' exact
+  source parameters when one source row carries both, otherwise the point is
+  located in whichever source triangle (or segment) of the face group holds
+  it. The carrier is that point's correctly rounded realization and the
+  insertion cavity is checked with the commit's exact predicate on exact
+  source positions. A face group is one declared PLC facet; without a
+  declared exact plane, the authored triangles of a rotated (not exactly
+  coplanar) facet stay the geometry and their shared edges stay segments.
+  Next to an acute input feature (two segments, a segment and a facet, or two
+  facets meeting below 90 degrees through the domain) a quality split point
+  within the feature's protected radius is not inserted, and a cell left for
+  that reason is reported as `INPUT_ANGLE` with the feature's apex vertex and
+  angle (`TetMeshUnmet.apex_vertex_ids`, `apex_angles`).
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
