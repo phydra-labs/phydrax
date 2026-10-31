@@ -72,6 +72,7 @@ from ..discretization.finite_volume._unstructured_motion import (
 from ..lifecycle import CompositionRebindReceipt
 from ..typing import checked
 from ._finite_volume import (
+    collective_branch,
     FiniteVolumeStageDecisionProvider,
     FiniteVolumeStageStateProvider,
     unstructured_ale_ssprk33_candidate,
@@ -393,7 +394,8 @@ def _prepare_owner_local_fv_stage_state_provider(
         )
 
         def exchange(local_state: Array, /) -> Array:
-            values = local_state[0]
+            # pmap strips the single local-device axis: one (capacity, c) block.
+            values = local_state
             rank = jax.lax.axis_index(stage_axis)
             for (
                 pair,
@@ -431,7 +433,7 @@ def _prepare_owner_local_fv_stage_state_provider(
                     lambda current: current,
                     values,
                 )
-            return values[None, ...]
+            return values
 
         mapped = jax.pmap(
             exchange,
@@ -1190,13 +1192,15 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     ),
                 )
             )
+            # Every collective traced into one advance program must name the
+            # same device mesh axis, so the providers share the stage axis.
             owner_local_decision_provider = _owner_local_global_decision_provider(
                 owner_local_group,
-                axis_name=f"{owner_axis}_decisions",
+                axis_name=f"{owner_axis}_stage",
             )
             owner_local_scalar_min_provider = _owner_local_global_scalar_min_provider(
                 owner_local_group,
-                axis_name=f"{owner_axis}_scalar_min",
+                axis_name=f"{owner_axis}_stage",
             )
         if stage_state_provider is not None:
             if not isinstance(stage_state_provider, FiniteVolumeStageStateProvider):
@@ -2182,6 +2186,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise TypeError(
                 "Restored owner-local FV geometry requires unstructured dynamics."
             )
+        authority_error: str | None = None
         try:
             _require_owner_local_fv_geometry_current(
                 owner_view,
@@ -7129,7 +7134,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 stage_state_provider=self.stage_state_provider,
                 stage_decision_provider=self.owner_local_decision_provider,
             )
-            candidate = jax.lax.cond(
+            candidate = collective_branch(
                 initial_valid,
                 lambda _: unstructured_ssprk33_content_candidate(
                     dynamics,
@@ -7146,7 +7151,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     cfl=self.policy.cfl,
                 ),
                 lambda _: zero_candidate,
-                operand=None,
             )
             if retry == 0:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals
@@ -7408,7 +7412,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     precheck_cfl_valid
                 )
             evaluate_physics = initial_valid & metrics_success & precheck_cfl_valid
-            candidate = jax.lax.cond(
+            if self.owner_local_decision_provider is not None:
+                evaluate_physics = self.owner_local_decision_provider(evaluate_physics)
+            candidate = collective_branch(
                 evaluate_physics,
                 lambda _: unstructured_ssprk33_content_candidate(
                     dynamics,
@@ -7426,7 +7432,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     stage_decision_provider=self.owner_local_decision_provider,
                 ),
                 lambda _: zero_candidate,
-                operand=None,
             )
             if retry == 0:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals

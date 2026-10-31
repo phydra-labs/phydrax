@@ -3191,10 +3191,14 @@ def _migrate_owner_local_periodic_delaunay_data(
             }
             cell_payloads_by_owner[target_owner].append(record)
             for vertex in vertex_payloads:
-                source_ids = {vertex["source_id"]}
+                # Adapted vertices are self-keyed; their source sites are the
+                # roots of their cumulative coordinate ancestry.
                 ancestry = vertex["coordinate_ancestry"]
-                if ancestry is not None:
-                    source_ids.update(ancestry["source_ids"])
+                source_ids = (
+                    {vertex["source_id"]}
+                    if ancestry is None
+                    else set(ancestry["source_ids"])
+                )
                 for source_id in source_ids:
                     if source_id not in source_point_payloads_by_id:
                         raise ValueError(
@@ -3337,10 +3341,12 @@ def _migrate_owner_local_periodic_delaunay_data(
                         "Graph migration received conflicting quotient vertices."
                     )
                 vertex_records[vertex["vertex_id"]] = vertex
-                source_ids = {vertex["source_id"]}
                 ancestry = vertex["coordinate_ancestry"]
-                if ancestry is not None:
-                    source_ids.update(ancestry["source_ids"])
+                source_ids = (
+                    {vertex["source_id"]}
+                    if ancestry is None
+                    else set(ancestry["source_ids"])
+                )
                 if not source_ids.issubset(source_point_records):
                     raise ValueError(
                         "Graph migration omitted an exact coordinate ancestry root."
@@ -3389,6 +3395,7 @@ def _migrate_owner_local_periodic_delaunay_data(
     try:
         if any(
             int(source_id) not in source_point_records
+            and int(source_id) not in vertex_records
             for cell in cell_records.values()
             for source_id in cell["key_source_ids"]
         ):

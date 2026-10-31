@@ -2391,6 +2391,8 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     target_connectivity_candidate = successor_connectivity.reregister(
         {receptor_name: repartitioned_owner_assembly.part(receptor_name)},
         successor_specs=successor_specs,
+        execution_group=group,
+        axis_name="owner_local_fv_repartition_reregister",
     )
     target_field_transfer = prepare_overset_field_transfer(
         target_connectivity_candidate,
@@ -2807,6 +2809,60 @@ def _finite_volume_archive_boundary_scope(
     if not boundary_ids:
         return None
     return view.scope(facet_dimension, np.asarray(boundary_ids, dtype=np.int64))
+
+
+def _finite_volume_archive_target_receptor_spec(
+    source_spec: Any, target_part: Any, execution_group: Any, /
+) -> Any:
+    """Rebind a receptor spec across a repartition through its global scope.
+
+    Rank-local boundary scopes name this rank's resident facets; after graph
+    migration the same global facets live on their new owners, so the union of
+    every rank's source facets is intersected with the target resident facets.
+    """
+    from phydrax.meshing._distribution import _owner_group_allgather
+
+    boundary = source_spec.boundary
+    local_ids = (
+        np.zeros((0,), dtype=np.int64)
+        if boundary is None
+        else np.asarray(boundary.entity_ids, dtype=np.int64)
+    )
+    counts = np.asarray(
+        _owner_group_allgather(
+            np.asarray((local_ids.size,), dtype=np.int64),
+            execution_group,
+            "fv_archive_target_boundary_counts",
+        ),
+        dtype=np.int64,
+    ).reshape((-1,))
+    width = max(int(np.max(counts)), 1)
+    padded = np.full((width,), -1, dtype=np.int64)
+    padded[: local_ids.size] = local_ids
+    rows = np.asarray(
+        _owner_group_allgather(padded, execution_group, "fv_archive_target_boundary_ids"),
+        dtype=np.int64,
+    ).reshape((-1, width))
+    global_ids = {int(value) for value in rows.reshape(-1).tolist() if value >= 0}
+    view = target_part.carrier
+    facet_dimension = view.topological_dimension - 1
+    _, facet_ids = view.entity_binding(facet_dimension)
+    resident = np.asarray(
+        sorted(
+            int(identifier)
+            for identifier in np.asarray(facet_ids, dtype=np.int64).tolist()
+            if int(identifier) in global_ids
+        ),
+        dtype=np.int64,
+    )
+    return OversetPartSpec(
+        source_spec.part_name,
+        boundary=(
+            None if resident.size == 0 else target_part.scope(facet_dimension, resident)
+        ),
+        priority=source_spec.priority,
+        owner_rank=source_spec.owner_rank,
+    )
 
 
 def _finite_volume_archive_overset_part_spec(value: Any, /) -> Any:
@@ -3376,19 +3432,23 @@ def _finite_volume_archive_build_context(
         stored_target_spec = _finite_volume_archive_overset_part_spec(
             context.target_overset_specs[0]
         )
-        derived_target_spec = source_receptor_spec.rebound(target_part)
+        derived_target_spec = _finite_volume_archive_target_receptor_spec(
+            source_receptor_spec, target_part, execution_group
+        )
         target_overset_spec = _finite_volume_archive_overset_part_spec(
             derived_target_spec
         )
         if stored_target_spec.spec_id != target_overset_spec.spec_id:
             raise ValueError("Stored target overset spec differs from owner replay.")
     else:
-        target_overset_spec = source_overset_specs[
-            tuple(spec.part_name for spec in source_overset_specs).index(receptor_name)
-        ].rebound(target_part)
+        target_overset_spec = _finite_volume_archive_target_receptor_spec(
+            source_receptor_spec, target_part, execution_group
+        )
     target_candidate = source_connectivity.reregister(
         {receptor_name: target_part},
         successor_specs={receptor_name: target_overset_spec},
+        execution_group=execution_group,
+        axis_name=f"{context.owner_local_axis_name}_target_reregister",
     )
     target_transfer = prepare_overset_field_transfer(
         target_candidate, local_reconstructions, context.field_name
@@ -3396,7 +3456,7 @@ def _finite_volume_archive_build_context(
     target_connectivity = target_transfer.prepare_owner_local_exchange(
         coefficient_ids,
         execution_group,
-        source_views,
+        {part.name: part.carrier for part in target_candidate.assembly.parts},
     ).connectivity
     target_view = target_connectivity.assembly.part(receptor_name).carrier
     if not isinstance(target_view, OwnerLocalCellGeometry):
