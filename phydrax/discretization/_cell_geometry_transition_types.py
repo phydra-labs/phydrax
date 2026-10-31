@@ -14,6 +14,7 @@ from .._validation import finite_real_scalar
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import parse
 from ._cell_geometry import (
+    _quotient_chart_lift,
     CellGeometryElement,
     CellGeometrySpec,
     CellVertexGeometryElement,
@@ -290,6 +291,7 @@ def _geometry_map_expressions(
         elements, routes, _ = geometry.resolve(mesh)
     else:
         elements, routes = resolved
+    lift = _quotient_chart_lift(geometry, mesh, routes)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         rows = np.flatnonzero(
             np.asarray(block.global_ids, dtype=np.int64) == int(cell_global_id)
@@ -302,7 +304,10 @@ def _geometry_map_expressions(
             )
         local_row = int(rows[0])
         basis = coordinate_effective_basis(element, cell_row=local_row)
-        coefficients = geometry.source_coordinates(np.asarray(route)[local_row])
+        route_rows = np.asarray(route)[local_row]
+        coefficients = (
+            geometry.source_coordinates(route_rows) if lift is None else lift(route_rows)
+        )
         if len(basis) != len(coefficients):
             raise ValueError(
                 "Coordinate basis and exact source coefficients are misaligned."

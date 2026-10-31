@@ -1298,9 +1298,12 @@ def test_periodic_native_bisection_uses_one_orbit_locked_edge_plan() -> None:
     source_distribution = prepare_mesh_distribution(
         _periodic_part(mesh), policy=distribution_policy
     )
+    # The target's non-binary64 bisection midpoints are canonical roundings of
+    # exact quotient-chart translates: it is published with its exact vertex bank,
+    # so the certified adaptation result (not a re-certified bare mesh) is the part.
     distribution_transition = prepare_distribution_transition(
         source_distribution,
-        _periodic_part(target),
+        MeshPart("skew-periodic", result.target),
         lineage,
         policy=distribution_policy,
     )

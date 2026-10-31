@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
 from itertools import product
 from math import comb
@@ -227,6 +227,83 @@ def _capture_exact_coordinate_bank(
                 "Exact source coordinates do not match the execution coefficient shadows."
             )
     return bank
+
+
+def _quotient_chart_lift(
+    geometry: CellGeometrySpec,
+    mesh: CellMesh,
+    routes: Sequence[ArrayLike],
+    /,
+) -> Callable[[ArrayLike], CoordinateSourceBank] | None:
+    """Exact lifted-vertex rows of a periodic vertex-indexed carrier, or ``None``.
+
+    Without an admitted exact bank, a periodic quotient's exact vertex is its
+    root's binary64 position translated exactly by its winding (the quotient
+    chart). Each lifted binary64 row must be the canonical rounding of that
+    translate, so exact maps never mix independently rounded deck images.
+    """
+    topology = mesh.periodic_topology
+    if (
+        topology is None
+        or geometry.exact_coordinate_bank is not None
+        or topology.coordinate_source_map_id is not None
+    ):
+        return None
+    points = np.asarray(geometry.coordinates, dtype=np.float64)
+    if points.shape != tuple(mesh.coordinates.shape) or not np.array_equal(
+        points, np.asarray(mesh.coordinates, dtype=np.float64)
+    ):
+        return None
+    if len(routes) != len(mesh.blocks) or any(
+        not np.array_equal(np.asarray(route), np.asarray(block.vertices))
+        for route, block in zip(routes, mesh.blocks, strict=True)
+    ):
+        return None
+    from ._periodic_exact import exact_periodic_element
+
+    roots = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    transforms: dict[tuple[int, ...], Any] = {}
+    lifted: dict[int, tuple[Fraction, ...]] = {}
+
+    def lift(indices: ArrayLike, /) -> CoordinateSourceBank:
+        rows = np.asarray(indices, dtype=np.int64)
+        if rows.ndim != 1 or np.any(rows < 0) or np.any(rows >= points.shape[0]):
+            raise IndexError("Quotient-chart coordinate rows lie outside the carrier.")
+        result = []
+        for value in rows.tolist():
+            row = int(value)
+            exact = lifted.get(row)
+            if exact is None:
+                key = tuple(int(item) for item in shifts[row])
+                matrix = transforms.get(key)
+                if matrix is None:
+                    matrix = exact_periodic_element(topology.cell, shifts[row])
+                    transforms[key] = matrix
+                base = tuple(Fraction(float(item)) for item in points[int(roots[row])])
+                base = base + (Fraction(1),)
+                exact = tuple(
+                    sum(
+                        (
+                            matrix[axis][column] * base[column]
+                            for column in range(len(base))
+                        ),
+                        Fraction(0),
+                    )
+                    for axis in range(points.shape[1])
+                )
+                if tuple(float(item) for item in exact) != tuple(
+                    float(item) for item in points[row]
+                ):
+                    raise ValueError(
+                        "Periodic lifted coordinates are not canonical roundings of their "
+                        "quotient-chart translates."
+                    )
+                lifted[row] = exact
+            result.append(exact)
+        return tuple(result)
+
+    return lift
 
 
 class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
@@ -3244,7 +3321,8 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             raise TypeError("cell_global_ids must be an integer vector.")
         if len(reference_points) != identifiers.size:
             raise ValueError("Exact reference point rows must align with cell IDs.")
-        source_bank = self.source_coordinates()
+        lift = _quotient_chart_lift(self, mesh, routes)
+        source_bank = self.source_coordinates() if lift is None else ()
         row_by_cell: dict[int, tuple[int, int]] = {}
         for block_index, block in enumerate(mesh.blocks):
             for local_row, identifier in enumerate(
@@ -3308,7 +3386,11 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 )
             pyramid_target = reference_cell_topology(element.cell_kind).name == "pyramid"
             route = np.asarray(routes[block_index], dtype=np.int64)[local_row]
-            coefficients = tuple(source_bank[int(index)] for index in route)
+            coefficients = (
+                tuple(source_bank[int(index)] for index in route)
+                if lift is None
+                else lift(route)
+            )
             basis = coordinate_effective_basis(element, cell_row=local_row)
             if len(basis) != len(coefficients):
                 raise ValueError(

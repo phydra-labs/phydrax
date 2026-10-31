@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Sequence
+from typing import Sequence, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,6 +14,10 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked
 from ._exact_algebraic_geometry import ExactScalar, RadicalElement
+
+
+if TYPE_CHECKING:
+    from ._periodic_exact import PeriodicMeshIdentification
 
 
 def _token(value: ExactScalar, /) -> tuple[object, ...]:
@@ -84,16 +88,23 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
                 for entity in entities
             )
             or any(
-                any(not isinstance(part, str) or not part or part != part.strip() for part in path)
+                any(
+                    not isinstance(part, str) or not part or part != part.strip()
+                    for part in path
+                )
                 for path in occurrences
             )
         ):
-            raise ValueError("Exact PLC coordinate rows and source identities must align.")
+            raise ValueError(
+                "Exact PLC coordinate rows and source identities must align."
+            )
         rounded = np.asarray(
             [[float(value) for value in row] for row in exact], dtype=np.float64
         )
         if not np.all(np.isfinite(rounded)):
-            raise ValueError("Exact PLC coordinates must have finite binary64 execution views.")
+            raise ValueError(
+                "Exact PLC coordinates must have finite binary64 execution views."
+            )
         for row in exact:
             for value in row:
                 _token(value)
@@ -129,9 +140,72 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
             rows = np.arange(len(self.exact_coordinates), dtype=np.int64)
         else:
             rows = np.asarray(indices, dtype=np.int64)
-            if rows.ndim != 1 or np.any(rows < 0) or np.any(rows >= len(self.exact_coordinates)):
-                raise IndexError("PLC coordinate source index lies outside the exact vertex bank.")
+            if (
+                rows.ndim != 1
+                or np.any(rows < 0)
+                or np.any(rows >= len(self.exact_coordinates))
+            ):
+                raise IndexError(
+                    "PLC coordinate source index lies outside the exact vertex bank."
+                )
         return tuple(self.exact_coordinates[int(row)] for row in rows)
+
+    def require_periodic_lift(
+        self,
+        coordinates: ArrayLike,
+        cell: PeriodicMeshIdentification,
+        representatives: ArrayLike,
+        shifts: ArrayLike,
+        /,
+    ) -> None:
+        """Prove exact deck action on the bank and its canonical binary64 shadow.
+
+        Every lifted exact row is its root's exact row translated exactly by the
+        row's winding; the execution coordinates are the canonical roundings.
+        """
+        from ._periodic_exact import exact_periodic_element, identification_orders
+
+        points = np.asarray(coordinates, dtype=np.float64)
+        exact = self.exact_coordinates
+        if points.shape != (len(exact), len(exact[0])) or not np.array_equal(
+            points, np.asarray(self.rounded_vertices)
+        ):
+            raise ValueError(
+                "Exact periodic PLC coordinates do not match their canonical binary64 shadows."
+            )
+        roots = np.asarray(representatives)
+        exponents = np.asarray(shifts)
+        rank = len(identification_orders(cell))
+        if (
+            roots.shape != (points.shape[0],)
+            or roots.dtype.kind not in "iu"
+            or exponents.shape != (points.shape[0], rank)
+            or exponents.dtype.kind not in "iu"
+        ):
+            raise ValueError("Exact periodic PLC orbit rows are malformed.")
+        dimension = points.shape[1]
+        transforms: dict[tuple[int, ...], tuple[tuple[Fraction, ...], ...]] = {}
+        for row, root in enumerate(roots.astype(np.int64).tolist()):
+            key = tuple(int(value) for value in exponents[row])
+            matrix = transforms.get(key)
+            if matrix is None:
+                matrix = exact_periodic_element(cell, exponents[row])
+                transforms[key] = matrix
+            base = tuple(exact[int(root)]) + (Fraction(1),)
+            expected = tuple(
+                sum(
+                    (
+                        matrix[axis][column] * base[column]
+                        for column in range(dimension + 1)
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(dimension)
+            )
+            if expected != tuple(exact[row]):
+                raise ValueError(
+                    "Exact PLC coordinates violate their declared periodic deck action."
+                )
 
     @classmethod
     def from_stored_fields(
@@ -150,7 +224,9 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
         if rebuilt.source_map_id != value.source_map_id or not np.array_equal(
             np.asarray(rebuilt.rounded_vertices), np.asarray(value.rounded_vertices)
         ):
-            raise ValueError("Stored exact PLC coordinate source does not reproduce its source leaves.")
+            raise ValueError(
+                "Stored exact PLC coordinate source does not reproduce its source leaves."
+            )
         return rebuilt
 
 
