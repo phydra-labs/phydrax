@@ -4251,10 +4251,6 @@ def _revolution_normal_direction(
     return direction
 
 
-# Halvings of a closed-form chart cell whose normal bound straddles the limit.
-_CLOSED_FORM_NORMAL_SPLITS = 4
-
-
 def _closed_form_normal_deviation(
     surface: AbstractSurfacePatch,
     orientation: int,
@@ -4270,10 +4266,12 @@ def _closed_form_normal_deviation(
     closed-form direction stays regular there. Other carriers return ``None``.
 
     A cell's bounding box encloses up to twice its area, and the box enclosure
-    of the direction widens with it. While a bound straddles ``limit`` the cell
-    is split at its edge midpoints into four exact chart triangles: their union
-    is the cell, so the largest child bounds still enclose its deviation, with a
-    box overestimate halved per split.
+    of the direction widens with it. While a piece's bound straddles ``limit``
+    it is split at its edge midpoints into four exact chart triangles whose
+    union is the piece, halving its box overestimate. Splitting stops when every
+    piece is decided, when a piece's lower bound exceeds the limit (the cell's
+    deviation then exceeds it), or when a piece's edge midpoints round onto
+    its corners in binary64, so its chart box can no longer shrink.
     """
     from ._meshing_domain import _PlacedSurfacePatch
 
@@ -4342,16 +4340,7 @@ def _closed_form_normal_deviation(
             source_cross, target_cross, cosine[0]
         )
 
-    def refine(triangle: Triangle2, splits: int, /) -> tuple[Fraction, Fraction] | None:
-        evidence = bound(triangle)
-        if (
-            evidence is None
-            or limit is None
-            or splits == 0
-            or evidence[1] <= limit
-            or evidence[0] > limit
-        ):
-            return evidence
+    def split(triangle: Triangle2, /) -> tuple[Triangle2, ...] | None:
         first, second, third = triangle
 
         def midpoint(start: Point2, end: Point2, /) -> Point2:
@@ -4362,25 +4351,52 @@ def _closed_form_normal_deviation(
             midpoint(second, third),
             midpoint(third, first),
         )
-        children = tuple(
-            refine(child, splits - 1)
-            for child in (
-                (first, near, far),
-                (near, second, middle),
-                (far, middle, third),
-                (near, middle, far),
+        if all(
+            (float(point[0]), float(point[1]))
+            in ((float(start[0]), float(start[1])), (float(end[0]), float(end[1])))
+            for point, start, end in (
+                (near, first, second),
+                (middle, second, third),
+                (far, third, first),
             )
-        )
-        if any(child is None for child in children):
-            return evidence
-        resolved = tuple(child for child in children if child is not None)
-        # Each child's lower bound is attained inside the cell.
+        ):
+            return None
         return (
-            max(evidence[0], max(child[0] for child in resolved)),
-            min(evidence[1], max(child[1] for child in resolved)),
+            (first, near, far),
+            (near, second, middle),
+            (far, middle, third),
+            (near, middle, far),
         )
 
-    return refine(uv_triangle, _CLOSED_FORM_NORMAL_SPLITS)
+    evidence = bound(uv_triangle)
+    if evidence is None or limit is None or evidence[1] <= limit or evidence[0] > limit:
+        return evidence
+    # Every piece's lower bound is attained inside the cell; the cell's upper
+    # bound is the largest over a partition of the cell into pieces.
+    lower = evidence[0]
+    settled_upper = Fraction(0)
+    pending = [(uv_triangle, evidence)]
+    while pending:
+        following: list[tuple[Triangle2, tuple[Fraction, Fraction]]] = []
+        for piece, piece_evidence in pending:
+            children = split(piece)
+            child_evidence = (
+                None if children is None else tuple(bound(child) for child in children)
+            )
+            if children is None or child_evidence is None or None in child_evidence:
+                settled_upper = max(settled_upper, piece_evidence[1])
+                continue
+            for child, child_bound in zip(children, child_evidence, strict=True):
+                assert child_bound is not None
+                lower = max(lower, child_bound[0])
+                if child_bound[0] > limit:
+                    return lower, evidence[1]
+                if child_bound[1] <= limit:
+                    settled_upper = max(settled_upper, child_bound[1])
+                else:
+                    following.append((child, child_bound))
+        pending = following
+    return lower, min(evidence[1], settled_upper)
 
 
 def _normal_deviation_for_cell(
