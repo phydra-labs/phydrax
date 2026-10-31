@@ -338,6 +338,55 @@ def test_bisection_scenario_3() -> None:
     assert first.hierarchy.hierarchy_id == second.hierarchy.hierarchy_id
 
 
+def test_uniform_barycentric_subdivision_coarsens_back_to_the_source() -> None:
+    points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
+    source = _certified(
+        CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
+    )
+    uniform = BisectionCompatibility.UNIFORM_REFINEMENT
+    refined = _adapt(source, (0,), compatibility=uniform)
+    hierarchy = refined.hierarchy
+    np.testing.assert_array_equal(
+        np.asarray(hierarchy.subdivision_parent_ids), np.sort(_cell_ids(source.mesh))
+    )
+    assert np.asarray(hierarchy.subdivision_child_ids).shape == (2, 6)
+    # Children of one source cell alone cannot undo its subdivision: the shared
+    # edge midpoint still bounds the other cell's children.
+    one_side = np.asarray(hierarchy.subdivision_child_ids)[1]
+    partial = _adapt(
+        refined.target,
+        (),
+        np.intersect1d(_cell_ids(refined.target.mesh), one_side),
+        hierarchy=hierarchy,
+        compatibility=uniform,
+    )
+    assert np.asarray(partial.hierarchy.subdivision_parent_ids).size == 2
+    coarsened = _adapt(
+        refined.target,
+        (),
+        np.sort(_cell_ids(refined.target.mesh)),
+        hierarchy=hierarchy,
+        compatibility=uniform,
+    )
+    assert coarsened.target.mesh.topology_id == source.mesh.topology_id
+    np.testing.assert_array_equal(
+        np.asarray(coarsened.target.mesh.coordinates), np.asarray(source.mesh.coordinates)
+    )
+    restored = coarsened.hierarchy
+    assert np.asarray(restored.subdivision_parent_ids).size == 0
+    assert np.asarray(restored.record_parent_ids).size == 0
+    np.testing.assert_array_equal(np.asarray(restored.tags), np.zeros((2,)))
+    with pytest.raises(ValueError, match="UNIFORM_REFINEMENT"):
+        _adapt(coarsened.target, (0,), hierarchy=restored)
+    again = _adapt(coarsened.target, (0,), hierarchy=restored, compatibility=uniform)
+    assert again.evidence.uniform_refinement_applied
+    assert np.asarray(again.hierarchy.subdivision_parent_ids).size == 2
+    _assert_conforming(again.target.mesh, 3.5)
+    assert not np.intersect1d(
+        _cell_ids(again.target.mesh), _cell_ids(refined.target.mesh)
+    ).size
+
+
 def test_uniform_barycentric_refinement_keeps_exact_reference_ancestry() -> None:
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     mesh = CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))

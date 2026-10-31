@@ -16,11 +16,11 @@ from phydrax.discretization import (
     certify_cell_geometry_validity,
 )
 from phydrax.discretization._cell_complex import PolygonalConnectivity
+from phydrax.discretization._cell_geometry import _coordinate_coefficient_identity
 from phydrax.discretization._cell_mesh import SimplicialConnectivity
+from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import lagrange_element
-from phydrax.discretization._cell_geometry import _coordinate_coefficient_identity
-from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.discretization.fem._reference import (
     FiniteElementSpec,
     lagrange_reference_node_data,
@@ -67,10 +67,14 @@ def _annulus() -> CellMesh:
     )
     triangles = np.asarray(
         (
-            (0, 1, 5), (0, 5, 4),
-            (1, 2, 6), (1, 6, 5),
-            (2, 3, 7), (2, 7, 6),
-            (3, 0, 4), (3, 4, 7),
+            (0, 1, 5),
+            (0, 5, 4),
+            (1, 2, 6),
+            (1, 6, 5),
+            (2, 3, 7),
+            (2, 7, 6),
+            (3, 0, 4),
+            (3, 4, 7),
         )
     )
     return CellMesh.from_triangles(points, triangles)
@@ -89,9 +93,12 @@ def _triangular_annulus() -> CellMesh:
     )
     triangles = np.asarray(
         (
-            (0, 1, 4), (0, 4, 3),
-            (1, 2, 5), (1, 5, 4),
-            (2, 0, 3), (2, 3, 5),
+            (0, 1, 4),
+            (0, 4, 3),
+            (1, 2, 5),
+            (1, 5, 4),
+            (2, 0, 3),
+            (2, 3, 5),
         )
     )
     return CellMesh.from_triangles(points, triangles)
@@ -100,17 +107,27 @@ def _triangular_annulus() -> CellMesh:
 def _interior_vertex_grid() -> CellMesh:
     points = np.asarray(
         (
-            (0.0, 0.0), (1.0, 0.0), (2.0, 0.0),
-            (0.0, 1.0), (1.0, 1.0), (2.0, 1.0),
-            (0.0, 2.0), (1.0, 2.0), (2.0, 2.0),
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (2.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 1.0),
+            (2.0, 1.0),
+            (0.0, 2.0),
+            (1.0, 2.0),
+            (2.0, 2.0),
         )
     )
     triangles = np.asarray(
         (
-            (0, 1, 4), (0, 4, 3),
-            (1, 2, 5), (1, 5, 4),
-            (3, 4, 7), (3, 7, 6),
-            (4, 5, 8), (4, 8, 7),
+            (0, 1, 4),
+            (0, 4, 3),
+            (1, 2, 5),
+            (1, 5, 4),
+            (3, 4, 7),
+            (3, 7, 6),
+            (4, 5, 8),
+            (4, 8, 7),
         )
     )
     return CellMesh.from_triangles(points, triangles)
@@ -127,9 +144,7 @@ def _concave_l() -> CellMesh:
             (0.0, 2.0),
         )
     )
-    triangles = np.asarray(
-        ((0, 1, 3), (1, 2, 3), (0, 3, 5), (3, 4, 5))
-    )
+    triangles = np.asarray(((0, 1, 3), (1, 2, 3), (0, 3, 5), (3, 4, 5)))
     return CellMesh.from_triangles(points, triangles)
 
 
@@ -148,6 +163,7 @@ def _area(mesh: CellMesh) -> float:
             / 2.0
         )
     )
+
 
 def _boundary_edge_count(mesh: CellMesh) -> int:
     counts: dict[tuple[int, int], int] = {}
@@ -192,9 +208,9 @@ def test_cross_field_recombination_changes_topology_and_retains_exact_ancestry()
     fractions = np.asarray(dual.source_edge_parameter_numerators, dtype=np.int64)[
         mapped_source_edges
     ]
-    denominators = np.asarray(
-        dual.source_edge_parameter_denominators, dtype=np.int64
-    )[mapped_source_edges]
+    denominators = np.asarray(dual.source_edge_parameter_denominators, dtype=np.int64)[
+        mapped_source_edges
+    ]
     assert np.all(denominators > 0)
     assert np.all(fractions <= denominators)
     assert np.any(denominators == 2)
@@ -284,9 +300,6 @@ def test_feature_guided_quads_preserve_a_multiply_connected_domain() -> None:
     assert result.boundary_vertices.sum() == 8
 
 
-
-
-
 def test_feature_guided_layout_enforces_interior_regular_valence() -> None:
     source = _interior_vertex_grid()
     field = prepare_surface_cross_field(source)
@@ -306,9 +319,7 @@ def test_feature_guided_layout_enforces_interior_regular_valence() -> None:
 def test_feature_guided_quads_preserve_a_concave_source_domain() -> None:
     source = _concave_l()
     field = prepare_surface_cross_field(source)
-    result = extract_surface_quads(
-        source, cross_field=field, maximum_field_error=1.5
-    )
+    result = extract_surface_quads(source, cross_field=field, maximum_field_error=1.5)
     topology = result.mesh.topology
 
     assert result.mesh.connectivity.cell_count == 2
@@ -334,6 +345,55 @@ def test_cross_field_route_reports_unsatisfied_patch_parity() -> None:
     assert obstruction.value.category == "patch_parity"
     assert obstruction.value.source_cell_rows == (0,)
 
+
+def test_unpaired_triangles_subdivide_with_strip_propagated_midpoints() -> None:
+    # A square pair plus one triangle whose only pair would be degenerate.
+    source = CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (2.0, 0.0))),
+        np.asarray(((0, 1, 2), (0, 2, 3), (1, 4, 2))),
+    )
+    field = prepare_surface_cross_field(source)
+    with pytest.raises(QuadLayoutObstruction) as obstruction:
+        extract_surface_quads(source, cross_field=field)
+    assert obstruction.value.category == "patch_parity"
+
+    result = extract_surface_quads(
+        source, cross_field=field, unpaired_triangles="subdivide"
+    )
+
+    # The triangle splits in three; its split edge (1, 2) crosses the square
+    # strip to the boundary edge (3, 0), so the square splits in two.
+    assert {block.cell_kind for block in result.mesh.blocks} == {"quadrilateral"}
+    assert result.mesh.connectivity.cell_count == 5
+    assert result.validity.all_certified
+    assert _area(result.mesh) == pytest.approx(1.5)
+    offsets = np.asarray(result.parent_offsets, dtype=np.int64)
+    assert sorted(np.diff(offsets).tolist()) == [1, 1, 1, 2, 2]
+    supports = np.asarray(result.vertex_supports, dtype=np.int64)
+    midpoint_supports = {
+        tuple(int(value) for value in row if value >= 0)
+        for row in supports.tolist()
+        if np.count_nonzero(np.asarray(row) >= 0) == 2
+    }
+    assert {(0, 3), (1, 2)} <= midpoint_supports
+    assert (0, 2) not in midpoint_supports
+    assert _boundary_edge_count(result.mesh) == _boundary_edge_count(source) + 3
+
+
+def test_four_triangle_star_subdivides_without_a_positive_pairing() -> None:
+    source = CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5))),
+        np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4))),
+    )
+    field = prepare_surface_cross_field(source)
+
+    result = extract_surface_quads(
+        source, cross_field=field, unpaired_triangles="subdivide"
+    )
+
+    assert result.mesh.connectivity.cell_count == 12
+    assert result.validity.all_certified
+    assert _area(result.mesh) == pytest.approx(1.0)
 
 
 def test_cross_field_route_reports_odd_boundary_cycle() -> None:
@@ -365,8 +425,7 @@ def test_curved_dual_quads_restrict_exact_source_charts() -> None:
     coordinate_bank: list[tuple[float, float, float]] = []
     geometry_routes = []
     exact_parameters = tuple(
-        tuple(Fraction(float(value)) for value in point)
-        for point in reference_nodes
+        tuple(Fraction(float(value)) for value in point) for point in reference_nodes
     )
     for triangle in triangles:
         vertices = parameter_vertices[triangle]
@@ -404,9 +463,7 @@ def test_curved_dual_quads_restrict_exact_source_charts() -> None:
     expected_source_status = np.full(
         (2,), CellValidityStatus.CERTIFIED_VALID, dtype=np.int32
     )
-    np.testing.assert_array_equal(
-        source_validity.source_status, expected_source_status
-    )
+    np.testing.assert_array_equal(source_validity.source_status, expected_source_status)
     np.testing.assert_array_equal(
         source_validity.execution_status, expected_source_status
     )
@@ -429,9 +486,7 @@ def test_curved_dual_quads_restrict_exact_source_charts() -> None:
         reference_points = np.broadcast_to(
             reference, (block.cell_count, *reference.shape)
         )
-        mapped = geometry.evaluate(
-            result.mesh, block.global_ids, reference_points
-        )
+        mapped = geometry.evaluate(result.mesh, block.global_ids, reference_points)
         np.testing.assert_allclose(
             mapped,
             coordinates[np.asarray(block.vertices)],
@@ -567,12 +622,16 @@ def test_curved_cross_field_layout_preserves_one_exact_shared_patch_map() -> Non
         vertices = parameters[triangle]
         route = []
         for first, second in reference_nodes:
-            u = Fraction.from_float(float(vertices[0, 0])) + first * Fraction.from_float(
-                float(vertices[1, 0] - vertices[0, 0])
-            ) + second * Fraction.from_float(float(vertices[2, 0] - vertices[0, 0]))
-            v = Fraction.from_float(float(vertices[0, 1])) + first * Fraction.from_float(
-                float(vertices[1, 1] - vertices[0, 1])
-            ) + second * Fraction.from_float(float(vertices[2, 1] - vertices[0, 1]))
+            u = (
+                Fraction.from_float(float(vertices[0, 0]))
+                + first * Fraction.from_float(float(vertices[1, 0] - vertices[0, 0]))
+                + second * Fraction.from_float(float(vertices[2, 0] - vertices[0, 0]))
+            )
+            v = (
+                Fraction.from_float(float(vertices[0, 1]))
+                + first * Fraction.from_float(float(vertices[1, 1] - vertices[0, 1]))
+                + second * Fraction.from_float(float(vertices[2, 1] - vertices[0, 1]))
+            )
             key = (u, v)
             if key not in coordinate_rows:
                 coordinate_rows[key] = len(coordinate_bank)
@@ -609,10 +668,7 @@ def test_curved_cross_field_layout_preserves_one_exact_shared_patch_map() -> Non
     supports = np.asarray(result.vertex_supports)
     carrier = np.asarray(source.coordinates)
     parameter_points = np.asarray(
-        [
-            np.mean(carrier[row[row >= 0], :2], axis=0)
-            for row in supports
-        ]
+        [np.mean(carrier[row[row >= 0], :2], axis=0) for row in supports]
     )
     expected_height = (
         parameter_points[:, 0]
@@ -621,9 +677,7 @@ def test_curved_cross_field_layout_preserves_one_exact_shared_patch_map() -> Non
         * (1.0 - parameter_points[:, 1])
         / 4.0
     )
-    np.testing.assert_allclose(
-        coordinates[:, 2], expected_height, rtol=0.0, atol=1.0e-14
-    )
+    np.testing.assert_allclose(coordinates[:, 2], expected_height, rtol=0.0, atol=1.0e-14)
     geometry = result.geometry
     assert geometry is not None
     reference = np.asarray(reference_cell_topology("quadrilateral").vertices)

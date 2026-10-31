@@ -18,9 +18,12 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
-from ..discretization._cell_complex import TetrahedralConnectivity
+from ..discretization._cell_complex import (
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from ..discretization._cell_geometry import ScalarCoordinateElement
-from ..discretization._cell_mesh import SimplicialConnectivity
+from ..discretization._cell_mesh import CellMesh, SimplicialConnectivity
 from ..discretization._coordinate_enclosure import (
     compose_expression,
     coordinate_map_expressions,
@@ -136,28 +139,81 @@ class MappedPlcRootAuthority(Protocol):
 
 
 def _mapped_root_entity_banks(
-    connectivity: HexahedralConnectivity
-    | TetrahedralConnectivity
-    | SimplicialConnectivity,
-    /,
+    mesh: CellMesh, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if isinstance(connectivity, SimplicialConnectivity):
-        if connectivity.dimension != 3:
-            raise TypeError("Mapped root simplex connectivity must have dimension three.")
-        return (
-            np.asarray(connectivity.entities[2], dtype=np.int64),
-            np.asarray(connectivity.cell_entities[2], dtype=np.int64),
-            np.asarray(connectivity.entities[1], dtype=np.int64),
-        )
+    """Return face vertices, reference-ordered cell faces, and edge vertices."""
+    connectivity = mesh.connectivity
     if isinstance(connectivity, (HexahedralConnectivity, TetrahedralConnectivity)):
         return (
             np.asarray(connectivity.faces, dtype=np.int64),
             np.asarray(connectivity.cell_faces, dtype=np.int64),
             np.asarray(connectivity.edges, dtype=np.int64),
         )
-    raise TypeError(
-        "Mapped root charts require hexahedral, tetrahedral, or simplex connectivity."
-    )
+    if isinstance(connectivity, SimplicialConnectivity):
+        if connectivity.dimension != 3:
+            raise TypeError("Mapped root simplex connectivity must have dimension three.")
+        faces = np.asarray(connectivity.entities[2], dtype=np.int64)
+        cells = np.asarray(connectivity.cells, dtype=np.int64)
+        edges = np.asarray(connectivity.entities[1], dtype=np.int64)
+        topology = reference_cell_topology("simplex:3")
+    elif isinstance(connectivity, PolyhedralConnectivity):
+        # Multi-block homogeneous roots use packed incidence; their faces and
+        # cells are re-read in the blocks' reference vertex order.
+        kinds = {
+            "tetrahedron" if block.cell_kind == "simplex:3" else block.cell_kind
+            for block in mesh.blocks
+        }
+        if len(kinds) != 1 or next(iter(kinds)) not in {"hexahedron", "tetrahedron"}:
+            raise TypeError("Mapped root polyhedral connectivity must be homogeneous.")
+        topology = reference_cell_topology(next(iter(kinds)))
+        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+        values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        arity = len(topology.entities[2][0])
+        if np.any(np.diff(offsets) != arity):
+            raise TypeError("Mapped root polyhedral faces must have one reference arity.")
+        faces = values.reshape((-1, arity))
+        rows_by_id = {
+            int(identifier): vertices
+            for block in mesh.blocks
+            for identifier, vertices in zip(
+                np.asarray(block.global_ids, dtype=np.int64).tolist(),
+                np.asarray(block.vertices, dtype=np.int64).tolist(),
+                strict=True,
+            )
+        }
+        cells = np.asarray(
+            [
+                rows_by_id[int(identifier)]
+                for identifier in np.asarray(
+                    connectivity.cell_global_ids, dtype=np.int64
+                ).tolist()
+            ],
+            dtype=np.int64,
+        )
+        edges = np.asarray(connectivity.edges, dtype=np.int64)
+    else:
+        raise TypeError(
+            "Mapped root charts require hexahedral, tetrahedral, simplex, or "
+            "homogeneous polyhedral connectivity."
+        )
+    # Local face indices follow the reference cell (simplex face i opposite
+    # vertex i), as every mapped-root chart producer names them.
+    face_rows = {
+        tuple(sorted(int(value) for value in face)): row
+        for row, face in enumerate(faces.tolist())
+    }
+    local_faces = topology.entities[2]
+    cell_faces = np.asarray(
+        [
+            [
+                face_rows[tuple(sorted(int(cell[local]) for local in face))]
+                for face in local_faces
+            ]
+            for cell in cells.tolist()
+        ],
+        dtype=np.int64,
+    ).reshape((-1, len(local_faces)))
+    return faces, cell_faces, edges
 
 
 def _affine_chart_arguments(
@@ -836,13 +892,12 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         from ..linalg._exact import factor_exact_rational_algebraic
 
         mesh = domain.reference_mesh
-        connectivity = mesh.connectivity
-        if not isinstance(
-            connectivity,
-            (HexahedralConnectivity, TetrahedralConnectivity, SimplicialConnectivity),
-        ):
-            raise TypeError("Mapped root face chart has unsupported connectivity.")
-        face_vertex_rows, face_rows, _ = _mapped_root_entity_banks(connectivity)
+        try:
+            face_vertex_rows, face_rows, _ = _mapped_root_entity_banks(mesh)
+        except TypeError as error:
+            raise TypeError(
+                "Mapped root face chart has unsupported connectivity."
+            ) from error
         face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
         cell_connectivity_rows = {
             int(identifier): row
@@ -949,8 +1004,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         if raw_points.ndim != 2 or raw_points.shape[1] != 3:
             raise ValueError("root_reference_points must have shape (N, 3).")
         points = tuple(
-            tuple(_exact_scalar(value) for value in raw_point)
-            for raw_point in raw_points
+            tuple(_exact_scalar(value) for value in raw_point) for raw_point in raw_points
         )
         if not points:
             return ()
@@ -1303,7 +1357,6 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         /,
     ) -> None:
         root_mesh = domain.reference_mesh
-        connectivity = root_mesh.connectivity
         cell_kinds = {
             "tetrahedron" if block.cell_kind == "simplex:3" else block.cell_kind
             for block in root_mesh.blocks
@@ -1313,18 +1366,18 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             or root_mesh.ambient_dimension != 3
             or len(cell_kinds) != 1
             or next(iter(cell_kinds), None) not in {"hexahedron", "tetrahedron"}
-            or not isinstance(
-                connectivity,
-                (HexahedralConnectivity, TetrahedralConnectivity, SimplicialConnectivity),
-            )
-            or (
-                isinstance(connectivity, SimplicialConnectivity)
-                and connectivity.dimension != 3
-            )
         ):
             raise ValueError(
                 "Mapped root surface query requires homogeneous hexahedral or three-dimensional simplex charts."
             )
+        try:
+            face_vertex_rows, face_rows, edge_vertices = _mapped_root_entity_banks(
+                root_mesh
+            )
+        except TypeError as error:
+            raise ValueError(
+                "Mapped root surface query requires homogeneous hexahedral or three-dimensional simplex charts."
+            ) from error
         root_cell_kind = next(iter(cell_kinds))
         topology = reference_cell_topology(root_cell_kind)
         root_cell_rows = {
@@ -1336,9 +1389,6 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         }
         face_ids = np.asarray(root_mesh.entity_set(2).entity_ids, dtype=np.int64)
         face_row_by_id = {int(identifier): row for row, identifier in enumerate(face_ids)}
-        face_vertex_rows, face_rows, edge_vertices = _mapped_root_entity_banks(
-            connectivity
-        )
         cell_ids = np.asarray(root_mesh.entity_set(3).entity_ids, dtype=np.int64)
         cell_connectivity_rows = {
             int(identifier): row for row, identifier in enumerate(cell_ids)

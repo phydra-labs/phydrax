@@ -247,6 +247,7 @@ def prepare_material_chain_schedule(
         edge_size = edge_sources_by_map[index].size
         source_row_bank[index, :source_size] = source_rows_by_map[index]
         source_valid[index, :source_size] = True
+        target_row_bank[index, :target_size] = target_rows_by_map[index]
         target_valid[index, :target_size] = True
         edge_source_bank[index, :edge_size] = edge_sources_by_map[index]
         edge_target_bank[index, :edge_size] = edge_targets_by_map[index]

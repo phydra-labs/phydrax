@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations
@@ -641,6 +642,260 @@ def _certify_polyhedral_child_charts(
     )
 
 
+def _polynomial_identity(
+    polynomial: Mapping[tuple[int, ...], ExactScalar], /
+) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((str(key), str(item)) for key, item in polynomial.items()))
+
+
+def _expression_identity(value: Expression, /) -> object:
+    if isinstance(value, RationalPolynomial):
+        return (
+            _polynomial_identity(value.numerator),
+            _polynomial_identity(value.denominator),
+        )
+    return _polynomial_identity(value)
+
+
+def _certify_intermediate_parent_chain(
+    domain: MappedReferenceDomain,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    cell_regions: np.ndarray,
+    /,
+) -> MappedChartProof | None:
+    """Certify a child of a mapped child through its parent's own root proof.
+
+    The restriction names an intermediate parent bound by the geometry's
+    retained source map, and that parent's current restriction names the
+    mapped root. The parent's chart proof partitions every root; the forward
+    reference chain proves the children partition every parent (degree one,
+    exact child-in-parent charts); the child-to-root charts are the exact
+    compositions of both witness banks, checked against the target physical
+    maps. ``None`` means the operands do not form such a two-level chain.
+    """
+    from ..discretization._cell_geometry_validity import certify_cell_geometry_validity
+    from ._global_embedding import certify_global_embedding
+    from ._reference_chain_embedding import certify_reference_chain_embedding
+
+    restriction = geometry.restriction_source
+    source_map = geometry.source_map
+    parent_mesh = getattr(source_map, "source_mesh", None)
+    parent_geometry = getattr(source_map, "source_geometry", None)
+    if (
+        restriction is None
+        or not isinstance(parent_mesh, CellMesh)
+        or not isinstance(parent_geometry, CellGeometrySpec)
+        or restriction.source_geometry_id != cell_geometry_id(parent_geometry)
+        or restriction.source_topology_id != parent_mesh.topology_id
+        or getattr(source_map, "target_mesh_id", mesh.mesh_id) != mesh.mesh_id
+        or getattr(source_map, "target_topology_id", mesh.topology_id) != mesh.topology_id
+    ):
+        return None
+    parent_restriction = parent_geometry.restriction_source
+    if (
+        parent_restriction is None
+        or parent_restriction.source_geometry_id != domain.reference_geometry_id
+        or parent_restriction.source_topology_id != domain.reference_mesh.topology_id
+        or set(parent_restriction.block_names)
+        != {block.name for block in parent_mesh.blocks}
+        or set(restriction.block_names) != {block.name for block in mesh.blocks}
+    ):
+        return None
+
+    root_regions: dict[int, int] = {}
+    root_maps = cell_coordinate_expressions(domain.reference_mesh, domain.source_geometry)
+    root_map_by_id: dict[int, tuple[Expression, ...] | None] = {}
+    cursor = 0
+    for block in domain.reference_mesh.blocks:
+        for identifier in np.asarray(block.global_ids, dtype=np.int64).tolist():
+            root_regions[int(identifier)] = int(domain.cell_regions[cursor])
+            root_map_by_id[int(identifier)] = root_maps[cursor]
+            cursor += 1
+
+    parent_index = {name: row for row, name in enumerate(parent_restriction.block_names)}
+    parent_rows: dict[int, tuple[int, tuple[Expression, ...] | None]] = {}
+    parent_regions: list[int] = []
+    for block in parent_mesh.blocks:
+        index = parent_index[block.name]
+        roots = np.asarray(parent_restriction.parent_cell_ids[index], dtype=np.int64)
+        witness = parent_restriction.parent_reference_maps[index]
+        charts = None if witness is None else witness.source_reference_chart_arguments
+        if roots.shape != (block.cell_count,) or (
+            charts is not None and len(charts) != block.cell_count
+        ):
+            return None
+        for row, identifier in enumerate(
+            np.asarray(block.global_ids, dtype=np.int64).tolist()
+        ):
+            root_id = int(roots[row])
+            if root_id not in root_regions:
+                return None
+            parent_rows[int(identifier)] = (
+                root_id,
+                None if charts is None else _coordinate_expression_row(charts[row]),
+            )
+            parent_regions.append(root_regions[root_id])
+
+    parent_proof = certify_child_chart_partition(
+        domain,
+        parent_mesh,
+        parent_geometry,
+        np.asarray(parent_regions, dtype=np.int64),
+    )
+    findings = list(parent_proof.findings)
+    reference_maps = restriction.block_parent_reference_maps
+    chain_id = ""
+    try:
+        parent_validity = certify_cell_geometry_validity(
+            parent_geometry, mesh=parent_mesh
+        )
+        parent_embedding = certify_global_embedding(
+            parent_mesh, parent_geometry, parent_validity
+        )
+        chain = certify_reference_chain_embedding(
+            parent_mesh, parent_geometry, mesh, geometry, reference_maps, parent_embedding
+        )
+    except (TypeError, ValueError, IndexError, ZeroDivisionError) as error:
+        findings.append(
+            _finding(
+                "mapped_chart_parent_partition",
+                "unresolved",
+                "mesh",
+                detail=f"Children do not have an exact partition proof of their parents: {error}.",
+            )
+        )
+    else:
+        chain_id = chain.certificate_id
+        if (
+            chain.status != "certified"
+            or chain.findings
+            or not chain.cross_parent_coverage_complete
+        ):
+            findings.append(
+                _finding(
+                    "mapped_chart_parent_partition",
+                    "violated" if chain.status == "violated" else "unresolved",
+                    "mesh",
+                    detail="The forward reference chain does not prove the children partition their parents.",
+                )
+            )
+
+    target_maps = cell_coordinate_expressions(mesh, geometry)
+    target_root_ids: list[int] = []
+    chart_ids: list[str] = []
+    cursor = 0
+    for block in mesh.blocks:
+        witness = reference_maps.get(block.name)
+        charts = None if witness is None else witness.source_reference_chart_arguments
+        if witness is None or charts is None:
+            findings.append(
+                _finding(
+                    "mapped_chart_reference_map",
+                    "unresolved",
+                    "cell",
+                    tuple(int(value) for value in np.asarray(block.global_ids).tolist()),
+                    detail="A two-level child block lacks exact child-in-parent charts.",
+                )
+            )
+            cursor += block.cell_count
+            continue
+        parents = np.asarray(witness.source_cell_ids, dtype=np.int64)
+        for row, target_id in enumerate(
+            np.asarray(block.global_ids, dtype=np.int64).tolist()
+        ):
+            parent_id = int(parents[row])
+            parent = parent_rows.get(parent_id)
+            if parent is None:
+                findings.append(
+                    _finding(
+                        "mapped_chart_parent_missing",
+                        "violated",
+                        "cell",
+                        (int(target_id), parent_id),
+                        detail="A child chart names a parent cell absent from its parent mesh.",
+                    )
+                )
+                cursor += 1
+                continue
+            root_id, parent_chart = parent
+            if int(cell_regions[cursor]) != root_regions[root_id]:
+                findings.append(
+                    _finding(
+                        "mapped_chart_region_assignment",
+                        "violated",
+                        "cell",
+                        (int(target_id), root_id),
+                        detail="Dense target cell region differs from its mapped root cell region.",
+                    )
+                )
+            child_chart = _coordinate_expression_row(charts[row])
+            root_map = root_map_by_id[root_id]
+            target_map = target_maps[cursor]
+            if parent_chart is None or root_map is None or target_map is None:
+                findings.append(
+                    _finding(
+                        "mapped_chart_expression_missing",
+                        "unresolved",
+                        "cell",
+                        (int(target_id),),
+                        detail="The exact composed child-to-root chart is unavailable.",
+                    )
+                )
+                cursor += 1
+                continue
+            composed = tuple(
+                compose_expression(expression, child_chart) for expression in parent_chart
+            )
+            expected = tuple(
+                compose_expression(expression, composed) for expression in root_map
+            )
+            if len(expected) != len(target_map) or any(
+                not expression_equal(left, right)
+                for left, right in zip(expected, target_map, strict=True)
+            ):
+                findings.append(
+                    _finding(
+                        "mapped_chart_physical_map_mismatch",
+                        "violated",
+                        "cell",
+                        (int(target_id), root_id),
+                        detail="The target physical coordinate map is not the exact root map composed with its two-level chart.",
+                    )
+                )
+            target_root_ids.append(root_id)
+            chart_ids.append(
+                canonical_fingerprint(
+                    {
+                        "root": root_id,
+                        "parent": parent_id,
+                        "target": int(target_id),
+                        "kind": block.cell_kind,
+                        "parent_chart_proof": parent_proof.chart_ids,
+                        "parent_partition": chain_id,
+                        "chart": tuple(_expression_identity(value) for value in composed),
+                    }
+                )
+            )
+            cursor += 1
+    if len(target_root_ids) != len(cell_regions):
+        findings.append(
+            _finding(
+                "mapped_chart_boundary_unresolved",
+                "unresolved",
+                "mesh",
+                detail="The complete root-to-target chart partition is unavailable for every target cell.",
+            )
+        )
+    return MappedChartProof(
+        tuple(target_root_ids),
+        tuple(chart_ids),
+        parent_proof.facet_overlaps,
+        tuple(findings),
+        parent_proof.target_facet_count,
+    )
+
+
 def certify_child_chart_partition(
     domain: MappedReferenceDomain,
     mesh: CellMesh,
@@ -687,6 +942,11 @@ def certify_child_chart_partition(
             restriction.source_geometry_id != domain.reference_geometry_id
             or restriction.source_topology_id != domain.reference_mesh.topology_id
         ):
+            two_level = _certify_intermediate_parent_chain(
+                domain, mesh, geometry, np.asarray(cell_regions, dtype=np.int64)
+            )
+            if two_level is not None:
+                return two_level
             findings.append(
                 _finding(
                     "mapped_chart_source_identity",

@@ -558,6 +558,7 @@ def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
             )
         ),
         np.concatenate((prepared.source_deviations, np.zeros((2,), dtype=np.float64))),
+        prepared.suppression_search,
     )
     canonical_edges = np.asarray(complex_.plc_edge_vertices, dtype=np.int64)
     vertex_identity_rows = tuple(

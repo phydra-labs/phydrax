@@ -229,6 +229,8 @@ bound-method pytrees, which flatten the whole domain on every call, and
 `resolve_entity_id` bisects a per-stratum key index instead of fingerprinting
 every slot. Per-entity loops over a domain with one patch per source face
 therefore stay linear. Scope-bank numeric IDs and the `domain_id` are unchanged.
+`ReconstructedGeometrySource` methods bind the same way, so per-row source-key
+lookups over a reconstructed surface do not flatten its domain.
 
 BRep material regions bind to their source solid occurrences, and each region's
 full oriented face/sign boundary must match the supplied topology. Missing
@@ -437,11 +439,14 @@ outward. `BoundaryLayerControl` binds a schedule to a wall scope and one explici
 
 Native advancing layers classify wall edges by dihedral angle, split columns at
 convex ridges into fan columns and corner patches (`BoundaryLayerCornerPolicy.FAN`),
-and point every column along the visibility-optimal direction (the minimum-norm
-point of the convex hull of its face normals, a simplex QP solved by
-`phydrax.optim`). Concave corners are accepted only while a visible direction
-exists and the height stretch stays within `maximum_corner_stretch`; otherwise
-they are rejected with the offending wall vertices. Heights are limited by the
+and point every column along the visibility-optimal direction, the unit `d`
+maximizing `min_i n_i·d` over its face normals: the normalized minimum-norm point
+of their convex hull, found exactly by enumerating hull faces of at most three
+normals and certified by a closed weak-duality gap. Columns whose normals enclose
+the origin have no visible direction and are rejected with their wall vertices.
+Concave corners are accepted only while the height stretch stays within
+`maximum_corner_stretch`; otherwise they are rejected with the offending wall
+vertices. Heights are limited by the
 smooth concave radius and by BVH-nearest medial-crossing probes; every layer is
 certified by Bernstein validity and exact-predicate intersection against earlier
 layers, the wall, adjacent surfaces, and obstacles. Collisions resolve only by
@@ -488,6 +493,24 @@ the controlled solid, the partition has no core solid, and the swept cap is a
 one-sided exterior patch. Source-solid volume must equal the sum of its slab
 volumes; an empty core is not inferred from an absent region alone. Mesh this
 case with a layer-only region control and no core fill.
+
+`NativeMeshingProvider` grows one `ADVANCING` `BoundaryLayerControl` straight
+from a BRep model (`cad_tetrahedral` route). The wall scope names source faces and
+the volume scope names the whole solid. The accepted boundary's exact
+per-cell charts resolve those faces to wall cells. Layers grow inward from them.
+The fixed core boundary is the cap plus every unselected surface cell; each rim
+vertex of an unselected cell moves to the top of its column, so the core
+conforms to the cap. The core is filled with tetrahedra. The target must allow
+mixed `prism`/`tetrahedron` cells (transition pyramids optional) and use the
+`SIMPLEX` fill. Rim columns slide along the adjacent surfaces. A schedule
+whose fronts meet those surfaces before the collision policy can resolve them is
+refused with the colliding wall vertices and their locations, so choose
+thicknesses that are small relative to the surface size. Source fidelity covers
+every exterior facet: the grown cells keep their charts, and fixed cells and
+layer side strips take the closest-point charts of their source face. A column
+shared by two faces lies exactly on their common trim. Refinement that cannot
+reach its targets because of the fixed boundary is reported as evidence;
+improvement that leaves unmet quality criteria fails compliance.
 
 `prepare_periodic_layer_core_source(source, core_vertex_representatives,
 core_vertex_shifts, core_seam_polygon_pairs)` binds source-authored PLC orbits
@@ -575,9 +598,14 @@ exactly collinear/coplanar with their sources even when `S` is not a binary64
 point. After recovery such points are suppressed again: under `FIXED` every
 boundary split point, under `CONFORMING` every split point that is not a binary64
 point. Suppression retriangulates the subfaces through the point within their own
-planes and refills its star by contraction onto a neighbour, an exact Steiner-free
-gift-wrapped fill, or cones from interior volume points, each accepted only after
-exact positivity and cavity-boundary checks. Published boundary vertices
+planes and refills each wedge of its star by contraction onto a neighbour, else by
+the first of: the exact constrained Delaunay gift-wrapped fill, cones from one
+cavity vertex, the constrained Delaunay fill with interior volume points, cones
+from one binary64 interior point, and finally an exact exhaustive Steiner-free
+search. Deciding whether a Steiner-free fill exists is NP-complete, so the
+polynomial fills come first and the search, whose use is reported in
+`PlcRecovery3D.suppression_search`, runs only when they all fail. Every fill is
+accepted only after exact positivity and cavity-boundary checks. Published boundary vertices
 therefore lie exactly on their sources. A point that cannot be removed is a typed
 refusal naming its source entity: `STEINER_SUPPRESSION` under `CONFORMING`,
 `FIXED_SEGMENT`/`FIXED_FACET` under `FIXED`. A requested curve feature on an
@@ -602,16 +630,50 @@ target is compared with measured arc lengths at the `SizeCompliancePolicy`
 tolerances, which default to zero; a target such as 0.2 m that floating-point
 placement cannot reproduce exactly needs an explicit tolerance in the request.
 
-Native tetrahedral quality improvement follows fixed-boundary refinement. Each
-cell scores the worse of its dihedral-angle and radius-edge target fractions,
-1 when both targets hold. Every face flip, edge-ring reconnection, interior
-vertex collapse, and interior relocation is accepted only if the affected cells'
-worst-first sorted scores strictly improve, with relative-determinant validity
-and source constraints as hard requirements. That single order makes
-improvement terminate without pass, candidate, or time limits. Targets the
-edits cannot reach end valid but unmet: the run status is unresolved,
-`TetMesh3D.unmet()` reports each remaining cell and criterion, and volume routes
-refuse such a mesh rather than publish it.
+Native tetrahedral refinement and quality improvement (`TetMesh3D.refine` and
+`TetMesh3D.improve`, run in that order by the native volume routes) have these
+contracts:
+
+- **Size field.** `sizes` holds one circumradius target per current vertex (0:
+  unconstrained). A cell's target is the mean of its corners' targets, and is
+  unconstrained if any corner is. The field is retained on the mesh: refinement
+  installs it, every vertex either pass inserts receives the target interpolated
+  at its position, and a removed vertex's entry is erased. `improve()` without
+  `sizes` uses the retained field, so a route's refinement size field (for
+  example a `UniformSizeControl`) constrains improvement too.
+- **Refinement.** Circumcenters of cells violating the radius-edge bound or
+  their size target are inserted through a checked cavity; an encroached
+  splittable boundary face is split instead. No point is inserted closer than
+  min(shortest initial edge, h(x)/2) to an existing vertex, h(x) the target
+  interpolated at the point. Since refinement removes no vertex, the inserted
+  points are packed at a positive spacing in a bounded domain, so finitely
+  many are inserted. A cell the guard blocks is reported as `REFUSED`; one
+  whose circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
+- **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
+  and radius-edge target fractions (1 when both hold), floored to multiples of
+  `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
+  interior vertex insertion, collapse, and relocation is accepted only if the
+  cells it creates pass the hard gates (relative determinant above its floor,
+  source constraints preserved) and the size gate, and the affected cells'
+  worst-first sorted scores strictly improve.
+- **Precedence.** The size gate (circumradius within the size target) binds
+  every edit except one that removes a degenerate cell: a cell below the
+  determinant floor or scoring 0 (a ratio beyond 2^20 times its target).
+  Repairing degeneracy takes precedence over size; any other edit, collapses
+  included, can never grow a cell beyond its size target. The whole-mesh
+  fixed-boundary retessellation never takes this exemption.
+- **Termination.** Every accepted edit strictly improves the whole mesh's
+  sorted score vector, and over the finite score alphabet that order admits no
+  infinite improving sequence. Improvement therefore ends without pass,
+  candidate, or time limits, although insertion and collapse change the vertex
+  set; no complexity bound is claimed.
+- **Unmet evidence.** Targets the edits cannot reach end valid but unmet: the
+  run status is unresolved and `TetMesh3D.unmet()` reports each remaining cell
+  per criterion with its reason. Refinement reports the radius-edge ratio and
+  size (circumradius over target); improvement reports the radius-edge ratio,
+  minimum dihedral, and determinant validity, since the size field constrains
+  improvement but is not one of its targets. Volume routes refuse a mesh with
+  improvement residuals rather than publish it.
 
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`
@@ -651,7 +713,14 @@ different mesh family or a simpler route. `planar_dual_quad` solves a
 source-feature-guided cross field and uses it to drive constrained triangle
 recombination, including field alignment, interior valence, boundary parity,
 and quad quality. This field-guided layout changes connectivity; it is distinct
-from explicit triangle-dual conversion.
+from explicit triangle-dual conversion. When the scaffold has no complete
+positive pairing (for example a four-triangle star), the route keeps the
+largest positive pairing. Unpaired triangles split into three quads at their
+edge midpoints and centroid. Each split edge forces the opposite edge of the
+adjacent paired quad to split too, so the splits run along whole quad strips
+and the mesh stays conforming. Every new vertex keeps its exact source-vertex
+support. Calling `extract_surface_quads` directly keeps the refusal unless it
+passes `unpaired_triangles="subdivide"`.
 
 `plc_dual_hex` is the explicit tetrahedral dual conversion. It retains parent
 cell, source-vertex, material-block, and exact coordinate-map ancestry, but is
@@ -665,6 +734,11 @@ PLC input also requires the independent mapped-root authority described below.
 intersections, then closes their conforming face arrangements with an
 all-hexahedron transition. It supports nonsimple shared interfaces and cavity
 domains while retaining source-cell regions and exact reference coverage.
+The lattice knots stay a fixed fraction of the spacing away from every source
+vertex. They also stay that far from every crossing of a source edge with a
+grid plane and every crossing of a source face with a grid line. Cut cells
+therefore never collapse to a numerically zero volume because of binary64
+coincidences.
 The public PLC cut route never infers curved geometry from vertex positions.
 Curved sources require both an authored `complex.geometry` and an independent
 `MappedReferenceDomain` binding the root geometry, reference carrier, frame,
@@ -729,6 +803,18 @@ local cell ring.
 Owner-local uniform size controls bind the common complete fundamental-domain
 scope, not rank-local point subsets; each process validates the same source,
 revision, entity set, and domain ID.
+
+Periodic triangle metric adaptation decides on the quotient, not on the lifted
+fundamental-domain cut: boundary and material-interface edges are those whose
+quotient edge orbit meets one cell orbit or cell orbits of different classes,
+so seam edges stay unclassified. A collapse removes every lifted member of the
+vertex orbit onto exact deck images of the kept vertex; a lifted member row the
+collapse empties is retired onto another member of its orbit, keeping the
+quotient vertex and the feature/lineage records of its quotient edges. Seam
+edge orbits flip across the seam. When the route stalls it refuses with
+`COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
+`MeshingFailureEvidence` holds each remaining edge's metric length and refusal
+reasons.
 
 Every owner-local periodic view retains the exact `specification_id`, including
 nonadaptive periodic-power views. Cold reattachment requires the archived typed
@@ -956,19 +1042,39 @@ bound to the source vertices). Routes:
   (newest-vertex bisection) and tetrahedron meshes. The initial refinement edge
   is the longest edge (ties by global IDs); an incompatible initial labelling is
   rejected unless `BisectionCompatibility.UNIFORM_REFINEMENT` explicitly requests
-  one barycentric compatibility refinement. The conformity closure is vectorized
-  per iteration; coarsening removes complete bisection patches (Chen–Zhang
-  vertex removal) and restores the recorded cell, edge, and face IDs, so a
-  refine/coarsen round trip reproduces the source topology exactly.
+  one barycentric compatibility refinement. That subdivision is recorded in the
+  `BisectionHierarchy` as a refinement level (each source cell, its exact block
+  row, its (d+1)! children, and its created edge, face, and center vertices). The
+  conformity closure is vectorized per iteration; coarsening removes complete
+  bisection patches (Chen–Zhang vertex removal) and then every subdivision whose
+  children are all marked and whose created vertices' stars are undone together
+  (whole edge-connected components), restoring the recorded cell, edge, and face
+  IDs, so a refine/coarsen round trip reproduces the source topology exactly,
+  including an incompatible source. Restored incompatible cells carry tag 0;
+  refining such a hierarchy subdivides all of them again under
+  `UNIFORM_REFINEMENT` (device bisection does so at preparation) and rejects
+  otherwise.
 - `NATIVE_METRIC_2D`: planar triangle metric adaptation by edge split
-  (metric length above sqrt(2)), collapse (below 1/sqrt(2)), metric-quality flip,
-  and relocation, with deterministic independent-cavity selection. Orientation
-  decisions use the policy's predicate mode; unresolved filtered signs reject the
-  operation. The status is COMPLETE when the unit-mesh criterion holds, STALLED or
-  NUMERICAL_STOP otherwise; `RelocationMeshAdaptation` moves vertices only.
+  (metric length above sqrt(2)), collapse (below 1/sqrt(2); a collapse that
+  removes or keeps a vertex born in the run must not create an edge above
+  sqrt(2)), flip, and relocation, with deterministic independent-cavity
+  selection. A flip is accepted when it raises the minimum quality of its two
+  cells, or when it strictly lowers the quantized `|ln L|` deviation of its
+  diagonal without lowering their quality pair; a relocation likewise when it
+  raises its star's minimum quality or keeps it and strictly improves the
+  worst-first quantized deviations of its edges. Neither rule creates vertices,
+  so each phase terminates. Orientation decisions use the policy's predicate
+  mode; unresolved filtered signs reject the operation. The status is COMPLETE
+  when the unit-mesh criterion holds, STALLED or NUMERICAL_STOP otherwise; a
+  stalled `LocalMetricEvidence.stalled_edges` lists every remaining edge (one per
+  quotient orbit) with its metric length and refusal reasons, for example
+  `collapse=hysteresis+inadmissible;flip=invalid`. `RelocationMeshAdaptation`
+  moves vertices only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
-  and hierarchy of `NATIVE_BISECTION` byte for byte.
+  and hierarchy of `NATIVE_BISECTION` byte for byte. The device passes coarsen
+  bisection families; the commit then removes the recorded barycentric
+  subdivisions they expose by the host rule.
 - `DEVICE_METRIC_2D`: the planar metric and relocation requests executed as
   compiled device passes with FILTERED_DEVICE predicates (below).
 - `MMG`, `OMEGA_H`: the configured provider's metric adaptation; the lineage

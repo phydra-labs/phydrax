@@ -9,7 +9,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Sequence
 from fractions import Fraction
-from typing import final
+from typing import cast, final, Literal
 
 import equinox as eqx
 import numpy as np
@@ -104,6 +104,21 @@ def _reference_points_2d(cell_kind: str, /) -> tuple[QuadReferencePoint, ...]:
 
 def _edge_key(first: int, second: int, /) -> tuple[int, int]:
     return (min(first, second), max(first, second))
+
+
+# Layout refusals that only say no complete triangle pairing exists; the
+# subdividing extraction answers them with a partial pairing instead.
+_PAIRING_OBSTRUCTIONS = frozenset(
+    (
+        "patch_parity",
+        "boundary_parity",
+        "patch_boundary",
+        "field_alignment",
+        "source_map",
+        "patch_matching",
+        "singularity_valence",
+    )
+)
 
 
 @final
@@ -1090,8 +1105,13 @@ def prepare_surface_quad_layout(
     *,
     maximum_field_error: float = 2.0,
     source_geometry: CellGeometrySpec | None = None,
+    complete: bool = True,
 ) -> SurfaceQuadLayout:
-    """Extract an exact, field-guided quad patching with parity and valence constraints."""
+    """Extract an exact, field-guided quad patching with parity and valence constraints.
+
+    ``complete=False`` instead returns the maximal positive pairing; triangles
+    it leaves unpaired are subdivided by the quad mesh builder.
+    """
     data = _triangle_data(mesh)
     if (
         cross_field.source_topology_id != mesh.topology_id
@@ -1255,19 +1275,20 @@ def prepare_surface_quad_layout(
         int(patch): np.flatnonzero(patches == patch).astype(np.int64).tolist()
         for patch in np.unique(patches).tolist()
     }
-    for patch, faces in patch_faces.items():
-        if len(faces) % 2:
-            raise QuadLayoutObstruction(
-                "patch_parity",
-                "A feature-constrained patch has odd triangle parity.",
-                source_cell_rows=faces,
-                source_edge_rows=(
-                    edge_row[key]
-                    for key, owners in data.edge_owners.items()
-                    if sum(int(patches[face]) == patch for face in owners) == 1
-                ),
-            )
-        _patch_boundary_obstruction(faces, patch, data, patches, edge_row)
+    if complete:
+        for patch, faces in patch_faces.items():
+            if len(faces) % 2:
+                raise QuadLayoutObstruction(
+                    "patch_parity",
+                    "A feature-constrained patch has odd triangle parity.",
+                    source_cell_rows=faces,
+                    source_edge_rows=(
+                        edge_row[key]
+                        for key, owners in data.edge_owners.items()
+                        if sum(int(patches[face]) == patch for face in owners) == 1
+                    ),
+                )
+            _patch_boundary_obstruction(faces, patch, data, patches, edge_row)
     elements: tuple[ScalarCoordinateElement, ...] = ()
     routes: tuple[Array, ...] = ()
     source_coordinate_bank: CoordinateSourceBank = ()
@@ -1333,7 +1354,7 @@ def prepare_surface_quad_layout(
                 continue
         candidates.append(candidate)
     candidates.sort(key=lambda item: (item.edge_row, item.faces))
-    if not candidates:
+    if not candidates and complete:
         if rejected_source_map_edges:
             raise QuadLayoutObstruction(
                 "source_map",
@@ -1345,6 +1366,18 @@ def prepare_surface_quad_layout(
             "No feature-compatible, positive-quality, field-aligned source patch pair exists.",
             source_cell_rows=range(data.cells.shape[0]),
             source_edge_rows=considered_edges,
+        )
+    if not complete:
+        return _surface_quad_layout(
+            mesh,
+            source_geometry,
+            cross_field,
+            patches,
+            singular_vertices,
+            singularity_indices,
+            _maximum_partial_pairing(candidates, data.cells.shape[0]),
+            tolerance,
+            complete=False,
         )
     candidate_count = len(candidates)
     face_count = data.cells.shape[0]
@@ -1476,9 +1509,96 @@ def prepare_surface_quad_layout(
         for candidate, selected_row in zip(candidates, selection.tolist(), strict=True)
         if selected_row == 1
     )
+    return _surface_quad_layout(
+        mesh,
+        source_geometry,
+        cross_field,
+        patches,
+        singular_vertices,
+        singularity_indices,
+        selected,
+        tolerance,
+        complete=True,
+    )
+
+
+def _maximum_partial_pairing(
+    candidates: Sequence[_PairCandidate], face_count: int, /
+) -> list[int]:
+    """Select the most positive field-aligned pairs; leftovers stay triangles."""
+    if not candidates:
+        return []
+    face_rows = np.asarray(
+        [face for candidate in candidates for face in candidate.faces], dtype=np.int64
+    )
+    columns = np.repeat(np.arange(len(candidates), dtype=np.int64), 2)
+    incidence = coo_array(
+        (np.ones(face_rows.size, dtype=np.float64), (face_rows, columns)),
+        shape=(face_count, len(candidates)),
+    ).tocsc()
+    # Each pair saves one subdivided cell; alignment and shape only break ties.
+    costs = np.asarray(
+        [
+            -1.0
+            + 1.0e-3 * (candidate.alignment_error + 0.25 * (1.0 - candidate.quad_quality))
+            + 1.0e-12 * (candidate.edge_row + 1)
+            for candidate in candidates
+        ],
+        dtype=np.float64,
+    )
+    matching = milp(
+        costs,
+        integrality=np.ones((len(candidates),), dtype=np.int8),
+        bounds=MilpBounds(
+            np.zeros((len(candidates),), dtype=np.float64),
+            np.ones((len(candidates),), dtype=np.float64),
+        ),
+        constraints=LinearConstraint(
+            incidence,
+            np.zeros((face_count,), dtype=np.float64),
+            np.ones((face_count,), dtype=np.float64),
+        ),
+    )
+    if not matching.success or matching.x is None:
+        raise QuadLayoutObstruction(
+            "patch_solver",
+            "The sparse integer pair solver returned no partial matching.",
+            source_cell_rows=range(face_count),
+        )
+    selection = np.rint(matching.x).astype(np.int64)
+    if not np.allclose(matching.x, selection, rtol=0.0, atol=1.0e-8) or np.any(
+        np.asarray(incidence @ selection) > 1
+    ):
+        raise QuadLayoutObstruction(
+            "patch_solver",
+            "The sparse integer pair solver returned a nonintegral or overlapping matching.",
+            source_cell_rows=range(face_count),
+        )
+    return sorted(
+        candidate.edge_row
+        for candidate, chosen in zip(candidates, selection.tolist(), strict=True)
+        if chosen == 1
+    )
+
+
+def _surface_quad_layout(
+    mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    cross_field: SurfaceCrossField,
+    patches: np.ndarray,
+    singular_vertices: np.ndarray,
+    singularity_indices: np.ndarray,
+    selected: list[int],
+    tolerance: float,
+    /,
+    *,
+    complete: bool,
+) -> SurfaceQuadLayout:
     layout_id = canonical_fingerprint(
         {
-            "kind": "feature-guided-quad-recombination",
+            "kind": "feature-guided-quad-recombination"
+            if complete
+            else "feature-guided-partial-quad-recombination",
             "source_topology": mesh.topology_id,
             "source_geometry": mesh.geometry_id,
             "source_coordinate_geometry": source_geometry.geometry_layout_id,
@@ -1493,7 +1613,7 @@ def prepare_surface_quad_layout(
             "maximum_field_error": tolerance,
         }
     )
-    count = face_count
+    count = mesh.blocks[0].cell_count
     return SurfaceQuadLayout(
         mesh,
         np.arange(count + 1, dtype=np.int64),
@@ -1656,11 +1776,7 @@ def _build_recombined_quad_mesh(
         pairs.append((cycle, face_pair))
         consumed_faces.update(face_pair)
     if len(consumed_faces) != data.cells.shape[0]:
-        raise QuadLayoutObstruction(
-            "patch_decomposition",
-            "A field-guided quad layout must cover every source triangle exactly once.",
-            source_cell_rows=set(range(data.cells.shape[0])) - consumed_faces,
-        )
+        return _build_subdivided_pair_mesh(source, data, pairs)
     pairs.sort(key=lambda item: item[1])
     quad_rows = np.asarray([cycle for cycle, _ in pairs], dtype=np.int32).reshape((-1, 4))
     target_points = np.asarray(source.coordinates, dtype=np.float64).copy()
@@ -1833,6 +1949,31 @@ def _build_quad_mesh(
                 "Native triangle dual extraction returned an invalid cell extent."
             )
         quad_rows = np.asarray(native_quads, dtype=np.int32)
+    return _quad_mesh_record(
+        source, target_points, quad_rows, support_rows, parent_offsets, parent_cells
+    )
+
+
+def _quad_mesh_record(
+    source: CellMesh,
+    target_points: np.ndarray,
+    quad_rows: np.ndarray,
+    support_rows: Sequence[Sequence[int]],
+    parent_offsets: Sequence[int],
+    parent_cells: Sequence[int],
+    /,
+) -> tuple[
+    CellMesh,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     block = CellBlock(source.blocks[0].name, "quadrilateral", quad_rows)
     vertex_ids = fresh_vertex_global_ids(
         source, target_points.shape[0] - source.coordinates.shape[0]
@@ -1874,6 +2015,157 @@ def _build_quad_mesh(
         source_edge_ids,
         source_edge_parameter_numerators,
         source_edge_parameter_denominators,
+    )
+
+
+def _build_subdivided_pair_mesh(
+    source: CellMesh,
+    data: _TriangleData,
+    pairs: Sequence[tuple[tuple[int, int, int, int], tuple[int, int]]],
+    /,
+) -> tuple[
+    CellMesh,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    """Quad-mesh a partial pairing by conforming midpoint subdivision.
+
+    Every unpaired triangle splits into three quads at its edge midpoints and
+    centroid. A split edge forces the opposite edge of each incident pair quad
+    to split as well, so splits travel along quad strips until they close or
+    leave the surface. Each pair then stays one quad, splits into two along
+    one strip, or into four about its centroid; every split edge is split on
+    both sides, and each new vertex keeps its exact source-vertex average.
+    """
+    paired_faces = {face for _, faces in pairs for face in faces}
+    unpaired = [face for face in range(data.cells.shape[0]) if face not in paired_faces]
+
+    def cycle_edge(cycle: Sequence[int], position: int, /) -> tuple[int, int]:
+        return _edge_key(
+            int(cycle[position % len(cycle)]), int(cycle[(position + 1) % len(cycle)])
+        )
+
+    quads_by_edge: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for index, (cycle, _) in enumerate(pairs):
+        for position in range(4):
+            quads_by_edge[cycle_edge(cycle, position)].append(index)
+    split: set[tuple[int, int]] = set()
+    pending: list[tuple[int, int]] = []
+    for face in unpaired:
+        triangle = data.cells[face].tolist()
+        for position in range(3):
+            key = cycle_edge(triangle, position)
+            if key not in split:
+                split.add(key)
+                pending.append(key)
+    while pending:
+        key = pending.pop()
+        for index in quads_by_edge.get(key, ()):
+            cycle = pairs[index][0]
+            position = next(
+                value for value in range(4) if cycle_edge(cycle, value) == key
+            )
+            opposite = cycle_edge(cycle, position + 2)
+            if opposite not in split:
+                split.add(opposite)
+                pending.append(opposite)
+
+    points = np.asarray(source.coordinates, dtype=np.float64)
+    padded = np.pad(points, ((0, 0), (0, 3 - points.shape[1])))
+    vertex_count = points.shape[0]
+    new_points: list[np.ndarray] = []
+    support_rows: list[list[int]] = [
+        [vertex, -1, -1, -1] for vertex in range(vertex_count)
+    ]
+    midpoint: dict[tuple[int, int], int] = {}
+    for key in sorted(split):
+        midpoint[key] = vertex_count + len(new_points)
+        new_points.append(0.5 * (padded[key[0]] + padded[key[1]]))
+        support_rows.append([key[0], key[1], -1, -1])
+
+    def add_center(vertices: Sequence[int], /) -> int:
+        row = vertex_count + len(new_points)
+        new_points.append(np.mean(padded[np.asarray(vertices, dtype=np.int64)], axis=0))
+        ordered = sorted(int(vertex) for vertex in vertices)
+        support_rows.append([*ordered, *([-1] * (4 - len(ordered)))])
+        return row
+
+    quads: list[list[int]] = []
+    parent_cells: list[int] = []
+    parent_offsets = [0]
+
+    def emit(quad: list[int], parents: Sequence[int], /) -> None:
+        quads.append(quad)
+        parent_cells.extend(parents)
+        parent_offsets.append(parent_offsets[-1] + len(parents))
+
+    entries = sorted(
+        [(min(faces), 1, index) for index, (_, faces) in enumerate(pairs)]
+        + [(face, 0, face) for face in unpaired]
+    )
+    for _, is_pair, value in entries:
+        if not is_pair:
+            triangle = tuple(int(vertex) for vertex in data.cells[value].tolist())
+            center = add_center(triangle)
+            for position in range(3):
+                emit(
+                    [
+                        triangle[position],
+                        midpoint[cycle_edge(triangle, position)],
+                        center,
+                        midpoint[cycle_edge(triangle, position - 1)],
+                    ],
+                    (value,),
+                )
+            continue
+        cycle, faces = pairs[value]
+        split_positions = [
+            position for position in range(4) if cycle_edge(cycle, position) in split
+        ]
+        if not split_positions:
+            emit(list(cycle), faces)
+        elif len(split_positions) == 4:
+            center = add_center(cycle)
+            for position in range(4):
+                emit(
+                    [
+                        cycle[position],
+                        midpoint[cycle_edge(cycle, position)],
+                        center,
+                        midpoint[cycle_edge(cycle, position - 1)],
+                    ],
+                    faces,
+                )
+        elif split_positions in ([0, 2], [1, 3]):
+            start = split_positions[0]
+            rotated = (*cycle[start:], *cycle[:start])
+            first = midpoint[cycle_edge(rotated, 0)]
+            second = midpoint[cycle_edge(rotated, 2)]
+            emit([rotated[0], first, second, rotated[3]], faces)
+            emit([first, rotated[1], rotated[2], second], faces)
+        else:
+            raise QuadLayoutObstruction(
+                "patch_decomposition",
+                "Strip-propagated midpoint splits left a pair quad nonconforming.",
+                source_cell_rows=faces,
+            )
+    target_points = np.concatenate(
+        (padded, np.asarray(new_points, dtype=np.float64).reshape((-1, 3)))
+    )[:, : source.ambient_dimension]
+    return _quad_mesh_record(
+        source,
+        target_points,
+        np.asarray(quads, dtype=np.int32),
+        support_rows,
+        parent_offsets,
+        parent_cells,
     )
 
 
@@ -1995,33 +2287,63 @@ def _compose_quad_source_geometry(
         chart_by_parent: list[QuadChart] = []
         expressions_by_parent: list[tuple[Expression, ...]] = []
         patch_cycle: tuple[int, int, int, int] | None = None
+        patch_corners: list[QuadReferencePoint] = []
         if len(candidate_parents) == 2:
-            patch_vertices: list[int] = []
+            shared_edge = sorted(
+                set(map(int, source_cells[candidate_parents[0]].tolist()))
+                & set(map(int, source_cells[candidate_parents[1]].tolist()))
+            )
+            if len(shared_edge) != 2:
+                raise ValueError(
+                    "A two-triangle quad patch must share exactly one source edge."
+                )
+            patch_cycle = _oriented_pair_cycle(
+                (candidate_parents[0], candidate_parents[1]),
+                _edge_key(shared_edge[0], shared_edge[1]),
+                source_cells,
+            )
+            if patch_cycle is None:
+                raise ValueError("A two-triangle quad patch has no oriented cycle.")
+            # Target corners are exact source-vertex averages inside the patch;
+            # a whole recombined pair is the identity corner assignment.
             for target_vertex in quad:
                 support = tuple(
                     int(value)
                     for value in supports[int(target_vertex)].tolist()
                     if int(value) >= 0
                 )
-                if len(support) != 1:
+                if not support or any(vertex not in patch_cycle for vertex in support):
                     raise ValueError(
-                        "A recombined source quad must retain four source vertices."
+                        "A patch quad vertex lost its two-triangle source support."
                     )
-                patch_vertices.append(support[0])
-            patch_cycle = (
-                patch_vertices[0],
-                patch_vertices[1],
-                patch_vertices[2],
-                patch_vertices[3],
-            )
+                positions = tuple(patch_cycle.index(vertex) for vertex in support)
+                patch_corners.append(
+                    (
+                        sum(
+                            (reference_quads[index][0] for index in positions),
+                            Fraction(0),
+                        )
+                        / len(positions),
+                        sum(
+                            (reference_quads[index][1] for index in positions),
+                            Fraction(0),
+                        )
+                        / len(positions),
+                    )
+                )
         for parent in candidate_parents:
             if patch_cycle is not None:
-                chart = _quad_patch_reference_chart(
+                patch_chart = _quad_patch_reference_chart(
                     source_cells,
                     parent,
                     patch_cycle,
                     reference_triangles,
                     reference_quads,
+                )
+                corner_chart = _bilinear_triangle_chart(patch_corners)
+                chart = (
+                    cast(Polynomial, compose_expression(patch_chart[0], corner_chart)),
+                    cast(Polynomial, compose_expression(patch_chart[1], corner_chart)),
                 )
             else:
                 triangle_row = source_cells[parent]
@@ -2186,13 +2508,19 @@ def extract_surface_quads(
     cross_field: SurfaceCrossField | None = None,
     source_geometry: CellGeometrySpec | None = None,
     maximum_field_error: float = 2.0,
+    unpaired_triangles: Literal["refuse", "subdivide"] = "refuse",
 ) -> DualExtraction:
     """Extract a triangle dual or an exact field-guided patch recombination.
 
     Field-guided patch cells retain exact source-parent and feature-edge ancestry.
     Non-affine source maps must agree exactly across each recombined pair; every
     returned target map is independently certified for continuous positivity.
+    When no complete pairing exists, ``unpaired_triangles="subdivide"`` keeps
+    the maximal positive pairing and subdivides the rest conformingly at edge
+    midpoints instead of refusing.
     """
+    if unpaired_triangles not in ("refuse", "subdivide"):
+        raise ValueError("unpaired_triangles must be 'refuse' or 'subdivide'.")
     _triangle_data(source)
     if source_geometry is None:
         source_geometry = CellGeometrySpec.affine(source)
@@ -2213,16 +2541,28 @@ def extract_surface_quads(
         raise ValueError(
             "Quad extraction source triangles must have certified positive cell maps."
         )
-    layout = (
-        None
-        if cross_field is None
-        else prepare_surface_quad_layout(
-            source,
-            cross_field,
-            maximum_field_error=maximum_field_error,
-            source_geometry=source_geometry,
-        )
-    )
+    layout = None
+    if cross_field is not None:
+        try:
+            layout = prepare_surface_quad_layout(
+                source,
+                cross_field,
+                maximum_field_error=maximum_field_error,
+                source_geometry=source_geometry,
+            )
+        except QuadLayoutObstruction as obstruction:
+            if (
+                unpaired_triangles != "subdivide"
+                or obstruction.category not in _PAIRING_OBSTRUCTIONS
+            ):
+                raise
+            layout = prepare_surface_quad_layout(
+                source,
+                cross_field,
+                maximum_field_error=maximum_field_error,
+                source_geometry=source_geometry,
+                complete=False,
+            )
     (
         target,
         supports,

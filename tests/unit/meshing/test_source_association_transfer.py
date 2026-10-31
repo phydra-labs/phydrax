@@ -60,6 +60,7 @@ from tests.unit.meshing.test_native_surface_routes import (
     _square_domain,
     _surface_specification,
 )
+from tests.unit.meshing.test_transition_acceptance import tiny_chart_source
 
 
 _CONTRACT = SpatialCoordinateContract.si()
@@ -236,6 +237,21 @@ def test_implicit_sphere_association_survives_bisection_split_and_collapse() -> 
     )
 
 
+def _curve_rows(result: CellMeshingResult) -> dict[int, tuple[object, ...]]:
+    return {
+        int(identifier): (
+            association.source_entity_ids[row],
+            association.source_parameter_intervals[row],
+            int(np.asarray(association.orientations)[row]),
+        )
+        for association in result.associations
+        if association.association_kind is GeometryAssociationKind.CURVE
+        for row, identifier in enumerate(
+            np.asarray(association.target_global_ids, dtype=np.int64).tolist()
+        )
+    }
+
+
 def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals() -> None:
     domain = _square_domain()
     specification = _surface_specification(domain)
@@ -297,6 +313,42 @@ def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals(
         interval is not None and interval[0] < interval[1]
         for interval in curves.source_parameter_intervals
     )
+
+
+def test_coarsened_curve_edges_merge_exact_source_intervals() -> None:
+    domain, source = tiny_chart_source()
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+        association_transfer=SurfaceAssociationTransfer(domain),
+    )
+    refined = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(
+                np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
+            ),
+            policy=policy,
+        )
+    )
+    current, hierarchy = refined.target, refined.hierarchy
+    assert isinstance(hierarchy, BisectionHierarchy)
+    # Every source curve edge is split, so coarsening merges COARSENED_INTO halves.
+    assert len(_curve_rows(current)) > len(_curve_rows(source))
+    coarsened = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            current,
+            MarkedMeshAdaptation(
+                (),
+                np.asarray(current.mesh.entity_set(2).entity_ids, dtype=np.int64),
+                hierarchy=hierarchy,
+            ),
+            policy=policy,
+        )
+    )
+    assert coarsened.target.mesh.topology_id == source.mesh.topology_id
+    # Merged half-edges recover the source's exact interval and orientation.
+    assert _curve_rows(coarsened.target) == _curve_rows(source)
 
 
 def test_mapped_reference_root_association_and_composed_namespaces() -> None:

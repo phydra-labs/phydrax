@@ -74,11 +74,10 @@ def interpolation_rows_preserve_constants(
                 for value in coefficients[row, support[row]]
             ),
             Fraction(0),
-        ) == 1
+        )
+        == 1
         for row in range(coefficients.shape[0])
     )
-
-
 
 
 class EntityLineage(StrictModule, NonTrainableState):
@@ -137,9 +136,7 @@ class EntityLineage(StrictModule, NonTrainableState):
         )
         if np.any(~np.isin(kinds, supported)):
             raise ValueError("Entity lineage contains an unsupported relation kind.")
-        if dimension_ == 0 and np.any(
-            kinds == int(EntityLineageKind.SPLIT_FROM)
-        ):
+        if dimension_ == 0 and np.any(kinds == int(EntityLineageKind.SPLIT_FROM)):
             raise ValueError(
                 "Vertex split ancestry must be represented by interpolation stencils."
             )
@@ -168,7 +165,6 @@ class EntityLineage(StrictModule, NonTrainableState):
                 "deleted_source_ids": array_tree_fingerprint(deleted),
             }
         )
-
 
 
 class MeshLineage(StrictModule, NonTrainableState):
@@ -265,7 +261,9 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
             raise ValueError("Every interpolation target requires one stencil row.")
         if np.any(targets < 0) or np.any(sources[valid_] < 0):
             raise ValueError("Interpolation entity IDs must be non-negative.")
-        source_rows = tuple(tuple(int(value) for value in row) for row in sources.tolist())
+        source_rows = tuple(
+            tuple(int(value) for value in row) for row in sources.tolist()
+        )
         valid_rows = tuple(tuple(bool(value) for value in row) for row in valid_.tolist())
         coefficient_rows = tuple(
             tuple(float(value) for value in row) for row in coefficients.tolist()
@@ -288,9 +286,7 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
                     Fraction.from_float(value) if is_valid else Fraction(0)
                     for value, is_valid in zip(row, row_valid, strict=True)
                 )
-                for row, row_valid in zip(
-                    coefficient_rows, valid_rows, strict=True
-                )
+                for row, row_valid in zip(coefficient_rows, valid_rows, strict=True)
             )
         else:
             exact = tuple(tuple(row) for row in exact_weights)
@@ -305,13 +301,12 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
                 for row, row_valid in zip(exact, valid_rows, strict=True)
                 for value, is_valid in zip(row, row_valid, strict=True)
             ):
-                raise ValueError("Invalid interpolation slots require exact zero weights.")
+                raise ValueError(
+                    "Invalid interpolation slots require exact zero weights."
+                )
             if any(
                 is_valid
-                and (
-                    float(value) != coefficient
-                    or (value != 0 and coefficient == 0.0)
-                )
+                and (float(value) != coefficient or (value != 0 and coefficient == 0.0))
                 for row, row_valid, coefficient_row in zip(
                     exact, valid_rows, coefficient_rows, strict=True
                 )
@@ -324,7 +319,11 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
                 )
         if preserves_constants and any(
             sum(
-                (value for value, is_valid in zip(row, row_valid, strict=True) if is_valid),
+                (
+                    value
+                    for value, is_valid in zip(row, row_valid, strict=True)
+                    if is_valid
+                ),
                 Fraction(0),
             )
             != 1
@@ -494,14 +493,18 @@ class CellMeshTransition(StrictModule, NonTrainableState):
             raise TypeError("vertex_stencil must be VertexInterpolationStencil or None.")
         if geometry_transition is not None:
             if not isinstance(geometry_transition, CellGeometryTransition):
-                raise TypeError("geometry_transition must be CellGeometryTransition or None.")
+                raise TypeError(
+                    "geometry_transition must be CellGeometryTransition or None."
+                )
             if (
                 geometry_transition.source_mesh.mesh_id != mesh_id
                 or geometry_transition.source_topology_id != topology_id
                 or geometry_transition.target_mesh.mesh_id != target.mesh.mesh_id
                 or geometry_transition.target_topology_id != target.mesh.topology_id
             ):
-                raise ValueError("Geometry transition endpoints do not match the mesh transition.")
+                raise ValueError(
+                    "Geometry transition endpoints do not match the mesh transition."
+                )
             geometry_transition.require_bound(
                 geometry_transition.source_mesh,
                 geometry_transition.source_geometry,
@@ -511,21 +514,32 @@ class CellMeshTransition(StrictModule, NonTrainableState):
         if material_reference is not None and not isinstance(
             material_reference, MaterialReferenceDeclaration
         ):
-            raise TypeError("material_reference must be MaterialReferenceDeclaration or None.")
+            raise TypeError(
+                "material_reference must be MaterialReferenceDeclaration or None."
+            )
         if volume_material_chain is not None:
             if not isinstance(volume_material_chain, VolumeMaterialChain):
-                raise TypeError("volume_material_chain must be VolumeMaterialChain or None.")
+                raise TypeError(
+                    "volume_material_chain must be VolumeMaterialChain or None."
+                )
+            # The chain is chronological from its reference; this transition
+            # contributes its latest map.
             if (
-                volume_material_chain.source_mesh_id != mesh_id
+                volume_material_chain.maps[-1].source_mesh.mesh_id != mesh_id
                 or volume_material_chain.target_mesh_id != target.mesh.mesh_id
-                or volume_material_chain.target_geometry_id != cell_geometry_id(target.geometry)
+                or volume_material_chain.target_geometry_id
+                != cell_geometry_id(target.geometry)
             ):
-                raise ValueError("Volume material chain endpoints do not match the mesh transition.")
+                raise ValueError(
+                    "Volume material chain endpoints do not match the mesh transition."
+                )
             chain_reference = volume_material_chain.reference
             if material_reference is not None and (
                 material_reference.declaration_id != chain_reference.declaration_id
             ):
-                raise ValueError("Transition material reference differs from its retained material chain.")
+                raise ValueError(
+                    "Transition material reference differs from its retained material chain."
+                )
             material_reference = chain_reference
         if material_reference is not None:
             material_reference = MaterialReferenceDeclaration.revalidate(

@@ -433,6 +433,10 @@ using detail::LocalIncidence;
 using detail::sorted_local_edge;
 using FaceKey = std::array<std::int32_t, 3>;
 using LogicalEdgeKey = std::pair<std::uint64_t, std::uint64_t>;
+// Validity classes of a measured cell (-1: not measurable).
+constexpr std::int8_t kBelowDeterminantFloor = 0;
+constexpr std::int8_t kBeyondSizeTarget = 1;
+constexpr std::int8_t kValidCell = 2;
 struct FlipQuality {
   std::int8_t validity_class = -1;
   double primary = -std::numeric_limits<double>::infinity();
@@ -448,8 +452,8 @@ void sort_quality_vector(QualityVector& quality);
 // bounds the number of accepted edits; without it a smoothing sequence can
 // keep making strictly smaller improvements. Target attainment (score 1) and
 // the final per-criterion residual records use the unresolved measures.
-// Validity (a hard gate for every edit) requires the relative determinant
-// above its floor and the circumradius within the cell's size target.
+// The validity class separates cells below the determinant floor, cells
+// beyond their circumradius size target, and valid cells (admissible_class).
 FlipQuality quality_from_measure(const CellMeasure& measure,
                                  const TetQualityRequest& request) {
   const double angle_score =
@@ -464,10 +468,10 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
   const double quality_score =
       std::floor(std::min(angle_score, radius_score) / kTetScoreQuantum) * kTetScoreQuantum;
   const std::int8_t validity =
-      measure.relative_determinant > request.minimum_relative_determinant &&
-              measure.circumradius <= measure.size_target
-          ? 1
-          : 0;
+      !(measure.relative_determinant > request.minimum_relative_determinant)
+          ? kBelowDeterminantFloor
+      : !(measure.circumradius <= measure.size_target) ? kBeyondSizeTarget
+                                                       : kValidCell;
   return {validity, quality_score};
 }
 
@@ -712,22 +716,46 @@ bool quality_vector_less(std::span<const FlipQuality> worse,
   return worse.size() > better.size();
 }
 
+// Cells whose replacement takes precedence over the size field: below the
+// determinant floor, or with score 0 (a ratio beyond 2^20 times its target,
+// including unrepresentable circumspheres).
+bool degenerate_cell(const FlipQuality& quality) noexcept {
+  return quality.validity_class == kBelowDeterminantFloor || quality.primary <= 0.0;
+}
+
+// Lowest validity class an edit replacing `before` may create. The
+// determinant floor binds every edit. The size target binds every edit except
+// one that removes a degenerate cell: repairing degeneracy takes precedence,
+// so such an edit may create cells beyond their size target (it still has to
+// improve the sorted scores). Size therefore never blocks the removal of a
+// degenerate cell, and no other edit can create a size violation.
+std::int8_t admissible_class(std::span<const FlipQuality> before) {
+  return std::any_of(before.begin(), before.end(), degenerate_cell) ? kBeyondSizeTarget
+                                                                   : kValidCell;
+}
+
 // The single acceptance rule for every topology and vertex edit: all
-// replacement cells pass the hard validity gates and the affected cells' sorted
-// score vector strictly increases in quality_vector_less.
+// replacement cells reach `minimum_class` and the affected cells' sorted score
+// vector strictly increases in quality_vector_less.
 bool improves_quality_vector(std::span<const FlipQuality> before,
-                             std::span<const FlipQuality> after) {
-  if (before.empty() || after.empty() ||
-      std::any_of(after.begin(), after.end(), [](const FlipQuality& quality) {
-        return quality.validity_class != 1;
+                             std::span<const FlipQuality> after,
+                             std::int8_t minimum_class) {
+  if (before.empty() || after.empty()) return false;
+  if (std::any_of(after.begin(), after.end(), [&](const FlipQuality& quality) {
+        return quality.validity_class < minimum_class;
       })) {
     return false;
   }
   return quality_vector_less(before, after);
 }
+// Local edits: the validity gates admissible for the edit (above).
+bool improves_quality_vector(std::span<const FlipQuality> before,
+                             std::span<const FlipQuality> after) {
+  return improves_quality_vector(before, after, admissible_class(before));
+}
 
 bool cell_quality_meets_target(const FlipQuality& quality) noexcept {
-  return quality.validity_class == 1 && quality.primary >= 1.0;
+  return quality.validity_class == kValidCell && quality.primary >= 1.0;
 }
 bool quality_vector_meets_target(std::span<const FlipQuality> quality) {
   return !quality.empty() &&
@@ -1108,6 +1136,12 @@ TetEditStatus make_edge_removal_proposal(
   for (std::size_t index = 0; index < count; ++index) {
     ring_edges.insert(sorted_local_edge(ring[index], ring[(index + 1) % count]));
   }
+  // The ring's own cells decide which replacement cells may be considered
+  // (see admissible_class).
+  if (!quality_vector_for_slots(mesh, removed_slots, request, scratch.before_quality)) {
+    return TetEditStatus::kRejectedTopology;
+  }
+  const std::int8_t minimum_class = admissible_class(scratch.before_quality);
 
   const auto triangle_cells = [&](std::size_t i, std::size_t k, std::size_t j,
                                   LocalCell& first_cell, LocalCell& second_cell,
@@ -1130,8 +1164,8 @@ TetEditStatus make_edge_removal_proposal(
     }
     triangle_quality = {local_flip_quality(mesh, first_cell, request),
                         local_flip_quality(mesh, second_cell, request)};
-    if (triangle_quality[0].validity_class != 1 ||
-        triangle_quality[1].validity_class != 1) {
+    if (triangle_quality[0].validity_class < minimum_class ||
+        triangle_quality[1].validity_class < minimum_class) {
       return false;
     }
     if (flip_quality_less(triangle_quality[1], triangle_quality[0])) {
@@ -1218,11 +1252,7 @@ TetEditStatus make_edge_removal_proposal(
       }
     }
   }
-  if (choices[count - 1] < 0 ||
-      !quality_vector_for_slots(mesh, removed_slots, request,
-                                scratch.before_quality)) {
-    return TetEditStatus::kRejectedTopology;
-  }
+  if (choices[count - 1] < 0) return TetEditStatus::kRejectedTopology;
   const std::span<const FlipQuality> after_quality(
       best_quality.data() + quality_offsets[count - 1], replacement_count);
   if (!improves_quality_vector(scratch.before_quality, after_quality)) {
@@ -1531,8 +1561,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     const FlipQuality quality = local_flip_quality(mesh, vertices, request);
     if (quality.validity_class < 0) return PHX_MC_INVALID_INPUT;
     before_cavity_quality.push_back(quality);
-    has_unmet_quality = has_unmet_quality ||
-                        quality.validity_class != 1 || quality.primary < 1.0;
+    has_unmet_quality = has_unmet_quality || !cell_quality_meets_target(quality);
   }
   sort_quality_vector(before_cavity_quality);
   if (has_unmet_quality) {
@@ -1568,7 +1597,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         after_cavity_quality.push_back(quality_from_measure(measure, request));
       }
       sort_quality_vector(after_cavity_quality);
-      if (improves_quality_vector(before_cavity_quality, after_cavity_quality)) {
+      // This whole-mesh retessellation would discard every interior vertex,
+      // so it never takes the degenerate-repair size exemption.
+      if (improves_quality_vector(before_cavity_quality, after_cavity_quality, kValidCell)) {
         TetEditBatch batch;
         batch.expected_generation = mesh.generation();
         batch.source_revision = mesh.source_revision();
@@ -2146,9 +2177,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
 
   TetMeshSnapshot final_state;
   if (mesh.snapshot(final_state) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
+  // The records cover improvement's own targets. The size field is a
+  // constraint on improvement's edits, not one of its targets: residual size
+  // violations are refinement's records (and the route's size compliance).
   std::vector<TetUnmetRecord> records;
-  if (final_state.cells.size() <= records.max_size() / 4) {
-    records.reserve(4 * final_state.cells.size());
+  if (final_state.cells.size() <= records.max_size() / 3) {
+    records.reserve(3 * final_state.cells.size());
   }
   for (const TetSnapshotCell& cell : final_state.cells) {
     std::array<std::int32_t, 4> slots{};
@@ -2170,34 +2204,18 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     }
     bool cell_unmet = false;
     geometry::TetrahedronShape shape;
-    const double size_target = slots_size_target(request, slots.data());
     if (!geometry::tetrahedron_shape(points.data(), shape)) {
       // Exactly positive (checked above) with a circumsphere that floating
-      // point cannot represent: the ratio exceeds every representable bound,
-      // and so does the circumradius any finite size target.
+      // point cannot represent: the ratio exceeds every representable bound.
       records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
                          PHX_MC_TET_UNMET_NONREPRESENTABLE,
                          std::numeric_limits<double>::infinity()});
-      if (std::isfinite(size_target)) {
-        records.push_back({cell.id, PHX_MC_TET_UNMET_SIZE,
-                           PHX_MC_TET_UNMET_NONREPRESENTABLE,
-                           std::numeric_limits<double>::infinity()});
-      }
       cell_unmet = true;
-    } else {
-      if (shape.radius_edge_ratio > request.radius_edge_bound) {
-        records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
-                           PHX_MC_TET_UNMET_NO_IMPROVEMENT,
-                           shape.radius_edge_ratio});
-        cell_unmet = true;
-      }
-      // Value: circumradius over target, as refinement records it.
-      if (shape.circumradius > size_target) {
-        records.push_back({cell.id, PHX_MC_TET_UNMET_SIZE,
-                           PHX_MC_TET_UNMET_NO_IMPROVEMENT,
-                           shape.circumradius / size_target});
-        cell_unmet = true;
-      }
+    } else if (shape.radius_edge_ratio > request.radius_edge_bound) {
+      records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
+                         PHX_MC_TET_UNMET_NO_IMPROVEMENT,
+                         shape.radius_edge_ratio});
+      cell_unmet = true;
     }
     const double angle = geometry::minimum_dihedral_degrees(points.data());
     if (!std::isfinite(angle)) {

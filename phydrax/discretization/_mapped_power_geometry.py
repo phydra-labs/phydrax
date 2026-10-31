@@ -31,6 +31,65 @@ def _integer_rows(value: Any, name: str, /) -> np.ndarray:
     return rows.astype(np.int64, copy=False)
 
 
+def _renewed_mapped_domain(stored: Any, /) -> Any:
+    """Rebuild a stored mapped reference domain through its constructors.
+
+    Archived coordinate elements are canonical recipes, not executable
+    elements, so the root maps are only usable after the reference mesh, the
+    root coordinate geometry and the reference domain are renewed. The renewed
+    domain identity covers all of them and must equal the stored one.
+    """
+    from ..geometry._domain_coverage import PiecewiseLinearDomain
+    from ..geometry._mapped_reference_domain import MappedReferenceDomain
+    from ._cell_geometry import CellGeometrySpec
+    from ._cell_mesh import CellMesh
+
+    if type(stored) is not MappedReferenceDomain:
+        raise TypeError("Stored mapped power geometry lost its mapped reference domain.")
+    reference_mesh = CellMesh.from_stored_fields(stored.reference_mesh)
+    stored_geometry = stored.source_geometry
+    source_geometry = CellGeometrySpec.from_stored_fields(
+        stored_geometry,
+        source_mesh=(None if stored_geometry.source_mesh_id is None else reference_mesh),
+        source_map=stored_geometry.source_map,
+        restriction_source=stored_geometry.restriction_source,
+        elements=dict(
+            zip(stored_geometry.block_names, stored_geometry.elements, strict=True)
+        ),
+    )
+    stored_reference = stored.reference_domain
+    reference_domain = PiecewiseLinearDomain(
+        stored_reference.vertices,
+        stored_reference.facets,
+        stored_reference.facet_regions,
+        stored_reference.region_ids,
+        source_id=stored_reference.source_id,
+        region_occurrence_paths=stored_reference.region_occurrence_paths,
+    )
+    domain = MappedReferenceDomain(
+        reference_domain,
+        reference_mesh,
+        source_geometry,
+        stored.cell_regions,
+        source_id=stored.source_id,
+        source_revision=stored.source_revision,
+        coordinate_contract=stored.coordinate_contract,
+        root_vertex_occurrence_paths=stored.root_vertex_occurrence_paths,
+        root_cell_occurrence_paths=stored.root_cell_occurrence_paths,
+        reference_domain_vertex_root_ids=(
+            None
+            if stored.reference_domain_vertex_root_ids is None
+            else np.asarray(stored.reference_domain_vertex_root_ids, dtype=np.int64)
+        ),
+    )
+    if (
+        reference_domain.domain_id != stored_reference.domain_id
+        or domain.domain_id != stored.domain_id
+    ):
+        raise ValueError("Stored mapped reference domain differs from its renewal.")
+    return domain
+
+
 @final
 class MappedPowerCellGeometrySource(StrictModule, NonTrainableState):
     """Exact physical power vertices bound to their reference power cells.
@@ -210,6 +269,61 @@ class MappedPowerCellGeometrySource(StrictModule, NonTrainableState):
         self.source_revision = reference_source.source_revision
         self.domain_id = domain.domain_id
         self.source_map_id = identity
+
+    @classmethod
+    def from_stored_fields(
+        cls,
+        value: MappedPowerCellGeometrySource,
+        /,
+        *,
+        reference_source: ExactPowerCellGeometrySource | None = None,
+    ) -> MappedPowerCellGeometrySource:
+        """Re-place every stored vertex through the renewed reference power map.
+
+        The reference power source is rebuilt by its owner (or supplied already
+        renewed by a caller that also renews its mapped domain), and the
+        constructor re-derives the exact physical vertices from the stored root
+        charts and restricted pieces. The renewed identity must match the stored
+        one, so a changed chart, piece row or vertex image is refused.
+        """
+        if type(value) is not cls:
+            raise TypeError("value must be MappedPowerCellGeometrySource.")
+        if reference_source is None:
+            if type(value.reference_source) is not ExactPowerCellGeometrySource:
+                raise TypeError(
+                    "Stored mapped power geometry lost its exact reference power source."
+                )
+            reference_source = ExactPowerCellGeometrySource.from_stored_fields(
+                value.reference_source,
+                domain_source=_renewed_mapped_domain(
+                    value.reference_source.domain_source
+                ),
+            )
+        cells = _integer_rows(np.asarray(value.piece_cells), "piece_cells")
+        if cells.size == 0:
+            raise ValueError("Stored mapped power geometry has no restricted pieces.")
+        renewed = cls(
+            reference_source,
+            np.asarray(value.carrier_root_cell_ids),
+            value.carrier_root_charts,
+            cells,
+            np.asarray(value.piece_tets),
+            int(np.max(cells)) + 1,
+        )
+        if (
+            renewed.source_map_id != value.source_map_id
+            or renewed.source_id != value.source_id
+            or renewed.source_revision != value.source_revision
+            or renewed.domain_id != value.domain_id
+            or renewed.exact_vertices != tuple(value.exact_vertices)
+            or not np.array_equal(
+                np.asarray(renewed.runtime_vertices), np.asarray(value.runtime_vertices)
+            )
+        ):
+            raise ValueError(
+                "Stored mapped power geometry differs from its renewed root-chart images."
+            )
+        return renewed
 
     @property
     def domain(self) -> Any:

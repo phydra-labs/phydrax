@@ -597,11 +597,14 @@ PHX_MC_API int32_t phx_mc_tet_mesh_refine(
 /* Improve preserves every constrained face/segment and region. Flips,
  * collapses, relocations, and interior vertex insertions are accepted by one
  * sorted-score order; each cell's score is floored to multiples of
- * `*score_quantum` (reported, 2^-20). Determinant floor and circumradius size
- * target are hard gates for every edit. `sizes` follows refine (empty keeps
- * the retained field, e.g. refine's). The run status is UNRESOLVED while the
- * radius-edge, size, or dihedral target, or the determinant floor, remains
- * unmet; `phx_mc_tet_mesh_unmet` reports each residual criterion. */
+ * `*score_quantum` (reported, 2^-20). The determinant floor gates every edit.
+ * The circumradius size target gates every edit except one removing a
+ * degenerate cell (below the determinant floor or scoring 0), whose repair
+ * takes precedence. `sizes` follows refine (empty keeps the retained field,
+ * e.g. refine's). The run status is UNRESOLVED while the radius-edge or
+ * dihedral target, or the determinant floor, remains unmet;
+ * `phx_mc_tet_mesh_unmet` reports each residual criterion. The size field is
+ * a constraint on improvement, not one of its targets. */
 PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(
     phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
     const char* source_id, int64_t source_id_length,
@@ -1151,6 +1154,11 @@ PHX_MC_API int32_t phx_mc_plc3d_failure(
     const phx_mc_plc3d_result* result, int32_t* reason, int32_t* first_kind,
     int64_t* first, int32_t* second_kind, int64_t* second, double* certified_deviation,
     double* declared_bound);
+// Steiner-suppression search evidence: values[0..4] = wedges searched,
+// wedges filled, states expanded, most states in one wedge, largest searched
+// wedge (cells).
+PHX_MC_API int32_t phx_mc_plc3d_suppression_search(
+    const phx_mc_plc3d_result* result, int64_t* values);
 PHX_MC_API void phx_mc_plc3d_free(phx_mc_plc3d_result* result);
 
 enum phx_mc_intersection_class {

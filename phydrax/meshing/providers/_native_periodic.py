@@ -36,6 +36,7 @@ from ...meshing._certification_schedule import MeshCertificationSchedule
 from ...meshing._contracts import (
     MeshingFailure,
     MeshingFailureCategory,
+    MeshingFailureEvidence,
     SurfaceMeshingSpec,
     VolumeFillStrategy,
     VolumeMeshingSpec,
@@ -937,16 +938,30 @@ def _periodic_metric_controls(
                 "Periodic fixed-vertex controls must agree over every vertex orbit."
             )
     if dimension == 2:
+        # The lifted mesh cuts the quotient along a fundamental-domain seam, so a
+        # seam edge has one incident lifted cell per orbit member. That seam is a
+        # representation artifact: boundary and material-interface edges are
+        # decided by the cell orbits incident to each quotient edge orbit.
         incidence = mesh.topology.incidences[1].relation
         valid = np.asarray(incidence.valid, dtype=np.bool_)
         edge_rows = np.asarray(incidence.source_indices, dtype=np.int64)[valid]
         cell_rows = np.asarray(incidence.target_indices, dtype=np.int64)[valid]
-        incident_counts = np.bincount(edge_rows, minlength=edge_ids.size)
-        required_class = incident_counts == 1
-        for edge_row in np.flatnonzero(incident_counts == 2):
-            adjacent_cells = cell_rows[edge_rows == edge_row]
-            if np.unique(cell_classes[adjacent_cells]).size > 1:
-                required_class[edge_row] = True
+        edge_orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)
+        cell_orbits = np.asarray(
+            periodic_entity_orbit_map(mesh, 2).lifted_to_quotient, dtype=np.int64
+        )
+        incident = np.unique(
+            np.stack((edge_orbits[edge_rows], cell_orbits[cell_rows]), axis=1), axis=0
+        )
+        class_by_cell_orbit = np.zeros((int(np.max(cell_orbits)) + 1,), dtype=np.int64)
+        class_by_cell_orbit[cell_orbits] = cell_classes
+        orbit_count = edge_map.quotient_entity_ids.size
+        incident_counts = np.bincount(incident[:, 0], minlength=orbit_count)
+        lowest = np.full((orbit_count,), np.iinfo(np.int64).max, dtype=np.int64)
+        highest = np.full((orbit_count,), -1, dtype=np.int64)
+        np.minimum.at(lowest, incident[:, 0], class_by_cell_orbit[incident[:, 1]])
+        np.maximum.at(highest, incident[:, 0], class_by_cell_orbit[incident[:, 1]])
+        required_class = ((incident_counts == 1) | (lowest != highest))[edge_orbits]
         reserved_class = len(specification.protected_features) + 1
         edge_classes[required_class & (edge_classes == 0)] = reserved_class
     return cell_classes, edge_classes, protected_edges, fixed_vertices, region_by_code
@@ -1008,12 +1023,33 @@ def _adapt_periodic_triangles(
         topology_operations=True,
         relocation=True,
     )
-    if not outcome.evidence.converged:
+    evidence = outcome.evidence
+    if not evidence.converged:
+        # A valid but unmet candidate is not request success: the stall and the
+        # refusal reason of every remaining edge orbit are reported.
+        status = "stalled" if evidence.stalled else "incomplete"
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
             "Periodic metric adaptation did not meet the unit-edge criterion; "
-            f"{outcome.evidence.out_of_range_edges} edges remain outside the accepted range.",
+            f"status={status}, {evidence.out_of_range_edges} edges remain outside "
+            "the accepted range"
+            + "".join(
+                f"; metric length {length:.4f}: {reason}"
+                for length, reason in evidence.stalled_edges
+            )
+            + ".",
             stage="periodic-metric-adaptation",
+            evidence=MeshingFailureEvidence(
+                achieved_quantities=tuple(
+                    (f"stalled_edge_{index}_metric_length", length)
+                    for index, (length, _) in enumerate(evidence.stalled_edges)
+                ),
+                checkpoint=f"periodic-metric-adaptation:{status}",
+                logical_findings=tuple(
+                    f"stalled_edge_{index}: {reason}"
+                    for index, (_, reason) in enumerate(evidence.stalled_edges)
+                ),
+            ),
         )
     target = stage_periodic_topology_edit(mesh, outcome.edit)
     if target is None or target.periodic_topology is None:

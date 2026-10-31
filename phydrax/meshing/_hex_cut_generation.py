@@ -2363,6 +2363,7 @@ def _compose_cut_hex_geometry(
     root_element = root_elements[0]
 
     charts: list[tuple[Expression, Expression, Expression]] = []
+    parent_charts: list[tuple[Expression, Expression, Expression]] = []
     chart_bounds: list[tuple[Fraction, Fraction]] = []
     reference_volumes: list[Fraction] = []
     for output_row, (cell, parent) in enumerate(zip(hexes, parents, strict=True)):
@@ -2402,6 +2403,7 @@ def _compose_cut_hex_geometry(
             )
         reference_volumes.append(volume)
         charts.append((root_chart[0], root_chart[1], root_chart[2]))
+        parent_charts.append((chart[0], chart[1], chart[2]))
         chart_bounds.append(bounds)
     source_reference_coverage: list[Fraction] = [Fraction(0) for _ in source_cells]
     for parent, volume in zip(parents, reference_volumes, strict=True):
@@ -2449,15 +2451,13 @@ def _compose_cut_hex_geometry(
         [source_vertex_ids[source_cells[int(parent)]] for parent in parents],
         dtype=np.int64,
     )
+    # Witness charts stay relative to the retained fill tetrahedron: a curved
+    # root composes through the exact affine fill-in-root restriction, so the
+    # forward reference chain reuses the fill mesh's global embedding proof
+    # instead of per-hex curved injectivity proofs.
     reference_map: ReferenceCellMapWitnesses | None = None
-    if (
-        source_geometry.restriction_source is None
-        and tuple(root_parent_ids)
-        == tuple(int(value) for value in source_parent_ids.tolist())
-        and all(
-            str(block.cell_kind) == root_element.cell_kind for block in source_mesh.blocks
-        )
-    ):
+    parent_kinds = {str(block.cell_kind) for block in source_mesh.blocks}
+    if len(parent_kinds) == 1:
         hexahedron_reference_vertices = tuple(
             tuple(Fraction.from_float(float(value)) for value in point)
             for point in np.asarray(
@@ -2470,25 +2470,22 @@ def _compose_cut_hex_geometry(
                 tuple(
                     _require_fraction(
                         evaluate_expression(expression, point),
-                        "Cut root-reference corners must remain rational.",
+                        "Cut fill-reference corners must remain rational.",
                     )
                     for expression in chart
                 )
                 for point in hexahedron_reference_vertices
             )
-            for chart in charts
-        )
-        source_reference_vertices = np.asarray(
-            exact_source_reference_vertices, dtype=np.float64
+            for chart in parent_charts
         )
         reference_map = ReferenceCellMapWitnesses(
-            np.arange(len(charts), dtype=np.int64),
-            np.asarray(root_parent_ids, dtype=np.int64),
+            np.arange(len(parent_charts), dtype=np.int64),
+            source_parent_ids,
             "hexahedron",
-            root_element.cell_kind,
-            source_reference_vertices,
+            next(iter(parent_kinds)),
+            np.asarray(exact_source_reference_vertices, dtype=np.float64),
             exact_source_reference_vertices,
-            tuple(charts),
+            tuple(parent_charts),
         )
     restriction = CellGeometryRestrictionSource(
         cell_geometry_id(source_geometry),
@@ -2960,7 +2957,7 @@ def generate_balanced_cut_hexes(
         or plan.source_topology_id != source_mesh.topology_id
         or schedule.route not in ("balanced_grid", "frame_grid")
         or (schedule.route == "frame_grid") != (plan.frame_id is not None)
-        or source.geometry is not None
+        or (source.geometry is not None and source_geometry is None)
         or source.boundary != "conforming"
         or any(not _is_tetrahedron_block(block) for block in source_mesh.blocks)
     ):

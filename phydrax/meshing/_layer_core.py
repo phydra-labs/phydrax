@@ -802,7 +802,8 @@ def _generate_layer_core_unmapped(
     if layer_regions.shape != (layer_count,):
         raise ValueError("Native layer regions must identify every accepted layer cell.")
     if any(
-        control.control_id != layers.control_id
+        controls_owner.realized_layer_control(source, control).control_id
+        != layers.control_id
         for control in specification.layer_controls
     ):
         raise ValueError(
