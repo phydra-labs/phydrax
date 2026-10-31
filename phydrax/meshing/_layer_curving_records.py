@@ -93,7 +93,10 @@ def _adaptive_implicit_source_query(
         return source_query
     if isinstance(source_query, _AdaptiveImplicitBoundaryCarrier):
         return source_query
-    raise TypeError("Adaptive layer source query must retain its native adaptive chart authority.")
+    raise TypeError(
+        "Adaptive layer source query must retain its native adaptive chart authority."
+    )
+
 
 def _fraction(value: object, /) -> Fraction:
     if isinstance(value, Fraction):
@@ -111,6 +114,8 @@ def _fraction3(point: Sequence[object], /) -> tuple[Fraction, Fraction, Fraction
     if len(point) != 3:
         raise ValueError("An exact target reference point must have three coordinates.")
     return (_fraction(point[0]), _fraction(point[1]), _fraction(point[2]))
+
+
 type _ExactReferencePoint2 = tuple[ExactScalar, ExactScalar]
 type _ExactReferencePoint3 = tuple[ExactScalar, ExactScalar, ExactScalar]
 type _BarycentricSolver2 = ExactRationalAlgebraicFactorization[RadicalElement]
@@ -141,24 +146,28 @@ def _exact_reference_cell_vertices(
 ) -> tuple[tuple[Fraction, Fraction, Fraction], ...]:
     element = lagrange_element(cell_kind, 1)
     if not isinstance(element, FiniteElementSpec):
-        raise ValueError("Exact layer maps require a canonical degree-one reference element.")
+        raise ValueError(
+            "Exact layer maps require a canonical degree-one reference element."
+        )
     node_data = lagrange_reference_node_data(element)
     vertices: list[tuple[Fraction, Fraction, Fraction]] = []
     for dofs in element.entity_dofs[0]:
         if len(dofs) != 1:
-            raise ValueError("A degree-one reference vertex must have one exact nodal DOF.")
+            raise ValueError(
+                "A degree-one reference vertex must have one exact nodal DOF."
+            )
         local_dof = int(dofs[0])
         node = node_data[local_dof]
         if node.local_dof != local_dof or node.exact_point is None:
-            raise ValueError("A reference vertex has no canonical exact nodal coordinate.")
+            raise ValueError(
+                "A reference vertex has no canonical exact nodal coordinate."
+            )
         vertices.append(_fraction3(node.exact_point))
     return tuple(vertices)
 
 
 def _exact_scalar_identity(value: ExactScalar, /) -> object:
     return _coordinate_coefficient_identity(value)
-
-
 
 
 def _fraction_chart2(
@@ -185,22 +194,20 @@ def _fraction_chart3(
     return (_fraction3(points[0]), _fraction3(points[1]), _fraction3(points[2]))
 
 
-def _reference_expression(
-    expression: ExactReferenceChartExpression, /
-) -> Expression:
+def _reference_expression(expression: ExactReferenceChartExpression, /) -> Expression:
     return expression if isinstance(expression, RationalPolynomial) else dict(expression)
 
 
 type _ImplicitCellKey = tuple[int, int, int, int]
 type _ImplicitRootEdge = tuple[tuple[int, int, int], tuple[int, int, int]]
-type _ImplicitRootEdgeRow = tuple[
-    _ImplicitRootEdge, _ImplicitRootEdge, _ImplicitRootEdge
-]
+type _ImplicitRootEdgeRow = tuple[_ImplicitRootEdge, _ImplicitRootEdge, _ImplicitRootEdge]
 
 
 def _implicit_cell_key(values: Sequence[int], /) -> _ImplicitCellKey:
     if len(values) != 4:
-        raise ValueError("Adaptive implicit source-cell keys must retain four coordinates.")
+        raise ValueError(
+            "Adaptive implicit source-cell keys must retain four coordinates."
+        )
     return (int(values[0]), int(values[1]), int(values[2]), int(values[3]))
 
 
@@ -222,7 +229,9 @@ def _implicit_root_edge_row(
 ) -> _ImplicitRootEdgeRow:
     edges = np.asarray(values, dtype=np.int64)
     if edges.shape != (3, 2, 3):
-        raise ValueError("Adaptive implicit source triangles must retain three root edges.")
+        raise ValueError(
+            "Adaptive implicit source triangles must retain three root edges."
+        )
     return (
         _implicit_root_edge(edges[0]),
         _implicit_root_edge(edges[1]),
@@ -236,7 +245,9 @@ def _implicit_root_witness_row(
     target_row: int,
     /,
 ) -> int:
-    cell_key = tuple(int(value) for value in target_witness.implicit_cell_keys[target_row])
+    cell_key = tuple(
+        int(value) for value in target_witness.implicit_cell_keys[target_row]
+    )
     root_edges = tuple(
         tuple(tuple(int(value) for value in endpoint) for endpoint in edge)
         for edge in target_witness.implicit_root_edge_keys[target_row]
@@ -244,8 +255,10 @@ def _implicit_root_witness_row(
     matches = tuple(
         row
         for row in range(len(root_witness.source_chart_ids))
-        if root_witness.source_chart_ids[row] == target_witness.source_chart_ids[target_row]
-        and tuple(int(value) for value in root_witness.implicit_cell_keys[row]) == cell_key
+        if root_witness.source_chart_ids[row]
+        == target_witness.source_chart_ids[target_row]
+        and tuple(int(value) for value in root_witness.implicit_cell_keys[row])
+        == cell_key
         and tuple(
             tuple(tuple(int(value) for value in endpoint) for endpoint in edge)
             for edge in root_witness.implicit_root_edge_keys[row]
@@ -253,8 +266,12 @@ def _implicit_root_witness_row(
         == root_edges
     )
     if len(matches) != 1:
-        raise ValueError("Adaptive target chart has no unique retained source-wall root witness.")
+        raise ValueError(
+            "Adaptive target chart has no unique retained source-wall root witness."
+        )
     return matches[0]
+
+
 def _mapped_reference_chart_rows(
     query: MappedReferenceBoundarySource,
     witness: SourceBoundaryChartWitness,
@@ -270,11 +287,15 @@ def _mapped_reference_chart_rows(
         for mapping in nested_cell_reference_maps(reference_map):
             arguments = mapping.arguments
             if arguments is None or len(arguments) != 3:
-                raise ValueError("Mapped layer witness requires an exact target-to-root expression bank.")
+                raise ValueError(
+                    "Mapped layer witness requires an exact target-to-root expression bank."
+                )
             key = (mapping.target_cell_id, mapping.source_cell_id)
             identity = reference_chart_arguments_identity((arguments,))
             if key in signatures and signatures[key] != identity:
-                raise ValueError("Mapped layer cell reference map repeats conflicting source charts.")
+                raise ValueError(
+                    "Mapped layer cell reference map repeats conflicting source charts."
+                )
             by_pair[key] = mapping
             signatures[key] = identity
     result = []
@@ -290,20 +311,22 @@ def _mapped_reference_chart_rows(
         try:
             mapping = by_pair[(target_cell, root_cell)]
         except KeyError as error:
-            raise ValueError("Mapped layer target chart has no exact root-cell reference map.") from error
+            raise ValueError(
+                "Mapped layer target chart has no exact root-cell reference map."
+            ) from error
         arguments = mapping.arguments
         if arguments is None or len(arguments) != 3:
-            raise ValueError("Mapped layer witness requires its exact target-to-root expression bank.")
+            raise ValueError(
+                "Mapped layer witness requires its exact target-to-root expression bank."
+            )
         target_points = _fraction_chart3(witness.target_reference_chart(row))
         exact_arguments = tuple(_reference_expression(value) for value in arguments)
-        if _determinant_3x3(
-            _exact_map_jacobian(exact_arguments, target_points[0])
-        ) == 0:
+        if _determinant_3x3(_exact_map_jacobian(exact_arguments, target_points[0])) == 0:
             raise ValueError("Mapped layer target-to-root reference map is singular.")
         root_points = tuple(
             _fraction3(mapping.evaluate(point)) for point in target_points
         )
-        source_parameters = _fraction_chart2(
+        root_uvs = _fraction_chart2(
             query.root_face_uv(
                 root_face,
                 root_cell,
@@ -311,10 +334,24 @@ def _mapped_reference_chart_rows(
                 root_points,
             )
         )
+        # Witness parameters are chart-local (barycentric in the source chart's
+        # root-face polygon), as _evaluate_mapped_chart_point consumes them.
+        source_chart = _fraction_chart2(query.chart_face_uv(chart_id))
+        solver = _prepare_barycentric_solver_2d(source_chart)
+        source_parameters = tuple(
+            _exact2(weights[1:])
+            for weights in (
+                _barycentric_2d(uv, source_chart, solver=solver) for uv in root_uvs
+            )
+        )
         if source_parameters != _fraction_chart2(witness.source_parameter_chart(row)):
-            raise ValueError("Mapped layer witness source parameters differ from its exact root map.")
+            raise ValueError(
+                "Mapped layer witness source parameters differ from its exact root map."
+            )
         result.append((query_row, root_face, root_cell, root_local, mapping))
     return tuple(result)
+
+
 def _exact_map_jacobian(
     arguments: Sequence[Expression],
     point: _ExactReferencePoint3,
@@ -325,7 +362,9 @@ def _exact_map_jacobian(
     tuple[ExactScalar, ExactScalar, ExactScalar],
 ]:
     if len(arguments) != 3:
-        raise ValueError("Mapped root cell chart must retain three exact coordinate expressions.")
+        raise ValueError(
+            "Mapped root cell chart must retain three exact coordinate expressions."
+        )
     rows = tuple(
         _exact3(
             tuple(
@@ -351,6 +390,7 @@ def _determinant_3x3(
         - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
         + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
     )
+
 
 def _query_frame_id(query: SourceBoundaryQuery, /) -> str | None:
     frame = getattr(query, "frame_id", None)
@@ -444,8 +484,7 @@ def _barycentric_3d(
     first = tuple(corners[1][axis] - corners[0][axis] for axis in range(3))
     second = tuple(corners[2][axis] - corners[0][axis] for axis in range(3))
     if any(
-        corners[0][axis] + alpha * first[axis] + beta * second[axis]
-        != point[axis]
+        corners[0][axis] + alpha * first[axis] + beta * second[axis] != point[axis]
         for axis in range(3)
     ):
         raise ValueError("Reference chart point is outside its exact target facet plane.")
@@ -477,9 +516,7 @@ def _mapped_chart_reference_contexts(
     root_references = tuple(
         _exact3(mapping.evaluate(point)) for point in target_references
     )
-    source_uvs = query.root_face_uv(
-        root_face, root_cell, root_local, root_references
-    )
+    source_uvs = query.root_face_uv(root_face, root_cell, root_local, root_references)
     if len(source_uvs) != len(root_references):
         raise ValueError("Mapped root-face chart returned misaligned exact UV rows.")
     source_chart = _fraction_chart2(
@@ -493,9 +530,7 @@ def _mapped_chart_reference_contexts(
             source_chart,
             source_chart_solver,
         )
-        for root_reference, source_uv in zip(
-            root_references, source_uvs, strict=True
-        )
+        for root_reference, source_uv in zip(root_references, source_uvs, strict=True)
     )
 
 
@@ -519,16 +554,17 @@ def _evaluate_mapped_chart_point(
 ]:
     arguments = mapping.arguments
     if arguments is None or len(arguments) != 3:
-        raise ValueError("Mapped layer source chart has no retained exact root reference expressions.")
+        raise ValueError(
+            "Mapped layer source chart has no retained exact root reference expressions."
+        )
     exact_arguments = tuple(_reference_expression(value) for value in arguments)
     if (
         _exact3(mapping.evaluate(target_reference)) != root_reference
-        or _determinant_3x3(
-            _exact_map_jacobian(exact_arguments, target_reference)
-        )
-        == 0
+        or _determinant_3x3(_exact_map_jacobian(exact_arguments, target_reference)) == 0
     ):
-        raise ValueError("Mapped layer target-to-root reference map is singular or stale.")
+        raise ValueError(
+            "Mapped layer target-to-root reference map is singular or stale."
+        )
     chart_weights = _barycentric_2d(
         source_uv, source_chart_uv, solver=source_chart_solver
     )
@@ -542,8 +578,7 @@ def _evaluate_mapped_chart_point(
         )
     )
     source_exact = tuple(
-        evaluate_expression(expression, chart_parameter)
-        for expression in expressions
+        evaluate_expression(expression, chart_parameter) for expression in expressions
     )
     tangents = np.asarray(
         [
@@ -586,15 +621,15 @@ def _mapped_physical_distance_bounds(
         for expression in query.chart_coordinate_expressions(2, chart_id)
     )
     source_exact = tuple(
-        evaluate_expression(expression, source_parameter)
-        for expression in expressions
+        evaluate_expression(expression, source_parameter) for expression in expressions
     )
     target_exact = tuple(
-        Fraction(float(value))
-        for value in np.asarray(target_point, dtype=np.float64)
+        Fraction(float(value)) for value in np.asarray(target_point, dtype=np.float64)
     )
     if len(source_exact) != 3:
-        raise ValueError("Mapped source physical distance requires three root-chart coordinates.")
+        raise ValueError(
+            "Mapped source physical distance requires three root-chart coordinates."
+        )
     squared_lower = Fraction(0)
     squared_upper = Fraction(0)
     for axis, value in enumerate(source_exact):
@@ -617,16 +652,13 @@ def _mapped_physical_distance_bounds(
     )
 
 
-def _face_reference_element(
-    element: object, cell_kind: str, /
-) -> _NodalReferenceElement:
+def _face_reference_element(element: object, cell_kind: str, /) -> _NodalReferenceElement:
     if isinstance(element, _NodalReferenceElement):
         return element
     degree = getattr(element, "degree", None)
     if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
         raise ValueError("Layer source trace has no supported nodal reference order.")
     return lagrange_element(cell_kind, int(degree))
-
 
 
 def _reference_face_dofs(
@@ -653,14 +685,14 @@ def _reference_face_dofs(
             )
         reference = _exact3(node.exact_point)
         try:
-            weights = _barycentric_3d(
-                reference, corners, solver=barycentric_solver
-            )
+            weights = _barycentric_3d(reference, corners, solver=barycentric_solver)
         except ValueError:
             continue
         if all(value >= 0 for value in weights):
             result.append((local_dof, reference))
     return tuple(result)
+
+
 def _evaluate_cell_geometry_point(
     elements: Sequence[CellGeometryElement],
     routes: Sequence[ArrayLike],
@@ -682,7 +714,9 @@ def _evaluate_cell_geometry_point(
         dtype=np.float64,
     )
     if point.ndim != 1 or not np.all(np.isfinite(point)):
-        raise ValueError("Exact target coordinate map produced an invalid source-bound point.")
+        raise ValueError(
+            "Exact target coordinate map produced an invalid source-bound point."
+        )
     return point
 
 
@@ -696,7 +730,9 @@ def _validate_parametric_chart_geometry(
     /,
 ) -> None:
     if not np.isfinite(tolerance) or tolerance < 0.0:
-        raise ValueError("Source-chart physical tolerance must be finite and nonnegative.")
+        raise ValueError(
+            "Source-chart physical tolerance must be finite and nonnegative."
+        )
     charts.require_current()
     charts.require_root(charts.mesh, charts.geometry)
     charts.require_bound(charts.mesh, charts.geometry, charts.boundary_source)
@@ -725,21 +761,17 @@ def _validate_parametric_chart_geometry(
     parameters: list[tuple[float, float]] = []
     exact_parameters: list[_ExactReferencePoint2] = []
     target_points: list[NDArray[np.float64]] = []
-    for chart_row, source_cell_id in enumerate(
-        column_identity.source_wall_cell_ids
-    ):
+    for chart_row, source_cell_id in enumerate(column_identity.source_wall_cell_ids):
         source_chart_row = source_chart_rows.get(int(source_cell_id))
         if source_chart_row is None:
-            raise ValueError("Layer column ancestry names an absent source-wall chart cell.")
+            raise ValueError(
+                "Layer column ancestry names an absent source-wall chart cell."
+            )
         patch = int(charts.root_patches[source_chart_row])
         source_entity = charts.domain.entity_id(2, patch)
         occurrence = tuple(charts.domain.source_occurrences[2][patch])
-        source_parameters = _fraction_chart2(
-            witness.source_parameter_chart(chart_row)
-        )
-        root_chart = _fraction_chart2(
-            charts.root_parameter_chart(source_chart_row)
-        )
+        source_parameters = _fraction_chart2(witness.source_parameter_chart(chart_row))
+        root_chart = _fraction_chart2(charts.root_parameter_chart(source_chart_row))
         root_chart_solver = _prepare_barycentric_solver_2d(root_chart)
         if (
             witness.source_entity_ids[chart_row] != source_entity
@@ -755,7 +787,9 @@ def _validate_parametric_chart_geometry(
                 for point in source_parameters
             )
         ):
-            raise ValueError("Layer source chart changed its exact entity, occurrence, or root patch.")
+            raise ValueError(
+                "Layer source chart changed its exact entity, occurrence, or root patch."
+            )
         cell_id = int(witness.cell_global_ids[chart_row])
         try:
             block_row, cell_row = cell_rows[cell_id]
@@ -767,9 +801,7 @@ def _validate_parametric_chart_geometry(
         if local_face < 0 or local_face >= len(element.entity_dofs[2]):
             raise ValueError("Layer source chart names an absent target face.")
         face_key = (cell_id, local_face)
-        target_corners = _fraction_chart3(
-            witness.target_reference_chart(chart_row)
-        )
+        target_corners = _fraction_chart3(witness.target_reference_chart(chart_row))
         target_chart_solver = _prepare_barycentric_solver_3d(target_corners)
         face_nodes = _reference_face_dofs(
             element, target_corners, solver=target_chart_solver
@@ -783,7 +815,10 @@ def _validate_parametric_chart_geometry(
             source_uv = _exact2(
                 tuple(
                     sum(
-                        (weights[corner] * source_parameters[corner][axis] for corner in range(3)),
+                        (
+                            weights[corner] * source_parameters[corner][axis]
+                            for corner in range(3)
+                        ),
                         Fraction(0),
                     )
                     for axis in range(2)
@@ -795,7 +830,9 @@ def _validate_parametric_chart_geometry(
                     source_uv, root_chart, solver=root_chart_solver
                 )
             ):
-                raise ValueError("A target boundary DOF leaves its exact source root chart.")
+                raise ValueError(
+                    "A target boundary DOF leaves its exact source root chart."
+                )
             route = np.asarray(routes[block_row], dtype=np.int64)
             geometry_row = int(route[cell_row, local_dof])
             if geometry_row >= 0:
@@ -810,7 +847,9 @@ def _validate_parametric_chart_geometry(
                     reference,
                 )
             else:
-                raise ValueError("A source-chart boundary DOF has an invalid map-node sentinel.")
+                raise ValueError(
+                    "A source-chart boundary DOF has an invalid map-node sentinel."
+                )
             patches.append(patch)
             parameters.append((float(source_uv[0]), float(source_uv[1])))
             exact_parameters.append(source_uv)
@@ -819,13 +858,13 @@ def _validate_parametric_chart_geometry(
     if not patches or any(
         covered_dofs.get(key, set()) != value for key, value in expected_dofs.items()
     ):
-        raise ValueError("Exact source charts do not cover every target boundary geometry DOF.")
+        raise ValueError(
+            "Exact source charts do not cover every target boundary geometry DOF."
+        )
     targets = np.asarray(target_points, dtype=np.float64)
     source_points = np.empty_like(targets)
     exact_surface_maps: dict[int, tuple[Expression, ...]] = {}
-    for row, (patch, parameter) in enumerate(
-        zip(patches, exact_parameters, strict=True)
-    ):
+    for row, (patch, parameter) in enumerate(zip(patches, exact_parameters, strict=True)):
         expressions = exact_surface_maps.get(patch)
         if expressions is None:
             exact = exact_surface_coordinate_expressions(
@@ -859,7 +898,9 @@ def _validate_parametric_chart_geometry(
         raise ValueError("Exact source-chart evaluation or physical frame is singular.")
     residuals = np.linalg.norm(targets - source_points, axis=1)
     if np.any(~np.isfinite(residuals)) or np.any(residuals > tolerance):
-        raise ValueError("Target coordinate map is outside its exact source-chart tolerance.")
+        raise ValueError(
+            "Target coordinate map is outside its exact source-chart tolerance."
+        )
     for patch in sorted(set(patches)):
         selected = np.flatnonzero(patch_rows == patch)
         differential = np.asarray(
@@ -872,14 +913,20 @@ def _validate_parametric_chart_geometry(
         if differential.shape != (selected.size, 3, 2) or not np.all(
             np.isfinite(differential)
         ):
-            raise ValueError("Exact source-chart derivative returned an invalid physical frame.")
+            raise ValueError(
+                "Exact source-chart derivative returned an invalid physical frame."
+            )
         cross = np.cross(differential[:, :, 0], differential[:, :, 1])
         lengths = np.linalg.norm(cross, axis=1)
         if np.any(~np.isfinite(lengths) | (lengths <= 0.0)):
             raise ValueError("Exact source-chart derivative is physically singular.")
-        oriented = int(charts.domain.patches[patch].orientation) * cross / lengths[:, None]
+        oriented = (
+            int(charts.domain.patches[patch].orientation) * cross / lengths[:, None]
+        )
         if np.any(np.sum(oriented * normals[selected], axis=1) <= 0.0):
-            raise ValueError("Exact source-chart derivative changed its physical frame orientation.")
+            raise ValueError(
+                "Exact source-chart derivative changed its physical frame orientation."
+            )
 
 
 class LayerColumnProjectionIdentity(StrictModule, NonTrainableState):
@@ -913,7 +960,9 @@ class LayerColumnProjectionIdentity(StrictModule, NonTrainableState):
         column_identities = tuple(
             tuple(str(value) for value in row) for row in source_column_identities
         )
-        roots = tuple(tuple(int(value) for value in row) for row in source_column_root_vertex_ids)
+        roots = tuple(
+            tuple(int(value) for value in row) for row in source_column_root_vertex_ids
+        )
         count = layers.size
         if (
             layers.ndim != 1
@@ -939,7 +988,9 @@ class LayerColumnProjectionIdentity(StrictModule, NonTrainableState):
                 )
             )
         ):
-            raise ValueError("Layer column/root ancestry rows are incomplete or misaligned.")
+            raise ValueError(
+                "Layer column/root ancestry rows are incomplete or misaligned."
+            )
         self.layer_indices = layers
         self.source_wall_cell_ids = wall_cells
         self.front_row_ids = front_rows
@@ -979,6 +1030,8 @@ def _column_identity_row(
         identity.source_column_identities[row],
         identity.source_column_root_vertex_ids[row],
     )
+
+
 class LayerCurvingProjectionTrace(StrictModule, NonTrainableState):
     """Row-aligned source projection results and failures at exact target chart nodes.
 
@@ -1076,7 +1129,10 @@ class LayerCurvingProjectionTrace(StrictModule, NonTrainableState):
             any(not value for value in (source_id, source_revision, frame_id))
             or not isinstance(column_identity, LayerColumnProjectionIdentity)
             or column_identity.row_count != count
-            or any(value.shape != (count,) for value in (cells, dofs, roots, lower, upper, states))
+            or any(
+                value.shape != (count,)
+                for value in (cells, dofs, roots, lower, upper, states)
+            )
             or chart_rows.shape != (count,)
             or np.any(rows < -1)
             or np.any(chart_rows < 0)
@@ -1088,7 +1144,18 @@ class LayerCurvingProjectionTrace(StrictModule, NonTrainableState):
             or params.shape[0] != count
             or points.shape != query.shape
             or len(pieces) != count
-            or any(len(value) != count for value in (requested_entities, returned_entities, requested_paths, returned_paths, source_ids, revisions, frames))
+            or any(
+                len(value) != count
+                for value in (
+                    requested_entities,
+                    returned_entities,
+                    requested_paths,
+                    returned_paths,
+                    source_ids,
+                    revisions,
+                    frames,
+                )
+            )
             or normal.shape != (count, 3)
             or tangent.shape != (count, 2, 3)
         ):
@@ -1156,11 +1223,21 @@ class LayerCurvingProjectionTrace(StrictModule, NonTrainableState):
     def resolved(self) -> bool:
         return bool(
             not self.failures
-            and np.all(np.isin(self.status, (int(SourceProjectionStatus.UNIQUE), int(SourceProjectionStatus.SEAM))))
+            and np.all(
+                np.isin(
+                    self.status,
+                    (
+                        int(SourceProjectionStatus.UNIQUE),
+                        int(SourceProjectionStatus.SEAM),
+                    ),
+                )
+            )
             and self.returned_entity_ids == self.requested_entity_ids
             and self.returned_occurrence_paths == self.requested_occurrence_paths
             and all(value == self.source_id for value in self.returned_source_ids)
-            and all(value == self.source_revision for value in self.returned_source_revisions)
+            and all(
+                value == self.source_revision for value in self.returned_source_revisions
+            )
             and all(value == self.frame_id for value in self.returned_frame_ids)
             and np.all(np.isfinite(self.parameters))
             and np.all(np.isfinite(self.projected_points))
@@ -1168,8 +1245,16 @@ class LayerCurvingProjectionTrace(StrictModule, NonTrainableState):
             and np.all(np.isfinite(self.tangents))
             and np.all(np.isfinite(self.distance_lower_bounds))
             and np.all(np.isfinite(self.residuals))
-            and np.all((self.distance_lower_bounds >= 0.0) & (self.distance_lower_bounds <= self.residuals))
-            and np.all(np.linalg.norm(np.cross(self.tangents[:, 0, :], self.tangents[:, 1, :]), axis=1) > 0.0)
+            and np.all(
+                (self.distance_lower_bounds >= 0.0)
+                & (self.distance_lower_bounds <= self.residuals)
+            )
+            and np.all(
+                np.linalg.norm(
+                    np.cross(self.tangents[:, 0, :], self.tangents[:, 1, :]), axis=1
+                )
+                > 0.0
+            )
         )
 
 
@@ -1235,7 +1320,15 @@ class LayerCurvingImplicitRootTrace(StrictModule, NonTrainableState):
         evidence = tuple(chart_evidence)
         count = nodes.size
         if (
-            not all((source_id, source_revision, frame_id, map_witness_id, root_chart_witness_id))
+            not all(
+                (
+                    source_id,
+                    source_revision,
+                    frame_id,
+                    map_witness_id,
+                    root_chart_witness_id,
+                )
+            )
             or nodes.ndim != 1
             or np.any(nodes < -1)
             or cells.shape != (count,)
@@ -1260,9 +1353,13 @@ class LayerCurvingImplicitRootTrace(StrictModule, NonTrainableState):
             or not isinstance(column_identity, LayerColumnProjectionIdentity)
             or column_identity.row_count != count
         ):
-            raise ValueError("Implicit layer root-lift rows are unresolved or misaligned.")
+            raise ValueError(
+                "Implicit layer root-lift rows are unresolved or misaligned."
+            )
         if np.any(rows < 0) or (rows.size and np.max(rows) >= len(evidence)):
-            raise ValueError("Implicit layer root-lift chart row is absent from its evidence bank.")
+            raise ValueError(
+                "Implicit layer root-lift chart row is absent from its evidence bank."
+            )
         self.source_id = str(source_id)
         self.source_revision = str(source_revision)
         self.frame_id = str(frame_id)
@@ -1326,7 +1423,6 @@ class LayerCurvingImplicitRootTrace(StrictModule, NonTrainableState):
         return all(value == "certified_root_chart" for value in self.statuses) and all(
             row.status == "certified" for row in self.chart_evidence
         )
-
 
 
 class LayerCurvingMappedChartTrace(StrictModule, NonTrainableState):
@@ -1444,7 +1540,9 @@ class LayerCurvingMappedChartTrace(StrictModule, NonTrainableState):
             or any(not value for value in charts)
             or any(not value for value in entities)
         ):
-            raise ValueError("Mapped layer source-chart trace rows are malformed or incomplete.")
+            raise ValueError(
+                "Mapped layer source-chart trace rows are malformed or incomplete."
+            )
         if np.any(
             np.linalg.norm(np.cross(tangent[:, 0, :], tangent[:, 1, :]), axis=1) <= 0.0
         ) or np.any(np.linalg.norm(normal, axis=1) <= 0.0):
@@ -1476,7 +1574,12 @@ class LayerCurvingMappedChartTrace(StrictModule, NonTrainableState):
         self.trace_id = canonical_fingerprint(
             {
                 "kind": "layer-curving-mapped-chart-trace",
-                "source": (self.source_id, self.source_revision, self.frame_id, self.query_id),
+                "source": (
+                    self.source_id,
+                    self.source_revision,
+                    self.frame_id,
+                    self.query_id,
+                ),
                 "geometry_nodes": array_tree_fingerprint(nodes),
                 "target_cells": array_tree_fingerprint(cells),
                 "target_dofs": array_tree_fingerprint(dofs),
@@ -1501,7 +1604,10 @@ class LayerCurvingMappedChartTrace(StrictModule, NonTrainableState):
                 ),
                 "target_points": array_tree_fingerprint(target),
                 "source_points": array_tree_fingerprint(source),
-                "distance_bounds": (array_tree_fingerprint(lower), array_tree_fingerprint(upper)),
+                "distance_bounds": (
+                    array_tree_fingerprint(lower),
+                    array_tree_fingerprint(upper),
+                ),
                 "normals": array_tree_fingerprint(normal),
                 "tangents": array_tree_fingerprint(tangent),
                 "column_identity": column_identity.identity_id,
@@ -1533,7 +1639,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
     mapped_chart_trace: LayerCurvingMappedChartTrace | None
     mapped_reference_maps: tuple[ReferenceCellMapWitnesses, ...]
     implicit_map_witness_id: str | None = eqx.field(static=True)
-    implicit_chart_evidence: tuple[ImplicitRootChartEvidence, ...] = eqx.field(static=True)
+    implicit_chart_evidence: tuple[ImplicitRootChartEvidence, ...] = eqx.field(
+        static=True
+    )
     implicit_root_chart_witness: SourceBoundaryChartWitness | None
     implicit_root_cell_vertex_global_ids: NDArray[np.int64] | None
     chart_witness: SourceBoundaryChartWitness
@@ -1583,13 +1691,19 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             raise TypeError("layer_evidence must be BoundaryLayerEvidence.")
         if not isinstance(chart_witness, SourceBoundaryChartWitness):
             raise TypeError("chart_witness must be SourceBoundaryChartWitness.")
+        if not isinstance(
+            chart_column_identity, LayerColumnProjectionIdentity
+        ) or chart_column_identity.row_count != len(chart_witness.source_chart_ids):
+            raise ValueError(
+                "Source-chart column ancestry must align with the retained chart witness."
+            )
         if (
-            not isinstance(chart_column_identity, LayerColumnProjectionIdentity)
-            or chart_column_identity.row_count != len(chart_witness.source_chart_ids)
+            not isinstance(fidelity, SourceFidelityCertificate)
+            or fidelity.status != "certified"
         ):
-            raise ValueError("Source-chart column ancestry must align with the retained chart witness.")
-        if not isinstance(fidelity, SourceFidelityCertificate) or fidelity.status != "certified":
-            raise ValueError("Accepted layer source evidence requires certified fidelity.")
+            raise ValueError(
+                "Accepted layer source evidence requires certified fidelity."
+            )
         chart_rows = tuple(implicit_chart_evidence)
         root_cell_vertices = (
             None
@@ -1602,7 +1716,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
         )
         if source_surface_charts is not None:
             if not isinstance(source_surface_charts, SurfaceSourceCharts):
-                raise TypeError("source_surface_charts must be SurfaceSourceCharts or None.")
+                raise TypeError(
+                    "source_surface_charts must be SurfaceSourceCharts or None."
+                )
             if (
                 projection_trace is not None
                 or implicit_root_trace is not None
@@ -1614,13 +1730,17 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 or mapped_maps
                 or source_surface_charts.boundary_source is not source_query
             ):
-                raise ValueError("Parametric evidence requires its retained exact source-chart authority.")
+                raise ValueError(
+                    "Parametric evidence requires its retained exact source-chart authority."
+                )
             if (
                 source_surface_charts.source_id != source_query.source_id
                 or source_surface_charts.source_revision != source_query.source_revision
                 or source_surface_charts.coordinate_contract.spatial_id != selected_frame
             ):
-                raise ValueError("Parametric source charts and query change source identity or frame.")
+                raise ValueError(
+                    "Parametric source charts and query change source identity or frame."
+                )
             source_surface_charts.require_current()
             source_surface_charts.require_bound(
                 source_surface_charts.mesh,
@@ -1629,10 +1749,13 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             )
             source_cell_rows = {
                 int(cell_id): tuple(
-                    int(value) for value in np.asarray(block.vertices[row], dtype=np.int64)
+                    int(value)
+                    for value in np.asarray(block.vertices[row], dtype=np.int64)
                 )
                 for block in source_surface_charts.mesh.blocks
-                for row, cell_id in enumerate(np.asarray(block.global_ids, dtype=np.int64))
+                for row, cell_id in enumerate(
+                    np.asarray(block.global_ids, dtype=np.int64)
+                )
             }
             source_vertex_ids = np.asarray(
                 source_surface_charts.mesh.vertex_global_ids, dtype=np.int64
@@ -1648,7 +1771,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 source_chart_row = chart_cells.get(source_cell)
                 vertices = source_cell_rows.get(source_cell)
                 if source_chart_row is None or vertices is None:
-                    raise ValueError("Parametric chart column ancestry names an absent source-wall cell.")
+                    raise ValueError(
+                        "Parametric chart column ancestry names an absent source-wall cell."
+                    )
                 patch = int(source_surface_charts.root_patches[source_chart_row])
                 root_chart = _fraction_chart2(
                     source_surface_charts.root_parameter_chart(source_chart_row)
@@ -1671,10 +1796,14 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                         )
                         for point in chart_parameters
                     )
-                    or not set(chart_column_identity.source_column_root_vertex_ids[chart_row])
+                    or not set(
+                        chart_column_identity.source_column_root_vertex_ids[chart_row]
+                    )
                     <= {int(value) for value in source_vertex_ids}
                 ):
-                    raise ValueError("Parametric chart column ancestry changed its source face or root vertices.")
+                    raise ValueError(
+                        "Parametric chart column ancestry changed its source face or root vertices."
+                    )
         elif isinstance(source_query, MappedReferenceBoundarySource):
             if (
                 source_surface_charts is not None
@@ -1691,7 +1820,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 or chart_witness.reference_dimension != 3
                 or chart_witness.source_query_id != source_query.source_query_id
             ):
-                raise ValueError("Mapped layer evidence requires its exact root chart maps and source trace.")
+                raise ValueError(
+                    "Mapped layer evidence requires its exact root chart maps and source trace."
+                )
             mapped_rows = _mapped_reference_chart_rows(
                 source_query, chart_witness, mapped_maps
             )
@@ -1702,9 +1833,13 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 or mapped_chart_trace.query_id != source_query.source_query_id
                 or np.any(mapped_chart_trace.chart_witness_rows >= len(mapped_rows))
             ):
-                raise ValueError("Mapped layer source trace changes its source, frame, or chart scope.")
+                raise ValueError(
+                    "Mapped layer source trace changes its source, frame, or chart scope."
+                )
             for row, chart_row in enumerate(mapped_chart_trace.chart_witness_rows):
-                query_row, root_face, root_cell, root_local, _ = mapped_rows[int(chart_row)]
+                query_row, root_face, root_cell, root_local, _ = mapped_rows[
+                    int(chart_row)
+                ]
                 if (
                     mapped_chart_trace.source_chart_ids[row]
                     != chart_witness.source_chart_ids[int(chart_row)]
@@ -1717,14 +1852,14 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     or int(mapped_chart_trace.root_local_face_indices[row]) != root_local
                     or int(mapped_chart_trace.target_cell_global_ids[row])
                     != int(chart_witness.cell_global_ids[int(chart_row)])
-                    or _column_identity_row(
-                        mapped_chart_trace.column_identity, row
-                    )
+                    or _column_identity_row(mapped_chart_trace.column_identity, row)
                     != _column_identity_row(chart_column_identity, int(chart_row))
                     or source_query.chart_row(2, mapped_chart_trace.source_chart_ids[row])
                     != query_row
                 ):
-                    raise ValueError("Mapped layer source trace changes exact root, source, or column ancestry.")
+                    raise ValueError(
+                        "Mapped layer source trace changes exact root, source, or column ancestry."
+                    )
         elif source_surface_charts is None:
             root_witness = implicit_root_chart_witness
             implicit_entity = source_entity_id(
@@ -1739,7 +1874,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 or not implicit_root_trace.resolved
                 or not implicit_map_witness_id
                 or not chart_rows
-                or any(not isinstance(row, ImplicitRootChartEvidence) for row in chart_rows)
+                or any(
+                    not isinstance(row, ImplicitRootChartEvidence) for row in chart_rows
+                )
                 or implicit_root_trace.map_witness_id != implicit_map_witness_id
                 or implicit_root_trace.chart_evidence != chart_rows
                 or not isinstance(root_witness, SourceBoundaryChartWitness)
@@ -1758,10 +1895,14 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 != tuple(implicit_entity for _ in chart_witness.source_chart_ids)
                 or np.unique(root_witness.cell_global_ids).size
                 != len(root_witness.source_chart_ids)
-                or not np.array_equal(root_witness.entity_global_ids, root_witness.cell_global_ids)
+                or not np.array_equal(
+                    root_witness.entity_global_ids, root_witness.cell_global_ids
+                )
                 or np.any(root_witness.local_entity_indices != -1)
             ):
-                raise ValueError("Adaptive implicit evidence requires its current source-wall root chart authority.")
+                raise ValueError(
+                    "Adaptive implicit evidence requires its current source-wall root chart authority."
+                )
             root_chart_rows = tuple(
                 _implicit_root_witness_row(root_witness, chart_witness, row)
                 for row in range(len(chart_witness.source_chart_ids))
@@ -1774,7 +1915,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     or not set(chart_column_identity.source_column_root_vertex_ids[row])
                     <= root_vertex_ids
                 ):
-                    raise ValueError("Implicit chart column ancestry changed its source-wall root cell.")
+                    raise ValueError(
+                        "Implicit chart column ancestry changed its source-wall root cell."
+                    )
             standard_chart = (
                 (Fraction(0), Fraction(0)),
                 (Fraction(1), Fraction(0)),
@@ -1784,23 +1927,33 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 root_witness.source_parameter_chart(row)
                 for row in range(len(root_witness.source_chart_ids))
             ) != tuple(standard_chart for _ in root_witness.source_chart_ids):
-                raise ValueError("Adaptive root witness does not retain canonical source parameters.")
+                raise ValueError(
+                    "Adaptive root witness does not retain canonical source parameters."
+                )
         if (fidelity.source_id, fidelity.source_revision) != (
             source_query.source_id,
             source_query.source_revision,
         ):
             raise ValueError("Layer fidelity and source query change source identity.")
         if not isinstance(fidelity.witness, SourceBoundaryChartWitness):
-            raise ValueError("Accepted layer source fidelity must retain an exact source chart witness.")
+            raise ValueError(
+                "Accepted layer source fidelity must retain an exact source chart witness."
+            )
         if (
             chart_witness.source_id != source_query.source_id
             or chart_witness.source_revision != source_query.source_revision
             or chart_witness.witness_id != fidelity.witness.witness_id
         ):
-            raise ValueError("Layer chart witness differs from its continuous source-fidelity proof.")
+            raise ValueError(
+                "Layer chart witness differs from its continuous source-fidelity proof."
+            )
         if not layer_result_id:
-            raise ValueError("Layer source evidence requires the immutable layer result identity.")
-        if not np.isfinite(minimum_scaled_jacobian) or not np.isfinite(maximum_distortion):
+            raise ValueError(
+                "Layer source evidence requires the immutable layer result identity."
+            )
+        if not np.isfinite(minimum_scaled_jacobian) or not np.isfinite(
+            maximum_distortion
+        ):
             raise ValueError("Layer curving quality measurements must be finite.")
         self.source_id = source_query.source_id
         self.source_revision = source_query.source_revision
@@ -1915,7 +2068,6 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             return self.mapped_chart_trace.root_cell_global_ids
         return self.chart_column_identity.source_wall_cell_ids
 
-
     @property
     def source_piece_ids(self) -> tuple[tuple[int, ...], ...]:
         if self.source_surface_charts is not None:
@@ -2007,19 +2159,22 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             or not isinstance(self.fidelity.witness, SourceBoundaryChartWitness)
             or self.fidelity.witness.witness_id != self.chart_witness.witness_id
         ):
-            raise ValueError("Layer source evidence is bound to different source or target operands.")
+            raise ValueError(
+                "Layer source evidence is bound to different source or target operands."
+            )
         self.fidelity.require_current(mesh, geometry, query)
         validate_source_fidelity_witness(mesh, geometry, query, self.chart_witness)
         if self.source_surface_charts is not None:
             if self.projection_trace is not None:
-                raise ValueError("Exact parametric chart evidence cannot claim point projection.")
+                raise ValueError(
+                    "Exact parametric chart evidence cannot claim point projection."
+                )
             charts = self.source_surface_charts
             charts.require_current()
             charts.require_root(charts.mesh, charts.geometry)
             charts.require_bound(charts.mesh, charts.geometry, query)
             source_chart_rows = {
-                int(cell_id): row
-                for row, cell_id in enumerate(charts.cell_global_ids)
+                int(cell_id): row for row, cell_id in enumerate(charts.cell_global_ids)
             }
             source_wall_vertex_ids = {
                 int(value) for value in np.asarray(charts.mesh.vertex_global_ids)
@@ -2029,7 +2184,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             ):
                 source_chart_row = source_chart_rows.get(int(source_cell_id))
                 if source_chart_row is None:
-                    raise ValueError("Layer column ancestry names an absent source-wall chart cell.")
+                    raise ValueError(
+                        "Layer column ancestry names an absent source-wall chart cell."
+                    )
                 patch = int(charts.root_patches[source_chart_row])
                 if (
                     self.chart_witness.source_entity_ids[chart_row]
@@ -2037,11 +2194,15 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     or self.chart_witness.occurrence_paths[chart_row]
                     != tuple(charts.domain.source_occurrences[2][patch])
                     or not set(
-                        self.chart_column_identity.source_column_root_vertex_ids[chart_row]
+                        self.chart_column_identity.source_column_root_vertex_ids[
+                            chart_row
+                        ]
                     )
                     <= source_wall_vertex_ids
                 ):
-                    raise ValueError("Layer chart changed source entity, occurrence, or root-column identity.")
+                    raise ValueError(
+                        "Layer chart changed source entity, occurrence, or root-column identity."
+                    )
             _validate_parametric_chart_geometry(
                 mesh,
                 geometry,
@@ -2055,7 +2216,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
         cell_rows = {
             int(cell_id): (block_row, cell_row)
             for block_row, block in enumerate(mesh.blocks)
-            for cell_row, cell_id in enumerate(np.asarray(block.global_ids, dtype=np.int64))
+            for cell_row, cell_id in enumerate(
+                np.asarray(block.global_ids, dtype=np.int64)
+            )
         }
         if self.mapped_chart_trace is not None:
             if (
@@ -2064,7 +2227,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 or self.implicit_root_trace is not None
                 or not self.mapped_reference_maps
             ):
-                raise ValueError("Mapped layer trace lost its exact original-source query or root maps.")
+                raise ValueError(
+                    "Mapped layer trace lost its exact original-source query or root maps."
+                )
             trace = self.mapped_chart_trace
             mapped_rows = _mapped_reference_chart_rows(
                 query, self.chart_witness, self.mapped_reference_maps
@@ -2076,13 +2241,16 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 or trace.query_id != query.source_query_id
                 or trace.column_identity.row_count != trace.geometry_node_rows.size
             ):
-                raise ValueError("Mapped layer trace changed its source/frame/root-query identity.")
+                raise ValueError(
+                    "Mapped layer trace changed its source/frame/root-query identity."
+                )
             chart_rows = tuple(int(value) for value in trace.chart_witness_rows)
             if any(
-                chart_row < 0 or chart_row >= len(mapped_rows)
-                for chart_row in chart_rows
+                chart_row < 0 or chart_row >= len(mapped_rows) for chart_row in chart_rows
             ):
-                raise ValueError("Mapped layer trace names an absent target source chart.")
+                raise ValueError(
+                    "Mapped layer trace names an absent target source chart."
+                )
             contexts_by_trace_row = {}
             target_face_contexts = {}
             for chart_row in sorted(set(chart_rows)):
@@ -2125,8 +2293,12 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 )
             for row, chart_row in enumerate(chart_rows):
                 if chart_row < 0 or chart_row >= len(mapped_rows):
-                    raise ValueError("Mapped layer trace names an absent target source chart.")
-                query_row, root_face, root_cell, root_local, mapping = mapped_rows[chart_row]
+                    raise ValueError(
+                        "Mapped layer trace names an absent target source chart."
+                    )
+                query_row, root_face, root_cell, root_local, mapping = mapped_rows[
+                    chart_row
+                ]
                 chart_id = self.chart_witness.source_chart_ids[chart_row]
                 if (
                     trace.source_chart_ids[row] != chart_id
@@ -2143,7 +2315,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     or _column_identity_row(trace.column_identity, row)
                     != _column_identity_row(self.chart_column_identity, chart_row)
                 ):
-                    raise ValueError("Mapped layer trace changed source occurrence or layer-column/root identity.")
+                    raise ValueError(
+                        "Mapped layer trace changed source occurrence or layer-column/root identity."
+                    )
                 target_corners, target_solver, face_reference_by_dof = (
                     target_face_contexts[chart_row]
                 )
@@ -2160,7 +2334,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                         target_reference, target_corners, solver=target_solver
                     )
                 ):
-                    raise ValueError("Mapped layer trace DOF is outside its exact target chart.")
+                    raise ValueError(
+                        "Mapped layer trace DOF is outside its exact target chart."
+                    )
                 (
                     root_reference,
                     source_uv,
@@ -2190,13 +2366,22 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     trace.target_reference_points[row] != target_reference
                     or trace.root_reference_points[row] != root_reference
                     or trace.source_parameters[row] != source_parameter
-                    or not np.array_equal(source_point.view(np.uint64), trace.source_points[row].view(np.uint64))
-                    or not np.array_equal(tangents.view(np.uint64), trace.tangents[row].view(np.uint64))
-                    or not np.array_equal(normal.view(np.uint64), trace.normals[row].view(np.uint64))
+                    or not np.array_equal(
+                        source_point.view(np.uint64),
+                        trace.source_points[row].view(np.uint64),
+                    )
+                    or not np.array_equal(
+                        tangents.view(np.uint64), trace.tangents[row].view(np.uint64)
+                    )
+                    or not np.array_equal(
+                        normal.view(np.uint64), trace.normals[row].view(np.uint64)
+                    )
                     or trace.distance_lower_bounds[row] != distance_lower
                     or trace.distance_upper_bounds[row] != distance_upper
                 ):
-                    raise ValueError("Mapped root source chart point or physical derivative evidence does not replay.")
+                    raise ValueError(
+                        "Mapped root source chart point or physical derivative evidence does not replay."
+                    )
             rows = trace.geometry_node_rows
             target_cells = trace.target_cell_global_ids
             local_dofs = trace.target_local_dofs
@@ -2208,9 +2393,7 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             trace = self.implicit_root_trace
             root_witness = self.implicit_root_chart_witness
             root_vertices = self.implicit_root_cell_vertex_global_ids
-            root_scope = getattr(
-                query, "boundary_source_revision", query.source_revision
-            )
+            root_scope = getattr(query, "boundary_source_revision", query.source_revision)
             implicit_entity = source_entity_id(
                 self.source_id,
                 self.source_revision,
@@ -2230,10 +2413,14 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 != tuple(implicit_entity for _ in self.chart_witness.source_chart_ids)
                 or np.unique(root_witness.cell_global_ids).size
                 != len(root_witness.source_chart_ids)
-                or not np.array_equal(root_witness.entity_global_ids, root_witness.cell_global_ids)
+                or not np.array_equal(
+                    root_witness.entity_global_ids, root_witness.cell_global_ids
+                )
                 or np.any(root_witness.local_entity_indices != -1)
             ):
-                raise ValueError("Implicit layer evidence changed its source-wall root-chart authority.")
+                raise ValueError(
+                    "Implicit layer evidence changed its source-wall root-chart authority."
+                )
             root_chart_rows = tuple(
                 _implicit_root_witness_row(root_witness, self.chart_witness, row)
                 for row in range(len(self.chart_witness.source_chart_ids))
@@ -2248,35 +2435,43 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             for row, chart_row in enumerate(trace.chart_rows):
                 chart_index = int(chart_row)
                 if chart_index < 0 or chart_index >= len(root_chart_rows):
-                    raise ValueError("Implicit trace chart row is absent from the target witness.")
+                    raise ValueError(
+                        "Implicit trace chart row is absent from the target witness."
+                    )
                 root_index = root_chart_rows[chart_index]
                 if (
                     int(self.chart_witness.cell_global_ids[chart_index])
                     != int(trace.target_cell_global_ids[row])
-                    or _column_identity_row(
-                        trace.column_identity, row
-                    )
+                    or _column_identity_row(trace.column_identity, row)
                     != _column_identity_row(self.chart_column_identity, chart_index)
                     or int(self.chart_column_identity.source_wall_cell_ids[chart_index])
                     != int(root_witness.cell_global_ids[root_index])
                     or trace.source_cell_keys[row]
-                    != tuple(int(value) for value in root_witness.implicit_cell_keys[root_index])
+                    != tuple(
+                        int(value)
+                        for value in root_witness.implicit_cell_keys[root_index]
+                    )
                     or trace.root_edge_keys[row]
                     != tuple(
                         tuple(
-                            tuple(int(value) for value in endpoint)
-                            for endpoint in edge
+                            tuple(int(value) for value in endpoint) for endpoint in edge
                         )
                         for edge in root_witness.implicit_root_edge_keys[root_index]
                     )
                     or not set(
-                        self.chart_column_identity.source_column_root_vertex_ids[chart_index]
+                        self.chart_column_identity.source_column_root_vertex_ids[
+                            chart_index
+                        ]
                     )
                     <= root_vertex_ids
                 ):
-                    raise ValueError("Implicit layer column/root ancestry does not match its retained source chart.")
+                    raise ValueError(
+                        "Implicit layer column/root ancestry does not match its retained source chart."
+                    )
             if not isinstance(query, SourceBoundaryProjectionQuery):
-                raise ValueError("Adaptive implicit evidence requires its native projection query.")
+                raise ValueError(
+                    "Adaptive implicit evidence requires its native projection query."
+                )
             adaptive_query = _adaptive_implicit_source_query(query)
             from ..geometry.implicit._source_charts import (
                 prepare_adaptive_implicit_root_charts,
@@ -2296,7 +2491,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 or tuple(root_map.chart_evidence) != self.implicit_chart_evidence
                 or root_map.status != "certified"
             ):
-                raise ValueError("Adaptive implicit root-map evidence no longer revalidates.")
+                raise ValueError(
+                    "Adaptive implicit root-map evidence no longer revalidates."
+                )
             for row, chart_row in enumerate(trace.chart_rows):
                 point = root_map.project_target(
                     int(chart_row), trace.target_reference_points[row]
@@ -2309,7 +2506,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     or point.displacement_upper != trace.displacement_upper[row]
                     or point.root_error != trace.root_error[row]
                 ):
-                    raise ValueError("Adaptive implicit root lift does not replay for this target map.")
+                    raise ValueError(
+                        "Adaptive implicit root lift does not replay for this target map."
+                    )
             rows = trace.geometry_node_rows
             target_cells = trace.target_cell_global_ids
             local_dofs = trace.target_local_dofs
@@ -2321,7 +2520,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             try:
                 block_row, cell_row = cell_rows[int(cell_id)]
             except KeyError as error:
-                raise ValueError("Layer source map names an absent target cell.") from error
+                raise ValueError(
+                    "Layer source map names an absent target cell."
+                ) from error
             reference_element = _face_reference_element(
                 elements[block_row], mesh.blocks[block_row].cell_kind
             )
@@ -2331,7 +2532,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 )
             reference_nodes = lagrange_reference_node_data(reference_element)
             if local_dof < 0 or local_dof >= len(reference_nodes):
-                raise ValueError("Layer source map changed its target reference DOF identity.")
+                raise ValueError(
+                    "Layer source map changed its target reference DOF identity."
+                )
             node = reference_nodes[local_dof]
             if node.local_dof != local_dof or node.exact_point is None:
                 raise ValueError(
@@ -2339,14 +2542,17 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 )
             expected_reference = _exact3(node.exact_point)
             if expected_reference != reference:
-                raise ValueError("Layer source map changed its exact target reference point.")
+                raise ValueError(
+                    "Layer source map changed its exact target reference point."
+                )
             if node_row >= 0:
                 route = np.asarray(routes[block_row], dtype=np.int64)
-                if (
-                    local_dof >= route.shape[1]
-                    or int(route[cell_row, local_dof]) != int(node_row)
+                if local_dof >= route.shape[1] or int(route[cell_row, local_dof]) != int(
+                    node_row
                 ):
-                    raise ValueError("Layer source map changed exact cell/dof/node identity.")
+                    raise ValueError(
+                        "Layer source map changed exact cell/dof/node identity."
+                    )
                 actual_point = np.asarray(coordinates[int(node_row)], dtype=np.float64)
             elif node_row == -1:
                 actual_point = _evaluate_cell_geometry_point(
@@ -2358,12 +2564,17 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     reference,
                 )
             else:
-                raise ValueError("Layer source map has an invalid virtual geometry-node sentinel.")
+                raise ValueError(
+                    "Layer source map has an invalid virtual geometry-node sentinel."
+                )
             if not np.array_equal(
                 np.asarray(actual_point, dtype=np.float64).view(np.uint64),
                 np.asarray(target_points[row], dtype=np.float64).view(np.uint64),
             ):
-                raise ValueError("Layer source map queries no longer equal accepted map nodes.")
+                raise ValueError(
+                    "Layer source map queries no longer equal accepted map nodes."
+                )
+
 
 __all__ = [
     "LayerColumnProjectionIdentity",
@@ -2372,4 +2583,3 @@ __all__ = [
     "LayerCurvingProjectionTrace",
     "LayerCurvingSourceEvidence",
 ]
-
