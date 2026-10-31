@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import weakref
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from fractions import Fraction
@@ -23,7 +24,7 @@ from typing import (
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -410,14 +411,25 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
         return ((0.0, 0.0), (1.0, 1.0))
 
     def evaluate(self, parameters: Array, /) -> Array:
-        values = jnp.asarray(parameters, dtype=jnp.float64)
+        # Concrete charts evaluate on the host in the same operation order (each
+        # binary64 operation is correctly rounded either way, so the values are
+        # identical); eager per-primitive dispatch cost about 0.6 ms per call and
+        # dominated domain construction and witness validation.
+        traced = isinstance(parameters, jax_core.Tracer) or isinstance(
+            self.corners, jax_core.Tracer
+        )
+        values = (
+            jnp.asarray(parameters, dtype=jnp.float64)
+            if traced
+            else np.asarray(parameters, dtype=np.float64)
+        )
+        corners = self.corners if traced else np.asarray(self.corners)
         first = values[..., 0, None]
         second = values[..., 1, None]
-        return (
-            (1.0 - first - second) * self.corners[0]
-            + first * self.corners[1]
-            + second * self.corners[2]
+        point = (
+            (1.0 - first - second) * corners[0] + first * corners[1] + second * corners[2]
         )
+        return point if traced else jnp.asarray(point)
 
 
 def _reconstructed_meshing_domain(
@@ -445,6 +457,32 @@ def _reconstructed_meshing_domain(
     )
 
 
+# Triangle-complex meshing domains built in this process, addressed by the full
+# content of their construction arguments. Construction is a deterministic
+# function of those arguments, so an equal key rebuilds an equal domain; the
+# currentness proofs that rebuild a source from its retained inputs (once per
+# certification query) reuse the domain while a source still holds it.
+_TRIANGLE_COMPLEX_DOMAINS: weakref.WeakValueDictionary[str, MeshingDomain] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _triangle_complex_domain_key(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    edges: np.ndarray,
+    identity: tuple[str, str, str, int | None, tuple[str, str, str]],
+    entity_ids: tuple[np.ndarray, ...],
+    /,
+) -> str:
+    digest = hashlib.sha256(repr(identity).encode())
+    for values in (vertices, faces, edges, *entity_ids):
+        array = np.ascontiguousarray(values)
+        digest.update(repr((array.dtype.str, array.shape)).encode())
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
 def _triangle_complex_meshing_domain(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -459,13 +497,22 @@ def _triangle_complex_meshing_domain(
 ) -> MeshingDomain:
     """Exact affine-chart domain of a triangle complex; open sheets own no region."""
     from .._meshing_domain import (
-        MeshingDomain,
         MeshingDomainCurve,
         MeshingDomainRegion,
         MeshingSurfacePatch,
         PatchCurveUse,
     )
 
+    key = _triangle_complex_domain_key(
+        vertices,
+        faces,
+        edges,
+        (source_id, source_revision, binding_id, region_id, source_kinds),
+        entity_ids,
+    )
+    built = _TRIANGLE_COMPLEX_DOMAINS.get(key)
+    if built is not None:
+        return built
     edge_rows = {
         tuple(sorted((int(first), int(last)))): row
         for row, (first, last) in enumerate(edges.tolist())
@@ -492,7 +539,7 @@ def _triangle_complex_meshing_domain(
                 _ReconstructedTrianglePatch(vertices[face]), (tuple(uses),)
             )
         )
-    return MeshingDomain(
+    domain = MeshingDomain(
         tuple(patches),
         curves,
         vertices.shape[0],
@@ -516,6 +563,8 @@ def _triangle_complex_meshing_domain(
         accuracy="exact_represented",
         corner_points=vertices,
     )
+    _TRIANGLE_COMPLEX_DOMAINS[key] = domain
+    return domain
 
 
 def _reconstructed_scope_banks(
