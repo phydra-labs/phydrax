@@ -1054,6 +1054,45 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
     )
 
 
+def periodic_quotient_facet_cell_classes(
+    mesh: CellMesh, cell_classes: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Quotient incidence of every lifted facet: count, lowest and highest cell class.
+
+    A lifted cover cuts the quotient along its outer boundary, where a facet has
+    one incident lifted cell although its orbit is interior. Each quotient cell is
+    counted once through its representative lift, so every facet orbit reports its
+    quotient incidences (a cell meeting one facet orbit through two of its own
+    facets counts twice). Values are returned per lifted facet row.
+    """
+    dimension = mesh.topological_dimension
+    facet_map = periodic_entity_orbit_map(mesh, dimension - 1)
+    facet_orbits = np.asarray(facet_map.lifted_to_quotient, dtype=np.int64)
+    cell_representatives = np.asarray(
+        periodic_entity_orbit_map(mesh, dimension).representative_lifted_rows,
+        dtype=np.int64,
+    )
+    classes = np.asarray(cell_classes, dtype=np.int64)
+    if classes.shape != (mesh.entity_set(dimension).count,):
+        raise ValueError("cell_classes must align with the lifted cell rows.")
+    relation = mesh.topology.incidences[dimension - 1].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    facets = np.asarray(relation.source_indices, dtype=np.int64)[valid]
+    cells = np.asarray(relation.target_indices, dtype=np.int64)[valid]
+    representative = np.zeros((classes.size,), dtype=np.bool_)
+    representative[cell_representatives] = True
+    selected = representative[cells]
+    orbit_rows = facet_orbits[facets[selected]]
+    incident_classes = classes[cells[selected]]
+    orbit_count = int(facet_map.quotient_entity_ids.size)
+    incident = np.bincount(orbit_rows, minlength=orbit_count)
+    lowest = np.full((orbit_count,), np.iinfo(np.int64).max, dtype=np.int64)
+    highest = np.full((orbit_count,), -1, dtype=np.int64)
+    np.minimum.at(lowest, orbit_rows, incident_classes)
+    np.maximum.at(highest, orbit_rows, incident_classes)
+    return incident[facet_orbits], lowest[facet_orbits], highest[facet_orbits]
+
+
 def transfer_periodic_p1_vertices(
     source: CellMesh,
     target: CellMesh,

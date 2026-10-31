@@ -918,6 +918,83 @@ def test_periodic_local_metric_commits_a_full_flip_orbit() -> None:
     assert target.topology_id != mesh.topology_id
 
 
+def test_periodic_metric_edge_classes_use_quotient_incidence_on_multi_period_covers() -> (
+    None
+):
+    from phydrax.meshing._adaptation import _edge_classes
+    from phydrax.meshing._periodic import periodic_quotient_facet_cell_classes
+
+    # A 2 x 2 cover of the torus: its outer boundary edges have one incident
+    # lifted cell, while their orbit mates inside the cover have two.
+    mesh = _periodic_grid_mesh(2)
+    edge_orbits = np.asarray(
+        periodic_entity_orbit_map(mesh, 1).lifted_to_quotient, dtype=np.int64
+    )
+    cell_orbits = np.asarray(
+        periodic_entity_orbit_map(mesh, 2).lifted_to_quotient, dtype=np.int64
+    )
+    relation = mesh.topology.incidences[1].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    edge_rows = np.asarray(relation.source_indices, dtype=np.int64)[valid]
+    cell_rows = np.asarray(relation.target_indices, dtype=np.int64)[valid]
+    lifted_incidence = np.bincount(edge_rows, minlength=edge_orbits.size)
+    assert np.any(lifted_incidence == 1)
+    assert np.any(lifted_incidence == 2)
+
+    free = _edge_classes(mesh, (), np.zeros((cell_orbits.size,), dtype=np.int64))
+    np.testing.assert_array_equal(free, 0)
+
+    cell_classes = (cell_orbits % 2).astype(np.int64)
+    incident, lowest, highest = periodic_quotient_facet_cell_classes(mesh, cell_classes)
+    np.testing.assert_array_equal(incident, 2)
+    # Oracle: the cover holds every quotient incidence of an edge orbit through
+    # some member, so an orbit is an interface iff its members see two classes.
+    orbit_classes: dict[int, set[int]] = {}
+    for edge_row, cell_row in zip(edge_rows.tolist(), cell_rows.tolist(), strict=True):
+        orbit_classes.setdefault(int(edge_orbits[edge_row]), set()).add(
+            int(cell_classes[cell_row])
+        )
+    interface = np.asarray(
+        [len(orbit_classes[int(orbit)]) > 1 for orbit in edge_orbits], dtype=np.bool_
+    )
+    assert np.any(interface) and not np.all(interface)
+    np.testing.assert_array_equal(lowest != highest, interface)
+    classes = _edge_classes(mesh, (), cell_classes)
+    np.testing.assert_array_equal(classes > 0, interface)
+    for orbit in np.unique(edge_orbits):
+        assert np.unique(classes[edge_orbits == orbit]).size == 1
+
+    source = certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    vertices = source.mesh.entity_set(0)
+    scope = phx.meshing.MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        phx.meshing.MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        vertices.entity_ids,
+    )
+    metric = phx.meshing.MeshMetricField(
+        scope,
+        np.broadcast_to(16.0 * np.eye(2), (vertices.entity_ids.shape[0], 2, 2)),
+        minimum_size=1.0e-3,
+        maximum_size=10.0,
+    )
+    result = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MetricMeshAdaptation(metric),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_2D
+            ),
+        )
+    )
+    assert result.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    target = result.target.mesh
+    assert target.periodic_topology is not None
+    assert target.entity_set(2).count > mesh.entity_set(2).count
+
+
 def test_periodic_local_metric_commits_a_full_relocation_orbit() -> None:
     mesh = _periodic_grid_mesh(4, perturbation=0.08)
     metric = np.broadcast_to(4.0 * np.eye(2), (mesh.coordinates.shape[0], 2, 2)).copy()

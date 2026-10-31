@@ -66,6 +66,7 @@ from .._distribution import _owner_local_multiset_identity
 from .._periodic import (
     periodic_delaunay_mesh,
     periodic_entity_orbit_map,
+    periodic_quotient_facet_cell_classes,
     PeriodicPointOrbits,
     stage_periodic_topology_edit,
 )
@@ -938,30 +939,14 @@ def _periodic_metric_controls(
                 "Periodic fixed-vertex controls must agree over every vertex orbit."
             )
     if dimension == 2:
-        # The lifted mesh cuts the quotient along a fundamental-domain seam, so a
-        # seam edge has one incident lifted cell per orbit member. That seam is a
-        # representation artifact: boundary and material-interface edges are
-        # decided by the cell orbits incident to each quotient edge orbit.
-        incidence = mesh.topology.incidences[1].relation
-        valid = np.asarray(incidence.valid, dtype=np.bool_)
-        edge_rows = np.asarray(incidence.source_indices, dtype=np.int64)[valid]
-        cell_rows = np.asarray(incidence.target_indices, dtype=np.int64)[valid]
-        edge_orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)
-        cell_orbits = np.asarray(
-            periodic_entity_orbit_map(mesh, 2).lifted_to_quotient, dtype=np.int64
+        # The lifted mesh cuts the quotient along a fundamental-domain seam (and
+        # a multi-period cover along its outer boundary), so such edges have one
+        # incident lifted cell per orbit member. Boundary and material-interface
+        # edges are decided by the quotient cell incidences of each edge orbit.
+        incident, lowest, highest = periodic_quotient_facet_cell_classes(
+            mesh, cell_classes
         )
-        incident = np.unique(
-            np.stack((edge_orbits[edge_rows], cell_orbits[cell_rows]), axis=1), axis=0
-        )
-        class_by_cell_orbit = np.zeros((int(np.max(cell_orbits)) + 1,), dtype=np.int64)
-        class_by_cell_orbit[cell_orbits] = cell_classes
-        orbit_count = edge_map.quotient_entity_ids.size
-        incident_counts = np.bincount(incident[:, 0], minlength=orbit_count)
-        lowest = np.full((orbit_count,), np.iinfo(np.int64).max, dtype=np.int64)
-        highest = np.full((orbit_count,), -1, dtype=np.int64)
-        np.minimum.at(lowest, incident[:, 0], class_by_cell_orbit[incident[:, 1]])
-        np.maximum.at(highest, incident[:, 0], class_by_cell_orbit[incident[:, 1]])
-        required_class = ((incident_counts == 1) | (lowest != highest))[edge_orbits]
+        required_class = (incident != 2) | (lowest != highest)
         reserved_class = len(specification.protected_features) + 1
         edge_classes[required_class & (edge_classes == 0)] = reserved_class
     return cell_classes, edge_classes, protected_edges, fixed_vertices, region_by_code
