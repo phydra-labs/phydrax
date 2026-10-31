@@ -16,8 +16,10 @@ from phydrax._array_archive import (
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
 from phydrax.meshing._model_codec import (
+    read_model_archive,
     read_model_artifact,
     restore_model_archive_value,
+    write_model_archive,
     write_model_artifact,
 )
 
@@ -98,7 +100,9 @@ def test_equal_subtrees_are_archived_once_independent_of_aliasing(
     tmp_path: Path,
 ) -> None:
     mesh = _mesh()
-    single = write_model_artifact(tmp_path / "single.phx", _composition(mesh), limits=None)
+    single = write_model_artifact(
+        tmp_path / "single.phx", _composition(mesh), limits=None
+    )
     aliased = write_model_artifact(
         tmp_path / "aliased.phx", _composition(mesh, mesh), limits=None
     )
@@ -155,3 +159,38 @@ def test_shared_archive_nodes_refuse_changed_or_noncanonical_definitions(
     ) as refused:
         _read(changed / "source.phx")
     assert "Shared model recipe" in str(refused.value.__cause__)
+
+
+def test_model_archive_readers_see_only_expanded_recipes(tmp_path: Path) -> None:
+    mesh = _mesh()
+    source = write_model_artifact(
+        tmp_path / "source.phx", _composition(mesh, _mesh()), limits=None
+    )
+    manifest, arrays = read_model_archive(source, limits=None)
+    assert set(manifest) == {"kind", "model_recipe"}
+    assert not _nodes(manifest["model_recipe"], "shared")
+    entries = manifest["model_recipe"]["fields"]["entries"]["items"]
+    # Equal definitions expand to one node, so editing it edits every referrer.
+    assert entries[0]["fields"]["value"] is entries[1]["fields"]["value"]
+
+    rewritten = write_model_archive(
+        tmp_path / "rewritten.phx", manifest=manifest, arrays=arrays, limits=None
+    )
+    assert _archive(rewritten) == _archive(source)
+
+    # One changed occurrence is stored as its own content, not dropped.
+    occurrence = max(arrays)
+    changed_arrays = dict(arrays)
+    changed_arrays[occurrence] = np.asarray(arrays[occurrence]).copy()
+    changed_arrays[occurrence].flat[0] += 1
+    changed = write_model_archive(
+        tmp_path / "changed.phx", manifest=manifest, arrays=changed_arrays, limits=None
+    )
+    changed_manifest, restored_arrays = read_model_archive(changed, limits=None)
+    changed_entries = changed_manifest["model_recipe"]["fields"]["entries"]["items"]
+    assert (
+        changed_entries[0]["fields"]["value"] is not changed_entries[1]["fields"]["value"]
+    )
+    assert set(restored_arrays) == set(arrays)
+    for name, value in restored_arrays.items():
+        np.testing.assert_array_equal(value, changed_arrays[name])

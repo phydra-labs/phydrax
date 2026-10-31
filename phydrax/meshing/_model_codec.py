@@ -1468,6 +1468,91 @@ def _require_periodic_distributed_transfer_current(composition: Any, /) -> None:
         raise ValueError("Periodic FE source-context bindings changed.")
 
 
+def _unaliased_recipe(node: Any, /) -> Any:
+    """Copy a recipe so every occurrence is its own node (stack, no recursion)."""
+    root: dict[str, Any] = {"node": None}
+    pending: list[tuple[Any, dict[Any, Any] | list[Any], Any]] = [(node, root, "node")]
+    while pending:
+        value, parent, slot = pending.pop()
+        if isinstance(value, dict):
+            child: Any = dict.fromkeys(value)
+            pending.extend((item, child, key) for key, item in value.items())
+        elif isinstance(value, list):
+            child = [None] * len(value)
+            pending.extend((item, child, index) for index, item in enumerate(value))
+        else:
+            child = value
+        parent[slot] = child
+    return root["node"]
+
+
+def write_model_archive(
+    path: str | Path,
+    /,
+    *,
+    manifest: dict[str, Any],
+    arrays: dict[str, Any],
+    limits: ArrayArchiveLimits | None,
+) -> Path:
+    """Write an expanded native model manifest in canonical shared form.
+
+    ``manifest`` holds the full ``model_recipe`` and ``arrays`` its exact
+    per-occurrence inventory, as returned by :func:`read_model_archive`. Every
+    occurrence is keyed by its own content, so editing one occurrence or one
+    definition is stored as exactly that content; the recipe is not validated
+    here, so readers decide whether it is admissible.
+    """
+    if set(manifest) != {"kind", "model_recipe"} or manifest["kind"] != _MODEL_KIND:
+        raise ValueError(
+            "Native model archive manifests hold only kind and model_recipe."
+        )
+    shared_recipe, members = share_model_archive_recipe(
+        _unaliased_recipe(manifest["model_recipe"]), arrays, prefix=_MODEL_ARRAYS
+    )
+    return write_array_archive(
+        path,
+        manifest={"kind": _MODEL_KIND, "model_recipe": shared_recipe},
+        limits=limits,
+        arrays=members,
+    )
+
+
+def read_model_archive(
+    path: str | Path,
+    /,
+    *,
+    limits: ArrayArchiveLimits | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read a native model archive as its expanded manifest and array inventory.
+
+    This is the one expansion point of shared archive nodes: the returned
+    ``model_recipe`` is the validated full recipe (equal definitions are one
+    node), and ``arrays`` is its exact per-occurrence inventory. No reader of a
+    native model archive sees a shared reference.
+    """
+    _register_model_archive_types()
+    manifest, members = read_array_archive(path, limits=limits)
+    if (
+        set(manifest) != {"arrays", "kind", "model_recipe"}
+        or manifest["kind"] != _MODEL_KIND
+    ):
+        raise ArrayArchiveCorruptionError(
+            "Native model archive fields are not canonical."
+        )
+    shared_recipe = manifest["model_recipe"]
+    if not isinstance(shared_recipe, dict) or shared_recipe.get("kind") != "dataclass":
+        raise ArrayArchiveCorruptionError("Native model archive has no dataclass recipe.")
+    try:
+        recipe, arrays = expand_shared_model_archive_recipe(
+            shared_recipe, members, prefix=_MODEL_ARRAYS, limits=limits
+        )
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise ArrayArchiveCorruptionError(
+            "Native model archive is incompatible with its registered recipe."
+        ) from error
+    return {"kind": _MODEL_KIND, "model_recipe": recipe}, arrays
+
+
 def write_model_artifact(
     path: str | Path,
     model: Any,
@@ -1491,14 +1576,11 @@ def write_model_artifact(
     arrays = pack_model_array_tree(
         archive_model, recipe, prefix=_MODEL_ARRAYS, limits=limits
     )
-    shared_recipe, members = share_model_archive_recipe(
-        recipe, arrays, prefix=_MODEL_ARRAYS
-    )
-    return write_array_archive(
+    return write_model_archive(
         path,
-        manifest={"kind": _MODEL_KIND, "model_recipe": shared_recipe},
+        manifest={"kind": _MODEL_KIND, "model_recipe": recipe},
+        arrays=arrays,
         limits=limits,
-        arrays=members,
     )
 
 
@@ -1515,21 +1597,9 @@ def read_model_artifact(
     _require_model_type(expected_type)
     if not callable(restore):
         raise TypeError("restore must be the owning model's reconstruction function.")
-    manifest, members = read_array_archive(path, limits=limits)
-    if (
-        set(manifest) != {"arrays", "kind", "model_recipe"}
-        or manifest["kind"] != _MODEL_KIND
-    ):
-        raise ArrayArchiveCorruptionError(
-            "Native model archive fields are not canonical."
-        )
-    shared_recipe = manifest["model_recipe"]
-    if not isinstance(shared_recipe, dict) or shared_recipe.get("kind") != "dataclass":
-        raise ArrayArchiveCorruptionError("Native model archive has no dataclass recipe.")
+    manifest, arrays = read_model_archive(path, limits=limits)
+    recipe = manifest["model_recipe"]
     try:
-        recipe, arrays = expand_shared_model_archive_recipe(
-            shared_recipe, members, prefix=_MODEL_ARRAYS, limits=limits
-        )
         declared_type = artifact_value(recipe["type"])
         _require_model_type(declared_type)
         if declared_type is not expected_type:
@@ -1582,4 +1652,9 @@ def _require_model_type(model_type: Any, /) -> None:
         raise TypeError("Native model archive root has no exact registered field set.")
 
 
-__all__ = ["read_model_artifact", "write_model_artifact"]
+__all__ = [
+    "read_model_archive",
+    "read_model_artifact",
+    "write_model_archive",
+    "write_model_artifact",
+]
