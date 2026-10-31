@@ -1,3 +1,4 @@
+import gc
 from fractions import Fraction
 
 import jax.numpy as jnp
@@ -13,6 +14,7 @@ from phydrax.geometry._meshing_domain import (
     PatchCurveUse,
 )
 from phydrax.geometry._source_boundary_records import SourceProjectionStatus
+from phydrax.geometry.brep import _tspline
 from phydrax.geometry.brep._constructors import (
     assemble_brep_model,
     brep_planar_face,
@@ -282,3 +284,17 @@ def test_certified_t_spline_intersection_pcurve_drives_native_trimmed_mesh() -> 
     assert result.surface_source.domain.domain_id == domain.domain_id
     assert float(np.max(mesh_coordinates[:, 2])) <= 0.5 + 2.0e-2
     np.testing.assert_allclose(np.asarray(boundary_points)[:, 2], 0.5, atol=2.0e-8)
+
+
+def test_t_spline_transfer_chain_proof_memo_is_weak_and_content_bound() -> None:
+    patch = _nonuniform_transverse_patch()
+    key = id(patch)
+    patch.validate_exact_transfer_chain()
+    reference, identity = _tspline._PROVED_TRANSFER_CHAINS[key]
+    assert reference() is patch
+    assert identity == _tspline._transfer_chain_identity(patch)
+    assert _tspline._proved_transfer_chain(patch, identity)
+    assert not _tspline._proved_transfer_chain(patch, identity + "-edited")
+    del reference, patch
+    gc.collect()
+    assert key not in _tspline._PROVED_TRANSFER_CHAINS
