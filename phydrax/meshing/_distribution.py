@@ -7515,7 +7515,8 @@ def prepare_owner_local_cell_shard(
         "cell_neighbor_ids": np.asarray(graph_neighbors, dtype=np.int64),
         "cell_neighbor_owner_ranks": np.asarray(graph_neighbor_owners, dtype=np.int32),
         "cell_neighbor_weights": np.ones((len(graph_neighbors),), dtype=np.int64),
-        "support_cell_mask": np.zeros(cell_ids.shape, dtype=np.bool_),
+        # An owned cell's closure and its exact face halo are resident.
+        "support_cell_mask": owned.copy(),
         "vertex_rows": np.arange(resident_vertex_ids.size, dtype=np.int64),
         "vertex_ids": resident_vertex_ids,
         "vertex_coordinates": coordinates,

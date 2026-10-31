@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -21,7 +23,7 @@ from phydrax.discretization.fem import (
 )
 from phydrax.lifecycle import Composition, CompositionEntry
 from phydrax.meshing._assembly import MeshAssembly, MeshPart, MeshPartManifest
-from phydrax.meshing._distribution import ShardedOwnerDirectoryWitness
+from phydrax.meshing._distribution import prepare_owner_local_cell_shard
 from phydrax.meshing._motion import (
     advance_mesh_motion,
     advance_owner_local_mesh_motion,
@@ -128,37 +130,39 @@ def _boundary_ids(mesh: CellMesh, facet_dimension: int, /) -> np.ndarray:
     return entity_ids[np.asarray(boundary, dtype=np.bool_)]
 
 
-def _owned_boundary_ids(view: OwnerLocalCellGeometry, mesh: CellMesh, /) -> np.ndarray:
-    owner_by_cell = {
-        int(identifier): int(owner)
-        for identifier, owner in zip(
-            np.asarray(view.cell_ids, dtype=np.int64).tolist(),
-            np.asarray(view.cell_owner_ranks, dtype=np.int32).tolist(),
+def _owned_boundary_ids(view: OwnerLocalCellGeometry, /) -> np.ndarray:
+    """Facet IDs of owned cells met by no other resident cell (exact face halo)."""
+    _, facet_ids = view.entity_binding(1)
+    facet_by_key = {
+        tuple(sorted(int(row) for row in np.asarray(loop))): int(identifier)
+        for identifier, loop in zip(
+            np.asarray(facet_ids).tolist(),
+            view.entity_vertex_loops(1, np.asarray(facet_ids)),
             strict=True,
         )
     }
-    cell_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    counts: dict[tuple[int, ...], int] = {}
+    owned_keys: set[tuple[int, ...]] = set()
+    for block in view.blocks:
+        owned_ids = set(
+            np.asarray(view.cell_ids, dtype=np.int64)[
+                np.asarray(view.owned, dtype=np.bool_)
+            ].tolist()
+        )
+        for identifier, vertices in zip(
+            np.asarray(block.cell_ids, dtype=np.int64).tolist(),
+            np.asarray(block.vertices, dtype=np.int64).tolist(),
+            strict=True,
+        ):
+            for skip in range(len(vertices)):
+                key = tuple(sorted(vertices[:skip] + vertices[skip + 1 :]))
+                counts[key] = counts.get(key, 0) + 1
+                if identifier in owned_ids:
+                    owned_keys.add(key)
+    return np.asarray(
+        sorted(facet_by_key[key] for key in owned_keys if counts[key] == 1),
+        dtype=np.int64,
     )
-    owned_cells = np.asarray(
-        [owner_by_cell[int(identifier)] == view.owner_rank for identifier in cell_ids],
-        dtype=np.bool_,
-    )
-    connectivity = mesh.connectivity
-    if isinstance(connectivity, SimplicialConnectivity):
-        cell_facets = np.asarray(connectivity.cell_entities[1], dtype=np.int64)
-        facet_valid = np.ones(cell_facets.shape, dtype=np.bool_)
-        boundary = np.asarray(connectivity.boundary_masks[1], dtype=np.bool_)
-    elif isinstance(connectivity, PolygonalConnectivity):
-        cell_facets = np.asarray(connectivity.cell_edges, dtype=np.int64)
-        facet_valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
-        boundary = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
-    else:
-        raise TypeError("The owner-local fixture requires simplex or polygon cells.")
-    entity_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
-    owned_facets = np.zeros((entity_ids.size,), dtype=np.bool_)
-    owned_facets[cell_facets[owned_cells][facet_valid[owned_cells]]] = True
-    return entity_ids[boundary & owned_facets]
 
 
 def _case() -> tuple[
@@ -267,7 +271,7 @@ def test_moving_overset_poisson_commits_all_parts_with_overlap_flux_balance() ->
     expected_content = {"donor": 2.0, "receptor": 0.125}
     assert {part.part_name for part in update.parts} == set(expected_content)
     for part in update.parts:
-        assert part.conservative_remap.complete
+        assert part.remap_complete
         assert part.source_content == pytest.approx(expected_content[part.part_name])
         assert part.target_content == pytest.approx(expected_content[part.part_name])
         assert part.overlap_defect <= 1e-9
@@ -422,114 +426,56 @@ def test_overset_interpolation_is_distinct_from_conservative_overlap() -> None:
     )
 
 
-def _owner_local_source_part(
-    name: str,
-    points: tuple[tuple[float, float], ...],
-    execution_group: ExecutionGroup,
-    rank: int,
+def _grid_part(name: str, lower: float, upper: float, count: int, /) -> MeshPart:
+    axis = np.linspace(lower, upper, count + 1)
+    points = np.asarray([(x, y) for y in axis for x in axis], dtype=np.float64)
+    triangles = []
+    for j in range(count):
+        for i in range(count):
+            first = j * (count + 1) + i
+            above = first + count + 1
+            triangles.extend(((first, first + 1, above + 1), (first, above + 1, above)))
+    mesh = CellMesh(
+        points,
+        (CellBlock(f"{name}-triangles", "triangle", np.asarray(triangles, np.int64)),),
+        numeric_version=f"{name}-source",
+    )
+    result = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    return MeshPart(name, result)
+
+
+def _manufactured(points: np.ndarray, /) -> np.ndarray:
+    """Nonconstant accepted state; its xy term is not reproduced by P1 transfer."""
+    return 1.0 + points[:, 0] + 2.0 * points[:, 1] + 0.5 * points[:, 0] * points[:, 1]
+
+
+def _sharded_part(
+    serial: MeshPart, execution_group: ExecutionGroup, rank: int, /
 ) -> tuple[MeshPart, MeshPartManifest]:
-    part = _part(name, points)
-    result = _cell_result(part)
-    mesh = result.mesh
-    geometry = _cell_geometry(result)
-    cell_owners = np.asarray((0, 1, 2), dtype=np.int32)
+    mesh = _cell_result(serial).mesh
+    centroids = np.mean(
+        np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)], axis=1
+    )
+    lower = float(np.min(centroids[:, 0]))
+    width = float(np.max(centroids[:, 0])) - lower
+    owners = np.minimum(((centroids[:, 0] - lower) / width * 3.0).astype(np.int32), 2)
     distribution = phx.meshing.MeshDistribution(
-        part,
-        phx.discretization.CellPartition(cell_owners, 3),
-        halo_width=3,
+        serial, phx.discretization.CellPartition(owners, 3), halo_width=1
     )
-    local = distribution.local_cell_geometry(rank, include_halo=True)
-    cell_ids = np.asarray(local["cell_ids"], dtype=np.int64)
-    cell_rows = np.asarray(local["cell_rows"], dtype=np.int64)
-    cell_owner_ranks = cell_owners[cell_rows]
-    vertex_owner_by_id: dict[int, int] = {}
-    coordinate_owner_by_row: dict[int, int] = {}
-    for cell_row, owner in enumerate(cell_owners):
-        for vertex_row in np.asarray(mesh.blocks[0].vertices[cell_row], dtype=np.int64):
-            identifier = int(mesh.vertex_global_ids[vertex_row])
-            vertex_owner_by_id[identifier] = min(
-                int(owner), vertex_owner_by_id.get(identifier, int(owner))
-            )
-            coordinate_owner_by_row[int(vertex_row)] = min(
-                int(owner),
-                coordinate_owner_by_row.get(int(vertex_row), int(owner)),
-            )
-    vertex_ids = np.asarray(local["vertex_ids"], dtype=np.int64)
-    vertex_owners = np.asarray(
-        [vertex_owner_by_id[int(identifier)] for identifier in vertex_ids],
-        dtype=np.int32,
-    )
-    coordinate_rows = np.asarray(local["coordinate_rows"], dtype=np.int64)
-    source_owners = np.asarray(
-        [coordinate_owner_by_row[int(identifier)] for identifier in coordinate_rows],
-        dtype=np.int32,
-    )
-    manifest = MeshPartManifest.from_part(part)
-    directory_id = f"{name}/owner-directory"
-    base_directory = ShardedOwnerDirectoryWitness(
+    assembly = prepare_owner_local_cell_shard(
+        serial.name,
+        serial.name,
+        serial.part_id,
+        serial.coordinate_contract,
+        mesh.blocks[0].name,
+        "triangle",
+        distribution.owner_local_cell_shard_rows(rank),
         execution_group,
-        rank,
-        manifest.manifest_id,
-        directory_id,
-        coordinate_rows,
-        source_owners,
-        source_owners == rank,
-        cell_ids,
-        cell_owner_ranks,
-        vertex_ids,
-        vertex_owners,
-        source_map_id=geometry.source_map_id,
-        axis_name=f"moving_owner_local_{name}_directory",
+        axis_name=f"poisson_shard_{serial.name}",
     )
-    source_entry = CompositionEntry(
-        result,
-        entry_id=f"{name}/source",
-        role="topology",
-        owner_id="moving-owner-local-test-source",
-        structure_id=mesh.mesh_id,
-        revision_id=part.part_id,
-        semantics_id=manifest.source_geometry_id or "",
-    )
-    part_authority = CompositionEntry(
-        part,
-        entry_id=f"{name}/part-authority",
-        role="topology",
-        owner_id="moving-owner-local-test",
-        structure_id=mesh.topology_id,
-        revision_id=part.part_id,
-        semantics_id=manifest.source_geometry_id or "",
-        dependencies=(
-            source_entry.binding("structure"),
-            source_entry.binding("revision"),
-            source_entry.binding("semantics"),
-            base_directory.composition_entry().binding("structure"),
-        ),
-    )
-    owner_directory = base_directory.bind_source_authority(
-        part_authority.record_id,
-        execution_group,
-        axis_name=f"moving_owner_local_{name}_directory",
-    )
-    accepted_composition = Composition(
-        (
-            source_entry,
-            owner_directory.composition_entry(),
-            part_authority,
-        ),
-        boundary_id=manifest.manifest_id,
-    )
-    record = distribution.owner_local_geometry_record(
-        rank,
-        part_authority,
-        accepted_composition,
-        owner_directory,
-        source_id=name,
-        source_revision=part.part_id,
-        include_halo=True,
-    )
-    view = OwnerLocalCellGeometry.from_owner_local_result(record)
-    local_part = MeshPart(name, view, coordinate_contract=part.coordinate_contract)
-    return local_part, MeshPartManifest.from_part(local_part)
+    (part,) = assembly.parts
+    (manifest,) = assembly.part_manifest
+    return part, manifest
 
 
 def _owner_local_poisson_case(
@@ -539,37 +485,30 @@ def _owner_local_poisson_case(
     dict[str, FiniteElementPlan],
     Composition,
     dict[str, MeshPart],
+    dict[str, MeshPart],
 ]:
-    donor, donor_manifest = _owner_local_source_part(
-        "owner-poisson-donor",
-        ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (0.5, 0.5)),
-        execution_group,
-        rank,
-    )
-    receptor, receptor_manifest = _owner_local_source_part(
-        "owner-poisson-receptor",
-        ((0.2, 0.2), (0.7, 0.2), (0.2, 0.7), (0.36, 0.36)),
-        execution_group,
-        rank,
-    )
-    parts = {part.name: part for part in (donor, receptor)}
+    serial = {
+        "owner-poisson-donor": _grid_part("owner-poisson-donor", 0.0, 2.0, 6),
+        "owner-poisson-receptor": _grid_part("owner-poisson-receptor", 0.55, 1.35, 4),
+    }
+    sharded = {
+        name: _sharded_part(part, execution_group, rank) for name, part in serial.items()
+    }
+    parts = {name: value[0] for name, value in sharded.items()}
     assembly = MeshAssembly(
         tuple(parts.values()),
-        global_parts=(donor_manifest, receptor_manifest),
+        global_parts=tuple(value[1] for value in sharded.values()),
         local_rank=rank,
     )
-    receptor_view = _owner_view(receptor)
-    receptor_mesh, _ = receptor_view.reconstruct_local_geometry()
-    if receptor_mesh is None:
-        raise ValueError("Owner-local receptor mesh must be non-empty.")
+    receptor_view = _owner_view(parts["owner-poisson-receptor"])
     # Owner-local scopes declare each global face once: on the owner of the
     # cell carrying that boundary face.
-    boundary_ids = _owned_boundary_ids(receptor_view, receptor_mesh)
+    boundary_ids = _owned_boundary_ids(receptor_view)
     specifications = (
         OversetPartSpec("owner-poisson-donor", owner_rank=0),
         OversetPartSpec(
             "owner-poisson-receptor",
-            boundary=receptor.scope(1, boundary_ids),
+            boundary=parts["owner-poisson-receptor"].scope(1, boundary_ids),
             owner_rank=1,
         ),
     )
@@ -583,7 +522,7 @@ def _owner_local_poisson_case(
     field_spec = FiniteElementFieldSpec("u", lagrange_element("triangle", 1))
     plans: dict[str, FiniteElementPlan] = {}
     discretizations: dict[str, FiniteElementDiscretization] = {}
-    reconstructions: dict[str, object] = {}
+    reconstructions: dict[str, Any] = {}
     coefficient_ids: dict[str, np.ndarray] = {}
     for part in parts.values():
         view = _owner_view(part)
@@ -624,7 +563,9 @@ def _owner_local_poisson_case(
             dependencies=(part_entries[f"overset:part:{name}"].binding("revision"),),
         )
         state_entry = CompositionEntry(
-            jnp.zeros((discretization.dof_maps[0].global_dof_count,), dtype=jnp.float64),
+            jnp.asarray(
+                _manufactured(np.asarray(discretization.dof_maps[0].dof_coordinates))
+            ),
             entry_id=f"poisson:{name}",
             role="physical-state",
             owner_id="moving-owner-local-test",
@@ -639,7 +580,88 @@ def _owner_local_poisson_case(
         plans,
         Composition(entries, boundary_id="moving-owner-local-poisson-accepted"),
         parts,
+        serial,
     )
+
+
+_MOVED_VERTICES = {
+    "owner-poisson-donor": (np.asarray((1.0, 1.0)), np.asarray((0.01, 0.0))),
+    "owner-poisson-receptor": (np.asarray((0.95, 0.95)), np.asarray((0.0, 0.005))),
+}
+
+
+def _moved(points: np.ndarray, name: str, /) -> tuple[np.ndarray, np.ndarray]:
+    anchor, shift = _MOVED_VERTICES[name]
+    moved = np.all(np.isclose(points, anchor, rtol=0.0, atol=1e-12), axis=1)
+    result = points.copy()
+    result[moved] += shift
+    return result, moved
+
+
+def _locate_p1(
+    points: np.ndarray, triangles: np.ndarray, values: np.ndarray, query: np.ndarray, /
+) -> float:
+    for triangle in triangles:
+        corners = points[triangle]
+        matrix = np.stack((corners[1] - corners[0], corners[2] - corners[0]), axis=1)
+        local = np.linalg.solve(matrix, query - corners[0])
+        weights = np.asarray((1.0 - local[0] - local[1], local[0], local[1]))
+        if np.all(weights >= -1e-12):
+            return float(weights @ values[triangle])
+    raise ValueError("Receptor point lies outside the donor mesh.")
+
+
+def _serial_poisson(
+    points: np.ndarray, triangles: np.ndarray, dirichlet: dict[int, float], /
+) -> np.ndarray:
+    """Independent dense P1 oracle for -Laplace(u) = 1 with Dirichlet rows."""
+    count = points.shape[0]
+    stiffness = np.zeros((count, count))
+    load = np.zeros((count,))
+    reference = np.asarray(((-1.0, 1.0, 0.0), (-1.0, 0.0, 1.0)))
+    for triangle in triangles:
+        corners = points[triangle]
+        jacobian = np.stack((corners[1] - corners[0], corners[2] - corners[0]), axis=1)
+        area = 0.5 * abs(np.linalg.det(jacobian))
+        gradients = np.linalg.inv(jacobian).T @ reference
+        stiffness[np.ix_(triangle, triangle)] += area * gradients.T @ gradients
+        load[triangle] += area / 3.0
+    fixed = np.asarray(sorted(dirichlet), dtype=np.int64)
+    free = np.setdiff1d(np.arange(count), fixed)
+    solution = np.zeros((count,))
+    solution[fixed] = [dirichlet[int(row)] for row in fixed]
+    solution[free] = np.linalg.solve(
+        stiffness[np.ix_(free, free)],
+        load[free] - stiffness[np.ix_(free, fixed)] @ solution[fixed],
+    )
+    return solution
+
+
+def _gathered_receptor_ids(update: PreparedMovingOversetPoissonUpdate) -> set[int]:
+    from jax.experimental import multihost_utils
+
+    evidence = update.candidate.receptors_of("owner-poisson-receptor")
+    donor_index = update.candidate.part_index("owner-poisson-donor")
+    local = np.asarray(
+        [
+            int(identifier)
+            for identifier, found, part in zip(
+                np.asarray(evidence.receptor_ids).tolist(),
+                np.asarray(evidence.found).tolist(),
+                np.asarray(evidence.donor_parts).tolist(),
+                strict=True,
+            )
+            if found and part == donor_index
+        ],
+        dtype=np.int64,
+    )
+    counts = np.asarray(
+        multihost_utils.process_allgather(np.asarray((local.size,), np.int64))
+    ).reshape((-1,))
+    padded = np.full((int(np.max(counts)),), -1, dtype=np.int64)
+    padded[: local.size] = local
+    gathered = np.asarray(multihost_utils.process_allgather(padded)).reshape(-1)
+    return {int(value) for value in gathered if value >= 0}
 
 
 def test_owner_local_moving_overset_poisson_commits_collectively() -> None:
@@ -662,27 +684,33 @@ def test_owner_local_moving_overset_poisson_commits_collectively() -> None:
         devices,
     )
     rank = process_ranks.index(jax.process_index())
-    previous, plans, composition, source_parts = _owner_local_poisson_case(
+    previous, plans, composition, source_parts, serial = _owner_local_poisson_case(
         execution_group, rank
     )
+    for part in source_parts.values():
+        view = _owner_view(part)
+        assert not view.serial_source_view
+        assert np.count_nonzero(np.asarray(view.owned)) < sum(
+            1
+            for _ in np.asarray(_cell_result(serial[part.name]).mesh.blocks[0].global_ids)
+        )
     advances: dict[str, MeshMotionAdvance] = {}
     target_parts: list[MeshPart] = []
     for index, (name, part) in enumerate(sorted(source_parts.items())):
         view = _owner_view(part)
-        coordinates = np.asarray(view.coordinates, dtype=np.float64).copy()
-        center_row = int(np.flatnonzero(np.asarray(view.coordinate_rows) == 3)[0])
-        coordinates[center_row, 0] += 0.002 * (index + 1)
-        fixed_vertices = np.asarray(view.vertex_ids, dtype=np.int64) != 3
+        coordinates, moved = _moved(np.asarray(view.coordinates, dtype=np.float64), name)
         advance = advance_owner_local_mesh_motion(
             view,
             coordinates,
             execution_group,
             boundary_residual=0.0,
-            fixed_vertices=fixed_vertices,
+            fixed_vertices=~moved,
             driver_id=f"moving-owner-local-poisson-{name}",
             axis_name=f"moving_owner_local_poisson_motion_{index}",
         )
-        assert advance.accepted and advance.local_result is not None
+        assert advance.accepted and advance.local_result is not None, tuple(
+            assessment.failure_detail for assessment in advance.assessments
+        )
         advances[name] = advance
         target_parts.append(
             MeshPart(
@@ -711,12 +739,55 @@ def test_owner_local_moving_overset_poisson_commits_collectively() -> None:
     assert update.candidate.complete
     assert {part.part_name for part in update.parts} == set(previous.global_part_names)
     for part in update.parts:
-        assert part.conservative_remap.complete
+        assert part.remap_complete
         assert part.overlap_defect <= 1e-9
         assert part.boundary_flux + part.overset_flux == pytest.approx(
             -part.target_content, abs=1e-9
         )
         assert part.flux_defect <= 1e-9
+
+    # Independent serial oracle over the moved global meshes.
+    receptor_ids = _gathered_receptor_ids(update)
+    assert receptor_ids
+    targets: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    for name, part in serial.items():
+        mesh = _cell_result(part).mesh
+        source_points = np.asarray(mesh.coordinates, dtype=np.float64)
+        target_points, _ = _moved(source_points, name)
+        targets[name] = (
+            source_points,
+            target_points,
+            np.asarray(mesh.blocks[0].vertices, dtype=np.int64),
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+        )
+    donor_source, donor_target, donor_cells, _ = targets["owner-poisson-donor"]
+    donor_state = _manufactured(donor_source)
+    expected: dict[str, dict[int, float]] = {}
+    for name, (source_points, target_points, cells, vertex_ids) in targets.items():
+        boundary_rows = set()
+        mesh = _cell_result(serial[name]).mesh
+        for row in np.flatnonzero(np.asarray(mesh.boundary_masks[0], dtype=np.bool_)):
+            boundary_rows.add(int(row))
+        dirichlet = {
+            row: float(_manufactured(source_points[row : row + 1])[0])
+            for row in boundary_rows
+        }
+        if name == "owner-poisson-receptor":
+            for row, identifier in enumerate(vertex_ids.tolist()):
+                if identifier in receptor_ids:
+                    dirichlet[row] = _locate_p1(
+                        donor_target, donor_cells, donor_state, target_points[row]
+                    )
+        solution = _serial_poisson(target_points, cells, dirichlet)
+        expected[name] = dict(zip(vertex_ids.tolist(), solution.tolist(), strict=True))
+    for part in update.parts:
+        identifiers = _owner_local_coefficient_ids(part.discretization, "u")
+        np.testing.assert_allclose(
+            np.asarray(part.coefficients),
+            [expected[part.part_name][int(identifier)] for identifier in identifiers],
+            rtol=0.0,
+            atol=1e-9,
+        )
 
     rejected = update.commit(accepted_boundary=False)
     assert not rejected.published

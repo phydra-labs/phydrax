@@ -1413,8 +1413,9 @@ def _owner_local_sync_coordinates(
     outgoing: list[np.ndarray] = [empty.copy() for _ in range(parts)]
     proposal_bits = np.ascontiguousarray(proposed, dtype=np.float64).view(np.int64)
     for owner in range(parts):
+        if owner == local_rank:
+            continue
         selected = np.flatnonzero(coordinate_owners == owner)
-        selected = selected[owner != local_rank]
         if selected.size:
             outgoing[owner] = np.concatenate(
                 (
@@ -1505,6 +1506,7 @@ def _owner_local_motion_mesh(
     point_routes: list[int] = []
     point_shifts: list[np.ndarray] = []
     point_fixed: list[bool] = []
+    point_by_key: dict[tuple[int, tuple[float, ...]], int] = {}
     standard_blocks: list[CellBlock] = []
     polygon_blocks: list[CellBlock] = []
     polyhedral_blocks: dict[str, tuple[tuple[np.ndarray, ...], ...]] = {}
@@ -1571,33 +1573,37 @@ def _owner_local_motion_mesh(
                 else shifts[cell, valid[cell]] @ lattice
             )
             cell_coordinates += cell_shifts
+            # Vertex alignment is a property of the accepted source view; the
+            # proposed bank moves those same coordinate rows.
             if not np.array_equal(
-                cell_coordinates - cell_shifts,
+                np.asarray(view.coordinates, dtype=np.float64)[cell_routes],
                 np.asarray(view.vertex_coordinates, dtype=np.float64)[cell_vertices],
             ):
                 raise ValueError(
                     "Owner-local motion requires exact vertex-aligned affine geometry."
                 )
-            start = len(points)
-            for local, (vertex_row, route, shift, coordinate) in enumerate(
-                zip(
-                    cell_vertices,
-                    cell_routes,
-                    cell_shifts,
-                    cell_coordinates,
-                    strict=True,
-                )
+            cell_points = []
+            for local, (route, shift, coordinate) in enumerate(
+                zip(cell_routes, cell_shifts, cell_coordinates, strict=True)
             ):
-                local_rows[cell, np.flatnonzero(valid[cell])[local]] = start + local
-                points.append(coordinate)
-                point_routes.append(int(route))
-                point_shifts.append(shift)
-                source_id = int(coordinate_source_ids[int(route)])
-                point_fixed.append(fixed_by_source.get(source_id, False))
+                # One mesh vertex per coordinate route and lattice image, so
+                # neighboring cells share their vertices as in the source view.
+                key = (int(route), tuple(float(value) for value in shift))
+                point = point_by_key.get(key)
+                if point is None:
+                    point = len(points)
+                    point_by_key[key] = point
+                    points.append(coordinate)
+                    point_routes.append(int(route))
+                    point_shifts.append(shift)
+                    source_id = int(coordinate_source_ids[int(route)])
+                    point_fixed.append(fixed_by_source.get(source_id, False))
+                local_rows[cell, np.flatnonzero(valid[cell])[local]] = point
+                cell_points.append(point)
             if block.cell_kind == "polyhedron":
                 local_vertex_to_point = {
-                    int(vertex_row): start + local
-                    for local, vertex_row in enumerate(cell_vertices)
+                    int(vertex_row): point
+                    for vertex_row, point in zip(cell_vertices, cell_points, strict=True)
                 }
                 faces_by_cell.append(
                     tuple(
@@ -3199,12 +3205,56 @@ def advance_owner_local_mesh_motion(
         return _owner_local_rejected(
             source, target_coordinates, boundary_residual, str(error)
         )
+    advance_source_mesh_id = (
+        source.source_mesh_id if motion is None else motion.source_mesh_id
+    )
+    if source.periodic_topology_id is None:
+        # The monitor ran on its compact motion mesh; the accepted transition
+        # binds the canonical local meshes the source and target views publish.
+        local_error = None
+        try:
+            if motion is not None:
+                source_local_mesh, source_local_geometry = (
+                    source.reconstruct_local_geometry()
+                )
+                target_local_mesh, target_local_geometry = (
+                    target_view.reconstruct_local_geometry()
+                )
+                if (
+                    source_local_mesh is None
+                    or source_local_geometry is None
+                    or target_local_mesh is None
+                    or target_local_geometry is None
+                ):
+                    raise ValueError("Nonempty motion views lost their local carriers.")
+                local_transition = _transition_geometry_record(
+                    certify_cell_mesh(
+                        source_local_mesh,
+                        source.coordinate_contract,
+                        geometry=source_local_geometry,
+                    ),
+                    target_local_mesh,
+                    target_local_geometry,
+                )
+                local_target_mesh_id = target_local_mesh.mesh_id
+                advance_source_mesh_id = source_local_mesh.mesh_id
+        except Exception as error:
+            local_error = str(error)
+        try:
+            _owner_group_fail_if_any(
+                local_error,
+                execution_group,
+                f"{axis}_canonical_transition",
+                "owner-local motion canonical transition",
+            )
+        except Exception as error:
+            return _owner_local_rejected(
+                source, target_coordinates, boundary_residual, str(error)
+            )
     return MeshMotionAdvance(
         decision,
         tuple(assessments),
-        source_mesh_id=(
-            source.source_mesh_id if motion is None else motion.source_mesh_id
-        ),
+        source_mesh_id=advance_source_mesh_id,
         source_result_id=source.local_view_id,
         local_result=target_view,
         local_source_view_id=source.local_view_id,

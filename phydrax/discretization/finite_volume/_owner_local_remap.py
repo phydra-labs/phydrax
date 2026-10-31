@@ -4009,8 +4009,9 @@ def _route_candidate_source_cells(
                     & (source_min[:, None, :] < qupper[None, :, :]),
                     axis=2,
                 )
+                # A non-periodic source cell has one image with no lattice shift.
                 selected.update(
-                    (int(row), (0,) * dimension)
+                    (int(row), (0,) * source_windings.shape[1])
                     for row in np.flatnonzero(np.any(overlap, axis=1))
                 )
             else:
