@@ -783,6 +783,15 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             safe_neighbor = jnp.maximum(neighbor, 0)
             route_active = self._stage_route_active(layout, metrics.active_cell_mask)
             points = self.precision.reconstruction(geometry_block.quadrature_points)
+            # Seam neighbors evaluate their polynomials in their own lattice frame.
+            neighbor_points = (
+                self.discretization.neighbor_side_points(points, layout.face_ids)
+                if layout.block_kind == "physical"
+                and isinstance(
+                    self.discretization, UnstructuredFiniteVolumeDiscretization
+                )
+                else points
+            )
             if isinstance(reconstruction, PiecewiseConstantReconstruction):
                 quadrature_count = layout.quadrature_count
                 left = jnp.broadcast_to(
@@ -812,7 +821,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         reconstruction_state,
                         coefficients,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
                 else:
                     left = reconstruction.evaluate_stage_coefficients(
@@ -829,7 +838,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         stage_lengths,
                         metrics,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
             elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
                 if coefficients is None:
@@ -849,7 +858,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         reconstruction_state,
                         coefficients,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
                 else:
                     left = reconstruction.optimal.evaluate_stage_coefficients(
@@ -866,7 +875,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         stage_lengths,
                         metrics,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
                 left = reconstruction._limit(reconstruction_state, left, owner)
                 right = reconstruction._limit(

@@ -107,7 +107,7 @@ from ._cad import (
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_physical_tag_losses,
-    cad_import_synthesis_losses,
+    cad_import_stage_losses,
     CadExportPolicy,
     CadExportResult,
     CadExportTolerances,
@@ -2280,7 +2280,7 @@ def _import(
         decoded, model, resolver.stage.provenance, factor, unit
     )
     losses.extend(tolerances.evidence.losses)
-    losses.extend(cad_import_synthesis_losses(resolver.stage))
+    losses.extend(cad_import_stage_losses(resolver.stage))
     report = AdapterReport(
         AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
         _FORMAT,

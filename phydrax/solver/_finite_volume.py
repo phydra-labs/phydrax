@@ -433,6 +433,7 @@ def unstructured_ssprk33_content_candidate(
         redistribution=redistribution,
         stage_state_provider=stage_state_provider,
         stage_decision_provider=stage_decision_provider,
+        stage_route_provider=stage_route_provider,
     )
     high_1 = dynamics.evaluate_stage(
         stage_initial, stage_1, args, cfl=cfl, redistribution=redistribution
@@ -744,8 +745,13 @@ def zero_unstructured_ssprk33_content_candidate(
     redistribution: ConservativeSmallCellRedistributionPlan | None = None,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
     stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
+    stage_route_provider: FiniteVolumeStageRouteProvider | None = None,
 ) -> FiniteVolumeSSPRK3ContentCandidate:
-    """Build a no-physics, zero-integral candidate over fixed stage routes."""
+    """Build a no-physics, zero-integral candidate over fixed stage routes.
+
+    Its identity matches the physical candidate of the same providers, so the
+    two are interchangeable branches of one collective decision.
+    """
 
     if (
         not isinstance(stage_metrics, tuple)
@@ -785,6 +791,9 @@ def zero_unstructured_ssprk33_content_candidate(
             "dynamics": dynamics.dynamics_id,
             "stage_state_provider": (
                 None if stage_state_provider is None else stage_state_provider.provider_id
+            ),
+            "stage_route_provider": (
+                None if stage_route_provider is None else stage_route_provider.provider_id
             ),
             "redistribution": (
                 None if redistribution is None else redistribution.plan_id
@@ -856,6 +865,7 @@ def zero_unstructured_ale_ssprk33_candidate(
     *,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
     stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
+    stage_route_provider: FiniteVolumeStageRouteProvider | None = None,
 ) -> FiniteVolumeALESSPRK3Candidate:
     """Build a no-physics, zero-integral candidate for rejected ALE geometry."""
 
@@ -868,6 +878,7 @@ def zero_unstructured_ale_ssprk33_candidate(
         accepted_step,
         stage_state_provider=stage_state_provider,
         stage_decision_provider=stage_decision_provider,
+        stage_route_provider=stage_route_provider,
     )
     return FiniteVolumeALESSPRK3Candidate(
         content_state=content.content_state,

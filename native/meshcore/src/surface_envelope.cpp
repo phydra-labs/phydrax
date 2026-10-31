@@ -781,6 +781,27 @@ struct PointIndex {
     }
     return found;
   }
+  // Calls visit(point) for every indexed point in the cells the box
+  // [x - radius, x + radius] meets (a superset of the points within radius).
+  template <class Visit>
+  void for_each_near(const V& x, double radius, Visit&& visit) const {
+    std::array<int64_t, 3> low{}, high{};
+    for (int d = 0; d < 3; ++d) {
+      V shifted = x;
+      shifted[d] = x[d] - radius;
+      low[d] = std::max<int64_t>(0, coordinates(shifted)[d]);
+      shifted[d] = x[d] + radius;
+      high[d] = std::min<int64_t>(shape[d] - 1, coordinates(shifted)[d]);
+    }
+    for (int64_t i = low[0]; i <= high[0]; ++i)
+      for (int64_t j = low[1]; j <= high[1]; ++j)
+        for (int64_t k = low[2]; k <= high[2]; ++k) {
+          const int64_t cell_index = flat({i, j, k});
+          for (int64_t s = start[static_cast<size_t>(cell_index)];
+               s < start[static_cast<size_t>(cell_index + 1)]; ++s)
+            visit((*points)[static_cast<size_t>(items[static_cast<size_t>(s)])]);
+        }
+  }
 };
 
 class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
@@ -816,6 +837,77 @@ class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
     const double norm = length(direction);
     if (!(norm > 0) || !std::isfinite(norm)) return x;
     return add(p, mul(direction, data.offset / norm));
+  }
+  // Source normals of the band piece are the directions (x - q) / |x - q| from
+  // a nearest source point q of a triangle point x. Every x lies within R of
+  // a corner v (R = certified free radius); q lies within the covering radius
+  // c of a cloud point p, and |x - q| <= |x - p*| for v's nearest cloud point
+  // p* (on the source), which gives, with d = |v - p*|,
+  //   |v - p|^2 - d^2 <= 2 R |p - p*| + 2 c (d + R) + c^2,  |v - p| <= d + 2R + c,
+  // and (x - q) / |x - q| lies within asin((R + c) / |v - p|) of (v - p) / |v - p|.
+  // The cone holds every such direction over the candidate cloud points of the
+  // three corners (relative slack 1e-9 on the filters).
+  phx::mc::remesh::NormalCone normal_cone(
+      const V& a, const V& b, const V& c,
+      const std::array<phx::mc::remesh::VertexEvidence, 3>&) const override {
+    phx::mc::remesh::NormalCone cone;
+    const double radius = phx::mc::remesh::certified_free_radius(a, b, c, data.roundoff);
+    if (!std::isfinite(radius)) return cone;
+    const double covering = data.covering_radius;
+    const std::array<const V*, 3> corners{&a, &b, &c};
+    std::array<V, 3> nearest{};
+    V axis{0, 0, 0};
+    for (int k = 0; k < 3; ++k) {
+      const int64_t item = cloud.nearest_index(*corners[k]);
+      if (item < 0) return cone;
+      nearest[k] = data.cloud[static_cast<size_t>(item)];
+      const V direction = difference(*corners[k], nearest[k]);
+      const double norm = length(direction);
+      if (!(norm > radius + covering)) return cone;
+      axis = add(axis, mul(direction, 1 / norm));
+    }
+    const double axis_length = length(axis);
+    if (!(axis_length > 0)) return cone;
+    axis = mul(axis, 1 / axis_length);
+    double half = 0;
+    bool open = false;
+    for (int k = 0; k < 3 && !open; ++k) {
+      const V& v = *corners[k];
+      const double d = length(difference(v, nearest[k]));
+      const double reach = (d + 2 * radius + covering) * (1 + 1.0e-9);
+      cloud.for_each_near(v, reach, [&](const V& p) {
+        const V offset = difference(v, p);
+        const double squared = dot(offset.data(), offset.data());
+        if (squared > reach * reach) return;
+        const double allowance = 2 * radius * length(difference(p, nearest[k])) +
+                                 2 * covering * (d + radius) + covering * covering;
+        if (squared - d * d > allowance + (allowance + d * d) * 1.0e-9) return;
+        const double norm = std::sqrt(squared);
+        if (!(norm > radius + covering)) {
+          open = true;
+          return;
+        }
+        const double between =
+            std::atan2(length(cross(axis, offset)), dot(axis.data(), offset.data()));
+        half = std::max(half, between + std::asin((radius + covering) / norm));
+      });
+    }
+    if (open || !(half < cone.half_angle)) return cone;
+    cone.axis = axis;
+    cone.half_angle = half;
+    return cone;
+  }
+  // Every cone holds the nearest cloud point p* of each corner as a candidate,
+  // whose term is at least asin((R + c) / |v - p*|) >= asin((R + c) / U_v).
+  double normal_cone_floor(
+      const V& a, const V& b, const V& c,
+      const std::array<phx::mc::remesh::VertexEvidence, 3>& evidence) const override {
+    const double radius = phx::mc::remesh::certified_free_radius(a, b, c, data.roundoff);
+    double nearest_upper = std::numeric_limits<double>::infinity();
+    for (const auto& vertex : evidence) nearest_upper = std::min(nearest_upper, vertex.upper);
+    const double margin = radius + data.covering_radius;
+    if (!std::isfinite(radius) || !(nearest_upper > margin)) return phx::mc::remesh::kOpenCone;
+    return std::asin(margin / nearest_upper);
   }
 
  private:

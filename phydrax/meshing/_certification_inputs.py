@@ -29,10 +29,8 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryDistanceWitness,
     SourceBoundaryQuery,
 )
-from ..geometry._source_fidelity import (
-    SourceFidelityWitness,
-    validate_source_fidelity_witness,
-)
+from ..geometry._source_fidelity import validate_source_fidelity_witness
+from ..geometry._source_fidelity_certificate import SourceFidelityWitness
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayBoundaryWitness,

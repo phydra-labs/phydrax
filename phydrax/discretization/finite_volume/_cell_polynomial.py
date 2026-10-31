@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from numbers import Integral
 
 import equinox as eqx
@@ -21,7 +22,11 @@ from ..._trainable import NonTrainableState
 from ..._validation import positive_integer
 from ...typing import checked
 from ._geometry_protocol import FiniteVolumeStageMetrics
-from ._unstructured import UnstructuredFiniteVolumeDiscretization
+from ._unstructured import (
+    periodic_image_key,
+    periodic_image_scale,
+    UnstructuredFiniteVolumeDiscretization,
+)
 
 
 def _monomials(values: np.ndarray, exponents: np.ndarray, /) -> np.ndarray:
@@ -34,33 +39,65 @@ def _jax_monomials(values: Array, exponents: Array, /) -> Array:
 
 def _adjacency(
     discretization: UnstructuredFiniteVolumeDiscretization, /
-) -> list[set[int]]:
-    adjacency: list[set[int]] = [set() for _ in range(discretization.cell_count)]
+) -> list[list[tuple[int, np.ndarray]]]:
+    """Face neighbors of every cell with the image translation of each neighbor.
+
+    A neighbor's own coordinates plus its translation place it beside the cell;
+    the translation is zero except across owner-local periodic seams.
+    """
+    adjacency: list[list[tuple[int, np.ndarray]]] = [
+        [] for _ in range(discretization.cell_count)
+    ]
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
     neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
-    for left, right in zip(owner, neighbor, strict=True):
+    translations = (
+        np.zeros((owner.size, discretization.cell_centers.shape[1]), dtype=np.float64)
+        if discretization.periodic_face_translations is None
+        else np.asarray(discretization.periodic_face_translations, dtype=np.float64)
+    )
+    for left, right, translation in zip(owner, neighbor, translations, strict=True):
         if right >= 0:
-            adjacency[int(left)].add(int(right))
-            adjacency[int(right)].add(int(left))
+            adjacency[int(left)].append((int(right), -translation))
+            adjacency[int(right)].append((int(left), translation))
     return adjacency
 
 
-def _bfs_order(adjacency: list[set[int]], cell: int, /) -> list[tuple[int, int]]:
-    visited = {cell}
-    frontier = sorted(adjacency[cell])
-    ordered: list[tuple[int, int]] = []
-    depth = 1
-    while frontier:
-        next_frontier: list[int] = []
-        for candidate in frontier:
-            if candidate in visited:
-                continue
-            visited.add(candidate)
-            ordered.append((candidate, depth))
-            next_frontier.extend(adjacency[candidate])
-        frontier = sorted(set(next_frontier) - visited)
-        depth += 1
-    return ordered
+def _bfs_rings(
+    adjacency: list[list[tuple[int, np.ndarray]]],
+    cell: int,
+    dimension: int,
+    scale: float,
+    /,
+) -> Iterator[list[tuple[int, np.ndarray]]]:
+    """Breadth-first rings of `(cell, image)` nodes around `cell` at the origin.
+
+    Nodes are cell images: a periodic cell reached at two lattice images is two
+    stencil members, exactly as in the periodic tiling. Each ring is ordered by
+    image (the identity first), then by cell index; without seams that is the
+    cell-index order of the plain face graph.
+    """
+
+    def identity(node: tuple[int, np.ndarray]) -> tuple[int, ...]:
+        return (node[0], *periodic_image_key(node[1], scale))
+
+    origin = (cell, np.zeros((dimension,), dtype=np.float64))
+    visited = {identity(origin)}
+    frontier = [origin]
+    while True:
+        ring: dict[tuple[int, ...], tuple[int, np.ndarray]] = {}
+        for current, image in frontier:
+            for other, offset in adjacency[current]:
+                candidate = (other, image + offset)
+                key = identity(candidate)
+                if key not in visited:
+                    ring.setdefault(key, candidate)
+        if not ring:
+            return
+        visited.update(ring)
+        frontier = sorted(
+            ring.values(), key=lambda node: (periodic_image_key(node[1], scale), node[0])
+        )
+        yield frontier
 
 
 def _cell_moments(
@@ -86,11 +123,15 @@ def _design_rows(
     lengths: np.ndarray,
     cell: int,
     stencil: list[int],
+    images: np.ndarray,
     /,
 ) -> np.ndarray:
     centers = np.asarray(discretization.cell_centers)
     volumes = np.asarray(discretization.cell_volumes)
-    points = np.asarray(discretization.cell_quadrature_points)[stencil]
+    points = (
+        np.asarray(discretization.cell_quadrature_points)[stencil]
+        + np.asarray(images, dtype=np.float64)[:, None, :]
+    )
     weights = np.asarray(discretization.cell_quadrature_weights)[stencil]
     normalized = (points - centers[cell]) / lengths[cell]
     monomials = _monomials(normalized, np.asarray(basis.exponents))
@@ -106,64 +147,97 @@ def _selected_stencils(
     oversampling: int,
     direction: np.ndarray | None,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Rank-complete stencils as `(cells, images, valid, depths)`.
+
+    `images[c, s]` translates stencil member `s` of cell `c` beside `c`; it is
+    zero except across owner-local periodic seams. A periodic stencil search
+    never exhausts its rings, so it is bounded by one ring per cell.
+    """
     adjacency = _adjacency(discretization)
     centers = np.asarray(discretization.cell_centers)
-    stencils: list[tuple[int, ...]] = []
+    dimension = centers.shape[1]
+    scale = periodic_image_scale(centers)
+    depth_limit = discretization.cell_count + 1
+    stencils: list[tuple[list[int], list[np.ndarray]]] = []
     depths: list[int] = []
     required = basis.feature_count + oversampling
     for cell in range(discretization.cell_count):
-        candidates = _bfs_order(adjacency, cell)
-        if direction is not None:
-            candidates = sorted(
-                candidates,
-                key=lambda item: (
-                    item[1],
-                    -float(
-                        np.dot(
-                            (centers[item[0]] - centers[cell]) / lengths[cell],
-                            direction,
-                        )
+        selected: list[int] = []
+        selected_images: list[np.ndarray] = []
+        selected_depth = 0
+        rank = 0
+        for depth, ring in enumerate(
+            _bfs_rings(adjacency, cell, dimension, scale), start=1
+        ):
+            if depth > depth_limit:
+                break
+            if direction is not None:
+                ring = sorted(
+                    ring,
+                    key=lambda node: (
+                        -float(
+                            np.dot(
+                                (centers[node[0]] + node[1] - centers[cell])
+                                / lengths[cell],
+                                direction,
+                            )
+                        ),
+                        periodic_image_key(node[1], scale),
+                        node[0],
                     ),
-                    item[0],
-                ),
-            )
-        if len(candidates) < basis.feature_count:
+                )
+            for candidate, image in ring:
+                selected.append(candidate)
+                selected_images.append(image)
+                selected_depth = depth
+                if len(selected) >= required:
+                    rank = np.linalg.matrix_rank(
+                        _design_rows(
+                            discretization,
+                            basis,
+                            moments,
+                            lengths,
+                            cell,
+                            selected,
+                            np.asarray(selected_images),
+                        )
+                    )
+                    if rank == basis.feature_count:
+                        break
+            if rank == basis.feature_count:
+                break
+        if len(selected) < basis.feature_count:
             raise ValueError(
                 f"Cell polynomial stencil for cell {cell} has fewer cells than features."
             )
-        selected: list[int] = []
-        selected_depth = 0
-        rank = 0
-        target = min(len(candidates), required)
-        for candidate, depth in candidates:
-            selected.append(candidate)
-            selected_depth = max(selected_depth, depth)
-            if len(selected) >= target:
-                design = _design_rows(
+        if len(selected) < required:
+            rank = np.linalg.matrix_rank(
+                _design_rows(
                     discretization,
                     basis,
                     moments,
                     lengths,
                     cell,
                     selected,
+                    np.asarray(selected_images),
                 )
-                rank = np.linalg.matrix_rank(design)
-                if rank == basis.feature_count:
-                    break
+            )
         if rank != basis.feature_count:
             raise ValueError(
                 f"Cell polynomial stencil for cell {cell} is rank deficient."
             )
-        stencils.append(tuple(selected))
+        stencils.append((selected, selected_images))
         depths.append(selected_depth)
-    capacity = max(len(stencil) for stencil in stencils)
+    capacity = max(len(stencil) for stencil, _ in stencils)
     indices = np.zeros((discretization.cell_count, capacity), dtype=np.int32)
+    images = np.zeros((discretization.cell_count, capacity, dimension), dtype=np.float64)
     valid = np.zeros((discretization.cell_count, capacity), dtype=np.bool_)
-    for cell, stencil in enumerate(stencils):
+    for cell, (stencil, stencil_images) in enumerate(stencils):
         indices[cell, : len(stencil)] = stencil
+        images[cell, : len(stencil)] = stencil_images
         valid[cell, : len(stencil)] = True
-    return indices, valid, np.asarray(depths, dtype=np.int32)
+    return indices, images, valid, np.asarray(depths, dtype=np.int32)
 
 
 def _smoothness_gram(
@@ -308,13 +382,20 @@ class CellPolynomialReconstructionPlan(StrictModule, NonTrainableState):
 
 
 class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
-    """Fixed-capacity cell-average polynomial reconstruction."""
+    """Fixed-capacity cell-average polynomial reconstruction.
+
+    Across owner-local periodic seams a stencil member is a cell image:
+    ``stencil_images[c, s]`` translates member ``s`` beside cell ``c`` (``None``
+    without seams), and neighbor-side face traces are evaluated at the face
+    points translated into the neighbor's frame.
+    """
 
     discretization: UnstructuredFiniteVolumeDiscretization
     basis: CellPolynomialBasis
     moments: Array
     characteristic_lengths: Array
     stencil_cells: Array
+    stencil_images: Array | None
     stencil_valid: Array
     factors: Array
     smoothness_gram: Array
@@ -331,9 +412,6 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         *,
         stencil_direction: ArrayLike | None = None,
     ) -> None:
-        discretization.require_single_face_embedding(
-            "Cell polynomial reconstruction stencils"
-        )
         required_quadrature_degree = max(plan.degree, 2 * (plan.degree - 1))
         if required_quadrature_degree > discretization.cell_quadrature_degree:
             raise ValueError(
@@ -352,7 +430,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
             if not np.isfinite(norm) or norm == 0.0:
                 raise ValueError("stencil_direction must be finite and nonzero.")
             direction = direction / norm
-        indices, valid, depths = _selected_stencils(
+        indices, images, valid, depths = _selected_stencils(
             discretization,
             basis,
             moments,
@@ -369,6 +447,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         for cell in range(discretization.cell_count):
             stencil = indices[cell, valid[cell]].tolist()
             stencil_count = len(stencil)
+            stencil_images = images[cell, :stencil_count]
             design = _design_rows(
                 discretization,
                 basis,
@@ -376,9 +455,11 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
                 lengths,
                 cell,
                 stencil,
+                stencil_images,
             )
             distance = np.linalg.norm(
-                (centers[stencil] - centers[cell]) / lengths[cell], axis=-1
+                (centers[stencil] + stencil_images - centers[cell]) / lengths[cell],
+                axis=-1,
             )
             weights = 1.0 / np.maximum(distance, 1e-14) ** plan.weight_power
             root_weight = np.sqrt(weights)
@@ -416,6 +497,11 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         self.moments = jnp.asarray(moments)
         self.characteristic_lengths = jnp.asarray(lengths)
         self.stencil_cells = jnp.asarray(indices)
+        self.stencil_images = (
+            None
+            if discretization.periodic_face_translations is None
+            else jnp.asarray(images, dtype=discretization.cell_centers.dtype)
+        )
         self.stencil_valid = jnp.asarray(valid)
         self.factors = jnp.asarray(factors)
         self.smoothness_gram = jnp.asarray(gram)
@@ -439,6 +525,9 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
                 if direction is None
                 else array_tree_fingerprint(direction),
                 "stencils": array_tree_fingerprint(indices),
+                "images": None
+                if self.stencil_images is None
+                else array_tree_fingerprint(images),
                 "valid": array_tree_fingerprint(valid),
                 "moments": array_tree_fingerprint(moments),
             }
@@ -506,6 +595,8 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
             )
             return self.coefficients(value), self.characteristic_lengths
         neighbor_centers = centers[self.stencil_cells]
+        if self.stencil_images is not None:
+            neighbor_centers = neighbor_centers + self.stencil_images.astype(value.dtype)
         design = _jax_monomials(
             (neighbor_centers - centers[:, None, :]) / lengths[:, None, None],
             self.basis.exponents,
@@ -641,13 +732,19 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         )
 
     def reconstruct_at(self, state: Array, points: Array, /) -> tuple[Array, Array]:
+        """Owner and neighbor traces at face `points` given in the owner's frame."""
         owner = self.discretization.owner_cells
         neighbor = self.discretization.neighbor_cells
         safe_neighbor = jnp.maximum(neighbor, 0)
         coefficients = self.coefficients(state)
         return (
             self.evaluate_coefficients(state, coefficients, owner, points),
-            self.evaluate_coefficients(state, coefficients, safe_neighbor, points),
+            self.evaluate_coefficients(
+                state,
+                coefficients,
+                safe_neighbor,
+                self.discretization.neighbor_side_points(points),
+            ),
         )
 
     def reconstruct(self, state: Array, /) -> tuple[Array, Array]:

@@ -279,24 +279,11 @@ def _exact_torus_patch_box(
 def _exact_bspline_surface_box(
     patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
-    from ..._interpolation import rational_bspline_surface_spans
     from ._patches import BSplineSurfacePatch
 
     if not isinstance(patch, BSplineSurfacePatch):
         raise TypeError("Exact B-spline bounds require a BSplineSurfacePatch.")
-    spans = rational_bspline_surface_spans(
-        np.asarray(patch.control_points, dtype=np.float64).tolist(),
-        np.asarray(patch.weights, dtype=np.float64).tolist(),
-        np.asarray(patch.u_knots, dtype=np.float64).tolist(),
-        np.asarray(patch.v_knots, dtype=np.float64).tolist(),
-        patch.u_degree,
-        patch.v_degree,
-        exact_control_points=patch.exact_control_points,
-        exact_weights=patch.exact_weights,
-        exact_u_knots=patch.exact_u_knots,
-        exact_v_knots=patch.exact_v_knots,
-    )
-    return _exact_span_surface_box(spans, lower, upper)
+    return _exact_span_surface_box(patch.rational_spans(), lower, upper)
 
 
 def _exact_span_surface_box(

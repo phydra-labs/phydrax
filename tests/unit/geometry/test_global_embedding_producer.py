@@ -58,7 +58,9 @@ from phydrax.geometry._boundary_degree_embedding import (
 from phydrax.geometry._embedding_cells import EmbeddingCell, prepare_embedding_cells
 from phydrax.geometry._exact_polyhedral_geometry import Point3
 from phydrax.geometry._global_embedding import (
+    _full_column_rank_modulo_prime,
     _nonperiodic_contacts,
+    _rational_markowitz_nullspace,
     _shared_curved_facet_separation,
     _shared_edge_cone_separation,
     _shared_edge_separation,
@@ -70,6 +72,7 @@ from phydrax.geometry._restricted_embedding import (
     reference_chart_composition_equal,
     restriction_trace_equal,
 )
+from phydrax.linalg._exact import factor_exact_sparse
 from phydrax.meshing._curving import _exact_coordinate_bank_source_map
 
 
@@ -1680,3 +1683,34 @@ def test_unrelated_curved_duplicate_corners_prove_contact_violation() -> None:
         and "Distinct mapped corner identities" in finding.detail
         for finding in certificate.findings
     )
+
+
+def test_integer_markowitz_nullspace_matches_the_exact_sparse_factorization() -> None:
+    generator = np.random.default_rng(11)
+    checked = {"nullity_one": 0, "other": 0}
+    for _ in range(60):
+        columns = int(generator.integers(3, 9))
+        rank = int(generator.integers(1, columns + 1))
+        basis = generator.integers(-4, 5, (rank, columns))
+        mixing = generator.integers(-3, 4, (int(generator.integers(rank, 12)), rank))
+        dense = mixing @ basis
+        # Sparse dyadic and non-dyadic rationals, with exact zeros kept out.
+        rows = tuple(
+            {
+                column: Fraction(int(value), int(generator.choice((1, 2, 3, 8))))
+                for column, value in enumerate(row)
+                if value
+            }
+            for row in dense
+        )
+        factorization = factor_exact_sparse(rows, columns)
+        replayed = _rational_markowitz_nullspace(rows, columns)
+        if factorization.evidence.rank == columns - 1:
+            assert replayed == factorization.nullspace_basis()[0]
+            checked["nullity_one"] += 1
+        else:
+            assert replayed is False
+            checked["other"] += 1
+        if _full_column_rank_modulo_prime(rows, columns):
+            assert factorization.evidence.rank == columns
+    assert checked["nullity_one"] and checked["other"]

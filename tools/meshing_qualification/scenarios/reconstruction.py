@@ -180,7 +180,16 @@ def _affine_harmonic_solve(
         ),
     )
     operator, rhs = problem.linear_system()
-    solve = phx.linalg.solve(operator, rhs)
+    # The oracle is roundoff reproduction of affine data. The default iterative stop
+    # (relative residual 1e-8) leaves affine errors of order 1e-8 on the envelope
+    # volumes, so the matrix-free solve converges to relative residual 1e-12.
+    solve = phx.linalg.solve(
+        operator,
+        rhs,
+        policy=phx.linalg.LinearSolvePolicy(
+            tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=0.0)
+        ),
+    )
     values = np.asarray(problem.expand(solve.value), dtype=np.float64)
     points = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     exact = 1.0 + 2.0 * points[:, 0] - points[:, 1] + 0.5 * points[:, 2]
