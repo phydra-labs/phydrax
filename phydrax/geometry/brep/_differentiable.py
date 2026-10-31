@@ -53,6 +53,7 @@ from ..simplicial import MeshQueryResult, TriangleBVH, TriangleMesh
 from ..simplicial._mesh import _closest_points_on_triangles
 from ._model import BRepBoundaryMap, BRepGeometry, BRepModel
 from ._patches import AbstractCurve, AbstractSurfacePatch
+from ._source import _require_closed_solid
 
 
 if TYPE_CHECKING:
@@ -2617,10 +2618,14 @@ class FixedTopologyBRepSource(GeometrySource):
             "weights",
         ),
     ) -> None:
+        if not isinstance(model, BRepModel):
+            raise TypeError("model must be a BRepModel.")
         if parameter_map is not None and not isinstance(
             parameter_map, AbstractBRepParameterMap
         ):
             raise TypeError("parameter_map must be an AbstractBRepParameterMap or None.")
+        # The kernel is a REGION source: like BRepSource it requires a closed solid.
+        _require_closed_solid(model)
         self.model = model
         self.parameter_map = parameter_map
         self.trainable_fields = frozenset(trainable_fields)

@@ -328,6 +328,7 @@ def _place_exact_vector(
         for row in range(3)
     )
 
+
 @checked
 def place_curve(
     curve: AbstractCurve, placement: RigidPlacement, label: str, /
@@ -338,9 +339,7 @@ def place_curve(
     match curve:
         case LineCurve():
             rotation, translation = _exact_placement_coefficients(placement)
-            origin_exact = _place_exact_vector(
-                curve.origin_exact, rotation, translation
-            )
+            origin_exact = _place_exact_vector(curve.origin_exact, rotation, translation)
             direction_exact = _place_exact_vector(curve.direction_exact, rotation)
             return LineCurve(
                 tuple(float(value) for value in origin_exact),
@@ -350,9 +349,7 @@ def place_curve(
             )
         case CircleCurve():
             rotation, translation = _exact_placement_coefficients(placement)
-            center_exact = _place_exact_vector(
-                curve.center_exact, rotation, translation
-            )
+            center_exact = _place_exact_vector(curve.center_exact, rotation, translation)
             first_axis_exact = _place_exact_vector(curve.first_axis_exact, rotation)
             second_axis_exact = _place_exact_vector(curve.second_axis_exact, rotation)
             return CircleCurve(
@@ -435,9 +432,7 @@ def place_surface(
             origin_exact = _place_exact_vector(
                 patch.origin_exact, rotation_exact, translation_exact
             )
-            first_axis_exact = _place_exact_vector(
-                patch.first_axis_exact, rotation_exact
-            )
+            first_axis_exact = _place_exact_vector(patch.first_axis_exact, rotation_exact)
             second_axis_exact = _place_exact_vector(
                 patch.second_axis_exact, rotation_exact
             )
@@ -477,7 +472,9 @@ def place_surface(
                 patch.center_exact, rotation_exact, translation_exact
             )
             first_axis_exact = _place_exact_vector(patch.first_axis_exact, rotation_exact)
-            second_axis_exact = _place_exact_vector(patch.second_axis_exact, rotation_exact)
+            second_axis_exact = _place_exact_vector(
+                patch.second_axis_exact, rotation_exact
+            )
             axis_exact = _place_exact_vector(patch.axis_exact, rotation_exact)
             return TorusPatch(
                 tuple(float(value) for value in center_exact),
@@ -502,6 +499,8 @@ def place_surface(
                 patch.v_knots,
                 patch.u_degree,
                 patch.v_degree,
+                # Placement moves poles; it never changes their source identity.
+                control_point_ids=patch.control_point_ids,
             )
         case ExtrusionSurface():
             return ExtrusionSurface(
