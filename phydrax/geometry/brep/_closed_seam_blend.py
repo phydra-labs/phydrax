@@ -1667,12 +1667,19 @@ def _stage_boundaries(
                 if geometry.coedge_edges[coedge] != radial_edge:
                     continue
                 original_pcurve = builder.pcurves[coedge]
-                if not isinstance(original_pcurve, LineCurve):
+                # The forward seam use lives on the closing native-period sheet; the
+                # radial remap acts on its source line and keeps the period gauge.
+                original_line = (
+                    original_pcurve.source_curve
+                    if isinstance(original_pcurve, PeriodicPCurve)
+                    else original_pcurve
+                )
+                if not isinstance(original_line, LineCurve):
                     raise BRepBlendUnsupported(
                         "closed seam blend: Revolution cap seam p-curve is not linear"
                     )
-                pcurve_origin_exact = original_pcurve.origin_exact
-                pcurve_direction_exact = original_pcurve.direction_exact
+                pcurve_origin_exact = original_line.origin_exact
+                pcurve_direction_exact = original_line.direction_exact
                 pcurve_end_exact = tuple(
                     first + delta
                     for first, delta in zip(
@@ -1707,11 +1714,18 @@ def _stage_boundaries(
                     raise BRepBlendUnsupported(
                         "closed seam blend: Revolution cap seam p-curve has an unknown radial map"
                     )
-                new_pcurve = LineCurve(
+                new_line = LineCurve(
                     np.asarray(tuple(float(value) for value in new_pcurve_origin)),
                     np.asarray(tuple(float(value) for value in new_pcurve_direction)),
                     origin_exact=new_pcurve_origin,
                     direction_exact=new_pcurve_direction,
+                )
+                new_pcurve = (
+                    PeriodicPCurve(
+                        new_line, original_pcurve.patch, original_pcurve.period_shifts
+                    )
+                    if isinstance(original_pcurve, PeriodicPCurve)
+                    else new_line
                 )
                 builder.pcurves[coedge] = new_pcurve
                 coedge_roots = list(builder.coedge_endpoint_roots[coedge])
