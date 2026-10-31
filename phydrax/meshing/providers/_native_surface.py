@@ -181,6 +181,9 @@ class _ChartMesh:
     ]
     pole_deviation_bound: float = 0.0
     turn_rows: frozenset[tuple[int, int]] = frozenset()
+    # Source-piece root cells the chart triangles were split at; every cell
+    # lies inside one of them.
+    root_cells: tuple[_SurfaceRootChart, ...] = ()
 
     def edge_parameters(
         self,
@@ -2023,6 +2026,110 @@ def _split_chart_at_source_cells(
                 entity_ids=(int(chart.patch),),
             )
     chart.triangles = children
+    chart.root_cells = root_charts
+
+
+# A flip must raise the smaller physical minimum angle of its cell pair by more
+# than this many degrees, so rounding in the angle evaluation cannot cycle flips.
+_FLIP_ANGLE_GAIN = 1.0e-6
+
+
+def _root_cell_row(
+    roots: tuple[_SurfaceRootChart, ...], points: list[_ChartUV], /
+) -> int | None:
+    """Row of the first convex root cell containing every chart point."""
+    for row, root in enumerate(roots):
+        if all(
+            root.orientation * _root_edge_cross(first, last, point) >= 0
+            for first, last in zip(
+                root.corners, (*root.corners[1:], root.corners[0]), strict=True
+            )
+            for point in points
+        ):
+            return row
+    return None
+
+
+def _flip_to_physical_angles(
+    chart: _ChartMesh,
+    mapping: dict[int, int],
+    physical: np.ndarray,
+    minimum_angle: float,
+    /,
+) -> None:
+    """Flip interior chart edges where the other diagonal is physically better shaped.
+
+    The chart triangulation is shaped in parameters; where the surface map is
+    anisotropic a well-shaped chart cell can be a physical sliver (a sphere chart
+    near its poles). An edge shared by two cells whose quad is convex in the chart
+    is flipped when the other diagonal raises the smaller physical minimum angle
+    of the pair, so each flip raises the chart's sorted physical angle vector and
+    the passes terminate. Only edges of a cell below ``minimum_angle`` degrees
+    are tried. Trim edges, edges whose cells lie in different source-piece root
+    cells, and every cell at a collapsed pole keep their place.
+    """
+    if not chart.triangles:
+        return
+    corner_rows: dict[int, list[int]] = {}
+    for row, corner in chart.corners.items():
+        corner_rows.setdefault(corner, []).append(row)
+    pole_rows = {row for rows in corner_rows.values() if len(rows) > 1 for row in rows}
+    triangles = chart.triangles
+
+    def angles(cells: list[tuple[int, int, int]], /) -> list[float]:
+        rows = np.asarray(
+            [[mapping[row] for row in cell] for cell in cells], dtype=np.int64
+        ).reshape((-1, 3))
+        return _quality_angle_degrees(physical, rows).tolist()
+
+    cell_angles = angles(triangles)
+    sign = 1 if _root_edge_cross(*(chart.points[row] for row in triangles[0])) > 0 else -1
+    roots = chart.root_cells if len(chart.root_cells) > 1 else ()
+    while True:
+        cells_by_edge: dict[tuple[int, int], list[int]] = {}
+        for index, triangle in enumerate(triangles):
+            for corner in range(3):
+                cells_by_edge.setdefault(
+                    _edge_key(triangle[corner], triangle[(corner + 1) % 3]), []
+                ).append(index)
+        touched: set[int] = set()
+        for edge in sorted(cells_by_edge):
+            cells = cells_by_edge[edge]
+            if len(cells) != 2 or edge in chart.boundary_edges:
+                continue
+            first_cell, second_cell = cells
+            if first_cell in touched or second_cell in touched:
+                continue
+            old = min(cell_angles[first_cell], cell_angles[second_cell])
+            if old >= minimum_angle:
+                continue
+            first = triangles[first_cell]
+            apex = next(row for row in first if row not in edge)
+            opposite = next(row for row in triangles[second_cell] if row not in edge)
+            if pole_rows.intersection((apex, opposite, *edge)):
+                continue
+            start = first.index(apex)
+            left, right = first[(start + 1) % 3], first[(start + 2) % 3]
+            candidates = [(apex, left, opposite), (apex, opposite, right)]
+            if any(
+                sign * _root_edge_cross(*(chart.points[row] for row in cell)) <= 0
+                for cell in candidates
+            ):
+                continue
+            if roots:
+                first_root = _root_cell_row(roots, [chart.points[row] for row in first])
+                if first_root is None or first_root != _root_cell_row(
+                    roots, [chart.points[row] for row in triangles[second_cell]]
+                ):
+                    continue
+            new_angles = angles(candidates)
+            if min(new_angles) <= old + _FLIP_ANGLE_GAIN:
+                continue
+            triangles[first_cell], triangles[second_cell] = candidates
+            cell_angles[first_cell], cell_angles[second_cell] = new_angles
+            touched.update((first_cell, second_cell))
+        if not touched:
+            return
 
 
 def _size_field(
@@ -3625,7 +3732,16 @@ def _refine_charts(
     curve_bounds_by_chart = tuple(_chart_curve_bounds(chart, chords) for chart in charts)
     trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
     cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
+    quality_angle = schedule.quality_angle_degrees
+    if specification.quality_target is not None:
+        quality_angle = max(
+            quality_angle, math.degrees(specification.quality_target.minimum_angle)
+        )
     while True:
+        # Each round's cells are reshaped physically before they are bounded.
+        physical = np.asarray(coordinates, dtype=np.float64)
+        for chart, mapping in zip(charts, local_rows, strict=True):
+            _flip_to_physical_angles(chart, mapping, physical, quality_angle)
         triangles_by_chart = tuple(
             _chart_triangles(chart, mapping)
             for chart, mapping in zip(charts, local_rows, strict=True)
