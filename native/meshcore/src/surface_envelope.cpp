@@ -64,7 +64,7 @@ int32_t collect_cut_boundary(const C& tet, const std::vector<double>& field, dou
     int slot = 0;
     for (int i = 0; i < 4; ++i)
       if (i != opposite) face[slot++] = tet[i];
-    if (field[face[0]] == offset && field[face[1]] == offset && field[face[2]] == offset) continue;
+    // separate_field_from_offset leaves no grid value equal to the offset.
     const V a = location(face[0]), b = location(face[1]), c = location(face[2]),
             d = location(tet[opposite]);
     if (!point_in_domain(a) || !point_in_domain(b) || !point_in_domain(c) || !point_in_domain(d))
@@ -77,13 +77,7 @@ int32_t collect_cut_boundary(const C& tet, const std::vector<double>& field, dou
     };
     for (int i = 0; i < 3; ++i) {
       const int64_t v = face[i], w = face[(i + 1) % 3];
-      if (field[v] < offset)
-        append(v);
-      else if (field[v] == offset) {
-        const int64_t r = root(v, v);
-        if (r < 0) return PHX_MC_INTERNAL_ERROR;
-        append(-r - 1);
-      }
+      if (field[v] < offset) append(v);
       if ((field[v] < offset && field[w] > offset) || (field[v] > offset && field[w] < offset)) {
         const int64_t r = root(v, w);
         if (r < 0) return PHX_MC_INTERNAL_ERROR;
@@ -378,92 +372,55 @@ int32_t sample_envelope_field(const EnvelopeGrid& grid, const std::vector<V>& cl
   return PHX_MC_OK;
 }
 
-int32_t cancel_internal_skin_faces(
-    std::vector<F>& triangles,
-    const std::map<std::array<int64_t, 2>, int64_t>& roots,
-    std::size_t root_count) {
-  using Key = std::array<int64_t, 3>;
-  struct FaceUse {
-    std::size_t first_index;
-    int first_orientation;
-    bool level_face;
-    int count;
-  };
-  std::vector<uint8_t> root_endpoint(root_count, 0);
-  for (const auto& [edge, root] : roots) {
-    if (root < 0 || static_cast<std::size_t>(root) >= root_count) return PHX_MC_INTERNAL_ERROR;
-    if (edge[0] == edge[1]) root_endpoint[static_cast<std::size_t>(root)] = 1;
-  }
-  const auto sorted = [](const F& face) {
-    Key key = face;
-    std::sort(key.begin(), key.end());
-    return key;
-  };
-  const auto orientation = [](const F& face) {
-    int inversions = 0;
-    for (int first = 0; first < 3; ++first)
-      for (int second = first + 1; second < 3; ++second)
-        inversions += face[first] > face[second];
-    return (inversions & 1) == 0 ? 1 : -1;
-  };
-  std::map<Key, FaceUse> uses;
-  std::vector<uint8_t> keep(triangles.size(), 1);
-  for (std::size_t index = 0; index < triangles.size(); ++index) {
-    const F& face = triangles[index];
-    bool level_face = true;
-    for (int64_t vertex : face) {
-      if (vertex < 0 || static_cast<std::size_t>(vertex) >= root_count) {
-        return PHX_MC_INTERNAL_ERROR;
-      }
-      level_face = level_face && root_endpoint[static_cast<std::size_t>(vertex)] != 0;
-    }
-    if (face[0] == face[1] || face[1] == face[2] || face[2] == face[0]) {
-      return PHX_MC_CONSTRAINT_INTERSECTION;
-    }
-    const int face_orientation = orientation(face);
-    auto [found, inserted] = uses.emplace(
-        sorted(face), FaceUse{index, face_orientation, level_face, 1});
-    if (inserted) continue;
-    if (found->second.count != 1 || !found->second.level_face || !level_face ||
-        found->second.first_orientation == face_orientation) {
-      return PHX_MC_CONSTRAINT_INTERSECTION;
-    }
-    keep[found->second.first_index] = 0;
-    keep[index] = 0;
-    found->second.count = 2;
-  }
-  std::vector<F> boundary;
-  boundary.reserve(triangles.size());
-  for (std::size_t index = 0; index < triangles.size(); ++index)
-    if (keep[index]) boundary.push_back(triangles[index]);
-  triangles.swap(boundary);
+// Moves every grid value within `band` of the offset to the band edge on its
+// own side of the offset. The cloud distance is 1-Lipschitz, so on a grid
+// edge of length L the values differ by at most L (up to roundoff) and every
+// root then lies at a parameter in [band / (L + 2 band), 1 - band / (L + 2
+// band)]: the roots on the edges at one grid vertex never collapse onto it
+// (a value rounding next to the offset used to put ~10 roots within
+// roundoff of that vertex), and no value equals the offset, so every cut is
+// generic. Each grid vertex keeps its side, so the surface's combinatorics
+// are unchanged; the values move by at most `shift`, which joins the
+// certified interpolation error. The band is spacing / 8, capped at half the
+// offset's slack over that error, so it never turns a certifiable request
+// into a refusal.
+int32_t separate_field_from_offset(const phx_mc_surface_envelope_create_request& request,
+                                   EnvelopeGrid& grid, std::vector<double>& field) {
+  const double offset = request.offset;
+  const double slack = next_down(offset - grid.error);
+  const double band = std::min(request.spacing / 8, slack / 2);
+  const double below = next_down(offset - band);
+  const double above = next_up(offset + band);
+  const double shift = next_up(std::max(offset - below, above - offset));
+  for (double& value : field) value = value < offset ? std::min(value, below) : std::max(value, above);
+  grid.error = upper_sum(grid.error, shift);
+  if (!std::isfinite(grid.error) || !(offset > grid.error)) return PHX_MC_RANGE_ERROR;
   return PHX_MC_OK;
 }
 
 int32_t extract_envelope_carrier(const phx_mc_surface_envelope_create_request& request,
                                  EnvelopeGrid& grid, const std::vector<double>& field,
-                                 EnvelopeData& data, Carrier& carrier,
-                                 std::map<std::array<int64_t, 2>, int64_t>& roots) {
+                                 EnvelopeData& data, Carrier& carrier) {
   auto& result = data.surface_points;
   auto& triangles = data.triangles;
   auto& location = grid;
+  // One root per crossing grid edge; no grid value equals the offset, so a
+  // root is never a grid vertex and the cut of every grid tetrahedron is a
+  // triangle or a quadrilateral.
+  std::map<std::array<int64_t, 2>, int64_t> roots;
   auto root = [&](int64_t a, int64_t b) -> int64_t {
-    if (field[a] == request.offset)
-      b = a;
-    else if (field[b] == request.offset)
-      a = b;
     const auto key = phx::mc::topology::undirected_edge_vertices(a, b);
     const auto found = roots.find(key);
     if (found != roots.end()) return found->second;
-    const double t = a == b ? 0.0 : (request.offset - field[a]) / (field[b] - field[a]);
+    const double t = (request.offset - field[a]) / (field[b] - field[a]);
     const int64_t id = static_cast<int64_t>(result.size());
     result.push_back(add(location(a), mul(difference(location(b), location(a)), t)));
     roots.emplace(key, id);
     return id;
   };
   auto emit = [&](int64_t a, int64_t b, int64_t c, const V& outward) -> bool {
-    if (a < 0 || b < 0 || c < 0) return false;
-    if (a == b || b == c || a == c) return true;
+    // Roots of distinct grid edges are distinct.
+    if (a < 0 || b < 0 || c < 0 || a == b || b == c || a == c) return false;
     const V normal = cross(difference(result[b], result[a]), difference(result[c], result[a]));
     if (dot(normal.data(), normal.data()) == 0) return true;
     if (dot(normal.data(), outward.data()) < 0) std::swap(b, c);
@@ -530,7 +487,7 @@ int32_t extract_envelope_carrier(const phx_mc_surface_envelope_create_request& r
           if (status != PHX_MC_OK) return status;
         }
       }
-  return cancel_internal_skin_faces(triangles, roots, result.size());
+  return PHX_MC_OK;
 }
 
 int32_t assemble_envelope_carrier(EnvelopeGrid& grid, EnvelopeData* data, Carrier& carrier) {
@@ -539,8 +496,8 @@ int32_t assemble_envelope_carrier(EnvelopeGrid& grid, EnvelopeData* data, Carrie
   auto& location = grid;
   if (triangles.empty()) return PHX_MC_DEGENERATE_INPUT;
   // Preserve source boundary roots as the exact prefix of the volume
-  // carrier. Root-only zero-dimensional internal contacts remain interior
-  // carrier request.vertices; they never enter the surface deviation certificate.
+  // carrier. Roots only on skipped zero-area skin triangles remain interior
+  // carrier vertices; they never enter the surface deviation certificate.
   std::vector<int64_t> remap(result.size(), -1), root_volume(result.size(), -1);
   std::vector<int8_t> root_used(result.size(), 0);
   for (const F& t : triangles)
@@ -590,8 +547,9 @@ int32_t certify_envelope(const phx_mc_surface_envelope_create_request& request,
         upper_sum(upper_sum(next_up(nearest), grid.covering_radius), grid.arithmetic_error));
   }
   // Triangle covering + 1-Lipschitz cloud distance + P1 interpolation:
-  // |d_source-I_h d_cloud| <= covering radius + grid-cell diameter.
-  // I_h d_cloud=offset on every output triangle and <=error on the source.
+  // |d_source-I_h d_cloud| <= covering radius + grid-cell diameter, and the
+  // extracted field f moved d_cloud by at most the separation shift, all in
+  // grid.error. I_h f=offset on every output triangle and <=error on the source.
   bounds[0] = next_up(source_upper);
   bounds[1] = upper_sum(request.offset, grid.error);
   bounds[2] = next_down(request.offset - grid.error);
@@ -620,9 +578,10 @@ phx_mc_surface_envelope_create(const phx_mc_surface_envelope_create_request* req
     std::vector<double> field(static_cast<std::size_t>(grid.total));
     status = sample_envelope_field(grid, cloud, field);
     if (status != PHX_MC_OK) return status;
+    status = separate_field_from_offset(*request, grid, field);
+    if (status != PHX_MC_OK) return status;
     Carrier carrier(grid.total);
-    std::map<std::array<int64_t, 2>, int64_t> roots;
-    status = extract_envelope_carrier(*request, grid, field, *data, carrier, roots);
+    status = extract_envelope_carrier(*request, grid, field, *data, carrier);
     if (status != PHX_MC_OK) return status;
     status = assemble_envelope_carrier(grid, data.get(), carrier);
     if (status != PHX_MC_OK) return status;
