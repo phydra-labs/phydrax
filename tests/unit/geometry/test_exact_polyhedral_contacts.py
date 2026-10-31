@@ -190,11 +190,13 @@ def test_binary64_filter_certifies_neighbors_only_inside_their_common_hull() -> 
         (_point(3, 3, 3), _point(4, 3, 3), _point(3, 4, 3), _point(3, 3, 4)),
         (*_SMALL_FACE, _point(_QUARTER, _QUARTER, _QUARTER)),  # overlaps the base
         (_ORIGIN, _X, _Y, _point(1, 1, 0)),  # degenerate
+        _affine_image(_BASE),  # radical corners
     )
     certified = _assert_certified_contacts_in_common_hull(
-        tetrahedra, ((0, 1), (0, 2), (0, 3), (0, 4), (0, 5))
+        tetrahedra, ((0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (3, 6))
     )
-    assert certified.tolist() == [True, True, True, False, False]
+    # Radical corners have no binary64 enclosure, so their pairs stay exact.
+    assert certified.tolist() == [True, True, True, False, False, False]
 
 
 def test_binary64_filter_is_sound_on_touching_lattice_tetrahedra() -> None:

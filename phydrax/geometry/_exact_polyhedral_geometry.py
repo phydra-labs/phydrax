@@ -657,26 +657,28 @@ class TetrahedronEnclosures:
 
         `centers`, `face_directions` (unit normals pointing away from each apex)
         and `face_offsets` are midpoint estimates that only rank candidate planes.
+        Unbounded corners (radical or non-finite) leave their tetrahedron
+        undecided.
         """
         corners = (lower, upper)
-        origin = _interval_take(corners, (slice(None), _FACE_CORNERS[:, 0]))
-        normals = _interval_cross(
-            _interval_sub(
-                _interval_take(corners, (slice(None), _FACE_CORNERS[:, 1])), origin
-            ),
-            _interval_sub(
-                _interval_take(corners, (slice(None), _FACE_CORNERS[:, 2])), origin
-            ),
-        )
-        apex_signs = _certified_sign(
-            _interval_dot(normals, _interval_sub(corners, origin))
-        )
         finite = np.all(np.isfinite(lower), axis=(1, 2)) & np.all(
             np.isfinite(upper), axis=(1, 2)
         )
-        apex_signs = np.where(finite[:, None], apex_signs, 0).astype(np.int8)
-        centers = (lower + upper) / 2
-        with np.errstate(divide="ignore", invalid="ignore"):
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            origin = _interval_take(corners, (slice(None), _FACE_CORNERS[:, 0]))
+            normals = _interval_cross(
+                _interval_sub(
+                    _interval_take(corners, (slice(None), _FACE_CORNERS[:, 1])), origin
+                ),
+                _interval_sub(
+                    _interval_take(corners, (slice(None), _FACE_CORNERS[:, 2])), origin
+                ),
+            )
+            apex_signs = _certified_sign(
+                _interval_dot(normals, _interval_sub(corners, origin))
+            )
+            apex_signs = np.where(finite[:, None], apex_signs, 0).astype(np.int8)
+            centers = (lower + upper) / 2
             directions = (normals[0] + normals[1]) / 2
             directions = np.where(
                 (apex_signs != 0)[:, :, None],
@@ -684,6 +686,9 @@ class TetrahedronEnclosures:
                 * directions
                 / np.linalg.norm(directions, axis=2, keepdims=True),
                 np.nan,
+            )
+            offsets = np.einsum(
+                "tmk,tmk->tm", directions, centers[:, _FACE_CORNERS[:, 0]]
             )
         return cls(
             lower,
@@ -694,7 +699,7 @@ class TetrahedronEnclosures:
             np.any(apex_signs != 0, axis=1),
             centers,
             directions,
-            np.einsum("tmk,tmk->tm", directions, centers[:, _FACE_CORNERS[:, 0]]),
+            offsets,
         )
 
     def common_hull_contacts(
@@ -725,25 +730,29 @@ class TetrahedronEnclosures:
             axis=1,
         )
         certified[admitted & ~common & disjoint_boxes] = True
-        rows = np.flatnonzero(admitted & ~certified)
-        if rows.size:
-            side, face = self._widest_face(first[rows], second[rows], equal[rows])
-            certified[rows] = self._face_plane_supports(
-                np.where(side == 0, first[rows], second[rows]),
-                np.where(side == 0, second[rows], first[rows]),
-                face,
+        # Overflowing products of huge admitted corners only widen to undecided.
+        with np.errstate(invalid="ignore", over="ignore"):
+            rows = np.flatnonzero(admitted & ~certified)
+            if rows.size:
+                side, face = self._widest_face(first[rows], second[rows], equal[rows])
+                certified[rows] = self._face_plane_supports(
+                    np.where(side == 0, first[rows], second[rows]),
+                    np.where(side == 0, second[rows], first[rows]),
+                    face,
+                )
+            rows = np.flatnonzero(
+                admitted & ~certified & (np.sum(equal, axis=(1, 2)) == 1)
             )
-        rows = np.flatnonzero(admitted & ~certified & (np.sum(equal, axis=(1, 2)) == 1))
-        if rows.size:
-            certified[rows] = self._shared_corner_planes_separate(
-                first[rows],
-                second[rows],
-                np.argmax(np.any(equal[rows], axis=2), axis=1),
-                np.argmax(np.any(equal[rows], axis=1), axis=1),
-            )
-        rows = np.flatnonzero(admitted & ~certified & ~common)
-        if rows.size:
-            certified[rows] = self._edge_axis_separates(first[rows], second[rows])
+            if rows.size:
+                certified[rows] = self._shared_corner_planes_separate(
+                    first[rows],
+                    second[rows],
+                    np.argmax(np.any(equal[rows], axis=2), axis=1),
+                    np.argmax(np.any(equal[rows], axis=1), axis=1),
+                )
+            rows = np.flatnonzero(admitted & ~certified & ~common)
+            if rows.size:
+                certified[rows] = self._edge_axis_separates(first[rows], second[rows])
         return certified
 
     def _widest_face(
