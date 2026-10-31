@@ -159,6 +159,11 @@ struct PlcRecovery {
   std::vector<int32_t> segment_sources;
   std::vector<double> protection;
   std::vector<int32_t> plc_edges;
+  // Trailing plc_edges rows that recovery keeps as edges but never
+  // publishes: internal edges of declared-plane facets whose two triangles
+  // are not exactly coplanar (no planar flip can recover them). Published
+  // results (prepare_plc_source, recover_plc) hold none.
+  int64_t hidden_plc_edges = 0;
   std::vector<int8_t> vertex_dimension;
   std::vector<int32_t> input_triangles;
   std::vector<int32_t> input_polygons;
