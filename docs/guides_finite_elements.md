@@ -268,6 +268,21 @@ field-transfer callback is supplied. Accepted-state recipes rebuild the same
 canonical field and element identities; they do not infer lifted versus quotient
 storage from array dimensions.
 
+On an owner group, `adapt_owner_local` and `repartition` run one collective
+transaction per accepted state; every owner takes part, including owners with
+no resident cells. An empty owner compiles the same actions as its peers, using
+kernel identities from the form and space declarations. Keyed field and restart
+bank transfers declare one group-wide structure. Each rank's own shard entry is
+bound by a separate transport, so rank-local revision and dof-map IDs never have
+to agree across ranks. When the topology changes, field and accepted-state
+transports are physical remaps: a conservative P0 field reports its source and
+target integrals summed over the group, together with the rounding bound. A
+restart payload keeps one scientific meaning through every adaptation and
+repartition. Its entry's `semantics_id` is
+`FiniteElementRestartStateLayout.semantics_id` (name, role, row association),
+while `structure_id` is the current `layout_id`, which binds the DOF ownership
+and therefore the topology.
+
 
 `FiniteElementTopologyTransfer` stores the primal coefficient map (target DOFs by
 source DOFs) either as one `SparseLinearMap` with O(targets x stencil width)
