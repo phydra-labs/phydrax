@@ -718,6 +718,26 @@ contracts:
   inside the group's triangles, and acute input angles use the plane normals.
   Downstream, a stratum-3 vertex is a facet point of that face row's facet.
   Without a declaration a rotated facet keeps its authored triangles, as above.
+- **Coverage of boundary splits.** A split point's exact source point S (the
+  segment, triangle or declared-plane point named by its witness parameters)
+  is authoritative and its binary64 carrier is only S rounded, so a split
+  boundary is not exactly on the rounded source triangles. When refinement
+  inserted boundary points, the native PLC route therefore retains a
+  `PlcSourcePointWitness` (each vertex's source kind, row and parameters,
+  with the source segments, triangles and declared planes) as the
+  certificate's `source_coverage_witness`. Coverage recomputes every S in
+  rationals, refuses a parameter that leaves its segment or triangle
+  (`source_point_parameter`) and a carrier that is not the correctly rounded
+  S (`source_point_rounding`), and then matches the oriented facet chain and
+  integrates the region measures on S. Without declared planes the proof
+  stays an exact chain equality (`exact_oriented_facets`) whose
+  `source_distance_upper` is the carriers' rounding bound. A declared facet
+  whose rounded triangles leave its plane is compared after exact orthogonal
+  projection onto that plane; every corner must be admitted to the plane as
+  above, and the certificate is a `source_boundary_homotopy` bounded by twice
+  the largest corner distance to the plane plus the rounding bound. Unsplit
+  boundaries (every `FIXED` route) retain no witness and certify exactly as
+  before.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores

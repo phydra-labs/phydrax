@@ -32,7 +32,12 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._reference_cell import reference_cell_topology
 from ._domain_numerics import evaluate_map, polyhedral_vertex_coordinates
-from ._planar_coverage import OrientedFacet
+from ._planar_coverage import (
+    CellCorners,
+    OrientedFacet,
+    PlcSourcePoints,
+    SourcePointRefusal,
+)
 from ._planar_primitives import cross, plane_key, projection_axes, signed_area2
 
 
@@ -494,25 +499,34 @@ def oriented_target_facets(
     source_domain: PiecewiseLinearDomain | None = None,
     geometry: CellGeometrySpec | None = None,
     exact_face_images: bool = False,
+    source_points: PlcSourcePoints | None = None,
 ) -> tuple[tuple[OrientedFacet, ...], tuple[BoundaryIssue, ...]]:
     """Build a complete planar boundary/interface chain without coordinate welding.
 
     Facets are corner polygons. With ``exact_face_images`` a non-affine cell
     contributes a boundary or interface face only after its exact trace is
     proved to be that corner polygon; otherwise the chain is the vertex skeleton
-    used by bounded (non-exact) source comparisons.
+    used by bounded (non-exact) source comparisons. With ``source_points`` the
+    chain uses each witnessed vertex's exact source point instead of its
+    carrier, and a facet on a declared-plane chart is compared in that chart.
     """
     if coordinate_space not in ("physical", "reference"):
         raise ValueError("coordinate_space must be physical or reference.")
     if cell_regions.shape != (sum(block.cell_count for block in mesh.blocks),):
         raise ValueError("cell_regions must align with every target cell.")
-    if source_domain is None:
-        source_chain: tuple[OrientedFacet, ...] = ()
+    if source_points is not None:
+        if source_domain is None:
+            raise ValueError("Exact source points require their source domain.")
+        source_chain: tuple[OrientedFacet, ...] = source_points.sources
+    elif source_domain is None:
+        source_chain = ()
     else:
         from ._planar_coverage import source_facets
 
         source_chain = source_facets(source_domain)
     if any(expressions is None for expressions in coordinate_maps):
+        if source_points is not None:
+            raise ValueError("Exact source points substitute only affine cell corners.")
         return _polyhedral_target_facets(
             mesh, cell_regions, source_chain, geometry=geometry
         )
@@ -599,6 +613,8 @@ def oriented_target_facets(
             global_vertices = tuple(
                 int(vertex_ids[int(cell_vertices[slot])]) for slot in face_slots
             )
+            if source_points is not None:
+                points = source_points.substitute(global_vertices, points)
             key = tuple(sorted(global_vertices))
             grouped.setdefault(key, []).append(
                 (cell_index, region, global_vertices, points)
@@ -639,6 +655,28 @@ def oriented_target_facets(
                 )
             )
             continue
+        if source_points is not None:
+            try:
+                owners = [
+                    (
+                        owner[0],
+                        owner[1],
+                        owner[2],
+                        source_points.chart(owner[2], owner[3]),
+                    )
+                    for owner in owners
+                ]
+            except SourcePointRefusal as error:
+                issues.append(
+                    BoundaryIssue(
+                        error.check,
+                        tuple(sorted(owner[0] for owner in owners)),
+                        str(error),
+                        error.status,
+                    )
+                )
+                continue
+            first = owners[0]
         if len(owners) == 1:
             pair = (first[1], -1)
             if source_chain:
@@ -722,4 +760,46 @@ def oriented_target_facets(
     return tuple(result), tuple(issues)
 
 
-__all__ = ["BoundaryIssue", "oriented_target_facets"]
+def affine_cell_corners(
+    mesh: CellMesh,
+    coordinate_maps: tuple[tuple[Expression, ...] | None, ...],
+    /,
+) -> tuple[CellCorners, ...]:
+    """Exact carrier corners of every affine target cell, in cell order."""
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    result: list[CellCorners] = []
+    global_cell = 0
+    for block in mesh.blocks:
+        reference = reference_cell_topology(block.cell_kind)
+        reference_vertices = tuple(
+            tuple(Fraction(value) for value in point) for point in reference.vertices
+        )
+        vertices = np.asarray(block.vertices, dtype=np.int64)
+        for row in range(block.cell_count):
+            expressions = coordinate_maps[global_cell]
+            if (
+                expressions is None
+                or affine_map(expressions, reference.dimension) is None
+            ):
+                raise ValueError("Exact cell corners require affine cell maps.")
+            corners = tuple(
+                _fraction_point(
+                    _reference_corner_image(expressions, reference.family, point)
+                )
+                for point in reference_vertices
+            )
+            exact = tuple(corner for corner in corners if corner is not None)
+            if len(exact) != len(corners):
+                raise ValueError("Cell corner coordinates are not exact rationals.")
+            result.append(
+                (
+                    reference.family,
+                    tuple(int(vertex_ids[int(value)]) for value in vertices[row]),
+                    exact,
+                )
+            )
+            global_cell += 1
+    return tuple(result)
+
+
+__all__ = ["affine_cell_corners", "BoundaryIssue", "oriented_target_facets"]

@@ -220,7 +220,7 @@ def _register_model_archive_types() -> None:
     )
     from ..geometry._periodic_mapped_restriction import PeriodicMappedRestrictionEvidence
     from ..geometry._periodic_restriction import PeriodicRestrictionPremise
-    from ..geometry._planar_coverage import FacetOverlap
+    from ..geometry._planar_coverage import FacetOverlap, PlcSourcePointWitness
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import (
         SourceBoundaryChartCover,
@@ -545,6 +545,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry", SurfaceSourceCharts),
         ("phydrax.geometry", DomainCoverageCertificate),
         ("phydrax.geometry", FacetOverlap),
+        ("phydrax.geometry", PlcSourcePointWitness),
         ("phydrax.geometry.brep", BRepProjectionResult),
         ("phydrax.geometry.implicit", RestrictedDelaunayBoundaryWitness),
         ("phydrax.geometry.implicit", RestrictedDelaunayCoverageTransportWitness),
