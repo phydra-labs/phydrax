@@ -495,6 +495,12 @@ def _partition_findings(
                 )
             )
             continue
+        if isinstance(witness, SurfaceChartWitness):
+            # Collapsed pole slivers are part of their owner cells' chart preimages.
+            target = (
+                *target,
+                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+            )
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -4942,6 +4948,17 @@ def certify_source_fidelity(
                     point_lower[corner] = point_box[0]
                     point_upper[corner] = point_box[1]
                 source_intervals_by_row.append((point_lower, point_upper))
+            # A sliver's source image stays within its cap bound of the owner's
+            # pole corner, whose target image is bounded by the endpoint error.
+            sliver_caps: dict[int, Fraction] = {}
+            for owner_row, sliver in domain_source.collapsed_pole_slivers(
+                patch, tuple(chart for _, chart in chart_rows)
+            ):
+                owner = chart_rows[owner_row][0]
+                sliver_caps[owner] = max(
+                    sliver_caps.get(owner, Fraction(0)),
+                    domain_source.pole_sliver_cap_bound(patch, sliver),
+                )
         except (
             ArithmeticError,
             FloatingPointError,
@@ -5057,6 +5074,9 @@ def certify_source_fidelity(
                 )
             interpolation_bound = Fraction(float(interpolation[chart_row]))
             deviation = interpolation_bound + endpoint_error
+            cap = sliver_caps.get(cell_id)
+            if cap is not None:
+                deviation = max(deviation, cap + endpoint_error)
             output_row = row_for_id[cell_id]
             deviation_upper = fraction_endpoint(deviation, upper=True, saturate=True)
             deviation_bounds[output_row] = (0.0, deviation_upper)

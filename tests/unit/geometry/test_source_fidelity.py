@@ -55,6 +55,7 @@ from phydrax.geometry.brep._patches import (
     CircleCurve,
     LineCurve,
     PlanePatch,
+    SpherePatch,
 )
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
@@ -1463,6 +1464,123 @@ def test_source_partition_respects_authored_patch_orientation() -> None:
     assert any(
         finding.check == "source_chart_orientation" and finding.status == "violated"
         for finding in positive_findings
+    )
+
+
+def _sphere_lune_domain(width: float, /) -> MeshingDomain:
+    """One sphere lune ``[0, width] x [-pi/2, pi/2]`` with both poles collapsed."""
+    half_pi = 0.5 * np.pi
+    uses = (
+        PatchPoleUse(0, LineCurve((0.0, -half_pi), (width, 0.0)), 0.0, 1.0),
+        PatchCurveUse(1, LineCurve((width, -half_pi), (0.0, np.pi)), 0.0, 1.0),
+        PatchPoleUse(1, LineCurve((width, half_pi), (-width, 0.0)), 0.0, 1.0),
+        PatchCurveUse(0, LineCurve((0.0, -half_pi), (0.0, np.pi)), 0.0, 1.0, sense=-1),
+    )
+    return MeshingDomain(
+        (
+            MeshingSurfacePatch(
+                SpherePatch(
+                    (0.0, 0.0, 0.0),
+                    (1.0, 0.0, 0.0),
+                    (0.0, 1.0, 0.0),
+                    (0.0, 0.0, 1.0),
+                    1.0,
+                ),
+                (uses,),
+            ),
+        ),
+        (MeshingDomainCurve(0, 1), MeshingDomainCurve(0, 1)),
+        2,
+        source_id="source-sphere-lune",
+        source_revision="source-revision-1",
+        tolerance=1.0e-12,
+        corner_points=np.asarray(((0.0, 0.0, -1.0), (0.0, 0.0, 1.0)), dtype=np.float64),
+    )
+
+
+def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() -> None:
+    width = 2.0 * np.pi / 3.0
+    half_pi = 0.5 * np.pi
+    band = 1.0
+    domain = _sphere_lune_domain(width)
+    source = MeshingDomainBoundarySource(domain, (0,))
+    # Chart rows: a middle band and two fan cells per pole. Each fan cell keeps
+    # its own chart point on the collapsed pole side, leaving three slivers per
+    # pole between consecutive pole-side points.
+    b0, bm, b1 = (0.0, -band), (0.5 * width, -band), (width, -band)
+    t0, tm, t1 = (0.0, band), (0.5 * width, band), (width, band)
+    south = ((0.25 * width, -half_pi), (0.75 * width, -half_pi))
+    north = ((0.25 * width, half_pi), (0.75 * width, half_pi))
+    charts = (
+        (south[0], bm, b0),
+        (south[1], b1, bm),
+        (b0, bm, tm),
+        (b0, tm, t0),
+        (bm, b1, t1),
+        (bm, t1, tm),
+        (north[0], t0, tm),
+        (north[1], tm, t1),
+    )
+    vertex_rows = {b0: 0, bm: 1, b1: 2, t0: 3, tm: 4, t1: 5}
+    surface = domain.patches[0].surface
+
+    def physical(points: np.ndarray, /) -> np.ndarray:
+        return np.asarray(surface.evaluate(jnp.asarray(points)), dtype=np.float64)
+
+    points = np.concatenate(
+        (
+            physical(np.asarray(tuple(vertex_rows), dtype=np.float64)),
+            np.asarray(domain.corner_points, dtype=np.float64),
+        )
+    )
+
+    def witness_for(rows: tuple[int, ...], /) -> SurfaceChartWitness:
+        triangles = np.asarray(
+            [
+                tuple(
+                    6 if point in south else 7 if point in north else vertex_rows[point]
+                    for point in charts[row]
+                )
+                for row in rows
+            ],
+            dtype=np.int64,
+        )
+        mesh = _mesh(points, triangles)
+        return _witness(
+            mesh,
+            CellGeometrySpec.affine(mesh),
+            domain,
+            np.asarray([charts[row] for row in rows], dtype=np.float64),
+        )
+
+    complete = witness_for(tuple(range(len(charts))))
+    exact_charts = tuple(
+        _exact_triangle2(tuple((Fraction(u), Fraction(v)) for u, v in chart))
+        for chart in charts
+    )
+    slivers = source.collapsed_pole_slivers(0, exact_charts)
+
+    assert len(slivers) == 6
+    # Owners are the fan cells holding a pole-side edge to the sliver apex.
+    assert {owner for owner, _ in slivers} == {0, 1, 6, 7}
+    assert _partition_findings(source, complete) == ()
+
+    rng = np.random.default_rng(7)
+    for _owner, sliver in slivers:
+        corners = np.asarray(
+            [[float(value) for value in point] for point in sliver], dtype=np.float64
+        )
+        weights = rng.dirichlet(np.ones(3), size=256)
+        samples = physical(np.concatenate((corners, weights @ corners)))
+        sampled_diameter = float(
+            np.max(np.linalg.norm(samples[:, None, :] - samples[None, :, :], axis=-1))
+        )
+        assert source.pole_sliver_cap_bound(0, sliver) >= Fraction(sampled_diameter)
+
+    missing_fan = witness_for(tuple(range(1, len(charts))))
+    assert any(
+        finding.check == "source_chart_coverage" and finding.status == "violated"
+        for finding in _partition_findings(source, missing_fan)
     )
 
 

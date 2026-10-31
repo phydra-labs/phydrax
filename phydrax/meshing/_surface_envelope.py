@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from numbers import Integral
-from typing import final
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -112,7 +112,9 @@ def _fresh_original(source: _EnvelopeOriginal, /) -> _EnvelopeOriginal:
         fresh = ReconstructedGeometrySource(
             source.source,
             source.report,
-            persistent_vertex_ids=np.asarray(source.persistent_vertex_ids, dtype=np.int64),
+            persistent_vertex_ids=np.asarray(
+                source.persistent_vertex_ids, dtype=np.int64
+            ),
             persistent_edge_ids=np.asarray(source.persistent_edge_ids, dtype=np.int64),
             persistent_facet_ids=np.asarray(source.persistent_facet_ids, dtype=np.int64),
             persistent_region_id=source.persistent_region_id,
@@ -169,10 +171,11 @@ def _envelope_plc_source(
         or vertex_ids.shape != (vertices.shape[0],)
         or facet_ids.shape != (triangles.shape[0],)
     ):
-        raise ValueError("The derived envelope PLC requires one region and complete persistent vertex/facet IDs.")
+        raise ValueError(
+            "The derived envelope PLC requires one region and complete persistent vertex/facet IDs."
+        )
     exact_vertices = tuple(
-        tuple(Fraction.from_float(float(value)) for value in point)
-        for point in vertices
+        tuple(Fraction.from_float(float(value)) for value in point) for point in vertices
     )
     signed_six_volume = Fraction(0)
     edge_rows = set()
@@ -203,7 +206,9 @@ def _envelope_plc_source(
             {
                 "kind": "surface-envelope-edge",
                 "source": (domain.source_id, domain.source_revision),
-                "endpoints": tuple(sorted((int(vertex_ids[first]), int(vertex_ids[last])))),
+                "endpoints": tuple(
+                    sorted((int(vertex_ids[first]), int(vertex_ids[last])))
+                ),
             }
         )
         for first, last in edge_vertices
@@ -216,9 +221,13 @@ def _envelope_plc_source(
         np.tile(np.asarray(region_sides, dtype=np.int64), (triangles.shape[0], 1)),
         domain.region_ids,
         segments=np.asarray(edge_vertices, dtype=np.int64).reshape((-1, 2)),
-        vertex_ids=tuple(f"surface-envelope-vertex:{int(value)}" for value in vertex_ids.tolist()),
+        vertex_ids=tuple(
+            f"surface-envelope-vertex:{int(value)}" for value in vertex_ids.tolist()
+        ),
         vertex_occurrence_paths=tuple(() for _ in vertex_ids),
-        facet_ids=tuple(f"surface-envelope-facet:{int(value)}" for value in facet_ids.tolist()),
+        facet_ids=tuple(
+            f"surface-envelope-facet:{int(value)}" for value in facet_ids.tolist()
+        ),
         facet_occurrence_paths=tuple(() for _ in facet_ids),
         segment_ids=segment_ids,
         segment_occurrence_paths=tuple(() for _ in segment_ids),
@@ -240,6 +249,7 @@ def _envelope_plc_source(
     edges = np.asarray(complex_.plc_edge_vertices, dtype=np.int64)
     edges.setflags(write=False)
     return source, row_ids, edges
+
 
 def _allocate_envelope_birth_ids(
     source_id: str,
@@ -321,10 +331,16 @@ def _envelope_domain(
         or np.any(facet_birth_ids < 0)
         or np.unique(vertex_birth_ids).size != vertex_birth_ids.size
         or np.unique(facet_birth_ids).size != facet_birth_ids.size
-        or not np.array_equal(np.sort(vertex_rows), np.arange(vertex_rows.size, dtype=np.int64))
-        or not np.array_equal(np.sort(facet_rows), np.arange(facet_rows.size, dtype=np.int64))
+        or not np.array_equal(
+            np.sort(vertex_rows), np.arange(vertex_rows.size, dtype=np.int64)
+        )
+        or not np.array_equal(
+            np.sort(facet_rows), np.arange(facet_rows.size, dtype=np.int64)
+        )
     ):
-        raise ValueError("Persisted native envelope lineage must be bijective over its source rows.")
+        raise ValueError(
+            "Persisted native envelope lineage must be bijective over its source rows."
+        )
     vertices = np.empty_like(native_vertices)
     vertices[vertex_rows] = native_vertices
     facets = np.empty_like(native_facets)
@@ -389,10 +405,21 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
     original_query_id: str = eqx.field(static=True)
     envelope_id: str = eqx.field(static=True)
     scope_entity_id_banks: tuple[np.ndarray, ...]
-    scope_entity_key_banks: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...] = eqx.field(static=True)
+    scope_entity_key_banks: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...] = (
+        eqx.field(static=True)
+    )
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
     scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
     edges: np.ndarray
+
+    if not TYPE_CHECKING:
+
+        def __getattribute__(self, name: str, /) -> object:
+            # Equinox binds each method as a BoundMethod pytree whose construction
+            # flattens the whole receiver (original source, domain, PLC carrier).
+            # PWL boundary queries resolve keys once per facet, so those loops
+            # became quadratic. Methods bind as plain Python methods.
+            return object.__getattribute__(self, name)
 
     @checked
     def __init__(
@@ -408,13 +435,21 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         maximum_deviation: float,
     ) -> None:
         if not isinstance(original, (ReconstructedGeometrySource, AuthoredTriangleSheet)):
-            raise TypeError("original must be a ReconstructedGeometrySource or AuthoredTriangleSheet.")
-        if isinstance(original, ReconstructedGeometrySource) and not isinstance(original.source, MeshRegion):
-            raise TypeError("Surface envelopes require an actual reconstructed MeshRegion source.")
+            raise TypeError(
+                "original must be a ReconstructedGeometrySource or AuthoredTriangleSheet."
+            )
+        if isinstance(original, ReconstructedGeometrySource) and not isinstance(
+            original.source, MeshRegion
+        ):
+            raise TypeError(
+                "Surface envelopes require an actual reconstructed MeshRegion source."
+            )
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if coordinate_contract.coordinate_system != "cartesian":
-            raise ValueError("Surface-envelope lengths require an orthonormal Cartesian coordinate contract.")
+            raise ValueError(
+                "Surface-envelope lengths require an orthonormal Cartesian coordinate contract."
+            )
         source_id_ = canonical_identifier(source_id, "source_id")
         controls: tuple[float, float, float, float] = (
             _real_positive(offset, "offset"),
@@ -422,6 +457,13 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
             _real_positive(certificate_spacing, "certificate_spacing"),
             _real_positive(maximum_deviation, "maximum_deviation"),
         )
+        # The native kernel certifies an envelope only when the offset dominates
+        # its sampling error; refuse the declaration before running the kernel.
+        if not controls[0] > np.sqrt(3.0) * controls[1] + controls[2]:
+            raise ValueError(
+                "offset must exceed sqrt(3) * spacing + certificate_spacing, "
+                "the native envelope sampling error it has to dominate."
+            )
         fresh_original = _fresh_original(original)
         source_vertices, source_triangles = _original_triangles(fresh_original)
         original_domain_query = _original_domain_query(fresh_original)
@@ -455,7 +497,9 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 stage="source_fidelity",
             )
         if not np.array_equal(
-            np.asarray(result.volume_vertices, dtype=np.float64)[: result.surface_vertices.shape[0]],
+            np.asarray(result.volume_vertices, dtype=np.float64)[
+                : result.surface_vertices.shape[0]
+            ],
             np.asarray(result.surface_vertices, dtype=np.float64),
         ):
             raise _failure(
@@ -463,7 +507,14 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="surface_envelope_execution",
             )
-        allocation_id, region_id, vertex_entity_ids, facet_entity_ids, native_vertex_rows, native_facet_rows = _allocate_envelope_birth_ids(
+        (
+            allocation_id,
+            region_id,
+            vertex_entity_ids,
+            facet_entity_ids,
+            native_vertex_rows,
+            native_facet_rows,
+        ) = _allocate_envelope_birth_ids(
             source_id_,
             fresh_original,
             controls,
@@ -498,7 +549,9 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         self.source_revision = domain.source_revision
         self.region_id = region_id
         self.allocation_id = allocation_id
-        self.offset, self.spacing, self.certificate_spacing, self.maximum_deviation = controls
+        self.offset, self.spacing, self.certificate_spacing, self.maximum_deviation = (
+            controls
+        )
         self.original_query_id = original_domain_query.source_scope_id
         self.scope_entity_id_banks = id_banks
         self.scope_entity_key_banks = key_banks
@@ -516,11 +569,19 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 "original": (fresh_original.source_id, fresh_original.source_revision),
                 "controls": controls,
                 "entity_allocation": allocation_id,
-                "native_vertex_lineage": array_tree_fingerprint((native_vertex_rows, vertex_entity_ids)),
-                "native_facet_lineage": array_tree_fingerprint((native_facet_rows, facet_entity_ids)),
+                "native_vertex_lineage": array_tree_fingerprint(
+                    (native_vertex_rows, vertex_entity_ids)
+                ),
+                "native_facet_lineage": array_tree_fingerprint(
+                    (native_facet_rows, facet_entity_ids)
+                ),
                 "bounds": array_tree_fingerprint(result.bounds),
-                "envelope": array_tree_fingerprint((result.surface_vertices, result.surface_triangles)),
-                "carrier": array_tree_fingerprint((result.volume_vertices, result.tetrahedra)),
+                "envelope": array_tree_fingerprint(
+                    (result.surface_vertices, result.surface_triangles)
+                ),
+                "carrier": array_tree_fingerprint(
+                    (result.volume_vertices, result.tetrahedra)
+                ),
                 "plc_carrier": plc_source.binding_id,
                 "coordinate_contract": coordinate_contract.spatial_id,
             }
@@ -555,7 +616,9 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         identifiers = self.scope_entity_id_banks[index]
         position = int(np.searchsorted(identifiers, int(entity_id)))
         if position >= identifiers.size or int(identifiers[position]) != int(entity_id):
-            raise ValueError("entity_id is absent from this surface-envelope source dimension.")
+            raise ValueError(
+                "entity_id is absent from this surface-envelope source dimension."
+            )
         return self.scope_entity_key_banks[index][position]
 
     def source_entity_key_for_mesh_row(
@@ -587,16 +650,26 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 self.certificate_spacing,
             )
         except MeshcoreError as error:
-            raise ValueError(f"The retained native envelope no longer reproduces: {error}") from error
+            raise ValueError(
+                f"The retained native envelope no longer reproduces: {error}"
+            ) from error
         if (
             not np.array_equal(fresh_result.bounds, self.result.bounds)
-            or not np.array_equal(fresh_result.surface_vertices, self.result.surface_vertices)
-            or not np.array_equal(fresh_result.surface_triangles, self.result.surface_triangles)
-            or not np.array_equal(fresh_result.volume_vertices, self.result.volume_vertices)
+            or not np.array_equal(
+                fresh_result.surface_vertices, self.result.surface_vertices
+            )
+            or not np.array_equal(
+                fresh_result.surface_triangles, self.result.surface_triangles
+            )
+            or not np.array_equal(
+                fresh_result.volume_vertices, self.result.volume_vertices
+            )
             or not np.array_equal(fresh_result.tetrahedra, self.result.tetrahedra)
             or original_domain_query.source_scope_id != self.original_query_id
         ):
-            raise ValueError("The retained unsigned-distance envelope does not reproduce from its current source.")
+            raise ValueError(
+                "The retained unsigned-distance envelope does not reproduce from its current source."
+            )
         domain, domain_vertex_ids, domain_facet_ids = _envelope_domain(
             self.source_id,
             fresh_original,
@@ -618,18 +691,30 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
             or fresh_plc_source.binding_id != self.plc_source.binding_id
             or domain.source_revision != self.source_revision
             or domain.region_ids != (self.region_id,)
-            or any(not np.array_equal(first, second) for first, second in zip(id_banks, self.scope_entity_id_banks, strict=True))
+            or any(
+                not np.array_equal(first, second)
+                for first, second in zip(
+                    id_banks, self.scope_entity_id_banks, strict=True
+                )
+            )
             or key_banks != self.scope_entity_key_banks
             or set_ids != self.scope_entity_set_ids
-            or any(not np.array_equal(first, second) for first, second in zip(row_ids, self.scope_entity_ids_by_mesh_row, strict=True))
+            or any(
+                not np.array_equal(first, second)
+                for first, second in zip(
+                    row_ids, self.scope_entity_ids_by_mesh_row, strict=True
+                )
+            )
             or not np.array_equal(edges, self.edges)
         ):
-            raise ValueError("The derived envelope source identity, domain, or scopes no longer reproduce.")
+            raise ValueError(
+                "The derived envelope source identity, domain, or scopes no longer reproduce."
+            )
 
 
-
-
-def _mesh_scope(mesh: CellMesh, dimension: int, identifiers: np.ndarray, /) -> MeshingScope:
+def _mesh_scope(
+    mesh: CellMesh, dimension: int, identifiers: np.ndarray, /
+) -> MeshingScope:
     entity_set = mesh.entity_set(dimension)
     return MeshingScope(
         mesh.mesh_id,
@@ -735,13 +820,16 @@ def _envelope_target_boundary(
     )
     target_vertex_rows = {
         int(identifier): row
-        for row, identifier in enumerate(np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist())
+        for row, identifier in enumerate(
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
+        )
     }
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     for source_row, target_id in enumerate(vertex_ids.tolist()):
         target_row = target_vertex_rows.get(int(target_id))
         if target_row is None or not np.array_equal(
-            coordinates[target_row], np.asarray(source.domain.vertices[source_row], dtype=np.float64)
+            coordinates[target_row],
+            np.asarray(source.domain.vertices[source_row], dtype=np.float64),
         ):
             raise _failure(
                 "The derived PLC fill changed an identity-bound envelope vertex.",
@@ -758,7 +846,9 @@ def _envelope_target_boundary(
             category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             stage="source_witness",
         )
-    row_by_face_id = {int(identifier): row for row, identifier in enumerate(face_ids.tolist())}
+    row_by_face_id = {
+        int(identifier): row for row, identifier in enumerate(face_ids.tolist())
+    }
     target_face_vertices = {
         int(identifier): tuple(sorted(int(value) for value in vertex_global_ids[face]))
         for face, identifier in zip(face_rows, face_ids.tolist(), strict=True)
@@ -772,7 +862,10 @@ def _envelope_target_boundary(
                 stage="source_witness",
             )
         expected = tuple(
-            sorted(int(vertex_ids[int(vertex)]) for vertex in source.domain.facets[source_row])
+            sorted(
+                int(vertex_ids[int(vertex)])
+                for vertex in source.domain.facets[source_row]
+            )
         )
         if target_face_vertices[int(facet_id)] != expected:
             raise _failure(
@@ -781,6 +874,8 @@ def _envelope_target_boundary(
                 stage="source_witness",
             )
     return vertex_ids, facet_ids
+
+
 def _envelope_boundary_chart_witness(
     source: SurfaceEnvelopeSource,
     source_query: PiecewiseLinearBoundarySource,
@@ -828,12 +923,9 @@ def _envelope_boundary_chart_witness(
             stage="source_witness",
         )
     cell_row_by_id = {
-        int(identifier): row
-        for row, identifier in enumerate(cell_global_ids.tolist())
+        int(identifier): row for row, identifier in enumerate(cell_global_ids.tolist())
     }
-    target_faces: dict[
-        int, tuple[int, int, np.ndarray, tuple[int, int, int]]
-    ] = {}
+    target_faces: dict[int, tuple[int, int, np.ndarray, tuple[int, int, int]]] = {}
     for block in mesh.blocks:
         topology = reference_cell_topology(block.cell_kind)
         local_faces = tuple(
@@ -895,8 +987,7 @@ def _envelope_boundary_chart_witness(
                 )
 
     expected_boundary_ids = {
-        int(value)
-        for value in face_global_ids[np.flatnonzero(boundary_mask)].tolist()
+        int(value) for value in face_global_ids[np.flatnonzero(boundary_mask)].tolist()
     }
     if set(target_faces) != expected_boundary_ids:
         raise _failure(
@@ -947,7 +1038,9 @@ def _envelope_boundary_chart_witness(
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="source_witness",
             )
-        target_cell_id, local_face_index, target_reference, target_vertex_ids = target_face
+        target_cell_id, local_face_index, target_reference, target_vertex_ids = (
+            target_face
+        )
         source_facet_vertices = np.asarray(
             source.domain.facets[source_facet_row], dtype=np.int64
         )
@@ -955,8 +1048,7 @@ def _envelope_boundary_chart_witness(
             int(source_vertex_ids[int(row)]) for row in source_facet_vertices.tolist()
         )
         source_local_by_target_id = {
-            identifier: local
-            for local, identifier in enumerate(source_target_vertex_ids)
+            identifier: local for local, identifier in enumerate(source_target_vertex_ids)
         }
         if len(source_local_by_target_id) != 3:
             raise _failure(
@@ -978,11 +1070,10 @@ def _envelope_boundary_chart_witness(
         source_parameters = tuple(
             standard_triangle[index] for index in local_source_vertices
         )
-        signed_area = (
-            (source_parameters[1][0] - source_parameters[0][0])
-            * (source_parameters[2][1] - source_parameters[0][1])
-            - (source_parameters[1][1] - source_parameters[0][1])
-            * (source_parameters[2][0] - source_parameters[0][0])
+        signed_area = (source_parameters[1][0] - source_parameters[0][0]) * (
+            source_parameters[2][1] - source_parameters[0][1]
+        ) - (source_parameters[1][1] - source_parameters[0][1]) * (
+            source_parameters[2][0] - source_parameters[0][0]
         )
         if signed_area == 0:
             raise _failure(
@@ -1023,7 +1114,10 @@ def _envelope_boundary_chart_witness(
         )
     target_reference_values = np.asarray(target_reference_rows, dtype=np.float64)
     source_parameter_values = np.asarray(
-        [[tuple(float(value) for value in point) for point in row] for row in source_parameter_rows],
+        [
+            [tuple(float(value) for value in point) for point in row]
+            for row in source_parameter_rows
+        ],
         dtype=np.float64,
     )
     witness = SourceBoundaryChartWitness(
@@ -1108,10 +1202,14 @@ def _envelope_feature_witness(
         GeometrySourceEntityRole.EDGE,
     )
     mesh_edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
-    mesh_edge_rows = {int(identifier): row for row, identifier in enumerate(mesh_edge_ids.tolist())}
+    mesh_edge_rows = {
+        int(identifier): row for row, identifier in enumerate(mesh_edge_ids.tolist())
+    }
     boundary_edges = np.asarray(mesh.boundary_masks[1], dtype=np.bool_)
     cell_ids = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
-    cell_row_by_id = {int(identifier): row for row, identifier in enumerate(cell_ids.tolist())}
+    cell_row_by_id = {
+        int(identifier): row for row, identifier in enumerate(cell_ids.tolist())
+    }
     cell_edge_rows, _ = volume_cell_entity_rows(mesh, cell_ids)
     if (
         boundary_edges.shape != mesh_edge_ids.shape
@@ -1132,7 +1230,9 @@ def _envelope_feature_witness(
         )
         reference_vertices = np.asarray(topology.vertices, dtype=np.float64)
         block_vertices = np.asarray(block.vertices, dtype=np.int64)
-        for block_row, raw_cell_id in enumerate(np.asarray(block.global_ids, dtype=np.int64).tolist()):
+        for block_row, raw_cell_id in enumerate(
+            np.asarray(block.global_ids, dtype=np.int64).tolist()
+        ):
             cell_id = int(raw_cell_id)
             cell_position = cell_row_by_id.get(cell_id)
             if cell_position is None or len(local_edges) > cell_edge_rows.shape[1]:
@@ -1143,10 +1243,16 @@ def _envelope_feature_witness(
                 )
             for local_edge_index, local_edge in enumerate(local_edges):
                 edge_row = int(cell_edge_rows[cell_position, local_edge_index])
-                if edge_row < 0 or edge_row >= mesh_edge_ids.size or not boundary_edges[edge_row]:
+                if (
+                    edge_row < 0
+                    or edge_row >= mesh_edge_ids.size
+                    or not boundary_edges[edge_row]
+                ):
                     continue
                 edge_id = int(mesh_edge_ids[edge_row])
-                local_vertex_rows = block_vertices[block_row, np.asarray(local_edge, dtype=np.int64)]
+                local_vertex_rows = block_vertices[
+                    block_row, np.asarray(local_edge, dtype=np.int64)
+                ]
                 target_vertices = tuple(
                     int(value) for value in mesh_vertex_ids[local_vertex_rows].tolist()
                 )
@@ -1183,7 +1289,11 @@ def _envelope_feature_witness(
         target_edge_id = int(target_edge_ids[int(source_row)])
         target_edge_row = mesh_edge_rows.get(target_edge_id)
         chart = target_edge_charts.get(target_edge_id)
-        if target_edge_row is None or not boundary_edges[target_edge_row] or chart is None:
+        if (
+            target_edge_row is None
+            or not boundary_edges[target_edge_row]
+            or chart is None
+        ):
             raise _failure(
                 "A protected PWL curve lacks an identity-bound target boundary edge chart.",
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
@@ -1194,9 +1304,8 @@ def _envelope_feature_witness(
         source_target_vertices = tuple(
             int(vertex_ids[int(row)]) for row in source_vertex_rows.tolist()
         )
-        if (
-            len(set(source_target_vertices)) != 2
-            or set(source_target_vertices) != set(target_vertices)
+        if len(set(source_target_vertices)) != 2 or set(source_target_vertices) != set(
+            target_vertices
         ):
             raise _failure(
                 "A protected PWL curve changed its exact source vertex ancestry.",
@@ -1226,7 +1335,9 @@ def _envelope_feature_witness(
         source_entity_keys.append(entity_key)
         source_occurrences.append(occurrence_path)
         source_parameter_rows.append(source_parameters)
-        orientations.append(1 if source_parameters[1][0] > source_parameters[0][0] else -1)
+        orientations.append(
+            1 if source_parameters[1][0] > source_parameters[0][0] else -1
+        )
 
     witness = SourceBoundaryChartWitness(
         mesh_id=mesh.mesh_id,
@@ -1248,7 +1359,10 @@ def _envelope_feature_witness(
         source_entity_ids=tuple(source_entity_keys),
         occurrence_paths=tuple(source_occurrences),
         source_parameters=np.asarray(
-            [[tuple(float(value) for value in point) for point in row] for row in source_parameter_rows],
+            [
+                [tuple(float(value) for value in point) for point in row]
+                for row in source_parameter_rows
+            ],
             dtype=np.float64,
         ),
         source_parameter_rational_tokens=rational_chart_tokens(
@@ -1260,37 +1374,65 @@ def _envelope_feature_witness(
     return witness
 
 
-
-
-def _tetrahedron_quality(coordinates: np.ndarray, tetrahedra: np.ndarray, /) -> tuple[float, float]:
-    points = np.asarray(coordinates, dtype=np.float64)[np.asarray(tetrahedra, dtype=np.int64)]
-    edge_pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64)
+def _tetrahedron_quality(
+    coordinates: np.ndarray, tetrahedra: np.ndarray, /
+) -> tuple[float, float]:
+    points = np.asarray(coordinates, dtype=np.float64)[
+        np.asarray(tetrahedra, dtype=np.int64)
+    ]
+    edge_pairs = np.asarray(
+        ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64
+    )
     edge_vectors = points[:, edge_pairs[:, 1]] - points[:, edge_pairs[:, 0]]
     edge_lengths = np.linalg.norm(edge_vectors, axis=2)
     minimum_edges = np.min(edge_lengths, axis=1)
-    if points.ndim != 3 or points.shape[1:] != (4, 3) or np.any(~np.isfinite(edge_lengths)) or np.any(minimum_edges <= 0.0):
-        raise _failure("Native envelope tetrahedra must have finite nonzero edges.", category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED, stage="specification_compliance")
+    if (
+        points.ndim != 3
+        or points.shape[1:] != (4, 3)
+        or np.any(~np.isfinite(edge_lengths))
+        or np.any(minimum_edges <= 0.0)
+    ):
+        raise _failure(
+            "Native envelope tetrahedra must have finite nonzero edges.",
+            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            stage="specification_compliance",
+        )
     offsets = points[:, 1:] - points[:, :1]
-    try:
-        # NumPy 2 treats a batched rank-2 right-hand side as matrices; solve columns.
-        centers = np.linalg.solve(
-            2.0 * offsets, np.sum(offsets * offsets, axis=2)[..., None]
-        )[..., 0]
-    except np.linalg.LinAlgError as error:
-        raise _failure("Native envelope tetrahedra must have finite circumspheres.", category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED, stage="specification_compliance") from error
-    radius_edge = float(np.max(np.linalg.norm(centers, axis=1) / minimum_edges, initial=0.0))
-    face_vertices = np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64)
+    # Circumcenter offset (|a|^2 b x c + |b|^2 c x a + |c|^2 a x b) / (2 a . b x c);
+    # a tetrahedron whose binary64 determinant vanishes has an unbounded ratio.
+    first, second, third = offsets[:, 0], offsets[:, 1], offsets[:, 2]
+    determinant = 2.0 * np.sum(first * np.cross(second, third), axis=1)
+    numerator = (
+        np.sum(first * first, axis=1)[:, None] * np.cross(second, third)
+        + np.sum(second * second, axis=1)[:, None] * np.cross(third, first)
+        + np.sum(third * third, axis=1)[:, None] * np.cross(first, second)
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratios = np.linalg.norm(numerator, axis=1) / (np.abs(determinant) * minimum_edges)
+    ratios = np.where((determinant != 0.0) & np.isfinite(ratios), ratios, np.inf)
+    radius_edge = float(np.max(ratios, initial=0.0))
+    face_vertices = np.asarray(
+        ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64
+    )
     triangles = points[:, face_vertices]
-    normals = np.cross(triangles[:, :, 1] - triangles[:, :, 0], triangles[:, :, 2] - triangles[:, :, 0])
+    normals = np.cross(
+        triangles[:, :, 1] - triangles[:, :, 0], triangles[:, :, 2] - triangles[:, :, 0]
+    )
     face_centers = np.mean(triangles, axis=2)
     cell_centers = np.mean(points, axis=1)
     inward = np.sum(normals * (face_centers - cell_centers[:, None, :]), axis=2) < 0.0
     normals = np.where(inward[:, :, None], -normals, normals)
     lengths = np.linalg.norm(normals, axis=2)
     if np.any(~np.isfinite(lengths)) or np.any(lengths <= 0.0):
-        raise _failure("Native envelope tetrahedra must have finite face normals.", category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED, stage="specification_compliance")
+        raise _failure(
+            "Native envelope tetrahedra must have finite face normals.",
+            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            stage="specification_compliance",
+        )
     normals /= lengths[:, :, None]
-    face_pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64)
+    face_pairs = np.asarray(
+        ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64
+    )
     cosines = np.sum(normals[:, face_pairs[:, 0]] * normals[:, face_pairs[:, 1]], axis=2)
     dihedral = 180.0 - np.rad2deg(np.arccos(np.clip(cosines, -1.0, 1.0)))
     return radius_edge, float(np.min(dihedral))
@@ -1337,7 +1479,10 @@ def _compliance(
         )
     for feature, deviation_upper, warning in soft_feature_outcomes:
         requested.append(
-            (f"soft_feature:{feature.feature_id}:maximum_deviation", feature.maximum_deviation)
+            (
+                f"soft_feature:{feature.feature_id}:maximum_deviation",
+                feature.maximum_deviation,
+            )
         )
         achieved.extend(
             (
@@ -1353,7 +1498,9 @@ def _compliance(
     if source_deviation > source.maximum_deviation:
         issues.append("source_envelope_maximum_deviation")
     if specification.maximum_deviation is not None:
-        requested.append(("derived_envelope_maximum_deviation", specification.maximum_deviation))
+        requested.append(
+            ("derived_envelope_maximum_deviation", specification.maximum_deviation)
+        )
         achieved.append(("derived_envelope_maximum_deviation", 0.0))
     return MeshingComplianceReport(
         specification.specification_id,
@@ -1493,7 +1640,9 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             target_facet_global_ids=facet_ids,
         )
         try:
-            distance_witness.require_current(mesh, geometry, source.original_boundary_query)
+            distance_witness.require_current(
+                mesh, geometry, source.original_boundary_query
+            )
         except (TypeError, ValueError, IndexError, ArithmeticError) as error:
             raise _failure(
                 f"The original-source envelope witness did not revalidate: {error}",
@@ -1555,7 +1704,11 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             fidelity_witness=derived_witness,
             protected_features=self.specification.protected_features,
             scoped_fidelity=(
-                (source.original_boundary_query, distance_witness, source.maximum_deviation),
+                (
+                    source.original_boundary_query,
+                    distance_witness,
+                    source.maximum_deviation,
+                ),
                 *feature_scoped_fidelity,
             ),
             feature_source=source if self.specification.protected_features else None,
@@ -1590,6 +1743,7 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             stages=construction.stages,
         )
 
+
 def _support_issues(
     source: SurfaceEnvelopeSource,
     specification: VolumeMeshingSpec,
@@ -1598,11 +1752,16 @@ def _support_issues(
     /,
 ) -> list[str]:
     if not isinstance(source, SurfaceEnvelopeSource):
-        return ["an explicit SurfaceEnvelopeSource over a represented ReconstructedGeometrySource or AuthoredTriangleSheet"]
+        return [
+            "an explicit SurfaceEnvelopeSource over a represented ReconstructedGeometrySource or AuthoredTriangleSheet"
+        ]
     if not isinstance(specification, VolumeMeshingSpec):
         return ["a VolumeMeshingSpec"]
     issues: list[str] = []
-    if not isinstance(options, NativeMeshingOptions) or options.route != "surface_envelope_tetrahedral":
+    if (
+        not isinstance(options, NativeMeshingOptions)
+        or options.route != "surface_envelope_tetrahedral"
+    ):
         issues.append("the surface_envelope_tetrahedral native route")
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         issues.append("a SpatialCoordinateContract")
@@ -1622,32 +1781,41 @@ def _support_issues(
             "material_interface": 2,
         }.get(feature.feature_kind.value)
         if dimension not in (0, 1, 2) or expected_dimension != dimension:
-            issues.append(f"protected feature {feature.feature_id} has an unsupported PWL stratum")
-            continue
-        if (
-            scope.entity_kind is not MeshingEntityKind.GEOMETRY
-            or (scope.source_id, scope.source_revision, scope.entity_set_id)
-            != (
-                source.source_id,
-                source.source_revision,
-                source.scope_entity_set_id(dimension),
+            issues.append(
+                f"protected feature {feature.feature_id} has an unsupported PWL stratum"
             )
+            continue
+        if scope.entity_kind is not MeshingEntityKind.GEOMETRY or (
+            scope.source_id,
+            scope.source_revision,
+            scope.entity_set_id,
+        ) != (
+            source.source_id,
+            source.source_revision,
+            source.scope_entity_set_id(dimension),
         ):
-            issues.append(f"protected feature {feature.feature_id} changes envelope source identity")
+            issues.append(
+                f"protected feature {feature.feature_id} changes envelope source identity"
+            )
             continue
         try:
-            PiecewiseLinearBoundarySource(
-                source, dimension, entity_ids=scope.entity_ids
-            )
+            PiecewiseLinearBoundarySource(source, dimension, entity_ids=scope.entity_ids)
         except (TypeError, ValueError) as error:
-            issues.append(f"protected feature {feature.feature_id} is outside the envelope source scope: {error}")
+            issues.append(
+                f"protected feature {feature.feature_id} is outside the envelope source scope: {error}"
+            )
     if specification.layer_controls or specification.periodic_constraints:
-        issues.append("boundary layers or periodic constraints outside the native PLC fill route")
+        issues.append(
+            "boundary layers or periodic constraints outside the native PLC fill route"
+        )
     if any(
-        isinstance(control, UniformSizeControl) and control.maximum_growth_rate is not None
+        isinstance(control, UniformSizeControl)
+        and control.maximum_growth_rate is not None
         for control in specification.size_controls
     ):
-        issues.append("maximum-growth controls without a source-geodesic envelope size field")
+        issues.append(
+            "maximum-growth controls without a source-geodesic envelope size field"
+        )
     if len(source.domain.region_ids) != 1:
         issues.append("one exact derived PWL envelope region")
     if not isinstance(options.volume_schedule, NativeVolumeSchedule):
