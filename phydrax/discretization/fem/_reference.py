@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import cache
 from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -325,8 +327,18 @@ def _tetrahedron_p1(points: Array, /) -> tuple[Array, Array]:
 def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
     """Construct one implemented scalar nodal Lagrange reference element."""
 
-    cell = str(cell_kind)
-    order = int(degree)
+    return _lagrange_element(str(cell_kind), int(degree))
+
+
+@cache
+def _lagrange_element(cell: str, order: int, /) -> FiniteElementSpec:
+    # Reference elements are immutable and depend only on (cell, order): build
+    # each once per process, with concrete arrays even inside a trace.
+    with jax.ensure_compile_time_eval():
+        return _build_lagrange_element(cell, order)
+
+
+def _build_lagrange_element(cell: str, order: int, /) -> FiniteElementSpec:
     scalar_spec = FormValueSpec(
         FormType(reference_cell_topology(cell).dimension, 0, twist="untwisted"),
         proxy="scalar",
