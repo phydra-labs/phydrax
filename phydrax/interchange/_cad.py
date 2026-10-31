@@ -3749,16 +3749,41 @@ def _copy_geometry_with_approximation(
     fitted_coedges: set[int],
     /,
 ) -> BRepGeometry:
-    edge_roots = list(geometry.edge_endpoint_roots)
-    coedge_roots = list(geometry.coedge_endpoint_roots)
-    for edge in fitted_edges:
-        edge_roots[edge] = (None, None)
-    for coedge in fitted_coedges:
-        coedge_roots[coedge] = (None, None)
+    # A fitted carrier only interpolates its endpoint points: the vertices it
+    # touches stop being exact source roots, so every root-supported endpoint
+    # binding at them is released too. Native period turns need no vertex root.
+    released = {
+        vertex for edge in fitted_edges for vertex in geometry.edge_vertices[edge]
+    }
+
+    def release(
+        edge: int, roots: tuple[RootEndpoint | None, RootEndpoint | None], /
+    ) -> tuple[RootEndpoint | None, RootEndpoint | None]:
+        if edge in fitted_edges:
+            return None, None
+        first, last = (
+            None
+            if geometry.edge_vertices[edge][endpoint] in released
+            and not isinstance(root, NativePeriodEndpoint)
+            else root
+            for endpoint, root in enumerate(roots)
+        )
+        return first, last
+
+    edge_roots = [
+        release(edge, roots) for edge, roots in enumerate(geometry.edge_endpoint_roots)
+    ]
+    coedge_roots = [
+        release(geometry.coedge_edges[coedge], roots)
+        for coedge, roots in enumerate(geometry.coedge_endpoint_roots)
+    ]
     return BRepGeometry(
         vertex_points=geometry.vertex_points,
         vertex_exact_points=geometry.vertex_exact_points,
-        vertex_roots=geometry.vertex_roots,
+        vertex_roots=tuple(
+            None if vertex in released else root
+            for vertex, root in enumerate(geometry.vertex_roots)
+        ),
         edge_endpoint_roots=tuple(edge_roots),
         coedge_endpoint_roots=tuple(coedge_roots),
         edge_vertex_gap_bounds=geometry.edge_vertex_gap_bounds,
