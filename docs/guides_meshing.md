@@ -625,9 +625,14 @@ contracts:
   `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
   interior vertex insertion, collapse, and relocation is accepted only if the
   cells it creates pass the hard gates (relative determinant above its floor,
-  circumradius within the size target, source constraints preserved) and the
-  affected cells' worst-first sorted scores strictly improve. A collapse that
-  would grow a cell beyond its size target is therefore never accepted.
+  source constraints preserved) and the size gate, and the affected cells'
+  worst-first sorted scores strictly improve.
+- **Precedence.** The size gate (circumradius within the size target) binds
+  every edit except one that removes a degenerate cell: a cell below the
+  determinant floor or scoring 0 (a ratio beyond 2^20 times its target).
+  Repairing degeneracy takes precedence over size; any other edit, collapses
+  included, can never grow a cell beyond its size target. The whole-mesh
+  fixed-boundary retessellation never takes this exemption.
 - **Termination.** Every accepted edit strictly improves the whole mesh's
   sorted score vector, and over the finite score alphabet that order admits no
   infinite improving sequence. Improvement therefore ends without pass,
@@ -635,9 +640,11 @@ contracts:
   set; no complexity bound is claimed.
 - **Unmet evidence.** Targets the edits cannot reach end valid but unmet: the
   run status is unresolved and `TetMesh3D.unmet()` reports each remaining cell
-  per criterion (radius-edge ratio, size as circumradius over target, minimum
-  dihedral, determinant validity) with its reason. Volume routes refuse such a
-  mesh rather than publish it.
+  per criterion with its reason. Refinement reports the radius-edge ratio and
+  size (circumradius over target); improvement reports the radius-edge ratio,
+  minimum dihedral, and determinant validity, since the size field constrains
+  improvement but is not one of its targets. Volume routes refuse a mesh with
+  improvement residuals rather than publish it.
 
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`
