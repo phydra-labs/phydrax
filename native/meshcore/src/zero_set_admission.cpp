@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <map>
 #include <memory>
@@ -290,8 +292,30 @@ int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
 
 bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c,
                                   const std::array<VertexEvidence, 3>& evidence) const {
-  return transversal_sign(a, b, c) == orientation_ &&
-         distance_bound(a, b, c, evidence) <= tolerance_;
+  const int sign = transversal_sign(a, b, c);
+  const bool transversal = sign == orientation_;
+  const double bound = transversal ? distance_bound(a, b, c, evidence) : kInfinity;
+  // PHYDRAX_ZERO_SET_TRACE="x,y,z,r": report every decision on a triangle with a
+  // corner within r of (x, y, z) (diagnostic only; no effect on the decision).
+  static const std::array<double, 4> trace = [] {
+    std::array<double, 4> value{0, 0, 0, -1};
+    if (const char* text = std::getenv("PHYDRAX_ZERO_SET_TRACE"))
+      std::sscanf(text, "%lf,%lf,%lf,%lf", &value[0], &value[1], &value[2], &value[3]);
+    return value;
+  }();
+  if (trace[3] > 0) {
+    for (const Point* p : {&a, &b, &c}) {
+      if (std::hypot((*p)[0] - trace[0], (*p)[1] - trace[1], (*p)[2] - trace[2]) > trace[3])
+        continue;
+      std::fprintf(stderr,
+                   "zero-set admit: (%.6g %.6g %.6g) (%.6g %.6g %.6g) (%.6g %.6g %.6g) sign %d "
+                   "bound %.4g tol %.4g -> %d\n",
+                   a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], sign, bound,
+                   tolerance_, transversal && bound <= tolerance_);
+      break;
+    }
+  }
+  return transversal && bound <= tolerance_;
 }
 
 Point ZeroSetBandAdmission::project(const Point& position) const {
