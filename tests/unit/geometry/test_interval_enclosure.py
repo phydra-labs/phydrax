@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from phydrax._meshcore import load_meshcore
+from phydrax.geometry import Superquadric
 from phydrax.geometry._interval_enclosure import (
     interval_multiply,
     IntervalExtensionError,
@@ -429,6 +430,101 @@ def test_native_interval_comparison_selection_matches_host(comparison: str) -> N
     assert native.execution == "native"
     np.testing.assert_array_equal(native_bounds[0], host_bounds[0])
     np.testing.assert_array_equal(native_bounds[1], host_bounds[1])
+
+
+@pytest.mark.parametrize("extremum", ("maximum", "minimum"))
+def test_native_interval_extrema_match_host(extremum: str) -> None:
+    # Shared vectors with the native test_interval_program maximum/minimum case,
+    # plus a constant operand (the superquadric norm floor).
+    select = jnp.maximum if extremum == "maximum" else jnp.minimum
+
+    def function(point: jax.Array) -> jax.Array:
+        return jnp.stack((select(point[0], point[1]), select(point[0], 1.0e-12)))
+
+    lower = np.asarray(
+        ((-1.0, 0.0), (-np.inf, 1.0e-12), (3.0, -np.inf), (-2.0, -3.0)), dtype=np.float64
+    )
+    upper = np.asarray(
+        ((2.0, 1.0), (0.5, 1.0e-12), (np.inf, 4.0), (-1.0, 5.0)), dtype=np.float64
+    )
+    native = prepare_interval_function(function, 2, execution="native")
+    host = prepare_interval_function(function, 2, execution="host")
+    native_bounds = native.evaluate(lower, upper)
+    host_bounds = host.evaluate(lower, upper)
+
+    assert native.execution == "native"
+    np.testing.assert_array_equal(native_bounds[0], host_bounds[0])
+    np.testing.assert_array_equal(native_bounds[1], host_bounds[1])
+
+
+def test_native_interval_real_power_matches_host_and_refuses_negative_bases() -> None:
+    # exp(y log x) clamped at 0 encloses the host result (native products always
+    # round outward, the host only when inexact, so they differ by ulps); a base
+    # touching 0 keeps lower bound 0, and a negative base is a typed refusal.
+    def function(point: jax.Array) -> jax.Array:
+        return jnp.stack((point[0] ** 0.75, point[1] ** -1.5, jnp.exp(point[0])))
+
+    lower = np.asarray(((0.0, 0.5), (0.25, 1.0), (2.0, 3.0)), dtype=np.float64)
+    upper = np.asarray(((1.0, 2.0), (0.5, np.inf), (4.0, 3.0)), dtype=np.float64)
+    native = prepare_interval_function(function, 2, execution="native")
+    host = prepare_interval_function(function, 2, execution="host")
+    native_bounds = native.evaluate(lower, upper)
+    host_bounds = host.evaluate(lower, upper)
+
+    assert native.execution == "native"
+    assert np.all(native_bounds[0] <= host_bounds[0])
+    assert np.all(native_bounds[1] >= host_bounds[1])
+    np.testing.assert_allclose(native_bounds[0], host_bounds[0], rtol=1e-14, atol=0.0)
+    np.testing.assert_allclose(native_bounds[1], host_bounds[1], rtol=1e-14, atol=0.0)
+    assert native_bounds[0][0, 0] == 0.0
+    negative = np.asarray(((-0.5, 1.0),), dtype=np.float64)
+    for prepared in (native, host):
+        with pytest.raises(IntervalExtensionError, match="nonnegative base"):
+            prepared.evaluate(negative, negative + 1.0)
+
+
+def test_native_interval_dot_general_matches_host() -> None:
+    rotation = jnp.asarray(
+        ((0.6, -0.8, 0.0), (0.8, 0.6, 0.0), (0.0, 0.0, 1.0)), dtype=jnp.float64
+    )
+
+    def function(point: jax.Array) -> jax.Array:
+        rotated = rotation @ point
+        return jnp.concatenate((rotated, jnp.dot(point, point)[None]))
+
+    lower = np.asarray(((0.1, -0.2, 0.3), (-1.0, -1.0, -1.0)), dtype=np.float64)
+    upper = np.asarray(((0.2, 0.1, 0.5), (1.0, 1.0, 1.0)), dtype=np.float64)
+    native = prepare_interval_function(function, 3, execution="native")
+    host = prepare_interval_function(function, 3, execution="host")
+    native_bounds = native.evaluate(lower, upper)
+    host_bounds = host.evaluate(lower, upper)
+
+    assert native.execution == "native"
+    _assert_nested_enclosures(native_bounds, host_bounds)
+    np.testing.assert_allclose(native_bounds[0], host_bounds[0], rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(native_bounds[1], host_bounds[1], rtol=0.0, atol=1e-12)
+
+
+def test_native_interval_lowers_the_superquadric_field_and_gradient() -> None:
+    geometry = Superquadric((0.0, 0.0, 0.0), (0.45, 0.50, 0.55)).compile()
+    kernel, state = geometry.kernel, geometry.state
+
+    def field(point: jax.Array) -> jax.Array:
+        return kernel.boundary_field(state, point[None, :])[0]
+
+    lower = np.asarray(((0.40, 0.0, 0.0), (0.1, 0.2, 0.3)), dtype=np.float64)
+    upper = np.asarray(((0.42, 0.02, 0.02), (0.15, 0.25, 0.35)), dtype=np.float64)
+    for function in (field, jax.grad(field)):
+        native = prepare_interval_function(function, 3, execution="native")
+        host = prepare_interval_function(function, 3, execution="host")
+        native_bounds = native.evaluate(lower, upper)
+        host_bounds = host.evaluate(lower, upper)
+        assert native.execution == "native"
+        assert np.all(native_bounds[0] <= host_bounds[1])
+        assert np.all(host_bounds[0] <= native_bounds[1])
+        # Away from the coordinate planes the real powers are smooth and finite.
+        assert np.all(np.isfinite(native_bounds[0][1]))
+        assert np.all(np.isfinite(native_bounds[1][1]))
 
 
 def test_native_interval_lowers_the_finite_norm_gradient() -> None:

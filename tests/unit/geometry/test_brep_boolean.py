@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from pathlib import Path
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,6 +21,7 @@ from phydrax.geometry.brep._boolean_core import (
     pcurve_surface_period_shifts,
     PeriodicPCurve,
 )
+from phydrax.geometry.brep._intersection import IntersectionCurvePointRoot
 from phydrax.geometry.brep._intersection_curve import (
     CurveTrimSegment,
     IntersectionCurve,
@@ -28,6 +30,12 @@ from phydrax.geometry.brep._intersection_curve import (
 )
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import AbstractCurve, CylinderPatch, LineCurve
+from phydrax.geometry.brep._root_bindings import (
+    BRepBranchNodeRoots,
+    BRepVertexRoot,
+    vertex_root_payload,
+)
+from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
 from phydrax.units import MILLIMETER
 
 
@@ -342,7 +350,9 @@ def test_closed_branch_endpoints_isolated_on_opposite_seam_bind_one_chart_point(
         )
 
 
-def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks() -> None:
+def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks(
+    tmp_path: Path,
+) -> None:
     # The second cylinder runs along y, so one loop crosses the first
     # cylinder's seam twice; one crossing coincides with the second
     # cylinder's seam, where the loop closes.
@@ -415,6 +425,38 @@ def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks() -> None
         and all(on_first_cylinder(face) for face in faces)
     )
     assert len(seam_edges) == 1
+
+    # Both seam roots of the start node bind one vertex through a validated
+    # branch-node witness; every other vertex keeps its unwitnessed identity.
+    roots = tuple(root for root in geometry.vertex_roots if root is not None)
+    witnessed = tuple(root for root in roots if root.branch_node is not None)
+    assert len(witnessed) == 1
+    vertex_root = witnessed[0]
+    witness = vertex_root.branch_node
+    assert witness is not None and vertex_root.spatial_root is None
+    assert witness.node.curve.branch_id == branch.branch_id
+    assert witness.node.parameter == 0.0
+    assert len({endpoint.root.root_id for endpoint in witness.endpoints}) == 2
+    assert all(witness.binds(endpoint.root) for endpoint in witness.endpoints)
+    assert all(
+        "branch_node" not in vertex_root_payload(root)
+        for root in roots
+        if root.branch_node is None
+    )
+    with pytest.raises(ValueError, match="certify the branch node"):
+        BRepBranchNodeRoots(
+            IntersectionCurvePointRoot(branch, float(node)), witness.endpoints
+        )
+    with pytest.raises(ValueError, match="certify the vertex source root"):
+        BRepVertexRoot(witness.node, branch_node=witness)
+
+    archive = tmp_path / "seam-crossing-quadric.phx"
+    save_brep_archive(model, archive)
+    restored = load_brep_archive(archive).geometry
+    assert restored is not None
+    assert tuple(
+        None if root is None else root.root_id for root in restored.vertex_roots
+    ) == tuple(None if root is None else root.root_id for root in geometry.vertex_roots)
 
 
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:

@@ -81,6 +81,7 @@ from ._projection import NativeBRepProjection, prepare_brep_projection
 from ._projection_contracts import brep_entity_id, BRepProjectionStatus
 from ._root_bindings import (
     _curve_surface_root_shares_trim_support,
+    BRepBranchNodeRoots,
     BRepCurveSurfaceLift,
     BRepRootSupport,
     BRepVertexRoot,
@@ -1370,6 +1371,7 @@ def event_vertex(
                 spatial_root=prior_binding.spatial_root or spatial,
                 joint_root=prior_binding.joint_root,
                 source_edge_lifts=vertex_lifts,
+                branch_node=prior_binding.branch_node,
             )
     elif first.branch is not None and second.branch is not None:
         first_owners = state.branch_owners[first.token]
@@ -2680,7 +2682,7 @@ def _append_spatial_root_cuts(
     if alias is not None and alias[1] != vertex:
         # Another source root already certified as this branch node: one vertex.
         node, vertex = alias
-        binding = _bind_second_source_root(state, vertex, spatial)
+        binding = _bind_second_source_root(state, vertex, branch_arc, branch_endpoint)
     else:
         state.vertex_spatial[vertex] = spatial
         state.vertex_aliases.setdefault(vertex, [])
@@ -2705,37 +2707,59 @@ def _append_spatial_root_cuts(
 
 
 def _bind_second_source_root(
-    state: Arrangement, vertex: str, spatial: CurveSurfaceIntersectionRoot
+    state: Arrangement, vertex: str, arc: Arc, endpoint: BranchRootEndpoint
 ) -> BRepVertexRoot:
     """Bind a second source-edge root certified as an existing branch-node vertex.
 
-    Both roots were proved to be the same isolated branch node, as where two
-    periodic seams cross on the branch.
+    Both roots are proved to be the same isolated branch node, as where two
+    periodic seams cross on the branch; the vertex records that proof.
     """
     existing = state.vertex_bindings[vertex]
-    if existing is None:
+    if existing is None or not isinstance(existing.primary, CurveSurfaceIntersectionRoot):
         raise BRepBooleanFailure(
-            "BRepBoolean.branch_alias must retain the shared vertex binding; got None",
+            "BRepBoolean.branch_alias must share a source-root vertex binding",
             (vertex,),
         )
-    if existing.spatial_root is not None:
-        if existing.spatial_root.root_id == spatial.root_id:
-            return existing
-        raise BRepBooleanFailure(
-            "BRepBoolean.branch_alias must bind at most two source-edge roots per node; got a third",
-            (vertex,),
-        )
-    if (
-        isinstance(existing.primary, CurveSurfaceIntersectionRoot)
-        and existing.primary.root_id == spatial.root_id
+    if existing.primary.root_id == endpoint.root.root_id or (
+        existing.branch_node is not None and existing.branch_node.binds(endpoint.root)
     ):
         return existing
+    lower, upper = endpoint.parameter_enclosure()
+    primary_endpoints = tuple(
+        cut.endpoint
+        for cut in state.cuts[arc.token]
+        if cut.vertex == vertex
+        and isinstance(cut.endpoint, BranchRootEndpoint)
+        and cut.endpoint.root.root_id == existing.primary.root_id
+    )
+    if lower != upper or not float(lower).is_integer() or not primary_endpoints:
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias must retain both certified node endpoints",
+            (vertex,),
+        )
+    curve = endpoint.curve
+    parameter = 0.0 if curve.closed and lower == curve.num_charts else float(lower)
+    endpoints = (
+        (primary_endpoints[0], endpoint)
+        if existing.branch_node is None
+        else (*existing.branch_node.endpoints, endpoint)
+    )
+    try:
+        branch_node = BRepBranchNodeRoots(
+            IntersectionCurvePointRoot(curve, parameter), endpoints
+        )
+    except ValueError as error:
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias must certify every source root as the branch node",
+            (vertex,),
+        ) from error
     binding = BRepVertexRoot(
         existing.primary,
         aliases=existing.aliases,
-        spatial_root=spatial,
+        spatial_root=existing.spatial_root,
         joint_root=existing.joint_root,
         source_edge_lifts=existing.source_edge_lifts,
+        branch_node=branch_node,
     )
     state.vertex_bindings[vertex] = binding
     for token, cuts in state.cuts.items():

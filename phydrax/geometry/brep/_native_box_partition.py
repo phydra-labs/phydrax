@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ...discretization._exact_algebraic_geometry import coefficient_payload
 from .._cad_revision import (
     AssociationCoverageEvidence,
     AssociationGraph,
@@ -23,9 +24,10 @@ from .._cad_revision import (
     OccurrenceCorrespondenceTransaction,
 )
 from ._assembly import BRepAffinePlacement
-from ._constructors import BRepTessellationPolicy, assemble_brep_model
+from ._constructors import assemble_brep_model, BRepTessellationPolicy
 from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import ExactLineCurve, ExtrusionSurface, LineCurve, PlanePatch
+
 
 if TYPE_CHECKING:
     from ._partition import (
@@ -70,8 +72,12 @@ def _line_point(
 ) -> tuple[Fraction, ...]:
     if isinstance(curve, ExactLineCurve):
         return curve.evaluate_exact(parameter)
-    origin = tuple(Fraction.from_float(float(value)) for value in np.asarray(curve.origin))
-    direction = tuple(Fraction.from_float(float(value)) for value in np.asarray(curve.direction))
+    origin = tuple(
+        Fraction.from_float(float(value)) for value in np.asarray(curve.origin)
+    )
+    direction = tuple(
+        Fraction.from_float(float(value)) for value in np.asarray(curve.direction)
+    )
     return tuple(
         origin[axis] + parameter * direction[axis] for axis in range(len(origin))
     )
@@ -147,8 +153,7 @@ def _box_bounds(model: BRepModel, /) -> Box:
             "Native exact partition requires one unplaced exact six-face, twelve-edge, eight-vertex solid."
         )
     source_points = tuple(
-        _source_vertex(geometry, index)
-        for index in range(geometry.topology.num_vertices)
+        _source_vertex(geometry, index) for index in range(geometry.topology.num_vertices)
     )
     source_vertices = set(source_points)
     lower = (
@@ -168,7 +173,9 @@ def _box_bounds(model: BRepModel, /) -> Box:
         for x, y, z in product(*(tuple(sorted({lower[i], upper[i]})) for i in range(3)))
     }
     if len(source_vertices) != 8 or source_vertices != corners:
-        raise NotImplementedError("Native exact box partition needs all eight distinct corners.")
+        raise NotImplementedError(
+            "Native exact box partition needs all eight distinct corners."
+        )
     edge_uses = [0] * geometry.topology.num_edges
     edge_balances = [0] * geometry.topology.num_edges
     face_keys: set[FaceKey] = set()
@@ -176,23 +183,31 @@ def _box_bounds(model: BRepModel, /) -> Box:
     solid_faces = model.topology.solid_faces[0]
     solid_face_orientations = model.topology.solid_face_orientations[0]
     if set(solid_faces) != set(range(model.topology.num_faces)):
-        raise NotImplementedError("Native box partition requires every face in its solid shell.")
+        raise NotImplementedError(
+            "Native box partition requires every face in its solid shell."
+        )
     for face_index, shell_orientation in zip(
         solid_faces, solid_face_orientations, strict=True
     ):
         patch = model.patches[face_index]
         loops = geometry.face_loops[face_index]
         if len(loops) != 1 or len(loops[0]) != 4:
-            raise NotImplementedError("Native box partition requires four-edge planar faces.")
+            raise NotImplementedError(
+                "Native box partition requires four-edge planar faces."
+            )
         face_vertices: set[int] = set()
         for coedge in loops[0]:
             edge = geometry.coedge_edges[coedge]
             curve_index = geometry.edge_curves[edge]
             if curve_index < 0:
-                raise NotImplementedError("Native box partition requires straight source edges.")
+                raise NotImplementedError(
+                    "Native box partition requires straight source edges."
+                )
             curve = geometry.curves[curve_index]
             if not isinstance(curve, (LineCurve, ExactLineCurve)):
-                raise NotImplementedError("Native box partition requires straight source edges.")
+                raise NotImplementedError(
+                    "Native box partition requires straight source edges."
+                )
             first, last = (
                 Fraction.from_float(float(value))
                 for value in np.asarray(geometry.edge_ranges)[edge]
@@ -204,15 +219,23 @@ def _box_bounds(model: BRepModel, /) -> Box:
                 _line_point(curve, first) != source_start
                 or _line_point(curve, last) != source_end
             ):
-                raise NotImplementedError("Native box edges must retain exact represented endpoints.")
+                raise NotImplementedError(
+                    "Native box edges must retain exact represented endpoints."
+                )
             if sum(a != b for a, b in zip(source_start, source_end, strict=True)) != 1:
-                raise NotImplementedError("Native box edges must be axis-aligned source segments.")
+                raise NotImplementedError(
+                    "Native box edges must be axis-aligned source segments."
+                )
             pcurve = geometry.pcurves[coedge]
             if not isinstance(pcurve, (LineCurve, ExactLineCurve)):
-                raise NotImplementedError("Native box faces require straight source p-curves.")
+                raise NotImplementedError(
+                    "Native box faces require straight source p-curves."
+                )
             for parameter in (first, last):
                 uv = _line_point(pcurve, parameter)
-                if len(uv) != 2 or _patch_point(patch, (uv[0], uv[1])) != _line_point(curve, parameter):
+                if len(uv) != 2 or _patch_point(patch, (uv[0], uv[1])) != _line_point(
+                    curve, parameter
+                ):
                     raise NotImplementedError(
                         "Native box coedges must have exact coupled curve and p-curve endpoints."
                     )
@@ -224,19 +247,25 @@ def _box_bounds(model: BRepModel, /) -> Box:
                 * int(shell_orientation)
             )
         if len(face_vertices) != 4:
-            raise NotImplementedError("Native box faces require four distinct source corners.")
+            raise NotImplementedError(
+                "Native box faces require four distinct source corners."
+            )
         face_key = _face_key(
             tuple(_source_vertex(geometry, index) for index in face_vertices)
         )
         axis, fixed, lower_first, upper_first, lower_second, upper_second = face_key
         if fixed not in (lower[axis], upper[axis]):
-            raise NotImplementedError("Native box faces must lie on an exact outer coordinate plane.")
+            raise NotImplementedError(
+                "Native box faces must lie on an exact outer coordinate plane."
+            )
         other_axes = tuple(value for value in range(3) if value != axis)
-        if (
-            (lower_first, upper_first) != (lower[other_axes[0]], upper[other_axes[0]])
-            or (lower_second, upper_second) != (lower[other_axes[1]], upper[other_axes[1]])
-        ):
-            raise NotImplementedError("Native box faces must cover their exact rectangular sides.")
+        if (lower_first, upper_first) != (lower[other_axes[0]], upper[other_axes[0]]) or (
+            lower_second,
+            upper_second,
+        ) != (lower[other_axes[1]], upper[other_axes[1]]):
+            raise NotImplementedError(
+                "Native box faces must cover their exact rectangular sides."
+            )
         if isinstance(patch, PlanePatch):
             first_axis = _fraction_point(np.asarray(patch.first_axis))
             second_axis = _fraction_point(np.asarray(patch.second_axis))
@@ -253,29 +282,44 @@ def _box_bounds(model: BRepModel, /) -> Box:
                 )
             second_axis = _fraction_point(np.asarray(patch.direction))
         else:
-            raise NotImplementedError("Native box faces require exact plane or line-extrusion carriers.")
+            raise NotImplementedError(
+                "Native box faces require exact plane or line-extrusion carriers."
+            )
         normal = _cross(first_axis, second_axis)
         if any(normal[index] != 0 for index in range(3) if index != axis):
-            raise NotImplementedError("Native box face normals must align with a coordinate axis.")
+            raise NotImplementedError(
+                "Native box face normals must align with a coordinate axis."
+            )
         outward_sign = 1 if fixed == upper[axis] else -1
         oriented_normal = (
-            normal[axis]
-            * int(orientations[face_index])
-            * int(shell_orientation)
+            normal[axis] * int(orientations[face_index]) * int(shell_orientation)
         )
         if oriented_normal * outward_sign <= 0:
-            raise NotImplementedError("Native box shell faces must have exact outward orientation.")
+            raise NotImplementedError(
+                "Native box shell faces must have exact outward orientation."
+            )
         face_keys.add(face_key)
     expected_faces = {
-        (axis, fixed, lower[next_axis], upper[next_axis], lower[last_axis], upper[last_axis])
+        (
+            axis,
+            fixed,
+            lower[next_axis],
+            upper[next_axis],
+            lower[last_axis],
+            upper[last_axis],
+        )
         for axis in range(3)
         for fixed in (lower[axis], upper[axis])
         for next_axis, last_axis in (tuple(value for value in range(3) if value != axis),)
     }
     if face_keys != expected_faces:
-        raise NotImplementedError("Native box face topology must exhaust all six oriented sides.")
+        raise NotImplementedError(
+            "Native box face topology must exhaust all six oriented sides."
+        )
     if any(uses != 2 for uses in edge_uses) or any(edge_balances):
-        raise NotImplementedError("Native box source must have a closed, consistently oriented edge shell.")
+        raise NotImplementedError(
+            "Native box source must have a closed, consistently oriented edge shell."
+        )
     return lower, upper
 
 
@@ -317,7 +361,12 @@ def _face_corners(face: _Face, /) -> tuple[Point, Point, Point, Point]:
     upper[axis] = fixed
     first, second = face.first_axis, face.second_axis
     values: list[Point] = []
-    for first_upper, second_upper in ((False, False), (True, False), (True, True), (False, True)):
+    for first_upper, second_upper in (
+        (False, False),
+        (True, False),
+        (True, True),
+        (False, True),
+    ):
         point = list(lower)
         point[first] = upper[first] if first_upper else lower[first]
         point[second] = upper[second] if second_upper else lower[second]
@@ -333,7 +382,9 @@ def _source_face_key(model: BRepModel, face_index: int, /) -> FaceKey:
         for coedge in loop
         for vertex in geometry.edge_vertices[geometry.coedge_edges[coedge]]
     }
-    points = tuple(_fraction_point(np.asarray(geometry.vertex_points[index])) for index in vertex_ids)
+    points = tuple(
+        _fraction_point(np.asarray(geometry.vertex_points[index])) for index in vertex_ids
+    )
     return _face_key(points)
 
 
@@ -348,7 +399,13 @@ def _contained_face(inner: FaceKey, outer: FaceKey, /) -> bool:
 def _composite_revision(
     plan: BRepPartitionPlan, operands: tuple[BRepPartitionOperand, ...], /
 ) -> tuple[CADRevision, dict[tuple[str, str], str]]:
-    from ._partition import _entity_occurrence_id, _entity_text, _operand_selection
+    from ._partition import (
+        _assembly_namespace_occurrence_id,
+        _entity_occurrence_id,
+        _entity_text,
+        _operand_selection,
+        cad_revision_from_brep_model,
+    )
 
     plan_id = plan.plan_id
     source_id = f"native-brep-partition:{plan_id}"
@@ -357,7 +414,11 @@ def _composite_revision(
             "kind": "native-brep-partition-source-revision",
             "plan": plan_id,
             "sources": sorted(
-                (value.operand_id, value.model.source_revision, _operand_selection(value).selection_id)
+                (
+                    value.operand_id,
+                    value.model.source_revision,
+                    _operand_selection(value).selection_id,
+                )
                 for value in operands
             ),
         }
@@ -367,7 +428,26 @@ def _composite_revision(
     for operand in sorted(operands, key=lambda value: value.operand_id):
         model = operand.model
         geometry = model.geometry
-        solid_occurrences: dict[int, str] = {}
+        # Each operand keeps its exact assembly forest, rescoped to the operand, so
+        # source namespaces correspond to the result namespaces of their cells.
+        assembly_paths: dict[str, tuple[str, ...]] = {}
+        for item in cad_revision_from_brep_model(model).occurrences:
+            if item.kind != "assembly":
+                continue
+            assembly_path = tuple(
+                f"operand:{operand.operand_id}:assembly:{value}" for value in item.path
+            )
+            assembly_paths[item.occurrence_id] = assembly_path
+            occurrences.append(
+                CADOccurrence(
+                    revision_id,
+                    assembly_path[-1],
+                    item.entity_id,
+                    "assembly",
+                    assembly_path,
+                    assembly_path[-2] if len(assembly_path) > 1 else None,
+                )
+            )
         for source_occurrence in geometry.iter_occurrences():
             solid = source_occurrence.solid_index
             solid_entity = BRepEntityId(
@@ -379,16 +459,23 @@ def _composite_revision(
             )
             local_id = _entity_occurrence_id(solid_entity)
             occurrence_id = f"operand:{operand.operand_id}:solid:{solid}"
+            parent_path = assembly_paths.get(
+                _assembly_namespace_occurrence_id(
+                    model.source_id, model.source_revision, source_occurrence.path
+                ),
+                (),
+            )
+            solid_path = (*parent_path, occurrence_id)
             occurrences.append(
                 CADOccurrence(
                     revision_id,
                     occurrence_id,
                     _entity_text(solid_entity),
                     "solid",
-                    (occurrence_id,),
+                    solid_path,
+                    parent_path[-1] if parent_path else None,
                 )
             )
-            solid_occurrences[solid] = occurrence_id
             source_occurrence_ids[(operand.operand_id, local_id)] = occurrence_id
             for face, orientation in zip(
                 geometry.topology.solid_faces[solid],
@@ -410,12 +497,14 @@ def _composite_revision(
                         face_occurrence_id,
                         _entity_text(face_entity),
                         "face",
-                        (occurrence_id, face_occurrence_id),
+                        (*solid_path, face_occurrence_id),
                         occurrence_id,
                         orientation,
                     )
                 )
-                source_occurrence_ids[(operand.operand_id, face_local_id)] = face_occurrence_id
+                source_occurrence_ids[(operand.operand_id, face_local_id)] = (
+                    face_occurrence_id
+                )
     return (
         CADRevision(revision_id, source_id, tuple(occurrences), plan_id),
         source_occurrence_ids,
@@ -459,25 +548,43 @@ def _arrangement(plan: BRepPartitionPlan, /) -> tuple[tuple[_Atom, ...], dict[st
     axes = (
         tuple(
             sorted(
-                {point[0] for lower, upper in operand_boxes.values() for point in (lower, upper)}
+                {
+                    point[0]
+                    for lower, upper in operand_boxes.values()
+                    for point in (lower, upper)
+                }
             )
         ),
         tuple(
             sorted(
-                {point[1] for lower, upper in operand_boxes.values() for point in (lower, upper)}
+                {
+                    point[1]
+                    for lower, upper in operand_boxes.values()
+                    for point in (lower, upper)
+                }
             )
         ),
         tuple(
             sorted(
-                {point[2] for lower, upper in operand_boxes.values() for point in (lower, upper)}
+                {
+                    point[2]
+                    for lower, upper in operand_boxes.values()
+                    for point in (lower, upper)
+                }
             )
         ),
     )
     atoms: list[_Atom] = []
     voids = tuple(value for value in plan.operands if value.role.value == "void")
-    regions = {value.operand_id: value for value in plan.operands if value.role.value == "region"}
+    regions = {
+        value.operand_id: value for value in plan.operands if value.role.value == "region"
+    }
     for cell_index in product(*(range(len(values) - 1) for values in axes)):
-        lower: Point = (axes[0][cell_index[0]], axes[1][cell_index[1]], axes[2][cell_index[2]])
+        lower: Point = (
+            axes[0][cell_index[0]],
+            axes[1][cell_index[1]],
+            axes[2][cell_index[2]],
+        )
         upper: Point = (
             axes[0][cell_index[0] + 1],
             axes[1][cell_index[1] + 1],
@@ -486,9 +593,14 @@ def _arrangement(plan: BRepPartitionPlan, /) -> tuple[tuple[_Atom, ...], dict[st
         memberships = {
             operand_id
             for operand_id, (box_lower, box_upper) in operand_boxes.items()
-            if all(a >= b and c <= d for a, c, b, d in zip(lower, upper, box_lower, box_upper, strict=True))
+            if all(
+                a >= b and c <= d
+                for a, c, b, d in zip(lower, upper, box_lower, box_upper, strict=True)
+            )
         }
-        owner = next((name for name in plan.policy.region_precedence if name in memberships), None)
+        owner = next(
+            (name for name in plan.policy.region_precedence if name in memberships), None
+        )
         if owner is None or any(
             owner in void.target_region_ids and void.operand_id in memberships
             for void in voids
@@ -498,8 +610,16 @@ def _arrangement(plan: BRepPartitionPlan, /) -> tuple[tuple[_Atom, ...], dict[st
     if not atoms:
         raise ValueError("Native exact partition removes every region cell.")
     if {atom.owner for atom in atoms} != set(regions):
-        raise ValueError("Every declared partition region must retain a positive-volume cell.")
-    atoms.sort(key=lambda value: (value.bounds[0], value.bounds[1], plan.policy.region_precedence.index(value.owner)))
+        raise ValueError(
+            "Every declared partition region must retain a positive-volume cell."
+        )
+    atoms.sort(
+        key=lambda value: (
+            value.bounds[0],
+            value.bounds[1],
+            plan.policy.region_precedence.index(value.owner),
+        )
+    )
     return tuple(atoms), operand_boxes
 
 
@@ -527,12 +647,18 @@ def _build_model(
                 ):
                     point = list(lower)
                     point[axis] = fixed
-                    point[first_axis] = upper[first_axis] if first_upper else lower[first_axis]
-                    point[second_axis] = upper[second_axis] if second_upper else lower[second_axis]
+                    point[first_axis] = (
+                        upper[first_axis] if first_upper else lower[first_axis]
+                    )
+                    point[second_axis] = (
+                        upper[second_axis] if second_upper else lower[second_axis]
+                    )
                     points.append((point[0], point[1], point[2]))
                 key = _face_key(tuple(points))
                 if key not in faces:
-                    faces[key] = _Face(key, axis, sign, first_axis, second_axis, lower, upper)
+                    faces[key] = _Face(
+                        key, axis, sign, first_axis, second_axis, lower, upper
+                    )
                 entries.append((key, sign))
         atom_face_keys.append(entries)
 
@@ -563,7 +689,15 @@ def _build_model(
     for key in face_keys:
         face = faces[key]
         corners = _face_corners(face)
-        uvs = ((0.0, 0.0), (float(face.upper[face.first_axis] - face.lower[face.first_axis]), 0.0), (float(face.upper[face.first_axis] - face.lower[face.first_axis]), float(face.upper[face.second_axis] - face.lower[face.second_axis])), (0.0, float(face.upper[face.second_axis] - face.lower[face.second_axis])))
+        uvs = (
+            (0.0, 0.0),
+            (float(face.upper[face.first_axis] - face.lower[face.first_axis]), 0.0),
+            (
+                float(face.upper[face.first_axis] - face.lower[face.first_axis]),
+                float(face.upper[face.second_axis] - face.lower[face.second_axis]),
+            ),
+            (0.0, float(face.upper[face.second_axis] - face.lower[face.second_axis])),
+        )
         loop: list[int] = []
         for index, start in enumerate(corners):
             end = corners[(index + 1) % len(corners)]
@@ -615,7 +749,9 @@ def _build_model(
         shell_faces.append(tuple(indices))
         shell_orientations.append(tuple(orientations))
     geometry = BRepGeometry(
-        vertex_points=np.asarray([[float(value) for value in point] for point in vertices], dtype=np.float64),
+        vertex_points=np.asarray(
+            [[float(value) for value in point] for point in vertices], dtype=np.float64
+        ),
         vertex_exact_points=tuple(vertices),
         curves=tuple(curves),
         edge_curves=tuple(range(len(curves))),
@@ -633,7 +769,16 @@ def _build_model(
         {
             "kind": "native-axis-box-partition-result",
             "plan": plan.plan_id,
-            "cells": tuple((atom.owner, atom.bounds) for atom in atoms),
+            "cells": tuple(
+                (
+                    atom.owner,
+                    tuple(
+                        tuple(coefficient_payload(value) for value in point)
+                        for point in atom.bounds
+                    ),
+                )
+                for atom in atoms
+            ),
         }
     )
     model = assemble_brep_model(
@@ -659,12 +804,12 @@ def partition_native_boxes(
 ) -> BRepPartitionResult:
     """Partition exact native ``brep_box`` operands without external CAD engines."""
     from ._partition import (
+        _entity_occurrence_id,
+        _operand_selection,
         BRepPartitionPatch,
         BRepPartitionRegion,
         BRepPartitionReport,
         BRepPartitionResult,
-        _entity_occurrence_id,
-        _operand_selection,
         cad_revision_from_brep_model,
     )
 
@@ -719,22 +864,39 @@ def partition_native_boxes(
                 BRepEntityId(model.source_id, model.source_revision, "face", face, path)
             )
 
+    def assembly_chain(revision: CADRevision, occurrence_id: str, /) -> tuple[str, ...]:
+        chain: list[str] = []
+        parent = revision.occurrence(occurrence_id).parent_occurrence_id
+        while parent is not None:
+            chain.append(parent)
+            parent = revision.occurrence(parent).parent_occurrence_id
+        return tuple(chain)
+
     correspondence_pairs: set[tuple[str, str]] = set()
     for solid_index, atom in enumerate(atoms):
         target_solid_id, occurrence_path = target_solid_occurrences[solid_index]
+        target_assemblies = assembly_chain(target_revision, target_solid_id)
         for operand_id, (lower, upper) in operand_boxes.items():
-            if all(a >= b and c <= d for a, c, b, d in zip(atom.bounds[0], atom.bounds[1], lower, upper, strict=True)):
+            if all(
+                a >= b and c <= d
+                for a, c, b, d in zip(
+                    atom.bounds[0], atom.bounds[1], lower, upper, strict=True
+                )
+            ):
                 source_id = source_occurrence_by_operand[operand_id][0]
                 correspondence_pairs.add((source_id, target_solid_id))
-                namespace_id = canonical_fingerprint(
-                    {
-                        "kind": "cad-instance-namespace",
-                        "source_id": model.source_id,
-                        "source_revision": model.source_revision,
-                        "path": occurrence_path,
-                    }
-                )
-                correspondence_pairs.add((source_id, namespace_id))
+                source_assemblies = assembly_chain(source_revision, source_id)
+                if source_assemblies and not target_assemblies:
+                    raise RuntimeError(
+                        "Native box partition cells must retain their source assembly occurrence."
+                    )
+                for depth, source_assembly in enumerate(source_assemblies):
+                    correspondence_pairs.add(
+                        (
+                            source_assembly,
+                            target_assemblies[min(depth, len(target_assemblies) - 1)],
+                        )
+                    )
         for face_index in model.topology.solid_faces[solid_index]:
             target_face_id = target_face_occurrences[(solid_index, face_index)]
             for face_sources in source_face_keys.values():
@@ -746,12 +908,24 @@ def partition_native_boxes(
                         for coedge in loop:
                             edge = model.geometry.coedge_edges[coedge]
                             edge_id = _entity_occurrence_id(
-                                BRepEntityId(model.source_id, model.source_revision, "edge", edge, occurrence_path)
+                                BRepEntityId(
+                                    model.source_id,
+                                    model.source_revision,
+                                    "edge",
+                                    edge,
+                                    occurrence_path,
+                                )
                             )
                             correspondence_pairs.add((source_id, edge_id))
                             for vertex in model.geometry.edge_vertices[edge]:
                                 vertex_id = _entity_occurrence_id(
-                                    BRepEntityId(model.source_id, model.source_revision, "vertex", vertex, occurrence_path)
+                                    BRepEntityId(
+                                        model.source_id,
+                                        model.source_revision,
+                                        "vertex",
+                                        vertex,
+                                        occurrence_path,
+                                    )
                                 )
                                 correspondence_pairs.add((source_id, vertex_id))
     certificate_id = canonical_fingerprint(
@@ -767,7 +941,9 @@ def partition_native_boxes(
         OccurrenceCorrespondence(source_id, target_id, certificate_id)
         for source_id, target_id in sorted(correspondence_pairs)
     )
-    coverage = AssociationCoverageEvidence(True, True, certificate_id, "native-axis-box-arrangement")
+    coverage = AssociationCoverageEvidence(
+        True, True, certificate_id, "native-axis-box-arrangement"
+    )
     transaction = OccurrenceCorrespondenceTransaction(
         certificate_id,
         source_revision.revision_id,
@@ -781,16 +957,24 @@ def partition_native_boxes(
     regions = tuple(
         BRepPartitionRegion(
             name,
-            tuple(model.solid_ids[index] for index, owner in enumerate(solid_owner) if owner == name),
+            tuple(
+                model.solid_ids[index]
+                for index, owner in enumerate(solid_owner)
+                if owner == name
+            ),
         )
         for name in plan.policy.region_precedence
     )
     region_for_solid = {index: atom.owner for index, atom in enumerate(atoms)}
     grouped_faces: dict[tuple[str, ...], list[BRepEntityId]] = {}
     for face_index, solids in enumerate(model.topology.face_solids):
-        adjacent = tuple(sorted((region_for_solid[index] for index in solids), key=rank.__getitem__))
+        adjacent = tuple(
+            sorted((region_for_solid[index] for index in solids), key=rank.__getitem__)
+        )
         if len(adjacent) not in (1, 2):
-            raise RuntimeError("Native box arrangement produced a nonmanifold partition face.")
+            raise RuntimeError(
+                "Native box arrangement produced a nonmanifold partition face."
+            )
         grouped_faces.setdefault(adjacent, []).append(model.face_ids[face_index])
     patches = tuple(
         BRepPartitionPatch(
@@ -798,7 +982,10 @@ def partition_native_boxes(
             tuple(face_ids),
             adjacent,
         )
-        for adjacent, face_ids in sorted(grouped_faces.items(), key=lambda item: tuple(rank[value] for value in item[0]))
+        for adjacent, face_ids in sorted(
+            grouped_faces.items(),
+            key=lambda item: tuple(rank[value] for value in item[0]),
+        )
     )
     source_edge_ids = {edge.source_occurrence_id for edge in correspondences}
     target_edge_ids = {edge.target_occurrence_id for edge in correspondences}
@@ -812,8 +999,14 @@ def partition_native_boxes(
         sum(value.kind == "face" for value in source_revision.occurrences),
         model.topology.num_solids,
         model.topology.num_faces,
-        sum(value.occurrence_id not in source_edge_ids for value in source_revision.occurrences),
-        sum(value.occurrence_id not in target_edge_ids for value in target_revision.occurrences),
+        sum(
+            value.occurrence_id not in source_edge_ids
+            for value in source_revision.occurrences
+        ),
+        sum(
+            value.occurrence_id not in target_edge_ids
+            for value in target_revision.occurrences
+        ),
     )
     return BRepPartitionResult(
         model,
