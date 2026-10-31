@@ -381,6 +381,44 @@ class SparseCoordinateOperatorArchiveRecipe(NamedTuple):
     block_shape: tuple[int, int] | None
 
 
+# Entries of a periodic FE transfer archive root: the cover mesh and transfer
+# settings are authoritative; the periodic and distributed transfers are derived.
+PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS = frozenset(
+    {
+        "mesh/periodic-topology",
+        "transfer/settings",
+        "transfer/periodic",
+        "transfer/distributed",
+    }
+)
+
+
+class PeriodicFiniteElementTransferArchiveRecipe(NamedTuple):
+    """Identities a periodic FE transfer root recomputes from its mesh/settings.
+
+    Quotient maps, lifts, collapses and their entry, commuting, closure and
+    deck-descent evidence are derived data; the restore rebuilds them and
+    requires these stored identities.
+    """
+
+    transfer_id: str
+    map_id: str
+    lifted_evidence_id: str
+    quotient_evidence_id: str
+
+
+class DistributedFiniteElementTransferArchiveRecipe(NamedTuple):
+    """Per-degree DOF owner rows of a distributed periodic FE transfer.
+
+    The sparse owner plans are rebuilt from the periodic quotient transfer,
+    these rows and the root's part count; ``transfer_id`` binds the result.
+    """
+
+    source_owners: tuple[object, ...]
+    target_owners: tuple[object, ...]
+    transfer_id: str
+
+
 class _FiniteElementSpecArchiveProjection(NamedTuple):
     """Distinguish a projected executable FE element from a stored layout recipe."""
 
@@ -991,6 +1029,79 @@ def _finite_element_accepted_state_archive_recipe(
     )
 
 
+def _periodic_finite_element_transfer_root_archive_projection(
+    value: Any, /
+) -> Any | None:
+    """Store a periodic FE transfer root by its authoritative inputs only.
+
+    The root retains the cover mesh, the transfer settings and the per-degree
+    DOF owner rows. Every quotient operator, its evidence and the distributed
+    sparse plans derive from them, so the transfer entries keep identities
+    and owner rows, and the restore recomputes and requires them.
+    """
+    if (
+        type(value).__module__ != "phydrax.lifecycle._composition_rebind"
+        or type(value).__name__ != "Composition"
+        or frozenset(value.entry_ids) != PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS
+    ):
+        return None
+    from ..discretization.fem._de_rham import (
+        DistributedFiniteElementTransfer,
+        PeriodicFiniteElementTransfer,
+    )
+    from ..lifecycle._composition_rebind import Composition, CompositionEntry
+
+    entries = {entry.entry_id: entry for entry in value.entries}
+    periodic = entries["transfer/periodic"].value
+    distributed = entries["transfer/distributed"].value
+    if (
+        type(periodic) is PeriodicFiniteElementTransferArchiveRecipe
+        and type(distributed) is DistributedFiniteElementTransferArchiveRecipe
+    ):
+        return None
+    if (
+        type(periodic) is not PeriodicFiniteElementTransfer
+        or type(distributed) is not DistributedFiniteElementTransfer
+    ):
+        raise TypeError("Periodic FE transfer root must retain its typed transfers.")
+    if (
+        distributed.transfer_result.evidence_id
+        != periodic.quotient_transfer_result.evidence_id
+    ):
+        raise ValueError(
+            "Distributed FE transfer must distribute its root's periodic quotient."
+        )
+    compact = {
+        "transfer/periodic": PeriodicFiniteElementTransferArchiveRecipe(
+            periodic.transfer_id,
+            periodic.complex_map.map_id,
+            periodic.lifted_transfer_result.evidence_id,
+            periodic.quotient_transfer_result.evidence_id,
+        ),
+        "transfer/distributed": DistributedFiniteElementTransferArchiveRecipe(
+            tuple(np.asarray(item.source_owner) for item in distributed.degree_maps),
+            tuple(np.asarray(item.target_owner) for item in distributed.degree_maps),
+            distributed.transfer_id,
+        ),
+    }
+    return Composition(
+        tuple(
+            CompositionEntry(
+                compact.get(entry.entry_id, entry.value),
+                entry_id=entry.entry_id,
+                role=entry.role,
+                owner_id=entry.owner_id,
+                structure_id=entry.structure_id,
+                revision_id=entry.revision_id,
+                semantics_id=entry.semantics_id,
+                dependencies=entry.dependencies,
+            )
+            for entry in value.entries
+        ),
+        boundary_id=value.boundary_id,
+    )
+
+
 def _finite_volume_runtime_state_archive_recipe(
     value: Any, /
 ) -> FiniteVolumeRuntimeStateArchiveRecipe | None:
@@ -1207,6 +1318,9 @@ def model_archive_projection(value: Any, /) -> Any:
     state_recipe = _finite_element_accepted_state_archive_recipe(value)
     if state_recipe is not None:
         return model_archive_projection(state_recipe)
+    periodic_root = _periodic_finite_element_transfer_root_archive_projection(value)
+    if periodic_root is not None:
+        return model_archive_projection(periodic_root)
     fv_state_recipe = _finite_volume_runtime_state_archive_recipe(value)
     if fv_state_recipe is not None:
         return model_archive_projection(fv_state_recipe)

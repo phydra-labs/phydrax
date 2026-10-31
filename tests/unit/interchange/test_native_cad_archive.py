@@ -5248,20 +5248,25 @@ def test_periodic_distributed_fe_transfer_rebuilds_from_mesh_and_rejects_corrupt
     manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     _register_model_archive_types()
-    coefficient_leaf = next(
+    inventory = model_recipe_array_inventory(
+        manifest["model_recipe"], prefix="model/leaves", limits=None
+    )
+    # Derived quotient operators and evidence are recomputed from the mesh and
+    # settings on restore; only the authoritative owner rows are stored.
+    assert not any("coefficients" in entry.path for entry in inventory)
+    owner_leaf = next(
         (
             entry
-            for entry in model_recipe_array_inventory(
-                manifest["model_recipe"], prefix="model/leaves", limits=None
-            )
-            if "forward_coefficients" in entry.path and arrays[entry.name].size
+            for entry in inventory
+            if "source_owners" in entry.path and arrays[entry.name].size
         ),
         None,
     )
-    assert coefficient_leaf is not None
+    assert owner_leaf is not None
     damaged_arrays = {name: array.copy() for name, array in arrays.items()}
-    damaged_arrays[coefficient_leaf.name].flat[0] += 1.0
-    corrupted = tmp_path / "changed-periodic-distributed-fe-transfer.phx"
+    damaged_owners = damaged_arrays[owner_leaf.name]
+    damaged_owners.flat[0] = (damaged_owners.flat[0] + 1) % expected["settings"][5]
+    corrupted = tmp_path / "changed-periodic-distributed-fe-owner-row.phx"
     write_array_archive(
         corrupted,
         manifest=manifest,
