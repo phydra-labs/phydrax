@@ -976,6 +976,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _I64, _I64, _I64, _P, _P, _P, _P),
     ),
     "phx_mc_surface_envelope_free": (None, (_P,)),
+    "phx_mc_surface_envelope_remesh": (_I32, (_P, _P, _P)),
     "phx_mc_level_set_split_3d": (_I32, (ctypes.POINTER(_LevelSetSplit3DRequest),)),
     "phx_mc_mixed_template_counts": (_I32, (_I32, _I32, _I32, _P)),
     "phx_mc_mixed_template": (_I32, (_I32, _I32, _I32, _I64, _P)),
@@ -3128,6 +3129,7 @@ class SurfaceEnvelopeResult(NamedTuple):
     surface_triangles: np.ndarray
     volume_vertices: np.ndarray
     tetrahedra: np.ndarray
+    remesh_counters: np.ndarray | None = None
 
 
 # Periodic kernels also bound lattice (fractional) coordinates by 2**30 so that
@@ -3179,6 +3181,8 @@ def surface_envelope(
     spacing: float,
     certificate_spacing: float,
     /,
+    *,
+    remesh: bool = False,
 ) -> SurfaceEnvelopeResult:
     """Tetrahedralize an explicit unsigned-distance envelope around a triangle soup.
 
@@ -3187,6 +3191,14 @@ def surface_envelope(
     interpolation error in ``bounds``; it refuses when the offset cannot
     dominate those certified errors. This does not infer an interior from an
     unsigned zero set.
+
+    With ``remesh`` the extracted surface is remeshed in place toward edge length
+    ``2 * spacing`` and a 30 degree minimum angle; every edit keeps its triangles
+    inside the certified band ``[bounds[2], bounds[1]]`` and the surface an
+    embedded oriented closed 2-manifold, and ``bounds[0]`` is recomputed. The
+    tetrahedral carrier is then dropped (no tetrahedra; the volume vertices are
+    the surface vertices), and ``remesh_counters`` reports the splits, collapses,
+    flips, relocations and the triangles still below the angle or size target.
     """
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     faces = np.ascontiguousarray(
@@ -3234,6 +3246,16 @@ def surface_envelope(
             "surface_envelope_create returned no owned result handle.",
         )
     try:
+        remesh_counters: np.ndarray | None = None
+        if remesh:
+            remesh_counters = np.zeros((5,), dtype=np.int64)
+            _raise_for_call(
+                library["phx_mc_surface_envelope_remesh"](
+                    handle, bounds.ctypes.data, remesh_counters.ctypes.data
+                ),
+                "surface_envelope_remesh",
+            )
+            remesh_counters.setflags(write=False)
         sizes = np.empty((4,), dtype=np.int64)
         _raise_for_call(
             library["phx_mc_surface_envelope_sizes"](handle, sizes.ctypes.data),
@@ -3280,7 +3302,7 @@ def surface_envelope(
             surface_vertices.shape[0] == 0
             or surface_triangles.shape[0] == 0
             or volume_vertices.shape[0] == 0
-            or tetrahedra.shape[0] == 0
+            or (tetrahedra.shape[0] == 0) != remesh
             or np.any(~np.isfinite(bounds))
             or np.any(~np.isfinite(surface_vertices))
             or np.any(~np.isfinite(volume_vertices))
@@ -3307,6 +3329,7 @@ def surface_envelope(
             surface_triangles,
             volume_vertices,
             tetrahedra,
+            remesh_counters,
         )
     finally:
         library["phx_mc_surface_envelope_free"](handle)

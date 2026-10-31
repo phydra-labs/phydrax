@@ -262,10 +262,111 @@ void source_tetrahedron_envelope() {
   phx_mc_surface_envelope_free(handle);
 }
 
+// Remeshing keeps the certified band, closes an oriented 2-manifold, raises the
+// minimum angle, and drops the carrier.
+void remeshed_tetrahedron_envelope() {
+  constexpr double vertices[] = {
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  constexpr int64_t faces[] = {0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+  void* handle = nullptr;
+  std::array<double, 4> created{};
+  const phx_mc_surface_envelope_create_request request{
+      .vertices = vertices,
+      .vertex_count = 4,
+      .faces = faces,
+      .face_count = 4,
+      .offset = 0.5,
+      .spacing = 0.1,
+      .certificate_spacing = 0.1,
+      .result = &handle,
+      .bounds = created.data(),
+  };
+  PHX_CHECK(phx_mc_surface_envelope_create(&request) == PHX_MC_OK);
+  if (handle == nullptr) return;
+  auto minimum_angle = [](const std::vector<double>& points, const std::vector<int64_t>& tris) {
+    double minimum = 180.0;
+    for (size_t t = 0; t < tris.size(); t += 3)
+      for (int k = 0; k < 3; ++k) {
+        const double* p = points.data() + 3 * tris[t + k];
+        const double* q = points.data() + 3 * tris[t + (k + 1) % 3];
+        const double* r = points.data() + 3 * tris[t + (k + 2) % 3];
+        double u[3], v[3];
+        for (int d = 0; d < 3; ++d) {
+          u[d] = q[d] - p[d];
+          v[d] = r[d] - p[d];
+        }
+        const double cosine = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) /
+                              (std::hypot(u[0], u[1], u[2]) * std::hypot(v[0], v[1], v[2]));
+        minimum = std::min(minimum, std::acos(std::clamp(cosine, -1.0, 1.0)) * 180.0 / M_PI);
+      }
+    return minimum;
+  };
+  auto read = [&](std::vector<double>& points, std::vector<int64_t>& tris,
+                  std::array<int64_t, 4>& sizes) {
+    PHX_CHECK(phx_mc_surface_envelope_sizes(handle, sizes.data()) == PHX_MC_OK);
+    points.assign(static_cast<size_t>(3 * sizes[0]), 0.0);
+    tris.assign(static_cast<size_t>(3 * sizes[1]), -1);
+    std::vector<double> volume(static_cast<size_t>(3 * sizes[2]));
+    std::vector<int64_t> cells(static_cast<size_t>(4 * std::max<int64_t>(sizes[3], 1)));
+    PHX_CHECK(phx_mc_surface_envelope_arrays(handle, sizes[0], sizes[1], sizes[2], sizes[3],
+                                             points.data(), tris.data(), volume.data(),
+                                             cells.data()) == PHX_MC_OK);
+    if (sizes[3] == 0) PHX_CHECK(volume == points);
+  };
+  std::vector<double> before_points, after_points;
+  std::vector<int64_t> before_tris, after_tris;
+  std::array<int64_t, 4> before_sizes{}, after_sizes{};
+  read(before_points, before_tris, before_sizes);
+  std::array<double, 4> remeshed{};
+  std::array<int64_t, 5> counters{};
+  PHX_CHECK(phx_mc_surface_envelope_remesh(handle, remeshed.data(), counters.data()) ==
+            PHX_MC_OK);
+  read(after_points, after_tris, after_sizes);
+  PHX_CHECK(remeshed[1] == created[1] && remeshed[2] == created[2] && remeshed[3] == created[3]);
+  PHX_CHECK(remeshed[0] > 0.0 && std::isfinite(remeshed[0]));
+  PHX_CHECK(after_sizes[3] == 0 && after_sizes[2] == after_sizes[0]);
+  PHX_CHECK(counters[0] + counters[1] + counters[2] + counters[3] > 0);
+  PHX_CHECK(counters[4] >= 0 && counters[4] <= after_sizes[1]);
+  PHX_CHECK(minimum_angle(after_points, after_tris) > minimum_angle(before_points, before_tris));
+  // Closed oriented 2-manifold: every directed edge appears once, its reverse once.
+  std::map<std::pair<int64_t, int64_t>, int> directed;
+  for (size_t t = 0; t < after_tris.size(); t += 3)
+    for (int k = 0; k < 3; ++k) ++directed[{after_tris[t + k], after_tris[t + (k + 1) % 3]}];
+  for (const auto& [edge, count] : directed) {
+    PHX_CHECK(count == 1);
+    const auto reverse = directed.find({edge.second, edge.first});
+    PHX_CHECK(reverse != directed.end() && reverse->second == 1);
+  }
+  // Every remeshed vertex lies inside the band around the source tetrahedron.
+  for (int64_t v = 0; v < after_sizes[0]; ++v) {
+    const double* p = after_points.data() + 3 * v;
+    double nearest = std::numeric_limits<double>::infinity();
+    for (int f = 0; f < 4; ++f) {
+      const double* a = vertices + 3 * faces[3 * f];
+      const double* b = vertices + 3 * faces[3 * f + 1];
+      const double* c = vertices + 3 * faces[3 * f + 2];
+      // Dense barycentric sampling bounds the distance from above.
+      for (int i = 0; i <= 64; ++i)
+        for (int j = 0; i + j <= 64; ++j) {
+          double q[3];
+          for (int d = 0; d < 3; ++d)
+            q[d] = a[d] + (b[d] - a[d]) * i / 64.0 + (c[d] - a[d]) * j / 64.0;
+          nearest = std::min(nearest, std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]));
+        }
+    }
+    PHX_CHECK(nearest <= remeshed[1] + 0.03);
+    PHX_CHECK(nearest >= remeshed[2] - 0.03);
+  }
+  PHX_CHECK(phx_mc_surface_envelope_remesh(nullptr, remeshed.data(), counters.data()) ==
+            PHX_MC_INVALID_ARGUMENT);
+  phx_mc_surface_envelope_free(handle);
+}
+
 }  // namespace
 
 int main() {
   triangle_envelope();
   source_tetrahedron_envelope();
+  remeshed_tetrahedron_envelope();
   return phx::mc::test::finish("test_surface_envelope");
 }

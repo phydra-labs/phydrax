@@ -2908,12 +2908,14 @@ def _validate_surface_envelope_witness(
         raise ValueError(
             "Surface envelope witness identity does not reproduce its retained arrays."
         )
+    # The envelope is the band-constrained remesh of the kernel's extraction.
     fresh = surface_envelope(
         source._vertices,
         source._faces,
         witness.offset,
         witness.spacing,
         witness.certificate_spacing,
+        remesh=True,
     )
     if (
         not np.array_equal(fresh.bounds, witness.bounds)

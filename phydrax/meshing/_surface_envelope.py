@@ -468,12 +468,15 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 stage="source_inspection",
             )
         try:
+            # The marching-tetrahedra surface is remeshed inside the certified
+            # band: same band bounds, embedded oriented manifold, better angles.
             result = surface_envelope(
                 source_vertices,
                 source_triangles,
                 controls[0],
                 controls[1],
                 controls[2],
+                remesh=True,
             )
         except MeshcoreError as error:
             raise _failure(
@@ -639,6 +642,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 self.offset,
                 self.spacing,
                 self.certificate_spacing,
+                remesh=True,
             )
         except MeshcoreError as error:
             raise ValueError(
@@ -1463,6 +1467,14 @@ def _compliance(
             ("source_envelope_envelope_to_input_lower", float(source.result.bounds[2])),
         )
     )
+    counters = source.result.remesh_counters
+    if counters is not None:
+        achieved.append(
+            (
+                "source_envelope_surface_triangles_below_angle_or_size_target",
+                float(counters[4]),
+            )
+        )
     if isinstance(source.original, AuthoredTriangleSheet):
         achieved.extend(
             (f"source_topology_repair:{name}", float(value))
