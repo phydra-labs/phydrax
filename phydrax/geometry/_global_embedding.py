@@ -1713,6 +1713,34 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 "Global embedding periodic restriction proof must retain its current transition premise."
             )
 
+    def require_inputs(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        validity: CellValidityCertificate,
+        /,
+        *,
+        junction_vertices: ArrayLike | None = None,
+    ) -> None:
+        """Require this computed proof to be the one these inputs determine.
+
+        The theorem is a deterministic function of the mesh, coordinate map,
+        local-validity proof, junction set and periodic premises. When every
+        content identity equals the bound one, a consumer may reuse this
+        in-hand certificate instead of recomputing it; nothing is looked up.
+        """
+        if not isinstance(validity, CellValidityCertificate):
+            raise TypeError("validity must be CellValidityCertificate.")
+        self.require_current(mesh, geometry, validity=validity)
+        if self.binding.junction_vertices != _junction_ids(mesh, junction_vertices):
+            raise ValueError(
+                "Global embedding certificate binds another declared junction set."
+            )
+        if self.periodic_restriction_premise is not None:
+            raise ValueError(
+                "A periodic-restriction embedding proof answers a different premise set."
+            )
+
     @classmethod
     def from_stored_fields(
         cls, value: GlobalEmbeddingCertificate, /

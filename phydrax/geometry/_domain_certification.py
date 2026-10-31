@@ -941,6 +941,7 @@ def _coverage_boundary_partition(
                 preparation.cell_regions,
                 fidelity.witness,
                 source_coverage_witness,
+                embedding=embedding,
             )
         except RestrictedDelaunayCoverageUnavailable as error:
             findings.append(

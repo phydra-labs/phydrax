@@ -181,6 +181,14 @@ The report composes global embedding, source coverage, continuous fidelity,
 and applicable feature obligations. Unsupported proofs remain unresolved, not
 successful. `report.revalidate(mesh, geometry)` independently recomputes the
 proofs; stored IDs or a passed flag are not substitutes for source operands.
+The global-embedding theorem is computed once per mesh, coordinate map and
+validity policy and handed on explicitly: a route that already proved it
+passes the certificate in its certification request (or
+`certify_cell_mesh(..., embedding=...)`), and `revalidate(..., embedding=...)`
+accepts an in-hand certificate. Each consumer, including restricted-Delaunay
+coverage replay, reuses it only after checking that it binds the same mesh,
+coordinate map, local-validity proof and junction set; there is no process
+cache.
 Missing continuous fidelity witnesses produce an unresolved certificate with
 unbounded directed deviation evidence. Those bounds remain infinity; they are
 not replaced with finite estimates or accepted merely because mesh samples agree.

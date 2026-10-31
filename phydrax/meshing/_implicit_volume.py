@@ -32,8 +32,12 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec
-from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    certify_cell_geometry_validity,
+)
 from ..discretization._cell_mesh import CellMesh, TetrahedralConnectivity
+from ..geometry._global_embedding import certify_global_embedding
 from ..geometry._source_boundary_records import (
     SourceBoundaryDistanceWitness,
     SourceBoundarySamples,
@@ -2662,6 +2666,14 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
                 deviation_upper,
             )
             cell_regions = np.zeros((mesh.blocks[0].cell_count,), dtype=np.int32)
+            # The exact global embedding is computed once here and passed to
+            # the coverage replay and to acceptance, which check its inputs.
+            validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+            embedding = (
+                certify_global_embedding(mesh, geometry, validity)
+                if validity.all_certified
+                else None
+            )
             validate_restricted_delaunay_boundary_witness(
                 mesh,
                 geometry,
@@ -2669,6 +2681,7 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
                 cell_regions,
                 fidelity_witness,
                 coverage_witness,
+                embedding=embedding,
             )
             certification = NativeCertificationRequest(
                 MeshCertificationSchedule("volume_implicit"),
@@ -2681,6 +2694,7 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
                 fidelity_witness=fidelity_witness,
                 feature_source=profile,
                 source_coverage_witness=coverage_witness,
+                global_embedding=embedding,
             )
             return NativeMeshConstruction(
                 mesh,

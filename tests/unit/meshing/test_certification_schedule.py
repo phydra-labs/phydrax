@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
+from phydrax.discretization._cell_geometry_validity import (
+    certify_cell_geometry_validity,
+)
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._global_embedding import certify_global_embedding
 from phydrax.meshing._certification import MeshCertificationReport
 from phydrax.meshing._certification_inputs import MeshCertificationInputs
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
@@ -123,6 +127,46 @@ def test_acceptance_renews_without_inventing_absent_metric_quality() -> None:
     )
     with pytest.raises(ValueError):
         report.revalidate(mesh, moved)
+
+
+def test_acceptance_reuses_only_an_embedding_bound_to_its_inputs() -> None:
+    mesh, geometry, domain = _planar_inputs()
+    inputs = MeshCertificationInputs(
+        mesh,
+        geometry,
+        MeshCertificationSchedule("planar"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        domain=domain,
+        cell_regions=np.asarray((0,), dtype=np.int64),
+        junction_vertices=np.asarray((), dtype=np.int64),
+        protected_features=(),
+    )
+    prepared = certify_global_embedding(
+        mesh, geometry, certify_cell_geometry_validity(geometry, mesh=mesh)
+    )
+    report = MeshCertificationReport(inputs, embedding=prepared)
+    assert report.passed
+    assert report.embedding is prepared
+    assert report.report_id == MeshCertificationReport(inputs).report_id
+    report.revalidate(mesh, geometry, embedding=prepared)
+
+    elements, routes, coordinates = geometry.resolve(mesh)
+    moved = CellGeometrySpec(
+        {
+            block.name: element
+            for block, element in zip(mesh.blocks, elements, strict=True)
+        },
+        {block.name: route for block, route in zip(mesh.blocks, routes, strict=True)},
+        coordinates * 2.0,
+    )
+    foreign = certify_global_embedding(
+        mesh, moved, certify_cell_geometry_validity(moved, mesh=mesh)
+    )
+    with pytest.raises(ValueError, match="MeshCertificateBinding"):
+        MeshCertificationReport(inputs, embedding=foreign)
+    with pytest.raises(ValueError, match="MeshCertificateBinding"):
+        report.revalidate(mesh, geometry, embedding=foreign)
 
 
 def test_local_mesh_validity_does_not_replace_source_domain_coverage() -> None:
