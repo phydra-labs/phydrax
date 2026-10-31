@@ -652,7 +652,7 @@ void convex_bipyramid_reports_unresolved_radius_edge() {
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t improve_status =
-      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12},
+      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {},
                    inserted, collapsed, relocated, unmet);
   if (improve_status != PHX_MC_UNRESOLVED || unmet != 1 ||
       mesh.unmet_records().size() != 1 ||
@@ -815,7 +815,7 @@ void unresolved_radius_target_reports_residuals_without_losing_constraints() {
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t status = improve_mesh(
-      mesh, TetQualityRequest{0.5, 10.0, 0.0}, inserted, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{0.5, 10.0, 0.0}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(status == PHX_MC_UNRESOLVED);
   PHX_CHECK(inserted >= 0 && collapsed >= 0 && relocated >= 0 && unmet > 0);
   PHX_CHECK(!mesh.unmet_records().empty());
@@ -825,7 +825,7 @@ void unresolved_radius_target_reports_residuals_without_losing_constraints() {
                                  record.value > 0.5;
                         }));
   const std::int32_t angle_status = improve_mesh(
-      mesh, TetQualityRequest{2.0, 70.49, 0.0}, inserted, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{2.0, 70.49, 0.0}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(angle_status == PHX_MC_UNRESOLVED);
   PHX_CHECK(std::any_of(mesh.unmet_records().begin(), mesh.unmet_records().end(),
                         [](const TetUnmetRecord& record) {
@@ -877,7 +877,7 @@ void unrepresentable_positive_sliver_is_measured_not_refused() {
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t status = improve_mesh(
-      mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, inserted, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(status == PHX_MC_UNRESOLVED);
   TetMeshSnapshot after;
   PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
@@ -1018,7 +1018,7 @@ void fixed_mapped_cube_slivers_are_improved_transactionally() {
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t improve_status =
-      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12},
+      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {},
                    improvement_inserted, collapsed, relocated, unmet);
   PHX_CHECK(improve_status == PHX_MC_OK);
   PHX_CHECK(improvement_inserted >= 0 && collapsed >= 0 && relocated >= 0 && unmet == 0);
@@ -1250,12 +1250,14 @@ void relocation_metric_cache_is_bitwise_exact() {
         geometry::TetrahedronShape reference_shape;
         const bool reference_shape_valid =
             geometry::tetrahedron_shape(points.data(), reference_shape);
-        double cached_ratio = 0.0;
-        const bool cached_shape_valid = geometry::relocation_radius_edge_ratio(
-            points.data(), cache, cached_ratio);
+        geometry::TetrahedronShape cached_shape;
+        const bool cached_shape_valid = geometry::relocation_tetrahedron_shape(
+            points.data(), cache, cached_shape);
         PHX_CHECK(cached_shape_valid == reference_shape_valid);
         if (cached_shape_valid && reference_shape_valid) {
-          PHX_CHECK(same_bits(cached_ratio, reference_shape.radius_edge_ratio));
+          PHX_CHECK(same_bits(cached_shape.radius_edge_ratio,
+                              reference_shape.radius_edge_ratio));
+          PHX_CHECK(same_bits(cached_shape.circumradius, reference_shape.circumradius));
         }
         PHX_CHECK(same_bits(
             geometry::relocation_minimum_dihedral_degrees(points.data(), cache),
@@ -1308,10 +1310,10 @@ void hexagonal_ring_reconnects_and_is_slot_invariant() {
   std::int64_t second_unmet = 0;
   const TetQualityRequest request{1.5, 10.0, 1.0e-12};
   const std::int32_t first_status =
-      improve_mesh(first_mesh, request, first_inserted, first_collapsed,
+      improve_mesh(first_mesh, request, {}, first_inserted, first_collapsed,
                    first_relocated, first_unmet);
   const std::int32_t second_status =
-      improve_mesh(second_mesh, request, second_inserted, second_collapsed,
+      improve_mesh(second_mesh, request, {}, second_inserted, second_collapsed,
                    second_relocated, second_unmet);
   PHX_CHECK(first_status == PHX_MC_OK && second_status == PHX_MC_OK);
   PHX_CHECK(first_unmet == 0 && second_unmet == 0);
@@ -1370,7 +1372,7 @@ void concave_ring_uses_only_oriented_dp_cavities() {
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t status = improve_mesh(
-      mesh, TetQualityRequest{5.0, 10.0, 1.0e-12}, inserted, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{5.0, 10.0, 1.0e-12}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(status == PHX_MC_OK);
   PHX_CHECK(inserted == 0 && collapsed == 0 && relocated == 0 && unmet == 0);
   TetMeshSnapshot after;
@@ -1416,7 +1418,7 @@ void mixed_region_high_ring_refuses_transaction() {
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t status = improve_mesh(
-      mesh, TetQualityRequest{1.5, 10.0, 1.0e-12}, inserted, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{1.5, 10.0, 1.0e-12}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(status == PHX_MC_UNRESOLVED && unmet > 0);
   PHX_CHECK(inserted == 0 && collapsed == 0 && relocated == 0);
   TetMeshSnapshot after;
@@ -1465,10 +1467,10 @@ void interior_collapse_is_slot_order_invariant() {
   std::int64_t second_unmet = 0;
   const TetQualityRequest request{2.0, 10.0, 1.0e-12};
   const std::int32_t first_status =
-      improve_mesh(first_mesh, request, first_inserted, first_collapsed,
+      improve_mesh(first_mesh, request, {}, first_inserted, first_collapsed,
                    first_relocated, first_unmet);
   const std::int32_t second_status =
-      improve_mesh(second_mesh, request, second_inserted, second_collapsed,
+      improve_mesh(second_mesh, request, {}, second_inserted, second_collapsed,
                    second_relocated, second_unmet);
   PHX_CHECK(first_status == second_status);
   PHX_CHECK(first_collapsed > 0 && second_collapsed > 0);

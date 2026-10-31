@@ -111,13 +111,10 @@ bool tetrahedron_shape(const double* const points[4], TetrahedronShape& shape) n
   return tetrahedron_shape_impl<false>(points, nullptr, shape);
 }
 
-bool relocation_radius_edge_ratio(const double* const points[4],
+bool relocation_tetrahedron_shape(const double* const points[4],
                                   const RelocationMetricCache& cache,
-                                  double& ratio) noexcept {
-  TetrahedronShape shape;
-  if (!tetrahedron_shape_impl<true>(points, &cache, shape)) return false;
-  ratio = shape.radius_edge_ratio;
-  return true;
+                                  TetrahedronShape& shape) noexcept {
+  return tetrahedron_shape_impl<true>(points, &cache, shape);
 }
 
 }  // namespace phx::mc::geometry
