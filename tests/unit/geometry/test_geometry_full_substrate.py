@@ -633,14 +633,27 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative() -> None:
         atol=1e-9,
     )
 
-    singular = phx.geometry.BSplineCurve(
-        [[0.0, 0.0], [1.0, 0.0]],
-        [1.0, -1.0],
-        [0.0, 0.0, 1.0, 1.0],
-        1,
-    )
-    with pytest.raises(eqx.EquinoxRuntimeError, match="denominator"):
-        jax.block_until_ready(eqx.filter_jit(singular.evaluate)(jnp.asarray(0.5)))
+    # Positive weights are the rational CAD admissibility contract: concrete
+    # weights are refused at construction, traced weights at execution.
+    with pytest.raises(ValueError, match="weights must be positive"):
+        phx.geometry.BSplineCurve(
+            [[0.0, 0.0], [1.0, 0.0]],
+            [1.0, -1.0],
+            [0.0, 0.0, 1.0, 1.0],
+            1,
+        )
+
+    def traced_value(second_weight: Any) -> Any:
+        curve = phx.geometry.BSplineCurve(
+            [[0.0, 0.0], [1.0, 0.0]],
+            jnp.stack((jnp.asarray(1.0), second_weight)),
+            [0.0, 0.0, 1.0, 1.0],
+            1,
+        )
+        return curve.evaluate(jnp.asarray(0.5))
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="weights must be positive"):
+        jax.block_until_ready(eqx.filter_jit(traced_value)(jnp.asarray(-1.0)))
 
 
 def test_occt_bspline_import_matches_native_surface_differential() -> None:
