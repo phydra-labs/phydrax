@@ -2,9 +2,9 @@ from fractions import Fraction
 
 import jax.numpy as jnp
 import numpy as np
+
 from phydrax._interpolation import TMesh2D
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry._source_boundary_records import SourceProjectionStatus
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
     MeshingDomainCurve,
@@ -12,30 +12,32 @@ from phydrax.geometry._meshing_domain import (
     MeshingSurfacePatch,
     PatchCurveUse,
 )
+from phydrax.geometry._source_boundary_records import SourceProjectionStatus
 from phydrax.geometry.brep._constructors import (
+    assemble_brep_model,
+    brep_planar_face,
     PlanarProfile,
     ProfileLoop,
     ProfilePlane,
-    assemble_brep_model,
-    brep_planar_face,
 )
-from phydrax.geometry.brep._projection import prepare_brep_projection
-from phydrax.geometry.brep._projection_contracts import brep_entity_id
 from phydrax.geometry.brep._intersection import intersect_surface_regions
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve, SurfaceRegion
-from phydrax.geometry.brep._tspline import TSplineSurfacePatch
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import LineCurve, PlanePatch
+from phydrax.geometry.brep._projection import prepare_brep_projection
+from phydrax.geometry.brep._projection_contracts import brep_entity_id
+from phydrax.geometry.brep._tspline import TSplineSurfacePatch
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
     SurfaceMeshingSpec,
 )
+from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
+from phydrax.meshing.providers import NativeMeshingProvider
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_schedules import NativeSurfaceSchedule
-from phydrax.meshing.providers._native_surface import prepare_native_surface
 
 
 _CONTRACT = SpatialCoordinateContract.si()
@@ -45,9 +47,7 @@ def _tspline_surface_model() -> BRepModel:
     base = brep_planar_face(
         PlanarProfile(
             ProfilePlane(),
-            ProfileLoop.polygon(
-                ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-            ),
+            ProfileLoop.polygon(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         ),
         coordinate_contract=_CONTRACT,
     )
@@ -55,13 +55,22 @@ def _tspline_surface_model() -> BRepModel:
         tuple(Fraction(index, 4) for index in range(5)),
         tuple(Fraction(index, 4) for index in range(5)),
     )
+
+    def bump_blossom(knots: tuple[Fraction, ...]) -> Fraction:
+        # Cubic blossom of t(1 - t) at the interior local knots; these controls
+        # reproduce the quadratic exactly.
+        first, second, third = knots[1:4]
+        return (first + second + third) / 3 - (
+            first * second + first * third + second * third
+        ) / 3
+
     exact_controls = tuple(
         (
-            u,
-            v,
-            u * (1 - u) * v * (1 - v) / 4,
+            anchor.local_knots.greville_parameter[0],
+            anchor.local_knots.greville_parameter[1],
+            bump_blossom(anchor.local_knots.u) * bump_blossom(anchor.local_knots.v) / 4,
         )
-        for u, v in (anchor.local_knots.greville_parameter for anchor in mesh.anchors)
+        for anchor in mesh.anchors
     )
     patch = TSplineSurfacePatch(
         mesh,
@@ -101,6 +110,20 @@ def _surface_specification(domain: MeshingDomain) -> SurfaceMeshingSpec:
     )
 
 
+def _certified_surface_mesh(domain: MeshingDomain) -> CellMeshingResult:
+    """Mesh through the public native plan, which certifies the candidate."""
+    return (
+        NativeMeshingProvider(
+            NativeMeshingOptions(
+                "parametric_surface",
+                surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.45),
+            )
+        )
+        .plan(domain, _surface_specification(domain), coordinate_contract=_CONTRACT)
+        .execute()
+    )
+
+
 def test_t_spline_projection_and_native_meshing_retain_source_geometry() -> None:
     model = _tspline_surface_model()
     projection = prepare_brep_projection(model)
@@ -117,16 +140,8 @@ def test_t_spline_projection_and_native_meshing_retain_source_geometry() -> None
     np.testing.assert_allclose(projected.points, (expected,), atol=1.0e-12)
 
     domain = MeshingDomain.from_brep(model)
-    construction = prepare_native_surface(
-        domain,
-        _surface_specification(domain),
-        NativeMeshingOptions(
-            "parametric_surface",
-            surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.45),
-        ),
-        _CONTRACT,
-    ).execute()
-    mesh_coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    result = _certified_surface_mesh(domain)
+    mesh_coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)
     chart_samples = np.asarray(
         ((0.125, 0.25), (0.5, 0.5), (0.875, 0.75)), dtype=np.float64
     )
@@ -139,9 +154,9 @@ def test_t_spline_projection_and_native_meshing_retain_source_geometry() -> None
         / 4.0
     )
 
-    assert construction.mesh.topological_dimension == 2
-    assert construction.certification.passed
-    assert construction.compliance.passed
+    assert result.mesh.topological_dimension == 2
+    assert result.certification is not None and result.certification.passed
+    assert result.compliance.passed
     np.testing.assert_allclose(sampled_surface[:, :2], chart_samples, atol=1.0e-12)
     np.testing.assert_allclose(sampled_surface[:, 2], expected_height, atol=1.0e-12)
     assert np.all(np.isfinite(mesh_coordinates))
@@ -237,9 +252,7 @@ def _intersection_trim_domain(
 def test_certified_t_spline_intersection_pcurve_drives_native_trimmed_mesh() -> None:
     patch = _nonuniform_transverse_patch()
     result = intersect_surface_regions(
-        SurfaceRegion(
-            patch, np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)
-        ),
+        SurfaceRegion(patch, np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)),
         SurfaceRegion(
             PlanePatch(
                 (0.0, 0.0, 0.5),
@@ -253,16 +266,8 @@ def test_certified_t_spline_intersection_pcurve_drives_native_trimmed_mesh() -> 
     branch = result.curves[0]
     assert branch.fully_certified
     domain = _intersection_trim_domain(patch, branch)
-    construction = prepare_native_surface(
-        domain,
-        _surface_specification(domain),
-        NativeMeshingOptions(
-            "parametric_surface",
-            surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.45),
-        ),
-        _CONTRACT,
-    ).execute()
-    mesh_coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    result = _certified_surface_mesh(domain)
+    mesh_coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)
     curve_use = domain.patches[0].loops[0][2]
     boundary_parameters = np.linspace(
         curve_use.first, curve_use.last, 33, dtype=np.float64
@@ -270,11 +275,10 @@ def test_certified_t_spline_intersection_pcurve_drives_native_trimmed_mesh() -> 
     boundary_uv = curve_use.pcurve.evaluate(jnp.asarray(boundary_parameters))
     boundary_points = patch.evaluate(boundary_uv)
 
-    assert construction.mesh.topological_dimension == 2
-    assert construction.certification.passed and construction.compliance.passed
-    assert construction.organization.surface_source is not None
-    assert construction.organization.surface_source.domain.domain_id == domain.domain_id
+    assert result.mesh.topological_dimension == 2
+    assert result.certification is not None and result.certification.passed
+    assert result.compliance.passed
+    assert result.surface_source is not None
+    assert result.surface_source.domain.domain_id == domain.domain_id
     assert float(np.max(mesh_coordinates[:, 2])) <= 0.5 + 2.0e-2
     np.testing.assert_allclose(np.asarray(boundary_points)[:, 2], 0.5, atol=2.0e-8)
-
-

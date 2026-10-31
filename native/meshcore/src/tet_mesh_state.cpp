@@ -460,6 +460,26 @@ int32_t TetMesh::build_state(std::span<const double> points,
   return PHX_MC_OK;
 }
 
+int32_t TetMesh::install_vertex_sizes(const TetMeshSnapshot& current,
+                                      std::span<const double> sizes) {
+  if (sizes.empty()) return PHX_MC_OK;
+  if (sizes.size() != current.vertices.size()) return PHX_MC_INVALID_ARGUMENT;
+  for (double size : sizes) {
+    if (!std::isfinite(size) || size < 0.0) return PHX_MC_INVALID_INPUT;
+  }
+  try {
+    std::unordered_map<std::uint64_t, double> installed;
+    installed.reserve(sizes.size());
+    for (std::size_t row = 0; row < sizes.size(); ++row) {
+      if (sizes[row] > 0.0) installed.emplace(current.vertices[row].id, sizes[row]);
+    }
+    vertex_sizes_.swap(installed);
+    return PHX_MC_OK;
+  } catch (const std::bad_alloc&) {
+    return PHX_MC_ALLOCATION_FAILURE;
+  }
+}
+
 void TetMesh::copy_state_to(TetMesh& destination) const {
   destination.complex_ = complex_;
   destination.points_ = points_;
@@ -489,6 +509,7 @@ void TetMesh::copy_state_to(TetMesh& destination) const {
   destination.periodic_orbits_ = periodic_orbits_;
   destination.quotient_cells_ = quotient_cells_;
   destination.periodic_entity_maps_ = periodic_entity_maps_;
+  destination.vertex_sizes_ = vertex_sizes_;
   destination.vertex_slots_ = vertex_slots_;
   destination.cell_slots_ = cell_slots_;
   destination.used_vertex_ids_ = used_vertex_ids_;
@@ -542,6 +563,7 @@ void TetMesh::swap_state(TetMesh& other) noexcept {
   swap(periodic_orbits_, other.periodic_orbits_);
   swap(quotient_cells_, other.quotient_cells_);
   swap(periodic_entity_maps_, other.periodic_entity_maps_);
+  swap(vertex_sizes_, other.vertex_sizes_);
   swap(vertex_slots_, other.vertex_slots_);
   swap(cell_slots_, other.cell_slots_);
   swap(used_vertex_ids_, other.used_vertex_ids_);

@@ -228,4 +228,25 @@ the same scalar. Export proceeds only when continuous whole-domain bounds cover
 those errors, branch-local axes, nonlocal separation, and relevant trim
 separation. The export report records this as a geometry-changing approximation
 loss. Without the explicit fit policy, the non-rational intersection branch is
-refused.
+refused. A fitted carrier only interpolates its endpoints, so the vertices it
+touches are no longer exact source roots in the exported geometry; their
+root-supported endpoint bindings are released with them.
+
+## Periodic seams, poles, and recovered p-curves
+
+Closed periodic faces round-trip through STEP, IGES, and BRep text without
+rounding their native turn. A seam used on both chart sheets, a whole-turn ring,
+and a collapsed cap pole are recognized from exact period evidence: an affine
+isoline at an exact multiple of the binary period. IGES has no line p-curve
+entity, so a degree-one B-spline p-curve counts only when it is exactly that
+isoline over the authored edge range. Each coedge of a shared full-turn edge
+binds its endpoints to its own face, using the declared period of that face's
+surface or else the p-curve's own native turn. Pole vertices keep their file
+coordinates as exact source values.
+
+When a file omits p-curves, import recovers only exact source maps. A circle
+that is a height section of a cylinder, with the cylinder's own phase, maps to
+the isoline `(t, h)`. A circle in a plane exactly parallel to a planar face maps
+to its orthogonal chart circle. Its normal offset is not hidden: publication
+certifies it as a face gap that must lie within the import tolerance. Other
+combinations are refused rather than fitted.

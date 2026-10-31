@@ -3225,6 +3225,7 @@ def _same_carrier_source(first: object, second: object, /) -> bool:
 
 
 def _endpoint_binds_carrier(endpoint: object, carrier: AbstractCurve, /) -> bool:
+    from ._boolean_core import affine_transport_source
     from ._intersection import (
         BranchRootEndpoint,
         ConicParameterEndpoint,
@@ -3235,7 +3236,11 @@ def _endpoint_binds_carrier(endpoint: object, carrier: AbstractCurve, /) -> bool
         TrimRootEndpoint,
     )
 
-    source = carrier.curve if isinstance(carrier, CurveTrimSegment) else carrier
+    # A proved coincident chart transport keeps the source p-curve's parameter
+    # and roots unchanged; bind both sides against that source carrier.
+    source = affine_transport_source(
+        carrier.curve if isinstance(carrier, CurveTrimSegment) else carrier
+    )
     if isinstance(source, IntersectionPCurve) and source.reversed:
         if isinstance(endpoint, BranchRootEndpoint) or (
             isinstance(endpoint, TrimRootEndpoint)
@@ -3251,9 +3256,9 @@ def _endpoint_binds_carrier(endpoint: object, carrier: AbstractCurve, /) -> bool
             # traversal rather than changing only the source p-curve's map.
             return False
     if isinstance(endpoint, ConicParameterEndpoint):
-        return _same_carrier_source(endpoint.carrier, source)
+        return _same_carrier_source(affine_transport_source(endpoint.carrier), source)
     if isinstance(endpoint, NativePeriodEndpoint):
-        return _same_carrier_source(endpoint.curve, source)
+        return _same_carrier_source(affine_transport_source(endpoint.curve), source)
     if isinstance(endpoint, BranchRootEndpoint):
         if endpoint.source_pcurve is not None and _same_carrier_source(
             endpoint.source_pcurve, source

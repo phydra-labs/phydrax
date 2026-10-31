@@ -17,6 +17,7 @@ from phydrax.meshing._contracts import (
     UniformSizeControl,
 )
 from phydrax.meshing._scope import MeshingScope
+from phydrax.meshing._sizing import SizeControlStrength
 from phydrax.meshing.providers import NativeMeshingProvider
 
 from .._runtime import (
@@ -92,14 +93,14 @@ def _surface_samples(kind: str, count: int, rng: np.random.Generator) -> np.ndar
 
 
 def _defective_samples(
-    kind: str, count: int, seed: int
+    kind: str, count: int, seed: int, cap_radius: float
 ) -> tuple[np.ndarray, dict[str, object]]:
     rng = np.random.default_rng(seed)
     clean = _surface_samples(kind, count, rng)
     local = clean - _CENTER
     peak = float(np.max(local @ _CAP_DIRECTION))
     cap_center = peak * _CAP_DIRECTION
-    cap = np.linalg.norm(local - cap_center, axis=1) < 0.06
+    cap = np.linalg.norm(local - cap_center, axis=1) < cap_radius
     kept = ~cap
     x_extent = float(np.max(np.abs(local[:, 0])))
     low_density = local[:, 0] < -0.5 * x_extent
@@ -122,7 +123,7 @@ def _defective_samples(
         "injected_outliers": outlier_count,
         "noise_standard_deviation": 0.0008,
         "cap_direction": _CAP_DIRECTION.tolist(),
-        "cap_radius": 0.06,
+        "cap_radius": cap_radius,
         "density_drop": "every second sample in x < -0.5 max(|x|)",
     }
 
@@ -207,7 +208,12 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
     count = 320 * scale
     spacing = 0.08 / scale
     coverage_distance = 2.0 * spacing
-    points, input_record = _defective_samples(kind, count, 1709 + scale + len(kind))
+    # The missing cap must exceed the declared coverage distance, or no surface
+    # point lies farther than it from every sample and the gap is undetectable.
+    cap_radius = 1.5 * coverage_distance
+    points, input_record = _defective_samples(
+        kind, count, 1709 + scale + len(kind), cap_radius
+    )
     robustness = ReconstructionRobustness(
         outlier_std_ratio=2.0,
         coverage_distance=coverage_distance,
@@ -264,10 +270,16 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
 
     contract = SpatialCoordinateContract.si()
     scope = MeshingScope.whole(source, 2)
+    # The reconstructed route conforms to the source triangles and can only
+    # red-refine them. They are already finer than 2 * spacing, so a hard
+    # target there would demand coarsening; the size is a preference.
+    size_control = UniformSizeControl(
+        scope, 2.0 * spacing, strength=SizeControlStrength.SOFT
+    )
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
         scope,
-        size_controls=(UniformSizeControl(scope, 2.0 * spacing),),
+        size_controls=(size_control,),
         maximum_deviation=source_deviation_tolerance,
     )
     plan = NativeMeshingProvider().plan(
@@ -275,13 +287,24 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
     )
     result = plan.execute()
     accepted = accepted_result_record(result)
-    if (
-        result.surface_source is None
-        or result.certification is None
-        or result.certification.fidelity is None
-    ):
+    # The reconstructed route certifies fidelity against the reconstructed
+    # triangle source itself; it publishes no MeshingDomain chart bank.
+    if result.certification is None or result.certification.fidelity is None:
         raise RuntimeError(
             f"{kind} native surface consumption omitted source fidelity evidence."
+        )
+    # The soft size preference stays unmet, as declared: the result keeps the
+    # source triangles unrefined and reports a median edge finer than requested.
+    achieved_size = dict(result.compliance.achieved)
+    median_edge = achieved_size.get(f"size:{size_control.control_id}:p50_edge")
+    if (
+        median_edge is None
+        or not median_edge < size_control.target_size
+        or accepted["cells"] != report.output_cells
+    ):
+        raise RuntimeError(
+            f"{kind} reconstructed surface size evidence changed: median edge {median_edge}, "
+            f"target {size_control.target_size}, cells {accepted['cells']} vs source {report.output_cells}."
         )
     mesh_vertices = np.asarray(result.mesh.coordinates, dtype=np.float64) + np.asarray(
         report.recenter_offset, dtype=np.float64
@@ -339,6 +362,9 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
             "sample_to_surface_max_m": report.deviation_evidence.sample_to_surface_max,
             "surface_to_sample_max_m": report.deviation_evidence.surface_to_sample_max,
             "unsupported_repair_patches": report.coverage_evidence.unsupported_patches,
+            "missing_cap_radius_m": cap_radius,
+            "surface_size_preference_m": size_control.target_size,
+            "surface_median_edge_m": median_edge,
         },
         "required_features": [
             "no supplied normals",
