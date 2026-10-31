@@ -183,6 +183,20 @@ def _validate_initial_epoch(
     /,
 ) -> None:
     case = _ordinary_case(plan)
+    if plan.runtime is not None:
+        # A bound prepared runtime may continue a journal past topology events
+        # (or own an owner-local partition): its current epoch and artifacts,
+        # not the journal origin, must be the ones this case prepares.
+        current = journal.artifact_table[-1]
+        if (
+            journal.current_epoch_id != plan.runtime.topology_epoch_id
+            or current.epoch_id != plan.runtime.topology_epoch_id
+            or current.prepared_id != case.discretization_id
+        ):
+            raise ValueError(
+                "Finite-volume checkpoint current topology epoch is incompatible."
+            )
+        return
     initial = journal.epoch_table[0]
     artifacts = journal.artifact_table[0]
     if (

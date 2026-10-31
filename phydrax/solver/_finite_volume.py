@@ -133,6 +133,68 @@ class FiniteVolumeStageDecisionProvider(StrictModule, NonTrainableState):
         return result
 
 
+class FiniteVolumeStageRouteProvider(StrictModule, NonTrainableState):
+    """Collective hook routing ghost-row interface debits to their cell owners.
+
+    The callback receives one limited stage ledger and returns, in ledger cell
+    rows, the content rates this rank's owned cells receive from routes other
+    ranks evaluated against their ghost copies of those cells. The local ledger
+    keeps those routes, so the global ledger balance equals the owned change.
+    """
+
+    callback: Callable[[ConservationStageLedger], ArrayLike]
+    provider_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        callback: Callable[[ConservationStageLedger], ArrayLike],
+        /,
+        *,
+        provider_id: str,
+    ) -> None:
+        identity = str(provider_id)
+        if not callable(callback):
+            raise TypeError("callback must be callable.")
+        if not identity:
+            raise ValueError("provider_id must be non-empty.")
+        self.callback = callback
+        self.provider_id = identity
+
+    def __call__(self, ledger: ConservationStageLedger, /) -> Array:
+        routed = jnp.asarray(self.callback(ledger))
+        if routed.shape != (ledger.cell_count, *ledger.component_shape):
+            raise ValueError("Stage-route provider output must match the ledger cells.")
+        return routed
+
+
+def _routed_stage_content(
+    provider: FiniteVolumeStageRouteProvider | None,
+    system: Any,
+    euler_content: Array,
+    ledger: ConservationStageLedger,
+    increment: Array,
+    target_volumes: Array,
+    owned_cell_mask: Array | None,
+    /,
+) -> tuple[Array, Array]:
+    """Add routed owner debits to one limited Euler stage and recheck its cells."""
+    if provider is None:
+        return euler_content, jnp.asarray(True)
+    content = euler_content + (increment * provider(ledger)).astype(euler_content.dtype)
+    if ledger.cell_count == 0:
+        return content, jnp.asarray(True)
+    active = ledger.active_cell_mask
+    decision = active if owned_cell_mask is None else active & owned_cell_mask
+    volumes = jnp.where(active, target_volumes, jnp.ones_like(target_volumes))
+    average = content / volumes.reshape((-1,) + (1,) * (content.ndim - 1))
+    seed = average[jnp.argmax(decision.astype(jnp.int32))]
+    safe_average = jnp.where(
+        decision.reshape((-1,) + (1,) * (content.ndim - 1)), average, seed[None, ...]
+    )
+    valid = jnp.all(jnp.where(decision, system.admissible(safe_average), True))
+    return content, valid & jnp.all(jnp.isfinite(content))
+
+
 SplittingKind: TypeAlias = Literal["godunov", "strang"]
 
 
@@ -271,6 +333,7 @@ def unstructured_ssprk33_content_candidate(
     redistribution: ConservativeSmallCellRedistributionPlan | None = None,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
     stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
+    stage_route_provider: FiniteVolumeStageRouteProvider | None = None,
 ) -> FiniteVolumeSSPRK3ContentCandidate:
     """Form Shu--Osher content combinations over certified stage metrics."""
 
@@ -298,6 +361,12 @@ def unstructured_ssprk33_content_candidate(
     ):
         raise TypeError(
             "stage_decision_provider must be FiniteVolumeStageDecisionProvider or None."
+        )
+    if stage_route_provider is not None and not isinstance(
+        stage_route_provider, FiniteVolumeStageRouteProvider
+    ):
+        raise TypeError(
+            "stage_route_provider must be FiniteVolumeStageRouteProvider or None."
         )
     if (
         not isinstance(stage_metrics, tuple)
@@ -339,6 +408,9 @@ def unstructured_ssprk33_content_candidate(
             "stage_state_provider": (
                 None if stage_state_provider is None else stage_state_provider.provider_id
             ),
+            "stage_route_provider": (
+                None if stage_route_provider is None else stage_route_provider.provider_id
+            ),
             "stage_decision_provider": (
                 None
                 if stage_decision_provider is None
@@ -377,15 +449,25 @@ def unstructured_ssprk33_content_candidate(
         stage_2.effective_cell_volumes,
         owned_cell_mask=stage_initial.owned_cell_mask,
     )
-    finite_1 = jnp.all(jnp.isfinite(limited_1.euler_content))
+    routed_1, routed_1_valid = _routed_stage_content(
+        stage_route_provider,
+        dynamics.system,
+        limited_1.euler_content,
+        limited_1.ledger,
+        dt,
+        stage_2.effective_cell_volumes,
+        stage_initial.owned_cell_mask,
+    )
+    finite_1 = jnp.all(jnp.isfinite(routed_1))
     safe_q1_content = jnp.where(
         finite_1,
-        limited_1.euler_content,
+        routed_1,
         stage_initial.conservative_content,
     )
     q1 = _content_at_metrics(stage_initial, safe_q1_content, stage_2)
     stage_1_valid = (
         limited_1.report.limited_state_valid
+        & routed_1_valid
         & finite_1
         & (
             jnp.minimum(
@@ -423,15 +505,25 @@ def unstructured_ssprk33_content_candidate(
             stage_3.effective_cell_volumes,
             owned_cell_mask=stage_initial.owned_cell_mask,
         )
-        finite_2 = jnp.all(jnp.isfinite(limited_2.euler_content))
+        routed_2, routed_2_valid = _routed_stage_content(
+            stage_route_provider,
+            dynamics.system,
+            limited_2.euler_content,
+            limited_2.ledger,
+            0.25 * dt,
+            stage_3.effective_cell_volumes,
+            stage_initial.owned_cell_mask,
+        )
+        finite_2 = jnp.all(jnp.isfinite(routed_2))
         safe_q2_content = jnp.where(
             finite_2,
-            limited_2.euler_content,
+            routed_2,
             stage_initial.conservative_content,
         )
         q2 = _content_at_metrics(stage_initial, safe_q2_content, stage_3)
         stage_2_valid = (
             limited_2.report.limited_state_valid
+            & routed_2_valid
             & finite_2
             & (
                 jnp.minimum(
@@ -470,10 +562,19 @@ def unstructured_ssprk33_content_candidate(
                 accepted_metrics.effective_cell_volumes,
                 owned_cell_mask=stage_initial.owned_cell_mask,
             )
-            finite_3 = jnp.all(jnp.isfinite(limited_3.euler_content))
+            routed_3, routed_3_valid = _routed_stage_content(
+                stage_route_provider,
+                dynamics.system,
+                limited_3.euler_content,
+                limited_3.ledger,
+                (2.0 / 3.0) * dt,
+                accepted_metrics.effective_cell_volumes,
+                stage_initial.owned_cell_mask,
+            )
+            finite_3 = jnp.all(jnp.isfinite(routed_3))
             safe_qnew_content = jnp.where(
                 finite_3,
-                limited_3.euler_content,
+                routed_3,
                 stage_initial.conservative_content,
             )
             accepted_content = _content_at_metrics(
@@ -481,6 +582,7 @@ def unstructured_ssprk33_content_candidate(
             )
             stage_3_valid = (
                 limited_3.report.limited_state_valid
+                & routed_3_valid
                 & finite_3
                 & (
                     jnp.minimum(
@@ -586,6 +688,7 @@ def unstructured_ale_ssprk33_candidate(
     cfl: float,
     stage_state_provider: FiniteVolumeStageStateProvider | None = None,
     stage_decision_provider: FiniteVolumeStageDecisionProvider | None = None,
+    stage_route_provider: FiniteVolumeStageRouteProvider | None = None,
 ) -> FiniteVolumeALESSPRK3Candidate:
     """Form exact Shu--Osher content and volume combinations for ALE."""
 
@@ -610,6 +713,7 @@ def unstructured_ale_ssprk33_candidate(
         cfl=cfl,
         stage_state_provider=stage_state_provider,
         stage_decision_provider=stage_decision_provider,
+        stage_route_provider=stage_route_provider,
     )
     return FiniteVolumeALESSPRK3Candidate(
         content_state=content.content_state,
@@ -963,6 +1067,7 @@ __all__ = [
     "FiniteVolumeStepResult",
     "FiniteVolumeStageStateCallback",
     "FiniteVolumeStageDecisionProvider",
+    "FiniteVolumeStageRouteProvider",
     "FiniteVolumeStageStateProvider",
     "SplittingKind",
     "UnsplitFiniteVolumeSSPRK3Plan",

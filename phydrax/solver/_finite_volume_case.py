@@ -199,10 +199,13 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
             raise ValueError("Finite-volume mesh identity schema fields changed.")
         if payload["mesh"]["kind"] not in ("structured", "unstructured"):
             raise ValueError("Finite-volume mesh identity kind is invalid.")
+        # An empty owner-local rank has zero cell rows; the component axis is
+        # always populated.
         if (
             not isinstance(payload["state_shape"], list)
             or not payload["state_shape"]
-            or any(int(value) <= 0 for value in payload["state_shape"])
+            or any(int(value) < 0 for value in payload["state_shape"])
+            or int(payload["state_shape"][-1]) <= 0
         ):
             raise ValueError("Finite-volume state_shape is invalid.")
 

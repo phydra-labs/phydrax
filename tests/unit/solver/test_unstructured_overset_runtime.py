@@ -268,175 +268,6 @@ def _unique_overset_receptor_faces(
     return route_face_ids, face_points, face_normals, face_measures
 
 
-def _owner_local_fv_overset_map(
-    donor_view: Any,
-    receptor_view: Any,
-    donor_geometry: Any,
-    receptor_geometry: Any,
-    connectivity: Any,
-    donor_name: str,
-    receptor_name: str,
-    /,
-) -> Any:
-    from phydrax.meshing._overset import OversetCellStatus
-
-    donor_ids = np.asarray(donor_geometry.cell_global_ids, dtype=np.int64)
-    receptor_ids = np.asarray(receptor_geometry.cell_global_ids, dtype=np.int64)
-
-    def statuses(part_name: str, geometry: Any, /) -> np.ndarray:
-        blanking = connectivity.blanking_of(part_name)
-        by_id = {
-            int(identifier): int(status)
-            for identifier, status in zip(
-                np.asarray(blanking.cell_ids, dtype=np.int64),
-                np.asarray(blanking.cell_status, dtype=np.int32),
-                strict=True,
-            )
-        }
-        ids = np.asarray(geometry.cell_global_ids, dtype=np.int64)
-        missing = set(int(identifier) for identifier in ids).difference(by_id)
-        if missing:
-            raise ValueError("Native blanking omits a local FV cell.")
-        return np.asarray([by_id[int(identifier)] for identifier in ids], dtype=np.int32)
-
-    donor_status = statuses(donor_name, donor_geometry)
-    receptor_status = statuses(receptor_name, receptor_geometry)
-    donor_holes = donor_status == int(OversetCellStatus.HOLE)
-    receptor_holes = receptor_status == int(OversetCellStatus.HOLE)
-    donor_active = ~donor_holes
-    receptor_active = ~receptor_holes
-    donor_fringe = donor_status == int(OversetCellStatus.FRINGE)
-    receptor_fringe = receptor_status == int(OversetCellStatus.FRINGE)
-    donor_cell_index = {int(identifier): row for row, identifier in enumerate(donor_ids)}
-    receptor_cell_index = {
-        int(identifier): row for row, identifier in enumerate(receptor_ids)
-    }
-    # Native receptor evidence is keyed by receptor vertex; a fringe cell is
-    # routed when one of its vertices has a native winner in the donor part.
-    receptor_evidence = connectivity.receptors_of(receptor_name)
-    native_donors = {
-        int(receptor): int(donor)
-        for receptor, donor, found, donor_part in zip(
-            np.asarray(receptor_evidence.receptor_ids, dtype=np.int64),
-            np.asarray(receptor_evidence.donor_cells, dtype=np.int64),
-            np.asarray(receptor_evidence.found, dtype=np.bool_),
-            np.asarray(receptor_evidence.donor_parts, dtype=np.int32),
-            strict=True,
-        )
-        if found and int(donor_part) == connectivity.part_index(donor_name)
-    }
-    receptor_local_mesh, _ = receptor_view.reconstruct_local_geometry()
-    cell_winners: dict[int, set[int]] = {}
-    if receptor_local_mesh is not None:
-        mesh_vertex_ids = np.asarray(
-            receptor_local_mesh.vertex_global_ids, dtype=np.int64
-        )
-        for block in receptor_local_mesh.blocks:
-            for cell_id, vertices in zip(
-                np.asarray(block.global_ids, dtype=np.int64).tolist(),
-                np.asarray(block.vertices, dtype=np.int64),
-                strict=True,
-            ):
-                winners = {
-                    native_donors[int(vertex_id)]
-                    for vertex_id in mesh_vertex_ids[vertices]
-                    if int(vertex_id) in native_donors
-                }
-                if winners:
-                    cell_winners[int(cell_id)] = winners
-    routed_ids = tuple(
-        int(identifier)
-        for identifier in receptor_ids
-        if receptor_fringe[receptor_cell_index[int(identifier)]]
-        and int(identifier) in cell_winners
-    )
-    if routed_ids and not donor_ids.size:
-        raise ValueError("Owner-local receptor routes lack actual donor carrier cells.")
-    route_receptor_cells: list[int] = []
-    receptor_cells: list[int] = []
-    receptor_offsets = [0]
-    donor_indices: list[int] = []
-    overlap_measures: list[float] = []
-    if routed_ids:
-        donor_mesh, _ = donor_view.reconstruct_local_geometry()
-        receptor_mesh, _ = receptor_view.reconstruct_local_geometry()
-        if donor_mesh is None or receptor_mesh is None:
-            raise ValueError("Nonempty owner-local FV geometry has no carrier mesh.")
-        refinement = prepare_common_refinement(
-            donor_mesh,
-            receptor_mesh,
-            policy=CommonRefinementPolicy(coverage=CommonRefinementCoverage.TARGET),
-        )
-        if refinement.status is not CommonRefinementStatus.SUCCESS:
-            raise ValueError(
-                f"Owner-local FV overlap is incomplete: {refinement.status!r}."
-            )
-        source_ids = np.asarray(refinement.source_cell_global_ids, dtype=np.int64)
-        target_ids = np.asarray(refinement.target_cell_global_ids, dtype=np.int64)
-        target_row = {int(identifier): row for row, identifier in enumerate(target_ids)}
-        offsets = np.asarray(refinement.target_offsets, dtype=np.int64)
-        source_routes = np.asarray(refinement.source_cells, dtype=np.int64)
-        measures = np.asarray(refinement.volumes, dtype=np.float64)
-        for receptor_id in routed_ids:
-            target = target_row[receptor_id]
-            start, stop = (int(value) for value in offsets[target : target + 2])
-            overlap_source_ids = source_ids[source_routes[start:stop]]
-            if not overlap_source_ids.size or cell_winners[receptor_id].isdisjoint(
-                int(identifier) for identifier in overlap_source_ids
-            ):
-                raise ValueError(
-                    "Native donor evidence is outside its physical local overlap."
-                )
-            receptor_cells.append(receptor_cell_index[receptor_id])
-            donor_indices.extend(
-                donor_cell_index[int(identifier)] for identifier in overlap_source_ids
-            )
-            overlap_measures.extend(measures[start:stop].tolist())
-            route_receptor_cells.extend(
-                [receptor_cell_index[receptor_id]] * (stop - start)
-            )
-            receptor_offsets.append(len(donor_indices))
-    receptor_cells_array = np.asarray(receptor_cells, dtype=np.int32)
-    offsets_array = np.asarray(receptor_offsets, dtype=np.int32)
-    donors_array = np.asarray(donor_indices, dtype=np.int32)
-    measures_array = np.asarray(overlap_measures, dtype=np.float64)
-    face_ids = face_points = face_normals = face_measures = face_cells = None
-    if route_receptor_cells:
-        (
-            face_ids,
-            face_points,
-            face_normals,
-            face_measures,
-        ) = _unique_overset_receptor_faces(
-            receptor_geometry,
-            np.asarray(route_receptor_cells, dtype=np.int32),
-        )
-        face_cells = np.asarray(route_receptor_cells, dtype=np.int32)
-    return phx.discretization.UnstructuredOversetPlan(
-        donor_geometry,
-        receptor_geometry,
-        receptor_cells_array,
-        offsets_array,
-        donors_array,
-        measures_array,
-        native_connectivity_id=connectivity.connectivity_id,
-        donor_active_mask=donor_active,
-        donor_hole_mask=donor_holes,
-        donor_fringe_mask=donor_fringe,
-        receptor_active_mask=receptor_active,
-        receptor_hole_mask=receptor_holes,
-        receptor_fringe_mask=receptor_fringe,
-        receptor_face_ids=face_ids,
-        receptor_face_points=face_points,
-        receptor_face_normals=face_normals,
-        receptor_face_measures=face_measures,
-        receptor_face_cells=face_cells,
-        receptor_route_faces=(
-            None if face_cells is None else np.arange(face_cells.size, dtype=np.int32)
-        ),
-    )
-
-
 def _native_quad_part(
     name: str,
     points: Any,
@@ -1198,6 +1029,9 @@ def test_native_moving_overset_failure_keeps_accepted_state_runnable() -> None:
 
     assert bool(np.asarray(rolled_back.accepted))
     assert rolled_back.successor_runtime is None
+    assert isinstance(
+        rolled_back.topology_event_refusal, phx.solver.FiniteVolumeTopologyEventRefusal
+    )
     np.testing.assert_array_equal(
         rolled_back.runtime_state.content_state.conservative_content,
         accepted.runtime_state.content_state.conservative_content,
@@ -1242,6 +1076,10 @@ def test_native_moving_overset_failure_keeps_accepted_state_runnable() -> None:
     )
     assert bool(np.asarray(boundary_rejected.accepted))
     assert boundary_rejected.successor_runtime is None
+    assert isinstance(
+        boundary_rejected.topology_event_refusal,
+        phx.solver.FiniteVolumeTopologyEventRefusal,
+    )
     np.testing.assert_array_equal(
         boundary_rejected.runtime_state.content_state.conservative_content,
         accepted.runtime_state.content_state.conservative_content,
@@ -1908,26 +1746,23 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     assert np.sum(found_counts) > 0
 
     system = phx.equations.EulerSystem(2)
-    donor_geometry = (
-        phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
-            donor_view, component_names=system.component_names
-        ).prepare()
-    )
-    receptor_plan = (
-        phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
-            receptor_view, component_names=system.component_names
+
+    def fv_overset(connectivity: Any, receptor: Any, donor: Any, label: str, /) -> Any:
+        """The production owner-local FV overlap with donor halo expansion."""
+        return prepare_owner_local_finite_volume_overset(
+            connectivity,
+            {donor_name: donor, receptor_name: receptor},
+            donor_name,
+            receptor_name,
+            group,
+            component_names=system.component_names,
+            field_name="state",
+            axis_name=f"owner_local_fv_event_{label}_overset",
         )
-    )
-    receptor_geometry = receptor_plan.prepare()
-    receptor_overset = _owner_local_fv_overset_map(
-        donor_view,
-        receptor_view,
-        donor_geometry,
-        receptor_geometry,
-        connectivity,
-        donor_name,
-        receptor_name,
-    )
+
+    source_coupling = fv_overset(connectivity, receptor_view, donor_view, "source")
+    receptor_geometry = source_coupling.geometry
+    receptor_overset = source_coupling.overset
     mapped_route_counts = np.asarray(
         multihost_utils.process_allgather(
             np.asarray((receptor_overset.receptor_cells.size,), dtype=np.int32)
@@ -1974,7 +1809,7 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(maximum_retries=2),
         execution_group=group,
-        owner_local_geometry=receptor_view,
+        owner_local_geometry=source_coupling.composite,
         owner_local_axis_name="owner_local_fv_event_runtime",
     )
     cell_ids = np.asarray(receptor_geometry.cell_global_ids, dtype=np.int64)
@@ -1982,7 +1817,7 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     expected_primitive[:, 0] = 1.0 + (cell_ids % 19) * 0.01
     expected_primitive[:, 3] = 1.0
     input_primitive = expected_primitive.copy()
-    owned = np.asarray(receptor_view.owned, dtype=np.bool_)
+    owned = np.asarray(runtime.owner_local_owned_cell_mask, dtype=np.bool_)
     input_primitive[~owned, 0] = 3.0
     input_primitive[~owned, 3] = 3.0
     initial = runtime.initialize_state(
@@ -2062,7 +1897,18 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
                 owner_id="phydrax.test.owner-local-fv-motion",
                 structure_id=view.source_mesh_id,
                 revision_id=view.source_revision,
-                semantics_id=view.source_geometry_id,
+                # The root means its authored source, quotient topology, and
+                # coordinate contract; motion changes only its geometry and
+                # revision, so the meaning stays bound while distinct roots
+                # keep distinct meanings.
+                semantics_id=canonical_fingerprint(
+                    {
+                        "kind": "owner-local-source-root",
+                        "source": view.source_id,
+                        "topology": view.source_topology_id,
+                        "coordinates": view.coordinate_contract_id,
+                    }
+                ),
             )
             geometry_entry = CompositionEntry(
                 manifest,
@@ -2185,8 +2031,22 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
             np.asarray((int(motion.accepted),), dtype=np.int32)
         )
     ).reshape((-1,))
-    assert np.all(motion_flags == 1)
+    assert np.all(motion_flags == 1), motion.assessments[-1].failure_detail
     assert motion.local_result is not None
+    if np.asarray(receptor_view.cell_ids).size:
+        # Each owner certifies the complete stars of its own vertices; the
+        # pinched halo vertices of the resident patch are their owners' scope.
+        star_scope = motion.local_manifold_scope
+        assert star_scope is not None and star_scope.kind == "owned-star"
+        receptor_vertex_ids = np.asarray(receptor_view.vertex_ids, dtype=np.int64)
+        np.testing.assert_array_equal(
+            np.asarray(star_scope.vertex_ids),
+            np.sort(
+                receptor_vertex_ids[
+                    np.asarray(receptor_view.vertex_owner_ranks, dtype=np.int32) == rank
+                ]
+            ),
+        )
     target_owned_ids = np.asarray(motion.local_result.owned_cell_ids, dtype=np.int64)
     target_owned_work = np.asarray(motion.local_result.owned_cell_weights)
     assert target_owned_work.dtype == np.int64
@@ -2259,20 +2119,11 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     if not isinstance(successor_carrier, OwnerLocalCellGeometry):
         raise TypeError("Owner-local motion successor lacks its typed cell view.")
     successor_view = successor_carrier
-    successor_geometry = (
-        phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
-            successor_view, component_names=system.component_names
-        ).prepare()
+    successor_coupling = fv_overset(
+        successor_connectivity, successor_view, donor_view, "successor"
     )
-    successor_overset = _owner_local_fv_overset_map(
-        donor_view,
-        successor_view,
-        donor_geometry,
-        successor_geometry,
-        successor_connectivity,
-        donor_name,
-        receptor_name,
-    )
+    successor_geometry = successor_coupling.geometry
+    successor_overset = successor_coupling.overset
     successor_dynamics = dynamics_for(successor_geometry, successor_overset)
     committed = runtime.commit_moving_overset_update(
         accepted,
@@ -2289,13 +2140,19 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         owner_local_coefficient_ids=coefficient_ids,
         owner_local_field_name="state",
         owner_local_part_name=receptor_name,
+        # Both parts' derived geometry roots are reprepared against the
+        # successor registration.
+        reprepare_entries=tuple(
+            entry
+            for entry in with_geometry_roots(
+                successor_assembly, successor_connectivity.composition_entries()
+            )
+            if entry.entry_id.startswith(("mesh/source-root:", "mesh/geometry:"))
+        ),
     )
     assert committed.accepted
-    assert committed.successor_runtime is not None, (
-        "Native owner-local event did not publish a successor runtime: "
-        f"statuses={np.asarray(committed.runtime_state.topology_journal.statuses)}, "
-        f"count={int(np.asarray(committed.runtime_state.topology_journal.count))}"
-    )
+    assert committed.topology_event_refusal is None, committed.topology_event_refusal
+    assert committed.successor_runtime is not None
     assert committed.overset_motion_receipt is not None
     assert committed.overset_motion_receipt.published
     committed_state = committed.runtime_state
@@ -2335,7 +2192,9 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         committed.successor_runtime,
         phx.solver.FiniteVolumeExecutionSpec(1.0, 1000),
     )
-    checkpoint_plan = phx.solver.FiniteVolumeCheckpointPlan(case)
+    checkpoint_plan = phx.solver.FiniteVolumeCheckpointPlan(
+        case, runtime=committed.successor_runtime
+    )
     checkpoint_path = tmp_path / f"owner-local-{rank}.fvckpt"
     phx.solver.write_finite_volume_checkpoint(
         checkpoint_path, checkpoint_plan, committed_state
@@ -2481,6 +2340,9 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     )
     assert rolled_back.accepted
     assert rolled_back.successor_runtime is None
+    assert isinstance(
+        rolled_back.topology_event_refusal, phx.solver.FiniteVolumeTopologyEventRefusal
+    )
     np.testing.assert_array_equal(
         rolled_back.runtime_state.content_state.conservative_content,
         continued_state.content_state.conservative_content,
@@ -2580,9 +2442,17 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         graph_partition_plan=target_graph_plan,
         axis_name="owner_local_fv_repartition_geometry",
     )
+    repartitioned_receptor_part = repartitioned_owner_assembly.part(receptor_name)
+    # The moved receptor's boundary scope names rank-local facets of the motion
+    # target; graph migration moves them, so rebind it on the repartitioned part.
+    repartitioned_specs = {
+        receptor_name: _finite_volume_archive_target_receptor_spec(
+            successor_specs[receptor_name], repartitioned_receptor_part, group
+        )
+    }
     target_connectivity_candidate = successor_connectivity.reregister(
-        {receptor_name: repartitioned_owner_assembly.part(receptor_name)},
-        successor_specs=successor_specs,
+        {receptor_name: repartitioned_receptor_part},
+        successor_specs=repartitioned_specs,
         execution_group=group,
         axis_name="owner_local_fv_repartition_reregister",
     )
@@ -2591,31 +2461,30 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         local_reconstructions,
         "state",
     )
+    # The repartitioned receptor replaces the moved view in the search.
+    target_search_views = {
+        part.name: part.carrier
+        for part in target_connectivity_candidate.assembly.parts
+        if isinstance(part.carrier, OwnerLocalCellGeometry)
+    }
     target_connectivity = target_field_transfer.prepare_owner_local_exchange(
         coefficient_ids,
         group,
-        current_source_views,
+        target_search_views,
     ).connectivity
     assert target_connectivity.owner_local and target_connectivity.complete
     target_receptor_carrier = target_connectivity.assembly.part(receptor_name).carrier
     if not isinstance(target_receptor_carrier, OwnerLocalCellGeometry):
         raise TypeError("Graph-migrated connectivity lacks its owner-local cell view.")
     target_receptor_view = target_receptor_carrier
-    target_geometry = (
-        phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
-            target_receptor_view,
-            component_names=system.component_names,
-        ).prepare()
-    )
-    target_overset = _owner_local_fv_overset_map(
-        current_source_views[donor_name],
-        target_receptor_view,
-        donor_geometry,
-        target_geometry,
+    target_coupling = fv_overset(
         target_connectivity,
-        donor_name,
-        receptor_name,
+        target_receptor_view,
+        current_source_views[donor_name],
+        "target",
     )
+    target_geometry = target_coupling.geometry
+    target_overset = target_coupling.overset
     target_dynamics = dynamics_for(target_geometry, target_overset)
 
     repartition_entries = successor_connectivity.composition_entries()
@@ -2874,15 +2743,27 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         )
     ).reshape((-1,))
     assert int(np.sum(target_owned_counts)) == int(np.sum(source_owned_counts))
-    assert target_owned_counts[2] > 0
-    assert np.all(target_owned_counts[:2] == 0)
+    # The composite layout keeps the unmoved donor on its owners; only the
+    # repartitioned receptor migrates wholly to the last rank.
+    receptor_owned_counts = np.asarray(
+        multihost_utils.process_allgather(
+            np.asarray(
+                (int(np.count_nonzero(np.asarray(target_receptor_view.owned))),),
+                dtype=np.int32,
+            )
+        )
+    ).reshape((-1,))
+    assert receptor_owned_counts[2] > 0
+    assert np.all(receptor_owned_counts[:2] == 0)
 
     repartition_case = phx.solver.FiniteVolumeCaseSpec(
         "native-owner-local-fv-repartition",
         repartitioned.successor_runtime,
         phx.solver.FiniteVolumeExecutionSpec(1.0, 1000),
     )
-    repartition_checkpoint_plan = phx.solver.FiniteVolumeCheckpointPlan(repartition_case)
+    repartition_checkpoint_plan = phx.solver.FiniteVolumeCheckpointPlan(
+        repartition_case, runtime=repartitioned.successor_runtime
+    )
     repartition_checkpoint_path = tmp_path / f"owner-local-repartition-{rank}.fvckpt"
     phx.solver.write_finite_volume_checkpoint(
         repartition_checkpoint_path,

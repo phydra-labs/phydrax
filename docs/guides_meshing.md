@@ -1494,6 +1494,18 @@ satisfies those claims is rejected with its failed report; the immutable accepte
 result remains available for retry. Audit-only results keep the monitor/audit
 contract without acquiring source claims.
 
+On periodic owner-local views, `advance_owner_local_mesh_motion` certifies each
+rank's resident patch (owned cells plus one face halo). That patch is legitimately
+pinched where its halo ends, and an owned vertex may still lack cells that only
+touch it. The certification
+therefore declares an owned-star `manifold_scope` (`CellMeshManifoldScope`): every
+owner checks vertex and edge manifoldness on the complete stars of its own
+vertices. The other owners send it the non-resident star cells by stable ID.
+Halo vertices belong to their owners' scopes. The audit report records the scope
+(`audit.manifold_scope`): the checked vertex IDs and the supplied star cells. The
+accepted owner-local `MeshMotionAdvance` returns it as `local_manifold_scope`. All
+other audit checks still apply to the whole resident patch.
+
 An adapted mesh reaches a running coupled problem only through one accepted
 cross-owner rebind (`phx.lifecycle.CompositionRebind`). A certified conservative
 `FiniteElementTopologyTransfer` (the adaptation transfer, or
