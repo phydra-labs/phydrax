@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import final, Protocol
+from typing import final, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -71,6 +71,14 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
     source_entity_keys: tuple[str, ...] = eqx.field(static=True)
     source_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     chart_ids: tuple[str, ...] = eqx.field(static=True)
+
+    if not TYPE_CHECKING:
+
+        def __getattribute__(self, name: str, /) -> object:
+            # Equinox binds each method as a BoundMethod pytree whose construction
+            # flattens the whole receiver, so per-entity loops over its methods
+            # became quadratic. Methods bind as plain Python methods.
+            return object.__getattribute__(self, name)
 
     def __init__(
         self,
