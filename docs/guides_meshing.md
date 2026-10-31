@@ -786,19 +786,24 @@ contracts:
   determinant above its floor, source constraints preserved) and the size
   gate, and the affected cells' worst-first sorted scores strictly improve. An
   interior insertion either cones a circumsphere cavity to a candidate point
-  or, for a cell whose edits are otherwise exhausted, cones the closed ring of
-  one of its unconstrained edges to a point in the ring's kernel. The latter
-  removes a flat cell whose four vertices lie on a fixed boundary (two
-  constrained faces splitting a planar or slightly folded quad) without
-  moving the boundary: no flip can remove such a cell and no circumsphere
-  cavity contains it. The ring point is searched over the kernel in the
-  edit's own order (a cone passing the gates beats one that does not, then
-  the larger sorted score vector wins), since a point merely clear of the
-  ring faces can cone a nearly flat ring into worse or oversized cells. A
-  relocation must also make sufficient progress: at the first position where
-  its star's sorted scores change, the new score meets the target or closes at
-  least an eighth of that score's gap to the target (at least one quantum). A
-  cell's gap therefore shrinks geometrically rather than one quantum per move.
+  or, for a cell whose edits are otherwise exhausted, cones a kernel cavity to
+  a point in its kernel: the closed ring of one of the cell's unconstrained
+  edges, else the star of one of its vertices (a boundary vertex stays, held
+  by its constrained faces; the commit refuses a star whose removal would
+  drop a vertex, a constrained face or segment, or mix regions). These remove
+  a flat cell whose four vertices lie on a fixed boundary (two constrained
+  faces splitting a planar or slightly folded quad) without moving the
+  boundary: no flip can remove such a cell and no circumsphere cavity
+  contains it, and at a folded rim the ring of its single free edge may admit
+  no better cone while a vertex star does. The kernel point is searched in
+  the edit's own order (a cone passing the gates beats one that does not,
+  then the larger sorted score vector wins), since a point merely clear of
+  the cavity faces can cone a nearly flat cavity into worse or oversized
+  cells. A relocation must also make sufficient progress: at the first
+  position where its star's sorted scores change, the new score meets the
+  target or closes at least an eighth of that score's gap to the target (at
+  least one quantum). A cell's gap therefore shrinks geometrically rather than
+  one quantum per move.
 - **Precedence.** The determinant floor binds every edit. The size gate is
   relative to the cells an edit removes: no created cell may exceed its target
   by more than the largest excess (circumradius over target) among them, or at

@@ -2653,24 +2653,27 @@ void refused_boundary_insertion_restores_disk_constraints() {
   PHX_CHECK(incidence_matches_mesh(mesh, incidence));
 }
 
-// Closed rings around the free chord of a flat cell whose four vertices lie on
-// a fixed, slightly folded boundary (two constrained faces at a few degrees),
-// taken from a CAD cylinder's lateral surface: every ring face is constrained,
-// so only edge-ring insertion can remove the flat cell. The point that merely
-// keeps clear of the ring faces cones the ring into cells worse than the flat
-// one (first ring), or beyond the size excess the removed cells admit (second
-// ring, with uniform circumradius targets), so the edit was rejected. The
-// ring point is now searched in the edit's own order (gates, then sorted
-// scores), and the flat cell is replaced by a better, admissible cone.
-void flat_fixed_boundary_ring_point_is_searched_by_quality_and_size() {
+// Flat cells whose four vertices lie on a fixed, slightly folded boundary (two
+// constrained faces at a few degrees), taken from CAD cylinder fills. In each
+// fixture every outer face is constrained, so only a kernel cone (edge-ring or
+// vertex-star insertion) can remove the flat cell. On the lateral surface
+// (first two), the point that merely keeps clear of the ring faces cones the
+// ring into cells worse than the flat one, or beyond the size excess the
+// removed cells admit (uniform circumradius targets), so the edit was
+// rejected; the point is now searched in the edit's own order (gates, then
+// sorted scores). At a layer core's top rim (third: the star of one rim
+// vertex), the flat cell's single free edge has a ring no cone improves, and
+// only coning that vertex's star removes it, meeting every target.
+void flat_fixed_boundary_cells_are_removed_by_kernel_cones() {
   struct FlatRing {
     const char* label;
     std::vector<double> points;
     std::vector<std::array<std::int32_t, 4>> cells;
     double size;          // uniform circumradius target (0: none)
     double worst_before;  // radius-edge ratio of the flat cell (reference)
+    bool meets_target;    // whether improvement then meets every target
   };
-  const std::array<FlatRing, 2> rings{{
+  const std::array<FlatRing, 3> rings{{
       {"lateral-fold",
        {0x1.d906bcf328d44p-2, -0x1.87de2a6aea96dp-3, 0x0.0p+0,
         0x1.7839c86b3f361p-2, -0x1.2b5802a0760fcp-4, 0x0.0p+0,
@@ -2682,7 +2685,8 @@ void flat_fixed_boundary_ring_point_is_searched_by_quality_and_size() {
         0x1.2dad4d02e781bp-2, -0x1.29e9a293c6a0ap-4, 0x1.8000000000000p-3},
        {{5, 6, 3, 1}, {5, 0, 3, 6}, {2, 1, 3, 6}, {6, 0, 3, 4}, {7, 3, 6, 2}, {7, 3, 4, 6}},
        0.0,
-       13.917},
+       13.917,
+       false},
       {"sized-lateral-fold",
        {-0x1.c38b2f180bdb1p-2, 0x1.e2b5d3806f63ap-3, 0x1.0000000000000p-1,
         -0x1.ced7af43cc773p-2, 0x1.b5d1009e15cbep-3, 0x1.8000000000000p-1,
@@ -2693,7 +2697,30 @@ void flat_fixed_boundary_ring_point_is_searched_by_quality_and_size() {
         -0x1.cdfb5588cfe50p-4, 0x1.03554b08456f8p-4, 0x1.9de3bf2360c61p-1},
        {{3, 0, 2, 4}, {3, 0, 1, 2}, {1, 3, 2, 5}, {4, 2, 3, 6}, {2, 5, 3, 6}},
        0.3,
-       35.937},
+       35.937,
+       false},
+      {"folded-rim-star",
+       {-0x1.c146b3cc276cfp-2, -0x1.7353652d43f31p-3, 0x1.f1e5ac437b2dcp-1,
+        -0x1.d0ee474599c43p-2, -0x1.1c84aa95baf1ep-3, 0x1.7ccfb26cc7cd2p-1,
+        -0x1.5c54478ba7f0ep-2, -0x1.762ae482c4d5cp-4, 0x1.f3333333332e4p-1,
+        -0x1.785c7846b6adep-2, -0x1.33e3a922aaa2bp-2, 0x1.7d36fb30a35f3p-1,
+        -0x1.da538de8b60c7p-2, -0x1.792cfbbb7b6a2p-4, 0x1.f3333333333d1p-1,
+        -0x1.1e692716e66c9p-2, -0x1.b791dc0a26e80p-3, 0x1.f333333333368p-1,
+        -0x1.946e753fcf142p-2, -0x1.0ddbb9fcd80f3p-2, 0x1.f1eb343e93a64p-1,
+        -0x1.acdb91f8f0256p-2, -0x1.caac1a8f7a4c8p-3, 0x1.7cd427553a968p-1,
+        -0x1.21d4aeed179d8p-2, -0x1.85ef299ba5180p-2, 0x1.bd0958240246dp-1,
+        -0x1.e09b9796b8755p-2, -0x1.1fb1bb638ce1dp-4, 0x1.bd6815e3f53f6p-1,
+        -0x1.4440713ff5596p-2, -0x1.4012ea71c6d72p-3, 0x1.f333333333333p-1,
+        -0x1.a14cc49df753dp-2, -0x1.f3496c4465fc3p-3, 0x1.bc0dbb024eeefp-1,
+        -0x1.7650b1e2c0b54p-2, -0x1.b073bd640cc05p-3, 0x1.f3333333333d2p-1,
+        -0x1.f6824092231b6p-3, -0x1.3752c910e7edap-3, 0x1.cea2c6059e9eep-1},
+       {{0, 2, 10, 11}, {12, 0, 10, 11}, {6, 12, 11, 0}, {6, 11, 12, 5}, {13, 7, 3, 11},
+        {8, 13, 11, 5}, {8, 3, 11, 13}, {11, 13, 12, 5}, {11, 10, 12, 13}, {11, 2, 10, 13},
+        {11, 2, 13, 9}, {7, 13, 9, 11}, {8, 6, 5, 11}, {8, 3, 6, 11}, {11, 4, 1, 0},
+        {4, 11, 1, 9}, {7, 11, 1, 0}, {11, 7, 1, 9}, {2, 4, 11, 0}, {4, 2, 11, 9}},
+       0.3,
+       12.691,
+       true},
   }};
   for (const FlatRing& ring : rings) {
     std::map<std::array<std::int32_t, 3>, std::pair<int, std::array<std::int32_t, 3>>> face_uses;
@@ -2764,7 +2791,8 @@ void flat_fixed_boundary_ring_point_is_searched_by_quality_and_size() {
       std::fprintf(stderr, "%s: status=%d inserted=%lld worst %.17g -> %.17g\n", ring.label,
                    status, static_cast<long long>(inserted), before_radius, after_radius);
     }
-    PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(ring.meets_target ? status == PHX_MC_OK && unmet == 0
+                                : status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
     PHX_CHECK(inserted == 1);
     PHX_CHECK(after_radius < 0.75 * before_radius);
     PHX_CHECK(same_source_banks(before, after));
@@ -2799,6 +2827,6 @@ int main() {
   cavity_local_reconnection_matches_public_batch();
   boundary_point_insertion_splits_segment_and_fans();
   refused_boundary_insertion_restores_disk_constraints();
-  flat_fixed_boundary_ring_point_is_searched_by_quality_and_size();
+  flat_fixed_boundary_cells_are_removed_by_kernel_cones();
   return phx::mc::test::finish("test_improve3d");
 }
