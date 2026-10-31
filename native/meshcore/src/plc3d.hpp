@@ -183,6 +183,11 @@ struct SourceComplexView {
   std::span<const int64_t> segment_ids;
   std::span<const double> segment_tolerances;
   std::span<const SourceWitness> witnesses;
+  // Declared exact facet planes, one per source face row (origin, first and
+  // second axis, binary64; NaN rows are undeclared), and their declared
+  // authored tolerances. Empty when no facet declares a plane.
+  std::span<const double> face_planes;
+  std::span<const double> face_plane_tolerances;
 };
 
 // Reused scratch for adjacency traversal and its conservative candidates.

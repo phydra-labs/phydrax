@@ -157,6 +157,44 @@ bool install_witness(const double* const* corners, SourceStratum stratum, std::i
   return true;
 }
 
+// Installs the plane witness of source face row `row` with `parameters` on
+// `vertex`: the carrier rounds the exact plane point, the deviation is its
+// exact realization bound.
+bool install_plane_parameters(const TetMesh& mesh, std::int32_t row, const double* parameters,
+                              TetEditVertex& vertex) {
+  double deviation = 0.0;
+  if (!mesh.plane_carrier(row, parameters, vertex.carrier.data(), deviation)) return false;
+  vertex.witness.stratum = SourceStratum::kPlane;
+  vertex.witness.entity = row;
+  vertex.witness.parameters[0] = parameters[0];
+  vertex.witness.parameters[1] = parameters[1];
+  vertex.witness.deviation = deviation;
+  return true;
+}
+
+// Installs the plane witness of the declared plane of source face row `row`
+// at the binary64 parameters of the (approximately computed) orthogonal
+// projection of `point`: the exact plane point they address is the vertex,
+// wherever it lands near `point`.
+bool install_plane_witness(const TetMesh& mesh, std::int32_t row, const double* point,
+                           TetEditVertex& vertex) {
+  const double* plane = mesh.face_plane(row);
+  if (plane == nullptr) return false;
+  const double* u = plane + 3;
+  const double* v = plane + 6;
+  const double r[3]{point[0] - plane[0], point[1] - plane[1], point[2] - plane[2]};
+  const auto dot = [](const double* a, const double* b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  };
+  const double uu = dot(u, u);
+  const double uv = dot(u, v);
+  const double vv = dot(v, v);
+  const double determinant = uu * vv - uv * uv;
+  const double parameters[2]{(dot(u, r) * vv - dot(v, r) * uv) / determinant,
+                             (dot(v, r) * uu - dot(u, r) * uv) / determinant};
+  return install_plane_parameters(mesh, row, parameters, vertex);
+}
+
 // The rows of source face group `rows` on whose plane the exact positions of
 // all vertex slots `slots` lie (for a segment group: on whose line), so that
 // a point located among them stays on the plane of the boundary piece it
@@ -615,10 +653,17 @@ double degrees(double cosine) {
 }
 
 // The smallest angle in degrees between the ray along `ray` and the planar
-// sector spanned by `first` and `second` at the same apex.
-double ray_sector_angle(const double* ray, const double* first, const double* second) {
+// sector spanned by `first` and `second` at the same apex, measured in the
+// sector's declared plane of normal `plane_normal` when it has one (null:
+// the plane of the two sides).
+double ray_sector_angle(const double* ray, const double* first, const double* second,
+                        const double* plane_normal) {
   double normal[3];
   cross3(first, second, normal);
+  if (plane_normal != nullptr) {
+    const double sign = dot3(plane_normal, normal) < 0.0 ? -1.0 : 1.0;
+    for (int axis = 0; axis < 3; ++axis) normal[axis] = sign * plane_normal[axis];
+  }
   const double normal_squared = dot3(normal, normal);
   if (normal_squared > 0.0) {
     const double height = dot3(ray, normal) / normal_squared;
@@ -664,12 +709,19 @@ double protected_radius(double feature_size, double angle) {
 // The acute features of the constrained complex (`facets`, `segments`) of
 // `mesh`, apexes in slot order then ridges in slot-pair order; the radius is
 // protected_radius of the local feature size `feature_sizes` at the apex (the
-// smaller one of the ridge endpoints). False on a dead constrained vertex.
-bool acute_input_features(const TetMesh& mesh, const detail::LocalIncidence& incidence,
-                          std::span<const TetSnapshotFacet> facets,
-                          std::span<const TetSnapshotSegment> segments,
-                          std::span<const double> feature_sizes,
-                          std::vector<AcuteFeature>& features) {
+// smaller one of the ridge endpoints). Angles at a facet of a group with a
+// declared plane are measured with the plane's normal (`plane_normals`, by
+// group), not with its rounded subfacets. False on a dead constrained vertex.
+bool acute_input_features(
+    const TetMesh& mesh, const detail::LocalIncidence& incidence,
+    std::span<const TetSnapshotFacet> facets, std::span<const TetSnapshotSegment> segments,
+    std::span<const double> feature_sizes,
+    const std::unordered_map<std::int32_t, std::array<double, 3>>& plane_normals,
+    std::vector<AcuteFeature>& features) {
+  const auto plane_normal = [&](std::int32_t group) -> const double* {
+    const auto found = plane_normals.find(group);
+    return found == plane_normals.end() ? nullptr : found->second.data();
+  };
   features.clear();
   using Edge = std::pair<std::int32_t, std::int32_t>;
   const auto ordered = [](std::int32_t a, std::int32_t b) {
@@ -729,7 +781,8 @@ bool acute_input_features(const TetMesh& mesh, const detail::LocalIncidence& inc
         direction(apex, corner.second, sides[1]);
         if (cosine3(ray, sides[0]) > kRightAngleCosine ||
             cosine3(ray, sides[1]) > kRightAngleCosine) {
-          smallest = std::min(smallest, ray_sector_angle(ray, sides[0], sides[1]));
+          smallest = std::min(smallest, ray_sector_angle(ray, sides[0], sides[1],
+                                                         plane_normal(corner.group)));
         }
       }
     }
@@ -771,10 +824,17 @@ bool acute_input_features(const TetMesh& mesh, const detail::LocalIncidence& inc
         for (const std::size_t side : {first, second}) {
           double offset[3];
           direction(a, sides[side].first, offset);
-          const double height = dot3(offset, along) / length_squared;
-          for (int axis = 0; axis < 3; ++axis) {
-            normal[side == first ? 0 : 1][axis] = offset[axis] - height * along[axis];
+          double* inward = normal[side == first ? 0 : 1];
+          if (const double* plane = plane_normal(sides[side].second); plane != nullptr) {
+            // The declared plane's direction perpendicular to the edge, toward the facet.
+            cross3(plane, along, inward);
+            if (dot3(inward, offset) < 0.0) {
+              for (int axis = 0; axis < 3; ++axis) inward[axis] = -inward[axis];
+            }
+            continue;
           }
+          const double height = dot3(offset, along) / length_squared;
+          for (int axis = 0; axis < 3; ++axis) inward[axis] = offset[axis] - height * along[axis];
         }
         const double cosine = cosine3(normal[0], normal[1]);
         if (cosine > kRightAngleCosine &&
@@ -1002,6 +1062,31 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     for (std::size_t row : facet_rows) {
       if (mesh.facets_[row].source >= 0) groups.insert(mesh.facets_[row].source);
     }
+    // A facet edge of a declared plane is split on the plane: at the exact
+    // mean of the endpoints' plane parameters when both are witnessed on it
+    // (the edge's midpoint), else at the projection of the carrier midpoint.
+    if (groups.size() == 1) {
+      const auto declared = mesh.declared_groups_.find(*groups.begin());
+      if (declared != mesh.declared_groups_.end()) {
+        const std::int32_t row = declared->second.rows.front();
+        const SourceWitness& first = mesh.witness(first_slot);
+        const SourceWitness& second = mesh.witness(second_slot);
+        const auto on_plane = [&](const SourceWitness& witness) {
+          return witness.stratum == SourceStratum::kPlane &&
+                 mesh.source_face_groups_[static_cast<std::size_t>(witness.entity)] ==
+                     *groups.begin();
+        };
+        double parameters[2]{};
+        const bool installed =
+            on_plane(first) && on_plane(second) &&
+                    exact_half_sum(first.parameters[0], second.parameters[0], parameters[0]) &&
+                    exact_half_sum(first.parameters[1], second.parameters[1], parameters[1])
+                ? install_plane_parameters(mesh, row, parameters, vertex)
+                : install_plane_witness(mesh, row, midpoint, vertex);
+        return installed && !same_carrier(vertex.carrier.data(), mesh.point(first_slot)) &&
+               !same_carrier(vertex.carrier.data(), mesh.point(second_slot));
+      }
+    }
     for (std::int32_t group : groups) {
       const auto rows = source_face_rows.find(group);
       if (rows == source_face_rows.end()) continue;
@@ -1160,9 +1245,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       return PHX_MC_UNRESOLVED;
     }
   }
+  std::unordered_map<std::int32_t, std::array<double, 3>> plane_normals;
+  for (const auto& [group, declared] : mesh.declared_groups_) {
+    const double* plane = mesh.face_plane(declared.rows.front());
+    std::array<double, 3> normal{};
+    cross3(plane + 3, plane + 6, normal.data());
+    plane_normals.emplace(group, normal);
+  }
   std::vector<AcuteFeature> acute_features;
   if (!acute_input_features(mesh, incidence, mesh.facets_, mesh.segments_, feature_sizes,
-                            acute_features)) {
+                            plane_normals, acute_features)) {
     return PHX_MC_INVALID_INPUT;
   }
   ProtectionIndex protection(mesh, acute_features);
@@ -1596,7 +1688,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     const auto rows = source_face_rows.find(source);
     if (rows == source_face_rows.end()) return PHX_MC_OK;
     TetEditVertex inserted;
-    {
+    if (const auto declared = mesh.declared_groups_.find(source);
+        declared != mesh.declared_groups_.end()) {
+      // On a declared plane the circumcenter is witnessed on the plane itself.
+      if (!install_plane_witness(mesh, declared->second.rows.front(), center.data(), inserted)) {
+        return PHX_MC_OK;
+      }
+    } else {
       std::int32_t row = -1;
       double parameters[2]{};
       const double* corners[3]{};

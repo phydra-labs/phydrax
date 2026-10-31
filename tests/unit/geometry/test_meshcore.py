@@ -42,6 +42,7 @@ from phydrax._meshcore import (
     TetMeshEdit,
     TetMeshEditKind,
     TetMeshEditStatus,
+    TetMeshPlaneRefusal,
     TetMeshSourceComplex,
     TetMeshSourceEvidence,
     tetrahedron_dual_hexes,
@@ -598,6 +599,93 @@ def test_triangle_dual_quads_validates_and_preserves_shared_node_ids() -> None:
         triangle_dual_quads(duplicate, 7)
 
 
+def _declared_unit_tet(plane: np.ndarray, tolerance: float) -> TetMesh3D:
+    # Face row 3 (z = 0) declares `plane`; the other rows declare none.
+    faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
+    face_ids = np.asarray((101, 102, 103, 104), dtype=np.int64)
+    planes = np.full((4, 3, 3), np.nan, dtype=np.float64)
+    planes[3] = plane
+    source = TetMeshSourceComplex(
+        UNIT_TET.copy(),
+        faces.copy(),
+        np.arange(4, dtype=np.int32),
+        np.zeros((4,), dtype=np.float64),
+        np.empty((0, 2), dtype=np.int32),
+        np.empty((0,), dtype=np.int32),
+        np.empty((0,), dtype=np.float64),
+        np.zeros((4,), dtype=np.int8),
+        np.full((4,), -1, dtype=np.int32),
+        np.zeros((4, 2), dtype=np.float64),
+        face_ids,
+        np.empty((0,), dtype=np.int64),
+        planes,
+        np.asarray((0.0, 0.0, 0.0, tolerance), dtype=np.float64),
+    )
+    return TetMesh3D(
+        UNIT_TET.copy(),
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+        None,
+        faces,
+        face_ids,
+        np.empty((0, 2), dtype=np.int32),
+        np.empty((0,), dtype=np.int64),
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
+        source=source,
+    )
+
+
+def test_declared_facet_plane_admits_records_and_refuses_boundary_vertices() -> None:
+    lifted = np.asarray(((0.0, 0.0, 1e-3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    # A plane 1e-3 above the face misses every corner's rounding box: the
+    # first corner of the face refuses it with its record as evidence.
+    with pytest.raises(TetMeshPlaneRefusal) as refusal:
+        _declared_unit_tet(lifted, 0.0)
+    assert (refusal.value.vertex, refusal.value.face_row) == (0, 3)
+    assert refusal.value.parameters == (0.0, 0.0)
+    assert 1e-3 <= refusal.value.deviation <= 1e-3 * (1.0 + 1e-12)
+    assert refusal.value.tolerance == 0.0
+    # The declared tolerance admits the corners instead.
+    state = _declared_unit_tet(lifted, 2e-3)
+    try:
+        records = state.plane_records()
+        np.testing.assert_array_equal(records.vertex_ids, (0, 1, 2))
+        np.testing.assert_array_equal(records.face_rows, (3, 3, 3))
+        np.testing.assert_array_equal(
+            records.parameters, ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
+        )
+        assert np.all(records.deviations >= 1e-3)
+        arrays = state.arrays()
+        np.testing.assert_array_equal(arrays.source_face_planes[3], lifted)
+        assert np.all(np.isnan(arrays.source_face_planes[:3]))
+        np.testing.assert_array_equal(
+            arrays.source_face_plane_tolerances, (0, 0, 0, 2e-3)
+        )
+    finally:
+        state.close()
+    # Refinement splits the declared face on its exact plane (stratum 3).
+    exact = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    state = _declared_unit_tet(exact, 0.0)
+    try:
+        run = state.refine(radius_edge_bound=2.0, sizes=np.full((4,), 0.2))
+        assert run.status is MeshcoreStatus.OK
+        arrays = state.arrays()
+        on_plane = arrays.witness_strata == 3
+        assert np.count_nonzero(on_plane) > 0
+        np.testing.assert_array_equal(arrays.witness_entities[on_plane], 3)
+        np.testing.assert_array_equal(arrays.points[on_plane, 2], 0.0)
+        np.testing.assert_array_equal(
+            arrays.points[on_plane, :2], arrays.witness_parameters[on_plane]
+        )
+        # Undeclared faces keep facet witnesses on their source rows.
+        facet_points = arrays.witness_strata == 2
+        assert np.count_nonzero(facet_points) > 0
+        assert not np.any(arrays.witness_entities[facet_points] == 3)
+        records = state.plane_records()
+        assert np.all(records.deviations == 0.0)
+    finally:
+        state.close()
+
+
 def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
     mesh_points = UNIT_TET.copy()
     source_points = UNIT_TET.copy()
@@ -620,6 +708,8 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
         np.zeros((4, 2), dtype=np.float64),
         face_ids,
         segment_ids,
+        np.full((4, 3, 3), np.nan, dtype=np.float64),
+        np.zeros((4,), dtype=np.float64),
     )
     state = TetMesh3D(
         mesh_points,
@@ -804,6 +894,8 @@ def make_state():
         np.zeros((SOURCE_POINTS.shape[0], 2), dtype=np.float64),
         SOURCE_FACE_IDS,
         np.asarray((201,), dtype=np.int64),
+        np.full((SOURCE_FACES.shape[0], 3, 3), np.nan, dtype=np.float64),
+        np.zeros((SOURCE_FACES.shape[0],), dtype=np.float64),
     )
     return TetMesh3D(
         SOURCE_POINTS,
@@ -993,6 +1085,8 @@ source = TetMeshSourceComplex(
     np.zeros((4, 2), dtype=np.float64),
     face_ids,
     segment_ids,
+    np.full((4, 3, 3), np.nan, dtype=np.float64),
+    np.zeros((4,), dtype=np.float64),
 )
 state = TetMesh3D(
     points,

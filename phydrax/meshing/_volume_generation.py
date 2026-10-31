@@ -521,6 +521,16 @@ def _source_tables(
                 "Native PLC recovery returned an unknown source witness stratum."
             )
 
+    # Each source face row carries its facet's declared exact plane (NaN rows
+    # undeclared); the TetMesh witnesses facet interior points on it (stratum 3).
+    if complex_.facet_planes is None:
+        face_planes = np.full((faces.shape[0], 3, 3), np.nan, dtype=np.float64)
+        face_plane_tolerances = np.zeros((faces.shape[0],), dtype=np.float64)
+    else:
+        face_planes = np.asarray(complex_.facet_planes, dtype=np.float64)[face_facets]
+        face_plane_tolerances = np.asarray(
+            complex_.facet_plane_tolerances, dtype=np.float64
+        )[face_facets]
     source = TetMeshSourceComplex(
         np.asarray(complex_.vertices, dtype=np.float64),
         np.asarray(faces, dtype=np.int32),
@@ -534,6 +544,8 @@ def _source_tables(
         witness_parameters,
         face_ids=face_ids,
         segment_ids=segment_ids,
+        face_planes=face_planes,
+        face_plane_tolerances=face_plane_tolerances,
     )
     return _SourceTables(
         points=np.asarray(complex_.vertices, dtype=np.float64),
@@ -945,7 +957,7 @@ def _make_construction(
         elif stratum == 1 and 0 <= entity < len(tables.segment_entity_ids):
             vertex_source_ids.append(tables.segment_entity_ids[entity])
             vertex_source_occurrence_paths.append(tables.segment_occurrence_paths[entity])
-        elif stratum == 2 and 0 <= entity < tables.face_facets.size:
+        elif stratum in (2, 3) and 0 <= entity < tables.face_facets.size:
             facet = int(tables.face_facets[entity])
             vertex_source_ids.append(tables.facet_ids[facet])
             vertex_source_occurrence_paths.append(tables.facet_occurrence_paths[facet])

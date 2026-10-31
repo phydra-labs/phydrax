@@ -483,7 +483,9 @@ def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> 
 
 
 def _declared_rotated_cube(
-    facet_planes: object | None, facet_plane_tolerances: object | None = None
+    facet_planes: object | None,
+    facet_plane_tolerances: object | None = None,
+    boundary: PlcBoundaryPolicy = "fixed",
 ) -> NativePlcSource:
     base = _grouped_cube_source(angle=0.3).complex
     loops = np.asarray(base.polygon_vertices).reshape(-1, 3)
@@ -501,7 +503,7 @@ def _declared_rotated_cube(
         segment_ids=(),
         segment_occurrence_paths=(),
         region_occurrence_paths=base.region_occurrence_paths,
-        boundary="fixed",
+        boundary=boundary,
         facet_planes=facet_planes,
         facet_plane_tolerances=facet_plane_tolerances,
     )
@@ -1018,9 +1020,9 @@ def test_conforming_refinement_keeps_undeclared_rotated_cube_triangles_as_author
     assert diagonal_ids <= set(construction.segment_source_ids)
 
 
-def test_conforming_refinement_meets_bound_in_rotated_bipyramid() -> None:
-    # Acute input dihedral angles (54.7 degrees) and segment angles (45
-    # degrees) next to boundary splits of every facet.
+def _rotated_bipyramid(
+    declared: bool,
+) -> tuple[NativePlcSource, tuple[RegionSeed, ...]]:
     angle = 0.3
     rotation = np.asarray(
         (
@@ -1029,9 +1031,18 @@ def test_conforming_refinement_meets_bound_in_rotated_bipyramid() -> None:
             (0.0, 0.0, 1.0),
         )
     )
+    points = _POINTS @ rotation.T / 3.0
+    # Each triangular facet declares the plane through its rounded corners
+    # (first corner, edge vectors rounded) with a tolerance covering them.
+    planes = np.asarray(
+        [
+            (points[a], points[b] - points[a], points[c] - points[a])
+            for a, b, c in _POLYGONS.tolist()
+        ]
+    )
     base = _source("conforming")
     complex_ = PiecewiseLinearComplex(
-        _POINTS @ rotation.T / 3.0,
+        points,
         _POLYGONS,
         np.arange(_POLYGONS.shape[0], dtype=np.int64),
         _FACET_REGIONS,
@@ -1045,6 +1056,10 @@ def test_conforming_refinement_meets_bound_in_rotated_bipyramid() -> None:
         segment_occurrence_paths=(),
         region_occurrence_paths=((), ()),
         boundary="conforming",
+        facet_planes=planes if declared else None,
+        facet_plane_tolerances=np.full((_POLYGONS.shape[0],), 1e-12)
+        if declared
+        else None,
     )
     source = NativePlcSource(complex_, "rotated-bipyramid", "revision-1")
     seeds = tuple(
@@ -1056,7 +1071,51 @@ def test_conforming_refinement_meets_bound_in_rotated_bipyramid() -> None:
         )
         for seed in _request(source).region_seeds
     )
+    return source, seeds
+
+
+def test_conforming_refinement_meets_bound_in_rotated_bipyramid() -> None:
+    # Acute input dihedral angles (54.7 degrees) and segment angles (45
+    # degrees) next to boundary splits of every facet.
+    source, seeds = _rotated_bipyramid(False)
     _assert_refined_with_boundary_splits(_conforming_refinement(source, seeds, 0.1))
+
+
+def _assert_split_on_declared_planes(construction: VolumeConstruction) -> None:
+    assert construction.refinement_status is MeshcoreStatus.OK
+    assert construction.improvement_status is MeshcoreStatus.OK
+    assert construction.refinement_unmet == ()
+    assert construction.improvement_unmet == ()
+    strata = np.asarray(construction.witness_strata)
+    # Facet points lie on the declared planes (stratum 3), never on a rounded
+    # source triangle; segment points on their source edges.
+    assert np.count_nonzero(strata == 1) > 0
+    assert np.count_nonzero(strata == 2) == 0
+    assert np.count_nonzero(strata == 3) > 0
+
+
+def test_conforming_refinement_splits_declared_rotated_cube_faces_on_their_planes() -> (
+    None
+):
+    # Declared exact planes group each rotated face's two rounded triangles:
+    # the internal diagonals are no segments and refinement meets the bound.
+    source = _declared_rotated_cube(
+        _rotated_cube_planes(), np.full((6,), 1e-12), "conforming"
+    )
+    complex_ = source.complex
+    construction = _conforming_refinement(source, _CUBE_SEED, 0.05)
+    _assert_split_on_declared_planes(construction)
+    boundary_ids = {
+        complex_.plc_edge_ids[row]
+        for row, facets in enumerate(complex_.plc_edge_facets)
+        if len(facets) == 2
+    }
+    assert set(construction.segment_source_ids) == boundary_ids
+
+
+def test_conforming_refinement_splits_declared_rotated_bipyramid_on_its_planes() -> None:
+    source, seeds = _rotated_bipyramid(True)
+    _assert_split_on_declared_planes(_conforming_refinement(source, seeds, 0.1))
 
 
 def test_mapped_carrier_classification_uses_plc_incidence_and_witnesses() -> None:

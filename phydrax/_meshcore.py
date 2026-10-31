@@ -561,6 +561,17 @@ class _TetPeriodicEditView(ctypes.Structure):
     )
 
 
+class _TetPlaneRefusal(ctypes.Structure):
+    _fields_ = (
+        ("refused", _I32),
+        ("face_row", _I32),
+        ("vertex", _I64),
+        ("parameters", ctypes.c_double * 2),
+        ("deviation", ctypes.c_double),
+        ("tolerance", ctypes.c_double),
+    )
+
+
 class _TetMeshCreateRequest(ctypes.Structure):
     _fields_ = (
         ("point_count", _I64),
@@ -593,6 +604,8 @@ class _TetMeshCreateRequest(ctypes.Structure):
         ("source_segment_groups", _P),
         ("source_segment_ids", _P),
         ("source_segment_tolerances", _P),
+        ("source_face_planes", _P),
+        ("source_face_plane_tolerances", _P),
         ("witness_strata", _P),
         ("witness_entities", _P),
         ("witness_parameters", _P),
@@ -608,6 +621,7 @@ class _TetMeshCreateRequest(ctypes.Structure):
         ("frame_id", _P),
         ("frame_id_length", _I64),
         ("periodic_state", _P),
+        ("plane_refusal", _P),
         ("result", _P),
     )
 
@@ -685,6 +699,8 @@ class _TetMeshSnapshotRequest(ctypes.Structure):
         ("source_segment_groups", _P),
         ("source_segment_tolerances", _P),
         ("source_segment_ids", _P),
+        ("source_face_planes", _P),
+        ("source_face_plane_tolerances", _P),
         ("generation", _P),
     )
 
@@ -1000,6 +1016,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_tet_mesh_unmet_count": (_I32, (_P, _P)),
     "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_tet_mesh_plane_record_count": (_I32, (_P, _P)),
+    "phx_mc_tet_mesh_plane_records": (_I32, (_P, _I64, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_snapshot": (
         _I32,
         (_P, ctypes.POINTER(_TetMeshSnapshotRequest)),
@@ -2583,7 +2601,12 @@ class PlcRecovery3D(NamedTuple):
 class TetMeshSourceComplex(NamedTuple):
     """Persistent source banks whose witnesses index canonical rows.
 
-    Stratum 1 entities index ``segments``; stratum 2 entities index ``faces``.
+    Stratum 1 entities index ``segments``; strata 2 and 3 entities index
+    ``faces``. ``face_planes`` declares an exact plane per face row (origin,
+    first axis, second axis; an all-NaN row is undeclared; every row of a face
+    group declares the same plane or none) with ``face_plane_tolerances``. A
+    stratum-3 witness is the point ``origin + s * first_axis + t * second_axis``
+    of its row's declared plane, ``(s, t)`` its parameters.
     """
 
     points: np.ndarray
@@ -2598,6 +2621,8 @@ class TetMeshSourceComplex(NamedTuple):
     witness_parameters: np.ndarray
     face_ids: np.ndarray
     segment_ids: np.ndarray
+    face_planes: np.ndarray
+    face_plane_tolerances: np.ndarray
 
 
 class TetMeshIdentity(NamedTuple):
@@ -2705,6 +2730,8 @@ class TetMeshArrays(NamedTuple):
     source_segment_group_rows: np.ndarray
     source_segment_ids: np.ndarray
     source_segment_tolerances: np.ndarray
+    source_face_planes: np.ndarray
+    source_face_plane_tolerances: np.ndarray
     witness_strata: np.ndarray
     witness_entities: np.ndarray
     witness_parameters: np.ndarray
@@ -2732,6 +2759,51 @@ class TetMeshSourceEvidence(NamedTuple):
     witness_entities: np.ndarray
     witness_parameters: np.ndarray
     witness_deviations: np.ndarray
+
+
+class TetMeshPlaneRecords(NamedTuple):
+    """One row per (vertex, declared face group) incidence of the constrained facets.
+
+    ``face_rows`` is the group's first source face row, ``parameters`` the
+    correctly rounded parameters of the carrier's orthogonal projection onto
+    the declared plane, ``deviations`` an outward bound of its distance to it.
+    """
+
+    vertex_ids: np.ndarray
+    face_rows: np.ndarray
+    parameters: np.ndarray
+    deviations: np.ndarray
+
+
+class TetMeshPlaneRefusal(MeshcoreError):
+    """A boundary vertex refused its facet's declared exact plane.
+
+    The plane neither meets the closed rounding box of the vertex carrier nor
+    lies within the declared tolerance of it: ``vertex`` is the input vertex
+    row, ``face_row`` the plane's source face row, ``parameters`` and
+    ``deviation`` the carrier's record on the plane.
+    """
+
+    def __init__(
+        self,
+        status: MeshcoreStatus,
+        vertex: int,
+        face_row: int,
+        parameters: tuple[float, float],
+        deviation: float,
+        tolerance: float,
+        /,
+    ) -> None:
+        super().__init__(
+            status,
+            f"declared plane of source face row {face_row} refused vertex {vertex} "
+            f"(deviation {deviation!r} > tolerance {tolerance!r})",
+        )
+        self.vertex = vertex
+        self.face_row = face_row
+        self.parameters = parameters
+        self.deviation = deviation
+        self.tolerance = tolerance
 
 
 class TetMeshUnmetReason(IntEnum):
@@ -6376,6 +6448,8 @@ class TetMesh3D:
                 "witness_strata",
                 "witness_entities",
                 "witness_parameters",
+                "face_planes",
+                "face_plane_tolerances",
             )
         }
         if source is not None:
@@ -6415,9 +6489,15 @@ class TetMesh3D:
             parameters = _real_array(
                 source.witness_parameters, "source.witness_parameters"
             )
+            face_planes = _real_array(source.face_planes, "source.face_planes")
+            face_plane_tolerances = _real_array(
+                source.face_plane_tolerances, "source.face_plane_tolerances"
+            )
             if (
                 face_groups.shape != (source_faces.shape[0],)
                 or face_tolerances.shape != (source_faces.shape[0],)
+                or face_planes.shape != (source_faces.shape[0], 3, 3)
+                or face_plane_tolerances.shape != (source_faces.shape[0],)
                 or segment_groups.shape != (source_segments.shape[0],)
                 or segment_tolerances.shape != (source_segments.shape[0],)
                 or strata.shape != (point_array.shape[0],)
@@ -6476,6 +6556,8 @@ class TetMesh3D:
                 "witness_strata": strata,
                 "witness_entities": entities,
                 "witness_parameters": parameters,
+                "face_planes": face_planes,
+                "face_plane_tolerances": face_plane_tolerances,
             }
         else:
             face_source_array = _native_integer_array(
@@ -6554,6 +6636,10 @@ class TetMesh3D:
         request.source_segment_tolerances = _tet_mesh_pointer(
             source_banks["segment_tolerances"]
         )
+        request.source_face_planes = _tet_mesh_pointer(source_banks["face_planes"])
+        request.source_face_plane_tolerances = _tet_mesh_pointer(
+            source_banks["face_plane_tolerances"]
+        )
         request.witness_strata = _tet_mesh_pointer(source_banks["witness_strata"])
         request.witness_entities = _tet_mesh_pointer(source_banks["witness_entities"])
         request.witness_parameters = _tet_mesh_pointer(source_banks["witness_parameters"])
@@ -6579,10 +6665,20 @@ class TetMesh3D:
             if periodic_payload is None
             else ctypes.cast(ctypes.pointer(periodic_payload.view), _P)
         )
+        refusal = _TetPlaneRefusal()
+        request.plane_refusal = ctypes.addressof(refusal)
         request.result = ctypes.addressof(handle)
-        _raise_for_call(
-            library["phx_mc_tet_mesh_create"](ctypes.byref(request)), "tet_mesh_create"
-        )
+        status = library["phx_mc_tet_mesh_create"](ctypes.byref(request))
+        if refusal.refused:
+            raise TetMeshPlaneRefusal(
+                MeshcoreStatus(status),
+                refusal.vertex,
+                refusal.face_row,
+                (refusal.parameters[0], refusal.parameters[1]),
+                refusal.deviation,
+                refusal.tolerance,
+            )
+        _raise_for_call(status, "tet_mesh_create")
         if not handle.value:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "tet_mesh_create returned no handle"
@@ -6825,6 +6921,10 @@ class TetMesh3D:
             source_segment_tolerances = np.empty(
                 (source_segment_count,), dtype=np.float64
             )
+            source_face_planes = np.empty((source_face_count, 3, 3), dtype=np.float64)
+            source_face_plane_tolerances = np.empty(
+                (source_face_count,), dtype=np.float64
+            )
             periodic_orbits = (_TetPeriodicOrbit * periodic_orbit_count)()
             periodic_members = (_TetPeriodicVertexMember * periodic_member_count)()
             periodic_quotient_cells = (
@@ -6925,6 +7025,8 @@ class TetMesh3D:
                 ("source_segment_groups", source_segment_groups),
                 ("source_segment_ids", source_segment_ids),
                 ("source_segment_tolerances", source_segment_tolerances),
+                ("source_face_planes", source_face_planes),
+                ("source_face_plane_tolerances", source_face_plane_tolerances),
             ):
                 setattr(request, name, _tet_mesh_pointer(array) if array.size else None)
             request.periodic_orbits = (
@@ -7124,6 +7226,8 @@ class TetMesh3D:
                 segment_group_rows,
                 segment_id_bank,
                 source_segment_tolerances,
+                source_face_planes,
+                source_face_plane_tolerances,
                 witness_strata,
                 witness_entities,
                 witness_parameters,
@@ -7202,6 +7306,40 @@ class TetMesh3D:
             return TetMeshUnmet(
                 tetrahedra, criteria, reasons, values, apex_vertex_ids, apex_angles
             )
+
+    def plane_records(self) -> TetMeshPlaneRecords:
+        """Copy the live mesh's vertex records on declared facet planes."""
+
+        with self._lock:
+            count = _I64()
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_plane_record_count"](
+                    self._live(), ctypes.addressof(count)
+                ),
+                "tet_mesh_plane_record_count",
+            )
+            if count.value < 0:
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR,
+                    "negative tetrahedral plane record count",
+                )
+            row_count = int(count.value)
+            vertex_ids = np.empty((row_count,), dtype=np.uint64)
+            face_rows = np.empty((row_count,), dtype=np.int32)
+            parameters = np.empty((row_count, 2), dtype=np.float64)
+            deviations = np.empty((row_count,), dtype=np.float64)
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_plane_records"](
+                    self._live(),
+                    row_count,
+                    _tet_mesh_pointer(vertex_ids),
+                    _tet_mesh_pointer(face_rows),
+                    _tet_mesh_pointer(parameters),
+                    _tet_mesh_pointer(deviations),
+                ),
+                "tet_mesh_plane_records",
+            )
+            return TetMeshPlaneRecords(vertex_ids, face_rows, parameters, deviations)
 
     def apply_edit(self, edit: TetMeshEdit) -> TetMeshEditStatus:
         if not isinstance(edit, TetMeshEdit):
@@ -7922,6 +8060,8 @@ __all__ = [
     "TetMeshPeriodicQuotientCell",
     "TetMeshPeriodicSnapshot",
     "TetMeshPeriodicState",
+    "TetMeshPlaneRecords",
+    "TetMeshPlaneRefusal",
     "TetMeshRun",
     "TetMeshSourceComplex",
     "TetMeshSourceEvidence",

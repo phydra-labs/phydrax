@@ -66,11 +66,15 @@ int32_t TetMesh::build(std::span<const double> points,
                        const SourceComplexView* source,
                        std::span<const std::int8_t> protected_vertices) {
   try {
+    plane_refusal_.reset();
     TetMesh staged(policy_);
     const std::int32_t status = staged.build_state(
         points, tetrahedra, regions, faces, face_sources, face_orientations,
         segments, segment_sources, protection_radii, source, protected_vertices);
-    if (status != PHX_MC_OK) return status;
+    if (status != PHX_MC_OK) {
+      plane_refusal_ = staged.plane_refusal_;
+      return status;
+    }
     staged.generation_ = 0;
     staged.identity_bound_ = identity_bound_;
     staged.source_id_ = source_id_;
@@ -212,6 +216,12 @@ int32_t TetMesh::build_state(std::span<const double> points,
     if (!source->witnesses.empty()) {
       std::copy(source->witnesses.begin(), source->witnesses.end(), witnesses_.begin());
     }
+    if ((!source->face_planes.empty() &&
+         source->face_planes.size() != 9 * source->face_group_rows.size()) ||
+        (!source->face_plane_tolerances.empty() &&
+         source->face_plane_tolerances.size() != source->face_group_rows.size())) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
   }
 
   const std::size_t source_vertex_count = source_points_.size() / 3;
@@ -230,6 +240,13 @@ int32_t TetMesh::build_state(std::span<const double> points,
   }
   for (double tolerance : source_segment_tolerances_) {
     if (!std::isfinite(tolerance) || tolerance < 0.0) return PHX_MC_INVALID_INPUT;
+  }
+  if (const std::int32_t declared =
+          source == nullptr
+              ? install_declared_planes({}, {})
+              : install_declared_planes(source->face_planes, source->face_plane_tolerances);
+      declared != PHX_MC_OK) {
+    return declared;
   }
   for (std::size_t row = 0; row < face_count; ++row) {
     const std::int32_t source_group = face_sources[row];
@@ -424,6 +441,24 @@ int32_t TetMesh::build_state(std::span<const double> points,
     if (source_id == kNoConstraint) return PHX_MC_INVALID_INPUT;
   }
 
+  // Every boundary vertex of a constrained facet on a declared plane must be
+  // admitted on it; the first that is not (facet order, then corner order)
+  // refuses the declaration with its record as evidence.
+  for (std::size_t row = 0; row < face_count; ++row) {
+    const auto group = declared_groups_.find(facets_[row].source);
+    if (group == declared_groups_.end()) continue;
+    const std::int32_t plane_row = group->second.rows.front();
+    for (std::uint64_t vertex : facets_[row].vertices) {
+      const double* carrier = points_.data() + 3 * vertex;
+      if (plane_admits(plane_row, carrier)) continue;
+      TetPlaneRefusal refusal;
+      refusal.vertex = static_cast<std::int64_t>(vertex);
+      if (!plane_record(plane_row, carrier, refusal.record)) return PHX_MC_INTERNAL_ERROR;
+      refusal.tolerance = source_face_plane_tolerances_[static_cast<std::size_t>(plane_row)];
+      plane_refusal_ = refusal;
+      return PHX_MC_INVALID_INPUT;
+    }
+  }
   for (std::size_t row = 0; row < face_count; ++row) {
     const TetSnapshotFacet& face = facets_[row];
     TetEditFacet candidate;
@@ -506,6 +541,9 @@ void TetMesh::copy_state_to(TetMesh& destination) const {
   destination.source_segment_groups_ = source_segment_groups_;
   destination.source_segment_ids_ = source_segment_ids_;
   destination.source_segment_tolerances_ = source_segment_tolerances_;
+  destination.source_face_planes_ = source_face_planes_;
+  destination.source_face_plane_tolerances_ = source_face_plane_tolerances_;
+  destination.declared_groups_ = declared_groups_;
   destination.periodic_orbits_ = periodic_orbits_;
   destination.quotient_cells_ = quotient_cells_;
   destination.periodic_entity_maps_ = periodic_entity_maps_;
@@ -559,6 +597,9 @@ void TetMesh::swap_state(TetMesh& other) noexcept {
   swap(source_segments_, other.source_segments_);
   swap(source_segment_groups_, other.source_segment_groups_);
   swap(source_segment_tolerances_, other.source_segment_tolerances_);
+  swap(source_face_planes_, other.source_face_planes_);
+  swap(source_face_plane_tolerances_, other.source_face_plane_tolerances_);
+  swap(declared_groups_, other.declared_groups_);
   swap(source_segment_ids_, other.source_segment_ids_);
   swap(periodic_orbits_, other.periodic_orbits_);
   swap(quotient_cells_, other.quotient_cells_);
@@ -604,6 +645,8 @@ bool TetMesh::audit_state() const {
       source_segment_groups_.size() != source_segments_.size() / 2 ||
       source_segment_ids_.size() != source_segments_.size() / 2 ||
       source_segment_tolerances_.size() != source_segments_.size() / 2 ||
+      source_face_planes_.size() != 3 * source_faces_.size() ||
+      source_face_plane_tolerances_.size() != source_faces_.size() / 3 ||
       !std::all_of(vertex_ancestry_.begin(), vertex_ancestry_.end(), [&](const auto& item) {
         if (!used_vertex_ids_.contains(item.first) || item.second.empty()) return false;
         return std::all_of(item.second.begin(), item.second.end(), [&](const TetVertexAncestry& ancestor) {

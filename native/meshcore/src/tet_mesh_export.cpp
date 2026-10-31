@@ -106,6 +106,8 @@ TetEditStatus TetMesh::snapshot(TetMeshSnapshot& output) const {
     staged.source_segment_groups = source_segment_groups_;
     staged.source_segment_tolerances = source_segment_tolerances_;
     staged.source_segment_ids = source_segment_ids_;
+    staged.source_face_planes = source_face_planes_;
+    staged.source_face_plane_tolerances = source_face_plane_tolerances_;
     staged.periodic_orbits = periodic_orbits_;
     staged.quotient_cells = quotient_cells_;
     staged.periodic_identity = periodic_identity_;
