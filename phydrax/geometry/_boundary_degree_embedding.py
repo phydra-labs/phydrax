@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from collections.abc import Iterator
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, pairwise
@@ -14,6 +15,7 @@ from typing import cast, Literal
 
 import numpy as np
 
+from .._bvh import bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_enclosure import (
@@ -815,76 +817,378 @@ def _shell_euler_characteristic(faces: tuple[BoundaryFace, ...], /) -> int:
     return len(vertices) - len(edges) + len(faces)
 
 
+type _Interval = tuple[np.ndarray, np.ndarray]
+
+
+def _outward_coordinate(value: ExactScalar, /) -> tuple[float, float]:
+    """Binary64 enclosure of one exact coordinate.
+
+    `float` is correctly rounded for both exact scalar kinds, so one ulp on each side
+    encloses the value; exactly representable rationals keep a point interval.
+    """
+    rounded = float(value)
+    if isinstance(value, Fraction) and value == rounded:
+        return rounded, rounded
+    return float(np.nextafter(rounded, -np.inf)), float(np.nextafter(rounded, np.inf))
+
+
+def _interval_sub(first: _Interval, second: _Interval, /) -> _Interval:
+    return (
+        np.nextafter(first[0] - second[1], -np.inf),
+        np.nextafter(first[1] - second[0], np.inf),
+    )
+
+
+def _interval_add(first: _Interval, second: _Interval, /) -> _Interval:
+    return (
+        np.nextafter(first[0] + second[0], -np.inf),
+        np.nextafter(first[1] + second[1], np.inf),
+    )
+
+
+def _interval_mul(first: _Interval, second: _Interval, /) -> _Interval:
+    products = (
+        first[0] * second[0],
+        first[0] * second[1],
+        first[1] * second[0],
+        first[1] * second[1],
+    )
+    return (
+        np.nextafter(np.minimum.reduce(products), -np.inf),
+        np.nextafter(np.maximum.reduce(products), np.inf),
+    )
+
+
+def _interval_axis(value: _Interval, axis: int, /) -> _Interval:
+    return value[0][..., axis], value[1][..., axis]
+
+
+def _interval_cross(first: _Interval, second: _Interval, /) -> _Interval:
+    components = tuple(
+        _interval_sub(
+            _interval_mul(
+                _interval_axis(first, (axis + 1) % 3),
+                _interval_axis(second, (axis + 2) % 3),
+            ),
+            _interval_mul(
+                _interval_axis(first, (axis + 2) % 3),
+                _interval_axis(second, (axis + 1) % 3),
+            ),
+        )
+        for axis in range(3)
+    )
+    return (
+        np.stack([component[0] for component in components], axis=-1),
+        np.stack([component[1] for component in components], axis=-1),
+    )
+
+
+def _interval_dot(first: _Interval, second: _Interval, /) -> _Interval:
+    total = _interval_mul(_interval_axis(first, 0), _interval_axis(second, 0))
+    for axis in (1, 2):
+        total = _interval_add(
+            total,
+            _interval_mul(_interval_axis(first, axis), _interval_axis(second, axis)),
+        )
+    return total
+
+
+def _certified_sign(value: _Interval, /) -> np.ndarray:
+    """+1 or -1 where the enclosure excludes zero, 0 where the sign is undecided."""
+    return np.where(value[0] > 0, 1, np.where(value[1] < 0, -1, 0))
+
+
+def _rows(value: _Interval, rows: np.ndarray, vertex: np.ndarray, /) -> _Interval:
+    return value[0][rows, vertex], value[1][rows, vertex]
+
+
+def _strictly_one_side(signs: np.ndarray, mask: np.ndarray, /) -> np.ndarray:
+    """Every masked vertex has the same certified strict sign (and one is masked)."""
+    return (
+        np.all((signs > 0) | ~mask, axis=1) | np.all((signs < 0) | ~mask, axis=1)
+    ) & np.any(mask, axis=1)
+
+
+def _off_plane(
+    points: _Interval,
+    normals: _Interval,
+    plane_rows: np.ndarray,
+    point_rows: np.ndarray,
+    point_mask: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Masked vertices of `point_rows` lie strictly on one side of `plane_rows`' plane."""
+    count = plane_rows.shape[0]
+    origin = _rows(points, plane_rows, np.zeros((count,), dtype=np.int64))
+    normal = (normals[0][plane_rows], normals[1][plane_rows])
+    signs = np.stack(
+        [
+            _certified_sign(
+                _interval_dot(
+                    normal,
+                    _interval_sub(
+                        _rows(points, point_rows, np.full((count,), vertex)), origin
+                    ),
+                )
+            )
+            for vertex in range(3)
+        ],
+        axis=1,
+    )
+    return _strictly_one_side(signs, point_mask)
+
+
+def _apex_edge_separates(
+    points: _Interval,
+    normals: _Interval,
+    rows: np.ndarray,
+    apex: np.ndarray,
+    other_rows: np.ndarray,
+    other_apex: np.ndarray,
+    /,
+) -> np.ndarray:
+    """A plane through a shared apex and an edge of `rows` separates the triangles.
+
+    The plane contains the apex, the edge direction `d` and the triangle normal `n`
+    (normal `n x d`).  The triangle of `rows` lies in one closed half-space and meets
+    the plane in that edge; if both free vertices of the other triangle are strictly
+    on the opposite side, the closed triangles meet exactly at the apex.
+    """
+    vertex = _rows(points, rows, apex)
+    normal = (normals[0][rows], normals[1][rows])
+    free = tuple(
+        _interval_sub(_rows(points, other_rows, (other_apex + shift) % 3), vertex)
+        for shift in (1, 2)
+    )
+    separated = np.zeros((rows.shape[0],), dtype=np.bool_)
+    for shift in (1, 2):
+        edge = _interval_sub(_rows(points, rows, (apex + shift) % 3), vertex)
+        opposite = _interval_sub(_rows(points, rows, (apex + 3 - shift) % 3), vertex)
+        plane = _interval_cross(normal, edge)
+        own = _certified_sign(_interval_dot(plane, opposite))
+        others = tuple(_certified_sign(_interval_dot(plane, row)) for row in free)
+        separated |= (own != 0) & (others[0] == -own) & (others[1] == -own)
+    return separated
+
+
+def _common_edge_opens(
+    points: _Interval,
+    first_rows: np.ndarray,
+    second_rows: np.ndarray,
+    first_shared: np.ndarray,
+    second_shared: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Edge-adjacent triangles whose free vertices lie on opposite sides of the edge.
+
+    With `u, w` the common edge and `a, b` the free vertices, a certified negative
+    `((w-u) x (a-u)) . ((w-u) x (b-u))` excludes the coplanar fold, the only way two
+    edge-sharing triangles can meet beyond their common edge.
+    """
+    free_first = np.argmin(first_shared, axis=1)
+    start = (free_first + 1) % 3
+    origin = _rows(points, first_rows, start)
+    edge = _interval_sub(_rows(points, first_rows, (free_first + 2) % 3), origin)
+    first_free = _interval_sub(_rows(points, first_rows, free_first), origin)
+    second_free = _interval_sub(
+        _rows(points, second_rows, np.argmin(second_shared, axis=1)), origin
+    )
+    product = _interval_dot(
+        _interval_cross(edge, first_free), _interval_cross(edge, second_free)
+    )
+    return product[1] < 0
+
+
+def _triangle_enclosures(
+    triangles: tuple[BoundaryTriangle, ...],
+    vertex_images: dict[int, Point3],
+    /,
+) -> tuple[_Interval, _Interval, np.ndarray] | None:
+    """Binary64 vertex enclosures, normals and the per-triangle filter admission.
+
+    A triangle is admitted to the filter when its normal enclosure excludes zero
+    (nondegenerate) and every vertex coordinate equals its declared vertex image,
+    so shared vertex identifiers denote one exact point.  `None` when a coordinate
+    has no finite binary64 enclosure.
+    """
+    cache: dict[ExactScalar, tuple[float, float]] = {}
+    lower = np.empty((len(triangles), 3, 3), dtype=np.float64)
+    upper = np.empty((len(triangles), 3, 3), dtype=np.float64)
+    admitted = np.ones((len(triangles),), dtype=np.bool_)
+    try:
+        for row, triangle in enumerate(triangles):
+            for vertex, (identifier, point) in enumerate(
+                zip(triangle.vertex_ids, triangle.points, strict=True)
+            ):
+                if vertex_images.get(identifier) != point:
+                    admitted[row] = False
+                for axis, value in enumerate(point):
+                    bounds = cache.get(value)
+                    if bounds is None:
+                        bounds = cache[value] = _outward_coordinate(value)
+                    lower[row, vertex, axis], upper[row, vertex, axis] = bounds
+    except OverflowError:
+        return None
+    if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
+        return None
+    points = (lower, upper)
+    normals = _interval_cross(
+        _interval_sub((lower[:, 1], upper[:, 1]), (lower[:, 0], upper[:, 0])),
+        _interval_sub((lower[:, 2], upper[:, 2]), (lower[:, 0], upper[:, 0])),
+    )
+    admitted &= np.any(_certified_sign(normals) != 0, axis=1)
+    return points, normals, admitted
+
+
+def _undecided_contact_pairs(
+    faces: tuple[BoundaryFace, ...],
+    triangles: tuple[BoundaryTriangle, ...],
+    vertex_images: dict[int, Point3],
+    /,
+) -> Iterator[tuple[int, int]]:
+    """Ordered triangle pairs whose contact finding needs the exact predicate.
+
+    Pairs absent from the binary64 broad phase have disjoint exact boxes.  Among the
+    candidates, a pair is cleared only when outward-rounded predicates prove the
+    exact contact set is empty or exactly the declared common vertex or edge, which
+    are the pairs for which the exact scan records no finding.
+    """
+    count = len(triangles)
+    enclosures = _triangle_enclosures(triangles, vertex_images) if count > 1 else None
+    if enclosures is None:
+        yield from combinations(range(count), 2)
+        return
+    points, normals, admitted = enclosures
+    tree = prepare_bvh(points[0].min(axis=1), points[1].max(axis=1), dtype=np.float64)
+    first, second = bvh_overlap_pairs_host(tree, tree, include_touching=True)
+    ordered = first < second
+    first, second = first[ordered], second[ordered]
+    vertex_ids = np.asarray(
+        [triangle.vertex_ids for triangle in triangles], dtype=np.int64
+    )
+    equal = vertex_ids[first][:, :, None] == vertex_ids[second][:, None, :]
+    first_shared, second_shared = np.any(equal, axis=2), np.any(equal, axis=1)
+    shared = first_shared.sum(axis=1)
+    cleared = np.zeros(first.shape, dtype=np.bool_)
+    candidate = admitted[first] & admitted[second] & (shared < 3)
+    rows = np.flatnonzero(candidate)
+    cleared[rows] = _off_plane(
+        points, normals, first[rows], second[rows], ~second_shared[rows]
+    ) | _off_plane(points, normals, second[rows], first[rows], ~first_shared[rows])
+
+    apex_rows = rows[(shared[rows] == 1) & ~cleared[rows]]
+    first_apex = np.argmax(first_shared[apex_rows], axis=1)
+    second_apex = np.argmax(second_shared[apex_rows], axis=1)
+    cleared[apex_rows] = _apex_edge_separates(
+        points, normals, first[apex_rows], first_apex, second[apex_rows], second_apex
+    ) | _apex_edge_separates(
+        points, normals, second[apex_rows], second_apex, first[apex_rows], first_apex
+    )
+
+    edge_rows = rows[(shared[rows] == 2) & ~cleared[rows]]
+    cleared[edge_rows] = _common_edge_opens(
+        points,
+        first[edge_rows],
+        second[edge_rows],
+        first_shared[edge_rows],
+        second_shared[edge_rows],
+    )
+    # Edge-sharing pairs are admissible only along a declared common face edge.
+    for row in np.flatnonzero(cleared & (shared == 2)):
+        left_triangle, right_triangle = triangles[first[row]], triangles[second[row]]
+        if left_triangle.parent_face == right_triangle.parent_face:
+            continue
+        left, right = sorted(
+            set(left_triangle.vertex_ids).intersection(right_triangle.vertex_ids)
+        )
+        cleared[row] = _loop_has_edge(
+            faces[left_triangle.parent_face].vertex_ids, left, right
+        ) and _loop_has_edge(faces[right_triangle.parent_face].vertex_ids, left, right)
+    for row in np.flatnonzero(~cleared):
+        yield int(first[row]), int(second[row])
+
+
+def _exact_triangle_contact_finding(
+    faces: tuple[BoundaryFace, ...],
+    first: BoundaryTriangle,
+    second: BoundaryTriangle,
+    vertex_images: dict[int, Point3],
+    /,
+) -> BoundaryFinding | None:
+    if any(
+        max(point[axis] for point in first.points)
+        < min(point[axis] for point in second.points)
+        or max(point[axis] for point in second.points)
+        < min(point[axis] for point in first.points)
+        for axis in range(3)
+    ):
+        return None
+    try:
+        contacts = triangle_contact_points3(first.points, second.points)
+    except ValueError as error:
+        return BoundaryFinding(
+            "degenerate_boundary_triangle",
+            tuple(sorted((first.facet_id, second.facet_id))),
+            str(error),
+        )
+    if not contacts:
+        return None
+    shared = set(first.vertex_ids).intersection(second.vertex_ids)
+    allowed = False
+    if first.parent_face == second.parent_face and len(shared) == 2:
+        allowed = True
+    elif len(shared) == 1:
+        allowed = True
+    elif len(shared) == 2:
+        left, right = tuple(sorted(shared))
+        first_face = faces[first.parent_face].vertex_ids
+        second_face = faces[second.parent_face].vertex_ids
+        allowed = _loop_has_edge(first_face, left, right) and _loop_has_edge(
+            second_face, left, right
+        )
+    if allowed and len(shared) == 1:
+        identifier = next(iter(shared))
+        allowed = identifier in vertex_images and all(
+            point == vertex_images[identifier] for point in contacts
+        )
+    elif allowed and len(shared) == 2:
+        identifiers = tuple(sorted(shared))
+        if all(identifier in vertex_images for identifier in identifiers):
+            left, right = (vertex_images[identifier] for identifier in identifiers)
+            allowed = all(point_on_segment3(point, left, right) for point in contacts)
+        else:
+            allowed = False
+    else:
+        allowed = False
+    if allowed:
+        return None
+    return BoundaryFinding(
+        "exterior_boundary_self_contact",
+        tuple(sorted((first.facet_id, second.facet_id))),
+        "Exact exterior triangles intersect beyond their declared common vertex or edge.",
+    )
+
+
 def _boundary_triangle_contacts(
     faces: tuple[BoundaryFace, ...],
     triangles: tuple[BoundaryTriangle, ...],
     vertex_images: dict[int, Point3],
     /,
 ) -> list[BoundaryFinding]:
+    """Exact pairwise exterior contacts in ascending triangle-pair order.
+
+    The binary64 filter only removes pairs whose exact finding is provably absent;
+    every remaining pair runs the exact rational predicate.
+    """
     findings: list[BoundaryFinding] = []
-    for first_index, first in enumerate(triangles):
-        for second_index in range(first_index + 1, len(triangles)):
-            second = triangles[second_index]
-            if any(
-                max(point[axis] for point in first.points)
-                < min(point[axis] for point in second.points)
-                or max(point[axis] for point in second.points)
-                < min(point[axis] for point in first.points)
-                for axis in range(3)
-            ):
-                continue
-            try:
-                contacts = triangle_contact_points3(first.points, second.points)
-            except ValueError as error:
-                findings.append(
-                    BoundaryFinding(
-                        "degenerate_boundary_triangle",
-                        tuple(sorted((first.facet_id, second.facet_id))),
-                        str(error),
-                    )
-                )
-                continue
-            if not contacts:
-                continue
-            shared = set(first.vertex_ids).intersection(second.vertex_ids)
-            allowed = False
-            if first.parent_face == second.parent_face and len(shared) == 2:
-                allowed = True
-            elif len(shared) == 1:
-                allowed = True
-            elif len(shared) == 2:
-                left, right = tuple(sorted(shared))
-                first_face = faces[first.parent_face].vertex_ids
-                second_face = faces[second.parent_face].vertex_ids
-                allowed = _loop_has_edge(first_face, left, right) and _loop_has_edge(
-                    second_face, left, right
-                )
-            if allowed and len(shared) == 1:
-                identifier = next(iter(shared))
-                allowed = identifier in vertex_images and all(
-                    point == vertex_images[identifier] for point in contacts
-                )
-            elif allowed and len(shared) == 2:
-                identifiers = tuple(sorted(shared))
-                if all(identifier in vertex_images for identifier in identifiers):
-                    left, right = (
-                        vertex_images[identifier] for identifier in identifiers
-                    )
-                    allowed = all(
-                        point_on_segment3(point, left, right) for point in contacts
-                    )
-                else:
-                    allowed = False
-            else:
-                allowed = False
-            if not allowed:
-                findings.append(
-                    BoundaryFinding(
-                        "exterior_boundary_self_contact",
-                        tuple(sorted((first.facet_id, second.facet_id))),
-                        "Exact exterior triangles intersect beyond their declared common vertex or edge.",
-                    )
-                )
+    for first_index, second_index in _undecided_contact_pairs(
+        faces, triangles, vertex_images
+    ):
+        finding = _exact_triangle_contact_finding(
+            faces, triangles[first_index], triangles[second_index], vertex_images
+        )
+        if finding is not None:
+            findings.append(finding)
     return findings
 
 

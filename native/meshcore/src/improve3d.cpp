@@ -2066,6 +2066,38 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     for (std::int32_t vertex : tet.v) pending_vertices.insert(mesh.vertex_id(vertex));
   }
 
+  // Sorted score vector of the cone from `candidate` over the boundary faces
+  // of the star-shaped cavity `cells` (membership `members`); the new vertex's
+  // size target interpolates at the candidate as the target of the cell
+  // `slot` being improved (unconstrained if that cell is). False when a cone
+  // cell is not exactly positive or not measurable.
+  const auto measure_cone = [&](std::int32_t slot, const double* candidate,
+                                std::span<const std::int32_t> cells,
+                                const std::unordered_set<std::int32_t>& members,
+                                QualityVector& quality) {
+    const double target = slots_size_target(request, mesh.tet(slot).v);
+    const double candidate_size = std::isfinite(target) ? target : 0.0;
+    quality.clear();
+    for (std::int32_t cell : cells) {
+      const Tetrahedron& tetrahedron = mesh.tet(cell);
+      for (int face = 0; face < 4; ++face) {
+        if (members.contains(tetrahedron.n[face])) continue;
+        std::array<const double*, 4> points{};
+        std::array<double, 4> sizes{};
+        for (int corner = 0; corner < 4; ++corner) {
+          points[corner] = corner == face ? candidate : mesh.point(tetrahedron.v[corner]);
+          sizes[corner] =
+              corner == face ? candidate_size : vertex_size(request, tetrahedron.v[corner]);
+        }
+        CellMeasure measure;
+        if (!measure_cell(points, cell_size_target(sizes), measure)) return false;
+        quality.push_back(quality_from_measure(measure, request));
+      }
+    }
+    sort_quality_vector(quality);
+    return true;
+  };
+
   // Cones the star-shaped cavity `cells` (membership `members`) to a new
   // interior vertex at `candidate` when the cone's sorted score vector
   // strictly improves on the cavity's, under the same rule as every other
@@ -2086,31 +2118,10 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         !quality_vector_for_slots(mesh, cells, request, insertion_before)) {
       return TetEditStatus::kRejectedTopology;
     }
-    // The new vertex's size target interpolates at the candidate as the
-    // target of the cell being improved (unconstrained if that cell is).
     const double target = slots_size_target(request, mesh.tet(slot).v);
     const double candidate_size = std::isfinite(target) ? target : 0.0;
-    insertion_after.clear();
-    for (std::int32_t cell : cells) {
-      const Tetrahedron& tetrahedron = mesh.tet(cell);
-      for (int face = 0; face < 4; ++face) {
-        if (members.contains(tetrahedron.n[face])) continue;
-        std::array<const double*, 4> points{};
-        std::array<double, 4> sizes{};
-        for (int corner = 0; corner < 4; ++corner) {
-          points[corner] = corner == face ? candidate : mesh.point(tetrahedron.v[corner]);
-          sizes[corner] =
-              corner == face ? candidate_size : vertex_size(request, tetrahedron.v[corner]);
-        }
-        CellMeasure measure;
-        if (!measure_cell(points, cell_size_target(sizes), measure)) {
-          return TetEditStatus::kRejectedTopology;
-        }
-        insertion_after.push_back(quality_from_measure(measure, request));
-      }
-    }
-    sort_quality_vector(insertion_after);
-    if (!improves_quality_vector(insertion_before, insertion_after)) {
+    if (!measure_cone(slot, candidate, cells, members, insertion_after) ||
+        !improves_quality_vector(insertion_before, insertion_after)) {
       return TetEditStatus::kRejectedTopology;
     }
     TetEditVertex inserted;
@@ -2168,6 +2179,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   std::vector<std::int32_t> ring_cells;
   std::vector<std::int32_t> ring_vertices;
   std::unordered_set<std::int32_t> ring_members;
+  QualityVector ring_cone_quality;
+  QualityVector ring_trial_quality;
+  QualityVector ring_before_quality;
   const auto try_edge_ring_insertion = [&](std::int32_t slot, std::int32_t first,
                                            std::int32_t second) -> TetEditStatus {
     if (source_edges.contains(sorted_logical_edge(mesh.vertex_id(first),
@@ -2194,9 +2208,63 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       edge_length_squared += delta * delta;
     }
     std::array<double, 3> candidate{};
-    if (!cavity_kernel_point(mesh, ring_cells, ring_members, seeds,
-                             0.25 * std::sqrt(edge_length_squared), candidate)) {
+    const double initial_step = 0.25 * std::sqrt(edge_length_squared);
+    if (!quality_vector_for_slots(mesh, ring_cells, request, ring_before_quality) ||
+        !cavity_kernel_point(mesh, ring_cells, ring_members, seeds, initial_step, candidate) ||
+        !measure_cone(slot, candidate.data(), ring_cells, ring_members, ring_cone_quality)) {
       return TetEditStatus::kRejectedTopology;
+    }
+    // The kernel point only keeps clear of every ring face; a cone from it
+    // over a nearly flat ring can be worse than the cells it replaces, or
+    // exceed the size gate. A pattern search over the kernel then moves the
+    // point only to a strictly better cone in the order the edit is judged
+    // by: a cone whose cells all pass the gates (determinant floor, the size
+    // excess the removed ring cells admit) beats one that does not, and
+    // otherwise the larger sorted score vector wins. Its 26 directions are the
+    // nonzero offsets of {-1, 0, 1}^3, so it also follows the diagonal ridges
+    // along which two cone cells' scores tie, where axis moves alone stall.
+    // Steps halve from the kernel search's first step down to 2^-20 of it,
+    // where scores are resolved to their quantum anyway; each step length
+    // allows at most kMovesPerStep moves, so the search makes at most
+    // 26 * kHalvings * (kMovesPerStep + 1) cone measurements.
+    const double size_excess_bound = admissible_size_excess(ring_before_quality);
+    const auto admissible_cone = [&](const QualityVector& cone) {
+      return std::all_of(cone.begin(), cone.end(), [&](const FlipQuality& quality) {
+        return admissible_cell(quality, size_excess_bound);
+      });
+    };
+    bool candidate_admissible = admissible_cone(ring_cone_quality);
+    constexpr int kHalvings = 20;
+    constexpr int kMovesPerStep = 16;
+    double step = initial_step;
+    for (int halving = 0; halving < kHalvings; ++halving, step *= 0.5) {
+      for (int move = 0; move < kMovesPerStep; ++move) {
+        bool moved = false;
+        for (int direction = 0; direction < 27 && !moved; ++direction) {
+          if (direction == 13) continue;  // the zero offset
+          std::array<double, 3> trial = candidate;
+          bool inside = true;
+          for (int axis = 0, code = direction; axis < 3; ++axis, code /= 3) {
+            trial[static_cast<std::size_t>(axis)] += static_cast<double>(code % 3 - 1) * step;
+            inside = inside && coordinate_in_domain(trial[static_cast<std::size_t>(axis)]);
+          }
+          if (!inside ||
+              !measure_cone(slot, trial.data(), ring_cells, ring_members, ring_trial_quality)) {
+            continue;
+          }
+          const bool trial_admissible = admissible_cone(ring_trial_quality);
+          if (trial_admissible != candidate_admissible
+                  ? !trial_admissible
+                  : !quality_vector_less(ring_cone_quality, ring_trial_quality)) {
+            continue;
+          }
+          candidate = trial;
+          candidate_admissible = trial_admissible;
+          ring_cone_quality.swap(ring_trial_quality);
+          moved = true;
+        }
+        if (!moved) break;
+      }
     }
     return cone_insertion(slot, candidate.data(), ring_cells, ring_members);
   };

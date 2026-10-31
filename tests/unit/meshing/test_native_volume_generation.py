@@ -12,7 +12,9 @@ from phydrax._meshcore import (
     prepare_plc_source,
 )
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._domain_certification import certify_domain_coverage
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._planar_coverage import PlcSourcePointWitness
 from phydrax.meshing._association import (
     GeometryAssociationKind,
     GeometrySourceEntityRole,
@@ -34,7 +36,7 @@ from phydrax.meshing._controls import (
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._plc_source import PiecewiseLinearComplex, PlcBoundaryPolicy
-from phydrax.meshing._result import _validated_source_evidence
+from phydrax.meshing._result import _validated_source_evidence, CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing._volume_generation import (
@@ -44,6 +46,7 @@ from phydrax.meshing._volume_generation import (
     NativeVolumeSchedule,
     VolumeConstruction,
 )
+from phydrax.meshing.providers._native import NativeMeshingProvider
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_sources import NativePlcSource
 from phydrax.meshing.providers._native_volume import (
@@ -1211,6 +1214,132 @@ def test_conforming_refinement_splits_declared_rotated_cube_faces_on_their_plane
 def test_conforming_refinement_splits_declared_rotated_bipyramid_on_its_planes() -> None:
     source, seeds = _rotated_bipyramid(True)
     _assert_split_on_declared_planes(_conforming_refinement(source, seeds, 0.1))
+
+
+def _conforming_route(source: NativePlcSource, size: float) -> CellMeshingResult:
+    base = _request(source, region_seeds=_CUBE_SEED)
+    specification = VolumeMeshingSpec(
+        base.target,
+        base.boundary_scope,
+        base.fill_strategy,
+        size_controls=(UniformSizeControl(base.boundary_scope, size),),
+        region_seeds=base.region_seeds,
+    )
+    options = NativeMeshingOptions(
+        "plc_tetrahedral",
+        volume_schedule=NativeVolumeSchedule(
+            radius_edge_bound=2.0, minimum_dihedral_degrees=0.0
+        ),
+    )
+    return (
+        NativeMeshingProvider(options)
+        .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
+        .execute()
+    )
+
+
+def _rotated_cube(declared: bool, boundary: PlcBoundaryPolicy) -> NativePlcSource:
+    return _declared_rotated_cube(
+        _rotated_cube_planes() if declared else None,
+        np.full((6,), 1e-12) if declared else None,
+        boundary,
+    )
+
+
+@pytest.mark.parametrize("declared", (False, True), ids=("undeclared", "declared"))
+def test_conforming_route_certifies_boundary_splits_on_exact_source_points(
+    declared: bool,
+) -> None:
+    # Boundary splits leave carriers off the rounded source triangles; coverage
+    # decides the chain on the exact source points that the carriers round.
+    result = _conforming_route(_rotated_cube(declared, "conforming"), 0.3)
+    report = result.certification
+    assert report is not None
+    assert report.status == "certified"
+    witness = report.inputs.source_coverage_witness
+    assert isinstance(witness, PlcSourcePointWitness)
+    kinds = np.asarray(witness.vertex_kinds)
+    assert np.count_nonzero(kinds == 1) > 0
+    assert bool(np.any(kinds == 3)) == declared
+    coverage = report.coverage
+    assert coverage is not None
+    assert coverage.status == "certified"
+    assert coverage.findings == ()
+    assert coverage.source_distance_upper is not None
+    if declared:
+        # A face's rounded triangles leave its declared plane: the chain is
+        # proved exactly in the plane chart, a bounded identification.
+        assert coverage.coverage_method == "source_boundary_homotopy"
+        assert 0.0 < coverage.source_distance_upper < 1e-12
+    else:
+        assert coverage.coverage_method == "exact_oriented_facets"
+        assert coverage.achieved_region_measures == coverage.requested_region_measures
+        # Only the carriers' rounding separates the mesh from the source chain.
+        assert 0.0 < coverage.source_distance_upper < 1e-15
+    restored = type(coverage).from_stored_fields(coverage)
+    assert restored.certificate_id == coverage.certificate_id
+
+
+def test_unsplit_plc_route_retains_no_source_point_witness() -> None:
+    result = _conforming_route(_rotated_cube(True, "fixed"), 5.0)
+    report = result.certification
+    assert report is not None
+    assert report.inputs.source_coverage_witness is None
+    assert report.coverage is not None
+    assert report.coverage.coverage_method == "exact_oriented_facets"
+    assert report.coverage.source_distance_upper is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "shift", "check"),
+    (
+        (1, 1e-9, "source_point_rounding"),
+        (1, 2.0, "source_point_parameter"),
+        (3, 1e-9, "source_point_rounding"),
+    ),
+    ids=("segment-moved", "segment-outside", "plane-moved"),
+)
+def test_tampered_source_point_witness_is_refused(
+    kind: int, shift: float, check: str
+) -> None:
+    result = _conforming_route(_rotated_cube(True, "conforming"), 0.3)
+    report = result.certification
+    assert report is not None
+    inputs = report.inputs
+    witness = inputs.source_coverage_witness
+    assert isinstance(witness, PlcSourcePointWitness)
+    assert inputs.domain is not None
+    assert inputs.cell_regions is not None
+    row = int(np.flatnonzero(np.asarray(witness.vertex_kinds) == kind)[0])
+    parameters = np.array(witness.vertex_parameters, copy=True)
+    parameters[row, 0] += shift
+    tampered = PlcSourcePointWitness(
+        witness.vertex_global_ids,
+        witness.vertex_kinds,
+        witness.vertex_entities,
+        parameters,
+        segments=witness.segments,
+        faces=witness.faces,
+        face_groups=witness.face_groups,
+        face_planes=witness.face_planes,
+        face_plane_tolerances=witness.face_plane_tolerances,
+        domain_face_rows=witness.domain_face_rows,
+        domain_id=witness.domain_id,
+    )
+    coverage = certify_domain_coverage(
+        inputs.mesh,
+        inputs.geometry,
+        inputs.domain,
+        inputs.cell_regions,
+        embedding=report.embedding,
+        source_coverage_witness=tampered,
+    )
+    assert coverage.status != "certified"
+    vertex = int(witness.vertex_global_ids[row])
+    assert any(
+        finding.check == check and finding.entity_ids == (vertex,)
+        for finding in coverage.findings
+    )
 
 
 def test_mapped_carrier_classification_uses_plc_incidence_and_witnesses() -> None:

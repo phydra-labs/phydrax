@@ -20,6 +20,7 @@ from phydrax.discretization._distributed_field import DistributedHaloPlan
 from phydrax.discretization._mapped_locator import PreparedMappedCellLocator
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._polyhedral_locator import PreparedPolyhedralCellLocator
+from phydrax.discretization._view_support import OwnerLocalCellGeometry
 from phydrax.discretization.fem import prepare_finite_element_field_reconstruction
 from phydrax.discretization.finite_volume import (
     PiecewiseConstantReconstruction,
@@ -379,86 +380,217 @@ def test_distributed_halo_plan_keeps_search_only_partitions_empty() -> None:
 
 
 def test_owner_local_exchange_supports_search_only_owner_and_syncs_failure() -> None:
+    """A search-only part joins donor search on its own owner but donates nothing.
+
+    The donor part (priority 2, owned by rank 0) and an overlapping lower-priority
+    search-only part (priority 1, owned by rank 2) are both searched. The donor
+    wins every receptor, so only it needs a field binding and rank 2 moves no
+    field rows. A binding refusal on the search-only owner fails every owner.
+    """
     devices = tuple(sorted(jax.devices(), key=lambda device: device.process_index))
+    group_ranks = tuple(device.process_index for device in devices)
     if (
         jax.process_count() != 3
         or len(devices) != 3
-        or tuple(device.process_index for device in devices) != (0, 1, 2)
+        or group_ranks != (0, 1, 2)
         or len(jax.local_devices()) != 1
     ):
         pytest.skip("This regression needs three owner processes with one device each.")
-    donor, receptor, _ = _native_pair()
-    search_only = _part(
-        "search-only",
-        ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0)),
-        ((0, 1, 2),),
-    )
-    connectivity = prepare_overset_connectivity(
-        MeshAssembly((donor, receptor, search_only)),
-        (
-            OversetPartSpec("donor", priority=1, owner_rank=0),
-            OversetPartSpec(
-                "receptor", boundary=_boundary_facets(receptor), owner_rank=1
-            ),
-            OversetPartSpec("search-only", priority=0, owner_rank=2),
-        ),
-        policy=OversetPolicy(fringe_layers=1, donor_priority="part-priority"),
-    )
-    discretization = phx.discretization.FiniteElementPlan(
-        donor.carrier.mesh,
-        phx.discretization.FiniteElementFieldSpec(
-            "u", phx.discretization.lagrange_element("triangle", 1)
-        ),
-    ).prepare()
-    reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
-    transfer = prepare_overset_field_transfer(
-        connectivity, {"donor": reconstruction}, "u"
-    )
-    field = jnp.asarray(
-        1.0
-        + np.asarray(discretization.dof_maps[0].dof_coordinates)[:, 0]
-        + 2.0 * np.asarray(discretization.dof_maps[0].dof_coordinates)[:, 1]
-    )
-    stable_ids = np.arange(discretization.dof_maps[0].global_dof_count, dtype=np.int64)
     group = ExecutionGroup(
         ExecutionGroupSpec(
             "native-overset-search-only-owner-test",
-            (0, 1, 2),
+            group_ranks,
             tuple((device.process_index, device.id) for device in devices),
             mesh_axes=(("overset", 3),),
         ),
         devices,
     )
-    mismatched_ids = stable_ids.copy()
-    if jax.process_index() == 2:
-        mismatched_ids[0] += 100
-    with pytest.raises(ValueError, match="metadata differ"):
-        transfer.prepare_owner_local_exchange({"donor": mismatched_ids}, group)
+    partition = group_ranks.index(jax.process_index())
+    donor_name, search_name, receptor_name = "donor", "search-only", "receptor"
+    donor_points = np.asarray(((0.11, 0.13), (0.58, 0.17), (0.31, 0.62), (0.84, 0.77)))
+    sources = (
+        _owner_local_periodic_assembly(
+            donor_name, donor_points, np.zeros((4,), dtype=np.int32), group
+        ),
+        _owner_local_periodic_assembly(
+            search_name, donor_points, np.full((4,), 2, dtype=np.int32), group
+        ),
+        _owner_local_periodic_assembly(
+            receptor_name,
+            np.asarray(((0.19, 0.21), (0.63, 0.11), (0.23, 0.70), (0.77, 0.83))),
+            np.asarray((1, 1, 0, 0), dtype=np.int32),
+            group,
+        ),
+    )
+    assembly = MeshAssembly(
+        tuple(part for source in sources for part in source.parts),
+        global_parts=tuple(
+            manifest for source in sources for manifest in source.part_manifest
+        ),
+        local_rank=partition,
+    )
+    parts_by_name = {part.name: part for part in assembly.parts}
+    views: dict[str, OwnerLocalCellGeometry] = {}
+    for name, part in parts_by_name.items():
+        assert isinstance(part.carrier, OwnerLocalCellGeometry)
+        views[name] = part.carrier
+    search_only_rows = np.asarray(
+        multihost_utils.process_allgather(
+            np.asarray(
+                (
+                    np.count_nonzero(
+                        np.asarray(views[search_name].cell_owner_ranks) == partition
+                    )
+                    if search_name in views
+                    else 0,
+                ),
+                dtype=np.int32,
+            )
+        )
+    ).reshape((-1,))
+    assert search_only_rows[2] > 0
+    assert np.all(search_only_rows[:2] == 0)
 
-    exchange = transfer.prepare_owner_local_exchange({"donor": stable_ids}, group)
-    assert not np.any(np.asarray(exchange.halo.local_valid)[2])
+    boundary = None
+    boundary_facets: list[int] = []
+    receptor_view = views.get(receptor_name)
+    if partition == 1 and receptor_view is not None:
+        facet_dimension = receptor_view.topological_dimension - 1
+        _, facet_ids = receptor_view.entity_binding(facet_dimension)
+        vertex_ids = np.asarray(receptor_view.vertex_ids, dtype=np.int64)
+        owner_by_vertex = dict(
+            zip(
+                vertex_ids.tolist(),
+                np.asarray(receptor_view.vertex_owner_ranks, dtype=np.int32).tolist(),
+                strict=True,
+            )
+        )
+        for identifier, loop in zip(
+            facet_ids,
+            receptor_view.entity_vertex_loops(facet_dimension, facet_ids),
+            strict=True,
+        ):
+            facet_vertices = vertex_ids[np.asarray(loop, dtype=np.int64)]
+            if any(owner_by_vertex[int(vertex)] == 1 for vertex in facet_vertices):
+                boundary_facets.append(int(identifier))
+        if boundary_facets:
+            boundary = parts_by_name[receptor_name].scope(
+                facet_dimension, np.asarray(boundary_facets[:1], dtype=np.int64)
+            )
+    boundary_counts = np.asarray(
+        multihost_utils.process_allgather(
+            np.asarray((len(boundary_facets),), dtype=np.int32)
+        )
+    ).reshape((-1,))
+    assert boundary_counts[1] > 0
+    candidate = prepare_overset_connectivity(
+        assembly,
+        (
+            OversetPartSpec(donor_name, priority=2, owner_rank=0),
+            OversetPartSpec(search_name, priority=1, owner_rank=2),
+            OversetPartSpec(receptor_name, boundary=boundary, owner_rank=1),
+        ),
+        policy=OversetPolicy(fringe_layers=1, donor_priority="part-priority"),
+        execution_group=group,
+    )
+
+    # Only the donor part can be selected for this field, so only it is bound.
+    local_reconstructions = {}
+    coefficient_ids = {}
+    if donor_name in views:
+        blocks = [
+            block for block in views[donor_name].blocks if np.asarray(block.cell_ids).size
+        ]
+        if blocks:
+            assert len(blocks) == 1
+            local_reconstructions[donor_name] = (
+                phx.discretization.prepare_owner_local_finite_volume_field_reconstruction(
+                    views[donor_name], blocks[0].name, "u"
+                )
+            )
+            coefficient_ids[donor_name] = np.asarray(blocks[0].cell_ids, dtype=np.int64)
+    transfer = prepare_overset_field_transfer(candidate, local_reconstructions, "u")
+
+    # The search-only owner claims coefficients without a binding; every owner fails.
+    refused_ids = (
+        {donor_name: np.zeros((1,), dtype=np.int64)}
+        if partition == 2
+        else coefficient_ids
+    )
+    with pytest.raises(OversetConnectivityError, match="failed collectively") as refused:
+        transfer.prepare_owner_local_exchange(refused_ids, group, views)
+    if partition == 2:
+        assert "must match this rank's prepared field bindings" in str(refused.value)
+
+    exchange = transfer.prepare_owner_local_exchange(coefficient_ids, group, views)
+    resolved = exchange.connectivity
+    assert resolved.complete and resolved.orphan_count == 0
+    receptor_evidence = resolved.receptors_of(receptor_name)
+    assert np.all(np.asarray(receptor_evidence.found))
+    # Both overlapping parts located every receptor; the higher priority donated.
+    assert np.all(np.asarray(receptor_evidence.candidate_parts) == 2)
+    assert np.all(
+        np.asarray(receptor_evidence.donor_parts) == resolved.part_index(donor_name)
+    )
+    halo_valid = np.asarray(exchange.halo.local_valid, dtype=np.bool_)
+    assert not np.any(halo_valid[2])
     assert not np.any(np.asarray(exchange.halo.local_owned)[2])
     assert not np.any(np.asarray(exchange.halo.phase_send_valid)[:, 2])
     assert not np.any(np.asarray(exchange.halo.phase_receive_valid)[:, 2])
-    local_donors = {"donor": field} if jax.process_index() == 0 else {}
-    output = exchange.apply(local_donors)
-    if jax.process_index() == 1:
-        expected = np.asarray(receptor.carrier.mesh.coordinates)
-        np.testing.assert_allclose(
-            output["receptor"], 1.0 + expected[:, 0] + 2.0 * expected[:, 1]
-        )
-    else:
-        assert not output
 
-    local_duals = (
-        {"receptor": jnp.ones((receptor.carrier.mesh.coordinates.shape[0],))}
-        if jax.process_index() == 1
-        else {}
+    def field_value(ids: np.ndarray) -> np.ndarray:
+        return 1.0 + (np.asarray(ids, dtype=np.int64) % 17) * 0.125
+
+    local_donors = {}
+    if donor_name in coefficient_ids:
+        donor_view = views[donor_name]
+        owner_by_cell = dict(
+            zip(
+                np.asarray(donor_view.cell_ids, dtype=np.int64).tolist(),
+                np.asarray(donor_view.cell_owner_ranks, dtype=np.int32).tolist(),
+                strict=True,
+            )
+        )
+        ids = coefficient_ids[donor_name]
+        owned = np.asarray(
+            [owner_by_cell[int(identifier)] == partition for identifier in ids],
+            dtype=np.bool_,
+        )
+        if np.any(owned):
+            local_donors[donor_name] = jnp.asarray(field_value(ids[owned]))
+    output = exchange.apply(local_donors)
+    expected_by_receptor = dict(
+        zip(
+            np.asarray(receptor_evidence.receptor_ids, dtype=np.int64).tolist(),
+            field_value(np.asarray(receptor_evidence.donor_cells, dtype=np.int64)),
+            strict=True,
+        )
     )
-    transposed = exchange.transpose(local_duals)
-    if jax.process_index() == 0:
-        assert set(transposed) == {"donor"}
-    else:
+    local_receptor_ids = dict(exchange.receptor_global_ids)
+    for name, values in output.items():
+        np.testing.assert_array_equal(
+            np.asarray(values).reshape(-1),
+            np.asarray(
+                [
+                    expected_by_receptor[identifier]
+                    for identifier in local_receptor_ids[name]
+                ]
+            ),
+        )
+    output_counts = np.asarray(
+        multihost_utils.process_allgather(
+            np.asarray((sum(np.asarray(value).size for value in output.values()),))
+        )
+    ).reshape((-1,))
+    assert output_counts[2] == 0 and np.sum(output_counts) > 0
+    transposed = exchange.transpose(
+        {
+            name: jnp.ones((shape[0],), dtype=jnp.float64)
+            for name, shape, _ in exchange.receptor_layouts
+        }
+    )
+    assert set(transposed) <= {donor_name}
+    if partition == 2:
         assert not transposed
 
 

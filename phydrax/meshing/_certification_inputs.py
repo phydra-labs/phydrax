@@ -20,8 +20,11 @@ from ..discretization._cell_mesh import CellMesh
 from ..geometry._domain_certification import (
     coverage_region_occurrence_paths,
     CoverageDomain,
+    SourceCoverageWitness,
 )
+from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..geometry._mesh_certificates import _same_tree_content
+from ..geometry._planar_coverage import PlcSourcePointWitness
 from ..geometry._source_boundary_records import (
     SourceBoundaryDistanceWitness,
     SourceBoundaryQuery,
@@ -33,7 +36,6 @@ from ..geometry._source_fidelity import (
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayBoundaryWitness,
-    RestrictedDelaunayCoverageWitness,
 )
 from ..typing import checked
 from ._certification_schedule import MeshCertificationSchedule
@@ -131,9 +133,7 @@ def _prepare_region_assignments(
     region_keys = (
         ()
         if domain is None
-        else tuple(
-            zip(region_ids, coverage_region_occurrence_paths(domain), strict=True)
-        )
+        else tuple(zip(region_ids, coverage_region_occurrence_paths(domain), strict=True))
     )
     if domain is not None and (
         not region_ids
@@ -240,7 +240,7 @@ def _prepare_features(
 
 
 def _require_coverage_witness_binding(
-    witness: RestrictedDelaunayCoverageWitness | None,
+    witness: SourceCoverageWitness | None,
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     domain: CoverageDomain | None,
@@ -249,6 +249,16 @@ def _require_coverage_witness_binding(
 ) -> None:
     """Cross-bind independent metric and topology premises, without asserting proof."""
     if witness is None:
+        return
+    if isinstance(witness, PlcSourcePointWitness):
+        if (
+            not isinstance(domain, PiecewiseLinearDomain)
+            or witness.domain_id != domain.domain_id
+            or not np.array_equal(witness.vertex_global_ids, mesh.vertex_global_ids)
+        ):
+            raise ValueError(
+                "PLC source points must bind the piecewise-linear domain and mesh vertices."
+            )
         return
     if not isinstance(domain, AnalyticImplicitProfile) or not isinstance(
         fidelity_witness, SourceBoundaryDistanceWitness
@@ -262,7 +272,11 @@ def _require_coverage_witness_binding(
         distance_id = witness.distance_witness_id
     else:
         root = witness.root_witness
-        target = (witness.target_mesh_id, witness.target_geometry_id, witness.target_topology_id)
+        target = (
+            witness.target_mesh_id,
+            witness.target_geometry_id,
+            witness.target_topology_id,
+        )
         distance_id = witness.target_distance_witness_id
     if (
         target != (mesh.mesh_id, cell_geometry_id(geometry), mesh.topology_id)
@@ -327,7 +341,7 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
     maximum_normal_deviation: float | None
     fidelity_witness: SourceFidelityWitness | None
     feature_source: _SourceEntityScopes | None
-    source_coverage_witness: RestrictedDelaunayCoverageWitness | None
+    source_coverage_witness: SourceCoverageWitness | None
     mesh_id: str
     topology_id: str
     geometry_id: str
@@ -357,7 +371,7 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         scoped_fidelity: tuple[ScopedFidelityInput, ...] = (),
         fidelity_witness: SourceFidelityWitness | None = None,
         feature_source: _SourceEntityScopes | None = None,
-        source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None,
+        source_coverage_witness: SourceCoverageWitness | None = None,
     ) -> None:
         source_id_ = canonical_identifier(source_id, "source_id")
         source_revision_ = canonical_identifier(source_revision, "source_revision")

@@ -37,7 +37,12 @@ from ...discretization._coordinate_enclosure import (
     Polynomial,
     polynomial_bounds,
 )
-from ...discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
+from ...discretization._exact_algebraic_geometry import (
+    coefficient_endpoint,
+    ExactScalar,
+    RadicalElement,
+    rational_coefficient,
+)
 from ...geometry._certificate import FieldRegularity
 from ...geometry._contracts import CompiledGeometry
 from ...geometry._embedding_state import MeshCertificateFinding
@@ -121,6 +126,8 @@ type IntervalDerivative3x2 = tuple[
     IntervalVector2,
 ]
 type PhysicalPoint3 = tuple[Fraction, Fraction, Fraction]
+# Target map values: P3 Lagrange coordinate bases carry quadratic radicals.
+type ExactPoint3 = tuple[ExactScalar, ExactScalar, ExactScalar]
 type RootCorner = tuple[TrianglePoint, np.ndarray, float]
 
 
@@ -449,7 +456,12 @@ def _interval_vector_norm_bounds(
     return lower, upper
 
 
-def _fraction_interval(value: Fraction) -> tuple[float, float]:
+def _exact_interval(value: ExactScalar) -> tuple[float, float]:
+    if isinstance(value, RadicalElement):
+        return (
+            coefficient_endpoint(value, upper=False, saturate=True),
+            coefficient_endpoint(value, upper=True, saturate=True),
+        )
     represented = float(value)
     if not math.isfinite(represented):
         return (-math.inf, math.inf)
@@ -458,6 +470,11 @@ def _fraction_interval(value: Fraction) -> tuple[float, float]:
         represented if exact <= value else float(np.nextafter(represented, -np.inf)),
         represented if exact >= value else float(np.nextafter(represented, np.inf)),
     )
+
+
+def _rational_bounds(value: ExactScalar, /) -> tuple[Fraction, Fraction]:
+    """Exact rational enclosure of a rational or quadratic-radical scalar."""
+    return (value, value) if isinstance(value, Fraction) else value.interval()
 
 
 def _poly_interval(expression: Polynomial, triangle: TriangleReference) -> Interval:
@@ -497,13 +514,17 @@ def _restrict_polynomial(
     return restricted
 
 
-def _evaluate_fraction_polynomial(
+def _evaluate_exact_polynomial(
     expression: Polynomial, point: tuple[Fraction, ...], /
-) -> Fraction:
+) -> ExactScalar:
     value = evaluate_expression(expression, point)
-    if not isinstance(value, Fraction):
+    if isinstance(value, RadicalElement) and (
+        not value.terms or (len(value.terms) == 1 and value.terms[0][0] == 1)
+    ):
+        return rational_coefficient(value, role="Implicit target map value")
+    if not isinstance(value, (Fraction, RadicalElement)):
         raise TypeError(
-            "Certified implicit target maps require rational coordinate values."
+            "Certified implicit target maps require exact algebraic coordinate values."
         )
     return value
 
@@ -773,7 +794,7 @@ def _preconditioned_symmetric_part(
                 total = _interval_add(
                     total,
                     _interval_multiply(
-                        _fraction_interval(preconditioner[row][axis]),
+                        _exact_interval(preconditioner[row][axis]),
                         jacobian[axis][column],
                     ),
                 )
@@ -1093,17 +1114,17 @@ def _piece_center(
         (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3,
     )
     coordinates = tuple(
-        _fraction_interval(_evaluate_fraction_polynomial(expression, center))
+        _exact_interval(_evaluate_exact_polynomial(expression, center))
         for expression in target_expressions
     )
     offsets: IntervalVector2 = (
         (
-            _fraction_interval(min(point[0] for point in triangle) - center[0])[0],
-            _fraction_interval(max(point[0] for point in triangle) - center[0])[1],
+            _exact_interval(min(point[0] for point in triangle) - center[0])[0],
+            _exact_interval(max(point[0] for point in triangle) - center[0])[1],
         ),
         (
-            _fraction_interval(min(point[1] for point in triangle) - center[1])[0],
-            _fraction_interval(max(point[1] for point in triangle) - center[1])[1],
+            _exact_interval(min(point[1] for point in triangle) - center[1])[0],
+            _exact_interval(max(point[1] for point in triangle) - center[1])[1],
         ),
     )
     return (
@@ -1275,9 +1296,17 @@ def _face_piece_steps(
         radius = 2.0 * (value_high - value_low) / (
             gradient_norm[0] * gradient_norm[0]
         ) + 0.5 * abs(center_parameter)
+        lower = min(0.0, center_parameter - radius)
+        upper = max(0.0, center_parameter + radius)
+        # The root side spans twice its estimate: the face-independent doubling
+        # bracket of a point lift then stays inside the certified interval.
+        if center_parameter >= 0.0:
+            upper *= 2.0
+        else:
+            lower *= 2.0
         root_parameters = (
-            float(np.nextafter(min(0.0, center_parameter - radius), -np.inf)),
-            float(np.nextafter(max(0.0, center_parameter + radius), np.inf)),
+            float(np.nextafter(lower, -np.inf)),
+            float(np.nextafter(upper, np.inf)),
         )
     if not (math.isfinite(root_parameters[0]) and math.isfinite(root_parameters[1])):
         return None, "implicit root-chart normal tube is not finitely enclosed", True
@@ -1588,23 +1617,26 @@ def _transversal_injectivity(
     target_expressions: Polynomial3,
     orientation: int,
     /,
-) -> Callable[[float], float]:
+) -> Callable[[Sequence[_PieceProof]], float]:
     """Certify whole-face injectivity of the normal-line root chart directly.
 
     If ``R(u1) = R(u2)`` with ``R = P + t grad f(P)``, the mean-value forms
     ``P1 - P2 = A (u1 - u2)`` and ``grad f(P2) - grad f(P1) = H (P2 - P1)`` give
     ``(I + t1 H) A (u1 - u2) = (t2 - t1) grad f(P2)``, so
-    ``det[A_u, A_v, (I + t1 H)^-1 grad f(P2)] = 0``. ``A``, ``H`` and the
-    gradient lie in their enclosures over the whole target face and ``|t1|`` is
-    at most the certified root radius of the face pieces. A strictly signed
-    enclosure of that determinant therefore proves injectivity.
+    ``det[A_u, A_v, (I + t1 H)^-1 grad f(P2)] = 0``. ``H`` and the gradient lie
+    in their enclosures over the whole target face and ``|t1|`` is at most the
+    certified root radius of the face pieces. ``A`` is the chord mean of ``DP``;
+    with ``m`` the chord midpoint and ``d = u1 - u2``, a map of degree at most
+    three has ``A = DP(m) + D^2(DP)[d, d] / 24`` exactly, and ``m`` lies in one
+    of the face pieces. A strictly signed enclosure of that determinant on every
+    piece therefore proves injectivity.
 
-    Returns a function of the root radius giving the normalized lower bound of
-    the determinant, or 0.0 when the enclosure is not strictly signed.
+    Returns a function of the face pieces giving the normalized lower bound of
+    the determinant, or 0.0 when some enclosure is not strictly signed.
     """
     face_low, face_high = _box_from_polynomials(target_expressions, _STANDARD_TRIANGLE)
     if not (np.all(np.isfinite(face_low)) and np.all(np.isfinite(face_high))):
-        return lambda radius: 0.0
+        return lambda pieces: 0.0
     ((_, gradient),), (hessian,) = _evaluate_box_requests(
         bounds,
         hessian_program,
@@ -1614,38 +1646,70 @@ def _transversal_injectivity(
         sum(max(abs(entry[0]), abs(entry[1])) for entry in row) for row in hessian
     )
     gradient_bound = max(max(abs(entry[0]), abs(entry[1])) for entry in gradient)
-    tangents: IntervalDerivative3x2 = (
-        (
-            _poly_interval(derivative(target_expressions[0], 0), _STANDARD_TRIANGLE),
-            _poly_interval(derivative(target_expressions[0], 1), _STANDARD_TRIANGLE),
-        ),
-        (
-            _poly_interval(derivative(target_expressions[1], 0), _STANDARD_TRIANGLE),
-            _poly_interval(derivative(target_expressions[1], 1), _STANDARD_TRIANGLE),
-        ),
-        (
-            _poly_interval(derivative(target_expressions[2], 0), _STANDARD_TRIANGLE),
-            _poly_interval(derivative(target_expressions[2], 1), _STANDARD_TRIANGLE),
-        ),
+    tangent_expressions: tuple[tuple[Polynomial, Polynomial], ...] = tuple(
+        (derivative(expression, 0), derivative(expression, 1))
+        for expression in target_expressions
     )
+    # |D^2(DP)[d, d]| / 24 with |d_a d_b| <= 1 on the standard triangle; the
+    # third derivatives of a map of degree at most three are constants.
+    chord_errors = tuple(
+        tuple(
+            float(
+                np.nextafter(
+                    sum(
+                        max(
+                            abs(value)
+                            for value in _poly_interval(
+                                derivative(derivative(tangent, first), second),
+                                _STANDARD_TRIANGLE,
+                            )
+                        )
+                        for first in (0, 1)
+                        for second in (0, 1)
+                    )
+                    / 24.0,
+                    np.inf,
+                )
+            )
+            for tangent in row
+        )
+        for row in tangent_expressions
+    )
+
+    def tangents(triangle: TriangleReference, chord: bool, /) -> IntervalDerivative3x2:
+        def entry(axis: int, column: int, /) -> Interval:
+            value = _poly_interval(tangent_expressions[axis][column], triangle)
+            if not chord:
+                return value
+            error = chord_errors[axis][column]
+            return _interval_add(value, (-error, error))
+
+        return (
+            (entry(0, 0), entry(0, 1)),
+            (entry(1, 0), entry(1, 1)),
+            (entry(2, 0), entry(2, 1)),
+        )
+
+    face_tangents = tangents(_STANDARD_TRIANGLE, False)
     area_norm = _interval_vector_norm_bounds(
         (
             _interval_subtract(
-                _interval_multiply(tangents[1][0], tangents[2][1]),
-                _interval_multiply(tangents[2][0], tangents[1][1]),
+                _interval_multiply(face_tangents[1][0], face_tangents[2][1]),
+                _interval_multiply(face_tangents[2][0], face_tangents[1][1]),
             ),
             _interval_subtract(
-                _interval_multiply(tangents[2][0], tangents[0][1]),
-                _interval_multiply(tangents[0][0], tangents[2][1]),
+                _interval_multiply(face_tangents[2][0], face_tangents[0][1]),
+                _interval_multiply(face_tangents[0][0], face_tangents[2][1]),
             ),
             _interval_subtract(
-                _interval_multiply(tangents[0][0], tangents[1][1]),
-                _interval_multiply(tangents[1][0], tangents[0][1]),
+                _interval_multiply(face_tangents[0][0], face_tangents[1][1]),
+                _interval_multiply(face_tangents[1][0], face_tangents[0][1]),
             ),
         )
     )[1]
 
-    def margin(radius: float, /) -> float:
+    def margin(pieces: Sequence[_PieceProof], /) -> float:
+        radius = max(piece.root_parameter_bound for piece in pieces)
         contraction = float(np.nextafter(radius * hessian_norm, np.inf))
         if not math.isfinite(contraction) or contraction >= 1.0:
             return 0.0
@@ -1663,19 +1727,32 @@ def _transversal_injectivity(
             _interval_add(gradient[1], (-perturbation, perturbation)),
             _interval_add(gradient[2], (-perturbation, perturbation)),
         )
-        determinant = _normal_area_interval(tangents, direction, orientation)
         scale = area_norm * _interval_vector_norm_bounds(direction)[1]
-        if determinant[0] <= 0.0 or not math.isfinite(scale) or scale <= 0.0:
+        if not math.isfinite(scale) or scale <= 0.0:
             return 0.0
-        return float(np.nextafter(determinant[0] / scale, 0.0))
+        lower = math.inf
+        for piece in pieces:
+            determinant = _normal_area_interval(
+                tangents(piece.triangle, True), direction, orientation
+            )
+            if determinant[0] <= 0.0:
+                return 0.0
+            lower = min(lower, determinant[0])
+        return float(np.nextafter(lower / scale, 0.0))
 
     return margin
 
 
-def _injectivity_preconditioner(
+def _injectivity_preconditioners(
     pieces: tuple[_PieceProof, ...], /
-) -> FractionMatrix2 | None:
-    """Inverse of the area-weighted mean projected Jacobian over the face pieces."""
+) -> tuple[FractionMatrix2, ...]:
+    """Candidate preconditioners from the area-weighted mean projected Jacobian.
+
+    With the mean ``M``, ``M^-1`` makes ``C J`` the identity at the mean, while
+    ``M^T / |M|_F^2`` pairs each chord image with its mean image,
+    ``(v-u)·C J (v-u) = (M d)·(J d)``, which a rotating Jacobian keeps positive
+    on thin faces where ``M^-1`` amplifies the rotation by the condition number.
+    """
     total = np.zeros((2, 2), dtype=np.float64)
     weight = 0.0
     for piece in pieces:
@@ -1692,19 +1769,23 @@ def _injectivity_preconditioner(
         total += area * midpoint
         weight += area
     if weight <= 0.0:
-        return None
+        return ()
     mean = total / weight
     if not np.all(np.isfinite(mean)) or np.linalg.det(mean) == 0.0:
-        return None
+        return ()
+    candidates: list[np.ndarray] = []
     try:
-        inverse = np.linalg.inv(mean)
+        candidates.append(np.linalg.inv(mean))
     except np.linalg.LinAlgError:
-        return None
-    if not np.all(np.isfinite(inverse)):
-        return None
-    return (
-        (Fraction(float(inverse[0, 0])), Fraction(float(inverse[0, 1]))),
-        (Fraction(float(inverse[1, 0])), Fraction(float(inverse[1, 1]))),
+        pass
+    candidates.append(mean.T / float(np.sum(mean * mean)))
+    return tuple(
+        (
+            (Fraction(float(matrix[0, 0])), Fraction(float(matrix[0, 1]))),
+            (Fraction(float(matrix[1, 0])), Fraction(float(matrix[1, 1]))),
+        )
+        for matrix in candidates
+        if np.all(np.isfinite(matrix))
     )
 
 
@@ -1720,65 +1801,73 @@ def _preconditioners_agree(first: FractionMatrix2, second: FractionMatrix2, /) -
 
 def _certify_face_injectivity(
     prove: _PieceProver,
-    transversal: Callable[[float], float],
+    transversal: Callable[[Sequence[_PieceProof]], float],
     pieces: tuple[_PieceProof, ...],
 ) -> tuple[tuple[_PieceProof, ...], float, str]:
     """Prove the projected root chart injective on the whole convex target face.
 
-    Each generation first tries the transversal certificate with the current
-    root radius. Otherwise, for the preconditioner ``C`` of the current pieces and
+    Each generation first tries the transversal certificate on the current
+    pieces. Otherwise, for a preconditioner ``C`` of the current pieces and
     distinct face points ``u, v``, the mean-value form gives
     ``(v-u)·C(F(v)-F(u)) = ∫ (v-u)·C J(u+s(v-u)) (v-u) ds``, so ``F`` is
     injective when ``sym(C J)`` is positive definite at every face point. Each
-    piece checks its own Jacobian enclosure and only undecided pieces split, so
-    ``C`` sharpens with the pieces. The proof refuses when every remaining piece
-    is decided and some refutes ``C``, and refinement ends at target-parameter
-    representability.
+    piece checks its own Jacobian enclosure against every candidate ``C`` and
+    only the undecided pieces of the best unrefuted candidate split, so the
+    candidates sharpen with the pieces. The proof refuses when every candidate
+    is refuted by a piece and refinement no longer moves them or leaves nothing
+    undecided, and refinement ends at target-parameter representability.
     """
     current = list(pieces)
-    previous: FractionMatrix2 | None = None
+    previous: tuple[FractionMatrix2, ...] = ()
     while True:
-        transversal_margin = transversal(
-            max(piece.root_parameter_bound for piece in current)
-        )
+        transversal_margin = transversal(current)
         if transversal_margin > 0.0:
             return tuple(current), transversal_margin, ""
-        preconditioner = _injectivity_preconditioner(tuple(current))
-        if preconditioner is None:
+        candidates = _injectivity_preconditioners(tuple(current))
+        if not candidates:
             return (
                 pieces,
                 0.0,
                 "Implicit root chart has no invertible mean projected Jacobian.",
             )
-        decided: list[_PieceProof] = []
-        undecided: list[_PieceProof] = []
-        margin = math.inf
-        refuted_any = False
-        for piece in current:
-            piece_margin, refuted = _projected_injectivity_margin(
-                piece.target_jacobian, preconditioner
-            )
-            if piece_margin > 0.0 or refuted:
-                decided.append(piece)
-                margin = min(margin, piece_margin)
-                refuted_any = refuted_any or refuted
-            else:
-                undecided.append(piece)
+        outcomes: list[tuple[bool, list[_PieceProof], list[_PieceProof]]] = []
+        for preconditioner in candidates:
+            decided: list[_PieceProof] = []
+            undecided: list[_PieceProof] = []
+            margin = math.inf
+            refuted_any = False
+            for piece in current:
+                piece_margin, refuted = _projected_injectivity_margin(
+                    piece.target_jacobian, preconditioner
+                )
+                if piece_margin > 0.0 or refuted:
+                    decided.append(piece)
+                    margin = min(margin, piece_margin)
+                    refuted_any = refuted_any or refuted
+                else:
+                    undecided.append(piece)
+            if not refuted_any and not undecided:
+                return tuple(current), margin, ""
+            outcomes.append((refuted_any, decided, undecided))
         # A refutation is final once refinement no longer moves the mean
-        # preconditioner; refusing is always sound, it only withholds a proof.
-        settled = previous is not None and _preconditioners_agree(
-            previous, preconditioner
+        # preconditioners; refusing is always sound, it only withholds a proof.
+        settled = len(previous) == len(candidates) and all(
+            _preconditioners_agree(first, second)
+            for first, second in zip(previous, candidates, strict=True)
         )
-        if refuted_any and (settled or not undecided):
+        open_outcomes = [outcome for outcome in outcomes if outcome[2]]
+        if all(outcome[0] for outcome in outcomes) and (settled or not open_outcomes):
             return (
                 pieces,
                 0.0,
-                "Implicit root chart is not strongly monotone under the mean "
-                "projected-Jacobian preconditioner.",
+                "Implicit root chart is not strongly monotone under its mean "
+                "projected-Jacobian preconditioners.",
             )
-        if not undecided:
-            return tuple(current), margin, ""
-        previous = preconditioner
+        unrefuted = [outcome for outcome in open_outcomes if not outcome[0]]
+        _, decided, undecided = min(
+            unrefuted or open_outcomes, key=lambda outcome: len(outcome[2])
+        )
+        previous = candidates
         children: list[TriangleReference] = []
         for piece in undecided:
             split = _split_triangle(piece.triangle)
@@ -1869,28 +1958,45 @@ def _source_parameter_triangle(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _TargetMapSource:
+    """Resolved coordinate elements, routes and rational source bank of a target map."""
+
+    elements: tuple[object, ...]
+    routes: tuple[np.ndarray, ...]
+    source_bank: CoordinateSourceBank
+
+
+def _target_map_source(mesh: CellMesh, geometry: CellGeometrySpec, /) -> _TargetMapSource:
+    elements, routes, _ = geometry.resolve(mesh)
+    return _TargetMapSource(
+        tuple(elements),
+        tuple(np.asarray(route, dtype=np.int64) for route in routes),
+        geometry.rational_source_coordinates(),
+    )
+
+
 def _target_cell_coordinate_expressions(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
+    target: _TargetMapSource,
     block_index: int,
     cell_row: int,
     /,
 ) -> Polynomial3:
-    elements, routes, _ = geometry.resolve(mesh)
-    element = elements[block_index]
+    element = target.elements[block_index]
     if not isinstance(element, ScalarCoordinateElement):
         raise TypeError(
             "Implicit source charts require standard scalar coordinate elements."
         )
-    source_bank: CoordinateSourceBank = geometry.rational_source_coordinates()
-    local_route = np.asarray(routes[block_index], dtype=np.int64)[cell_row]
-    local: CoordinateSourceBank = tuple(source_bank[int(index)] for index in local_route)
+    local_route = target.routes[block_index][cell_row]
+    local: CoordinateSourceBank = tuple(
+        target.source_bank[int(index)] for index in local_route
+    )
     raw: tuple[Expression, ...] = coordinate_map_expressions(
         element, local, cell_row=cell_row
     )
     if len(raw) != 3:
         raise ValueError(
-            "Adaptive implicit P2/P3 charts require three exact rational target coordinates."
+            "Adaptive implicit P2/P3 charts require three exact target coordinates."
         )
     first, second, third = raw
     if (
@@ -1898,14 +2004,14 @@ def _target_cell_coordinate_expressions(
         or not isinstance(second, dict)
         or not isinstance(third, dict)
         or any(
-            not isinstance(coefficient, Fraction)
+            not isinstance(coefficient, (Fraction, RadicalElement))
             for expression in (first, second, third)
             if isinstance(expression, dict)
             for coefficient in expression.values()
         )
     ):
         raise ValueError(
-            "Adaptive implicit P2/P3 charts require exact rational polynomial target maps."
+            "Adaptive implicit P2/P3 charts require exact algebraic polynomial target maps."
         )
     return first, second, third
 
@@ -1928,25 +2034,32 @@ def _source_root_rows(
     return result
 
 
+def _source_cell_rows(surface: AdaptiveImplicitSurface, /) -> dict[SourceCellKey, int]:
+    return {
+        _source_cell_key(np.asarray(key, dtype=np.int64)): index
+        for index, key in enumerate(
+            np.asarray(surface.scaffold.cell_indices, dtype=np.int64)
+        )
+    }
+
+
 def _build_face(
     row: int,
     target_row: tuple[int, int],
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
+    target: _TargetMapSource,
     witness: SourceBoundaryChartWitness,
     surface: AdaptiveImplicitSurface,
     bounds: _FieldEnclosures,
     hessian_program: PreparedIntervalFunction,
     root_rows: dict[GridEdge, tuple[np.ndarray, float]],
+    cell_rows: dict[SourceCellKey, int],
     *,
     tolerance: float | None,
     maximum_normal_deviation: float | None,
 ) -> _PreparedFace:
 
     block_index, cell_row = target_row
-    cell_expressions = _target_cell_coordinate_expressions(
-        mesh, geometry, block_index, cell_row
-    )
+    cell_expressions = _target_cell_coordinate_expressions(target, block_index, cell_row)
     reference_corners = _reference_triangle(
         _token_chart(witness.target_reference_rational_tokens[row])
     )
@@ -1964,10 +2077,6 @@ def _build_face(
     cell_key = _source_cell_key(
         np.asarray(witness.implicit_cell_keys[row], dtype=np.int64)
     )
-    cell_rows: dict[SourceCellKey, int] = {
-        _source_cell_key(np.asarray(key, dtype=np.int64)): index
-        for index, key in enumerate(np.asarray(scaffold.cell_indices, dtype=np.int64))
-    }
     cell_row_source = cell_rows.get(cell_key)
     if cell_row_source is None:
         raise ValueError("Implicit chart witness names an absent scaffold root cell.")
@@ -2311,19 +2420,21 @@ def prepare_adaptive_implicit_root_charts(
             "Implicit target chart rows do not align with the retained source witness."
         )
     root_rows = _source_root_rows(surface)
+    cell_rows = _source_cell_rows(surface)
+    target = _target_map_source(mesh, geometry)
     prepared: list[_PreparedFace] = []
     for row, target_row in enumerate(target_rows):
         prepared.append(
             _build_face(
                 row,
                 target_row,
-                mesh,
-                geometry,
+                target,
                 witness,
                 surface,
                 bounds,
                 hessian_program,
                 root_rows,
+                cell_rows,
                 tolerance=tolerance_,
                 maximum_normal_deviation=normal_,
             )
@@ -2401,59 +2512,113 @@ def _lift_point(
             "Implicit normal root bracket reached coordinate representability."
         )
     maximum_step = maximum_root_parameter
+    # Doubling from the coordinate spacing keeps the bracket independent of the
+    # face, so faces sharing a node lift it to the same root. All doubling
+    # candidates inside the face tube are signed in one interval evaluation and
+    # the first strictly opposite one closes the bracket.
+    steps = [step]
     while True:
-        direction = -1.0 if point_sign > 0 else 1.0
-        second = point + direction * step * gradient
+        next_step = float(np.nextafter(steps[-1] * 2.0, np.inf))
+        if not math.isfinite(next_step) or next_step <= steps[-1]:
+            break
+        if next_step > maximum_step:
+            break
+        steps.append(next_step)
+    direction = -1.0 if point_sign > 0 else 1.0
+    candidates = point[None, :] + (
+        direction * np.asarray(steps, dtype=np.float64)[:, None] * gradient[None, :]
+    )
+    candidate_lower, candidate_upper = bounds.point_values(candidates)
+    for index, (step, second) in enumerate(zip(steps, candidates, strict=True)):
         if not np.all(np.isfinite(second)) or np.array_equal(second, point):
             raise ValueError(
                 "Implicit normal root bracket reached coordinate representability."
             )
-        second_lower, second_upper = bounds.point_values(second[None, :])
-        if float(second_upper[0]) < 0.0:
+        if float(candidate_upper[index]) < 0.0:
             second_sign = -1
-        elif float(second_lower[0]) > 0.0:
+        elif float(candidate_lower[index]) > 0.0:
             second_sign = 1
         else:
             second_sign = 0
-        if second_sign != 0 and second_sign != point_sign:
-            if step > maximum_step:
-                raise ValueError(
-                    "Implicit root bracket exceeds its certified face-local normal tube."
-                )
-            root = _root_on_edge(
-                bounds,
-                point,
-                second,
-                point_sign,
-                second_sign,
-                surface.policy.root_tolerance,
-            )
-            root_point, error, issue = root[:3]
-            if issue:
-                label = AdaptiveImplicitBoxIssue(issue).name.lower()
-                raise ValueError(
-                    f"Implicit normal root isolation is unresolved ({label})."
-                )
-            displacement = np.nextafter(
-                float(np.linalg.norm(root_point - point)) + float(error), np.inf
-            )
-            root_point = np.array(root_point, dtype=np.float64, copy=True)
-            root_point.setflags(write=False)
-            return ImplicitRootChartPoint(
-                root_point,
-                float(displacement),
-                float(error),
-                face.source_cell_key,
-                face.root_edge_keys,
-                "certified_root_chart",
-            )
-        if step >= maximum_step:
+        if second_sign == 0 or second_sign == point_sign:
+            continue
+        if step > maximum_step:
             raise ValueError(
-                "Implicit root is not isolated inside the certified face-local normal tube."
+                "Implicit root bracket exceeds its certified face-local normal tube."
             )
-        # Doubling brackets the root; the last bracket ends exactly at the
-        # certified tube end, so it never leaves the proved root interval.
-        step = min(float(np.nextafter(step * 2.0, np.inf)), maximum_step)
+        root = _root_on_edge(
+            bounds,
+            point,
+            np.array(second, copy=True),
+            point_sign,
+            second_sign,
+            surface.policy.root_tolerance,
+        )
+        root_point, error, issue = root[:3]
+        if issue:
+            label = AdaptiveImplicitBoxIssue(issue).name.lower()
+            raise ValueError(f"Implicit normal root isolation is unresolved ({label}).")
+        displacement = np.nextafter(
+            float(np.linalg.norm(root_point - point)) + float(error), np.inf
+        )
+        root_point = np.array(root_point, dtype=np.float64, copy=True)
+        root_point.setflags(write=False)
+        return ImplicitRootChartPoint(
+            root_point,
+            float(displacement),
+            float(error),
+            face.source_cell_key,
+            face.root_edge_keys,
+            "certified_root_chart",
+        )
+    raise ValueError(
+        "Implicit root is not isolated inside the certified face-local normal tube."
+    )
+
+
+def _nearest_center_squared(
+    sample: PhysicalPoint3,
+    sample_value: np.ndarray,
+    centers: Sequence[ExactPoint3],
+    center_lower: np.ndarray,
+    center_upper: np.ndarray,
+    /,
+) -> ExactScalar:
+    """Return the exact ``min_i |c_i - s|^2``, evaluating only the possible minimizers.
+
+    Each exact centre lies in its outward-rounded coordinate box, so the box gap
+    and the farthest box corner bound ``|c_i - s|^2`` below and above up to a
+    few binary64 roundings, which the relative ``1e-12`` and the absolute
+    ``1e-280`` slack cover. A centre whose lower bound exceeds the least upper
+    bound is farther than some other centre exactly, so the minimum over the
+    survivors is the minimum over all centres.
+    """
+    below = center_lower - sample_value
+    above = sample_value - center_upper
+    gap = np.maximum(np.maximum(below, above), 0.0)
+    far = np.maximum(np.abs(below), np.abs(above))
+    lower = np.sum(gap * gap, axis=1) * (1.0 - 1.0e-12)
+    upper = np.sum(far * far, axis=1) * (1.0 + 1.0e-12)
+    rows = np.flatnonzero(lower <= float(np.min(upper)) + 1.0e-280)
+    return min(_squared_distance(sample, centers[int(row)]) for row in rows)
+
+
+def _squared_distance(sample: PhysicalPoint3, point: ExactPoint3, /) -> ExactScalar:
+    total: ExactScalar = Fraction(0)
+    for axis in range(3):
+        offset = point[axis] - sample[axis]
+        total = total + offset * offset
+    return total
+
+
+def _evaluate_exact_point(
+    expressions: Polynomial3, parameter: TrianglePoint, /
+) -> ExactPoint3:
+    return (
+        _evaluate_exact_polynomial(expressions[0], parameter),
+        _evaluate_exact_polynomial(expressions[1], parameter),
+        _evaluate_exact_polynomial(expressions[2], parameter),
+    )
 
 
 def _nearest_target_chart_bounds(
@@ -2470,17 +2635,11 @@ def _nearest_target_chart_bounds(
     pending: list[TriangleReference] = [_STANDARD_TRIANGLE]
     lower_squared_rows: list[Fraction] = []
     center: TrianglePoint = (Fraction(1, 3), Fraction(1, 3))
-    center_point: PhysicalPoint3 = (
-        _evaluate_fraction_polynomial(expressions[0], center),
-        _evaluate_fraction_polynomial(expressions[1], center),
-        _evaluate_fraction_polynomial(expressions[2], center),
-    )
-    best_upper_squared: Fraction = sum(
-        ((sample[axis] - center_point[axis]) ** 2 for axis in range(3)),
-        Fraction(0),
+    best_upper_squared = _squared_distance(
+        sample, _evaluate_exact_point(expressions, center)
     )
     unresolved = False
-    center_upper = fraction_sqrt_interval(best_upper_squared)[1]
+    center_upper = fraction_sqrt_interval(_rational_bounds(best_upper_squared)[1])[1]
     if center_upper <= threshold:
         return Fraction(0), center_upper, True
     candidate_parameters: tuple[TrianglePoint, ...] = (
@@ -2516,24 +2675,20 @@ def _nearest_target_chart_bounds(
                 for value in _barycentric(parameter, triangle, solver=candidate_solver)
             ):
                 continue
-            point: PhysicalPoint3 = (
-                _evaluate_fraction_polynomial(
-                    _restrict_polynomial(expressions[0], triangle), parameter
+            point = _evaluate_exact_point(
+                (
+                    _restrict_polynomial(expressions[0], triangle),
+                    _restrict_polynomial(expressions[1], triangle),
+                    _restrict_polynomial(expressions[2], triangle),
                 ),
-                _evaluate_fraction_polynomial(
-                    _restrict_polynomial(expressions[1], triangle), parameter
-                ),
-                _evaluate_fraction_polynomial(
-                    _restrict_polynomial(expressions[2], triangle), parameter
-                ),
+                parameter,
             )
-            squared: Fraction = sum(
-                ((sample[axis] - point[axis]) ** 2 for axis in range(3)),
-                Fraction(0),
-            )
+            squared = _squared_distance(sample, point)
             if squared < best_upper_squared:
                 best_upper_squared = squared
-        upper_distance = fraction_sqrt_interval(best_upper_squared)[1]
+        upper_distance = fraction_sqrt_interval(_rational_bounds(best_upper_squared)[1])[
+            1
+        ]
         if upper_distance <= threshold:
             return Fraction(0), upper_distance, True
         if lower_squared >= best_upper_squared:
@@ -2547,7 +2702,7 @@ def _nearest_target_chart_bounds(
         pending.extend(reversed(children))
     nearest_lower_squared = min(lower_squared_rows, default=Fraction(0))
     nearest_lower = fraction_sqrt_interval(nearest_lower_squared)[0]
-    nearest_upper = fraction_sqrt_interval(best_upper_squared)[1]
+    nearest_upper = fraction_sqrt_interval(_rational_bounds(best_upper_squared)[1])[1]
     if nearest_lower > threshold:
         return nearest_lower, nearest_upper, True
     return nearest_lower, nearest_upper, not unresolved
@@ -2721,11 +2876,12 @@ def certify_adaptive_implicit_charts(
     )
     target_maps: list[Polynomial3] = []
     target_map_boxes: list[tuple[np.ndarray, np.ndarray]] = []
-    target_map_centers: list[PhysicalPoint3] = []
+    target_map_centers: list[ExactPoint3] = []
     center_parameter: TrianglePoint = (Fraction(1, 3), Fraction(1, 3))
+    target = _target_map_source(mesh, geometry)
     for row, (block_index, cell_row) in enumerate(target_rows):
         cell_expressions = _target_cell_coordinate_expressions(
-            mesh, geometry, block_index, cell_row
+            target, block_index, cell_row
         )
         reference_corners = _reference_triangle(
             _token_chart(witness.target_reference_rational_tokens[row])
@@ -2733,16 +2889,19 @@ def certify_adaptive_implicit_charts(
         mapped = _triangle_coordinate_expressions(cell_expressions, reference_corners)
         target_maps.append(mapped)
         target_map_boxes.append(_box_from_polynomials(mapped, _STANDARD_TRIANGLE))
-        target_map_centers.append(
-            (
-                _evaluate_fraction_polynomial(mapped[0], center_parameter),
-                _evaluate_fraction_polynomial(mapped[1], center_parameter),
-                _evaluate_fraction_polynomial(mapped[2], center_parameter),
-            )
-        )
-    target_bvh = prepare_bvh(
-        np.asarray([box[0] for box in target_map_boxes], dtype=np.float64),
-        np.asarray([box[1] for box in target_map_boxes], dtype=np.float64),
+        target_map_centers.append(_evaluate_exact_point(mapped, center_parameter))
+    box_lower = np.asarray([box[0] for box in target_map_boxes], dtype=np.float64)
+    box_upper = np.asarray([box[1] for box in target_map_boxes], dtype=np.float64)
+    target_bvh = prepare_bvh(box_lower, box_upper, dtype=np.float64)
+    center_intervals = [
+        [_exact_interval(value) for value in center] for center in target_map_centers
+    ]
+    center_lower = np.asarray(
+        [[value[0] for value in center] for center in center_intervals],
+        dtype=np.float64,
+    )
+    center_upper = np.asarray(
+        [[value[1] for value in center] for center in center_intervals],
         dtype=np.float64,
     )
     source_to_mesh_lower = Fraction(0)
@@ -2751,27 +2910,28 @@ def certify_adaptive_implicit_charts(
         point_error = Fraction.from_float(float(samples.point_error[sample_row]))
         cover_radius = Fraction.from_float(float(samples.covering_radius[sample_row]))
         threshold = Fraction.from_float(float(tolerance)) - point_error - cover_radius
-        center_upper_squared = min(
-            sum(
-                ((sample[axis] - center[axis]) ** 2 for axis in range(3)),
-                Fraction(0),
-            )
-            for center in target_map_centers
-        )
-        nearest_upper = fraction_sqrt_interval(center_upper_squared)[1]
         sample_float = np.asarray(
             tuple(float(value) for value in sample), dtype=np.float64
         )
-        lower_rows: list[tuple[float, Fraction]] = []
-        for row, (lower, upper) in enumerate(target_map_boxes):
-            first_gap = np.nextafter(lower - sample_float, -np.inf)
-            second_gap = np.nextafter(sample_float - upper, -np.inf)
-            gap = np.maximum(np.maximum(first_gap, second_gap), 0.0)
-            squared = np.nextafter(gap * gap, 0.0)
-            squared_sum = max(0.0, float(np.nextafter(float(np.sum(squared)), -np.inf)))
-            lower_distance = float(np.nextafter(math.sqrt(squared_sum), 0.0))
-            lower_rows.append((lower_distance, Fraction.from_float(lower_distance)))
-        nearest_lower = min((value for _, value in lower_rows), default=Fraction(0))
+        center_upper_squared = _nearest_center_squared(
+            sample, sample_float, target_map_centers, center_lower, center_upper
+        )
+        nearest_upper = fraction_sqrt_interval(_rational_bounds(center_upper_squared)[1])[
+            1
+        ]
+        first_gap = np.nextafter(box_lower - sample_float, -np.inf)
+        second_gap = np.nextafter(sample_float - box_upper, -np.inf)
+        gap = np.maximum(np.maximum(first_gap, second_gap), 0.0)
+        squared = np.nextafter(gap * gap, 0.0)
+        squared_sum = np.maximum(
+            0.0, np.nextafter(squared[:, 0] + squared[:, 1] + squared[:, 2], -np.inf)
+        )
+        lower_distances = np.nextafter(np.sqrt(squared_sum), 0.0)
+        nearest_lower = (
+            Fraction.from_float(float(np.min(lower_distances)))
+            if lower_distances.size
+            else Fraction(0)
+        )
         if nearest_upper > threshold:
             candidate_count = 1
             processed: set[int] = set()
@@ -2788,8 +2948,7 @@ def certify_adaptive_implicit_charts(
                     if row < 0 or row >= len(target_maps) or row in processed:
                         continue
                     processed.add(row)
-                    _, exact_lower = lower_rows[row]
-                    if exact_lower > threshold:
+                    if Fraction.from_float(float(lower_distances[row])) > threshold:
                         continue
                     lower, upper, _resolved = _nearest_target_chart_bounds(
                         sample, target_maps[row], threshold

@@ -189,6 +189,19 @@ accepts an in-hand certificate. Each consumer, including restricted-Delaunay
 coverage replay, reuses it only after checking that it binds the same mesh,
 coordinate map, local-validity proof and junction set; there is no process
 cache.
+A restore of a stored report first calls `report.require_premises(inputs,
+audit_policy=..., organization=...)` with the rebuilt premises. It compares only
+claims fixed by content identity (request, mesh and coordinate-map bindings,
+junctions, source revisions, coverage region IDs and occurrence paths, material
+assignment, organization IDs, report identity), so a tampered archive is refused
+before any proof replay. It accepts nothing: the embedding, coverage, fidelity
+and audit proofs are then recomputed once from the same premises, because a
+stored claim is not determined by the identities it binds.
+Native model archives store per-entity static rows of geometry associations,
+embedding witnesses and surface cell tags as array columns (a value table with
+int64 row indices, or UTF-8 text with offsets), so manifests stay within the
+canonical `MODEL_ARCHIVE_LIMITS`; the decoder rebuilds each record through its
+constructor and requires its stored identity.
 Missing continuous fidelity witnesses produce an unresolved certificate with
 unbounded directed deviation evidence. Those bounds remain infinity; they are
 not replaced with finite estimates or accepted merely because mesh samples agree.
@@ -725,6 +738,26 @@ contracts:
   inside the group's triangles, and acute input angles use the plane normals.
   Downstream, a stratum-3 vertex is a facet point of that face row's facet.
   Without a declaration a rotated facet keeps its authored triangles, as above.
+- **Coverage of boundary splits.** A split point's exact source point S (the
+  segment, triangle or declared-plane point named by its witness parameters)
+  is authoritative and its binary64 carrier is only S rounded, so a split
+  boundary is not exactly on the rounded source triangles. When refinement
+  inserted boundary points, the native PLC route therefore retains a
+  `PlcSourcePointWitness` (each vertex's source kind, row and parameters,
+  with the source segments, triangles and declared planes) as the
+  certificate's `source_coverage_witness`. Coverage recomputes every S in
+  rationals, refuses a parameter that leaves its segment or triangle
+  (`source_point_parameter`) and a carrier that is not the correctly rounded
+  S (`source_point_rounding`), and then matches the oriented facet chain and
+  integrates the region measures on S. Without declared planes the proof
+  stays an exact chain equality (`exact_oriented_facets`) whose
+  `source_distance_upper` is the carriers' rounding bound. A declared facet
+  whose rounded triangles leave its plane is compared after exact orthogonal
+  projection onto that plane; every corner must be admitted to the plane as
+  above, and the certificate is a `source_boundary_homotopy` bounded by twice
+  the largest corner distance to the plane plus the rounding bound. Unsplit
+  boundaries (every `FIXED` route) retain no witness and certify exactly as
+  before.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores
@@ -738,8 +771,12 @@ contracts:
   or, for a cell whose edits are otherwise exhausted, cones the closed ring of
   one of its unconstrained edges to a point in the ring's kernel. The latter
   removes a flat cell whose four vertices lie on a fixed boundary (two
-  constrained faces splitting a planar quad) without moving the boundary: no
-  flip can remove such a cell and no circumsphere cavity contains it. A
+  constrained faces splitting a planar or slightly folded quad) without
+  moving the boundary: no flip can remove such a cell and no circumsphere
+  cavity contains it. The ring point is searched over the kernel in the
+  edit's own order (a cone passing the gates beats one that does not, then
+  the larger sorted score vector wins), since a point merely clear of the
+  ring faces can cone a nearly flat ring into worse or oversized cells. A
   relocation must also make sufficient progress: at the first position where
   its star's sorted scores change, the new score meets the target or closes at
   least an eighth of that score's gap to the target (at least one quantum). A

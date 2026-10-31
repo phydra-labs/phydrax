@@ -5947,6 +5947,16 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
     source_distance_witness = None
     source_coverage_profile = None
     if source_coverage_witness is not None:
+        if not isinstance(
+            source_coverage_witness,
+            (
+                RestrictedDelaunayBoundaryWitness,
+                RestrictedDelaunayCoverageTransportWitness,
+            ),
+        ):
+            raise ValueError(
+                "Polyhedral coverage renewal transports only restricted-Delaunay coverage."
+            )
         if certification_inputs is None or not isinstance(
             certification_inputs.fidelity_witness, SourceBoundaryDistanceWitness
         ):
