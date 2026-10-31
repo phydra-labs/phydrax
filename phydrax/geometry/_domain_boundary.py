@@ -860,6 +860,13 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         carries the certified lens separating it from the exact curved trim.
         """
         self.require_current()
+        return self._trim_partition_reference_unchecked(patch, triangles)
+
+    def _trim_partition_reference_unchecked(
+        self, patch: int, triangles: tuple[_Triangle2, ...], /
+    ) -> tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]]:
+        # Per-patch callers validate currentness once before their loop: the
+        # check fingerprints the whole domain, so it must not run per patch.
         successors = _target_boundary_successors(triangles)
         lenses: list[CurvedTrimLens] = []
 
