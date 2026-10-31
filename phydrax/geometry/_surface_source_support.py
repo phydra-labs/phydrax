@@ -708,8 +708,9 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
     def chart_witness(self) -> SurfaceChartWitness:
 
         self.require_current()
+        geometry_id = cell_geometry_id(self.geometry)
         return SurfaceChartWitness(
-            geometry_id=cell_geometry_id(self.geometry),
+            geometry_id=geometry_id,
             topology_id=self.mesh.topology_id,
             domain_id=self.domain.domain_id,
             cell_global_ids=np.asarray(self.cell_global_ids, dtype=np.int64),
@@ -717,11 +718,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             charts=self.root_parameters,
             source_root_cell_ids=self.source_root_cell_ids,
             root_mesh_cell_bindings=tuple(
-                SurfaceRootMeshCellBinding(
-                    cell_geometry_id(self.geometry),
-                    self.mesh.topology_id,
-                    cell_id,
-                )
+                SurfaceRootMeshCellBinding(geometry_id, self.mesh.topology_id, cell_id)
                 for cell_id in self.cell_global_ids
             ),
             source_piece_ids=self.source_piece_ids,

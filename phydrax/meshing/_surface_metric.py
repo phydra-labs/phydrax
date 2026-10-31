@@ -2062,8 +2062,9 @@ def _physical_edit(
             int(patch): surface_occurrences[int(patch)]
             for patch in np.unique(patches).tolist()
         }
+        geometry_id = cell_geometry_id(target_geometry)
         witness = SurfaceChartWitness(
-            geometry_id=cell_geometry_id(target_geometry),
+            geometry_id=geometry_id,
             topology_id=target_mesh.topology_id,
             domain_id=prepared.domain.domain_id,
             cell_global_ids=target_cell_ids,
@@ -2085,9 +2086,7 @@ def _physical_edit(
             ),
             root_mesh_cell_bindings=tuple(
                 SurfaceRootMeshCellBinding(
-                    cell_geometry_id(target_geometry),
-                    target_mesh.topology_id,
-                    int(identifier),
+                    geometry_id, target_mesh.topology_id, int(identifier)
                 )
                 for identifier in target_cell_ids.tolist()
             ),

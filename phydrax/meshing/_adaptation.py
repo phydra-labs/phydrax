@@ -3192,6 +3192,8 @@ def _retarget_surface_chart_witness(
     occurrences: list[tuple[str, ...]] = []
     source_vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
     target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
+    # One fingerprint of the whole target geometry binds every cell.
+    geometry_id = cell_geometry_id(geometry)
     for block in target.blocks:
         cell_vertices = np.asarray(block.vertices, dtype=np.int64)
         for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
@@ -3358,15 +3360,13 @@ def _retarget_surface_chart_witness(
             root_mesh_bindings.append(
                 None
                 if root_mesh_binding is None
-                else SurfaceRootMeshCellBinding(
-                    cell_geometry_id(geometry), target.topology_id, cell_id
-                )
+                else SurfaceRootMeshCellBinding(geometry_id, target.topology_id, cell_id)
             )
             pieces.append(tuple(piece))
             entities.append(entity)
             occurrences.append(tuple(occurrence))
     return SurfaceChartWitness(
-        geometry_id=cell_geometry_id(geometry),
+        geometry_id=geometry_id,
         topology_id=target.topology_id,
         domain_id=witness.domain_id,
         cell_global_ids=np.asarray(target_ids, dtype=np.int64),
