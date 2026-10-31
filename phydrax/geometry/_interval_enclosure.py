@@ -1444,6 +1444,8 @@ def _evaluate_jaxpr(
                     _hull(tuple(row[index] for row in branch_outputs))
                     for index in range(len(branch_outputs[0]))
                 )
+        elif name == "scan":
+            outputs = _evaluate_scan(equation, arguments)
         elif identity.is_square(equation):
             outputs = (interval_square(arguments[0]),)
         else:
@@ -1456,6 +1458,56 @@ def _evaluate_jaxpr(
             if not isinstance(variable, jax_core.DropVar):
                 environment[variable] = value
     return tuple(_read_atom(atom, environment) for atom in jaxpr.outvars)
+
+
+def _evaluate_scan(
+    equation: jax_core.JaxprEqn, arguments: tuple[Interval, ...], /
+) -> tuple[Interval, ...]:
+    """Unroll a fixed-length scan: each step is a sound enclosure of the last."""
+    body = equation.params["jaxpr"]
+    if "num_consts" in equation.params:
+        constant_count = int(equation.params["num_consts"])
+        carry_count = int(equation.params["num_carry"])
+    else:
+        # Flat-tree scan parameters group inputs as (consts, carry, xs).
+        constant_group, carry_group, _ = equation.params["ft_in"].unpack()
+        constant_count, carry_count = len(list(constant_group)), len(list(carry_group))
+    length = int(equation.params["length"])
+    if not isinstance(body, jax_core.ClosedJaxpr):
+        raise IntervalExtensionError("unsupported nested jaxpr for primitive 'scan'.")
+    body_constants = tuple(_as_interval(value) for value in body.consts)
+    constants = arguments[:constant_count]
+    carry = arguments[constant_count : constant_count + carry_count]
+    scanned = arguments[constant_count + carry_count :]
+    steps = range(length - 1, -1, -1) if equation.params["reverse"] else range(length)
+    stacked: list[tuple[Interval, ...]] = []
+    for step in steps:
+        sliced = tuple(
+            (np.asarray(lower)[step], np.asarray(upper)[step]) for lower, upper in scanned
+        )
+        result = _evaluate_jaxpr(
+            body.jaxpr, body_constants, (*constants, *carry, *sliced)
+        )
+        carry = result[:carry_count]
+        stacked.append(result[carry_count:])
+    if equation.params["reverse"]:
+        stacked.reverse()
+    outputs = list(carry)
+    for index, variable in enumerate(equation.outvars[carry_count:]):
+        if stacked:
+            outputs.append(
+                (
+                    np.stack([np.asarray(row[index][0]) for row in stacked]),
+                    np.stack([np.asarray(row[index][1]) for row in stacked]),
+                )
+            )
+        else:
+            aval = variable.aval
+            if not isinstance(aval, ShapedArray):
+                raise IntervalExtensionError("scan outputs must have array shapes.")
+            empty = np.empty(aval.shape, dtype=np.float64)
+            outputs.append((empty, empty))
+    return tuple(outputs)
 
 
 @dataclass(frozen=True, slots=True)

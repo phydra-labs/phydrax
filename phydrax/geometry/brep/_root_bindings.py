@@ -541,7 +541,7 @@ def _root_support_parameter_box(
     witness = root.endpoint_witness
     if witness is not None and _same_parameter_source(patch, witness.source_region.patch):
         return np.asarray(witness.uv_enclosure, dtype=np.float64)
-    lower, upper = np.asarray(root.parameter_lower), np.asarray(root.parameter_upper)
+    lower, upper = root.parameter_enclosure()
     curve_box = _curve_box(root.first, float(lower[0]), float(upper[0]))
     try:
         return np.asarray(patch.validate_parameter_box(curve_box), dtype=np.float64)

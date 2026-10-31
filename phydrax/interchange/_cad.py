@@ -1574,6 +1574,29 @@ def edge_range(
     return first, last
 
 
+def _window_root_endpoint(
+    root: TrimIntersectionRoot, operand: IntersectionSide, window: CurveTrimSegment, /
+) -> TrimRootEndpoint:
+    """Bind a window-local trim root to its coedge's edge parameter exactly.
+
+    The root operand is the incidence window's normalized chart; the endpoint
+    carries the window's exact affine map back to the source parameter.
+    """
+    scale = window.last - window.first
+    if window.reversed or Fraction(scale) != Fraction(window.last) - Fraction(
+        window.first
+    ):
+        raise ValueError(
+            f"CadStage incidence window must have an exact forward affine chart; got first={window.first!r}, last={window.last!r}, reversed={window.reversed!r}"
+        )
+    return TrimRootEndpoint(
+        root,
+        operand,
+        affine_parameter_offset=window.first,
+        affine_parameter_scale=scale,
+    )
+
+
 # -------------------------------------------------------- surface inversion
 
 
@@ -3487,8 +3510,8 @@ class CadStage:
             supports.append(BRepRootSupport(patch, root))
             bindings.extend(
                 (
-                    (first, end, TrimRootEndpoint(root, "first")),
-                    (second, start, TrimRootEndpoint(root, "second")),
+                    (first, end, _window_root_endpoint(root, "first", operands[0])),
+                    (second, start, _window_root_endpoint(root, "second", operands[1])),
                 )
             )
         primary = next(
@@ -3569,7 +3592,11 @@ class CadStage:
                         pair[endpoint] = candidates[0]
                         edges[edge] = pair[0], pair[1]
                         parameters = list(self.edge_ranges[edge])
-                        parameters[endpoint] = 0.5 * (lower + upper)
+                        # Any representative inside the certified enclosure is
+                        # sound; the authored parameter keeps the file's chart
+                        # (exact polygon corners) when the root admits it.
+                        if not lower <= parameters[endpoint] <= upper:
+                            parameters[endpoint] = 0.5 * (lower + upper)
                         self.edge_ranges[edge] = parameters[0], parameters[1]
                 box = definition.point_enclosure()
                 displacement = np.nextafter(
