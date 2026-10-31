@@ -53,14 +53,18 @@ def _pyramid_box_reference(
     point: tuple[Fraction, ...], /
 ) -> tuple[Fraction, Fraction, Fraction]:
     if len(point) != 3:
-        raise UnsupportedEmbeddingMap("Pyramid corners require three reference coordinates.")
+        raise UnsupportedEmbeddingMap(
+            "Pyramid corners require three reference coordinates."
+        )
     if point[2] == 1:
         if point[:2] != (Fraction(1, 2), Fraction(1, 2)):
             raise UnsupportedEmbeddingMap("A pyramid apex has noncanonical coordinates.")
         return Fraction(0), Fraction(0), Fraction(1)
     if point[2] == 0:
         return point[0], point[1], Fraction(0)
-    raise UnsupportedEmbeddingMap("Pyramid corners are outside the canonical reference strata.")
+    raise UnsupportedEmbeddingMap(
+        "Pyramid corners are outside the canonical reference strata."
+    )
 
 
 def _map_domain(kind: str, dimension: int) -> str:
@@ -70,7 +74,9 @@ def _map_domain(kind: str, dimension: int) -> str:
         return "prism"
     if kind == "pyramid":
         if dimension != 3:
-            raise UnsupportedEmbeddingMap("A pyramid reference map must be three-dimensional.")
+            raise UnsupportedEmbeddingMap(
+                "A pyramid reference map must be three-dimensional."
+            )
         return "pyramid"
     if kind in ("quadrilateral", "hexahedron") or kind.startswith("tensor:"):
         return "box"
@@ -208,11 +214,15 @@ def _polyhedral_face_routes(
         )
     cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
     cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int64)
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
     local_index = {vertex: index for index, vertex in enumerate(vertex_row)}
     routes = []
-    for face in cell_faces[cell_offsets[cell_row] : cell_offsets[cell_row + 1]]:
+    start, stop = cell_offsets[cell_row], cell_offsets[cell_row + 1]
+    # Face loops are stored once; the cell's face sign orients each loop
+    # outward so every cell lists shared faces with opposite orientation.
+    for face, sign in zip(cell_faces[start:stop], cell_signs[start:stop], strict=True):
         vertices = face_vertices[face_offsets[face] : face_offsets[face + 1]]
         try:
             route = tuple(local_index[int(vertex)] for vertex in vertices)
@@ -220,7 +230,7 @@ def _polyhedral_face_routes(
             raise UnsupportedEmbeddingMap(
                 "A cell face references a vertex outside its cell."
             ) from error
-        routes.append(route)
+        routes.append(route if sign > 0 else route[::-1])
     if not routes:
         raise UnsupportedEmbeddingMap("A polyhedron has no declared boundary faces.")
     return tuple(routes)
@@ -286,9 +296,7 @@ def prepare_embedding_cells(
             active_row = tuple(int(value) for value in row[valid])
             kind = str(block.cell_kind)
             dimension = block.topological_dimension
-            pyramid_normalizations: tuple[
-                PyramidApexNormalization, ...
-            ] | None = None
+            pyramid_normalizations: tuple[PyramidApexNormalization, ...] | None = None
             pyramid_reference_arguments: tuple[Expression, ...] | None = None
             if isinstance(element, CellVertexGeometryElement):
                 if route.shape != valid.shape:
@@ -371,9 +379,7 @@ def prepare_embedding_cells(
                         raise UnsupportedEmbeddingMap(
                             "Pyramid source map has no exact constant apex continuation."
                         )
-                    pyramid_reference_arguments = (
-                        pyramid_reference_to_box_arguments()
-                    )
+                    pyramid_reference_arguments = pyramid_reference_to_box_arguments()
                     proof_references = tuple(
                         _pyramid_box_reference(point) for point in references
                     )
@@ -383,7 +389,9 @@ def prepare_embedding_cells(
                     )
                     proof_domain = "box"
                 corners = tuple(
-                    tuple(_evaluate(expression, point) for expression in proof_coordinates)
+                    tuple(
+                        _evaluate(expression, point) for expression in proof_coordinates
+                    )
                     for point in proof_references
                 )
                 offset, matrix = _solve_affine(references, corners)

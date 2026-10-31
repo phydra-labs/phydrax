@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Construct the oriented exterior/interface chain of affine target cells."""
+"""Construct the oriented exterior/interface chain of planar-faced target cells."""
 
 from __future__ import annotations
 
@@ -16,7 +16,20 @@ import numpy as np
 from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
-from ..discretization._coordinate_enclosure import Expression
+from ..discretization._coordinate_enclosure import (
+    affine_map,
+    axes,
+    compose_expression,
+    constant,
+    ExactScalar,
+    Expression,
+    multiply,
+    normalize_pyramid_reference_expression,
+    Polynomial,
+    scale,
+    subtract,
+    sum_polynomials,
+)
 from ..discretization._reference_cell import reference_cell_topology
 from ._domain_numerics import evaluate_map, polyhedral_vertex_coordinates
 from ._planar_coverage import OrientedFacet
@@ -47,6 +60,122 @@ def _fraction_point(point: tuple[object, ...]) -> tuple[Fraction, ...] | None:
         else:
             return None
     return tuple(result)
+
+
+type _FaceTrace = tuple[tuple[Expression, ...], tuple[tuple[Fraction, ...], ...]]
+
+
+def _reference_corner_image(
+    expressions: tuple[Expression, ...],
+    cell_family: str,
+    point: tuple[Fraction, ...],
+    /,
+) -> tuple[ExactScalar | None, ...]:
+    """Evaluate a cell map at a reference corner, using the unique pyramid apex limit."""
+    if cell_family == "pyramid" and point[-1] == 1:
+        return tuple(
+            normalize_pyramid_reference_expression(expression).apex_value
+            for expression in expressions
+        )
+    return evaluate_map(expressions, point)
+
+
+def _face_weights(count: int, /) -> tuple[Polynomial, ...]:
+    """Return the multilinear corner weights of a unit edge, triangle or square."""
+    match count:
+        case 2:
+            (s,) = axes(1)
+            return (subtract(constant(1, 1), s), s)
+        case 3:
+            s, t = axes(2)
+            return (subtract(subtract(constant(1, 2), s), t), s, t)
+        case 4:
+            s, t = axes(2)
+            s_complement = subtract(constant(1, 2), s)
+            t_complement = subtract(constant(1, 2), t)
+            return (
+                multiply(s_complement, t_complement),
+                multiply(s, t_complement),
+                multiply(s, t),
+                multiply(s_complement, t),
+            )
+        case _:
+            raise ValueError("Exact face traces require two, three or four corners.")
+
+
+def _corner_interpolant(
+    weights: tuple[Polynomial, ...], corners: tuple[tuple[Fraction, ...], ...], /
+) -> tuple[Polynomial, ...]:
+    parameters = 1 if len(weights) == 2 else 2
+    return tuple(
+        sum_polynomials(
+            tuple(
+                scale(weight, corner[axis])
+                for weight, corner in zip(weights, corners, strict=True)
+            ),
+            parameters,
+        )
+        for axis in range(len(corners[0]))
+    )
+
+
+def _strictly_convex_planar_quadrilateral(
+    points: tuple[tuple[Fraction, ...], ...], /
+) -> bool:
+    def difference(
+        left: tuple[Fraction, ...], right: tuple[Fraction, ...], /
+    ) -> tuple[Fraction, ...]:
+        return tuple(a - b for a, b in zip(left, right, strict=True))
+
+    def cross3(
+        left: tuple[Fraction, ...], right: tuple[Fraction, ...], /
+    ) -> tuple[Fraction, ...]:
+        return (
+            left[1] * right[2] - left[2] * right[1],
+            left[2] * right[0] - left[0] * right[2],
+            left[0] * right[1] - left[1] * right[0],
+        )
+
+    def dot(left: tuple[Fraction, ...], right: tuple[Fraction, ...], /) -> Fraction:
+        return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
+
+    if len(points) != 4 or any(len(point) != 3 for point in points):
+        return False
+    edges = tuple(
+        difference(points[(index + 1) % 4], points[index]) for index in range(4)
+    )
+    turns = tuple(cross3(edges[index], edges[(index + 1) % 4]) for index in range(4))
+    normal = turns[0]
+    return (
+        any(normal)
+        and all(dot(normal, difference(point, points[0])) == 0 for point in points)
+        and all(dot(normal, turn) > 0 for turn in turns)
+    )
+
+
+def _face_image_is_corner_polygon(
+    trace: _FaceTrace, points: tuple[tuple[Fraction, ...], ...], /
+) -> bool:
+    """Prove a face image is exactly its corner segment, triangle or convex quadrilateral.
+
+    The restricted cell map must equal the multilinear interpolant of its exact
+    corner images. A bilinear interpolant of a planar strictly convex
+    quadrilateral is a bijection onto that quadrilateral, so the face image is
+    the polygon itself and the corner triangulation partitions it exactly.
+    """
+    expressions, reference_corners = trace
+    weights = _face_weights(len(points))
+    arguments = _corner_interpolant(weights, reference_corners)
+    expected = _corner_interpolant(weights, points)
+    if len(expected) != len(expressions):
+        return False
+    try:
+        for expression, target in zip(expressions, expected, strict=True):
+            if subtract(compose_expression(expression, arguments), target):
+                return False
+    except (TypeError, ValueError, ZeroDivisionError):
+        return False
+    return len(points) != 4 or _strictly_convex_planar_quadrilateral(points)
 
 
 def _matching_source_pairs(
@@ -364,8 +493,15 @@ def oriented_target_facets(
     coordinate_space: Literal["physical", "reference"] = "physical",
     source_domain: PiecewiseLinearDomain | None = None,
     geometry: CellGeometrySpec | None = None,
+    exact_face_images: bool = False,
 ) -> tuple[tuple[OrientedFacet, ...], tuple[BoundaryIssue, ...]]:
-    """Build a complete affine boundary/interface chain without coordinate welding."""
+    """Build a complete planar boundary/interface chain without coordinate welding.
+
+    Facets are corner polygons. With ``exact_face_images`` a non-affine cell
+    contributes a boundary or interface face only after its exact trace is
+    proved to be that corner polygon; otherwise the chain is the vertex skeleton
+    used by bounded (non-exact) source comparisons.
+    """
     if coordinate_space not in ("physical", "reference"):
         raise ValueError("coordinate_space must be physical or reference.")
     if cell_regions.shape != (sum(block.cell_count for block in mesh.blocks),):
@@ -406,6 +542,9 @@ def oriented_target_facets(
         tuple[int, ...],
         list[tuple[int, int, tuple[int, ...], tuple[tuple[Fraction, ...], ...]]],
     ] = {}
+    # Non-affine cells keep their face traces until a facet is emitted; only
+    # boundary/interface facets need the exact corner-polygon image proof.
+    face_traces: dict[tuple[int, tuple[int, ...]], _FaceTrace] = {}
     issues: list[BoundaryIssue] = []
     facet_sequence = 0
     for cell_index, region, expressions, cell_kind, cell_vertices in cells:
@@ -433,10 +572,17 @@ def oriented_target_facets(
         reference_vertices = tuple(
             tuple(Fraction(value) for value in point) for point in reference.vertices
         )
+        prove_faces = (
+            exact_face_images and affine_map(expressions, reference.dimension) is None
+        )
         for face in reference.entities[reference.dimension - 1]:
             face_slots = tuple(int(value) for value in face)
             mapped = tuple(
-                _fraction_point(evaluate_map(expressions, reference_vertices[slot]))
+                _fraction_point(
+                    _reference_corner_image(
+                        expressions, reference.family, reference_vertices[slot]
+                    )
+                )
                 for slot in face_slots
             )
             if any(point is None for point in mapped):
@@ -457,9 +603,14 @@ def oriented_target_facets(
             grouped.setdefault(key, []).append(
                 (cell_index, region, global_vertices, points)
             )
+            if prove_faces:
+                face_traces[(cell_index, key)] = (
+                    expressions,
+                    tuple(reference_vertices[slot] for slot in face_slots),
+                )
 
     result: list[OrientedFacet] = []
-    for owners in grouped.values():
+    for key, owners in grouped.items():
         if len(owners) > 2:
             issues.append(
                 BoundaryIssue(
@@ -471,6 +622,22 @@ def oriented_target_facets(
             continue
         first = owners[0]
         if len(owners) == 2 and owners[0][1] == owners[1][1]:
+            continue
+        unproven = tuple(
+            owner[0]
+            for owner in owners
+            if (owner[0], key) in face_traces
+            and not _face_image_is_corner_polygon(face_traces[(owner[0], key)], owner[3])
+        )
+        if unproven:
+            issues.append(
+                BoundaryIssue(
+                    "nonplanar_target_face_image",
+                    tuple(sorted(unproven)),
+                    "A non-affine boundary or interface face trace is not proved to be its exact corner polygon.",
+                    "unresolved",
+                )
+            )
             continue
         if len(owners) == 1:
             pair = (first[1], -1)

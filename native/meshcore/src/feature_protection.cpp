@@ -178,16 +178,6 @@ class ProtectionIndex {
   std::size_t root_ = 0;
 };
 
-bool strictly_between(const double* a, const double* b, const double* p) {
-  for (int axis = 0; axis < 3; ++axis) {
-    if (a[axis] != b[axis]) {
-      return a[axis] < b[axis] ? (a[axis] < p[axis] && p[axis] < b[axis])
-                               : (b[axis] < p[axis] && p[axis] < a[axis]);
-    }
-  }
-  return false;
-}
-
 constexpr double kMinimumParameter = 0x1p-500;
 
 bool parameter_admissible(double value) {
@@ -292,59 +282,6 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
     radii[v] = reach;
   }
   return radii;
-}
-
-double split_target(const double* a, const double* b, double apex_a, double apex_b,
-                    double& tolerance) {
-  const double length = distance(a, b);
-  constexpr double shell_tolerance = 0x1p-8;
-  const auto shell = [&](double radius, bool from_a) {
-    double distance_from_apex = radius;
-    if (length <= 4.0 * radius / 3.0) {
-      const double k = std::round(std::log2(length / (2.0 * radius)));
-      distance_from_apex = std::clamp(radius * std::exp2(k), length / 3.0, 2.0 * length / 3.0);
-    }
-    const double t = distance_from_apex / length;
-    tolerance = shell_tolerance * std::min(t, 1.0 - t);
-    return from_a ? t : 1.0 - t;
-  };
-  if (apex_a > 0.0 && length > 4.0 * apex_a / 3.0) return shell(apex_a, true);
-  if (apex_b > 0.0 && length > 4.0 * apex_b / 3.0) return shell(apex_b, false);
-  if (apex_a > 0.0) return shell(apex_a, true);
-  if (apex_b > 0.0) return shell(apex_b, false);
-  tolerance = 0.125;
-  return 0.5;
-}
-
-bool exact_segment_point(const double* a, const double* b, double target, double tolerance,
-                         double* point) {
-  const double direction[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-  double previous = -1.0;
-  for (int resolution = 1; resolution <= 52; ++resolution) {
-    const double scale = std::exp2(resolution);
-    const double t = std::round(target * scale) / scale;
-    if (t == previous || !(t > 0.0 && t < 1.0) || std::fabs(t - target) > tolerance) continue;
-    previous = t;
-    for (int axis = 0; axis < 3; ++axis) point[axis] = a[axis] + t * direction[axis];
-    if (geometry::point_in_domain(point) && geometry::collinear(a, b, point) &&
-        strictly_between(a, b, point)) return true;
-  }
-  return false;
-}
-
-bool exact_triangle_point(const double* a, const double* b, const double* c, double* point) {
-  const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-  const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-  const double* const triangle[3] = {a, b, c};
-  for (int resolution = 2; resolution <= 52; ++resolution) {
-    const double scale = std::exp2(resolution);
-    const double t = std::round(scale / 3.0) / scale;
-    for (int axis = 0; axis < 3; ++axis) point[axis] = a[axis] + t * ab[axis] + t * ac[axis];
-    int side = 0;
-    if (geometry::point_in_domain(point) &&
-        locate_on_triangle(point, triangle, side) == kFeatureInterior) return true;
-  }
-  return false;
 }
 
 bool source_parameters_valid(SourceStratum stratum, const double* parameters) {
@@ -494,6 +431,135 @@ void clamp_source_parameters(SourceStratum stratum, double* parameters) {
   t = std::clamp(std::isfinite(t) ? t : 0.0, 0.0, 1.0);
   if (t > 0.0 && t < kMinimumParameter) t = 0.0;
   parameters[1] = 0.0;
+}
+
+namespace {
+
+void exact_point(const ExactPointRef& point, Expansion* coordinates) {
+  for (int axis = 0; axis < 3; ++axis) coordinates[axis] = coordinate(point, axis);
+}
+
+}  // namespace
+
+Expansion coordinate(const ExactPointRef& point, int axis) {
+  return point.exact != nullptr ? point.exact[axis] : Expansion(point.carrier[axis]);
+}
+
+int orient3d(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+             const ExactPointRef& d) {
+  if (a.exact == nullptr && b.exact == nullptr && c.exact == nullptr && d.exact == nullptr) {
+    return orient3d(a.carrier, b.carrier, c.carrier, d.carrier);
+  }
+  Expansion pa[3], pb[3], pc[3], pd[3];
+  exact_point(a, pa);
+  exact_point(b, pb);
+  exact_point(c, pc);
+  exact_point(d, pd);
+  return orient3d_sign(pa, pb, pc, pd);
+}
+
+int orient3d_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                 const ExactPointRef& d, int64_t ia, int64_t ib, int64_t ic, int64_t id) {
+  if (a.exact == nullptr && b.exact == nullptr && c.exact == nullptr && d.exact == nullptr) {
+    return orient3d_sos(a.carrier, b.carrier, c.carrier, d.carrier, ia, ib, ic, id);
+  }
+  Expansion pa[3], pb[3], pc[3], pd[3];
+  exact_point(a, pa);
+  exact_point(b, pb);
+  exact_point(c, pc);
+  exact_point(d, pd);
+  return orient3d_sos_sign(pa, pb, pc, pd, ia, ib, ic, id);
+}
+
+int insphere_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                 const ExactPointRef& d, const ExactPointRef& e, int64_t ia, int64_t ib,
+                 int64_t ic, int64_t id, int64_t ie) {
+  if (a.exact == nullptr && b.exact == nullptr && c.exact == nullptr &&
+      d.exact == nullptr && e.exact == nullptr) {
+    return insphere_sos(a.carrier, b.carrier, c.carrier, d.carrier, e.carrier, ia, ib, ic, id,
+                        ie);
+  }
+  Expansion pa[3], pb[3], pc[3], pd[3], pe[3];
+  exact_point(a, pa);
+  exact_point(b, pb);
+  exact_point(c, pc);
+  exact_point(d, pd);
+  exact_point(e, pe);
+  return insphere_sos_sign(pa, pb, pc, pd, pe, ia, ib, ic, id, ie);
+}
+
+int orient2d_projected(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                       int axis) {
+  const int x = (axis + 1) % 3;
+  const int y = (axis + 2) % 3;
+  if (a.exact == nullptr && b.exact == nullptr && c.exact == nullptr) {
+    const double pa[2] = {a.carrier[x], a.carrier[y]};
+    const double pb[2] = {b.carrier[x], b.carrier[y]};
+    const double pc[2] = {c.carrier[x], c.carrier[y]};
+    return orient2d(pa, pb, pc);
+  }
+  const Expansion pa[2] = {coordinate(a, x), coordinate(a, y)};
+  const Expansion pb[2] = {coordinate(b, x), coordinate(b, y)};
+  const Expansion pc[2] = {coordinate(c, x), coordinate(c, y)};
+  return orient2d_sign(pa, pb, pc);
+}
+
+bool same_point(const ExactPointRef& a, const ExactPointRef& b) {
+  if (a.exact == nullptr && b.exact == nullptr) {
+    return geometry::same_point(a.carrier, b.carrier);
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    if ((coordinate(a, axis) - coordinate(b, axis)).sign() != 0) return false;
+  }
+  return true;
+}
+
+bool collinear(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c) {
+  if (a.exact == nullptr && b.exact == nullptr && c.exact == nullptr) {
+    return geometry::collinear(a.carrier, b.carrier, c.carrier);
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    if (orient2d_projected(a, b, c, axis) != 0) return false;
+  }
+  return true;
+}
+
+int8_t locate_on_triangle(const ExactPointRef& x, const ExactPointRef* triangle, int& side) {
+  if (x.exact == nullptr && triangle[0].exact == nullptr && triangle[1].exact == nullptr &&
+      triangle[2].exact == nullptr) {
+    const double* const corners[3] = {triangle[0].carrier, triangle[1].carrier,
+                                      triangle[2].carrier};
+    return locate_on_triangle(x.carrier, corners, side);
+  }
+  side = orient3d(triangle[0], triangle[1], triangle[2], x);
+  if (side != 0) return kFeatureNone;
+  for (int axis = 0; axis < 3; ++axis) {
+    const int orientation = orient2d_projected(triangle[0], triangle[1], triangle[2], axis);
+    if (orientation == 0) continue;
+    int signs[3];
+    int zeros = 0;
+    for (int k = 0; k < 3; ++k) {
+      signs[k] = orientation *
+                 orient2d_projected(triangle[(k + 1) % 3], triangle[(k + 2) % 3], x, axis);
+      if (signs[k] < 0) return kFeatureNone;
+      zeros += signs[k] == 0 ? 1 : 0;
+    }
+    if (zeros == 0) return kFeatureInterior;
+    for (int k = 0; k < 3; ++k) {
+      if (zeros == 1 && signs[k] == 0) return static_cast<int8_t>(3 + k);
+      if (zeros == 2 && signs[k] != 0) return static_cast<int8_t>(k);
+    }
+    return kFeatureNone;
+  }
+  return kFeatureNone;
+}
+
+void segment_witness_position(const double* first, const double* second, double parameter,
+                              Expansion* position) {
+  for (int axis = 0; axis < 3; ++axis) {
+    position[axis] = Expansion(first[axis]) +
+                     Expansion::difference(second[axis], first[axis]).scaled(parameter);
+  }
 }
 
 }  // namespace phx::mc

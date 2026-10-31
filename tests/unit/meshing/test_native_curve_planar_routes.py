@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from fractions import Fraction
 from typing import Any
 
@@ -13,12 +14,16 @@ import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry import BoundaryAtlas, BoundaryMap
-from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
+from phydrax.geometry._curve_boundary import (
+    ParametricCurveBoundarySource,
+    SegmentChartCurve,
+)
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
 )
+from phydrax.geometry._source_fidelity import certify_source_fidelity
 from phydrax.geometry.brep._patches import LineCurve
 from phydrax.geometry.simplicial import PlanarMeshRegion, SegmentMesh
 from phydrax.meshing._association import (
@@ -163,7 +168,10 @@ def test_curve_query_rejects_a_narrowed_authored_feature_range() -> None:
     )
 
     with pytest.raises(ValueError, match="full parameter range"):
-        query.validate_scope(source, np.asarray((scope_id,), dtype=np.int64), (occurrence,))
+        query.validate_scope(
+            source, np.asarray((scope_id,), dtype=np.int64), (occurrence,)
+        )
+
 
 def _curve_request() -> tuple[NativeCurveSource, CurveMeshingSpec, NativeMeshingOptions]:
     segments = SegmentMesh(
@@ -344,9 +352,7 @@ def test_curve_route_places_by_density_and_preserves_source_junction() -> None:
     lower, upper = point_query.source_point_bounds(*point_key)
     np.testing.assert_array_equal(lower, np.asarray((1.0, 0.0)))
     np.testing.assert_array_equal(upper, np.asarray((1.0, 0.0)))
-    source.validate_point_boundary_query(
-        point_query, np.asarray((602,), dtype=np.int64)
-    )
+    source.validate_point_boundary_query(point_query, np.asarray((602,), dtype=np.int64))
     curve_id = int(source.chart_scope_entity_ids[0])
     curve_key = source.source_entity_key_for_scope(1, curve_id)
     chart_query.validate_scope(
@@ -356,6 +362,70 @@ def test_curve_route_places_by_density_and_preserves_source_junction() -> None:
     assert set(chart_witness.source_entity_ids) == {
         source.source_entity_key_for_scope(1, int(source.chart_scope_entity_ids[0]))[0]
     }
+
+
+def test_segment_curve_query_is_an_exact_affine_chart_on_its_declared_range() -> None:
+    segments = SegmentMesh(
+        np.asarray(((0.1, 0.0), (1.1, 0.3)), dtype=np.float64),
+        np.asarray(((0, 1),), dtype=np.int32),
+        source_id="exact-segment-chart",
+    )
+    source = NativeCurveSource(
+        segments,
+        "revision-1",
+        curve_entity_ids=np.asarray((1,), dtype=np.int64),
+        vertex_entity_ids=np.asarray((1, 2), dtype=np.int64),
+        chart_parameter_ranges=np.asarray(((0.3, 1.7),), dtype=np.float64),
+    )
+    scope = MeshingScope.whole(source, 1)
+    specification = CurveMeshingSpec(
+        CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.2, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=1.0e-8,
+    )
+    construction = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    assert construction.compliance.passed
+    query = construction.certification.fidelity_source
+    witness = construction.certification.fidelity_witness
+    assert isinstance(query, ParametricCurveBoundarySource)
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    (carrier,) = query.curves
+    assert isinstance(carrier, SegmentChartCurve)
+    start = tuple(Fraction(value) for value in (0.1, 0.0))
+    end = tuple(Fraction(value) for value in (1.1, 0.3))
+    assert carrier.evaluate_exact(Fraction(0.3)) == start
+    assert carrier.evaluate_exact(Fraction(1.7)) == end
+    np.testing.assert_array_equal(
+        np.asarray(carrier.evaluate(jnp.asarray((0.3, 1.7)))),
+        np.asarray(((0.1, 0.0), (1.1, 0.3))),
+    )
+
+    certificate = certify_source_fidelity(
+        construction.mesh,
+        construction.geometry,
+        query,
+        tolerance=1.0e-8,
+        witness=witness,
+    )
+
+    assert certificate.status == "certified"
+    assert certificate.mesh_to_source_upper <= 1.0e-8
+    coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    length = float(np.hypot(1.0, 0.3))
+    cells = math.ceil(length / 0.2)
+    expected = np.asarray(start, dtype=np.float64) + np.linspace(0.0, 1.0, cells + 1)[
+        :, None
+    ] * np.asarray((1.0, 0.3))
+    order = np.argsort(coordinates[:, 0])
+    np.testing.assert_allclose(coordinates[order], expected, rtol=0.0, atol=1.0e-7)
 
 
 def _planar_request() -> tuple[
@@ -478,11 +548,13 @@ def test_planar_cdt_preserves_holes_embedded_constraint_and_exact_ancestry() -> 
     curve_query.validate_scope(
         source,
         np.asarray((int(source.embedded_edge_entity_ids[0]),), dtype=np.int64),
-        (source.source_entity_key_for_scope(1, int(source.embedded_edge_entity_ids[0]))[1],),
+        (
+            source.source_entity_key_for_scope(
+                1, int(source.embedded_edge_entity_ids[0])
+            )[1],
+        ),
     )
-    source.validate_point_boundary_query(
-        point_query, np.asarray((71,), dtype=np.int64)
-    )
+    source.validate_point_boundary_query(point_query, np.asarray((71,), dtype=np.int64))
     point_key = source.source_entity_key_for_scope(0, 71)
     point_lower, point_upper = point_query.source_point_bounds(*point_key)
     np.testing.assert_array_equal(point_lower, np.asarray((0.25, 1.5)))

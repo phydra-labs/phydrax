@@ -337,16 +337,18 @@ def test_polyhedral_power_keeps_region_sites_and_fv_field_measure() -> None:
 
     cell_ids = np.asarray(result.mesh.entity_set(3).entity_ids, dtype=np.int64)
     attributes = {attribute.name: attribute for attribute in result.attributes}
-    site_indices = np.asarray(attributes["power_site_index"].values, dtype=np.int64)
-    np.testing.assert_array_equal(
-        attributes["power_site_index"].scope.entity_ids, cell_ids
-    )
+    site_attribute = attributes["power_site_index"]
+    scope_ids = np.asarray(site_attribute.scope.entity_ids, dtype=np.int64)
+    np.testing.assert_array_equal(scope_ids, np.sort(cell_ids))
+    site_indices = np.asarray(site_attribute.values, dtype=np.int64)[
+        np.searchsorted(scope_ids, cell_ids)
+    ]
     labels = {label.name: label for label in result.labels}
     for site_index, site_id in enumerate(("upper-site", "lower-site")):
         site_cells = cell_ids[site_indices == site_index]
         assert site_cells.size
         np.testing.assert_array_equal(
-            labels[f"power-site:{site_id}"].scope.entity_ids, site_cells
+            labels[f"power-site:{site_id}"].scope.entity_ids, np.sort(site_cells)
         )
     for point_row, expected_site in enumerate((0, 1)):
         located_cells = np.asarray(located.candidate_cells[point_row], dtype=np.int64)

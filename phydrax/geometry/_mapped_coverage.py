@@ -19,6 +19,7 @@ from ..discretization._coordinate_enclosure import (
     ExactScalar,
     Expression,
     multiply,
+    normalize_pyramid_reference_expression,
     Polynomial,
     RationalPolynomial,
     scale,
@@ -42,7 +43,9 @@ def map_domain(cell_kind: str, /) -> ReferenceMeasureDomain:
         case "pyramid":
             return "pyramid"
         case _:
-            raise ValueError(f"Unsupported exact reference integration cell {cell_kind!r}.")
+            raise ValueError(
+                f"Unsupported exact reference integration cell {cell_kind!r}."
+            )
 
 
 def _polynomial(value: Expression, dimension: int, /) -> Polynomial:
@@ -50,7 +53,9 @@ def _polynomial(value: Expression, dimension: int, /) -> Polynomial:
         return value
     denominator = value.denominator
     if set(denominator) != {(0,) * dimension}:
-        raise ValueError("Exact mapped integration requires a polynomial or constant denominator.")
+        raise ValueError(
+            "Exact mapped integration requires a polynomial or constant denominator."
+        )
     scalar = denominator[(0,) * dimension]
     if not scalar:
         raise ValueError("Exact mapped integration encountered a zero denominator.")
@@ -86,8 +91,12 @@ def integrate(
     /,
 ) -> ExactScalar:
     polynomial = _polynomial(value, dimension)
-    if dimension not in (2, 3) or any(len(exponent) != dimension for exponent in polynomial):
-        raise ValueError("Exact mapped integration requires a two- or three-dimensional polynomial.")
+    if dimension not in (2, 3) or any(
+        len(exponent) != dimension for exponent in polynomial
+    ):
+        raise ValueError(
+            "Exact mapped integration requires a two- or three-dimensional polynomial."
+        )
     if domain == "simplex" and dimension not in (2, 3):
         raise ValueError("Simplex integration requires dimension two or three.")
     if domain == "prism" and dimension != 3:
@@ -105,10 +114,14 @@ def integrate(
                 factorial(dimension + sum(exponent)),
             )
         elif domain == "box":
-            moment = prod((Fraction(1, power + 1) for power in exponent), start=Fraction(1))
+            moment = prod(
+                (Fraction(1, power + 1) for power in exponent), start=Fraction(1)
+            )
         else:
             first, second, third = exponent
-            moment = Fraction(factorial(first) * factorial(second), factorial(first + second + 2))
+            moment = Fraction(
+                factorial(first) * factorial(second), factorial(first + second + 2)
+            )
             moment *= Fraction(1, third + 1)
         total += coefficient * moment
     return total
@@ -122,6 +135,16 @@ def integrate_jacobian(
     dimension = len(coordinates)
     if dimension not in (2, 3):
         raise ValueError("Mapped Jacobian integration requires a 2-D or 3-D map.")
+    domain = map_domain(cell_kind)
+    if domain == "pyramid":
+        # Rational pyramid maps become polynomial after the collapsed-cube
+        # pullback cancels their apex factors; the pulled-back determinant
+        # already carries the collapse Jacobian, so it integrates on the box.
+        coordinates = tuple(
+            normalize_pyramid_reference_expression(value).expression
+            for value in coordinates
+        )
+        domain = "box"
     jacobian = tuple(
         tuple(derivative(value, axis) for axis in range(dimension))
         for value in coordinates
@@ -129,8 +152,7 @@ def integrate_jacobian(
     determinant = determinant_small_algebra(
         jacobian, add=add, subtract=subtract, multiply=multiply
     )
-    return integrate(determinant, map_domain(cell_kind), dimension)
-
+    return integrate(determinant, domain, dimension)
 
 
 __all__ = [

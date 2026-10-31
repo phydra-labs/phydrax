@@ -13,10 +13,11 @@
 namespace phx::mc {
 
 // Each cell scores the worse of its dihedral and radius-edge target fractions.
-// Every edit is accepted only if its affected cells' worst-first sorted scores
-// strictly improve, with determinant validity and source constraints as hard
-// gates; that one order makes the run terminate. Final per-criterion checks,
-// not the score, set status, and unmet cells are reported individually.
+// Every edit (reconnection, collapse, relocation, interior vertex insertion) is
+// accepted only if its affected cells' worst-first sorted scores strictly
+// improve, with determinant validity and source constraints as hard gates;
+// that one order makes the run terminate. Final per-criterion checks, not the
+// score, set status, and unmet cells are reported individually.
 struct TetQualityRequest {
   double radius_edge_bound;
   double minimum_dihedral_degrees;
@@ -24,6 +25,7 @@ struct TetQualityRequest {
 };
 
 std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
+                          std::int64_t& inserted_vertices,
                           std::int64_t& collapsed_vertices,
                           std::int64_t& relocated_vertices,
                           std::int64_t& unmet_cells);

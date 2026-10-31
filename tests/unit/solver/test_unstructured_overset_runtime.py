@@ -1282,6 +1282,122 @@ def test_native_overset_continuous_ale_rebind_preserves_gcl_and_next_step() -> N
     assert int(np.asarray(continued.runtime_state.output_cursor)) == 6
 
 
+def test_owner_local_composite_fv_layout_lowers_and_conserves_each_part() -> None:
+    """Two owner-local periodic parts compile as one disjoint FV layout and advance."""
+    from phydrax._execution_resources import ExecutionGroupSpec
+    from phydrax._execution_runtime import ExecutionGroup
+    from phydrax.discretization._view_support import (
+        OwnerLocalCellGeometry,
+        OwnerLocalCompositeCellGeometry,
+    )
+    from phydrax.solver._finite_volume_runtime import FiniteVolumeStepPolicy
+    from tests.unit.meshing.test_native_overset import _owner_local_periodic_assembly
+
+    if jax.process_count() != 1:
+        pytest.skip("This composite layout contract uses one local process group.")
+    device = jax.local_devices()[0]
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "owner-local-composite-fv",
+            (jax.process_index(),),
+            ((device.process_index, device.id),),
+            mesh_axes=(("owner_local_composite", 1),),
+        ),
+        (device,),
+    )
+    owners = np.zeros((4,), dtype=np.int32)
+    views: dict[str, OwnerLocalCellGeometry] = {}
+    for name, points in (
+        ("composite-receptor", ((0.19, 0.21), (0.63, 0.11), (0.23, 0.70), (0.77, 0.83))),
+        ("composite-donor", ((0.11, 0.13), (0.58, 0.17), (0.31, 0.62), (0.84, 0.77))),
+    ):
+        carrier = (
+            _owner_local_periodic_assembly(
+                name, np.asarray(points, dtype=np.float64), owners, group
+            )
+            .parts[0]
+            .carrier
+        )
+        assert isinstance(carrier, OwnerLocalCellGeometry)
+        views[name] = carrier
+    donor, receptor = views["composite-donor"], views["composite-receptor"]
+    composite = OwnerLocalCompositeCellGeometry((receptor, donor))
+    assert composite.part_names == ("composite-donor", "composite-receptor")
+    assert composite.cell_offsets == (
+        0,
+        donor.cell_ids.size,
+        donor.cell_ids.size + receptor.cell_ids.size,
+    )
+    np.testing.assert_array_equal(
+        composite.cell_ids, np.concatenate((donor.cell_ids, receptor.cell_ids))
+    )
+    with pytest.raises(ValueError, match="unique names"):
+        OwnerLocalCompositeCellGeometry((donor, donor))
+
+    system = phx.equations.EulerSystem(2)
+    geometry = phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
+        composite, component_names=system.component_names
+    ).prepare()
+    assert geometry.owner_local_view is composite
+    np.testing.assert_array_equal(
+        np.sort(np.asarray(geometry.cell_global_ids)), np.sort(composite.cell_ids)
+    )
+    # Each periodic part tiles the quotient cell once; the union holds both tilings.
+    np.testing.assert_allclose(
+        float(np.sum(np.asarray(geometry.cell_volumes))),
+        float(np.sum(np.asarray(donor.cell_measures)))
+        + float(np.sum(np.asarray(receptor.cell_measures))),
+        rtol=1.0e-12,
+    )
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        geometry.boundary_patch_names,
+        {
+            name: phx.discretization.ExtrapolationBoundary()
+            for name in geometry.boundary_patch_names
+        },
+    )
+    dynamics = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR(
+            "owner-local-composite", "state", system, boundaries
+        ),
+        geometry,
+        phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+    ).dynamics
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
+        FiniteVolumeStepPolicy(maximum_retries=2),
+        execution_group=group,
+        owner_local_geometry=composite,
+        owner_local_axis_name="owner_local_composite_fv",
+    )
+    cell_ids = np.asarray(geometry.cell_global_ids, dtype=np.int64)
+    primitive = np.zeros((cell_ids.size, 4), dtype=np.float64)
+    primitive[:, 0] = 1.0 + (cell_ids % 7) * 0.05
+    primitive[:, 1] = 0.1
+    primitive[:, 3] = 1.0 + (cell_ids % 5) * 0.05
+    initial = runtime.initialize_state(
+        system.primitive_to_conserved(jnp.asarray(primitive)), 0.0, 1.0e-3
+    )
+    advanced = runtime.advance(initial)
+    assert bool(np.asarray(advanced.accepted))
+    before = np.asarray(initial.content_state.conservative_content)
+    after = np.asarray(advanced.runtime_state.content_state.conservative_content)
+    assert not np.array_equal(before, after)
+    # Parts share no faces: each part's periodic content is conserved on its own.
+    donor_rows = np.isin(cell_ids, np.asarray(donor.cell_ids, dtype=np.int64))
+    for rows in (donor_rows, ~donor_rows):
+        np.testing.assert_allclose(
+            np.sum(after[rows], axis=0),
+            np.sum(before[rows], axis=0),
+            rtol=1.0e-12,
+            atol=1.0e-12,
+        )
+
+
 def test_native_owner_local_fv_motion_event_restarts_and_advances(
     tmp_path: Any,
 ) -> None:

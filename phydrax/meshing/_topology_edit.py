@@ -320,6 +320,22 @@ def _cell_facets(mesh: CellMesh) -> tuple[tuple[np.ndarray, ...], ...]:
     return tuple(facets)
 
 
+def _polygon_cycle_action(
+    first: tuple[int, ...], second: tuple[int, ...], /
+) -> tuple[int, ...]:
+    """Position map of one polygon loop in another; it must be a dihedral action."""
+    positions = {vertex: index for index, vertex in enumerate(second)}
+    action = tuple(positions[vertex] for vertex in first)
+    size = len(action)
+    step = (action[1] - action[0]) % size
+    if step not in (1, size - 1) or any(
+        (action[(index + 1) % size] - action[index]) % size != step
+        for index in range(size)
+    ):
+        raise ValueError("Shared polygon faces must be the same cycle up to orientation.")
+    return action
+
+
 def _require_shared_faces(target: CellMesh, witnesses: SharedFaceWitnesses, /) -> None:
     first_cells = np.asarray(witnesses.first_cell_ids, dtype=np.int64)
     second_cells = np.asarray(witnesses.second_cell_ids, dtype=np.int64)
@@ -373,9 +389,12 @@ def _require_shared_faces(target: CellMesh, witnesses: SharedFaceWitnesses, /) -
         right = vertex_ids[all_facets[right_cell][right_facet]]
         if set(left.tolist()) != set(right.tolist()):
             raise ValueError("Shared-face witness facets have different vertices.")
-        action = facet_orientation_between(
-            tuple(int(value) for value in left),
-            tuple(int(value) for value in right),
+        left_loop = tuple(int(value) for value in left)
+        right_loop = tuple(int(value) for value in right)
+        expected = (
+            facet_orientation_between(left_loop, right_loop).permutation
+            if len(left_loop) <= 4
+            else _polygon_cycle_action(left_loop, right_loop)
         )
         declared_row = permutations[index]
         if np.any(declared_row < -1) or np.any(
@@ -383,7 +402,7 @@ def _require_shared_faces(target: CellMesh, witnesses: SharedFaceWitnesses, /) -
         ):
             raise ValueError("Shared-face permutation padding must be a -1 suffix.")
         declared = tuple(int(value) for value in declared_row if value >= 0)
-        if action.permutation != declared:
+        if expected != declared:
             raise ValueError("Shared-face witness has a wrong orientation permutation.")
         if keys[tuple(sorted(left.tolist()))] != 2:
             raise ValueError(

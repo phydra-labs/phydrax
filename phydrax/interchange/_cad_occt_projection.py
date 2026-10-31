@@ -16,13 +16,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, final, TYPE_CHECKING
+from typing import Any, Callable, final
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
+# This module is the optional OCCT provider boundary: its checked public
+# contracts name the provider shape type, so the provider loads with it.
+from OCP.TopoDS import TopoDS_Shape
 
 from .._bvh import bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
@@ -46,10 +50,6 @@ from ._cad_occt import (
     read_occt_shape,
     shape_index,
 )
-
-
-if TYPE_CHECKING:
-    from OCP.TopoDS import TopoDS_Shape
 
 
 class _LazyOCCT:
@@ -146,9 +146,7 @@ def _source_paths(
     return occurrence_paths, entity_occurrences, entity_paths
 
 
-def _children(
-    shape: TopoDS_Shape, occt_modules: Any, /
-) -> tuple[TopoDS_Shape, ...]:
+def _children(shape: TopoDS_Shape, occt_modules: Any, /) -> tuple[TopoDS_Shape, ...]:
     iterator = occt_modules.TopoDS.TopoDS_Iterator(shape, True, True)
     values: list[TopoDS_Shape] = []
     while iterator.More():
@@ -157,9 +155,7 @@ def _children(
     return tuple(values)
 
 
-def _matches_use(
-    use: BRepAssemblyUse, shape: TopoDS_Shape, occt_modules: Any, /
-) -> bool:
+def _matches_use(use: BRepAssemblyUse, shape: TopoDS_Shape, occt_modules: Any, /) -> bool:
     shape_type = shape.ShapeType()
     if use.solid_index is not None:
         return shape_type == occt_modules.TopAbs.TopAbs_SOLID
@@ -176,13 +172,10 @@ def _solid_occurrence_shapes(
     if not graph.roots:
         return ()
     definitions = {
-        definition.definition_id: definition
-        for definition in graph.definitions
+        definition.definition_id: definition for definition in graph.definitions
     }
 
-    def complete_use_shape(
-        use: BRepAssemblyUse, candidate: TopoDS_Shape, /
-    ) -> bool:
+    def complete_use_shape(use: BRepAssemblyUse, candidate: TopoDS_Shape, /) -> bool:
         if not _matches_use(use, candidate, occt_modules):
             return False
         if use.solid_index is not None:
@@ -275,11 +268,14 @@ def _map_face(
     allowed_paths: dict[tuple[int, int], tuple[tuple[str, ...], ...]],
     occt_modules: Any,
     /,
-) -> tuple[
-    dict[tuple[int, int, tuple[str, ...]], int],
-    float,
-    tuple[int, ...],
-] | None:
+) -> (
+    tuple[
+        dict[tuple[int, int, tuple[str, ...]], int],
+        float,
+        tuple[int, ...],
+    ]
+    | None
+):
     geometry = model.geometry
     try:
         face_row = shape_index(faces, face)
@@ -288,9 +284,7 @@ def _map_face(
     face_key = (int(BRepEntityDimension.FACE), face_index, path)
     local: dict[tuple[int, int, tuple[str, ...]], int] = {face_key: face_row}
 
-    def bind_local(
-        dimension: int, source_index: int, external_index: int, /
-    ) -> bool:
+    def bind_local(dimension: int, source_index: int, external_index: int, /) -> bool:
         key = (dimension, source_index, path)
         existing = local.get(key)
         if existing is not None and existing != external_index:
@@ -322,9 +316,7 @@ def _map_face(
                 geometry.edge_curves[native_edge] < 0
             ):
                 return None
-            if not bind_local(
-                int(BRepEntityDimension.EDGE), native_edge, edge_row
-            ):
+            if not bind_local(int(BRepEntityDimension.EDGE), native_edge, edge_row):
                 return None
             native_vertices = geometry.edge_vertices[native_edge]
             first = occt_modules.TopExp.FirstVertex_s(edge)
@@ -383,9 +375,7 @@ def _map_free_edge(
         source_vertices = geometry.edge_vertices[source_edge][::-1]
     else:
         return None
-    local = {
-        (int(BRepEntityDimension.EDGE), source_edge, ()): external_row
-    }
+    local = {(int(BRepEntityDimension.EDGE), source_edge, ()): external_row}
     for source_vertex, external_vertex in zip(
         source_vertices, (first, last), strict=True
     ):
@@ -411,9 +401,7 @@ def _placement_sign(placement: Any, /) -> int:
     a, b, c = matrix[0][:3]
     d, e, f = matrix[1][:3]
     g, h, i = matrix[2][:3]
-    determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (
-        d * h - e * g
-    )
+    determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
     return 1 if determinant > 0 else -1
 
 
@@ -602,9 +590,7 @@ def _build_source_mapping(
                     )
 
     native_attached_vertices = {
-        vertex
-        for endpoints in model.geometry.edge_vertices
-        for vertex in endpoints
+        vertex for endpoints in model.geometry.edge_vertices for vertex in endpoints
     }
     external_attached_vertices: set[int] = set()
     for edge in edges:
@@ -614,9 +600,7 @@ def _build_source_mapping(
         ):
             if external_vertex.IsNull():
                 continue
-            external_attached_vertices.add(
-                shape_index(vertices, external_vertex)
-            )
+            external_attached_vertices.add(shape_index(vertices, external_vertex))
     native_isolated_vertices = [
         vertex
         for vertex in range(model.topology.num_vertices)
@@ -640,9 +624,7 @@ def _build_source_mapping(
                 allowed_paths,
             )
 
-    solid_sources_final = {
-        row: tuple(values) for row, values in solid_sources.items()
-    }
+    solid_sources_final = {row: tuple(values) for row, values in solid_sources.items()}
     return _SourceMapping(
         occurrence_paths,
         entity_occurrences,
@@ -801,18 +783,10 @@ class PreparedOcctProjection(AbstractBRepProjection):
         _ensure_occt()
 
         occt_modules = _occt_modules()
-        faces = tuple(
-            explore_unique(shape, occt.TopAbs_FACE, occt.TopoDS.Face)
-        )
-        edges = tuple(
-            explore_unique(shape, occt.TopAbs_EDGE, occt.TopoDS.Edge)
-        )
-        vertices = tuple(
-            explore_unique(shape, occt.TopAbs_VERTEX, occt.TopoDS.Vertex)
-        )
-        solids = tuple(
-            explore_unique(shape, occt.TopAbs_SOLID, occt.TopoDS.Solid)
-        )
+        faces = tuple(explore_unique(shape, occt.TopAbs_FACE, occt.TopoDS.Face))
+        edges = tuple(explore_unique(shape, occt.TopAbs_EDGE, occt.TopoDS.Edge))
+        vertices = tuple(explore_unique(shape, occt.TopAbs_VERTEX, occt.TopoDS.Vertex))
+        solids = tuple(explore_unique(shape, occt.TopAbs_SOLID, occt.TopoDS.Solid))
         topology = model.topology
         mapping = _build_source_mapping(
             model, shape, vertices, edges, faces, solids, occt_modules
@@ -842,7 +816,9 @@ class PreparedOcctProjection(AbstractBRepProjection):
             curves.append(
                 None
                 if degenerate[row]
-                else occt.BRep_Tool.Curve_s(edge, float(ranges[row, 0]), float(ranges[row, 1]))
+                else occt.BRep_Tool.Curve_s(
+                    edge, float(ranges[row, 0]), float(ranges[row, 1])
+                )
             )
         surfaces, bounds, periods = [], [], []
         for face in faces:
@@ -889,9 +865,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
                 raise ValueError(
                     "PreparedOcctProjection.embedding requires source vertices to prove the plane binding."
                 )
-            residual = float(
-                np.max(np.abs(embedding.plane_residual(vertex_points)))
-            )
+            residual = float(np.max(np.abs(embedding.plane_residual(vertex_points))))
             if residual > policy.classifier_tolerance:
                 raise ValueError(
                     f"PreparedOcctProjection.embedding must contain the source vertices within classifier tolerance={policy.classifier_tolerance}; got maximum_plane_residual={residual}"
@@ -1177,9 +1151,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
                 )
             if any(
                 int(index) >= self.entity_counts[int(dimension)]
-                for dimension, index in zip(
-                    dimension_rows, index_rows, strict=True
-                )
+                for dimension, index in zip(dimension_rows, index_rows, strict=True)
             ):
                 raise ValueError(
                     "An allowed classification index lies outside its B-Rep dimension."
@@ -1198,9 +1170,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
                 allowed_occurrence_paths,
                 strict=True,
             ):
-                available = self.occt.entity_paths.get(
-                    (int(dimension), int(index)), ()
-                )
+                available = self.occt.entity_paths.get((int(dimension), int(index)), ())
                 if path not in available:
                     raise ValueError(
                         "An allowed classification path must own the selected source entity."
@@ -1466,8 +1436,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
             not isinstance(occurrence_paths, tuple)
             or len(occurrence_paths) != queries.shape[0]
             or any(
-                not isinstance(path, tuple)
-                or path not in self.occurrence_paths
+                not isinstance(path, tuple) or path not in self.occurrence_paths
                 for path in occurrence_paths
             )
         ):
@@ -1478,9 +1447,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
         dimensions = np.full((count,), -1, dtype=np.int8)
         indices = np.full((count,), -1, dtype=np.int32)
         output_points = np.full((count, 3), np.nan)
-        statuses = np.full(
-            (count,), BRepProjectionStatus.UNRESOLVED, dtype=np.int8
-        )
+        statuses = np.full((count,), BRepProjectionStatus.UNRESOLVED, dtype=np.int8)
         output_paths: list[tuple[str, ...]] = [()] * count
         solid_paths = {
             path: index
@@ -1505,9 +1472,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
             first = prepare_bvh(
                 queries - tolerance, queries + tolerance, dtype=jnp.float64
             )
-            second = prepare_bvh(
-                boxes[:, 0], boxes[:, 1], dtype=jnp.float64
-            )
+            second = prepare_bvh(boxes[:, 0], boxes[:, 1], dtype=jnp.float64)
             query_rows, solid_rows = bvh_overlap_pairs_host(
                 first, second, include_touching=True
             )
@@ -1524,9 +1489,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
                 sources = self.occt.solid_sources.get(external_row, ())
                 if occurrence_paths is not None:
                     sources = tuple(
-                        source
-                        for source in sources
-                        if source[1] == occurrence_paths[row]
+                        source for source in sources if source[1] == occurrence_paths[row]
                     )
                 matches[int(row)].update(sources)
             for row, sources in enumerate(matches):

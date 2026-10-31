@@ -6,15 +6,15 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
-from itertools import chain, combinations, product
+from itertools import chain, combinations, islice, product
 from typing import cast, Literal
 
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -37,6 +37,7 @@ from ..discretization._coordinate_enclosure import (
     affine_map,
     axes,
     bernstein_coefficients,
+    bernstein_degree,
     BernsteinDomain,
     compose_expression,
     constant,
@@ -58,11 +59,16 @@ from ..discretization._nested_reference import (
     nested_cell_reference_maps,
     validate_reference_cell_map_witnesses,
 )
+from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
 from ..discretization._periodic_topology import PeriodicMeshTopology
 from ..discretization._reference_cell import reference_cell_topology
 from ..linalg._exact import factor_exact_sparse, solve_exact
-from ._boundary_degree_embedding import build_oriented_boundary
+from ._boundary_degree_embedding import (
+    _face_trace_image_evidence,
+    build_oriented_boundary,
+)
 from ._embedding_cells import (
+    _cell_expressions,
     EmbeddingCell,
     prepare_embedding_cells,
     UnsupportedEmbeddingMap,
@@ -78,9 +84,13 @@ from ._embedding_state import (
     PeriodicRestrictionPartitionEvidence,
 )
 from ._exact_polyhedral_geometry import (
+    _cross3,
+    _dot3,
+    _sub3,
     determinant3,
     Point2,
     Point3,
+    point_in_triangle3,
     point_on_segment2,
     point_on_segment3,
     segment_contact_points3,
@@ -169,6 +179,16 @@ def _sign(value: ExactScalar, /) -> int:
     return (value > 0) - (value < 0)
 
 
+def _newell_normal(points: tuple[Point3, ...], /) -> Point3:
+    """Return the exact area vector of a closed planar polygon loop."""
+    components: list[ExactScalar] = [Fraction(0), Fraction(0), Fraction(0)]
+    for start, stop in zip(points, (*points[1:], points[0]), strict=True):
+        components[0] += (start[1] - stop[1]) * (start[2] + stop[2])
+        components[1] += (start[2] - stop[2]) * (start[0] + stop[0])
+        components[2] += (start[0] - stop[0]) * (start[1] + stop[1])
+    return components[0], components[1], components[2]
+
+
 def _local_strata(cell: EmbeddingCell, /) -> tuple[frozenset[int], ...]:
     result: set[frozenset[int]] = {
         frozenset((identifier,)) for identifier in cell.vertex_ids
@@ -199,7 +219,13 @@ def _point_in_declared_stratum(
     /,
 ) -> bool:
     if len(shared_ids) == 1:
-        return point == points_by_id[shared_ids[0]]
+        vertex = points_by_id[shared_ids[0]]
+        # Planar contacts are computed in R3 with z = 0.
+        if len(vertex) == 2 and len(point) == 3:
+            if point[2] != 0:
+                return False
+            point = point[0], point[1]
+        return point == vertex
     vertices = tuple(points_by_id[identifier] for identifier in shared_ids)
     dimension = len(vertices[0])
     if any(len(vertex) != dimension for vertex in vertices):
@@ -343,9 +369,7 @@ def _convex_planar_face_union(
     origin = next(iter(points.values()))
     if any(dot(difference(point, origin), normal) != 0 for point in points.values()):
         return False
-    boundary = {
-        start: stop for start, stop in directed if (stop, start) not in directed
-    }
+    boundary = {start: stop for start, stop in directed if (stop, start) not in directed}
     if len(boundary) < 3 or len(set(boundary.values())) != len(boundary):
         return False
     start = min(boundary)
@@ -470,101 +494,213 @@ def _volume_tetrahedra(
         )
     if cell.kind in ("tetrahedron", "simplex:3"):
         return (_tetrahedron3(cell.corner_images),)
-    if not cell.facet_routes:
+    faces = _oriented_closed_faces(cell)
+    points = tuple(_point3(point) for point in cell.corner_images)
+    planes = tuple(_face_plane(tuple(points[index] for index in face)) for face in faces)
+    center = _star_center(points, planes)
+    if center is None:
+        raise UnsupportedEmbeddingMap(
+            "Polytope face planes do not admit an exact strictly interior star point."
+        )
+    triangles: list[tuple[Point3, Point3, Point3]] = []
+    for face in faces:
+        face_points = tuple(points[index] for index in face)
+        try:
+            local = triangulate_planar_polygon(face_points)
+        except ValueError as error:
+            raise UnsupportedEmbeddingMap(str(error)) from error
+        triangles.extend(
+            (face_points[first], face_points[second], face_points[third])
+            for first, second, third in local
+        )
+    if _star_ray_degree(center, tuple(triangles)) != 1:
+        raise UnsupportedEmbeddingMap(
+            "The polytope boundary does not wrap its star point exactly once."
+        )
+    return tuple((center, *triangle) for triangle in triangles)
+
+
+def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...]:
+    """Orient face loops coherently outward over a closed oriented edge cycle."""
+    routes = cell.facet_routes
+    if not routes:
         raise UnsupportedEmbeddingMap(
             "A linear polytope has no exact face triangulation."
         )
-    edge_incidence: dict[frozenset[int], int] = defaultdict(int)
-    center: Point3 = (
-        sum((point[0] for point in cell.corner_images), Fraction(0))
-        / len(cell.corner_images),
-        sum((point[1] for point in cell.corner_images), Fraction(0))
-        / len(cell.corner_images),
-        sum((point[2] for point in cell.corner_images), Fraction(0))
-        / len(cell.corner_images),
-    )
-    face_triangles: list[tuple[int, int, int]] = []
-    for route in cell.facet_routes:
+    edge_faces: dict[frozenset[int], list[tuple[int, int]]] = defaultdict(list)
+    for face_index, route in enumerate(routes):
         if len(route) < 3 or len(set(route)) != len(route):
             raise UnsupportedEmbeddingMap("A polytope face has invalid vertex incidence.")
-        ids = tuple(cell.vertex_ids[index] for index in route)
-        for index in range(len(ids)):
-            edge_incidence[frozenset((ids[index], ids[(index + 1) % len(ids)]))] += 1
-        face_points = tuple(cell.corner_images[index] for index in route)
-        triangles = triangulate_planar_polygon(face_points)
-        origin, first, second = (
-            _point3(face_points[0]),
-            _point3(face_points[1]),
-            _point3(face_points[2]),
-        )
-        normal = (
-            (first[1] - origin[1]) * (second[2] - origin[2])
-            - (first[2] - origin[2]) * (second[1] - origin[1]),
-            (first[2] - origin[2]) * (second[0] - origin[0])
-            - (first[0] - origin[0]) * (second[2] - origin[2]),
-            (first[0] - origin[0]) * (second[1] - origin[1])
-            - (first[1] - origin[1]) * (second[0] - origin[0]),
-        )
-        side_signs = tuple(
-            _sign(
-                sum(
-                    (normal[axis] * (point[axis] - origin[axis]) for axis in range(3)),
-                    Fraction(0),
-                )
-            )
-            for point in cell.corner_images
-        )
-        if any(
-            _sign(
-                sum(
-                    (normal[axis] * (point[axis] - origin[axis]) for axis in range(3)),
-                    Fraction(0),
-                )
-            )
-            for point in face_points
-        ):
-            raise UnsupportedEmbeddingMap("A polytope face is not exactly planar.")
-        nonzero_sides = {value for value in side_signs if value}
-        center_side = _sign(
-            sum(
-                (normal[axis] * (center[axis] - origin[axis]) for axis in range(3)),
-                Fraction(0),
-            )
-        )
-        if (
-            len(nonzero_sides) != 1
-            or center_side == 0
-            or center_side not in nonzero_sides
-        ):
-            raise UnsupportedEmbeddingMap(
-                "Polytope face planes do not prove a strict convex interior."
-            )
-        face_triangles.extend(
-            (route[first_index], route[second_index], route[third_index])
-            for first_index, second_index, third_index in triangles
-        )
-    if not edge_incidence or any(count != 2 for count in edge_incidence.values()):
+        for start, stop in zip(route, (*route[1:], route[0]), strict=True):
+            edge_faces[frozenset((start, stop))].append((face_index, start))
+    if any(len(incident) != 2 for incident in edge_faces.values()):
         raise UnsupportedEmbeddingMap(
             "Polytope boundary is not a closed two-manifold face complex."
         )
-    tetrahedra: list[tuple[Point3, Point3, Point3, Point3]] = []
-    for first_index, second_index, third_index in face_triangles:
-        tetrahedron = (
-            center,
-            _point3(cell.corner_images[first_index]),
-            _point3(cell.corner_images[second_index]),
-            _point3(cell.corner_images[third_index]),
-        )
-        if not determinant3(*tetrahedron):
-            raise UnsupportedEmbeddingMap(
-                "A polytope face and its interior point form a degenerate tetrahedron."
+    # Two coherently oriented faces traverse their shared edge from opposite
+    # endpoints, so equal starting endpoints flip the neighbor's orientation.
+    reversed_face: dict[int, bool] = {}
+    for root in range(len(routes)):
+        if root in reversed_face:
+            continue
+        reversed_face[root] = False
+        queue = deque((root,))
+        while queue:
+            current = queue.popleft()
+            route = routes[current]
+            for start, stop in zip(route, (*route[1:], route[0]), strict=True):
+                for neighbor, neighbor_start in edge_faces[frozenset((start, stop))]:
+                    if neighbor == current:
+                        continue
+                    flipped = reversed_face[current] ^ (neighbor_start == start)
+                    if neighbor not in reversed_face:
+                        reversed_face[neighbor] = flipped
+                        queue.append(neighbor)
+                    elif reversed_face[neighbor] != flipped:
+                        raise UnsupportedEmbeddingMap(
+                            "Polytope boundary faces are not coherently orientable."
+                        )
+    oriented = tuple(
+        route[::-1] if reversed_face[index] else route
+        for index, route in enumerate(routes)
+    )
+    points = tuple(_point3(point) for point in cell.corner_images)
+    origin = points[0]
+    volume = sum(
+        (
+            determinant3(
+                origin, points[face[0]], points[face[index]], points[face[index + 1]]
             )
-        tetrahedra.append(tetrahedron)
-    if not tetrahedra:
-        raise UnsupportedEmbeddingMap(
-            "A polytope has no nondegenerate volume decomposition."
+            for face in oriented
+            for index in range(1, len(face) - 1)
+        ),
+        Fraction(0),
+    )
+    sign = _sign(volume)
+    if sign == 0:
+        raise UnsupportedEmbeddingMap("A polytope boundary encloses zero exact volume.")
+    return oriented if sign > 0 else tuple(face[::-1] for face in oriented)
+
+
+def _face_plane(points: tuple[Point3, ...], /) -> tuple[Point3, ExactScalar]:
+    """Return the exact outward plane ``normal . x = offset`` of an oriented loop."""
+    # Published faces may carry collinear vertices, so the plane normal is the
+    # exact Newell area vector rather than one corner cross product.
+    normal = _newell_normal(points)
+    if not any(_sign(component) for component in normal):
+        raise UnsupportedEmbeddingMap("A polytope face has zero exact area.")
+    offset = _dot3(normal, points[0])
+    if any(_sign(_dot3(normal, point) - offset) for point in points):
+        raise UnsupportedEmbeddingMap("A polytope face is not exactly planar.")
+    return normal, offset
+
+
+def _strictly_inside(
+    point: Point3, planes: tuple[tuple[Point3, ExactScalar], ...], /
+) -> bool:
+    return all(_sign(_dot3(normal, point) - offset) < 0 for normal, offset in planes)
+
+
+def _vertex_centroid(points: tuple[Point3, ...] | list[Point3], /) -> Point3:
+    count = len(points)
+    return (
+        sum((point[0] for point in points), Fraction(0)) / count,
+        sum((point[1] for point in points), Fraction(0)) / count,
+        sum((point[2] for point in points), Fraction(0)) / count,
+    )
+
+
+def _star_center(
+    points: tuple[Point3, ...], planes: tuple[tuple[Point3, ExactScalar], ...], /
+) -> Point3 | None:
+    """Return an exact point strictly inside every outward face plane.
+
+    The vertex centroid is tried first. Otherwise the kernel polytope is
+    enumerated from face-plane triples; its vertex centroid is interior exactly
+    when the kernel is full-dimensional.
+    """
+    centroid = _vertex_centroid(points)
+    if _strictly_inside(centroid, planes):
+        return centroid
+    unique: dict[tuple[ExactScalar, ...], tuple[Point3, ExactScalar]] = {}
+    for normal, offset in planes:
+        pivot = next(abs(value) for value in normal if _sign(value))
+        unique.setdefault(
+            tuple(value / pivot for value in (*normal, offset)), (normal, offset)
         )
-    return tuple(tetrahedra)
+    kernel_planes = tuple(unique.values())
+    kernel_vertices: list[Point3] = []
+    for first, second, third in combinations(kernel_planes, 3):
+        rows = (first[0], second[0], third[0])
+        determinant = _dot3(rows[0], _cross3(rows[1], rows[2]))
+        if not _sign(determinant):
+            continue
+        # Cramer's rule: x = (d1 (n2 x n3) + d2 (n3 x n1) + d3 (n1 x n2)) / det.
+        terms = (
+            (first[1], _cross3(rows[1], rows[2])),
+            (second[1], _cross3(rows[2], rows[0])),
+            (third[1], _cross3(rows[0], rows[1])),
+        )
+        vertex: Point3 = (
+            sum((offset * vector[0] for offset, vector in terms), Fraction(0))
+            / determinant,
+            sum((offset * vector[1] for offset, vector in terms), Fraction(0))
+            / determinant,
+            sum((offset * vector[2] for offset, vector in terms), Fraction(0))
+            / determinant,
+        )
+        if vertex not in kernel_vertices and all(
+            _sign(_dot3(normal, vertex) - offset) <= 0 for normal, offset in kernel_planes
+        ):
+            kernel_vertices.append(vertex)
+    if len(kernel_vertices) < 4:
+        return None
+    kernel_centroid = _vertex_centroid(kernel_vertices)
+    return kernel_centroid if _strictly_inside(kernel_centroid, planes) else None
+
+
+def _star_ray_degree(
+    center: Point3, triangles: tuple[tuple[Point3, Point3, Point3], ...], /
+) -> int | None:
+    """Count exact boundary crossings of one generic ray from ``center``.
+
+    With ``center`` strictly inside every outward face plane, each oriented
+    triangle spans a positive cone, so the radial projection of the closed
+    boundary is an orientation-preserving branched cover of the sphere whose
+    degree is this count; degree one makes the cones an exact tiling.
+    """
+    for exponent in range(8 * len(triangles) + 1):
+        direction: Point3 = (
+            Fraction(1),
+            Fraction(exponent),
+            Fraction(exponent * exponent + 1),
+        )
+        crossings = 0
+        generic = True
+        for triangle in triangles:
+            first, second, third = triangle
+            normal = _cross3(_sub3(second, first), _sub3(third, first))
+            denominator = _dot3(normal, direction)
+            if _sign(denominator) <= 0:
+                continue
+            parameter = _dot3(normal, _sub3(first, center)) / denominator
+            hit: Point3 = (
+                center[0] + parameter * direction[0],
+                center[1] + parameter * direction[1],
+                center[2] + parameter * direction[2],
+            )
+            if not point_in_triangle3(hit, triangle):
+                continue
+            if any(
+                point_on_segment3(hit, triangle[left], triangle[right])
+                for left, right in ((0, 1), (1, 2), (2, 0))
+            ):
+                generic = False
+                break
+            crossings += 1
+        if generic:
+            return crossings
+    return None
 
 
 def _cell_simplices(
@@ -590,6 +726,45 @@ def _cell_simplices(
     raise UnsupportedEmbeddingMap(
         "Global embedding supports cell dimensions one through three."
     )
+
+
+def _plane_side_shared_contacts(
+    first: tuple[tuple[ExactScalar, ...], ...],
+    second: tuple[tuple[ExactScalar, ...], ...],
+    dimension: int,
+    ambient: int,
+    /,
+) -> tuple[tuple[ExactScalar, ...], ...] | None:
+    """Return the exact contact of two spatial triangles meeting only at shared corners.
+
+    If every corner of one triangle that is not a corner of the other lies
+    strictly on one side of the other's plane, that triangle meets the plane
+    exactly in the hull of the shared corners, which lies in both triangles. The
+    contact is then that hull, whose vertices are the shared corners. Returns
+    ``None`` when this exact orientation test does not apply.
+    """
+    if dimension != 2 or ambient != 3 or len(first) != 3 or len(second) != 3:
+        return None
+    left = tuple(_point3(point) for point in first)
+    right = tuple(_point3(point) for point in second)
+    shared = tuple(point for point in left if point in right)
+    if len(shared) == 3 or len(set(left)) != 3 or len(set(right)) != 3:
+        return None
+    for plane, other in ((left, right), (right, left)):
+        sides = {
+            _sign(determinant3(plane[0], plane[1], plane[2], point))
+            for point in other
+            if point not in shared
+        }
+        # A nonzero side proves the plane triangle nondegenerate; the other
+        # triangle must be too, as the full contact route requires.
+        if (
+            len(sides) == 1
+            and 0 not in sides
+            and any(determinant3(other[0], other[1], other[2], point) for point in plane)
+        ):
+            return shared
+    return None
 
 
 def _piece_contacts(
@@ -856,6 +1031,71 @@ def _affine_chart_cell(
     )
 
 
+def _planar_faced_chart_cell(
+    cell: EmbeddingCell, arguments: tuple[Expression, ...], /
+) -> EmbeddingCell | None:
+    """Represent a non-affine restriction chart by its exact planar-faced image.
+
+    An injective chart whose every face trace is exactly its planar injective
+    corner polygon maps the closed reference cell onto the solid bounded by those
+    polygons. The chart image is therefore the vertex-defined polytope with the
+    chart corner images and the reference face loops, which the exact star
+    decomposition then tiles for contact comparison in root coordinates.
+    """
+    if (
+        cell.dimension != 3
+        or cell.pyramid_normalizations is not None
+        or not cell.facet_routes
+        or len(arguments) != 3
+        or any(not isinstance(expression, dict) for expression in arguments)
+    ):
+        return None
+    try:
+        corners = tuple(
+            tuple(evaluate_expression(expression, point) for expression in arguments)
+            for point in cell.reference_vertices
+        )
+        bounds = tuple(
+            polynomial_bounds(
+                expression, cast(BernsteinDomain, cell.domain), cell.dimension
+            )
+            for expression in arguments
+        )
+        chart = EmbeddingCell(
+            cell.global_id,
+            cell.block_name,
+            cell.local_index,
+            cell.kind,
+            cell.dimension,
+            cell.domain,
+            cell.vertex_indices,
+            cell.vertex_ids,
+            cell.reference_vertices,
+            arguments,
+            corners,
+            None,
+            None,
+            tuple(value[0] for value in bounds),
+            tuple(value[1] for value in bounds),
+            cell.facet_routes,
+        )
+        if prove_mapped_cell_injective(chart) is None:
+            return None
+        for face in cell.facet_routes:
+            if (
+                _face_trace_image_evidence(
+                    chart,
+                    tuple(cell.vertex_ids[index] for index in face),
+                    tuple(_point3(corners[index]) for index in face),
+                )
+                is None
+            ):
+                return None
+    except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
+        return None
+    return replace(chart, coordinates=())
+
+
 def _inverse_affine_arguments(
     arguments: tuple[Expression, ...], dimension: int, /
 ) -> tuple[Expression, ...] | None:
@@ -916,6 +1156,75 @@ def _inverse_affine_arguments(
     return tuple(result)
 
 
+def _block_root_chart_rows(
+    cell_kind: str,
+    cell_count: int,
+    element: object,
+    witness: ReferenceCellMapWitnesses | None,
+    parent_cell_ids: np.ndarray,
+    /,
+) -> tuple[tuple[int, int, str, tuple[Expression, ...]], ...]:
+    """Return ``(row, root cell ID, root kind, chart)`` for one block's cells.
+
+    Charts come from the restriction witness; a per-cell restricted element
+    without a witness carries its own exact root charts.
+    """
+    if witness is None:
+        if not isinstance(element, PerCellRestrictedCellGeometryElement):
+            return ()
+        try:
+            return tuple(
+                (
+                    row,
+                    int(element.source_cell_ids[row]),
+                    element.source_element.cell_kind,
+                    tuple(element.chart_arguments(row)),
+                )
+                for row in range(cell_count)
+            )
+        except (IndexError, TypeError, ValueError):
+            return ()
+    try:
+        validate_reference_cell_map_witnesses(witness)
+        maps = nested_cell_reference_maps(witness)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return ()
+    if (
+        witness.target_cell_kind != cell_kind
+        or not np.array_equal(
+            np.asarray(witness.target_cell_ids, dtype=np.int64),
+            np.arange(cell_count, dtype=np.int64),
+        )
+        or not np.array_equal(
+            np.asarray(witness.source_cell_ids, dtype=np.int64), parent_cell_ids
+        )
+    ):
+        return ()
+    maps_by_target = {value.target_cell_id: value for value in maps}
+    rows: list[tuple[int, int, str, tuple[Expression, ...]]] = []
+    for row in range(cell_count):
+        chart = maps_by_target.get(row)
+        if (
+            chart is None
+            or chart.source_cell_id != int(parent_cell_ids[row])
+            or chart.arguments is None
+        ):
+            continue
+        arguments = cast(tuple[Expression, ...], tuple(chart.arguments))
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            try:
+                element_arguments = element.chart_arguments(row)
+            except (IndexError, TypeError, ValueError):
+                continue
+            if len(arguments) != len(element_arguments) or not all(
+                expression_equal(first, second)
+                for first, second in zip(arguments, element_arguments, strict=True)
+            ):
+                continue
+        rows.append((row, chart.source_cell_id, chart.source_cell_kind, arguments))
+    return tuple(rows)
+
+
 def _retained_root_charts(
     mesh: CellMesh, geometry: CellGeometrySpec, cells: tuple[EmbeddingCell, ...], /
 ) -> tuple[_RootChart | None, ...]:
@@ -924,9 +1233,10 @@ def _retained_root_charts(
     if source is None:
         return tuple(None for _ in cells)
     try:
-        elements, _, _ = geometry.resolve(mesh)
+        elements, routes, _ = geometry.resolve(mesh)
     except (ValueError, TypeError, IndexError):
         return tuple(None for _ in cells)
+    coefficient_bank: tuple[tuple[CoordinateExactScalar, ...], ...] | None = None
     chart_witnesses = dict(
         zip(source.block_names, source.parent_reference_maps, strict=True)
     )
@@ -941,84 +1251,70 @@ def _retained_root_charts(
         (cell.block_name, cell.local_index): index for index, cell in enumerate(cells)
     }
     result: list[_RootChart | None] = [None] * len(cells)
-    for block, element in zip(mesh.blocks, elements, strict=True):
-        witness = chart_witnesses.get(block.name)
-        if witness is None:
-            continue
-        try:
-            validate_reference_cell_map_witnesses(witness)
-            maps = nested_cell_reference_maps(witness)
-        except (TypeError, ValueError, ZeroDivisionError):
-            continue
-        if (
-            witness.target_cell_kind != block.cell_kind
-            or not np.array_equal(
-                np.asarray(witness.target_cell_ids, dtype=np.int64),
-                np.arange(block.cell_count, dtype=np.int64),
-            )
-            or not np.array_equal(
-                np.asarray(witness.source_cell_ids, dtype=np.int64),
-                parent_ids[block.name],
-            )
-        ):
-            continue
-        maps_by_target = {value.target_cell_id: value for value in maps}
-        for row, target_id in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
+    for block, element, block_route in zip(mesh.blocks, elements, routes, strict=True):
+        row_charts = _block_root_chart_rows(
+            block.cell_kind,
+            block.cell_count,
+            element,
+            chart_witnesses.get(block.name),
+            parent_ids[block.name],
+        )
+        for row, source_cell_id, source_cell_kind, arguments in row_charts:
             cell_index = cells_by_row.get((block.name, row))
-            if cell_index is None or int(target_id) != cells[cell_index].global_id:
-                continue
-            chart = maps_by_target.get(row)
-            if chart is None or chart.source_cell_id != int(parent_ids[block.name][row]):
+            if (
+                cell_index is None
+                or int(block.global_ids[row]) != cells[cell_index].global_id
+            ):
                 continue
             cell = cells[cell_index]
-            if chart.arguments is None:
-                continue
-            arguments = cast(tuple[Expression, ...], tuple(chart.arguments))
-            if isinstance(element, PerCellRestrictedCellGeometryElement):
-                try:
-                    element_arguments = element.chart_arguments(row)
-                    if len(arguments) != len(element_arguments) or not all(
-                        expression_equal(first, second)
-                        for first, second in zip(
-                            arguments, element_arguments, strict=True
-                        )
-                    ):
-                        continue
-                except (IndexError, TypeError, ValueError):
-                    continue
             inverse = _inverse_affine_arguments(arguments, cell.dimension)
-            if inverse is None:
-                continue
             try:
-                root_coordinates = tuple(
-                    compose_expression(expression, inverse)
-                    for expression in cell.coordinates
-                )
+                if inverse is not None:
+                    root_coordinates = tuple(
+                        compose_expression(expression, inverse)
+                        for expression in cell.coordinates
+                    )
+                elif isinstance(element, PerCellRestrictedCellGeometryElement):
+                    # A non-affine restriction chart (a dual hexahedron of a
+                    # root simplex) has no affine inverse; the common root map is
+                    # the source element on the cell's retained root route.
+                    if coefficient_bank is None:
+                        coefficient_bank = geometry.source_coordinates()
+                    root_coordinates = _cell_expressions(
+                        element.source_element,
+                        np.asarray(block_route, dtype=np.int64)[row],
+                        coefficient_bank,
+                        row,
+                    )
+                else:
+                    continue
                 composed = tuple(
                     compose_expression(expression, arguments)
                     for expression in root_coordinates
                 )
-                if not all(
+                if len(composed) != len(cell.coordinates) or not all(
                     expression_equal(first, second)
                     for first, second in zip(cell.coordinates, composed, strict=True)
                 ):
                     continue
-            except (TypeError, ValueError, ZeroDivisionError):
+            except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
                 continue
             root_cell = _root_reference_cell(
-                chart.source_cell_kind, root_coordinates, chart.source_cell_id
+                source_cell_kind, root_coordinates, source_cell_id
             )
             if root_cell is None:
                 continue
             result[cell_index] = _RootChart(
                 source.source_geometry_id,
                 source.source_topology_id,
-                chart.source_cell_id,
-                chart.source_cell_kind,
+                source_cell_id,
+                source_cell_kind,
                 arguments,
                 root_coordinates,
                 root_cell,
-                _affine_chart_cell(cell, arguments),
+                _affine_chart_cell(cell, arguments)
+                if inverse is not None
+                else _planar_faced_chart_cell(cell, arguments),
                 _root_map_injective(root_cell),
             )
     return tuple(result)
@@ -1568,16 +1864,20 @@ def _candidate_normals(
 def _unique_projective_normals(
     normals: Iterator[tuple[ExactScalar, ...]], /
 ) -> Iterator[tuple[ExactScalar, ...]]:
-    """Yield one exactly normalized representative of each candidate plane."""
-    seen: list[tuple[ExactScalar, ...]] = []
+    """Yield one exactly normalized representative of each candidate plane.
+
+    Exact scalars hash consistently with equality, so the seen set gives the
+    same representatives as a pairwise scan in linear rather than quadratic time.
+    """
+    seen: set[tuple[ExactScalar, ...]] = set()
     for normal in normals:
         leading = next((value for value in normal if _sign(value)), None)
         if leading is None:
             continue
         normalized = tuple(value / leading for value in normal)
-        if any(normalized == previous for previous in seen):
+        if normalized in seen:
             continue
-        seen.append(normalized)
+        seen.add(normalized)
         yield normalized
 
 
@@ -1999,14 +2299,236 @@ def _edge_residual_side_sign(
     return None
 
 
+class _ComposedMonomials:
+    """Exact composition through one fixed polynomial argument map.
+
+    Composition is linear in the composed polynomial, so each monomial image is
+    formed once and every later polynomial is the exact linear combination of
+    cached images.
+    """
+
+    __slots__ = ("_arguments", "_images")
+
+    def __init__(
+        self, arguments: tuple[Mapping[tuple[int, ...], ExactScalar], ...], /
+    ) -> None:
+        self._arguments = arguments
+        self._images: dict[tuple[int, ...], dict[tuple[int, ...], ExactScalar]] = {}
+
+    def compose(
+        self, polynomial: Mapping[tuple[int, ...], ExactScalar], /
+    ) -> dict[tuple[int, ...], ExactScalar]:
+        result: dict[tuple[int, ...], ExactScalar] = {}
+        for exponent, coefficient in polynomial.items():
+            image = self._images.get(exponent)
+            if image is None:
+                composed = compose_expression({exponent: Fraction(1)}, self._arguments)
+                if not isinstance(composed, dict):
+                    raise ValueError("Polynomial arguments composed to a rational map.")
+                image = composed
+                self._images[exponent] = image
+            for target, value in image.items():
+                result[target] = result.get(target, Fraction(0)) + coefficient * value
+        return {target: value for target, value in result.items() if value}
+
+
+def _factor_quotients(
+    transformed: Mapping[tuple[int, ...], ExactScalar], dimension: int, /
+) -> list[dict[tuple[int, ...], ExactScalar]]:
+    """Split the nonconstant part as ``sum(t_axis * quotient_axis)``.
+
+    Each monomial is assigned to its first factor coordinate with a positive
+    power; this projection is linear in ``transformed``.
+    """
+    quotients: list[dict[tuple[int, ...], ExactScalar]] = [{} for _ in range(dimension)]
+    for exponent, coefficient in transformed.items():
+        axis = next((index for index, power in enumerate(exponent) if power), None)
+        if axis is None:
+            continue
+        quotient_exponent = tuple(
+            power - int(index == axis) for index, power in enumerate(exponent)
+        )
+        quotients[axis] = add(quotients[axis], {quotient_exponent: coefficient})
+    return quotients
+
+
+@dataclass(frozen=True, slots=True)
+class _VertexResidualFrame:
+    """Coordinates of one cell corner given by its three incident facet factors.
+
+    ``to_factor_coordinates`` rewrites reference polynomials in the facet
+    factor coordinates (the exact inverse affine map); ``to_reference`` maps
+    factor-coordinate polynomials back to reference coordinates. Both depend
+    only on the cell and corner, so every candidate separating normal reuses
+    them.
+
+    ``screen`` holds, per factor quotient, binary64 shadows of the exact
+    Bernstein controls of each coordinate component's quotient, elevated to
+    one common degree (rows: components, columns: controls). The quotient
+    controls for a normal ``n`` are ``n @ rows`` exactly at that degree, and
+    elevated controls are convex combinations of the least-degree controls the
+    exact proof uses. A normal whose shadow controls have a sign beyond a
+    rigorous rounding bound therefore fails the exact strict proof and is
+    skipped without changing which normal the exact proof accepts first.
+    """
+
+    to_factor_coordinates: _ComposedMonomials
+    to_reference: _ComposedMonomials
+    screen: tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...] | None
+
+
+def _vertex_residual_screen(
+    cell: EmbeddingCell,
+    to_factor_coordinates: _ComposedMonomials,
+    to_reference: _ComposedMonomials,
+    /,
+) -> tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...] | None:
+    dimension = cell.dimension
+    components = cell.coordinates
+    if (
+        cell.pyramid_normalizations is not None
+        or cell.kind == "pyramid"
+        or len(components) != 3
+        or not all(isinstance(component, dict) for component in components)
+    ):
+        return None
+    domain = cell.proof_domain
+    rows_by_axis: list[list[dict[tuple[int, ...], ExactScalar]]] = [
+        [] for _ in range(dimension)
+    ]
+    for component in components:
+        quotients = _factor_quotients(
+            to_factor_coordinates.compose(cast(dict, component)), dimension
+        )
+        for axis, quotient in enumerate(quotients):
+            rows_by_axis[axis].append(to_reference.compose(quotient))
+    screen = []
+    for rows in rows_by_axis:
+        degrees = tuple(bernstein_degree(row, domain, dimension) for row in rows)
+        degree = tuple(max(values) for values in zip(*degrees, strict=True))
+        shadows = np.asarray(
+            tuple(
+                tuple(
+                    float(value)
+                    for value in bernstein_coefficients(
+                        row, domain, dimension, degree=degree
+                    )
+                )
+                for row in rows
+            ),
+            dtype=np.float64,
+        )
+        if not np.all(np.isfinite(shadows)):
+            return None
+        screen.append((shadows, np.abs(shadows)))
+    return tuple(screen)
+
+
+def _screened_sides(
+    screen: tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...],
+    normals: NDArray[np.float64],
+    /,
+) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
+    """Return, per normal row, whether a strict positive/negative side survives.
+
+    A side is excluded only when some shadow control has the opposite sign
+    beyond a rigorous bound on the rounding of the normal, the controls and
+    the three-term dot product; nonfinite rows exclude nothing.
+    """
+    positive = np.ones((normals.shape[0],), dtype=np.bool_)
+    negative = np.ones((normals.shape[0],), dtype=np.bool_)
+    magnitude = np.abs(normals)
+    for shadows, absolute in screen:
+        values = normals @ shadows
+        # Far above the binary64 rounding error; the absolute term covers underflow.
+        bound = 1e-9 * (magnitude @ absolute) + 1e-300
+        undecided = ~(
+            np.all(np.isfinite(values), axis=1) & np.all(np.isfinite(bound), axis=1)
+        )
+        positive &= undecided | np.all(values > -bound, axis=1)
+        negative &= undecided | np.all(values < bound, axis=1)
+    return positive, negative
+
+
+def _screened_normals(
+    first: _VertexResidualFrame,
+    second: _VertexResidualFrame,
+    normals: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> tuple[bool, ...]:
+    """Admit every normal for which opposite strict sides are not excluded."""
+    if first.screen is None or second.screen is None:
+        return (True,) * len(normals)
+    rows: list[tuple[float, float, float]] = []
+    convertible: list[int] = []
+    for index, normal in enumerate(normals):
+        if len(normal) != 3:
+            continue
+        try:
+            rows.append((float(normal[0]), float(normal[1]), float(normal[2])))
+        except (OverflowError, TypeError, ValueError):
+            continue
+        convertible.append(index)
+    admitted = [True] * len(normals)
+    if rows:
+        shadows = np.asarray(rows, dtype=np.float64)
+        finite = np.all(np.isfinite(shadows), axis=1)
+        first_positive, first_negative = _screened_sides(first.screen, shadows)
+        second_positive, second_negative = _screened_sides(second.screen, shadows)
+        keep = (
+            ~finite
+            | (first_positive & second_negative)
+            | (first_negative & second_positive)
+        )
+        for index, value in zip(convertible, keep.tolist(), strict=True):
+            admitted[index] = bool(value)
+    return tuple(admitted)
+
+
+def _vertex_residual_frame(
+    cell: EmbeddingCell, vertex_id: int, /
+) -> _VertexResidualFrame | None:
+    factors = _reference_vertex_factors(cell, vertex_id)
+    if factors is None:
+        return None
+    dimension = cell.dimension
+    factor_expressions: tuple[Expression, ...] = tuple(
+        scale(factor, Fraction(1)) for factor in factors
+    )
+    try:
+        affine_factors = affine_map(factor_expressions, dimension)
+        if affine_factors is None:
+            return None
+        offsets, matrix = affine_factors
+        identity: tuple[tuple[ExactScalar, ...], ...] = tuple(
+            tuple(Fraction(int(row == column)) for column in range(dimension))
+            for row in range(dimension)
+        )
+        inverse = solve_exact(
+            matrix,
+            identity,
+            singular_error=_SingularReferenceFactorMap,
+        )
+    except (_SingularReferenceFactorMap, ValueError, ZeroDivisionError):
+        return None
+    shifted_variables = tuple(
+        subtract(variable, constant(offset, dimension))
+        for variable, offset in zip(axes(dimension), offsets, strict=True)
+    )
+    inverse_arguments = linear_combinations(shifted_variables, inverse)
+    to_factor_coordinates = _ComposedMonomials(inverse_arguments)
+    to_reference = _ComposedMonomials(factors)
+    try:
+        screen = _vertex_residual_screen(cell, to_factor_coordinates, to_reference)
+    except (ArithmeticError, OverflowError, TypeError, ValueError):
+        screen = None
+    return _VertexResidualFrame(to_factor_coordinates, to_reference, screen)
+
+
 def _vertex_residual_side_sign(
     cell: EmbeddingCell,
     residual: Expression,
-    factors: tuple[
-        dict[tuple[int, ...], Fraction],
-        dict[tuple[int, ...], Fraction],
-        dict[tuple[int, ...], Fraction],
-    ],
+    frame: _VertexResidualFrame,
     /,
 ) -> tuple[int, bool] | None:
     if isinstance(residual, RationalPolynomial):
@@ -2022,59 +2544,17 @@ def _vertex_residual_side_sign(
     denominator_sign = _strict_control_sign(proof_denominator, domain, cell.dimension)
     if denominator_sign is None:
         return None
-    factor_expressions: tuple[Expression, ...] = tuple(
-        scale(factor, Fraction(1)) for factor in factors
-    )
-    affine_factors = affine_map(factor_expressions, cell.dimension)
-    if affine_factors is None:
-        return None
-    offsets, matrix = affine_factors
     dimension = cell.dimension
-    identity: tuple[tuple[ExactScalar, ...], ...] = tuple(
-        tuple(Fraction(int(row == column)) for column in range(dimension))
-        for row in range(dimension)
-    )
-    try:
-        inverse = solve_exact(
-            matrix,
-            identity,
-            singular_error=_SingularReferenceFactorMap,
-        )
-    except _SingularReferenceFactorMap:
-        return None
-    shifted_variables = tuple(
-        subtract(variable, constant(offset, dimension))
-        for variable, offset in zip(axes(dimension), offsets, strict=True)
-    )
-    inverse_arguments = linear_combinations(shifted_variables, inverse)
-    transformed = compose_expression(numerator, inverse_arguments)
-    if not isinstance(transformed, dict):
-        return None
+    transformed = frame.to_factor_coordinates.compose(numerator)
     zero = (0,) * dimension
     if transformed.get(zero, Fraction(0)):
         return None
-    quotients: list[dict[tuple[int, ...], ExactScalar]] = [{} for _ in range(dimension)]
-    for exponent, coefficient in transformed.items():
-        axis = next(
-            (index for index, power in enumerate(exponent) if power),
-            None,
-        )
-        if axis is None:
-            return None
-        quotient_exponent = tuple(
-            power - int(index == axis) for index, power in enumerate(exponent)
-        )
-        quotients[axis] = add(quotients[axis], {quotient_exponent: coefficient})
+    quotients = _factor_quotients(transformed, dimension)
     reference_quotients = tuple(
-        compose_expression(quotient, factors) for quotient in quotients
+        frame.to_reference.compose(quotient) for quotient in quotients
     )
-    coefficient_polynomials = tuple(
-        expression for expression in reference_quotients if isinstance(expression, dict)
-    )
-    if len(coefficient_polynomials) != dimension:
-        return None
     proof_coefficients = tuple(
-        _proof_polynomial(cell, expression) for expression in coefficient_polynomials
+        _proof_polynomial(cell, expression) for expression in reference_quotients
     )
     if any(not isinstance(expression, dict) for expression in proof_coefficients):
         return None
@@ -2948,8 +3428,15 @@ def _shared_vertex_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
     shared_ids: tuple[int, ...],
+    frames: dict[tuple[int, int], _VertexResidualFrame | None],
     /,
 ) -> tuple[tuple[ExactScalar, ...], int, int, bool, bool] | None:
+    """Find a plane through one shared corner with the two cells on opposite sides.
+
+    ``frames`` caches each cell corner's facet-factor coordinates by cell and
+    vertex ID for the duration of one proof; the residual for each candidate
+    normal is then a linear combination of cached monomial images.
+    """
     if (
         first.dimension != 3
         or second.dimension != 3
@@ -2971,42 +3458,76 @@ def _shared_vertex_separation(
     common_point = first.corner_images[first_vertex]
     if second.corner_images[second_vertex] != common_point:
         return None
-    first_factors = _reference_vertex_factors(first, vertex_id)
-    second_factors = _reference_vertex_factors(second, vertex_id)
-    if first_factors is None or second_factors is None:
+
+    def frame(cell: EmbeddingCell, /) -> _VertexResidualFrame | None:
+        key = (cell.global_id, vertex_id)
+        if key not in frames:
+            frames[key] = _vertex_residual_frame(cell, vertex_id)
+        return frames[key]
+
+    first_frame = frame(first)
+    second_frame = frame(second)
+    if first_frame is None or second_frame is None:
         return None
-    for normal in _unique_projective_normals(_candidate_normals(first, second)):
-        if len(normal) != 3 or not any(_sign(value) for value in normal):
-            continue
-        offset = sum(
-            (normal[axis] * common_point[axis] for axis in range(3)),
-            Fraction(0),
+    candidates = _unique_projective_normals(_candidate_normals(first, second))
+    # Normals are screened in order-preserving chunks; a screened-out normal
+    # fails the exact strict proof, so the first accepted normal is unchanged.
+    while chunk := tuple(islice(candidates, 256)):
+        for normal, admitted in zip(
+            chunk, _screened_normals(first_frame, second_frame, chunk), strict=True
+        ):
+            if not admitted:
+                continue
+            witness = _vertex_normal_witness(
+                first, second, normal, common_point, first_frame, second_frame
+            )
+            if witness is not None:
+                return witness
+    return None
+
+
+def _vertex_normal_witness(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    normal: tuple[ExactScalar, ...],
+    common_point: tuple[ExactScalar, ...],
+    first_frame: _VertexResidualFrame,
+    second_frame: _VertexResidualFrame,
+    /,
+) -> tuple[tuple[ExactScalar, ...], int, int, bool, bool] | None:
+    if len(normal) != 3 or not any(_sign(value) for value in normal):
+        return None
+    offset = sum(
+        (normal[axis] * common_point[axis] for axis in range(3)),
+        Fraction(0),
+    )
+    try:
+        first_sign = _vertex_residual_side_sign(
+            first,
+            _projected_expression(first, normal, offset),
+            first_frame,
         )
-        try:
-            first_sign = _vertex_residual_side_sign(
-                first,
-                _projected_expression(first, normal, offset),
-                first_factors,
-            )
-            second_sign = _vertex_residual_side_sign(
-                second,
-                _projected_expression(second, normal, offset),
-                second_factors,
-            )
-        except (ValueError, ZeroDivisionError):
-            continue
-        if first_sign is None or second_sign is None:
-            continue
-        first_direction, first_strict = first_sign
-        second_direction, second_strict = second_sign
-        if first_direction == -second_direction and first_strict and second_strict:
-            return (
-                normal,
-                first_direction,
-                second_direction,
-                first_strict,
-                second_strict,
-            )
+        if first_sign is None or not first_sign[1]:
+            return None
+        second_sign = _vertex_residual_side_sign(
+            second,
+            _projected_expression(second, normal, offset),
+            second_frame,
+        )
+    except (ValueError, ZeroDivisionError):
+        return None
+    if second_sign is None:
+        return None
+    first_direction, first_strict = first_sign
+    second_direction, second_strict = second_sign
+    if first_direction == -second_direction and first_strict and second_strict:
+        return (
+            normal,
+            first_direction,
+            second_direction,
+            first_strict,
+            second_strict,
+        )
     return None
 
 
@@ -3055,6 +3576,7 @@ def _nonperiodic_contacts(
     root_charts = _retained_root_charts(mesh, geometry, cells)
     simplices: list[tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None] = []
     findings: list[MeshCertificateFinding] = []
+    vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
     for cell in cells:
         if not cell.affine and cell.coordinates:
             simplices.append(None)
@@ -3063,9 +3585,14 @@ def _nonperiodic_contacts(
             simplices.append(_cell_simplices(cell))
         except (ValueError, ZeroDivisionError) as error:
             simplices.append(None)
+            # A vertex-defined polyhedron has no Jacobian; its exact star
+            # decomposition is its local degree-one premise, which the global
+            # degree route may not discharge.
             findings.append(
                 MeshCertificateFinding(
-                    "exact_cell_contact_preparation",
+                    "polyhedral_cell_decomposition"
+                    if cell.kind == "polyhedron"
+                    else "exact_cell_contact_preparation",
                     "unresolved",
                     "cell",
                     (cell.global_id,),
@@ -3222,7 +3749,7 @@ def _nonperiodic_contacts(
                         continue
                 if trace is True and len(shared) == 1:
                     vertex_witness = _shared_vertex_separation(
-                        first_cell, second_cell, shared
+                        first_cell, second_cell, shared, vertex_frames
                     )
                     if vertex_witness is not None:
                         (
@@ -3241,7 +3768,14 @@ def _nonperiodic_contacts(
                                 f"strict:{first_strict},{second_strict}"
                             )
                         continue
-                if _strict_image_separation(first_cell, second_cell):
+                # Images meeting at a shared exact corner cannot have disjoint
+                # projection enclosures: both contain that corner's projection.
+                touching = any(
+                    first_cell.corner_images[first_cell.vertex_ids.index(identifier)]
+                    == second_cell.corner_images[second_cell.vertex_ids.index(identifier)]
+                    for identifier in shared
+                )
+                if not touching and _strict_image_separation(first_cell, second_cell):
                     if proof_values is not None:
                         proof_values.append(
                             f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:outward-bernstein-projection-separation"
@@ -3283,6 +3817,20 @@ def _nonperiodic_contacts(
             contact_error: Exception | None = None
             for left in first_pieces:
                 for right in second_pieces:
+                    shared_contacts = _plane_side_shared_contacts(
+                        left, right, first_cell.dimension, mesh.ambient_dimension
+                    )
+                    if shared_contacts is not None and (
+                        _contact_is_declared(
+                            first_cell,
+                            second_cell,
+                            shared_contacts,
+                            first_cell.vertex_ids,
+                            second_cell.vertex_ids,
+                        )
+                        is True
+                    ):
+                        continue
                     try:
                         contacts = _piece_contacts(
                             left,
@@ -3383,7 +3931,7 @@ def _boundary_findings(
         mesh.topological_dimension != 3
         or mesh.ambient_dimension != 3
         or not cells
-        or any(cell.kind in ("polygon", "polyhedron") for cell in cells)
+        or any(cell.kind == "polygon" for cell in cells)
     ):
         return [], 0, 0, [], False
     boundary = build_oriented_boundary(mesh, cells)

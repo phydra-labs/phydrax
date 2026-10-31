@@ -34,6 +34,7 @@ enum PlcFailureReason : int32_t {
   kPlcInvalidSeed = 14,
   kPlcOutsideDomain = 15,
   kPlcSourceDeviation = 17,
+  kPlcSteinerSuppression = 18,
 };
 
 enum PlcEntityKind : int32_t {
@@ -64,43 +65,6 @@ struct PlcInput {
   const double* facet_tolerances = nullptr;
   const double* segment_tolerances = nullptr;
 };
-
-namespace detail {
-
-struct PlcWrapCavityFace {
-  std::array<int32_t, 3> vertices{};
-  bool obstacle = true;
-  int32_t source = -1;
-  bool cavity_internal = false;
-  int32_t owner_tet = -1;
-  int32_t neighbor_tet = -1;
-};
-
-struct PlcWrapCavityInput {
-  std::span<const double> points;
-  std::span<const int32_t> vertices;
-  std::span<const PlcWrapCavityFace> faces;
-  std::span<const int32_t> protected_segments;
-  std::array<int32_t, 2> recovery_edge{-1, -1};
-  bool require_edge = false;
-};
-
-struct PlcWrapCavityResult {
-  bool complete = false;
-  bool empty_sphere_apex_missing = false;
-  bool has_facet_contact = false;
-  bool cavity_internal_contact = false;
-  int32_t blocking_source = -1;
-  int32_t blocking_owner = -1;
-  int32_t blocking_neighbor = -1;
-  std::vector<std::array<int32_t, 4>> tetrahedra;
-};
-
-// Replay the production source-cavity wrapper from an exact compact fixture.
-int32_t recover_plc_wrap_cavity(const PlcWrapCavityInput& input,
-                                PlcWrapCavityResult& result);
-
-}  // namespace detail
 
 struct PlcFailure {
   int32_t reason = kPlcNoFailure;
@@ -251,10 +215,5 @@ int32_t prepare_plc_source(const PlcInput& input, PlcRecovery& result);
 std::vector<double> protection_radii(const double* points, int64_t point_count,
                                      std::span<const int32_t> edges,
                                      std::span<const int32_t> triangles);
-double split_target(const double* a, const double* b, double apex_a, double apex_b,
-                    double& tolerance);
-bool exact_segment_point(const double* a, const double* b, double target, double tolerance,
-                         double* point);
-bool exact_triangle_point(const double* a, const double* b, const double* c, double* point);
 
 }  // namespace phx::mc

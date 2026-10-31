@@ -51,13 +51,30 @@ from .implicit._restricted_delaunay_coverage import (
 )
 
 
-type CoverageDomain = PiecewiseLinearDomain | MappedReferenceDomain | MeshingDomain | AdaptiveImplicitSurface | AnalyticImplicitProfile
-type CoverageMethod = Literal["exact_oriented_facets", "mapped_reference_charts", "source_boundary_homotopy"]
+type CoverageDomain = (
+    PiecewiseLinearDomain
+    | MappedReferenceDomain
+    | MeshingDomain
+    | AdaptiveImplicitSurface
+    | AnalyticImplicitProfile
+)
+type CoverageMethod = Literal[
+    "exact_oriented_facets", "mapped_reference_charts", "source_boundary_homotopy"
+]
 
 
 def require_coverage_domain(value: object, /) -> CoverageDomain:
     """Admit only concrete source owners with revalidatable coverage premises."""
-    if isinstance(value, (PiecewiseLinearDomain, MappedReferenceDomain, MeshingDomain, AdaptiveImplicitSurface, AnalyticImplicitProfile)):
+    if isinstance(
+        value,
+        (
+            PiecewiseLinearDomain,
+            MappedReferenceDomain,
+            MeshingDomain,
+            AdaptiveImplicitSurface,
+            AnalyticImplicitProfile,
+        ),
+    ):
         return value
     raise TypeError(
         "domain must be PiecewiseLinearDomain, MappedReferenceDomain, MeshingDomain, "
@@ -80,15 +97,21 @@ def coverage_region_occurrence_paths(
         paths = domain.region_occurrence_paths
     elif isinstance(domain, AdaptiveImplicitSurface):
         if region_ids not in ((), ("interior",)):
-            raise ValueError("Adaptive implicit coverage supports one uninstanced interior region.")
+            raise ValueError(
+                "Adaptive implicit coverage supports one uninstanced interior region."
+            )
         paths = tuple(() for _ in region_ids)
     else:
         raise TypeError("domain must be a canonical CoverageDomain.")
     if len(paths) != len(region_ids):
-        raise ValueError("Coverage region occurrence paths must align with source region IDs.")
+        raise ValueError(
+            "Coverage region occurrence paths must align with source region IDs."
+        )
     result = tuple(tuple(path) for path in paths)
     if len(set(zip(region_ids, result, strict=True))) != len(region_ids):
-        raise ValueError("Coverage region IDs and occurrence paths must uniquely identify regions.")
+        raise ValueError(
+            "Coverage region IDs and occurrence paths must uniquely identify regions."
+        )
     return result
 
 
@@ -102,9 +125,12 @@ def _coverage_source_revision(
             )
         expected = domain.boundary_source
         if (source.source_id, source.source_revision) != (
-            expected.source_id, expected.source_revision
+            expected.source_id,
+            expected.source_revision,
         ):
-            raise ValueError("Implicit source query does not bind the current discovery revision.")
+            raise ValueError(
+                "Implicit source query does not bind the current discovery revision."
+            )
         return expected.source_revision
     if isinstance(domain, AnalyticImplicitProfile):
         if source is None or not isinstance(source, SourceBoundaryQuery):
@@ -112,7 +138,8 @@ def _coverage_source_revision(
                 "Analytic implicit coverage requires its revision-bound source boundary query."
             )
         if (source.source_id, source.source_revision) != (
-            domain.source_id, domain.source_revision
+            domain.source_id,
+            domain.source_revision,
         ):
             raise ValueError("Analytic profile and source query identities differ.")
         return source.source_revision
@@ -143,6 +170,8 @@ class _CoverageProof(NamedTuple):
     source_coverage_id: str | None
     source_distance_upper: float | None
     source_region_degree_ids: tuple[str, ...]
+
+
 class _BoundaryCoverageProof(NamedTuple):
     facet_overlaps: tuple[FacetOverlap, ...]
     target_facet_count: int
@@ -296,18 +325,21 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         self.findings = proof.findings
         self.status = certificate_status(proof.findings)
         if self.status == "certified":
-            if (
-                len(self.source_region_degree_ids) != len(self.region_ids)
-                or any(not identifier for identifier in self.source_region_degree_ids)
+            if len(self.source_region_degree_ids) != len(self.region_ids) or any(
+                not identifier for identifier in self.source_region_degree_ids
             ):
-                raise ValueError("Certified coverage must retain one computed material-degree identity per source region.")
+                raise ValueError(
+                    "Certified coverage must retain one computed material-degree identity per source region."
+                )
             if self.coverage_method == "source_boundary_homotopy" and (
                 self.source_coverage_id is None
                 or self.source_distance_upper is None
                 or not np.isfinite(self.source_distance_upper)
                 or self.source_distance_upper < 0.0
             ):
-                raise ValueError("Certified bounded coverage must retain its source homotopy and finite distance bound.")
+                raise ValueError(
+                    "Certified bounded coverage must retain its source homotopy and finite distance bound."
+                )
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "domain-coverage-certificate",
@@ -328,15 +360,21 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
                 "facet_overlaps": _overlap_payload(self.facet_source_overlaps),
                 "source_facet_count": self.source_facet_count,
                 "target_facet_count": self.target_facet_count,
-                "source_query": None if self.source is None else (self.source.source_id, self.source.source_revision),
-                "source_fidelity": None if self.fidelity is None else self.fidelity.certificate_id,
+                "source_query": None
+                if self.source is None
+                else (self.source.source_id, self.source.source_revision),
+                "source_fidelity": None
+                if self.fidelity is None
+                else self.fidelity.certificate_id,
                 "covered_source_facet_count": self.covered_source_facet_count,
                 "chart_certificate": self.chart_certificate_id,
                 "coverage_method": self.coverage_method,
                 "source_coverage": self.source_coverage_id,
                 "source_distance_upper": self.source_distance_upper,
                 "source_region_degree_ids": self.source_region_degree_ids,
-                "source_coverage_witness": None if self.source_coverage_witness is None else self.source_coverage_witness.witness_id,
+                "source_coverage_witness": None
+                if self.source_coverage_witness is None
+                else self.source_coverage_witness.witness_id,
                 "findings": tuple(value.finding_id for value in proof.findings),
                 "status": self.status,
             }
@@ -383,25 +421,52 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             if not isinstance(source_, SourceBoundaryQuery):
                 raise TypeError("source must implement SourceBoundaryQuery.")
             if (source_.source_id, source_.source_revision) != (
-                self.source_id, self.source_revision
+                self.source_id,
+                self.source_revision,
             ):
-                raise ValueError("Domain coverage source query changed its bound identity.")
+                raise ValueError(
+                    "Domain coverage source query changed its bound identity."
+                )
             if self.source is None or not _same_tree_content(source_, self.source):
-                raise ValueError("Domain coverage source query differs from its retained premise.")
+                raise ValueError(
+                    "Domain coverage source query differs from its retained premise."
+                )
         if fidelity_ is not None:
             if not isinstance(fidelity_, SourceFidelityCertificate):
                 raise TypeError("fidelity must be SourceFidelityCertificate.")
             if (fidelity_.binding.source_id, fidelity_.binding.source_revision) != (
-                self.source_id, self.source_revision
+                self.source_id,
+                self.source_revision,
             ):
-                raise ValueError("Domain coverage fidelity binds a different source revision.")
-            if self.fidelity is None or fidelity_.certificate_id != self.fidelity.certificate_id:
-                raise ValueError("Domain coverage fidelity differs from its retained premise.")
+                raise ValueError(
+                    "Domain coverage fidelity binds a different source revision."
+                )
+            if (
+                self.fidelity is None
+                or fidelity_.certificate_id != self.fidelity.certificate_id
+            ):
+                raise ValueError(
+                    "Domain coverage fidelity differs from its retained premise."
+                )
         if source_coverage_witness_ is not None:
-            if not isinstance(source_coverage_witness_, (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness)):
-                raise TypeError("source_coverage_witness must be a restricted-Delaunay coverage witness or None.")
-            if self.source_coverage_witness is None or source_coverage_witness_.witness_id != self.source_coverage_witness.witness_id:
-                raise ValueError("Domain coverage source witness differs from its retained topology premise.")
+            if not isinstance(
+                source_coverage_witness_,
+                (
+                    RestrictedDelaunayBoundaryWitness,
+                    RestrictedDelaunayCoverageTransportWitness,
+                ),
+            ):
+                raise TypeError(
+                    "source_coverage_witness must be a restricted-Delaunay coverage witness or None."
+                )
+            if (
+                self.source_coverage_witness is None
+                or source_coverage_witness_.witness_id
+                != self.source_coverage_witness.witness_id
+            ):
+                raise ValueError(
+                    "Domain coverage source witness differs from its retained topology premise."
+                )
         regions = np.asarray(cell_regions)
         if regions.dtype.kind not in "iu" or not np.array_equal(
             regions, self.cell_regions
@@ -590,7 +655,9 @@ def _source_region_measures(
                 region = int(source_regions[source_row])
                 try:
                     if expressions is None:
-                        raise ValueError("Mapped source root cell has no reference coordinate map.")
+                        raise ValueError(
+                            "Mapped source root cell has no reference coordinate map."
+                        )
                     measure = affine_cell_measure(expressions, block.cell_kind)
                 except (TypeError, ValueError, ZeroDivisionError) as error:
                     unresolved_source_regions.add(region)
@@ -648,7 +715,7 @@ def _target_region_measures(
     """Integrate target cells under their explicit dense region assignments."""
     from ._domain_numerics import affine_cell_measure, polyhedral_cell_measures
 
-    polyhedral_measures: tuple[Fraction, ...] | None = None
+    polyhedral_measures: tuple[Fraction | None, ...] | None = None
     polyhedral_measure_error: Exception | None = None
     if any(expressions is None for expressions in preparation.coordinate_maps):
         try:
@@ -675,7 +742,12 @@ def _target_region_measures(
                         "Exact polyhedral cell integration is unavailable: "
                         f"{polyhedral_measure_error}"
                     )
-                measure = polyhedral_measures[assignment.row]
+                polyhedral_measure = polyhedral_measures[assignment.row]
+                if polyhedral_measure is None:
+                    raise ValueError(
+                        "A vertex-defined cell has no exact polyhedral measure."
+                    )
+                measure = polyhedral_measure
             else:
                 measure = affine_cell_measure(expressions, cell_kind)
         except (TypeError, ValueError, IndexError, ArithmeticError) as error:
@@ -742,9 +814,7 @@ def _exact_region_degree_ids(
             )
         )
         region_overlaps = tuple(
-            value
-            for value in overlaps
-            if region in value.region_pair
+            value for value in overlaps if region in value.region_pair
         )
         if (
             not region_facets
@@ -804,7 +874,9 @@ def _coverage_boundary_partition(
     source_distance_upper: float | None = None
     source_region_degree_ids: tuple[str, ...] = ()
     if isinstance(domain, AnalyticImplicitProfile):
-        if not isinstance(source, AnalyticImplicitProfile) or not _same_tree_content(source, domain):
+        if not isinstance(source, AnalyticImplicitProfile) or not _same_tree_content(
+            source, domain
+        ):
             findings.append(
                 _coverage_finding(
                     "analytic_source_identity",
@@ -813,8 +885,15 @@ def _coverage_boundary_partition(
                     detail="Analytic profile coverage requires the profile itself as its revision-bound source query.",
                 )
             )
-            return _BoundaryCoverageProof((), 0, None, 0, 0, "source_boundary_homotopy", None, None, ())
-        if fidelity is None or fidelity.status != "certified" or not isinstance(fidelity.witness, SourceBoundaryDistanceWitness) or fidelity.coverage is not None:
+            return _BoundaryCoverageProof(
+                (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
+            )
+        if (
+            fidelity is None
+            or fidelity.status != "certified"
+            or not isinstance(fidelity.witness, SourceBoundaryDistanceWitness)
+            or fidelity.coverage is not None
+        ):
             findings.append(
                 _coverage_finding(
                     "analytic_source_distance_witness",
@@ -823,7 +902,9 @@ def _coverage_boundary_partition(
                     detail="Analytic restricted coverage requires a current distance-only SourceBoundaryDistanceWitness.",
                 )
             )
-            return _BoundaryCoverageProof((), 0, None, 0, 0, "source_boundary_homotopy", None, None, ())
+            return _BoundaryCoverageProof(
+                (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
+            )
         if source_coverage_witness is None:
             findings.append(
                 _coverage_finding(
@@ -833,7 +914,9 @@ def _coverage_boundary_partition(
                     detail="Analytic source coverage requires retained restricted-Delaunay intersections, orientation, and whole-volume classification.",
                 )
             )
-            return _BoundaryCoverageProof((), 0, None, 0, 0, "source_boundary_homotopy", None, None, ())
+            return _BoundaryCoverageProof(
+                (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
+            )
         try:
             proof = validate_restricted_delaunay_coverage_witness(
                 mesh,
@@ -852,7 +935,9 @@ def _coverage_boundary_partition(
                     detail=str(error),
                 )
             )
-            return _BoundaryCoverageProof((), 0, None, 0, 0, "source_boundary_homotopy", None, None, ())
+            return _BoundaryCoverageProof(
+                (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
+            )
         except (TypeError, ValueError, IndexError) as error:
             findings.append(
                 _coverage_finding(
@@ -862,7 +947,9 @@ def _coverage_boundary_partition(
                     detail=f"Retained restricted-Delaunay witness is structurally invalid: {error}",
                 )
             )
-            return _BoundaryCoverageProof((), 0, None, 0, 0, "source_boundary_homotopy", None, None, ())
+            return _BoundaryCoverageProof(
+                (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
+            )
         except (ArithmeticError, FloatingPointError) as error:
             findings.append(
                 _coverage_finding(
@@ -872,7 +959,9 @@ def _coverage_boundary_partition(
                     detail=f"Restricted-Delaunay interval revalidation is unresolved: {error}",
                 )
             )
-            return _BoundaryCoverageProof((), 0, None, 0, 0, "source_boundary_homotopy", None, None, ())
+            return _BoundaryCoverageProof(
+                (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
+            )
         distance_upper = max(fidelity.mesh_to_source_upper, fidelity.source_to_mesh_upper)
         return _BoundaryCoverageProof(
             proof.facet_overlaps,
@@ -959,72 +1048,55 @@ def _coverage_boundary_partition(
             None if expressions is None else affine_map(expressions, dimension)
             for expressions in preparation.coordinate_maps
         )
-        if any(value is None for value in affine_cells) and not any(
-            expressions is None for expressions in preparation.coordinate_maps
+        if (
+            isinstance(domain, MeshingDomain)
+            and any(value is None for value in affine_cells)
+            and not any(
+                expressions is None for expressions in preparation.coordinate_maps
+            )
         ):
-            if isinstance(domain, MeshingDomain):
-                from ._approximate_source_coverage import approximate_source_coverage
+            from ._approximate_source_coverage import approximate_source_coverage
 
-                attempt = approximate_source_coverage(
-                    mesh,
-                    geometry,
-                    domain,
-                    preparation.cell_regions,
-                    source=source,
-                    fidelity=fidelity,
-                    embedding=embedding,
-                    revalidate_fidelity=False,
-                )
-                if attempt.bounded is not None:
-                    bounded = attempt.bounded
-                    return _BoundaryCoverageProof(
-                        (),
-                        bounded.target_facet_count,
-                        None,
-                        bounded.source_facet_count,
-                        bounded.covered_source_facet_count,
-                        "source_boundary_homotopy",
-                        bounded.witness_id,
-                        bounded.distance_upper,
-                        bounded.boundary_degree_ids,
-                    )
-                for failure in attempt.failures:
-                    findings.append(
-                        _coverage_finding(
-                            failure.check,
-                            failure.status,
-                            "mesh",
-                            failure.entity_ids,
-                            detail=failure.detail,
-                        )
-                    )
+            attempt = approximate_source_coverage(
+                mesh,
+                geometry,
+                domain,
+                preparation.cell_regions,
+                source=source,
+                fidelity=fidelity,
+                embedding=embedding,
+                revalidate_fidelity=False,
+            )
+            if attempt.bounded is not None:
+                bounded = attempt.bounded
                 return _BoundaryCoverageProof(
                     (),
-                    0,
+                    bounded.target_facet_count,
                     None,
-                    len(source_domain.facets),
-                    0,
+                    bounded.source_facet_count,
+                    bounded.covered_source_facet_count,
                     "source_boundary_homotopy",
-                    None,
-                    None,
-                    (),
+                    bounded.witness_id,
+                    bounded.distance_upper,
+                    bounded.boundary_degree_ids,
                 )
-            findings.append(
-                _coverage_finding(
-                    "source_boundary_map_unresolved",
-                    "unresolved",
-                    "source_facet",
-                    tuple(range(len(source_domain.facets))),
-                    detail="Source chart facets cannot be compared exactly to non-affine target boundary maps.",
+            for failure in attempt.failures:
+                findings.append(
+                    _coverage_finding(
+                        failure.check,
+                        failure.status,
+                        "mesh",
+                        failure.entity_ids,
+                        detail=failure.detail,
+                    )
                 )
-            )
             return _BoundaryCoverageProof(
                 (),
                 0,
                 None,
                 len(source_domain.facets),
                 0,
-                "exact_oriented_facets",
+                "source_boundary_homotopy",
                 None,
                 None,
                 (),
@@ -1038,9 +1110,12 @@ def _coverage_boundary_partition(
                 preparation.coordinate_maps,
                 source_domain=source_domain,
                 geometry=geometry,
+                exact_face_images=True,
             )
             target_facet_count = len(target_facets)
-            facet_overlaps, partition_issues = partition_overlaps(source_domain, target_facets)
+            facet_overlaps, partition_issues = partition_overlaps(
+                source_domain, target_facets
+            )
             exact_issues = bool(issues or partition_issues)
             if (
                 isinstance(domain, MeshingDomain)
@@ -1084,8 +1159,15 @@ def _coverage_boundary_partition(
                         )
                     )
                 return _BoundaryCoverageProof(
-                    (), target_facet_count, None, len(source_domain.facets), 0,
-                    "source_boundary_homotopy", None, None, ()
+                    (),
+                    target_facet_count,
+                    None,
+                    len(source_domain.facets),
+                    0,
+                    "source_boundary_homotopy",
+                    None,
+                    None,
+                    (),
                 )
             for issue in issues:
                 findings.append(
@@ -1102,7 +1184,9 @@ def _coverage_boundary_partition(
                 if any(issue.status == "unresolved" for issue in issues)
                 else "violated"
             )
-            findings.extend(_partition_findings(partition_issues, status=partition_status))
+            findings.extend(
+                _partition_findings(partition_issues, status=partition_status)
+            )
         source_count = len(source_domain.facets)
         covered_count = len({value.source_facet_id for value in facet_overlaps})
         if isinstance(domain, MeshingDomain):
@@ -1116,8 +1200,15 @@ def _coverage_boundary_partition(
                     )
                 )
                 return _BoundaryCoverageProof(
-                    (), target_facet_count, None, source_count, covered_count,
-                    "exact_oriented_facets", None, None, ()
+                    (),
+                    target_facet_count,
+                    None,
+                    source_count,
+                    covered_count,
+                    "exact_oriented_facets",
+                    None,
+                    None,
+                    (),
                 )
             chart_certificate_id = cad_boundary_id
             source_coverage_id = cad_boundary_id
@@ -1131,11 +1222,7 @@ def _coverage_boundary_partition(
                 }
             )
         coverage_method = "exact_oriented_facets"
-        if (
-            not issues
-            and not partition_issues
-            and embedding.status == "certified"
-        ):
+        if not issues and not partition_issues and embedding.status == "certified":
             source_region_degree_ids = _exact_region_degree_ids(
                 source_domain,
                 tuple(domain.region_ids),
@@ -1172,7 +1259,9 @@ def _coverage_boundary_partition(
                         detail=failure.detail,
                     )
                 )
-            return _BoundaryCoverageProof((), 0, None, 0, 0, "source_boundary_homotopy", None, None, ())
+            return _BoundaryCoverageProof(
+                (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
+            )
         bounded = attempt.bounded
         target_facet_count = bounded.target_facet_count
         source_count = bounded.source_facet_count
@@ -1214,18 +1303,27 @@ def _prove_coverage(
     from ._domain_preparation import prepare_domain_coverage
 
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("certify_domain_coverage requires CellMesh and CellGeometrySpec inputs.")
+        raise TypeError(
+            "certify_domain_coverage requires CellMesh and CellGeometrySpec inputs."
+        )
     domain = require_coverage_domain(domain)
     if not domain.region_ids:
-        raise ValueError("Domain coverage requires an established source material region.")
+        raise ValueError(
+            "Domain coverage requires an established source material region."
+        )
     if not isinstance(embedding, GlobalEmbeddingCertificate):
         raise TypeError("embedding must be a GlobalEmbeddingCertificate.")
     if fidelity is not None and source is None:
         source = fidelity.source
     if source is not None and not isinstance(source, SourceBoundaryQuery):
         raise TypeError("source must implement SourceBoundaryQuery.")
-    if source_coverage_witness is not None and not isinstance(source_coverage_witness, (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness)):
-        raise TypeError("source_coverage_witness must be a restricted-Delaunay coverage witness or None.")
+    if source_coverage_witness is not None and not isinstance(
+        source_coverage_witness,
+        (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness),
+    ):
+        raise TypeError(
+            "source_coverage_witness must be a restricted-Delaunay coverage witness or None."
+        )
     source_revision = _coverage_source_revision(domain, source)
     findings: list[MeshCertificateFinding] = []
     fidelity_for_coverage = fidelity
@@ -1233,14 +1331,25 @@ def _prove_coverage(
         if not isinstance(fidelity, SourceFidelityCertificate):
             raise TypeError("fidelity must be SourceFidelityCertificate.")
         if source is None:
-            raise ValueError("A source fidelity certificate requires its source boundary query.")
+            raise ValueError(
+                "A source fidelity certificate requires its source boundary query."
+            )
         if (fidelity.binding.source_id, fidelity.binding.source_revision) != (
-            domain.source_id, source_revision
+            domain.source_id,
+            source_revision,
         ):
-            raise ValueError("Source fidelity must bind the actual coverage domain revision.")
+            raise ValueError(
+                "Source fidelity must bind the actual coverage domain revision."
+            )
         try:
             fidelity.require_current(mesh, geometry, source)
-        except (TypeError, ValueError, IndexError, ArithmeticError, FloatingPointError) as error:
+        except (
+            TypeError,
+            ValueError,
+            IndexError,
+            ArithmeticError,
+            FloatingPointError,
+        ) as error:
             fidelity_for_coverage = None
             findings.append(
                 _coverage_finding(
@@ -1253,12 +1362,18 @@ def _prove_coverage(
     embedding.binding.require(mesh, geometry)
     dimension = (
         3
-        if isinstance(domain, (MeshingDomain, AdaptiveImplicitSurface, AnalyticImplicitProfile))
+        if isinstance(
+            domain, (MeshingDomain, AdaptiveImplicitSurface, AnalyticImplicitProfile)
+        )
         else domain.ambient_dimension
     )
     if mesh.topological_dimension != dimension or mesh.ambient_dimension != dimension:
-        raise ValueError("Domain coverage requires matching full-dimensional mesh and source domain.")
-    preparation = prepare_domain_coverage(mesh, geometry, cell_regions, len(domain.region_ids))
+        raise ValueError(
+            "Domain coverage requires matching full-dimensional mesh and source domain."
+        )
+    preparation = prepare_domain_coverage(
+        mesh, geometry, cell_regions, len(domain.region_ids)
+    )
     exact_cad = None
     if isinstance(domain, MeshingDomain):
         try:
@@ -1309,7 +1424,11 @@ def _prove_coverage(
         for region, (source_measure, target_measure) in enumerate(
             zip(requested, achieved, strict=True)
         ):
-            if source_measure is not None and target_measure is not None and target_measure != source_measure:
+            if (
+                source_measure is not None
+                and target_measure is not None
+                and target_measure != source_measure
+            ):
                 findings.append(
                     _coverage_finding(
                         "region_measure",
@@ -1367,6 +1486,7 @@ def certify_domain_coverage(
         fidelity=fidelity,
         source_coverage_witness=source_coverage_witness,
     )
+
 
 __all__ = [
     "CoverageDomain",

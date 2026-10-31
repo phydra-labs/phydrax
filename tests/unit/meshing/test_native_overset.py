@@ -784,19 +784,39 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         for name, shape, _ in exchange.receptor_layouts
     }
     transposed = exchange.transpose(duals)
+    # Empty owners contribute an exact float64 zero; an integer zero would give the
+    # collective a rank-dependent dtype.
     local_lhs = sum(
-        float(np.vdot(np.asarray(output[name]), np.asarray(duals[name])))
-        for name in output
+        (
+            float(np.vdot(np.asarray(output[name]), np.asarray(duals[name])))
+            for name in output
+        ),
+        0.0,
     )
     local_rhs = sum(
-        float(np.vdot(np.asarray(local_donors[name]), np.asarray(transposed[name])))
-        for name in transposed
+        (
+            float(np.vdot(np.asarray(local_donors[name]), np.asarray(transposed[name])))
+            for name in transposed
+        ),
+        0.0,
     )
     lhs = float(
-        np.sum(np.asarray(multihost_utils.process_allgather(np.asarray((local_lhs,)))))
+        np.sum(
+            np.asarray(
+                multihost_utils.process_allgather(
+                    np.asarray((local_lhs,), dtype=np.float64)
+                )
+            )
+        )
     )
     rhs = float(
-        np.sum(np.asarray(multihost_utils.process_allgather(np.asarray((local_rhs,)))))
+        np.sum(
+            np.asarray(
+                multihost_utils.process_allgather(
+                    np.asarray((local_rhs,), dtype=np.float64)
+                )
+            )
+        )
     )
 
     expected_by_receptor = {
@@ -911,24 +931,38 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         ),
         wrong_devices,
     )
-    with pytest.raises(OversetConnectivityError, match="group shard") as stale_owner:
+    # Reversing the group moves ranks 0 and 2 onto each other's shards; rank 1
+    # keeps its shard and receives the collective refusal of its peers.
+    stale_message = (
+        "another owner rejected its local search metadata"
+        if partition == 1
+        else "group shard"
+    )
+    with pytest.raises(OversetConnectivityError, match=stale_message) as stale_owner:
         transfer.prepare_owner_local_exchange(coefficient_ids, wrong_group, views)
     assert stale_owner.value.connectivity.connectivity_id == candidate.connectivity_id
+
+    # Periodic donors cover the whole torus under any rigid translation, so the
+    # orphan scenario removes every donor cell from the donor search instead.
+    def excluded_cells(name: str, /) -> Any:
+        view = views[name]
+        cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
+        if not cell_ids.size:
+            return None
+        return parts_by_name[name].scope(view.topological_dimension, cell_ids)
 
     orphan_specs = (
         OversetPartSpec(
             donor_name,
+            excluded=excluded_cells(donor_name),
             priority=2,
             owner_rank=0,
-            image_rotation=np.eye(2),
-            image_translation=np.asarray((100.0, 0.0)),
         ),
         OversetPartSpec(
             shadow_name,
+            excluded=excluded_cells(shadow_name),
             priority=1,
             owner_rank=0,
-            image_rotation=np.eye(2),
-            image_translation=np.asarray((100.0, 0.0)),
         ),
         OversetPartSpec(receptor_name, boundary=boundary, owner_rank=1),
     )

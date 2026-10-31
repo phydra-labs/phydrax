@@ -139,6 +139,7 @@ class PlcFailureReason(IntEnum):
     INVALID_SEED = 14
     OUTSIDE_DOMAIN = 15
     SOURCE_DEVIATION = 17
+    STEINER_SUPPRESSION = 18
 
 
 class PlcEntityKind(IntEnum):
@@ -1037,6 +1038,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _F64,
             _F64,
             _F64,
+            _P,
             _P,
             _P,
             _P,
@@ -7581,7 +7583,7 @@ class TetMesh3D:
                 identity.frame_id if identity.identity_bound else None,
             )
             edit_status, run_status = _I32(), _I32()
-            collapsed, relocated, unmet = _I64(), _I64(), _I64()
+            inserted, collapsed, relocated, unmet = _I64(), _I64(), _I64(), _I64()
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_improve_quality"](
                     self._live(),
@@ -7595,6 +7597,7 @@ class TetMesh3D:
                     determinant_floor,
                     ctypes.addressof(edit_status),
                     ctypes.addressof(run_status),
+                    ctypes.addressof(inserted),
                     ctypes.addressof(collapsed),
                     ctypes.addressof(relocated),
                     ctypes.addressof(unmet),
@@ -7604,7 +7607,7 @@ class TetMesh3D:
             return TetMeshRun(
                 TetMeshEditStatus(edit_status.value),
                 MeshcoreStatus(run_status.value),
-                0,
+                int(inserted.value),
                 int(collapsed.value),
                 int(relocated.value),
                 int(unmet.value),

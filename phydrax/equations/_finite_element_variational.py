@@ -1809,6 +1809,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             action_ir,
             workset_program,
             discretization,
+            local_kernel=policy.local_kernel,
+            realization=policy.realization,
         )
         compilation_id = canonical_fingerprint(
             {

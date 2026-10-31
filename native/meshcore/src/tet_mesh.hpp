@@ -262,6 +262,20 @@ struct TetUnmetRecord {
   double value = 0.0;
 };
 
+// Star-shaped cavity of a candidate interior point for cone insertion.
+enum class TetCavityStatus : std::uint8_t {
+  kFound,    // `cells` (root first) is star-shaped from the point
+  kBlocked,  // the walk to the point leaves through a constrained or hull face
+  kRefused,  // the walk cycles, or no star-shaped measurable cavity remains
+};
+struct TetInsertionCavity {
+  std::vector<std::int32_t> cells;
+  std::unordered_set<std::int32_t> members;
+  std::int32_t root = -1;
+  std::int32_t blocked_cell = -1;  // kBlocked: the face `blocked_face` of this
+  int blocked_face = -1;           // cell separates the point
+};
+
 class TetMesh {
  public:
   explicit TetMesh(BoundaryPolicy policy = BoundaryPolicy::kFixed);
@@ -364,7 +378,7 @@ class TetMesh {
   friend std::int32_t refine_mesh(TetMesh&, double, std::span<const double>,
                                   std::int64_t&, std::int64_t&);
   friend std::int32_t improve_mesh(TetMesh&, const TetQualityRequest&,
-                                   std::int64_t&, std::int64_t&,
+                                   std::int64_t&, std::int64_t&, std::int64_t&,
                                    std::int64_t&);
   friend class detail::LocalIncidence;
 
@@ -392,11 +406,15 @@ class TetMesh {
   // Called only by LocalIncidence for an interior quality reconnection or
   // collapse; validation and commit touch only the cavity and its boundary.
   TetEditStatus replace_local_cavity(const TetEdit& operation);
-  // Called only by refinement: cones a star-shaped cavity to one new interior
-  // vertex; created cell IDs are returned in cone order.
+  // Called by refinement and improvement: cones a star-shaped cavity to one
+  // new interior vertex; created cell IDs are returned in cone order.
   TetEditStatus insert_local_cone(const TetEditVertex& vertex,
                                   std::span<const std::int32_t> cavity,
                                   std::vector<std::uint64_t>& created_cells);
+  // Called by refinement and improvement: the star-shaped cavity of `point`
+  // reached by walking from cell slot `start`.
+  TetCavityStatus insertion_cavity(std::int32_t start, const double* point,
+                                   bool keep_walk, TetInsertionCavity& cavity) const;
   // True if an edge of `removed_slots` absent from `kept_edges` (local edge
   // keys) is a constrained segment.
   bool removes_constrained_segment(std::span<const std::int32_t> removed_slots,
