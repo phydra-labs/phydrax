@@ -400,18 +400,34 @@ def test_sliding_checkpoint_preserves_successor_identity_and_advance(
     discretization, runtime, initial = _moving_sliding_runtime()
     accepted = runtime.advance(initial, {"sliding_shift": 0.2})
     assert bool(np.asarray(accepted.accepted))
-    assert accepted.successor_runtime is not None
+    successor = accepted.successor_runtime
+    assert successor is not None
     state = accepted.runtime_state
     assert state.sliding_coupling is not None
     assert state.sliding_event_id is not None
+    # The accepted state carries the successor's sliding coupling, so only the
+    # successor runtime can bind it in a checkpoint.
+    with pytest.raises(ValueError, match="accepted successor runtime"):
+        phx.solver.write_finite_volume_checkpoint(
+            tmp_path / "sliding-predecessor.fvckpt",
+            phx.solver.FiniteVolumeCheckpointPlan(
+                phx.solver.FiniteVolumeCaseSpec(
+                    "checkpoint-sliding-motion",
+                    runtime,
+                    phx.solver.FiniteVolumeExecutionSpec(1.0, 1000),
+                ),
+                runtime=runtime,
+            ),
+            state,
+        )
     case = phx.solver.FiniteVolumeCaseSpec(
         "checkpoint-sliding-motion",
-        runtime,
+        successor,
         phx.solver.FiniteVolumeExecutionSpec(1.0, 1000),
     )
     checkpoint_plan = phx.solver.FiniteVolumeCheckpointPlan(
         case,
-        runtime=runtime,
+        runtime=successor,
     )
     path = tmp_path / "sliding.fvckpt"
 

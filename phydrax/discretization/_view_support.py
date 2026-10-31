@@ -2611,7 +2611,7 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
                     )
                     local_error = None
                 except Exception as error:
-                    local_error = str(error)
+                    local_error = f"{type(error).__name__}: {error}"
             _owner_group_fail_if_any(
                 local_error,
                 execution_group,

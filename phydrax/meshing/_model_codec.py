@@ -22,6 +22,8 @@ from .._model._artifacts import artifact_value, artifact_value_id
 from .._model._structure import (
     AdaptiveImplicitBoundarySourceArchiveRecipe,
     AnalyticImplicitProfileArchiveRecipe,
+    DistributedFiniteElementTransferArchiveRecipe,
+    expand_shared_model_archive_recipe,
     FiniteElementAcceptedStateArchiveRecipe,
     FiniteVolumeOversetPartSpecArchiveRecipe,
     FiniteVolumeOversetPolicyArchiveRecipe,
@@ -39,9 +41,12 @@ from .._model._structure import (
     NativePlcSourceArchiveRecipe,
     pack_model_array_tree,
     ParametricCurveBoundarySourceArchiveRecipe,
+    PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS,
+    PeriodicFiniteElementTransferArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
+    share_model_archive_recipe,
     SparseCoordinateOperatorArchiveRecipe,
     SphereMaterialCellAtlasArchiveRecipe,
     SurfaceChartBoundarySourceArchiveRecipe,
@@ -501,6 +506,8 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", NativeMappedHexSourceArchiveRecipe),
         ("phydrax.model.archive", MappedReferenceBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SparseCoordinateOperatorArchiveRecipe),
+        ("phydrax.model.archive", PeriodicFiniteElementTransferArchiveRecipe),
+        ("phydrax.model.archive", DistributedFiniteElementTransferArchiveRecipe),
         ("phydrax.geometry.reconstruction", NormalEstimationEvidence),
         ("phydrax.geometry.reconstruction", PoissonSolveEvidence),
         ("phydrax.geometry.reconstruction", SampledSurfaceDeviation),
@@ -1332,17 +1339,15 @@ def restore_model_archive_value(
                         "Owner-local adaptive archive changed its current binding."
                     )
                 return composition
+            if (
+                frozenset(item.entry_ids)
+                == PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS
+            ):
+                return _restore_periodic_finite_element_transfer_root(item, restore)
             entries = tuple(restore(entry) for entry in item.entries)
             composition = Composition(entries, boundary_id=item.boundary_id)
             if model_structure_recipe(composition) != model_structure_recipe(item):
                 raise ValueError("Stored Composition content changed.")
-            if set(composition.entry_ids) == {
-                "mesh/periodic-topology",
-                "transfer/settings",
-                "transfer/periodic",
-                "transfer/distributed",
-            }:
-                _require_periodic_distributed_transfer_current(composition)
             return composition
         if isinstance(item, tuple):
             values = tuple(restore(value) for value in item)
@@ -1356,20 +1361,25 @@ def restore_model_archive_value(
     return restore(value)
 
 
-def _require_periodic_distributed_transfer_current(composition: Any, /) -> None:
-    """Recompute periodic FE transfer evidence from its retained mesh/settings root."""
+def _restore_periodic_finite_element_transfer_root(
+    item: Any, restore: Callable[[Any], Any], /
+) -> Any:
+    """Rebuild a periodic FE transfer root from its mesh, settings and owner rows.
+
+    The archive keeps only these authoritative inputs plus the transfer
+    identities; every quotient operator, its evidence and the distributed
+    sparse plans are recomputed here and must reproduce the stored identities.
+    """
     from .._fingerprint import canonical_fingerprint
     from ..discretization._cell_mesh import CellMesh
     from ..discretization.fem._de_rham import FiniteElementDeRhamComplex
-    from ..lifecycle._composition_rebind import Composition
+    from ..lifecycle._composition_rebind import Composition, CompositionEntry
 
-    if type(composition) is not Composition:
-        raise TypeError("Periodic FE restore requires a canonical Composition root.")
-    entries = {entry.entry_id: entry for entry in composition.entries}
-    mesh_entry = entries["mesh/periodic-topology"]
-    settings_entry = entries["transfer/settings"]
-    mesh = mesh_entry.value
-    settings = settings_entry.value
+    stored = {entry.entry_id: entry for entry in item.entries}
+    mesh = restore(stored["mesh/periodic-topology"].value)
+    settings = restore(stored["transfer/settings"].value)
+    periodic_recipe = stored["transfer/periodic"].value
+    distributed_recipe = stored["transfer/distributed"].value
     if (
         type(mesh) is not CellMesh
         or not isinstance(settings, tuple)
@@ -1378,6 +1388,11 @@ def _require_periodic_distributed_transfer_current(composition: Any, /) -> None:
         raise TypeError(
             "Periodic FE archive lacks its exact source mesh/settings context."
         )
+    if (
+        type(periodic_recipe) is not PeriodicFiniteElementTransferArchiveRecipe
+        or type(distributed_recipe) is not DistributedFiniteElementTransferArchiveRecipe
+    ):
+        raise TypeError("Periodic FE archive transfers must be stored by identity.")
     source_family, source_order, target_family, target_order, boundary, part_count = (
         settings
     )
@@ -1401,28 +1416,54 @@ def _require_periodic_distributed_transfer_current(composition: Any, /) -> None:
         family=target_family,
         order=target_order,
     )
-    expected_periodic = source_complex.transfer_periodic_quotient(
+    periodic = source_complex.transfer_periodic_quotient(
         target_complex,
         boundary=boundary,
     )
-    periodic = entries["transfer/periodic"].value
-    distributed = entries["transfer/distributed"].value
-    if model_structure_recipe(periodic) != model_structure_recipe(expected_periodic):
+    if (
+        periodic.transfer_id,
+        periodic.complex_map.map_id,
+        periodic.lifted_transfer_result.evidence_id,
+        periodic.quotient_transfer_result.evidence_id,
+    ) != tuple(periodic_recipe):
         raise ValueError("Periodic FE evidence differs from its current mesh/settings.")
-    source_owners = tuple(item.source_owner for item in distributed.degree_maps)
-    target_owners = tuple(item.target_owner for item in distributed.degree_maps)
-    expected_distributed = expected_periodic.distributed(
-        source_owners,
-        target_owners,
+    distributed = periodic.distributed(
+        distributed_recipe.source_owners,
+        distributed_recipe.target_owners,
         part_count,
     )
-    if model_structure_recipe(distributed) != model_structure_recipe(
-        expected_distributed
-    ):
+    if distributed.transfer_id != distributed_recipe.transfer_id:
         raise ValueError("Distributed FE evidence differs from its current owner rows.")
+    rebuilt = {
+        "mesh/periodic-topology": mesh,
+        "transfer/settings": settings,
+        "transfer/periodic": periodic,
+        "transfer/distributed": distributed,
+    }
+    composition = Composition(
+        tuple(
+            CompositionEntry(
+                rebuilt[entry.entry_id],
+                entry_id=entry.entry_id,
+                role=entry.role,
+                owner_id=entry.owner_id,
+                structure_id=entry.structure_id,
+                revision_id=entry.revision_id,
+                semantics_id=entry.semantics_id,
+                dependencies=tuple(restore(value) for value in entry.dependencies),
+            )
+            for entry in item.entries
+        ),
+        boundary_id=item.boundary_id,
+    )
+    if composition.composition_id != item.composition_id:
+        raise ValueError("Periodic FE archive changed its composition identity.")
     settings_id = canonical_fingerprint(
         {"kind": "periodic-finite-element-transfer-settings", "settings": settings}
     )
+    entries = {entry.entry_id: entry for entry in composition.entries}
+    mesh_entry = entries["mesh/periodic-topology"]
+    settings_entry = entries["transfer/settings"]
     periodic_entry = entries["transfer/periodic"]
     distributed_entry = entries["transfer/distributed"]
     if (
@@ -1464,6 +1505,92 @@ def _require_periodic_distributed_transfer_current(composition: Any, /) -> None:
         or composition.boundary_id != "periodic-distributed-fe-transfer:archive"
     ):
         raise ValueError("Periodic FE source-context bindings changed.")
+    return composition
+
+
+def _unaliased_recipe(node: Any, /) -> Any:
+    """Copy a recipe so every occurrence is its own node (stack, no recursion)."""
+    root: dict[str, Any] = {"node": None}
+    pending: list[tuple[Any, dict[Any, Any] | list[Any], Any]] = [(node, root, "node")]
+    while pending:
+        value, parent, slot = pending.pop()
+        if isinstance(value, dict):
+            child: Any = dict.fromkeys(value)
+            pending.extend((item, child, key) for key, item in value.items())
+        elif isinstance(value, list):
+            child = [None] * len(value)
+            pending.extend((item, child, index) for index, item in enumerate(value))
+        else:
+            child = value
+        parent[slot] = child
+    return root["node"]
+
+
+def write_model_archive(
+    path: str | Path,
+    /,
+    *,
+    manifest: dict[str, Any],
+    arrays: dict[str, Any],
+    limits: ArrayArchiveLimits | None,
+) -> Path:
+    """Write an expanded native model manifest in canonical shared form.
+
+    ``manifest`` holds the full ``model_recipe`` and ``arrays`` its exact
+    per-occurrence inventory, as returned by :func:`read_model_archive`. Every
+    occurrence is keyed by its own content, so editing one occurrence or one
+    definition is stored as exactly that content; the recipe is not validated
+    here, so readers decide whether it is admissible.
+    """
+    if set(manifest) != {"kind", "model_recipe"} or manifest["kind"] != _MODEL_KIND:
+        raise ValueError(
+            "Native model archive manifests hold only kind and model_recipe."
+        )
+    shared_recipe, members = share_model_archive_recipe(
+        _unaliased_recipe(manifest["model_recipe"]), arrays, prefix=_MODEL_ARRAYS
+    )
+    return write_array_archive(
+        path,
+        manifest={"kind": _MODEL_KIND, "model_recipe": shared_recipe},
+        limits=limits,
+        arrays=members,
+    )
+
+
+def read_model_archive(
+    path: str | Path,
+    /,
+    *,
+    limits: ArrayArchiveLimits | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read a native model archive as its expanded manifest and array inventory.
+
+    This is the one expansion point of shared archive nodes: the returned
+    ``model_recipe`` is the validated full recipe (equal definitions are one
+    node), and ``arrays`` is its exact per-occurrence inventory. No reader of a
+    native model archive sees a shared reference.
+    """
+    _register_model_archive_types()
+    manifest, members = read_array_archive(path, limits=limits)
+    if (
+        set(manifest) != {"arrays", "kind", "model_recipe"}
+        or manifest["kind"] != _MODEL_KIND
+    ):
+        raise ArrayArchiveCorruptionError(
+            "Native model archive fields are not canonical."
+        )
+    shared_recipe = manifest["model_recipe"]
+    if not isinstance(shared_recipe, dict) or shared_recipe.get("kind") != "dataclass":
+        raise ArrayArchiveCorruptionError("Native model archive has no dataclass recipe.")
+    try:
+        recipe, arrays = expand_shared_model_archive_recipe(
+            shared_recipe, members, prefix=_MODEL_ARRAYS, limits=limits
+        )
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise ArrayArchiveCorruptionError(
+            "Native model archive is incompatible with its registered recipe."
+        ) from error
+    return {"kind": _MODEL_KIND, "model_recipe": recipe}, arrays
 
 
 def write_model_artifact(
@@ -1489,11 +1616,11 @@ def write_model_artifact(
     arrays = pack_model_array_tree(
         archive_model, recipe, prefix=_MODEL_ARRAYS, limits=limits
     )
-    return write_array_archive(
+    return write_model_archive(
         path,
         manifest={"kind": _MODEL_KIND, "model_recipe": recipe},
-        limits=limits,
         arrays=arrays,
+        limits=limits,
     )
 
 
@@ -1510,19 +1637,9 @@ def read_model_artifact(
     _require_model_type(expected_type)
     if not callable(restore):
         raise TypeError("restore must be the owning model's reconstruction function.")
-    manifest, arrays = read_array_archive(path, limits=limits)
-    if (
-        set(manifest) != {"arrays", "kind", "model_recipe"}
-        or manifest["kind"] != _MODEL_KIND
-    ):
-        raise ArrayArchiveCorruptionError(
-            "Native model archive fields are not canonical."
-        )
+    manifest, arrays = read_model_archive(path, limits=limits)
     recipe = manifest["model_recipe"]
-    if not isinstance(recipe, dict) or recipe.get("kind") != "dataclass":
-        raise ArrayArchiveCorruptionError("Native model archive has no dataclass recipe.")
     try:
-        validate_model_structure_recipe(recipe, limits=limits)
         declared_type = artifact_value(recipe["type"])
         _require_model_type(declared_type)
         if declared_type is not expected_type:
@@ -1575,4 +1692,9 @@ def _require_model_type(model_type: Any, /) -> None:
         raise TypeError("Native model archive root has no exact registered field set.")
 
 
-__all__ = ["read_model_artifact", "write_model_artifact"]
+__all__ = [
+    "read_model_archive",
+    "read_model_artifact",
+    "write_model_archive",
+    "write_model_artifact",
+]

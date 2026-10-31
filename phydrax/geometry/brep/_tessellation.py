@@ -39,6 +39,31 @@ class _TessellationUnresolved(NotImplementedError):
     """A native chart could not be enclosed or resolved at its numeric precision."""
 
 
+class _TessellationNonconvergent(_TessellationUnresolved):
+    """A violated continuous bound did not contract under one refinement.
+
+    ``bound`` names the violated bound (``"chord"`` or ``"normal"``); ``history``
+    holds ``(linear_target, maximum_chord_bound, maximum_normal_bound)`` for every
+    refinement attempt, the last two of which fail to contract.
+    """
+
+    def __init__(
+        self,
+        bound: str,
+        history: tuple[tuple[float, float, float], ...],
+        /,
+    ) -> None:
+        self.bound = bound
+        self.history = history
+        super().__init__(
+            f"the maximum continuous {bound} bound did not contract under refinement: "
+            + "; ".join(
+                f"target {target:.6g}: chord {chord:.6g}, normal {normal:.6g}"
+                for target, chord, normal in history
+            )
+        )
+
+
 class _TessellationRows(NamedTuple):
     vertices: np.ndarray
     triangles: np.ndarray
@@ -511,6 +536,7 @@ def tessellate_brep_model(
 
     domain = MeshingDomain.from_brep(model)
     linear_target = policy.linear_deflection
+    history: list[tuple[float, float, float]] = []
     while True:
         specification, options = _build_request(domain, policy, linear_target)
         construction = prepare_native_surface(
@@ -557,6 +583,28 @@ def tessellate_brep_model(
                 triangle_global_ids=triangle_global_ids,
                 source_chart_witness=source_chart_witness,
             )
+        # Halving the linear target must contract every violated bound: a
+        # maximum chord or normal bound that is violated in two consecutive
+        # attempts and does not strictly decrease between them has no
+        # refinement evidence of ever meeting the policy.
+        attempt = (
+            linear_target,
+            float(np.max(deviation_bounds)),
+            float(np.max(normal_bounds)),
+        )
+        if history:
+            previous = history[-1]
+            for bound, axis, limit in (
+                ("chord", 1, policy.linear_deflection),
+                ("normal", 2, policy.angular_deflection),
+            ):
+                if (
+                    previous[axis] > limit
+                    and attempt[axis] > limit
+                    and not attempt[axis] < previous[axis]
+                ):
+                    raise _TessellationNonconvergent(bound, (*history, attempt))
+        history.append(attempt)
         tighter = linear_target * 0.5
         if not np.isfinite(tighter) or tighter <= 0.0 or tighter >= linear_target:
             raise _TessellationUnresolved(

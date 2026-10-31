@@ -39,6 +39,8 @@ from phydrax.meshing._overset import (
 )
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.solver._moving_overset_poisson import (
+    _owner_local_coefficient_ids,
+    _owner_local_reconstruction,
     prepare_moving_overset_poisson_update,
     PreparedMovingOversetPoissonUpdate,
 )
@@ -124,6 +126,39 @@ def _boundary_ids(mesh: CellMesh, facet_dimension: int, /) -> np.ndarray:
     else:
         raise TypeError("The focused FE test requires simplex or polygon connectivity.")
     return entity_ids[np.asarray(boundary, dtype=np.bool_)]
+
+
+def _owned_boundary_ids(view: OwnerLocalCellGeometry, mesh: CellMesh, /) -> np.ndarray:
+    owner_by_cell = {
+        int(identifier): int(owner)
+        for identifier, owner in zip(
+            np.asarray(view.cell_ids, dtype=np.int64).tolist(),
+            np.asarray(view.cell_owner_ranks, dtype=np.int32).tolist(),
+            strict=True,
+        )
+    }
+    cell_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    )
+    owned_cells = np.asarray(
+        [owner_by_cell[int(identifier)] == view.owner_rank for identifier in cell_ids],
+        dtype=np.bool_,
+    )
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        cell_facets = np.asarray(connectivity.cell_entities[1], dtype=np.int64)
+        facet_valid = np.ones(cell_facets.shape, dtype=np.bool_)
+        boundary = np.asarray(connectivity.boundary_masks[1], dtype=np.bool_)
+    elif isinstance(connectivity, PolygonalConnectivity):
+        cell_facets = np.asarray(connectivity.cell_edges, dtype=np.int64)
+        facet_valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
+        boundary = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
+    else:
+        raise TypeError("The owner-local fixture requires simplex or polygon cells.")
+    entity_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    owned_facets = np.zeros((entity_ids.size,), dtype=np.bool_)
+    owned_facets[cell_facets[owned_cells][facet_valid[owned_cells]]] = True
+    return entity_ids[boundary & owned_facets]
 
 
 def _case() -> tuple[
@@ -527,7 +562,9 @@ def _owner_local_poisson_case(
     receptor_mesh, _ = receptor_view.reconstruct_local_geometry()
     if receptor_mesh is None:
         raise ValueError("Owner-local receptor mesh must be non-empty.")
-    boundary_ids = _boundary_ids(receptor_mesh, 1)
+    # Owner-local scopes declare each global face once: on the owner of the
+    # cell carrying that boundary face.
+    boundary_ids = _owned_boundary_ids(receptor_view, receptor_mesh)
     specifications = (
         OversetPartSpec("owner-poisson-donor", owner_rank=0),
         OversetPartSpec(
@@ -536,17 +573,18 @@ def _owner_local_poisson_case(
             owner_rank=1,
         ),
     )
-    connectivity = prepare_overset_connectivity(
+    prepared = prepare_overset_connectivity(
         assembly,
         specifications,
         policy=OversetPolicy(fringe_layers=1),
         execution_group=execution_group,
         axis_name="moving_owner_local_poisson_initial",
     )
-    entries = list(connectivity.composition_entries())
-    part_entries = {entry.entry_id: entry for entry in entries}
     field_spec = FiniteElementFieldSpec("u", lagrange_element("triangle", 1))
     plans: dict[str, FiniteElementPlan] = {}
+    discretizations: dict[str, FiniteElementDiscretization] = {}
+    reconstructions: dict[str, object] = {}
+    coefficient_ids: dict[str, np.ndarray] = {}
     for part in parts.values():
         view = _owner_view(part)
         mesh, geometry = view.reconstruct_local_geometry()
@@ -555,23 +593,43 @@ def _owner_local_poisson_case(
         plan = FiniteElementPlan(mesh, field_spec, coordinate_spec=geometry)
         discretization = plan.prepare()
         plans[part.name] = plan
+        discretizations[part.name] = discretization
+        reconstructions[part.name] = _owner_local_reconstruction(
+            view, discretization, "u"
+        )
+        coefficient_ids[part.name] = _owner_local_coefficient_ids(discretization, "u")
+    # Owner-local donor coverage is proved by the collective donor search of the
+    # field exchange; only the resolved connectivity publishes entries.
+    connectivity = (
+        prepare_overset_field_transfer(prepared, reconstructions, "u")
+        .prepare_owner_local_exchange(
+            coefficient_ids,
+            execution_group,
+            {name: _owner_view(part) for name, part in parts.items()},
+            axis_name="moving_owner_local_poisson_initial_field",
+        )
+        .connectivity
+    )
+    entries = list(connectivity.composition_entries())
+    part_entries = {entry.entry_id: entry for entry in entries}
+    for name, discretization in discretizations.items():
         fe_entry = CompositionEntry(
             discretization,
-            entry_id=f"fe:{part.name}",
+            entry_id=f"fe:{name}",
             role="discretization",
             owner_id="moving-owner-local-test",
             structure_id=discretization.dof_maps[0].dof_map_id,
             revision_id=discretization.prepared_id,
-            semantics_id=f"moving-owner-local-space:{part.name}",
-            dependencies=(part_entries[f"overset:part:{part.name}"].binding("revision"),),
+            semantics_id=f"moving-owner-local-space:{name}",
+            dependencies=(part_entries[f"overset:part:{name}"].binding("revision"),),
         )
         state_entry = CompositionEntry(
             jnp.zeros((discretization.dof_maps[0].global_dof_count,), dtype=jnp.float64),
-            entry_id=f"poisson:{part.name}",
+            entry_id=f"poisson:{name}",
             role="physical-state",
             owner_id="moving-owner-local-test",
             structure_id=fe_entry.structure_id,
-            revision_id=f"moving-owner-local-state:{part.name}:0",
+            revision_id=f"moving-owner-local-state:{name}:0",
             semantics_id="scalar-poisson-potential",
             dependencies=(fe_entry.binding("revision"),),
         )

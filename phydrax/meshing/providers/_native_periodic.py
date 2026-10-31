@@ -3379,12 +3379,13 @@ def _migrate_owner_local_periodic_delaunay_data(
     # The site-weight exchange is collective: every owner reaches it, after one
     # collective verdict on the received source sites. Adapted vertices are their
     # own quotient keys (their roots were checked through the ancestry above);
-    # only cells of ancestry-free vertices key source sites.
+    # only cells of ancestry-free vertices key source sites; adapted cells may
+    # cite their self-keyed resident vertices.
     local_error = None
     if any(
         int(source_id) not in source_point_records
+        and int(source_id) not in vertex_records
         for cell in cell_records.values()
-        if all(vertex["coordinate_ancestry"] is None for vertex in cell["vertices"])
         for source_id in cell["key_source_ids"]
     ):
         local_error = "ValueError: Graph migration omitted a cell-key source site."
@@ -6550,6 +6551,7 @@ def _require_owner_local_periodic_adaptive_target_current(
         axis_name,
         "stored adaptive target exact mesh",
     )
+
     mesh_authority = _owner_local_periodic_mesh_authority(
         mesh_data,
         source,
@@ -8571,7 +8573,12 @@ def _owner_local_periodic_candidate_from_accepted_view(
         raise ValueError("Accepted Delaunay mesh data changed the local carrier.")
     # Adapted views key midpoint vertices by themselves; their exact roots are
     # the cumulative coordinate ancestry carried with the accepted mesh data.
-    adapted = view.adaptive_result is not None
+    # An owner without resident vertices has no ancestry to carry.
+    stencil = (
+        mesh_data["source_coordinate_stencil"]
+        if view.adaptive_result is not None and np.asarray(view.vertex_ids).size
+        else None
+    )
     return OwnerLocalPeriodicCandidate(
         rank,
         part_count,
@@ -8617,13 +8624,10 @@ def _owner_local_periodic_candidate_from_accepted_view(
         cell_neighbor_ids=mesh_data["graph_neighbor_ids"],
         cell_neighbor_owner_ranks=mesh_data["graph_neighbor_owner_ranks"],
         cell_neighbor_weights=mesh_data["graph_neighbor_weights"],
-        # A real empty owner materializes no ancestry stencil and no offsets.
-        vertex_coordinate_stencil=(
-            mesh_data["source_coordinate_stencil"] if adapted else None
-        ),
+        vertex_coordinate_stencil=stencil,
         exact_vertex_coordinate_offsets=(
             None
-            if not adapted or mesh_data["exact_vertex_coordinate_offsets"] is None
+            if stencil is None
             else tuple(mesh_data["exact_vertex_coordinate_offsets"])
         ),
     )
@@ -8909,6 +8913,7 @@ def _repartition_owner_local_periodic_assembly(
     from ...meshing._assembly import MeshAssembly
     from .._distribution import (
         _owner_group_fail_if_any,
+        _owner_group_fail_with_reasons,
         OwnerLocalGraphMigrationEvidence,
         OwnerLocalGraphPartitionEvidence,
     )
@@ -9257,11 +9262,8 @@ def _repartition_owner_local_periodic_assembly(
             )
         except Exception as error:
             local_error = f"{type(error).__name__}: {error}"
-    _owner_group_fail_if_any(
-        local_error,
-        execution_group,
-        f"{axis_name}_source_replay",
-        "periodic graph source replay",
+    _owner_group_fail_with_reasons(
+        local_error, execution_group, f"{axis_name}_source_replay"
     )
 
     source_content_id = _owner_local_periodic_source_content_identity(
