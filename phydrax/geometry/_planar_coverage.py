@@ -75,6 +75,44 @@ def source_facets(domain: PiecewiseLinearDomain, /) -> tuple[OrientedFacet, ...]
     )
 
 
+class SourceFacetIndex:
+    """Source facets bucketed by their exact canonical supporting plane.
+
+    Two 3-D facets overlap with positive area only when their plane keys are
+    equal, and a facet without a plane key overlaps nothing, so a 3-D query
+    needs only the facets of its own plane. Segment (2-D) queries scan them all.
+    """
+
+    __slots__ = ("_by_plane", "facets")
+
+    def __init__(self, facets: tuple[OrientedFacet, ...], /) -> None:
+        by_plane: dict[tuple[int, int, int, int], list[int]] = {}
+        for row, facet in enumerate(facets):
+            try:
+                key = plane_key(facet.vertices)
+            except ValueError:
+                continue
+            by_plane.setdefault(key, []).append(row)
+        self.facets = facets
+        self._by_plane = {key: tuple(rows) for key, rows in by_plane.items()}
+
+    def candidates(
+        self, vertices: tuple[tuple[Fraction, ...], ...], dimension: int, /
+    ) -> tuple[int, ...]:
+        """Rows, in source order, of every facet that can overlap ``vertices``."""
+        if dimension == 2:
+            return tuple(range(len(self.facets)))
+        try:
+            key = plane_key(vertices)
+        except ValueError:
+            return ()
+        return self._by_plane.get(key, ())
+
+    def coplanar_rows(self) -> tuple[tuple[int, ...], ...]:
+        """Source-ordered row groups that share one supporting plane."""
+        return tuple(self._by_plane.values())
+
+
 def _facet_measure(facet: OrientedFacet, dimension: int, /) -> Fraction:
     if dimension == 2:
         first, second = facet.vertices
@@ -155,18 +193,23 @@ def partition_overlaps(
         facet.facet_id != row for row, facet in enumerate(sources)
     ):
         raise ValueError("sources must realize every domain facet in row order.")
+    index = SourceFacetIndex(sources)
     overlaps: list[FacetOverlap] = []
     findings: list[tuple[str, int, int]] = []
     source_totals = [Fraction(0) for _ in sources]
 
-    for index, first in enumerate(sources):
-        for other_index in range(index + 1, len(sources)):
-            second = sources[other_index]
-            shared = _overlap(first, second, dimension)
-            if shared:
-                findings.append(
-                    ("overlapping_source_facets", first.facet_id, second.facet_id)
-                )
+    groups = (tuple(range(len(sources))),) if dimension == 2 else index.coplanar_rows()
+    overlapping_pairs = sorted(
+        (rows[first], rows[second])
+        for rows in groups
+        for first in range(len(rows))
+        for second in range(first + 1, len(rows))
+        if _overlap(sources[rows[first]], sources[rows[second]], dimension)
+    )
+    findings.extend(
+        ("overlapping_source_facets", sources[first].facet_id, sources[second].facet_id)
+        for first, second in overlapping_pairs
+    )
 
     for target in targets:
         target_measure = _facet_measure(target, dimension)
@@ -175,7 +218,8 @@ def partition_overlaps(
             continue
         matched = Fraction(0)
         reverse = Fraction(0)
-        for source_index, source in enumerate(sources):
+        for source_index in index.candidates(target.vertices, dimension):
+            source = sources[source_index]
             overlap = _overlap(source, target, dimension)
             if overlap <= 0:
                 continue
@@ -825,6 +869,7 @@ __all__ = [
     "PlcSourcePoints",
     "PlcSourcePointWitness",
     "RegionPair",
+    "SourceFacetIndex",
     "SourcePointRefusal",
     "partition_overlaps",
     "resolve_plc_source_points",
