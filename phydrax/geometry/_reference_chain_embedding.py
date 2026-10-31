@@ -33,6 +33,7 @@ from ..discretization._coordinate_enclosure import (
     expression_equal,
     linear_combinations,
     multiply,
+    normalize_pyramid_reference_derivative,
     RationalPolynomial,
     scale,
     subtract,
@@ -55,7 +56,6 @@ if TYPE_CHECKING:
 ReferenceChainStatus = Literal["certified", "violated", "unresolved"]
 _ReferenceChainFindingStatus = Literal["violated", "unresolved"]
 _Point3 = tuple[Fraction, Fraction, Fraction]
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +130,6 @@ class ReferenceChainParentPremise:
     premise_id: str
 
 
-
 @dataclass(frozen=True, slots=True)
 class ReferenceChainSharedStratumPremise:
     source_dimension: int
@@ -142,6 +141,7 @@ class ReferenceChainSharedStratumPremise:
     physical_trace_id: str
     orientation_signs: tuple[tuple[int, int, int], ...]
     premise_id: str
+
 
 @dataclass(frozen=True, slots=True)
 class ReferenceChainEmbeddingCertificate:
@@ -215,6 +215,8 @@ class _TargetFaceOwner:
     local_face_index: int
     local_vertex_indices: tuple[int, ...]
     loop_vertex_rows: tuple[int, ...]
+
+
 def _scalar_key(value: ExactScalar, /) -> tuple[object, ...]:
     if isinstance(value, Fraction):
         return "fraction", value.numerator, value.denominator
@@ -269,9 +271,7 @@ def _reference_map_key(witness: ReferenceCellMapWitnesses | None, /) -> object:
         "target_cell_kind": witness.target_cell_kind,
         "source_cell_kind": witness.source_cell_kind,
         "source_reference_vertices": tuple(
-            tuple(
-                tuple(_scalar_key(value) for value in point) for point in cell
-            )
+            tuple(tuple(_scalar_key(value) for value in point) for point in cell)
             for cell in exact_vertices
         ),
         "chart_arguments": reference_chart_arguments_identity(
@@ -454,18 +454,14 @@ def _strict_control_sign(
     /,
 ) -> tuple[int, tuple[str, ...]] | None:
     if isinstance(expression, RationalPolynomial):
-        numerator = _polynomial_control_sign(
-            expression.numerator, domain, dimension
-        )
-        denominator = _polynomial_control_sign(
-            expression.denominator, domain, dimension
-        )
+        numerator = _polynomial_control_sign(expression.numerator, domain, dimension)
+        denominator = _polynomial_control_sign(expression.denominator, domain, dimension)
         if numerator is None or denominator is None:
             return None
         sign = numerator[0] * denominator[0]
-        controls = tuple(
-            f"numerator:{value}" for value in numerator[1]
-        ) + tuple(f"denominator:{value}" for value in denominator[1])
+        controls = tuple(f"numerator:{value}" for value in numerator[1]) + tuple(
+            f"denominator:{value}" for value in denominator[1]
+        )
         return sign, controls
     return _polynomial_control_sign(expression, domain, dimension)
 
@@ -475,8 +471,27 @@ def _chart_jacobian(
 ) -> tuple[int, tuple[str, ...]] | None:
     topology = reference_cell_topology(target_kind)
     dimension = topology.dimension
+    if dimension != 3 or len(arguments) != 3:
+        return None
+    if target_kind == "pyramid":
+        # Pyramid charts are proved on the collapsed cube: pulled-back
+        # pyramid-coordinate derivatives have exactly cancelled apex poles.
+        jacobian = tuple(
+            tuple(
+                _reduced_expression(
+                    normalize_pyramid_reference_derivative(expression, axis).expression
+                )
+                for axis in range(dimension)
+            )
+            for expression in arguments
+        )
+        if any(
+            isinstance(value, RationalPolynomial) for row in jacobian for value in row
+        ):
+            return None
+        return _strict_control_sign(_determinant(jacobian), "box", dimension)
     domain = _domain_for_target(target_kind)
-    if domain is None or dimension != 3 or len(arguments) != 3:
+    if domain is None:
         return None
     bernstein_domain, _ = domain
     jacobian = tuple(
@@ -485,6 +500,57 @@ def _chart_jacobian(
     )
     determinant = _determinant(jacobian)
     return _strict_control_sign(determinant, bernstein_domain, dimension)
+
+
+def _reduced_expression(expression: Expression, /) -> Expression:
+    """Exactly divide a rational expression whose denominator divides its numerator.
+
+    Pyramid charts restricted to faces through the apex carry removable
+    ``1-w`` denominators; single-divisor lex division leaves a zero remainder
+    exactly when the quotient is polynomial. Other expressions are unchanged.
+    """
+    if not isinstance(expression, RationalPolynomial):
+        return expression
+    numerator = {key: value for key, value in expression.numerator.items() if value}
+    denominator = {key: value for key, value in expression.denominator.items() if value}
+    if not denominator or not all(
+        isinstance(value, Fraction)
+        for value in (*numerator.values(), *denominator.values())
+    ):
+        return expression
+    lead_exponent = max(denominator)
+    lead = cast(Fraction, denominator[lead_exponent])
+    remainder: dict[tuple[int, ...], Fraction] = {
+        key: cast(Fraction, value) for key, value in numerator.items()
+    }
+    quotient: dict[tuple[int, ...], Fraction] = {}
+    while remainder:
+        exponent = max(remainder)
+        if any(
+            power < lead_power
+            for power, lead_power in zip(exponent, lead_exponent, strict=True)
+        ):
+            return expression
+        shift = tuple(
+            power - lead_power
+            for power, lead_power in zip(exponent, lead_exponent, strict=True)
+        )
+        factor = remainder[exponent] / lead
+        quotient[shift] = quotient.get(shift, Fraction(0)) + factor
+        for key, value in denominator.items():
+            product = tuple(
+                first + second for first, second in zip(shift, key, strict=True)
+            )
+            updated = remainder.get(product, Fraction(0)) - factor * cast(Fraction, value)
+            if updated:
+                remainder[product] = updated
+            else:
+                remainder.pop(product, None)
+    return {key: value for key, value in quotient.items() if value}
+
+
+def _trace(expression: Expression, arguments: tuple[Expression, ...], /) -> Expression:
+    return _reduced_expression(compose_expression(expression, arguments))
 
 
 def _point3(values: ArrayLike, /) -> _Point3:
@@ -519,9 +585,7 @@ def _cross(first: _Point3, second: _Point3, /) -> _Point3:
 
 
 def _dot(first: _Point3, second: _Point3, /) -> Fraction:
-    return sum(
-        (a * b for a, b in zip(first, second, strict=True)), Fraction(0)
-    )
+    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
 
 
 def _area_vector(points: tuple[_Point3, ...], /) -> _Point3:
@@ -624,9 +688,7 @@ def _face_arguments(
     tangent_t = _sub(third, first)
     if len(points) == 4:
         fourth = points[3]
-        if third != tuple(
-            second[axis] + fourth[axis] - first[axis] for axis in range(3)
-        ):
+        if third != tuple(second[axis] + fourth[axis] - first[axis] for axis in range(3)):
             return None
         tangent_t = _sub(fourth, first)
     s, t = axes(2)
@@ -637,6 +699,7 @@ def _face_arguments(
         )
         for axis in range(3)
     )
+
 
 def _edge_arguments(
     target_kind: str,
@@ -673,13 +736,12 @@ def _bilinear(expression: Expression, /) -> bool:
         len(exponent) == 2 and exponent[0] <= 1 and exponent[1] <= 1
         for exponent in expression
     )
+
+
 def _affine_triangle(expression: Expression, /) -> bool:
     if isinstance(expression, RationalPolynomial):
         return False
-    return all(
-        len(exponent) == 2 and sum(exponent) <= 1
-        for exponent in expression
-    )
+    return all(len(exponent) == 2 and sum(exponent) <= 1 for exponent in expression)
 
 
 def _plane_residual(
@@ -695,8 +757,7 @@ def _canonical_cycle(vertices: tuple[int, ...], /) -> tuple[int, ...]:
     candidates = []
     for sequence in (vertices, tuple(reversed(vertices))):
         candidates.extend(
-            sequence[index:] + sequence[:index]
-            for index in range(len(sequence))
+            sequence[index:] + sequence[:index] for index in range(len(sequence))
         )
     return min(candidates)
 
@@ -708,7 +769,9 @@ def _cycle_orientation(
         return None
     size = len(candidate)
     for shift in range(size):
-        if all(candidate[(index + shift) % size] == canonical[index] for index in range(size)):
+        if all(
+            candidate[(index + shift) % size] == canonical[index] for index in range(size)
+        ):
             return 1
     reversed_candidate = tuple(reversed(candidate))
     for shift in range(size):
@@ -730,10 +793,7 @@ def _point_on_segment(
     parameter = (point[axis] - first[axis]) / delta[axis]
     if not 0 <= parameter <= 1:
         return False, parameter
-    if any(
-        point[index] != first[index] + parameter * delta[index]
-        for index in range(3)
-    ):
+    if any(point[index] != first[index] + parameter * delta[index] for index in range(3)):
         return False, parameter
     return True, parameter
 
@@ -793,7 +853,6 @@ def _reference_map_identity_matches(
     )
 
 
-
 def _mesh_entity_bank(
     mesh: CellMesh, dimension: int, /
 ) -> tuple[tuple[int, tuple[int, ...]], ...] | None:
@@ -841,9 +900,7 @@ def _mesh_entity_bank(
         return None
     if len(rows) != entity_ids.size:
         return None
-    return tuple(
-        (int(entity_ids[row]), vertices) for row, vertices in enumerate(rows)
-    )
+    return tuple((int(entity_ids[row]), vertices) for row, vertices in enumerate(rows))
 
 
 def _parent_reference_strata(
@@ -858,9 +915,7 @@ def _parent_reference_strata(
     points_by_parent_stratum: dict[
         tuple[int, int, tuple[int, ...]], tuple[_Point3, ...]
     ] = {}
-    face_index_by_parent_stratum: dict[
-        tuple[int, int, tuple[int, ...]], int
-    ] = {}
+    face_index_by_parent_stratum: dict[tuple[int, int, tuple[int, ...]], int] = {}
     face_cycle_by_parent_stratum: dict[
         tuple[int, int, tuple[int, ...]], tuple[int, ...]
     ] = {}
@@ -913,8 +968,6 @@ def _parent_reference_strata(
     )
 
 
-
-
 def _face_basis(
     source_vertex_ids: tuple[int, ...],
     source_face_cycle: tuple[int, ...],
@@ -937,8 +990,7 @@ def _face_basis(
         tangent_s = _sub(first, origin)
         tangent_t = _sub(fourth, origin)
         if opposite != tuple(
-            origin[axis] + tangent_s[axis] + tangent_t[axis]
-            for axis in range(3)
+            origin[axis] + tangent_s[axis] + tangent_t[axis] for axis in range(3)
         ):
             return None
         return origin, tangent_s, tangent_t
@@ -955,8 +1007,7 @@ def _face_coordinates(
         (
             (first, second)
             for first, second in combinations(range(3), 2)
-            if tangent_s[first] * tangent_t[second]
-            - tangent_s[second] * tangent_t[first]
+            if tangent_s[first] * tangent_t[second] - tangent_s[second] * tangent_t[first]
         ),
         None,
     )
@@ -964,24 +1015,19 @@ def _face_coordinates(
         return None
     first, second = axis_pair
     determinant = (
-        tangent_s[first] * tangent_t[second]
-        - tangent_s[second] * tangent_t[first]
+        tangent_s[first] * tangent_t[second] - tangent_s[second] * tangent_t[first]
     )
     delta_first = point[first] - origin[first]
     delta_second = point[second] - origin[second]
     parameter_s = (
-        delta_first * tangent_t[second]
-        - delta_second * tangent_t[first]
+        delta_first * tangent_t[second] - delta_second * tangent_t[first]
     ) / determinant
     parameter_t = (
-        tangent_s[first] * delta_second
-        - tangent_s[second] * delta_first
+        tangent_s[first] * delta_second - tangent_s[second] * delta_first
     ) / determinant
     if any(
         point[axis]
-        != origin[axis]
-        + parameter_s * tangent_s[axis]
-        + parameter_t * tangent_t[axis]
+        != origin[axis] + parameter_s * tangent_s[axis] + parameter_t * tangent_t[axis]
         for axis in range(3)
     ):
         return None
@@ -1017,11 +1063,7 @@ def _point_in_source_stratum(
         return None
     first, second = coordinates
     if len(source_vertex_ids) == 3:
-        return (
-            coordinates
-            if first >= 0 and second >= 0 and first + second <= 1
-            else None
-        )
+        return coordinates if first >= 0 and second >= 0 and first + second <= 1 else None
     return coordinates if 0 <= first <= 1 and 0 <= second <= 1 else None
 
 
@@ -1072,8 +1114,7 @@ def _trace_coordinates_on_source_stratum(
         (
             (first, second)
             for first, second in combinations(range(3), 2)
-            if tangent_s[first] * tangent_t[second]
-            - tangent_s[second] * tangent_t[first]
+            if tangent_s[first] * tangent_t[second] - tangent_s[second] * tangent_t[first]
         ),
         None,
     )
@@ -1081,15 +1122,10 @@ def _trace_coordinates_on_source_stratum(
         return None
     first, second = axis_pair
     determinant = (
-        tangent_s[first] * tangent_t[second]
-        - tangent_s[second] * tangent_t[first]
+        tangent_s[first] * tangent_t[second] - tangent_s[second] * tangent_t[first]
     )
-    delta_first = subtract(
-        trace[first], constant(origin[first], parameter_dimension)
-    )
-    delta_second = subtract(
-        trace[second], constant(origin[second], parameter_dimension)
-    )
+    delta_first = subtract(trace[first], constant(origin[first], parameter_dimension))
+    delta_second = subtract(trace[second], constant(origin[second], parameter_dimension))
     parameter_s = scale(
         subtract(
             scale(delta_first, tangent_t[second]),
@@ -1138,11 +1174,15 @@ def certify_reference_chain_embedding(
     chains, and area supplements remain in the returned premise payload.
     """
     if not isinstance(parent_mesh, CellMesh) or not isinstance(target_mesh, CellMesh):
-        raise TypeError("Reference-chain proof requires parent and target CellMesh values.")
+        raise TypeError(
+            "Reference-chain proof requires parent and target CellMesh values."
+        )
     if not isinstance(parent_geometry, CellGeometrySpec) or not isinstance(
         target_geometry, CellGeometrySpec
     ):
-        raise TypeError("Reference-chain proof requires parent and target CellGeometrySpec values.")
+        raise TypeError(
+            "Reference-chain proof requires parent and target CellGeometrySpec values."
+        )
     if not isinstance(reference_maps, Mapping):
         raise TypeError("reference_maps must be a block-name mapping.")
     map_bank_id = _map_bank_id(reference_maps)
@@ -1166,6 +1206,7 @@ def certify_reference_chain_embedding(
             cross_parent_premises,
             cross_parent_coverage_complete,
         )
+
     try:
         (
             parent_source_strata,
@@ -1205,8 +1246,8 @@ def certify_reference_chain_embedding(
         return finish()
     try:
         parent_embedding.require_current(parent_mesh, parent_geometry)
-        rebuilt_parent_embedding = (
-            CanonicalGlobalEmbeddingCertificate.from_stored_fields(parent_embedding)
+        rebuilt_parent_embedding = CanonicalGlobalEmbeddingCertificate.from_stored_fields(
+            parent_embedding
         )
     except (TypeError, ValueError, IndexError) as error:
         findings.append(
@@ -1287,9 +1328,7 @@ def certify_reference_chain_embedding(
         )
         return finish()
 
-    parent_embedding_by_id = {
-        cell.global_id: cell for cell in parent_embeddings
-    }
+    parent_embedding_by_id = {cell.global_id: cell for cell in parent_embeddings}
     target_embedding_by_row = {
         (cell.block_name, cell.local_index): cell for cell in target_embeddings
     }
@@ -1337,8 +1376,7 @@ def certify_reference_chain_embedding(
         for block in target_mesh.blocks
         if target_topologies[block.name].dimension != 3
         or any(
-            len(face) not in (3, 4)
-            for face in target_topologies[block.name].entities[2]
+            len(face) not in (3, 4) for face in target_topologies[block.name].entities[2]
         )
     )
     if unsupported_target_families:
@@ -1356,11 +1394,11 @@ def certify_reference_chain_embedding(
     exact_corners_by_row: dict[tuple[str, int], tuple[_Point3, ...]] = {}
     chart_sign_by_row: dict[tuple[str, int], int] = {}
     parent_ids_by_row: dict[tuple[str, int], int] = {}
-    parent_reference_by_target_vertex: dict[
-        tuple[int, int], _Point3
-    ] = {}
+    parent_reference_by_target_vertex: dict[tuple[int, int], _Point3] = {}
     target_physical_by_vertex: dict[int, tuple[ExactScalar, ...]] = {}
-    chart_premise_by_parent: dict[int, list[ReferenceChainChartPremise]] = defaultdict(list)
+    chart_premise_by_parent: dict[int, list[ReferenceChainChartPremise]] = defaultdict(
+        list
+    )
 
     for block in target_mesh.blocks:
         restriction_block_index = restriction.block_names.index(block.name)
@@ -1496,9 +1534,7 @@ def certify_reference_chain_embedding(
                     )
                 )
                 continue
-            arguments = tuple(
-                _as_expression(value) for value in chart_rows[row]
-            )
+            arguments = tuple(_as_expression(value) for value in chart_rows[row])
             if len(arguments) != 3:
                 findings.append(
                     _finding(
@@ -1645,15 +1681,15 @@ def certify_reference_chain_embedding(
         block.cell_kind: _reference_vertices(block.cell_kind)
         for block in target_mesh.blocks
     }
-    internal_premises_by_parent: dict[
-        int, list[ReferenceChainInternalFacePremise]
-    ] = defaultdict(list)
-    boundary_faces_by_parent: dict[
-        int, list[ReferenceChainBoundaryFacePremise]
-    ] = defaultdict(list)
-    boundary_loops_by_parent_facet: dict[
-        tuple[int, int], list[tuple[_Point3, ...]]
-    ] = defaultdict(list)
+    internal_premises_by_parent: dict[int, list[ReferenceChainInternalFacePremise]] = (
+        defaultdict(list)
+    )
+    boundary_faces_by_parent: dict[int, list[ReferenceChainBoundaryFacePremise]] = (
+        defaultdict(list)
+    )
+    boundary_loops_by_parent_facet: dict[tuple[int, int], list[tuple[_Point3, ...]]] = (
+        defaultdict(list)
+    )
     boundary_target_faces_by_parent_facet: dict[
         tuple[int, int], list[tuple[int, ...]]
     ] = defaultdict(list)
@@ -1668,7 +1704,9 @@ def certify_reference_chain_embedding(
                     "target_face_incidence",
                     "violated",
                     "Target mesh has a face with more than two incident cells.",
-                    parent_cell_ids=tuple(sorted({owner.parent_cell_id for owner in owners})),
+                    parent_cell_ids=tuple(
+                        sorted({owner.parent_cell_id for owner in owners})
+                    ),
                     target_cell_ids=tuple(sorted(owner.cell_id for owner in owners)),
                 )
             )
@@ -1689,14 +1727,14 @@ def certify_reference_chain_embedding(
                 # A source-cell interface is an exterior facet of both reference
                 # parents; exact physical traces must still agree on the target.
                 other = owners[1] if owner is owners[0] else owners[0]
-                owner_embedding = target_embedding_by_row[(owner.block_name, owner.cell_row)]
-                other_embedding = target_embedding_by_row[(other.block_name, other.cell_row)]
-                owner_reference = target_reference_vertices_by_kind[
-                    owner_embedding.kind
+                owner_embedding = target_embedding_by_row[
+                    (owner.block_name, owner.cell_row)
                 ]
-                other_reference = target_reference_vertices_by_kind[
-                    other_embedding.kind
+                other_embedding = target_embedding_by_row[
+                    (other.block_name, other.cell_row)
                 ]
+                owner_reference = target_reference_vertices_by_kind[owner_embedding.kind]
+                other_reference = target_reference_vertices_by_kind[other_embedding.kind]
                 owner_face_arguments = _face_arguments(
                     owner_embedding.kind,
                     tuple(
@@ -1739,17 +1777,19 @@ def certify_reference_chain_embedding(
                             "parent_interface_trace",
                             "unresolved",
                             "Exact target reference-face charts are unavailable on a parent interface.",
-                            parent_cell_ids=tuple(sorted((owner.parent_cell_id, other.parent_cell_id))),
+                            parent_cell_ids=tuple(
+                                sorted((owner.parent_cell_id, other.parent_cell_id))
+                            ),
                             target_cell_ids=tuple(sorted((owner.cell_id, other.cell_id))),
                         )
                     )
                     continue
                 owner_trace = tuple(
-                    compose_expression(expression, owner_face_arguments)
+                    _trace(expression, owner_face_arguments)
                     for expression in owner_embedding.coordinates
                 )
                 other_trace = tuple(
-                    compose_expression(expression, other_face_arguments)
+                    _trace(expression, other_face_arguments)
                     for expression in other_embedding.coordinates
                 )
                 if not all(
@@ -1761,7 +1801,9 @@ def certify_reference_chain_embedding(
                             "parent_interface_trace",
                             "violated",
                             "Exact physical traces disagree across a target parent interface.",
-                            parent_cell_ids=tuple(sorted((owner.parent_cell_id, other.parent_cell_id))),
+                            parent_cell_ids=tuple(
+                                sorted((owner.parent_cell_id, other.parent_cell_id))
+                            ),
                             target_cell_ids=tuple(sorted((owner.cell_id, other.cell_id))),
                         )
                     )
@@ -1802,8 +1844,7 @@ def certify_reference_chain_embedding(
                 )
                 continue
             reference_trace = tuple(
-                compose_expression(expression, face_arguments)
-                for expression in chart_arguments
+                _trace(expression, face_arguments) for expression in chart_arguments
             )
             face_orientation = _cycle_orientation(
                 owner.loop_vertex_rows, canonical_loop_rows
@@ -1819,7 +1860,9 @@ def certify_reference_chain_embedding(
                     )
                 )
                 continue
-            side_orientation = chart_sign_by_row[(owner.block_name, owner.cell_row)] * face_orientation
+            side_orientation = (
+                chart_sign_by_row[(owner.block_name, owner.cell_row)] * face_orientation
+            )
             if len(owners) == 2 and owners[0].parent_cell_id == owners[1].parent_cell_id:
                 other = owners[1] if owner is owners[0] else owners[0]
                 other_block_index = next(
@@ -1855,8 +1898,7 @@ def certify_reference_chain_embedding(
                     )
                     continue
                 other_trace = tuple(
-                    compose_expression(expression, other_face_arguments)
-                    for expression in other_chart
+                    _trace(expression, other_face_arguments) for expression in other_chart
                 )
                 if not all(
                     expression_equal(first, second)
@@ -1892,7 +1934,7 @@ def certify_reference_chain_embedding(
                     )
                     continue
                 physical = tuple(
-                    compose_expression(expression, face_arguments)
+                    _trace(expression, face_arguments)
                     for expression in target_embedding_by_row[
                         (owner.block_name, owner.cell_row)
                     ].coordinates
@@ -1913,7 +1955,10 @@ def certify_reference_chain_embedding(
                         tuple(
                             int(target_vertex_ids[value]) for value in canonical_loop_rows
                         ),
-                        (min(owner.cell_id, other.cell_id), max(owner.cell_id, other.cell_id)),
+                        (
+                            min(owner.cell_id, other.cell_id),
+                            max(owner.cell_id, other.cell_id),
+                        ),
                         reference_trace,
                         physical,
                         (
@@ -1960,9 +2005,7 @@ def certify_reference_chain_embedding(
                 facet
                 for facet in parent_facet_rows
                 if expression_equal(
-                    _plane_residual(
-                        reference_trace, facet.outward_normal, facet.offset
-                    ),
+                    _plane_residual(reference_trace, facet.outward_normal, facet.offset),
                     constant(0, 2),
                 )
             )
@@ -2102,10 +2145,7 @@ def certify_reference_chain_embedding(
             boundary_target_faces_by_parent_facet[
                 (owner.parent_cell_id, facet.index)
             ].append(
-                tuple(
-                    int(target_vertex_ids[value])
-                    for value in owner.loop_vertex_rows
-                )
+                tuple(int(target_vertex_ids[value]) for value in owner.loop_vertex_rows)
             )
             trace_id = canonical_fingerprint(
                 {
@@ -2123,8 +2163,7 @@ def certify_reference_chain_embedding(
                     owner.parent_cell_id,
                     facet.index,
                     tuple(
-                        int(target_vertex_ids[value])
-                        for value in owner.loop_vertex_rows
+                        int(target_vertex_ids[value]) for value in owner.loop_vertex_rows
                     ),
                     owner.cell_id,
                     face_loop,
@@ -2135,7 +2174,15 @@ def certify_reference_chain_embedding(
                 )
             )
 
-    parent_ids = tuple(sorted({chart.parent_cell_id for values in chart_premise_by_parent.values() for chart in values}))
+    parent_ids = tuple(
+        sorted(
+            {
+                chart.parent_cell_id
+                for values in chart_premise_by_parent.values()
+                for chart in values
+            }
+        )
+    )
     parent_facets_by_kind: dict[str, tuple[_ReferenceFacet, ...] | None] = {}
     for parent_id in parent_ids:
         parent_location = parent_cell_location.get(parent_id)
@@ -2173,10 +2220,7 @@ def certify_reference_chain_embedding(
                 continue
             chain_ok, oriented_edges = _boundary_chain(facet.oriented_vertices, loops)
             mapped_area = sum(
-                (
-                    _dot(_area_vector(loop), facet.outward_normal) / 2
-                    for loop in loops
-                ),
+                (_dot(_area_vector(loop), facet.outward_normal) / 2 for loop in loops),
                 Fraction(0),
             )
             if not chain_ok:
@@ -2229,10 +2273,7 @@ def certify_reference_chain_embedding(
                 )
             )
         target_cell_ids = tuple(
-            sorted(
-                chart.target_cell_id
-                for chart in chart_premise_by_parent[parent_id]
-            )
+            sorted(chart.target_cell_id for chart in chart_premise_by_parent[parent_id])
         )
         chart_rows = tuple(chart_premise_by_parent[parent_id])
         if len({chart.jacobian_sign for chart in chart_rows}) != 1:
@@ -2273,8 +2314,7 @@ def certify_reference_chain_embedding(
                 "target_cell_ids": target_cell_ids,
                 "charts": tuple(chart.composition_id for chart in chart_rows),
                 "internal_faces": tuple(
-                    premise.trace_id
-                    for premise in internal_premises_by_parent[parent_id]
+                    premise.trace_id for premise in internal_premises_by_parent[parent_id]
                 ),
                 "boundary_facets": tuple(
                     premise.boundary_chain_id for premise in boundary_premises
@@ -2297,6 +2337,7 @@ def certify_reference_chain_embedding(
                 parent_premise_id,
             )
         )
+
     def prove_cross_parent_shared_strata() -> None:
         nonlocal cross_parent_coverage_complete
         if not shared_parent_strata:
@@ -2370,9 +2411,9 @@ def certify_reference_chain_embedding(
         if failed:
             return
 
-        owners_by_dimension: dict[
-            int, dict[int, list[_TargetEntityOwner]]
-        ] = {dimension: defaultdict(list) for dimension in range(3)}
+        owners_by_dimension: dict[int, dict[int, list[_TargetEntityOwner]]] = {
+            dimension: defaultdict(list) for dimension in range(3)
+        }
         target_blocks_by_name = {block.name: block for block in target_mesh.blocks}
         for block in target_mesh.blocks:
             topology = reference_cell_topology(block.cell_kind)
@@ -2389,8 +2430,7 @@ def certify_reference_chain_embedding(
                     continue
                 local_vertex_rows = tuple(int(value) for value in cell_rows[cell_row])
                 cell_vertex_ids = tuple(
-                    int(target_vertex_ids[vertex_row])
-                    for vertex_row in local_vertex_rows
+                    int(target_vertex_ids[vertex_row]) for vertex_row in local_vertex_rows
                 )
                 for dimension in range(3):
                     for local_vertices in topology.entities[dimension]:
@@ -2433,9 +2473,7 @@ def certify_reference_chain_embedding(
                     parent_block.vertices[location[2]], dtype=np.int64
                 ).tolist()
             )
-            parent_vertex_ids = np.asarray(
-                parent_mesh.vertex_global_ids, dtype=np.int64
-            )
+            parent_vertex_ids = np.asarray(parent_mesh.vertex_global_ids, dtype=np.int64)
             topology = reference_cell_topology(parent_block.cell_kind)
             source_id_set = set(source_vertex_ids)
             result = tuple(
@@ -2485,17 +2523,13 @@ def certify_reference_chain_embedding(
                 elif target_dimension == 1:
                     for index, first in enumerate(face_vertices):
                         last = face_vertices[(index + 1) % len(face_vertices)]
-                        entity_id = entity_id_by_vertices[1].get(
-                            frozenset((first, last))
-                        )
+                        entity_id = entity_id_by_vertices[1].get(frozenset((first, last)))
                         if entity_id is None:
                             return None
                         candidates.add(entity_id)
                 elif target_dimension == 0:
                     for vertex_id in face_vertices:
-                        entity_id = entity_id_by_vertices[0].get(
-                            frozenset((vertex_id,))
-                        )
+                        entity_id = entity_id_by_vertices[0].get(frozenset((vertex_id,)))
                         if entity_id is None:
                             return None
                         candidates.add(entity_id)
@@ -2511,7 +2545,9 @@ def certify_reference_chain_embedding(
                     if not (
                         left_expression
                         and right_expression
-                        and expression_equal(cast(Expression, left), cast(Expression, right))
+                        and expression_equal(
+                            cast(Expression, left), cast(Expression, right)
+                        )
                     ):
                         return False
                 elif left != right:
@@ -2569,8 +2605,7 @@ def certify_reference_chain_embedding(
                     return None, None, None, False, True
                 return None, None, None, True, False
             exact_endpoint_coordinates = tuple(
-                cast(tuple[Fraction, ...], value)
-                for value in endpoint_coordinates
+                cast(tuple[Fraction, ...], value) for value in endpoint_coordinates
             )
             endpoint_coordinates_by_id = dict(
                 zip(entity_vertex_ids, exact_endpoint_coordinates, strict=True)
@@ -2596,9 +2631,7 @@ def certify_reference_chain_embedding(
             )
             if not selected_owners:
                 return None, None, None, False, True
-            owner_records: list[
-                tuple[tuple[object, ...], tuple[object, ...], int]
-            ] = []
+            owner_records: list[tuple[tuple[object, ...], tuple[object, ...], int]] = []
             for owner in selected_owners:
                 block = target_blocks_by_name[owner.block_name]
                 cell_vertex_rows = tuple(
@@ -2607,14 +2640,11 @@ def certify_reference_chain_embedding(
                         block.vertices[owner.cell_row], dtype=np.int64
                     ).tolist()
                 )
-                reference_vertices = target_reference_vertices_by_kind[
-                    block.cell_kind
-                ]
+                reference_vertices = target_reference_vertices_by_kind[block.cell_kind]
                 if target_dimension == 1:
                     ordered_vertex_ids = tuple(sorted(entity_vertex_ids))
                     ordered_vertex_rows = tuple(
-                        target_vertex_rows[vertex_id]
-                        for vertex_id in ordered_vertex_ids
+                        target_vertex_rows[vertex_id] for vertex_id in ordered_vertex_ids
                     )
                     entity_arguments = _edge_arguments(
                         block.cell_kind,
@@ -2629,8 +2659,7 @@ def certify_reference_chain_embedding(
                     )
                     ordered_vertex_ids = _canonical_cycle(raw_face_ids)
                     ordered_vertex_rows = tuple(
-                        target_vertex_rows[vertex_id]
-                        for vertex_id in ordered_vertex_ids
+                        target_vertex_rows[vertex_id] for vertex_id in ordered_vertex_ids
                     )
                     entity_arguments = _face_arguments(
                         block.cell_kind,
@@ -2645,8 +2674,7 @@ def certify_reference_chain_embedding(
                 if entity_arguments is None or chart is None or target_cell is None:
                     return None, None, None, False, True
                 root_reference_trace = tuple(
-                    compose_expression(expression, entity_arguments)
-                    for expression in chart
+                    _trace(expression, entity_arguments) for expression in chart
                 )
                 root_trace = _trace_coordinates_on_source_stratum(
                     root_reference_trace,
@@ -2660,12 +2688,8 @@ def certify_reference_chain_embedding(
                     return None, None, None, False, True
                 if target_dimension == 1:
                     parameter = axes(1)[0]
-                    start_coordinates = endpoint_coordinates_by_id[
-                        ordered_vertex_ids[0]
-                    ]
-                    end_coordinates = endpoint_coordinates_by_id[
-                        ordered_vertex_ids[1]
-                    ]
+                    start_coordinates = endpoint_coordinates_by_id[ordered_vertex_ids[0]]
+                    end_coordinates = endpoint_coordinates_by_id[ordered_vertex_ids[1]]
                     if len(start_coordinates) != len(root_trace) or len(
                         end_coordinates
                     ) != len(root_trace):
@@ -2701,7 +2725,7 @@ def certify_reference_chain_embedding(
                         return None, None, None, False, True
 
                 physical_trace = tuple(
-                    compose_expression(expression, entity_arguments)
+                    _trace(expression, entity_arguments)
                     for expression in target_cell.coordinates
                 )
                 if target_dimension == 1:
@@ -2720,8 +2744,7 @@ def certify_reference_chain_embedding(
                     orientation = 1 if first_difference > 0 else -1
                 else:
                     face_vertex_rows = tuple(
-                        target_vertex_rows[vertex_id]
-                        for vertex_id in ordered_vertex_ids
+                        target_vertex_rows[vertex_id] for vertex_id in ordered_vertex_ids
                     )
                     matching_owners = tuple(
                         face_owner
@@ -2760,7 +2783,11 @@ def certify_reference_chain_embedding(
                 return None, None, None, False, True
             return first_root, first_physical, first_orientation, True, True
 
-        for source_dimension, source_vertex_ids, incident_parent_ids in shared_parent_strata:
+        for (
+            source_dimension,
+            source_vertex_ids,
+            incident_parent_ids,
+        ) in shared_parent_strata:
             if source_dimension == 2 and len(incident_parent_ids) != 2:
                 report(
                     "cross_parent_source_face_incidence",
@@ -2866,10 +2893,7 @@ def certify_reference_chain_embedding(
                 if (
                     not entity_sets
                     or not entity_sets[0]
-                    or any(
-                        entity_set != entity_sets[0]
-                        for entity_set in entity_sets[1:]
-                    )
+                    or any(entity_set != entity_sets[0] for entity_set in entity_sets[1:])
                 ):
                     report(
                         "cross_parent_target_strata",
@@ -2879,9 +2903,7 @@ def certify_reference_chain_embedding(
                     )
                     stratum_failed = True
                 common_entity_ids = (
-                    tuple(sorted(set.intersection(*entity_sets)))
-                    if entity_sets
-                    else ()
+                    tuple(sorted(set.intersection(*entity_sets))) if entity_sets else ()
                 )
                 if common_entity_ids:
                     reference_parent_id = incident_parent_ids[0]
@@ -2897,9 +2919,7 @@ def certify_reference_chain_embedding(
                             if candidate_trace is None:
                                 stratum_failed = True
                                 continue
-                            if not trace_equal(
-                                reference_trace[0], candidate_trace[0]
-                            ):
+                            if not trace_equal(reference_trace[0], candidate_trace[0]):
                                 report(
                                     "cross_parent_root_trace",
                                     "violated",
@@ -2907,9 +2927,7 @@ def certify_reference_chain_embedding(
                                     incident_parent_ids,
                                 )
                                 stratum_failed = True
-                            if not trace_equal(
-                                reference_trace[1], candidate_trace[1]
-                            ):
+                            if not trace_equal(reference_trace[1], candidate_trace[1]):
                                 report(
                                     "cross_parent_physical_trace",
                                     "violated",
@@ -2955,7 +2973,9 @@ def certify_reference_chain_embedding(
                                 "traces": tuple(
                                     (
                                         entity_id,
-                                        trace_key(records_by_parent[parent_id][entity_id][0]),
+                                        trace_key(
+                                            records_by_parent[parent_id][entity_id][0]
+                                        ),
                                     )
                                     for entity_id in sorted(records_by_parent[parent_id])
                                 ),
