@@ -378,20 +378,27 @@ def test_box_bottom_wall_layers_slide_along_fixed_sides_with_exact_charts() -> N
 def test_box_bottom_wall_refuses_a_schedule_that_meets_the_adjacent_sides() -> None:
     model = _box()
     wall = _faces(model, lambda point: point[2] == 0.0)
+    schedule = (0.1, 0.15)
+    # A column at rim distance d crosses the 45-degree medial plane of its wall
+    # corner at height d; fronts are probed up to the total over the default
+    # proximity fraction (0.8). The reach exceeds the rim distance of the first
+    # interior wall ring at this size, so the refusal does not hinge on where the
+    # surface mesher places a single interior vertex.
+    reach = sum(schedule) / 0.8
 
     with pytest.raises(MeshingFailure, match="collide") as failure:
         _execute(
             model,
-            _specification(model, wall, size=0.34, deviation=0.05, schedule=(0.04, 0.05)),
+            _specification(model, wall, size=0.34, deviation=0.05, schedule=schedule),
         )
 
     assert failure.value.stage == MeshingStageKind.LAYER_GENERATION.value
     locations = np.asarray(failure.value.locations, dtype=np.float64)
     assert locations.shape[0] > 0
-    # The colliding columns stand on the wall next to its rim.
+    # The colliding columns stand on the wall, inside the rim, within reach of a side.
     np.testing.assert_array_equal(locations[:, 2], 0.0)
     rim = np.min(np.minimum(locations[:, :2], 1.0 - locations[:, :2]), axis=1)
-    assert np.all(rim < 0.34)
+    assert np.all((rim > 0.0) & (rim < reach))
 
 
 def test_sphere_whole_wall_grows_smooth_layers_without_ridges() -> None:
