@@ -38,8 +38,10 @@ from phydrax.geometry._source_boundary_records import (
 )
 from phydrax.geometry._source_fidelity import (
     _box_gap_upper,
+    _DerivativeCache,
     _exact_triangle2,
     _nearest_triangle_distance_upper,
+    _normal_deviation_for_cell,
     _partition_findings,
     _require_reference_chart_partition,
     _surface_target_chart_rows,
@@ -1316,6 +1318,43 @@ def test_source_normal_deviation_uses_actual_target_map_orientation() -> None:
     assert certificate.status == "violated"
     assert certificate.maximum_normal_deviation_lower is not None
     assert certificate.maximum_normal_deviation_lower > 0.1
+
+
+def test_curved_cell_normal_deviation_bound_is_first_order_in_cell_width() -> None:
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(1.0, 2.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
+    for width in (Fraction(1, 10), Fraction(1, 40), Fraction(1, 160)):
+        triangle = (
+            (Fraction(1), Fraction(1, 4)),
+            (Fraction(1) + width, Fraction(1, 4)),
+            (Fraction(1), Fraction(1, 4) + width),
+        )
+        points = np.asarray(
+            domain.evaluate(
+                np.full((3,), 1, dtype=np.int64),
+                np.asarray([[float(u), float(v)] for u, v in triangle], dtype=np.float64),
+            ),
+            dtype=np.float64,
+        )
+        target = np.cross(points[1] - points[0], points[2] - points[0])
+        bound = _normal_deviation_for_cell(
+            domain,
+            1,
+            triangle,
+            (
+                Fraction(float(target[0])),
+                Fraction(float(target[1])),
+                Fraction(float(target[2])),
+            ),
+            _DerivativeCache(),
+        )
+        # The true deviation is below the angular span of the corners about the
+        # axis. A first-order bound stays within a fixed multiple of that span,
+        # while an O(sqrt(width)) bound exceeds it on the finer cells.
+        span = float(np.ptp(np.unwrap(np.arctan2(points[:, 1], points[:, 0]))))
+        assert bound is not None
+        assert 0.0 <= float(bound[0]) <= float(bound[1]) <= 2.0 * span
 
 
 def test_source_boundary_chart_witness_retains_non_dyadic_partition_exactly() -> None:

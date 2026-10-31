@@ -2552,10 +2552,11 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
     manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     recipe = manifest["model_recipe"]["fields"]["entries"]["items"][0]["fields"]["value"]
-    revision = recipe["fields"]["expected_source_revision"]["value"]
-    recipe["fields"]["expected_source_revision"]["value"] = (
-        "0" * 64 if revision != "0" * 64 else "1" * 64
-    )
+    assert recipe["kind"] == "namedtuple"
+    # ReconstructedGeometrySourceArchiveRecipe field 7: expected_source_revision.
+    revision_field = recipe["items"][7]
+    revision = revision_field["value"]
+    revision_field["value"] = "0" * 64 if revision != "0" * 64 else "1" * 64
     corrupted = corrupt_directory / "reconstructed-source.phx"
     write_array_archive(
         corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS

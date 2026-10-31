@@ -71,15 +71,17 @@ def _project(projection: Any, points: Any, dimension: Any, index: Any) -> Any:
 
 def _circle_edge(projection: Any, height: Any) -> Any:
     """Index of the closed circular edge at ``height`` (edges keep OCCT order)."""
-    vertices = np.asarray(projection.vertex_points)
-    edge_vertices = np.asarray(projection.edge_vertices)
-    closed = np.flatnonzero(np.asarray(projection.edge_closed))
+    geometry = projection.model.geometry
+    vertices = np.asarray(geometry.vertex_points)
+    edge_vertices = np.asarray(geometry.edge_vertices)
+    closed = np.flatnonzero(edge_vertices[:, 0] == edge_vertices[:, 1])
     return int(closed[np.isclose(vertices[edge_vertices[closed, 0], 2], height)][0])
 
 
 def test_brep_projection_scenario_1() -> None:
-    shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    _, projection = _bound(shape)
+    # The projection is immutable, so one cylinder import serves every query.
+    _, cylinder = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
+    projection = cylinder
     result = _project(projection, [[0.3, 0.4, 1.0], [1.5, 1.5, 0.25]], _FACE, 0)
 
     np.testing.assert_allclose(result.points, [[0.6, 0.8, 1.0], [2**-0.5, 2**-0.5, 0.25]])
@@ -104,8 +106,7 @@ def test_brep_projection_scenario_1() -> None:
         0,
         occurrence_path=result.occurrence_paths[0],
     )
-    shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    _, projection = _bound(shape)
+    projection = cylinder
     face = _project(projection, [[2.0, 0.0, 0.5], [0.0, 0.0, 1.0]], _FACE, 0)
     rim = _circle_edge(projection, 2.0)
     edge = _project(
@@ -143,8 +144,7 @@ def test_brep_projection_scenario_1() -> None:
         _STATUS.SEAM,
         _STATUS.NON_ISOLATED,
     ]
-    shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    _, projection = _bound(shape)
+    projection = cylinder
     points = np.asarray(
         [[0.0, 1.0, 1.0], [0.0, 1.0, 2.0], [1.0, 0.0, 2.0], [0.2, 0.1, 1.0]]
     )
@@ -161,7 +161,7 @@ def test_brep_projection_scenario_1() -> None:
         _STATUS.AMBIGUOUS,
         _STATUS.UNIQUE,
     ]
-    corner = int(np.asarray(projection.edge_vertices)[rim, 0])
+    corner = int(projection.model.geometry.edge_vertices[rim][0])
     assert np.asarray(
         projection.contains([2, 1, 1], [0, rim, rim], [1, 0, 2], [rim, corner, 0])
     ).tolist() == [True, True, False]

@@ -130,12 +130,35 @@ def _segment_enclosures(segment: _CurveTrimSegment, /) -> _SegmentEnclosures:
     return record
 
 
+def _turn_start_parameter(segment: _CurveTrimSegment, parameter: float, /) -> float:
+    """Map the end of a self-closing whole native turn to its start parameter.
+
+    Such a segment returns to its start point exactly; evaluating its end through
+    the rounded binary64 turn would open the loop by the rounding of ``2 pi``.
+    """
+    from .brep._intersection import closes_native_turn
+    from .brep._intersection_curve import CurveTrimSegment
+
+    if not isinstance(segment, CurveTrimSegment):
+        return parameter
+    turn_end = 0.0 if segment.reversed else 1.0
+    if parameter != turn_end or not closes_native_turn(
+        segment.last_root, segment.first_root
+    ):
+        return parameter
+    return 1.0 - turn_end
+
+
 def _segment_point(segment: _CurveTrimSegment, parameter: float, /) -> np.ndarray | None:
     points = _segment_enclosures(segment).points
     if parameter not in points:
         try:
             value = np.asarray(
-                segment.evaluate(jnp.asarray(parameter, dtype=jnp.float64)),
+                segment.evaluate(
+                    jnp.asarray(
+                        _turn_start_parameter(segment, parameter), dtype=jnp.float64
+                    )
+                ),
                 dtype=np.float64,
             ).reshape(-1)
         except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):

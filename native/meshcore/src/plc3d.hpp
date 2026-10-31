@@ -114,13 +114,22 @@ struct PlcSourceRefusal {
 // Evidence of the exhaustive Steiner-free suppression search, which runs
 // only for wedges no polynomial fill handles: how many wedges it searched
 // and filled, the states it expanded in total and at most per wedge, and
-// the largest searched wedge (cells around the suppressed point).
+// the largest searched wedge (cells around the suppressed point). Then the
+// merged cavities: wedges filled after merging with neighbouring cells and
+// the most layers one needed, and wedges whose constraint-delimited region
+// was exhausted without a fill with the largest such region in cells (a
+// suppression refusal follows only such exhaustion or a wedge that cannot
+// merge at all).
 struct PlcSuppressionSearch {
   int64_t searches = 0;
   int64_t fills = 0;
   int64_t nodes = 0;
   int64_t max_nodes = 0;
   int64_t max_wedge_cells = 0;
+  int64_t merges = 0;
+  int64_t max_merge_layers = 0;
+  int64_t exhausted = 0;
+  int64_t max_exhausted_cells = 0;
 };
 
 // Recovered complex: input point ids are preserved and new vertices follow.

@@ -48,10 +48,12 @@ from ..geometry.brep._correspondence import (
     _affine_bspline_pcurve,
     _affine_surface_frame,
     _plane_parameter_vector,
+    exact_sphere_pole,
     native_edge_pcurve,
     torus_circle_pcurve,
 )
 from ..geometry.brep._intersection import (
+    closes_native_turn,
     CurveSurfaceIntersectionRoot,
     endpoint_root_payload,
     NativePeriodEndpoint,
@@ -121,6 +123,9 @@ from ._step_metadata import StepEntityMetadata
 
 
 _TWO_PI = 2.0 * pi
+# Exchange formats print reals with finitely many decimal digits; an authored
+# value this close (relative to its scale) to a symbolic source value is it.
+_AUTHORED_DECIMAL_RELATIVE = 1.0e-12
 _ZERO_UV = (Fraction(0), Fraction(0))
 
 CadRefusalReason: TypeAlias = Literal[
@@ -1480,6 +1485,23 @@ def _sampled_curve_parameter(curve: AbstractCurve, target: np.ndarray, /) -> flo
         parameter = candidate
 
 
+def _authored_turn_end(first: float, last: float, /) -> float:
+    """Return the binary64 end of one authored turn written as a rounded decimal.
+
+    A closed edge on a ``2 pi``-periodic carrier (or a pole edge spanning the
+    chart period) covers a whole number of turns; exchange formats print that
+    end with finitely many decimal digits. A range within decimal rounding of
+    one turn is the turn itself; every other range is returned unchanged.
+    """
+    turn = float(first) + _TWO_PI
+    last = float(last)
+    if last != turn and abs(last - turn) <= _AUTHORED_DECIMAL_RELATIVE * max(
+        1.0, abs(turn)
+    ):
+        return turn
+    return last
+
+
 @checked
 def edge_range(
     curve: AbstractCurve,
@@ -1968,6 +1990,8 @@ class CadStage:
             )
         else:
             first, last = (float(parameter_range[0]), float(parameter_range[1]))
+            if start == end and isinstance(curve, (CircleCurve, EllipseCurve)):
+                last = _authored_turn_end(first, last)
             _validate_curve_parameter_range(curve, first, last, label)
             ends = np.asarray(
                 curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64))
@@ -1989,16 +2013,16 @@ class CadStage:
         if (
             start == end
             and isinstance(curve, (CircleCurve, EllipseCurve))
-            and (first, last) == (0.0, _TWO_PI)
+            and last == first + _TWO_PI
         ):
-            # A closed conic entity over its whole native parameter interval
+            # A closed conic entity over one whole native parameter interval
             # authors one mathematical turn; binary64 tau is only its carrier.
-            self.native_phase(edge, None, None)
+            self.native_phase(edge, None, None, rational=Fraction(first))
         return edge
 
     def degenerate(self, vertex: int, first: float, last: float, /) -> int:
         self.edge_curves.append(-1)
-        self.edge_ranges.append((float(first), float(last)))
+        self.edge_ranges.append((float(first), _authored_turn_end(first, last)))
         self.edge_vertices.append((vertex, vertex))
         self.degenerate_edges += 1
         return len(self.edge_curves) - 1
@@ -2071,6 +2095,99 @@ class CadStage:
                 return None
             radius += offset.frame_sign * offset.distance_exact
         return radius
+
+    def _sphere_pole_points(
+        self,
+        pcurves: list[AbstractCurve],
+        coedge_edges: list[int],
+        face_loops: list[tuple[tuple[int, ...], ...]],
+        /,
+    ) -> dict[int, tuple[Fraction, Fraction, Fraction]]:
+        """Exact poles of authored vertices collapsing sphere-chart pole coedges.
+
+        A pole coedge on a sphere chart's declared latitude limit collapses to
+        ``center ± radius * axis`` exactly; the file prints its vertex through
+        rounded ``cos(pi / 2)``. A vertex within decimal rounding of that pole is
+        the pole; any other vertex keeps its printed coordinates.
+        """
+        poles: dict[int, tuple[Fraction, Fraction, Fraction]] = {}
+        for face, loops in enumerate(face_loops):
+            patch = self.faces[face].patch
+            if not isinstance(patch, SpherePatch):
+                continue
+            for loop in loops:
+                for coedge in loop:
+                    edge = coedge_edges[coedge]
+                    if self.edge_curves[edge] >= 0:
+                        continue
+                    affine = _affine_curve_coefficients(pcurves[coedge], _ZERO_UV)
+                    if affine is None or affine[1][1] != 0:
+                        continue
+                    pole = exact_sphere_pole(patch, affine[0][1])
+                    if pole is None:
+                        continue
+                    vertex = self.edge_vertices[edge][0]
+                    rounded = np.asarray(
+                        tuple(float(value) for value in pole), dtype=np.float64
+                    )
+                    authored = np.asarray(self.vertices[vertex], dtype=np.float64)
+                    scale = max(1.0, float(np.max(np.abs(rounded))))
+                    if (
+                        float(np.max(np.abs(authored - rounded)))
+                        <= _AUTHORED_DECIMAL_RELATIVE * scale
+                    ):
+                        poles[vertex] = pole
+        return poles
+
+    def _snap_sphere_meridian_ranges(self) -> None:
+        """Return authored meridian ends at a sphere chart's pole latitude to it.
+
+        Exchange formats print a meridian's edge range in decimal, so its p-curve
+        end misses the declared latitude limit ``±0.5 * pi`` by decimal rounding.
+        An end within that rounding becomes the representable edge parameter
+        whose exact p-curve image is the limit; other ends are unchanged.
+        """
+        limit = Fraction.from_float(0.5 * pi)
+        for face in self.faces:
+            if not isinstance(face.patch, SpherePatch):
+                continue
+            for loop in face.loops:
+                for coedge in loop:
+                    if coedge.pcurve is None or self.edge_curves[coedge.edge] < 0:
+                        continue
+                    pcurve = coedge.pcurve
+                    if isinstance(pcurve, PeriodicPCurve):
+                        if pcurve.period_shifts[1] != 0:
+                            continue
+                        pcurve = pcurve.source_curve
+                    affine = _affine_curve_coefficients(
+                        explicit_carrier(pcurve), _ZERO_UV
+                    )
+                    if affine is None:
+                        continue
+                    offset, direction = affine
+                    if (
+                        direction[0] != 0
+                        or direction[1] == 0
+                        or not isinstance(offset[1], Fraction)
+                        or not isinstance(direction[1], Fraction)
+                    ):
+                        continue
+                    ends = list(self.edge_ranges[coedge.edge])
+                    for index, parameter in enumerate(ends):
+                        latitude = offset[1] + direction[1] * Fraction.from_float(
+                            float(parameter)
+                        )
+                        for target in (limit, -limit):
+                            snapped = (target - offset[1]) / direction[1]
+                            if (
+                                latitude != target
+                                and abs(latitude - target)
+                                <= _AUTHORED_DECIMAL_RELATIVE * max(1, abs(target))
+                                and Fraction.from_float(float(snapped)) == snapped
+                            ):
+                                ends[index] = float(snapped)
+                    self.edge_ranges[coedge.edge] = (float(ends[0]), float(ends[1]))
 
     @staticmethod
     def _native_pcurve(
@@ -3421,6 +3538,9 @@ class CadStage:
                         and second_root is not None
                         and endpoint_root_payload(first_root)
                         == endpoint_root_payload(second_root)
+                    ) or (
+                        # A self-closing whole native turn is one point.
+                        first == second and closes_native_turn(first_root, second_root)
                     )
                     if not shares_source_root:
                         if any(
@@ -3650,6 +3770,7 @@ class CadStage:
                 source_id,
                 f"CadStage.scale must be finite and positive for the physical source enclosure; got {self.scale!r}",
             )
+        self._snap_sphere_meridian_ranges()
         self._split_periodic_bands()
         resolved = [self._resolve_face(face) for face in self.faces]
         pcurves: list[AbstractCurve] = []
@@ -3684,15 +3805,22 @@ class CadStage:
         )
         vertex_points = np.asarray(self.vertices, dtype=np.float64).reshape(-1, 3)
         # A collapsed pole edge is proved against its authored vertex; the
-        # binary file coordinates are that vertex's exact source value.
+        # binary file coordinates are that vertex's exact source value, except
+        # at a sphere-chart pole, which the file prints through rounded trig.
         pole_vertices = {
             vertex
             for edge, curve in enumerate(self.edge_curves)
             if curve < 0
             for vertex in self.edge_vertices[edge]
         }
+        sphere_poles = self._sphere_pole_points(pcurves, coedge_edges, face_loops)
         vertex_exact_points: list[tuple[Fraction, Fraction, Fraction] | None] = []
         for vertex, (x, y, z) in enumerate(vertex_points):
+            pole = sphere_poles.get(vertex)
+            if pole is not None:
+                vertex_points[vertex] = tuple(float(value) for value in pole)
+                vertex_exact_points.append(pole)
+                continue
             vertex_exact_points.append(
                 (
                     Fraction.from_float(float(x)),

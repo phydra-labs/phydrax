@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Sequence
 from fractions import Fraction
 from math import inf, isfinite, nextafter
 from numbers import Integral, Real
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, core as jax_core
@@ -24,8 +24,7 @@ from ..._interpolation import (
     TMesh2D,
 )
 from ..._interpolation._tspline import _validated_asts_certificate
-from ..._strict import StrictModule
-from ...typing import ConvertibleToArray, checked
+from ...typing import checked, ConvertibleToArray
 from ._patches import AbstractSurfacePatch
 
 
@@ -56,6 +55,25 @@ def _exact_bank(
 def _float_bank(values: tuple[tuple[Fraction, ...], ...], /) -> np.ndarray:
     return np.asarray(
         [[float(value) for value in row] for row in values], dtype=np.float64
+    )
+
+
+# Patches whose exact transfer chain has been proved, keyed by object identity.
+# Patches are immutable, so one proof covers the object's lifetime; entries hold
+# only weak references and drop when their patch is collected. Edited patches
+# (``eqx.tree_at``, archive restores, traced rebuilds) are new objects.
+_PROVED_TRANSFER_CHAINS: dict[int, weakref.ref[TSplineSurfacePatch]] = {}
+
+
+def _proved_transfer_chain(patch: TSplineSurfacePatch, /) -> bool:
+    proved = _PROVED_TRANSFER_CHAINS.get(id(patch))
+    return proved is not None and proved() is patch
+
+
+def _record_proved_transfer_chain(patch: TSplineSurfacePatch, /) -> None:
+    key = id(patch)
+    _PROVED_TRANSFER_CHAINS[key] = weakref.ref(
+        patch, lambda _: _PROVED_TRANSFER_CHAINS.pop(key, None)
     )
 
 
@@ -430,7 +448,6 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
         u0, u1, v0, v1 = self.mesh.parameter_domain
         return ((float(u0), float(v0)), (float(u1), float(v1)))
 
-
     @property
     def source_authority_id(self, /) -> str:
         """Identify the exact authored root source independent of target refinement."""
@@ -464,6 +481,8 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
     def validate_exact_transfer_chain(self, /) -> None:
         """Revalidate the retained exact source-to-target geometry chain."""
         self.validate_source_bank()
+        if _proved_transfer_chain(self):
+            return
         if len(self.transfer_meshes) != len(self.transfer_plans) + 1 or len(
             self.transfer_basis_certificates
         ) != len(self.transfer_meshes):
@@ -496,6 +515,7 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
             raise ValueError(
                 "Retained exact T-spline target bank differs from its transfer chain."
             )
+        _record_proved_transfer_chain(self)
 
     @property
     def basis_certificate(self, /) -> ASTSCertificate:

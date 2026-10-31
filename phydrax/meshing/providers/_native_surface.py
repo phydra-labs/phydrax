@@ -31,6 +31,8 @@ from phydrax.geometry._source_boundary_records import (
 from phydrax.geometry.brep._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
+    ExactLineCurve,
+    LineCurve,
     SurfaceMappedCurve,
 )
 from phydrax.geometry.reconstruction._core import ReconstructedGeometrySource
@@ -169,6 +171,28 @@ class _ChartMesh:
         tuple[int, int], tuple[int, tuple[int, int, int], Fraction, Fraction]
     ]
     pole_deviation_bound: float = 0.0
+    turn_rows: frozenset[tuple[int, int]] = frozenset()
+
+    def edge_parameters(
+        self,
+        edge: tuple[int, int],
+        curve: int,
+        stored: tuple[Fraction, Fraction],
+        /,
+    ) -> tuple[Fraction | None, Fraction | None]:
+        """Return the source-curve parameters at both ends of one trim edge.
+
+        A turn row (the shared start and end of a self-closing trim) records the
+        start parameter; on the edge whose stored interval ends the turn it
+        carries the end parameter instead.
+        """
+        first, last = (
+            Fraction(1)
+            if (row, curve) in self.turn_rows and Fraction(0) not in stored
+            else self.curve_parameters.get((row, curve))
+            for row in edge
+        )
+        return first, last
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,6 +565,13 @@ def _use_chart_point(
     parameter: Fraction,
     /,
 ) -> tuple[Fraction, Fraction]:
+    # One whole native turn returns to its start chart point exactly.
+    if (
+        parameter == 1
+        and isinstance(use, domain_owner.PatchCurveUse)
+        and use.closes_native_turn()
+    ):
+        parameter = Fraction(0)
     native = float(_use_source_parameter(use, parameter))
     uv = np.asarray(
         use.pcurve.evaluate(jnp.asarray(native, dtype=jnp.float64)),
@@ -555,6 +586,29 @@ def _canonical_use_endpoints(
     use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse, /
 ) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]:
     return _use_chart_point(use, Fraction(0)), _use_chart_point(use, Fraction(1))
+
+
+def _curved_use_box_corners(
+    use: domain_owner.PatchCurveUse,
+    /,
+) -> tuple[tuple[Fraction, Fraction], ...]:
+    """Return the outward chart enclosure corners of one curved trim use."""
+    if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
+        return ()
+    bounds = np.asarray(
+        use.pcurve.bounding_box(min(use.first, use.last), max(use.first, use.last)),
+        dtype=np.float64,
+    )
+    return (
+        (
+            Fraction.from_float(float(bounds[0, 0])),
+            Fraction.from_float(float(bounds[0, 1])),
+        ),
+        (
+            Fraction.from_float(float(bounds[1, 0])),
+            Fraction.from_float(float(bounds[1, 1])),
+        ),
+    )
 
 
 def _interpolate_chart(
@@ -645,14 +699,21 @@ def _chart_inputs(
                     row = point_row(uv)
                     rows.append(row)
                     uv_values.append(uv)
+                    # The end of one whole native turn is its start point; the
+                    # shared row records the start parameter.
+                    recorded = (
+                        Fraction(0)
+                        if parameter == 1 and use.closes_native_turn()
+                        else parameter
+                    )
                     previous_parameter = point_curve_parameters.get((row, use.curve))
-                    if previous_parameter is not None and previous_parameter != parameter:
+                    if previous_parameter is not None and previous_parameter != recorded:
                         raise _failure(
                             "one source trim chart point has conflicting source-curve parameters",
                             category=MeshingFailureCategory.INVALID_SOURCE,
                             entity_ids=(int(use.curve),),
                         )
-                    point_curve_parameters[(row, use.curve)] = parameter
+                    point_curve_parameters[(row, use.curve)] = recorded
                     corner = (
                         domain.curves[use.curve].start
                         if parameter == 0
@@ -796,11 +857,17 @@ def _chart_inputs(
 def _source_curve_parameters(
     triangulation: ConstrainedDelaunayTriangulation,
     point_curve_parameters: dict[tuple[int, int], Fraction],
+    segments: np.ndarray,
     segment_curves: tuple[int, ...],
     segment_parameters: tuple[tuple[Fraction, Fraction], ...],
     /,
 ) -> dict[tuple[int, int], Fraction]:
-    """Compose native CDT constraint ancestry to exact represented source parameters."""
+    """Compose native CDT constraint ancestry to exact represented source parameters.
+
+    A split whose parent is an end of its own constraint segment takes that
+    segment's parameter there: the shared start/end row of a self-closing trim
+    records the start, while its closing segment ends at the end of the turn.
+    """
     points = np.asarray(triangulation.points, dtype=np.float64)
     input_count = triangulation.input_point_count
     sources = np.asarray(triangulation.constraint_sources, dtype=np.int64)
@@ -840,8 +907,13 @@ def _source_curve_parameters(
                 raise ValueError(
                     f"Native CDT source-curve ratio is invalid at vertex {vertex}."
                 )
-            low = parameter(first, curve)
-            high = parameter(last, curve)
+            endpoints = (int(segments[segment, 0]), int(segments[segment, 1]))
+            low, high = (
+                segment_parameters[segment][endpoints.index(parent)]
+                if parent in endpoints
+                else parameter(parent, curve)
+                for parent in (first, last)
+            )
             value = Fraction(float(low + Fraction.from_float(ratio) * (high - low)))
             # The native ratio is only known to binary64 resolution. When one source
             # curve bounds several chart sides (a periodic seam), independent splits
@@ -937,6 +1009,7 @@ def _make_chart_mesh(
     source_parameters = _source_curve_parameters(
         triangulation,
         input_curve_parameters,
+        segments,
         segment_curves,
         segment_parameters,
     )
@@ -1045,9 +1118,16 @@ def _make_chart_mesh(
                 continue
             first_vertex = int(triangle[(opposite + 1) % 3])
             last_vertex = int(triangle[(opposite + 2) % 3])
+            # A segment end takes its segment's parameter: the shared row of a
+            # self-closing trim ends its closing segment at the end of the turn.
+            endpoints = (int(segments[segment, 0]), int(segments[segment, 1]))
             try:
-                first_parameter = source_parameters[(first_vertex, curve)]
-                last_parameter = source_parameters[(last_vertex, curve)]
+                first_parameter, last_parameter = (
+                    segment_parameters[segment][endpoints.index(vertex)]
+                    if vertex in endpoints
+                    else source_parameters[(vertex, curve)]
+                    for vertex in (first_vertex, last_vertex)
+                )
             except KeyError as error:
                 raise ValueError(
                     "Native CDT trim edge endpoints lack canonical source-curve parameters."
@@ -1098,6 +1178,12 @@ def _make_chart_mesh(
         triangles_list = [
             (first, third, second) for first, second, third in triangles_list
         ]
+    turning = {
+        use.curve
+        for loop in domain.patches[patch].loops
+        for use in loop
+        if isinstance(use, domain_owner.PatchCurveUse) and use.closes_native_turn()
+    }
     return _ChartMesh(
         patch,
         chart_points,
@@ -1106,6 +1192,11 @@ def _make_chart_mesh(
         source_parameters,
         boundary_edges,
         pole_deviation_bound,
+        frozenset(
+            key
+            for key, value in input_curve_parameters.items()
+            if key[1] in turning and value == 0
+        ),
     )
 
 
@@ -1218,12 +1309,17 @@ def _chart_bounds(
         surface = domain.patches[patch].surface
         parameter_domain = surface.parameter_domain
         if parameter_domain is None:
+            # Curved trims bulge past their endpoints (a full circle has one), so
+            # their outward chart enclosures bound the root cell too.
             loop_points = tuple(
                 point
                 for loop in domain.patches[patch].loops
                 for use in loop
                 if isinstance(use, domain_owner.PatchCurveUse)
-                for point in _canonical_use_endpoints(use)
+                for point in (
+                    *_canonical_use_endpoints(use),
+                    *_curved_use_box_corners(use),
+                )
             )
             lower = tuple(min(point[axis] for point in loop_points) for axis in range(2))
             upper = tuple(max(point[axis] for point in loop_points) for axis in range(2))
@@ -1496,8 +1592,9 @@ def _chart_point_row(
         return row
     edge, boundary, fraction = boundary_matches[0]
     curve, occurrence, stored_first, stored_last = boundary
-    first_parameter = chart.curve_parameters.get((edge[0], curve))
-    last_parameter = chart.curve_parameters.get((edge[1], curve))
+    first_parameter, last_parameter = chart.edge_parameters(
+        edge, curve, (stored_first, stored_last)
+    )
     if first_parameter is None or last_parameter is None:
         raise _failure(
             "source trim cut edge lost its exact endpoint parameter ancestry",
@@ -2459,9 +2556,13 @@ def _chart_curve_bounds(
 ) -> dict[tuple[int, int], float]:
     """Chord deviation bound of every trim edge; shared intervals are bounded once."""
     bounds: dict[tuple[int, int], float] = {}
-    for edge, (curve, _occurrence, _first, _last) in chart.boundary_edges.items():
-        first = chart.curve_parameters.get((edge[0], curve))
-        last = chart.curve_parameters.get((edge[1], curve))
+    for edge, (
+        curve,
+        _occurrence,
+        stored_first,
+        stored_last,
+    ) in chart.boundary_edges.items():
+        first, last = chart.edge_parameters(edge, curve, (stored_first, stored_last))
         if first is None or last is None or first == last:
             raise _failure(
                 "source trim edge lacks a positive canonical curve interval",
@@ -2700,33 +2801,59 @@ def _refine_charts(
         if not np.any(bad):
             break
 
-        split_edges: set[tuple[object, ...]] = set()
-        cell_offset = 0
+        # Bisect along the longest-edge propagation path of every bad cell:
+        # the split edge is the longest edge of each cell sharing it, so no
+        # cell is bisected across a shorter edge and refinement never creates
+        # thinner cells than it splits. A trim edge is identified through its
+        # canonical curve identity, so every chart using that curve interval
+        # receives the same exact midpoint parameter.
+        identities: list[tuple[_LocalEdgeIdentity, ...]] = []
         for chart in charts:
-            for local_cell, triangle in enumerate(chart.triangles):
-                global_cell = cell_offset + local_cell
-                if not bad[global_cell]:
-                    continue
-                local_edges = (
-                    (triangle[0], triangle[1]),
-                    (triangle[1], triangle[2]),
-                    (triangle[2], triangle[0]),
+            identities.extend(
+                tuple(
+                    _local_edge_identity(chart, first, last)
+                    for first, last in (
+                        (triangle[0], triangle[1]),
+                        (triangle[1], triangle[2]),
+                        (triangle[2], triangle[0]),
+                    )
                 )
-                # Bisect the longest edge. A trim edge is split through its
-                # canonical curve identity, so every chart using that curve
-                # interval receives the same exact midpoint parameter; cells
-                # along a long trim edge otherwise keep its chart extent and
-                # their source bound cannot decrease.
-                longest_index = max(
-                    range(3), key=lambda index: edge_lengths[global_cell, index]
+                for triangle in chart.triangles
+            )
+        cells_by_edge: dict[_LocalEdgeIdentity, list[int]] = {}
+        for cell, cell_identities in enumerate(identities):
+            for identity in cell_identities:
+                cells_by_edge.setdefault(identity, []).append(cell)
+
+        def longest_identity(cell: int, /) -> _LocalEdgeIdentity:
+            index = max(
+                range(3),
+                key=lambda index: (edge_lengths[cell, index], identities[cell][index]),
+            )
+            return identities[cell][index]
+
+        split_edges: set[_LocalEdgeIdentity] = set()
+        for cell in np.flatnonzero(bad).tolist():
+            while True:
+                identity = longest_identity(cell)
+                onward = next(
+                    (
+                        other
+                        for other in cells_by_edge[identity]
+                        if other != cell and longest_identity(other) != identity
+                    ),
+                    None,
                 )
-                split_edges.add(_local_edge_identity(chart, *local_edges[longest_index]))
-            cell_offset += len(chart.triangles)
+                if onward is None:
+                    split_edges.add(identity)
+                    break
+                cell = onward
 
         changed = False
         for chart, mapping in zip(charts, local_rows, strict=True):
             old_triangles = tuple(chart.triangles)
             requested: dict[tuple[int, int], int] = {}
+            curved_rows: set[int] = set()
             all_edges = {
                 _edge_key(edge[0], edge[1])
                 for triangle in old_triangles
@@ -2745,6 +2872,19 @@ def _refine_charts(
                     (first_uv[0] + last_uv[0]) / 2,
                     (first_uv[1] + last_uv[1]) / 2,
                 )
+                boundary = chart.boundary_edges.get(edge)
+                if boundary is not None:
+                    # A curved trim is split at its p-curve point of the midpoint
+                    # parameter; the chord midpoint lies off the source curve.
+                    patch_row, loop_row, use_row = boundary[1]
+                    use = domain.patches[patch_row].loops[loop_row][use_row]
+                    if isinstance(use, domain_owner.PatchCurveUse) and not isinstance(
+                        use.pcurve, (ExactLineCurve, LineCurve)
+                    ):
+                        midpoint_uv = _use_chart_point(
+                            use, (boundary[2] + boundary[3]) / 2
+                        )
+                        curved_rows.add(len(chart.points))
                 represented_midpoint = (
                     float(midpoint_uv[0]),
                     float(midpoint_uv[1]),
@@ -2758,13 +2898,13 @@ def _refine_charts(
                         category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                         entity_ids=(int(chart.patch),),
                     )
-                boundary = chart.boundary_edges.get(edge)
                 local_row = len(chart.points)
                 chart.points.append(midpoint_uv)
                 if boundary is not None:
                     curve, occurrence, source_first, source_last = boundary
-                    first_parameter = chart.curve_parameters.get((first, curve))
-                    last_parameter = chart.curve_parameters.get((last, curve))
+                    first_parameter, last_parameter = chart.edge_parameters(
+                        (first, last), curve, (source_first, source_last)
+                    )
                     if first_parameter is None or last_parameter is None:
                         raise _failure(
                             "source curve refinement lost exact endpoint parameters",
@@ -2866,6 +3006,17 @@ def _refine_charts(
                             (ca, bc, c),
                             (ab, bc, ca),
                         )
+                    )
+            orientation = domain.patches[chart.patch].orientation
+            for child in children:
+                if curved_rows.isdisjoint(child):
+                    continue
+                area = _root_edge_cross(*(chart.points[row] for row in child))
+                if area == 0 or (area > 0) != (orientation > 0):
+                    raise _failure(
+                        "curved trim refinement folded a source chart cell",
+                        category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                        entity_ids=(int(chart.patch),),
                     )
             chart.triangles = children
         if not changed:
@@ -3002,6 +3153,9 @@ def _curve_chains(
                 )
             vertices[curve][parameter] = global_row
             parameters[curve].add(parameter)
+            if (local, curve) in chart.turn_rows:
+                # The start corner of a self-closing trim also ends its turn.
+                vertices[curve][Fraction(1)] = global_row
     edges: list[tuple[int, int]] = []
     owners: list[int] = []
     curve_parameters: list[tuple[int, np.ndarray]] = []
@@ -3192,8 +3346,9 @@ def _surface_construction(
         for (first, last), (curve, occurrence, source_first, source_last) in sorted(
             chart.boundary_edges.items()
         ):
-            first_parameter = chart.curve_parameters.get((first, curve))
-            last_parameter = chart.curve_parameters.get((last, curve))
+            first_parameter, last_parameter = chart.edge_parameters(
+                (first, last), curve, (source_first, source_last)
+            )
             if (
                 first_parameter is None
                 or last_parameter is None

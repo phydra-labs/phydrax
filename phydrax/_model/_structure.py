@@ -2282,7 +2282,27 @@ def model_recipe_array_inventory(
                 implementation=leaf.implementation,
             )
         )
+    if len(inventory) != _recipe_array_count(recipe):
+        raise TypeError(
+            "Model recipe arrays must be PyTree leaves; a registered value stores "
+            "arrays inside a non-PyTree node."
+        )
     return tuple(inventory)
+
+
+def _recipe_array_count(recipe: Mapping[str, Any], /) -> int:
+    count = 0
+    pending: list[Any] = [recipe]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, Mapping):
+            if node.get("kind") in ("array", "prng_key"):
+                count += 1
+                continue
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+    return count
 
 
 def pack_model_array_tree(

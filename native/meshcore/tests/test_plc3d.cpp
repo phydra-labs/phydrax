@@ -2491,6 +2491,9 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
   check_conforming_recovery(result, point_count, faces);
   check_fixed_boundary(result, point_count);
   PHX_CHECK(result.suppression_search.searches > 0);
+  PHX_CHECK(result.suppression_search.merges > 0);
+  PHX_CHECK(result.suppression_search.max_merge_layers >= 1);
+  PHX_CHECK(result.suppression_search.exhausted == 0);
 }
 
 // The distance envelope of the unit tetrahedron at offset 1.5 has grid
