@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import weakref
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from fractions import Fraction
 from typing import Protocol
 
@@ -190,6 +190,11 @@ def _boxes_disjoint(first: np.ndarray, second: np.ndarray, /) -> bool:
     return bool(np.any(first[1] < second[0]) or np.any(second[1] < first[0]))
 
 
+def _box_misses_interior(first: np.ndarray, second: np.ndarray, /) -> bool:
+    """Whether closed box ``first`` misses the open interior of ``second``."""
+    return bool(np.any(first[1] <= second[0]) or np.any(second[1] <= first[0]))
+
+
 type _ChordPiece = tuple[float, float, np.ndarray]
 
 
@@ -345,7 +350,10 @@ def _curve_loops_point_state(
 
 
 def _curve_loops_avoid_box(
-    loops: tuple[tuple[_CurveTrimSegment, ...], ...], box: np.ndarray, /
+    loops: tuple[tuple[_CurveTrimSegment, ...], ...],
+    box: np.ndarray,
+    disjoint: Callable[[np.ndarray, np.ndarray], bool] = _boxes_disjoint,
+    /,
 ) -> bool:
     for loop in loops:
         for segment in loop:
@@ -355,7 +363,7 @@ def _curve_loops_avoid_box(
                 image = _curve_segment_box(segment, first, last)
                 if image is None:
                     return False
-                if _boxes_disjoint(image, box):
+                if disjoint(image, box):
                     continue
                 if parent_box is not None and np.array_equal(image, parent_box):
                     return False
@@ -366,8 +374,8 @@ def _curve_loops_avoid_box(
                 right = _curve_segment_box(segment, middle, last)
                 if left is None or right is None:
                     return False
-                if (not _boxes_disjoint(left, box) and np.array_equal(left, image)) or (
-                    not _boxes_disjoint(right, box) and np.array_equal(right, image)
+                if (not disjoint(left, box) and np.array_equal(left, image)) or (
+                    not disjoint(right, box) and np.array_equal(right, image)
                 ):
                     return False
                 pending.append((middle, last, image))
@@ -577,7 +585,14 @@ class TrimDomain(StrictModule):
             inside.reshape(leading), boundary.reshape(leading), resolved.reshape(leading)
         )
 
-    def classify_boxes(self, boxes: npt.ArrayLike, /) -> TrimClassification:
+    def classify_boxes(
+        self, boxes: npt.ArrayLike, /, *, interior: bool = False
+    ) -> TrimClassification:
+        """Classify closed boxes, or with ``interior`` their open interiors.
+
+        An open interior that no trim curve meets lies on one side of the trim,
+        so trim curves running along its edges do not leave it undecided.
+        """
         boxes_ = np.asarray(boxes, dtype=np.float64)
         if (
             boxes_.ndim < 3
@@ -588,6 +603,7 @@ class TrimDomain(StrictModule):
             raise ValueError(
                 "TrimDomain.classify_boxes requires finite ordered (..., 2, 2) boxes."
             )
+        disjoint = _box_misses_interior if interior else _boxes_disjoint
         leading = boxes_.shape[:-2]
         flat = boxes_.reshape((-1, 2, 2))
         inside = np.zeros((flat.shape[0],), dtype=np.bool_)
@@ -595,7 +611,7 @@ class TrimDomain(StrictModule):
         resolved = np.zeros_like(inside)
         for index, box in enumerate(flat):
             if self.curve_loops:
-                clear = _curve_loops_avoid_box(self.curve_loops, box)
+                clear = _curve_loops_avoid_box(self.curve_loops, box, disjoint)
             else:
                 assert self.outer is not None
                 clear = True
@@ -607,7 +623,7 @@ class TrimDomain(StrictModule):
                         segment_box = np.stack(
                             (np.minimum(start, end), np.maximum(start, end))
                         )
-                        if not _boxes_disjoint(segment_box, box):
+                        if not disjoint(segment_box, box):
                             clear = False
                             break
                     if not clear:

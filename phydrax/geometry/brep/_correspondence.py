@@ -66,6 +66,7 @@ from ._source_correspondence import (
 
 if TYPE_CHECKING:
     from ._intersection import ConicParameterEndpoint
+    from ._trim_helpers import PeriodOffset
 
 
 def _same_source_definition(first: StrictModule, second: StrictModule, /) -> bool:
@@ -463,6 +464,65 @@ def _cylinder_section_pcurve(
         origin_exact=(Fraction(0), height),
         direction_exact=(Fraction(1), Fraction(0)),
     )
+
+
+def torus_circle_pcurve(curve: CircleCurve, patch: TorusPatch, /) -> LineCurve | None:
+    """Propose the torus coordinate line of a latitude or meridian circle.
+
+    The angles are binary64 roundings (a quarter-turn phase or an irrational
+    latitude has no exact chart value), so the candidate is never an exact
+    lift: the face-gap certificate bounds its distance to the source circle.
+    Full turns keep the chart's natural orientation: a forward line starts in
+    ``[0, 2pi)`` and a reversed one in ``(0, 2pi]``.
+    """
+    if curve.ambient_dimension != 3:
+        return None
+    center = np.asarray(patch.center, dtype=np.float64)
+    first_axis = np.asarray(patch.first_axis, dtype=np.float64)
+    second_axis = np.asarray(patch.second_axis, dtype=np.float64)
+    axis = np.asarray(patch.axis, dtype=np.float64)
+    major, minor = float(patch.major_radius), float(patch.minor_radius)
+    circle_center = np.asarray(curve.center, dtype=np.float64)
+    radius = float(curve.radius)
+    cosine = radius * np.asarray(curve.first_axis, dtype=np.float64)
+    sine = radius * np.asarray(curve.second_axis, dtype=np.float64)
+    relative = circle_center - center
+    height = float(relative @ axis)
+    planar = relative - height * axis
+    scale = major + minor + float(np.max(np.abs(center)))
+    resolution = 1.0e-9 * scale
+    tau = 2.0 * np.pi
+
+    def turn(angle: float, sense: float, /) -> float:
+        angle = float(np.mod(angle, tau))
+        return tau if sense < 0.0 and angle == 0.0 else angle
+
+    if (
+        abs(float(cosine @ axis)) <= resolution
+        and abs(float(sine @ axis)) <= resolution
+        and float(np.linalg.norm(planar)) <= resolution
+    ):
+        tube = np.arctan2(height / minor, (radius - major) / minor)
+        longitude = np.arctan2(float(cosine @ second_axis), float(cosine @ first_axis))
+        tangent = -np.sin(longitude) * first_axis + np.cos(longitude) * second_axis
+        sense = 1.0 if float(sine @ tangent) > 0.0 else -1.0
+        return LineCurve((turn(longitude, sense), float(np.mod(tube, tau))), (sense, 0.0))
+    distance = float(np.linalg.norm(planar))
+    if distance == 0.0:
+        return None
+    radial = planar / distance
+    if (
+        abs(height) > resolution
+        or abs(distance - major) > resolution
+        or abs(float(cosine @ np.cross(axis, radial))) > resolution
+        or abs(float(sine @ np.cross(axis, radial))) > resolution
+    ):
+        return None
+    longitude = np.arctan2(float(radial @ second_axis), float(radial @ first_axis))
+    tube = np.arctan2(float(cosine @ axis), float(cosine @ radial))
+    tangent = -np.sin(tube) * radial + np.cos(tube) * axis
+    sense = 1.0 if float(sine @ tangent) > 0.0 else -1.0
+    return LineCurve((float(np.mod(longitude, tau)), turn(tube, sense)), (0.0, sense))
 
 
 def _revolution_circle_pcurve_candidate(
@@ -1012,6 +1072,105 @@ def _surface_chart_coefficients(
         (direction[0], direction[1]),
         exact_box,
     )
+
+
+type _PeriodScalar = Fraction | PeriodOffset
+type _PeriodLineChart = tuple[
+    tuple[_PeriodScalar, _PeriodScalar], tuple[Fraction, Fraction]
+]
+
+
+def _composed_period_line(
+    curve: AbstractCurve, patch: AbstractSurfacePatch, /
+) -> _PeriodLineChart | None:
+    from ._boolean_core import AffinePCurve, PeriodicPCurve
+    from ._trim_helpers import period_offset
+
+    if isinstance(curve, (LineCurve, ExactLineCurve)):
+        coefficients = _affine_curve_coefficients(curve, (Fraction(0), Fraction(0)))
+        if coefficients is None:
+            return None
+        values = (*coefficients[0], *coefficients[1])
+        if len(values) != 4 or not all(isinstance(value, Fraction) for value in values):
+            return None
+        u0, v0, du, dv = cast(tuple[Fraction, Fraction, Fraction, Fraction], values)
+        return (u0, v0), (du, dv)
+    if isinstance(curve, PeriodicPCurve):
+        symbols = patch.native_period_symbols()
+        if curve.patch is not patch or any(
+            shift and symbols[axis] != "two_pi"
+            for axis, shift in enumerate(curve.period_shifts)
+        ):
+            return None
+        inner = _composed_period_line(curve.source_curve, patch)
+        if inner is None:
+            return None
+        (u0, v0), direction = inner
+        shifts = curve.period_shifts
+        return (
+            u0 + period_offset(Fraction(0), Fraction(shifts[0])),
+            v0 + period_offset(Fraction(0), Fraction(shifts[1])),
+        ), direction
+    if isinstance(curve, AffinePCurve):
+        inner = _composed_period_line(curve.curve, patch)
+        if inner is None:
+            return None
+        origin, direction = inner
+        matrix, offset = curve.matrix, curve.offset
+        return (
+            offset[0] + matrix[0][0] * origin[0] + matrix[0][1] * origin[1],
+            offset[1] + matrix[1][0] * origin[0] + matrix[1][1] * origin[1],
+        ), (
+            matrix[0][0] * direction[0] + matrix[0][1] * direction[1],
+            matrix[1][0] * direction[0] + matrix[1][1] * direction[1],
+        )
+    return None
+
+
+def periodic_affine_line_chart(
+    pcurve: AbstractCurve, region: SurfaceRegion, first: float, last: float, /
+) -> _PeriodLineChart | None:
+    """Compose native-period shifts and rational chart maps of one exact line.
+
+    Each origin coordinate is exact in ``Q + Q*(2*pi)``: a rational map of a
+    native period keeps its irrational atom instead of rounding the transported
+    phase. Coordinates must stay inside the region box, except along a
+    ``two_pi`` axis whose box spans at least one binary period, where every
+    angle has a representative in the region.
+    """
+    from ._boolean_core import _pcurve_execution_shadows_match
+    from ._trim_helpers import period_scalar_bounds
+
+    if pcurve.ambient_dimension != 2 or not _pcurve_execution_shadows_match(pcurve):
+        return None
+    domain = pcurve.parameter_domain
+    if domain is not None and (first < domain[0] or last > domain[1]):
+        return None
+    exact_box = _revolution_region_box(region)
+    chart = _composed_period_line(pcurve, region.patch)
+    if chart is None or exact_box is None:
+        return None
+    origin, direction = chart
+    symbols = region.patch.native_period_symbols()
+    periods = region.patch.periods
+    for axis in range(2):
+        period = periods[axis]
+        if (
+            symbols[axis] == "two_pi"
+            and period is not None
+            and exact_box[1][axis] - exact_box[0][axis]
+            >= Fraction.from_float(float(period))
+        ):
+            continue
+        for parameter in (first, last):
+            value = origin[axis] + Fraction.from_float(float(parameter)) * direction[axis]
+            lower, upper = period_scalar_bounds(value)
+            if (
+                Fraction.from_float(float(lower)) < exact_box[0][axis]
+                or Fraction.from_float(float(upper)) > exact_box[1][axis]
+            ):
+                return None
+    return origin, direction
 
 
 def _revolution_profile_curve_lift(
@@ -2834,10 +2993,11 @@ def exact_source_lift(
         )
     ):
         return True
-    if isinstance(region.patch, TorusPatch):
-        return _torus_coordinate_circle_lift(
-            curve, pcurve, region.patch, region, first, last
-        ) or _torus_rooted_circle_lift(curve, pcurve, region.patch, region, first, last)
+    if isinstance(region.patch, TorusPatch) and (
+        _torus_coordinate_circle_lift(curve, pcurve, region.patch, region, first, last)
+        or _torus_rooted_circle_lift(curve, pcurve, region.patch, region, first, last)
+    ):
+        return True
     if isinstance(region.patch, (PlanePatch, CylinderPatch)):
         section_source = _periodic_pcurve_source(pcurve, region.patch)
         if section_source is None:

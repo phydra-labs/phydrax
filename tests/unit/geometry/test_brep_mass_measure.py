@@ -1,6 +1,7 @@
 from math import pi
 
 import numpy as np
+import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep._assembly import (
@@ -11,6 +12,7 @@ from phydrax.geometry.brep._assembly import (
 from phydrax.geometry.brep._boolean import boolean_brep
 from phydrax.geometry.brep._constructors import (
     brep_box,
+    brep_cylinder,
     brep_revolution,
     brep_sphere,
     PlanarProfile,
@@ -83,6 +85,24 @@ def test_box_measure_is_source_bound_and_shell_sign_remains_distinct() -> None:
     assert measured.solid_ids[0].occurrence_path == ("solid-0",)
     _contains(np.asarray(measured.volume_enclosures)[0], 6.0)
     assert brep_shell_volume_sign(model, 0) == 1
+
+
+@pytest.mark.parametrize(
+    ("radius", "height"),
+    ((1.0, 2.0), (0.0315, 0.0015)),
+    ids=("regular", "thin-band"),
+)
+def test_curved_shell_volume_sign_resolves_trims_along_chart_edges(
+    radius: float, height: float
+) -> None:
+    # The lateral trim runs along the chart box edges; a thin band would leave
+    # every closed cell touching it, so only open cell interiors decide.
+    model = brep_cylinder(radius, height, coordinate_contract=_COORDINATES)
+    assert brep_shell_volume_sign(model, 0) == 1
+    assert (
+        brep_shell_volume_sign(brep_sphere(radius, coordinate_contract=_COORDINATES), 0)
+        == 1
+    )
 
 
 def test_curved_sphere_volume_encloses_independent_analytic_reference() -> None:

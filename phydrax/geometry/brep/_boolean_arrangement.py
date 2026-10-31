@@ -24,8 +24,9 @@ from .._interval_enclosure import (
     interval_multiply,
     interval_subtract,
     prepare_interval_function,
+    PreparedIntervalFunction,
 )
-from .._rational import fraction_down, fraction_up, rational_vector
+from .._rational import rational_vector
 from ._boolean_coincidence import CoincidentFaceArc, SourceEdgeFacePairCoverage
 from ._boolean_core import (
     affine_root_endpoint,
@@ -669,6 +670,14 @@ def trim_box_status(domain: TrimDomain, box: np.ndarray) -> int:
     return 1 if decision.inside[0] else -1
 
 
+def _trim_interior_status(domain: TrimDomain, box: np.ndarray, /) -> int:
+    """Trim side of a cell's open interior; trim curves on its edges carry no area."""
+    decision = domain.classify_boxes(box[None], interior=True)
+    if not decision.resolved[0] or decision.boundary[0]:
+        return 0
+    return 1 if decision.inside[0] else -1
+
+
 def _cross2(
     first: tuple[Fraction, Fraction],
     second: tuple[Fraction, Fraction],
@@ -904,6 +913,62 @@ def _source_planar_shell_face_term(
     return Fraction(int(sign), 3) * flux * area
 
 
+def _exact_enclosure(
+    lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[Fraction, Fraction]:
+    if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
+        raise BRepBooleanFailure(
+            "BRepBoolean.shell.volume_sign requires a finite integrand enclosure"
+        )
+    return Fraction.from_float(float(lower)), Fraction.from_float(float(upper))
+
+
+def _volume_cell_bounds(
+    value: PreparedIntervalFunction,
+    gradient: PreparedIntervalFunction,
+    box: np.ndarray,
+    status: int,
+    /,
+) -> tuple[Fraction, Fraction]:
+    """Enclose one chart cell's divergence-theorem integral exactly.
+
+    A cell inside the trim uses the centered form: ``f(x) - f(c)`` is the
+    gradient at an intermediate point dotted with ``x - c``, so with the
+    gradient enclosed by ``m +- r`` the integral lies in
+    ``f(c) A + sum_k (m_k M_k +- r_k |M|_k)`` where ``M_k`` and ``|M|_k`` are
+    the exact first and absolute first moments of ``x_k - c_k``. The width is
+    second order in the cell size. A cell crossing the trim encloses its
+    partial integral by the zero-extended range times the cell area.
+    """
+    lower = tuple(Fraction.from_float(float(entry)) for entry in box[0])
+    upper = tuple(Fraction.from_float(float(entry)) for entry in box[1])
+    widths = (upper[0] - lower[0], upper[1] - lower[1])
+    area = widths[0] * widths[1]
+    if status == 0:
+        bounds = evaluate_interval(value, box[0][None], box[1][None])
+        low, high = _exact_enclosure(bounds[0][0], bounds[1][0])
+        return min(low, Fraction(0)) * area, max(high, Fraction(0)) * area
+    center = box[0] + 0.5 * (box[1] - box[0])
+    center_bounds = evaluate_interval(value, center[None], center[None])
+    low, high = _exact_enclosure(center_bounds[0][0], center_bounds[1][0])
+    low, high = low * area, high * area
+    gradient_bounds = evaluate_interval(gradient, box[0][None], box[1][None])
+    for axis in range(2):
+        point = Fraction.from_float(float(center[axis]))
+        other = widths[1 - axis]
+        first_moment = other * widths[axis] * ((lower[axis] + upper[axis]) / 2 - point)
+        absolute_moment = (
+            other * ((point - lower[axis]) ** 2 + (upper[axis] - point) ** 2) / 2
+        )
+        slope_low, slope_high = _exact_enclosure(
+            gradient_bounds[0][0][axis], gradient_bounds[1][0][axis]
+        )
+        middle, radius = (slope_low + slope_high) / 2, (slope_high - slope_low) / 2
+        low += middle * first_moment - radius * absolute_moment
+        high += middle * first_moment + radius * absolute_moment
+    return low, high
+
+
 def _shell_volume_sign(
     geometry: BRepGeometry,
     patches: tuple[AbstractSurfacePatch, ...],
@@ -912,11 +977,24 @@ def _shell_volume_sign(
     signs: np.ndarray,
     faces: tuple[int, ...],
 ) -> int:
-    functions = []
-    cell_faces = []
+    """Certify the oriented shell volume sign from ``x . (S_u x S_v) / 3``.
+
+    Planar faces contribute exactly. Curved-face cell enclosures are summed in
+    exact arithmetic; each round splits every cell at least half as wide as
+    the widest, and sub-cells inherit a decided trim status.
+    """
+    functions: list[tuple[PreparedIntervalFunction, PreparedIntervalFunction]] = []
+    cell_signs: list[int] = []
     cell_domains: list[TrimDomain] = []
-    cells = []
+    cells: list[tuple[int, np.ndarray, int, tuple[Fraction, Fraction]]] = []
     planar_term = Fraction(0)
+
+    def bounded(index: int, box: np.ndarray, status: int, /) -> tuple[Fraction, Fraction]:
+        if status < 0:
+            return Fraction(0), Fraction(0)
+        low, high = _volume_cell_bounds(*functions[index], box, status)
+        return (low, high) if cell_signs[index] > 0 else (-high, -low)
+
     for face in faces:
         box = np.asarray(bounds[face], dtype=np.float64)
         exact_term = _source_planar_shell_face_term(
@@ -940,55 +1018,23 @@ def _shell_volume_sign(
             frame = jax.jacfwd(evaluator.evaluate)(uv)
             return (point @ jnp.cross(frame[:, 0], frame[:, 1])) / 3.0
 
-        index = len(functions)
+        constants = child_coefficient_enclosures(evaluator)
         functions.append(
-            prepare_interval_function(
-                integrand,
-                2,
-                batch_capacity=1,
-                constant_bounds=child_coefficient_enclosures(evaluator),
+            (
+                prepare_interval_function(
+                    integrand, 2, batch_capacity=1, constant_bounds=constants
+                ),
+                prepare_interval_function(
+                    jax.grad(integrand), 2, batch_capacity=1, constant_bounds=constants
+                ),
             )
         )
-        cell_faces.append(face)
-        cells.append((index, box))
+        cell_signs.append(1 if float(signs[face]) > 0.0 else -1)
         cell_domains.append(domain)
-
-    def cell_contribution(
-        index: int,
-        box: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        face = cell_faces[index]
-        status = trim_box_status(cell_domains[index], box)
-        if status < 0:
-            return np.asarray(0.0, np.float64), np.asarray(0.0, np.float64)
-        lower, upper = evaluate_interval(functions[index], box[0][None], box[1][None])
-        integrand_bounds = lower[0], upper[0]
-        face_sign = float(signs[face])
-        if face_sign < 0.0:
-            integrand_bounds = -integrand_bounds[1], -integrand_bounds[0]
-        if status == 0:
-            integrand_bounds = (
-                np.minimum(integrand_bounds[0], 0.0),
-                np.maximum(integrand_bounds[1], 0.0),
-            )
-        area = interval_multiply(
-            (
-                np.nextafter(box[1, 0] - box[0, 0], -np.inf),
-                np.nextafter(box[1, 0] - box[0, 0], np.inf),
-            ),
-            (
-                np.nextafter(box[1, 1] - box[0, 1], -np.inf),
-                np.nextafter(box[1, 1] - box[0, 1], np.inf),
-            ),
-        )
-        contribution = interval_multiply(integrand_bounds, area)
-        return (
-            np.asarray(contribution[0], dtype=np.float64),
-            np.asarray(contribution[1], dtype=np.float64),
-        )
-
-    bounded_cells = [(index, box, cell_contribution(index, box)) for index, box in cells]
-    if not bounded_cells:
+        index = len(functions) - 1
+        status = _trim_interior_status(domain, box)
+        cells.append((index, box, status, bounded(index, box, status)))
+    if not cells:
         if planar_term > 0:
             return 1
         if planar_term < 0:
@@ -996,38 +1042,43 @@ def _shell_volume_sign(
         raise BRepBooleanFailure(
             "BRepBoolean.shell.volume_sign has zero exact planar shell volume"
         )
-    planar_bounds = (
-        np.asarray(fraction_down(planar_term), dtype=np.float64),
-        np.asarray(fraction_up(planar_term), dtype=np.float64),
-    )
     while True:
-        total = planar_bounds
-        widths = []
-        for _, _, contribution in bounded_cells:
-            total = interval_add(total, contribution)
-            widths.append(float(contribution[1] - contribution[0]))
-        if np.all(np.greater(total[0], 0.0)):
+        total_low = planar_term + sum((cell[3][0] for cell in cells), Fraction(0))
+        total_high = planar_term + sum((cell[3][1] for cell in cells), Fraction(0))
+        if total_low > 0:
             return 1
-        if np.all(np.less(total[1], 0.0)):
+        if total_high < 0:
             return -1
-        if np.all(np.equal(total[0], 0.0)) and np.all(np.equal(total[1], 0.0)):
+        if total_low == total_high == 0:
             raise BRepBooleanFailure(
                 "BRepBoolean.shell.volume_sign has an exact zero shell volume"
             )
-        worst = int(np.argmax(widths))
-        index, box, _ = bounded_cells.pop(worst)
-        axis = int(np.argmax(box[1] - box[0]))
-        lower = float(box[0, axis])
-        upper = float(box[1, axis])
-        middle = lower + 0.5 * (upper - lower)
-        if not lower < middle < upper:
-            raise BRepBooleanFailure(
-                "BRepBoolean.shell.volume_sign remains unresolved at parameter representability"
-            )
-        first, second = box.copy(), box.copy()
-        first[1, axis], second[0, axis] = middle, middle
-        bounded_cells.append((index, first, cell_contribution(index, first)))
-        bounded_cells.append((index, second, cell_contribution(index, second)))
+        threshold = max(cell[3][1] - cell[3][0] for cell in cells) / 2
+        refined: list[tuple[int, np.ndarray, int, tuple[Fraction, Fraction]]] = []
+        for index, box, status, contribution in cells:
+            if contribution[1] - contribution[0] < threshold:
+                refined.append((index, box, status, contribution))
+                continue
+            axis = int(np.argmax(box[1] - box[0]))
+            lower = float(box[0, axis])
+            upper = float(box[1, axis])
+            middle = lower + 0.5 * (upper - lower)
+            if not lower < middle < upper:
+                raise BRepBooleanFailure(
+                    "BRepBoolean.shell.volume_sign remains unresolved at parameter representability"
+                )
+            first, second = box.copy(), box.copy()
+            first[1, axis], second[0, axis] = middle, middle
+            for child in (first, second):
+                child_status = (
+                    status
+                    if status
+                    else _trim_interior_status(cell_domains[index], child)
+                )
+                refined.append(
+                    (index, child, child_status, bounded(index, child, child_status))
+                )
+        cells = refined
 
 
 def _edge_spatial_roots(

@@ -13,7 +13,7 @@ from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry._atlas import BoundaryAtlas
 from phydrax.geometry.brep._assembly import BRepAffinePlacement
-from phydrax.geometry.brep._boolean_core import AffinePCurve
+from phydrax.geometry.brep._boolean_core import AffinePCurve, PeriodicPCurve
 from phydrax.geometry.brep._conic_gaps import native_face_gap_squared
 from phydrax.geometry.brep._constructors import (
     brep_planar_face,
@@ -36,6 +36,7 @@ from phydrax.geometry.brep._patches import (
     ExactLineCurve,
     LineCurve,
     PlanePatch,
+    SurfaceIsoparametricCurve,
     TorusPatch,
 )
 from phydrax.geometry.brep._placed import PlacedCurve, PlacedSurface
@@ -179,6 +180,41 @@ def test_torus_ring_lift_binds_exact_meridian_root(
         assert native_face_gap_squared(upper_ring, chart, region, 0.0, 2 * np.pi) == 0
         rounded_chart = LineCurve((0.0, np.pi / 2), (1.0, 0.0))
         assert not exact_source_lift(upper_ring, rounded_chart, region, 0.0, 2 * np.pi)
+
+
+@pytest.mark.parametrize(
+    ("first_axis", "certified"),
+    (((0.0, -1.0, 0.0), True), ((0.0, 1.0, 0.0), False)),
+    ids=("quarter-turn-frame", "half-turn-off"),
+)
+def test_torus_quarter_phase_ring_and_seam_have_source_gap_proofs(
+    first_axis: tuple[float, float, float], certified: bool
+) -> None:
+    # Binary64 radii as authored by a STEP washer bead: the outer ring radius is
+    # the rounded major + minor sum, so the ring is certified, not exact.
+    patch = TorusPatch(
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 0.03, 0.0015
+    )
+    ring = CircleCurve((0.0, 0.0, 0.0), first_axis, (1.0, 0.0, 0.0), 0.0315)
+    # u = -pi/2 + t: a rational map of one native period keeps the phase exact.
+    chart = PeriodicPCurve(
+        AffinePCurve(
+            PeriodicPCurve(LineCurve((0.0, 0.0), (-4.0, 0.0)), patch, (1, 0)),
+            np.asarray(((Fraction(-1, 4), 0), (0, 1)), dtype=object),
+            (0, 0),
+        ),
+        patch,
+        (0, 0),
+    )
+    region = SurfaceRegion(
+        patch, np.asarray(((-4.0e-16, 0.0), (2 * np.pi, 2.85)), dtype=np.float64)
+    )
+    gap = native_face_gap_squared(ring, chart, region, 0.5 * np.pi, 2 * np.pi)
+    assert gap is not None
+    assert (float(gap) <= 1.0e-28) is certified
+    seam = SurfaceIsoparametricCurve(patch, 0, 0.0, parameter_range=(0.0, 2.85))
+    closing_sheet = PeriodicPCurve(LineCurve((0.0, 0.0), (0.0, 1.0)), patch, (1, 0))
+    assert native_face_gap_squared(seam, closing_sheet, region, 0.0, 2.85) == 0
 
 
 @pytest.mark.parametrize(
