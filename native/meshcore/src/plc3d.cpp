@@ -1998,6 +1998,67 @@ class PlcRecoveryBuilder {
     return false;
   }
 
+  // True when a vertex other than a, b, c lies in the closed diametral ball
+  // of triangle abc (the smallest ball through a, b, c, centred on its
+  // plane), decided exactly on witnessed positions: with u = b - a,
+  // v = c - a, m = u x v and x = w - a, the centre is a + o with
+  // 2 |m|^2 o = |u|^2 (v x m) + |v|^2 (m x u), and w lies in the closed ball
+  // iff |x - o|^2 <= |o|^2, i.e. |x|^2 |m|^2 - x . (2 |m|^2 o) <= 0. A
+  // subface whose ball holds no other vertex is strongly Delaunay: it is a
+  // face of every Delaunay tetrahedralization of the vertices.
+  bool subface_encroached(int32_t a, int32_t b, int32_t c) const {
+    Expansion pa[3], u[3], v[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      pa[axis] = coordinate(ref(a), axis);
+      u[axis] = coordinate(ref(b), axis) - pa[axis];
+      v[axis] = coordinate(ref(c), axis) - pa[axis];
+    }
+    const auto cross = [](const Expansion* p, const Expansion* q, Expansion* out) {
+      out[0] = p[1] * q[2] - p[2] * q[1];
+      out[1] = p[2] * q[0] - p[0] * q[2];
+      out[2] = p[0] * q[1] - p[1] * q[0];
+    };
+    const auto dot = [](const Expansion* p, const Expansion* q) {
+      return p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+    };
+    Expansion m[3], vm[3], mu[3], centre[3];
+    cross(u, v, m);
+    cross(v, m, vm);
+    cross(m, u, mu);
+    const Expansion uu = dot(u, u), vv = dot(v, v), mm = dot(m, m);
+    for (int axis = 0; axis < 3; ++axis) centre[axis] = uu * vm[axis] + vv * mu[axis];
+    // Carrier box of the ball, widened for the roundings of witnessed carriers.
+    double carrier_centre[3], lower[3], upper[3];
+    const double scale = 2.0 * mm.estimate();
+    if (!(scale > 0.0)) return true;
+    for (int axis = 0; axis < 3; ++axis) {
+      carrier_centre[axis] = point(a)[axis] + centre[axis].estimate() / scale;
+    }
+    const double radius = std::sqrt(geometry::squared_distance(carrier_centre, point(a)));
+    for (int axis = 0; axis < 3; ++axis) {
+      const double margin =
+          radius * (1.0 + 0x1p-20) + 0x1p-40 * (radius + std::fabs(carrier_centre[axis]));
+      lower[axis] = carrier_centre[axis] - margin;
+      upper[axis] = carrier_centre[axis] + margin;
+    }
+    const int32_t count = static_cast<int32_t>(work_points_.size() / 3);
+    for (int32_t vertex = 0; vertex < count; ++vertex) {
+      if (vertex == a || vertex == b || vertex == c ||
+          alive_[static_cast<std::size_t>(vertex)] == 0) {
+        continue;
+      }
+      const double* w = point(vertex);
+      if (w[0] < lower[0] || w[0] > upper[0] || w[1] < lower[1] || w[1] > upper[1] ||
+          w[2] < lower[2] || w[2] > upper[2]) {
+        continue;
+      }
+      Expansion x[3];
+      for (int axis = 0; axis < 3; ++axis) x[axis] = coordinate(ref(vertex), axis) - pa[axis];
+      if ((dot(x, x) * mm - dot(x, centre)).sign() <= 0) return true;
+    }
+    return false;
+  }
+
   // Splits chain interval `interval` of source edge `edge` at the exactly
   // witnessed point S = A + t (B - A) of its authored segment AB, with t from
   // split_parameter. S is a dyadic rational point; its carrier is the
@@ -3574,6 +3635,18 @@ class PlcRecoveryBuilder {
           }
           failure_ = prior_failure;
         }
+        // A strongly Delaunay subface is missing only because local recovery
+        // edits (planar flips, star-shaped insertions) left the complex
+        // non-Delaunay; it reappears in a rebuild, so it is not split. Such
+        // a rebuild follows a point insertion at most once, so rebuild-only
+        // restarts cannot repeat.
+        if (local_edits_ && subface_rebuild_points_ != candidate_.points.size() &&
+            !subface_encroached(key[0], key[1], key[2])) {
+          subface_rebuild_points_ = candidate_.points.size();
+          incremental_triangulation_ready_ = false;
+          restart = true;
+          return PHX_MC_OK;
+        }
         const std::size_t points_before = candidate_.points.size();
         bool split = false;
         const int32_t split_status = split_source_face(key, source, split);
@@ -4916,6 +4989,8 @@ class PlcRecoveryBuilder {
   std::vector<int32_t> volume_output_;
   // True once a local recovery edit has left the complex non-Delaunay.
   bool local_edits_ = false;
+  // Point count at the last rebuild requested for a strongly Delaunay subface.
+  std::size_t subface_rebuild_points_ = 0;
   // Candidate points moved off the boundary by Steiner suppression.
   std::vector<char> suppressed_;
   // Published index of each candidate point (-1 when suppressed).
