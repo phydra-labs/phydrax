@@ -4306,13 +4306,13 @@ def test_native_owner_local_fv_archive_cold_repartitions_and_continues(
     from pathlib import Path
 
     from phydrax import config as pxconfig
-    from phydrax._array_archive import read_array_archive, write_array_archive
     from phydrax._execution_launch import (
         launch_local_processes,
         LocalProcessLaunchError,
         LocalProcessLaunchPlan,
     )
     from phydrax._model._structure import FiniteVolumeRuntimeStateArchiveRecipe
+    from phydrax.meshing._model_codec import read_model_archive, write_model_archive
 
     if jax.process_count() != 1:
         pytest.skip("The cold FV coordinator must run outside a live process group.")
@@ -4411,8 +4411,7 @@ def test_native_owner_local_fv_archive_cold_repartitions_and_continues(
         if rank != 0:
             shutil.copyfile(source, destination)
             continue
-        manifest, arrays = read_array_archive(source, limits=None)
-        manifest.pop("arrays")
+        manifest, arrays = read_model_archive(source, limits=None)
 
         def tamper_state_identity(node: Any) -> bool:
             if isinstance(node, dict):
@@ -4440,7 +4439,7 @@ def test_native_owner_local_fv_archive_cold_repartitions_and_continues(
             return False
 
         assert tamper_state_identity(manifest["model_recipe"])
-        write_array_archive(destination, manifest=manifest, arrays=arrays, limits=None)
+        write_model_archive(destination, manifest=manifest, arrays=arrays, limits=None)
 
     with pytest.raises(LocalProcessLaunchError) as refused:
         launch_phase(tampered_root, "read")
