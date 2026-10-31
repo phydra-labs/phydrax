@@ -224,10 +224,11 @@ generic conversion that checks endpoints only and confers no exact source author
 
 `MeshingDomain.stratum_entity_ids(dimension)` returns every canonical source key
 of one stratum in slot order, the same keys `entity_id(dimension, slot)` returns
-one at a time. Code that walks many slots reads the stratum once: each method
-call on an Equinox module rebuilds a bound-method pytree over the whole domain,
-so per-slot calls cost entities times patches. Scope banks are prepared this way,
-and their numeric IDs and the `domain_id` are unchanged.
+one at a time. Domain methods bind as plain Python methods rather than Equinox
+bound-method pytrees, which flatten the whole domain on every call, and
+`resolve_entity_id` bisects a per-stratum key index instead of fingerprinting
+every slot. Per-entity loops over a domain with one patch per source face
+therefore stay linear. Scope-bank numeric IDs and the `domain_id` are unchanged.
 
 BRep material regions bind to their source solid occurrences, and each region's
 full oriented face/sign boundary must match the supplied topology. Missing
