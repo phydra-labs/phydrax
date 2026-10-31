@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from math import hypot
 from numbers import Integral, Real
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -35,6 +35,11 @@ from ._assembly import (
 from ._intersection import ConicRootLineEndpointWitness, RootEndpoint
 from ._patches import AbstractSurfacePatch, BRepCurve, ExactLineCurve, PlanePatch
 from ._root_bindings import BRepVertexRoot
+
+
+if TYPE_CHECKING:
+    from .._meshing_domain import MeshingDomain
+    from ..multiregion_surface import MultiRegionSurfaceTopology
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -566,9 +571,7 @@ def _root_binding_payloads(
 
     return (
         tuple(
-            None
-            if root is None
-            else execution_payload(root, vertex_root_payload(root))
+            None if root is None else execution_payload(root, vertex_root_payload(root))
             for root in vertices
         ),
         tuple(
@@ -595,16 +598,13 @@ def _root_binding_payloads(
 def _same_recomputed_evidence(source: object, rebuilt: object, name: str, /) -> None:
     if (
         type(source) is not type(rebuilt)
-        or jax.tree_util.tree_structure(source)
-        != jax.tree_util.tree_structure(rebuilt)
+        or jax.tree_util.tree_structure(source) != jax.tree_util.tree_structure(rebuilt)
         or array_tree_fingerprint(source) != array_tree_fingerprint(rebuilt)
     ):
         raise ValueError(f"{name} no longer matches its recomputed source evidence.")
 
 
-def _validate_surface_carrier_source(
-    patch: Any, cache: dict[int, Any], /
-) -> None:
+def _validate_surface_carrier_source(patch: Any, cache: dict[int, Any], /) -> None:
     key = id(patch)
     if key not in cache:
         from ._patches import _validate_surface_source_shadows
@@ -613,9 +613,7 @@ def _validate_surface_carrier_source(
         cache[key] = patch
 
 
-def _validate_curve_carrier_source(
-    curve: Any, cache: dict[int, Any], /
-) -> None:
+def _validate_curve_carrier_source(curve: Any, cache: dict[int, Any], /) -> None:
     key = id(curve)
     if key not in cache:
         from ._patches import _validate_curve_source_shadows
@@ -624,9 +622,7 @@ def _validate_curve_carrier_source(
         cache[key] = curve
 
 
-def _rebuild_surface_region(
-    region: Any, cache: dict[int, Any] | None = None, /
-) -> Any:
+def _rebuild_surface_region(region: Any, cache: dict[int, Any] | None = None, /) -> Any:
     cache = {} if cache is None else cache
     key = id(region)
     if key in cache:
@@ -677,9 +673,7 @@ def _rebuild_intersection_curve(
     return rebuilt
 
 
-def _rebuild_curve_carrier(
-    curve: Any, cache: dict[int, Any] | None = None, /
-) -> Any:
+def _rebuild_curve_carrier(curve: Any, cache: dict[int, Any] | None = None, /) -> Any:
     cache = {} if cache is None else cache
     key = id(curve)
     if key in cache:
@@ -792,9 +786,7 @@ def _rebuild_intersection_root(root: Any, cache: dict[int, Any] | None = None, /
     return rebuilt
 
 
-def _rebuild_root_support(
-    root: Any, cache: dict[int, Any] | None = None, /
-) -> Any:
+def _rebuild_root_support(root: Any, cache: dict[int, Any] | None = None, /) -> Any:
     cache = {} if cache is None else cache
     key = id(root)
     if key in cache:
@@ -824,6 +816,7 @@ def _rebuild_vertex_root(
         return cache[key]
     from ._intersection_curve import SurfaceRegion
     from ._root_bindings import (
+        BRepBranchNodeRoots,
         BRepConicVertex,
         BRepCurveSurfaceLift,
         BRepPlacedVertex,
@@ -897,12 +890,27 @@ def _rebuild_vertex_root(
         _same_recomputed_evidence(lift, rebuilt_lift, "BRepCurveSurfaceLift")
         cache[lift_key] = rebuilt_lift
         lifts.append(rebuilt_lift)
+    branch_node = None
+    if root.branch_node is not None:
+        from ._intersection import BranchRootEndpoint
+
+        endpoints = []
+        for endpoint in root.branch_node.endpoints:
+            rebuilt_endpoint = _rebuild_endpoint_root(endpoint, cache)
+            if not isinstance(rebuilt_endpoint, BranchRootEndpoint):
+                raise TypeError("A branch-node witness must keep branch endpoints.")
+            endpoints.append(rebuilt_endpoint)
+        branch_node = BRepBranchNodeRoots(
+            _rebuild_intersection_root(root.branch_node.node, cache), tuple(endpoints)
+        )
+        _same_recomputed_evidence(root.branch_node, branch_node, "BRepBranchNodeRoots")
     rebuilt = BRepVertexRoot(
         primary(root.primary),
         aliases=aliases,
         spatial_root=spatial,
         joint_root=joint,
         source_edge_lifts=tuple(lifts),
+        branch_node=branch_node,
     )
     _same_recomputed_evidence(root, rebuilt, "BRepVertexRoot")
     cache[key] = rebuilt
@@ -1057,9 +1065,7 @@ def _brep_geometry_identity(geometry: BRepGeometry, /) -> str:
             },
             "assembly": {
                 "source": geometry.assembly_graph.identity_payload(),
-                "structure": str(
-                    jax.tree_util.tree_structure(geometry.assembly_graph)
-                ),
+                "structure": str(jax.tree_util.tree_structure(geometry.assembly_graph)),
                 "arrays": array_tree_fingerprint(geometry.assembly_graph),
             },
         }
@@ -1241,17 +1247,11 @@ def _validate_root_bindings(
                 return None
             expected_point: tuple[ExactScalar, ExactScalar, ExactScalar] = (
                 center[0]
-                + offset_radius
-                * root.root.sine_exact
-                * profile.second_axis_exact[0],
+                + offset_radius * root.root.sine_exact * profile.second_axis_exact[0],
                 center[1]
-                + offset_radius
-                * root.root.sine_exact
-                * profile.second_axis_exact[1],
+                + offset_radius * root.root.sine_exact * profile.second_axis_exact[1],
                 center[2]
-                + offset_radius
-                * root.root.sine_exact
-                * profile.second_axis_exact[2],
+                + offset_radius * root.root.sine_exact * profile.second_axis_exact[2],
             )
             if expected_point != root.point_exact:
                 return None
@@ -1265,18 +1265,14 @@ def _validate_root_bindings(
                 return None
             first = curve.first_axis_exact
             second = curve.second_axis_exact
-            delta = tuple(
-                point[axis] - curve.center_exact[axis] for axis in range(3)
-            )
+            delta = tuple(point[axis] - curve.center_exact[axis] for axis in range(3))
 
             def dot(
                 left: tuple[ExactScalar, ...],
                 right: tuple[ExactScalar, ...],
                 /,
             ) -> ExactScalar:
-                return sum(
-                    (a * b for a, b in zip(left, right, strict=True)), Fraction(0)
-                )
+                return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
 
             g00, g01, g11 = dot(first, first), dot(first, second), dot(second, second)
             determinant = g00 * g11 - g01 * g01
@@ -1284,21 +1280,17 @@ def _validate_root_bindings(
                 return None
             first_coordinate = dot(delta, first)
             second_coordinate = dot(delta, second)
-            cosine = (
-                first_coordinate * g11 - second_coordinate * g01
-            ) / (determinant * curve.radius_exact)
-            sine = (
-                second_coordinate * g00 - first_coordinate * g01
-            ) / (determinant * curve.radius_exact)
+            cosine = (first_coordinate * g11 - second_coordinate * g01) / (
+                determinant * curve.radius_exact
+            )
+            sine = (second_coordinate * g00 - first_coordinate * g01) / (
+                determinant * curve.radius_exact
+            )
             reconstructed = tuple(
-                curve.radius_exact
-                * (cosine * first[axis] + sine * second[axis])
+                curve.radius_exact * (cosine * first[axis] + sine * second[axis])
                 for axis in range(3)
             )
-            if (
-                cosine * cosine + sine * sine != 1
-                or reconstructed != delta
-            ):
+            if cosine * cosine + sine * sine != 1 or reconstructed != delta:
                 return None
             return point[0], point[1], point[2]
         parameter_exact = (
@@ -1308,10 +1300,7 @@ def _validate_root_bindings(
         )
         if parameter_exact is not None:
             source_point = exact_curve_parameter_point(curve, parameter_exact)
-            if (
-                source_point is not None
-                and tuple(source_point) == root.point_exact
-            ):
+            if source_point is not None and tuple(source_point) == root.point_exact:
                 return source_point[0], source_point[1], source_point[2]
         if not isinstance(curve, SurfaceMappedCurve):
             return None
@@ -2196,9 +2185,7 @@ def _certify_edge_face_gap_bounds(
                 patches[face],
             )
             region_box = (
-                patch.parameter_domain
-                if bounds_array is None
-                else bounds_array[face]
+                patch.parameter_domain if bounds_array is None else bounds_array[face]
             )
             if region_box is None:
                 region_box = ((0.0, 0.0), (1.0, 1.0))
@@ -3044,8 +3031,7 @@ def _brep_model_source_revision(
     /,
 ) -> str:
     trim_identity = tuple(
-        None if domain is None else domain.identity_payload()
-        for domain in trim_domains
+        None if domain is None else domain.identity_payload() for domain in trim_domains
     )
     return canonical_fingerprint(
         {
@@ -3354,7 +3340,6 @@ def _validate_native_period_patch_bindings(
                     )
 
 
-
 def _validate_degenerate_coedge_poles(
     geometry: BRepGeometry,
     patches: tuple[AbstractSurfacePatch, ...],
@@ -3423,6 +3408,33 @@ def _validate_model_source_bindings(
         raise ValueError(
             "An undeclared source coedge face gap must have an exact zero proof."
         )
+
+
+def _tessellation_multiregion_surface(
+    domain: MeshingDomain, tessellation: BRepTessellation, /
+) -> MultiRegionSurfaceTopology | None:
+    """Label tessellation triangles by the domain regions on their patch sides."""
+    witness = tessellation.source_chart_witness
+    witness_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(witness.cell_global_ids, dtype=np.int64).tolist()
+        )
+    }
+    triangle_ids = np.asarray(tessellation.triangle_global_ids, dtype=np.int64)
+    triangle_patches = np.asarray(witness.patches, dtype=np.int64)[
+        np.asarray(
+            [witness_rows[identifier] for identifier in triangle_ids.tolist()],
+            dtype=np.int64,
+        )
+    ]
+    return domain.multiregion_surface(
+        np.asarray(tessellation.vertices, dtype=np.float64),
+        np.asarray(tessellation.triangles, dtype=np.int64),
+        triangle_patches,
+        vertex_global_ids=np.asarray(tessellation.vertex_global_ids, dtype=np.int64),
+        cell_global_ids=triangle_ids,
+    )
 
 
 class BRepModel(StrictModule):
@@ -3623,11 +3635,26 @@ class BRepModel(StrictModule):
             frozenset(geometry.topology.solid_faces[value.solid_index])
             for value in occurrences
         )
-        expected_pairs = {
-            (face, occurrence)
-            for occurrence, faces in enumerate(occurrence_faces)
-            for face in faces
-        }
+        # A face shared by occurrences with one exact placement is one placed copy,
+        # tessellated once under the first such occurrence (`MeshingDomain` slots).
+        copy_index: dict[tuple[tuple[Fraction, ...], ...], int] = {}
+        occurrence_copies = np.asarray(
+            [
+                copy_index.setdefault(value.placement.matrix, index)
+                for index, value in enumerate(occurrences)
+            ]
+            + [-1],
+            dtype=np.int64,
+        )
+        copy_owner: dict[tuple[int, int], int] = {}
+        for occurrence, faces in enumerate(occurrence_faces):
+            for face in faces:
+                copy_owner.setdefault(
+                    (face, int(occurrence_copies[occurrence])), occurrence
+                )
+        expected_pairs = set(
+            (face, occurrence) for (face, _), occurrence in copy_owner.items()
+        )
         instantiated_faces = {face for face, _ in expected_pairs}
         expected_pairs.update(
             (face, -1) for face in range(len(patches)) if face not in instantiated_faces
@@ -3646,9 +3673,13 @@ class BRepModel(StrictModule):
                 raise ValueError(
                     "Tessellation face is not a member of its source occurrence."
                 )
-            if np.any(vertex_occurrences[triangles[row]] != occurrence):
+            # Index -1 (unplaced) maps to the trailing -1 copy.
+            if np.any(
+                occurrence_copies[vertex_occurrences[triangles[row]]]
+                != occurrence_copies[occurrence]
+            ):
                 raise ValueError(
-                    "Tessellation triangles cannot weld vertices across source occurrences."
+                    "Tessellation triangles cannot weld vertices across placed source copies."
                 )
         for dimension, count in (
             (0, geometry.topology.num_vertices),
@@ -3866,6 +3897,7 @@ class BRepModel(StrictModule):
             vertex_global_ids=np.asarray(tessellation.vertex_global_ids, dtype=np.int64),
             cell_global_ids=triangle_ids,
             numeric_version=self.source_revision,
+            multiregion_surface=_tessellation_multiregion_surface(domain, tessellation),
         )
         coordinate_geometry = CellGeometrySpec.affine(mesh)
         root_cell_ids = {
@@ -4157,6 +4189,22 @@ class BRepModel(StrictModule):
         return tuple(
             BRepEntityId(self.source_id, self.source_revision, "solid", index)
             for index in range(self.topology.num_solids)
+        )
+
+    def tessellation_multiregion_surface(self, /) -> MultiRegionSurfaceTopology | None:
+        """Region-labeled topology of this model's tessellation.
+
+        Each triangle carries the solid occurrences on both sides of its source
+        face: a face shared by two solids is one triangulation with two sides,
+        and every solid's closed boundary is its side selection. ``None`` when no
+        face separates two solid occurrences.
+        """
+        from .._meshing_domain import MeshingDomain
+
+        if self.tessellation is None:
+            raise ValueError("The B-Rep model has no tessellation.")
+        return _tessellation_multiregion_surface(
+            MeshingDomain.from_brep(self), self.tessellation
         )
 
     @property

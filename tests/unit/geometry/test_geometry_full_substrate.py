@@ -378,6 +378,7 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
         bd.Box(2.0, 2.0, 3.0).wrapped,
         destination,
         coordinate_contract=_SI_COORDINATES,
+        overwrite=True,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.1,
             angular_deflection=0.3,
@@ -679,9 +680,9 @@ def test_occt_bspline_import_matches_native_surface_differential() -> None:
     assert model.topology.face_solids == ((),)
     assert model.report.num_solids == 0
     assert model.solid_ids == ()
-    with pytest.raises(ValueError, match="watertight query tessellation"):
+    with pytest.raises(ValueError, match="at least one solid"):
         phx.geometry.BRepSource(model)
-    with pytest.raises(ValueError, match="watertight query tessellation"):
+    with pytest.raises(ValueError, match="at least one solid"):
         phx.geometry.FixedTopologyBRepSource(model)
 
     normalized = np.asarray([[0.0, 0.0], [0.2, 0.3], [0.5, 0.5], [1.0, 0.6], [0.4, 1.0]])

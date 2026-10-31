@@ -40,6 +40,10 @@ _RECIPROCAL = 11
 _SQUARE = 12
 _COMPARE = 13
 _SELECT = 14
+_MAXIMUM = 15
+_MINIMUM = 16
+_EXP = 17
+_LOG = 18
 
 
 def _size(shape: _Shape, /) -> int:
@@ -93,6 +97,8 @@ class NativeIntervalProgram:
     seeds: tuple[_Seed, ...]
     opcodes: frozenset[int]
     output: _Tensor
+    domain_guards: NDArray[np.int64]
+    """Workspace entries (real-power bases) that must be nonnegative."""
 
     def evaluate(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
@@ -120,6 +126,10 @@ class NativeIntervalProgram:
             lower_workspace,
             upper_workspace,
         )
+        if np.any(lower_workspace[self.domain_guards] < 0.0):
+            raise IntervalExtensionError(
+                "noninteger power requires a nonnegative base interval."
+            )
         if self.output.locations is None:
             start = self.output.offset
             stop = start + _size(self.output.shape)
@@ -164,7 +174,13 @@ class NativeIntervalProgram:
         from .._meshcore import IntervalBoxProgram
 
         return IntervalBoxProgram(
-            self.instructions, self.indices, self.parameters, lower, upper, outputs
+            self.instructions,
+            self.indices,
+            self.parameters,
+            lower,
+            upper,
+            outputs,
+            self.domain_guards,
         )
 
 
@@ -177,6 +193,7 @@ class _Builder:
         self.indices: list[int] = []
         self.parameters: list[float] = []
         self.seeds: list[_Seed] = []
+        self.domain_guards: list[int] = []
 
     def _reserve(self, shape: _Shape, /) -> int:
         offset = self.next_offset
@@ -334,6 +351,65 @@ class _Builder:
         locations = self._locations(value).transpose(axes).reshape((-1,))
         exact = None if value.exact is None else value.exact.transpose(axes)
         return _Tensor(shape, value.offset, locations, exact)
+
+    def _dot_general(
+        self,
+        left: _Tensor,
+        right: _Tensor,
+        params: Mapping[str, Any],
+        output_shape: _Shape,
+        /,
+    ) -> _Tensor:
+        """Contract as an elementwise product over (batch, free, free, contract)."""
+        (left_contract, right_contract), (left_batch, right_batch) = params[
+            "dimension_numbers"
+        ]
+        left_contract = tuple(int(axis) for axis in left_contract)
+        right_contract = tuple(int(axis) for axis in right_contract)
+        left_batch = tuple(int(axis) for axis in left_batch)
+        right_batch = tuple(int(axis) for axis in right_batch)
+        left_free = tuple(
+            axis
+            for axis in range(len(left.shape))
+            if axis not in left_contract and axis not in left_batch
+        )
+        right_free = tuple(
+            axis
+            for axis in range(len(right.shape))
+            if axis not in right_contract and axis not in right_batch
+        )
+        batch_shape = tuple(left.shape[axis] for axis in left_batch)
+        left_free_shape = tuple(left.shape[axis] for axis in left_free)
+        right_free_shape = tuple(right.shape[axis] for axis in right_free)
+        contract_shape = tuple(left.shape[axis] for axis in left_contract)
+        if (
+            batch_shape != tuple(right.shape[axis] for axis in right_batch)
+            or contract_shape != tuple(right.shape[axis] for axis in right_contract)
+            or batch_shape + left_free_shape + right_free_shape != output_shape
+        ):
+            raise IntervalExtensionError("native dot_general shapes do not align.")
+        product_shape = batch_shape + left_free_shape + right_free_shape + contract_shape
+        batch_count, left_count = len(batch_shape), len(left_free_shape)
+        right_start = batch_count + left_count
+        contract_start = right_start + len(right_free_shape)
+        ordered_left = self._transpose(left, left_batch + left_free + left_contract)
+        ordered_right = self._transpose(right, right_batch + right_free + right_contract)
+        left_mapped = self._mapped(
+            ordered_left,
+            product_shape,
+            tuple(range(right_start)) + tuple(range(contract_start, len(product_shape))),
+        )
+        right_mapped = self._mapped(
+            ordered_right,
+            product_shape,
+            tuple(range(batch_count)) + tuple(range(right_start, len(product_shape))),
+        )
+        product = self._emit_binary(_MULTIPLY, left_mapped, right_mapped, product_shape)
+        if not contract_shape:
+            return product
+        return self._reduce_sum(
+            product, tuple(range(contract_start, len(product_shape))), output_shape
+        )
 
     def _slice(
         self, value: _Tensor, slices: tuple[slice, ...], output_shape: _Shape, /
@@ -582,24 +658,53 @@ class _Builder:
                 "integer_pow", (value,), {"y": exponent - 1}, output_shape, False
             )[0]
             return (self._emit_binary(_MULTIPLY, previous, value, output_shape),)
+        if name in ("max", "min"):
+            first, second = values
+            if first.exact is not None and second.exact is not None:
+                select = np.maximum if name == "max" else np.minimum
+                exact = np.asarray(
+                    select(
+                        np.broadcast_to(first.exact, output_shape),
+                        np.broadcast_to(second.exact, output_shape),
+                    ),
+                    dtype=np.float64,
+                )
+                return (self._seed(exact, exact, exact=exact),)
+            opcode = _MAXIMUM if name == "max" else _MINIMUM
+            return (self._emit_binary(opcode, first, second, output_shape),)
         if name == "pow":
             exponent = values[1].exact
+            flat = None if exponent is None else exponent.reshape((-1,))
             if (
-                exponent is None
-                or exponent.size != 1
-                or not np.isfinite(exponent.reshape((-1,))[0])
-                or exponent.reshape((-1,))[0] != math.trunc(exponent.reshape((-1,))[0])
+                flat is not None
+                and flat.size
+                and np.all(flat == flat[0])
+                and np.isfinite(flat[0])
+                and float(flat[0]).is_integer()
             ):
-                raise IntervalExtensionError(
-                    "native interval power requires a constant integer exponent."
+                return self._lower_arithmetic(
+                    "integer_pow",
+                    (values[0],),
+                    {"y": int(flat[0])},
+                    output_shape,
+                    False,
                 )
-            return self._lower_arithmetic(
-                "integer_pow",
-                (values[0],),
-                {"y": int(exponent.reshape((-1,))[0])},
-                output_shape,
-                False,
+            # As in the host interpreter: exp(y log x) over a base that must be
+            # nonnegative (checked after execution), clamped below at 0 since a
+            # nonnegative base has a nonnegative real power.
+            base = self._materialize(self._mapped(values[0], output_shape))
+            self.domain_guards.extend(
+                int(location) for location in self._locations(base).reshape((-1,))
             )
+            logarithm = self._emit_unary(_LOG, base, output_shape)
+            scaled = self._emit_binary(_MULTIPLY, values[1], logarithm, output_shape)
+            power = self._emit_unary(_EXP, scaled, output_shape)
+            zeros = np.zeros(output_shape, dtype=np.float64)
+            zero = self._seed(zeros, zeros, exact=zeros)
+            return (self._emit_binary(_MAXIMUM, power, zero, output_shape),)
+        if name in ("exp", "log"):
+            opcode = _EXP if name == "exp" else _LOG
+            return (self._emit_unary(opcode, values[0], output_shape),)
         raise IntervalExtensionError(
             f"no native interval arithmetic lowering for JAX primitive {name!r}."
         )
@@ -851,9 +956,59 @@ class _Builder:
             "cos",
             "integer_pow",
             "pow",
+            "max",
+            "exp",
+            "log",
+            "min",
         ):
             (output_shape,) = output_shapes
             return self._lower_arithmetic(name, values, params, output_shape, same_input)
+        if name == "pad":
+            (output_shape,) = output_shapes
+            value, padding = values
+            config = tuple(
+                (int(low), int(high), int(interior))
+                for low, high, interior in params["padding_config"]
+            )
+            if any(low < 0 or high < 0 or interior < 0 for low, high, interior in config):
+                raise IntervalExtensionError(
+                    "native interval pad requires nonnegative padding."
+                )
+            filler = self._locations(self._mapped(padding, ())).reshape(())
+            locations = np.full(output_shape, int(filler), dtype=np.int64)
+            selection = tuple(
+                slice(
+                    low,
+                    low + (extent - 1) * (interior + 1) + 1 if extent else low,
+                    interior + 1,
+                )
+                for (low, _high, interior), extent in zip(
+                    config, value.shape, strict=True
+                )
+            )
+            locations[selection] = self._locations(value)
+            padded = _Tensor(
+                output_shape, int(locations.reshape((-1,))[0]), locations.reshape((-1,))
+            )
+            return (padded,)
+        if name in ("reduce_max", "reduce_min"):
+            (output_shape,) = output_shapes
+            value = values[0]
+            axes = tuple(int(axis) for axis in params["axes"])
+            kept = tuple(axis for axis in range(len(value.shape)) if axis not in axes)
+            locations = self._locations(value).transpose(kept + axes)
+            lanes = locations.reshape((_size(output_shape), -1))
+            if lanes.shape[1] == 0:
+                raise IntervalExtensionError("native interval extremum of an empty axis.")
+            opcode = _MAXIMUM if name == "reduce_max" else _MINIMUM
+            result = _Tensor(output_shape, int(lanes[0, 0]), lanes[:, 0].copy())
+            for lane in range(1, lanes.shape[1]):
+                term = _Tensor(output_shape, int(lanes[0, lane]), lanes[:, lane].copy())
+                result = self._emit_binary(opcode, result, term, output_shape)
+            return (result,)
+        if name == "dot_general":
+            (output_shape,) = output_shapes
+            return (self._dot_general(values[0], values[1], params, output_shape),)
         if name == "reduce_sum":
             (output_shape,) = output_shapes
             axes = tuple(int(axis) for axis in params["axes"])
@@ -987,6 +1142,12 @@ class _Builder:
         return self._seed(lower_, upper_, exact=exact)
 
 
+def _immutable_indices(values: Sequence[int], /) -> NDArray[np.int64]:
+    result = np.asarray(values, dtype=np.int64).reshape((-1,))
+    result.setflags(write=False)
+    return result
+
+
 def lower_interval_jaxpr(
     closed_jaxpr: jax_core.ClosedJaxpr,
     constant_intervals: Sequence[_Interval],
@@ -1035,6 +1196,7 @@ def lower_interval_jaxpr(
         input_dimension=input_dimension,
         seeds=tuple(builder.seeds),
         output=output,
+        domain_guards=_immutable_indices(builder.domain_guards),
         opcodes=opcodes,
     )
 

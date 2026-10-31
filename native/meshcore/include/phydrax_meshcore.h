@@ -1000,6 +1000,8 @@ typedef struct phx_mc_interval_box_program {
   int64_t workspace_size;
   const int64_t* outputs;
   int64_t output_count;
+  const int64_t* guards; /* entries whose lower bound must be >= 0 (real-power bases) */
+  int64_t guard_count;
 } phx_mc_interval_box_program;
 /* Remeshes a closed, consistently oriented, embedded carrier of the zero set of f
  * toward `edge_length` and `minimum_angle_degrees`. Every created triangle is
