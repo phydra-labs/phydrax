@@ -58,6 +58,7 @@ set(PHX_MC_SOURCES
   src/restricted_delaunay.cpp
   src/surface_envelope.cpp
   src/surface_mesh.cpp
+  src/surface_remesh.cpp
   src/tet_mesh.cpp
   src/tet_mesh_collapse.cpp
   src/tet_mesh_export.cpp

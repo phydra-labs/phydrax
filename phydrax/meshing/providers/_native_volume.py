@@ -805,6 +805,9 @@ def _source_associations(
             vertex_dimensions_list.append(0)
         elif witness_stratum in (1, 2):
             vertex_dimensions_list.append(witness_stratum)
+        elif witness_stratum == 3:
+            # A point on its facet's declared exact plane is a facet point.
+            vertex_dimensions_list.append(2)
         elif witness_stratum == 0:
             vertex_dimensions_list.append(3)
         else:

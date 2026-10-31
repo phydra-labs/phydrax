@@ -686,6 +686,83 @@ def test_declared_facet_plane_admits_records_and_refuses_boundary_vertices() -> 
         state.close()
 
 
+def _restored_tet_mesh(
+    arrays: TetMeshArrays, witness_parameters: np.ndarray
+) -> TetMesh3D:
+    return TetMesh3D(
+        arrays.points,
+        arrays.tetrahedra,
+        arrays.tetrahedron_regions,
+        arrays.faces,
+        arrays.face_sources,
+        arrays.segments,
+        arrays.segment_sources,
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
+        protection_radii=arrays.protection_radii,
+        protected_vertices=arrays.protected_vertices,
+        vertex_ids=arrays.vertex_ids,
+        cell_ids=arrays.cell_ids,
+        facet_ids=arrays.facet_ids,
+        face_orientations=arrays.facet_orientations,
+        segment_ids=arrays.segment_ids,
+        source=TetMeshSourceComplex(
+            arrays.source_points,
+            arrays.source_faces,
+            arrays.source_face_group_rows,
+            arrays.source_face_tolerances,
+            arrays.source_segments,
+            arrays.source_segment_group_rows,
+            arrays.source_segment_tolerances,
+            arrays.witness_strata,
+            arrays.witness_entities,
+            witness_parameters,
+            arrays.source_face_ids,
+            arrays.source_segment_ids,
+            arrays.source_face_planes,
+            arrays.source_face_plane_tolerances,
+        ),
+    )
+
+
+def test_plane_witnesses_and_records_round_trip_through_tet_mesh_arrays() -> None:
+    exact = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    state = _declared_unit_tet(exact, 0.0)
+    try:
+        state.refine(radius_edge_bound=2.0, sizes=np.full((4,), 0.2))
+        arrays = state.arrays()
+        records = state.plane_records()
+    finally:
+        state.close()
+    on_plane = arrays.witness_strata == 3
+    assert np.count_nonzero(on_plane) > 0
+    # A new mesh from the copied banks re-derives every plane witness
+    # deviation and the plane records from the declared plane alone.
+    restored = _restored_tet_mesh(arrays, arrays.witness_parameters)
+    try:
+        again = restored.arrays()
+        for name in (
+            "points",
+            "witness_strata",
+            "witness_entities",
+            "witness_parameters",
+            "witness_deviations",
+        ):
+            np.testing.assert_array_equal(getattr(again, name), getattr(arrays, name))
+        np.testing.assert_array_equal(again.source_face_planes, arrays.source_face_planes)
+        restored_records = restored.plane_records()
+        for name in records._fields:
+            np.testing.assert_array_equal(
+                getattr(restored_records, name), getattr(records, name)
+            )
+    finally:
+        restored.close()
+    # A plane witness moved off its carrier's plane point is refused.
+    tampered = arrays.witness_parameters.copy()
+    tampered[np.flatnonzero(on_plane)[0], 0] += 1e-3
+    with pytest.raises(ValueError, match="tet_mesh_create: invalid input"):
+        _restored_tet_mesh(arrays, tampered)
+
+
 def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
     mesh_points = UNIT_TET.copy()
     source_points = UNIT_TET.copy()
@@ -1300,6 +1377,70 @@ def test_declared_facet_plane_groups_rounded_triangles_and_refuses_off_plane_ver
         assert (refusal.value.first_kind, refusal.value.first) == (PlcEntityKind.FACET, 5)
 
 
+def test_declared_planes_recover_a_rotated_cube_missing_its_face_diagonals() -> None:
+    # Corners are the correct roundings of the exact corners of a rotated
+    # cube of half side 1/8, and each face declares its exact plane (origin
+    # +-h c_k, axes c_{k+1}, c_{k+2}; tolerance 0). The two triangles of a
+    # face are not exactly coplanar and the Delaunay complex lacks some face
+    # diagonals. Recovery used to split faces endlessly around such a
+    # diagonal; it now recovers the diagonals as hidden edges, suppresses
+    # every split point on them, and publishes neither them nor any point.
+    c, s = np.cos(0.3), np.sin(0.3)
+    columns = np.asarray(((c, -s, 0.0), (s * c, c * c, -s), (s * s, s * c, c))).T
+    signs = np.asarray(
+        [(x, y, z) for z in (-1, 1) for y in (-1, 1) for x in (-1, 1)], dtype=np.float64
+    )
+    points = np.asarray(
+        [
+            [
+                float(
+                    sum(Fraction(sign[k] / 8) * Fraction(columns[k][a]) for k in range(3))
+                )
+                for a in range(3)
+            ]
+            for sign in signs
+        ]
+    )
+    sides = ((2, -1), (2, 1), (1, -1), (1, 1), (0, -1), (0, 1))
+    planes = np.asarray(
+        [
+            (side / 8 * columns[k], columns[(k + 1) % 3], columns[(k + 2) % 3])
+            for k, side in sides
+        ]
+    )
+    triangles = np.asarray(
+        (
+            (0, 2, 3),
+            (0, 3, 1),
+            (4, 5, 7),
+            (4, 7, 6),
+            (0, 1, 5),
+            (0, 5, 4),
+            (2, 6, 7),
+            (2, 7, 3),
+            (0, 4, 6),
+            (0, 6, 2),
+            (1, 3, 7),
+            (1, 7, 5),
+        )
+    )
+    arguments = (
+        points,
+        np.arange(0, 37, 3),
+        triangles.reshape(-1),
+        np.repeat(np.arange(6), 2),
+        np.tile(np.asarray((-1, 0)), (6, 1)),
+    )
+    for policy in (PlcBoundaryPolicy.FIXED, PlcBoundaryPolicy.CONFORMING):
+        loose = recover_plc_3d(*arguments, boundary_policy=policy)
+        declared = recover_plc_3d(*arguments, facet_planes=planes, boundary_policy=policy)
+        assert loose.plc_edges.shape[0] == 18
+        assert declared.plc_edges.shape[0] == 12
+        assert declared.segments.shape[0] == 12
+        np.testing.assert_array_equal(declared.points, points)
+        assert declared.faces.shape[0] == 12
+
+
 def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
     triangles = np.asarray(
         ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
@@ -1327,6 +1468,54 @@ def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
     assert np.all(result.surface_triangles < result.surface_vertices.shape[0])
     assert np.all(result.tetrahedra < result.volume_vertices.shape[0])
     assert not result.bounds.flags.writeable
+
+
+def _minimum_triangle_angles(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
+    corners = [vertices[triangles[:, k]] for k in range(3)]
+    angles = []
+    for k in range(3):
+        first = corners[(k + 1) % 3] - corners[k]
+        second = corners[(k + 2) % 3] - corners[k]
+        cosine = np.sum(first * second, axis=1) / (
+            np.linalg.norm(first, axis=1) * np.linalg.norm(second, axis=1)
+        )
+        angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    return np.min(np.stack(angles), axis=0)
+
+
+def test_surface_envelope_remesh_keeps_the_band_and_raises_angles() -> None:
+    triangles = np.asarray(
+        ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
+        dtype=np.int64,
+    )
+    extracted = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1)
+    remeshed = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1, remesh=True)
+
+    assert extracted.remesh_counters is None
+    assert remeshed.remesh_counters is not None
+    assert remeshed.remesh_counters.shape == (5,)
+    assert int(np.sum(remeshed.remesh_counters[:4])) > 0
+    # The band and interpolation error are unchanged; only the source-to-surface
+    # bound is recomputed on the remeshed vertices.
+    np.testing.assert_array_equal(remeshed.bounds[1:], extracted.bounds[1:])
+    assert 0.0 < remeshed.bounds[0] < remeshed.bounds[1]
+    assert remeshed.tetrahedra.shape == (0, 4)
+    np.testing.assert_array_equal(remeshed.volume_vertices, remeshed.surface_vertices)
+    assert np.min(
+        _minimum_triangle_angles(remeshed.surface_vertices, remeshed.surface_triangles)
+    ) > np.min(
+        _minimum_triangle_angles(extracted.surface_vertices, extracted.surface_triangles)
+    )
+    directed = {
+        (int(face[k]), int(face[(k + 1) % 3]))
+        for face in remeshed.surface_triangles
+        for k in range(3)
+    }
+    assert len(directed) == 3 * remeshed.surface_triangles.shape[0]
+    assert all((second, first) in directed for first, second in directed)
+    again = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1, remesh=True)
+    np.testing.assert_array_equal(again.surface_vertices, remeshed.surface_vertices)
+    np.testing.assert_array_equal(again.surface_triangles, remeshed.surface_triangles)
 
 
 def test_surface_envelope_names_the_offset_domination_contract() -> None:

@@ -708,6 +708,83 @@ void convex_bipyramid_reports_unresolved_radius_edge() {
   }
 }
 
+// A fixed constrained needle face (radius-edge ratio about 5) bounds the ratio
+// of every tetrahedron on it from below, so the residual of the cell on that
+// face is FIXED_BOUNDARY, never NO_IMPROVEMENT, whatever interior edits run.
+void fixed_needle_face_reports_fixed_boundary_radius_edge() {
+  constexpr std::array<double, 12> points{
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 0.05, 0.0, 0.5, 0.2, 0.8};
+  constexpr std::array<std::int32_t, 4> tetrahedron{0, 1, 2, 3};
+  constexpr std::array<std::int32_t, 1> regions{3};
+  std::vector<std::int32_t> faces;
+  for (int opposite = 0; opposite < 4; ++opposite) {
+    std::int32_t face[3];
+    oriented_facet(tetrahedron.data(), opposite, face);
+    faces.insert(faces.end(), face, face + 3);
+  }
+  const std::vector<std::int32_t> face_sources{0, 1, 2, 3};
+  const std::vector<std::int32_t> segments{0, 1, 0, 2, 0, 3, 1, 2, 1, 3, 2, 3};
+  const std::vector<std::int32_t> segment_sources{0, 1, 2, 3, 4, 5};
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  const std::int32_t build_status = mesh.build(
+      points, tetrahedron, regions, faces, face_sources, {}, segments, segment_sources,
+      {}, nullptr);
+  PHX_CHECK(build_status == PHX_MC_OK);
+  if (build_status != PHX_MC_OK) return;
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status = improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {},
+                                           inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && unmet > 0);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  PHX_CHECK(same_source_banks(before, after));
+  const std::uint64_t first = before.vertices[0].id;
+  const std::uint64_t second = before.vertices[1].id;
+  const std::uint64_t third = before.vertices[2].id;
+  std::uint64_t needle_facet = kNoUnmetFacet;
+  for (const TetSnapshotFacet& facet : after.constrained_facets) {
+    const auto has = [&](std::uint64_t id) {
+      return std::find(facet.vertices.begin(), facet.vertices.end(), id) != facet.vertices.end();
+    };
+    if (has(first) && has(second) && has(third)) needle_facet = facet.id;
+  }
+  PHX_CHECK(needle_facet != kNoUnmetFacet);
+  // Independent reference: R = abc / (4 area) over the shortest side, sides
+  // 1 and sqrt(0.2525) twice, area 0.025.
+  const double half_side = std::sqrt(0.2525);
+  const double needle_ratio = half_side * half_side / (4.0 * 0.025) / half_side;
+  std::size_t needle_cells = 0;
+  std::size_t needle_records = 0;
+  for (const TetSnapshotCell& cell : after.cells) {
+    const auto has = [&](std::uint64_t id) {
+      return std::find(cell.vertices.begin(), cell.vertices.end(), id) != cell.vertices.end();
+    };
+    const bool on_needle = has(first) && has(second) && has(third);
+    needle_cells += on_needle ? 1 : 0;
+    for (const TetUnmetRecord& record : mesh.unmet_records()) {
+      if (record.cell_id != cell.id || record.criterion != PHX_MC_TET_UNMET_RADIUS_EDGE) {
+        continue;
+      }
+      if (on_needle) {
+        ++needle_records;
+        PHX_CHECK(record.reason == PHX_MC_TET_UNMET_FIXED_BOUNDARY);
+        PHX_CHECK(record.facet_id == needle_facet);
+        PHX_CHECK(std::abs(record.facet_ratio - needle_ratio) <= 1.0e-12 * needle_ratio);
+        PHX_CHECK(record.value >= record.facet_ratio);
+      } else {
+        PHX_CHECK(record.reason == PHX_MC_TET_UNMET_NO_IMPROVEMENT);
+        PHX_CHECK(record.facet_id == kNoUnmetFacet && std::isnan(record.facet_ratio));
+      }
+    }
+  }
+  PHX_CHECK(needle_cells == 1 && needle_records == 1);
+}
+
 void relocation_clears_stale_carrier_ancestry() {
   constexpr std::array<double, 12> points{
       0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
@@ -1830,6 +1907,86 @@ void flat_fixed_boundary_cell_is_removed_by_edge_ring_insertion() {
   PHX_CHECK(minimum_determinant > 1.0e-12);
 }
 
+// A flat pole-cap cell of a CAD sphere fill with its vertex neighborhood,
+// every neighborhood boundary face fixed. Its four boundary vertices lie on
+// two latitude circles: the isosceles latitude trapezoid is cocircular, so
+// the cell's circumsphere is finite and its radius-edge ratio meets the bound
+// 8 while its relative determinant (2e-16) is below the floor. Such a cell
+// scores 0, not its angle/ratio score: scored 1 it tied every replacement,
+// so no edit counted as removing it and the vertex phase skipped its star.
+void flat_cocircular_cap_cell_scores_below_every_valid_cell() {
+  const ImprovementFixture fixture = make_improvement_fixture(
+      {
+          0.3061862178478972, -0.17677669529663706, -0.35355339059327373,
+          0.3535533905932738, -6.4946704217662e-17, -0.35355339059327373,
+          0.2683198181955348, -0.07189607859875917, -0.4157348061512726,
+          0.2683198181955348, 0.07189607859875907, -0.4157348061512726,
+          0.2405689676907078, -0.13889255825490068, -0.4157348061512726,
+          0.23368193619725902, 0.030764810541427556, -0.44096063217417747,
+          0.27778511650980114, -5.102829806767538e-17, -0.4157348061512726,
+          0.4042071658821823, 0.08126159373509423, -0.28286590539180656,
+          0.4077465784244585, -0.0811058372053646, -0.2777851165098011,
+          0.3415063509461097, -0.09150635094610962, -0.35355339059327373,
+          0.34150635094610976, 0.0915063509461095, -0.35355339059327373,
+          0.20966987109892432, -0.04170593042847486, -0.45199464656172167,
+          0.4157348061512726, -7.63692449470952e-17, -0.2777851165098011,
+          0.3617325323737764, -0.13614648462031945, -0.31719664208182274,
+          0.2177568984230744, -0.09019786062713801, -0.44096063217417747,
+          0.07932842547846919, -0.08474238329962355, -0.09522239684195916,
+          0.00471287204436654, 0.0, -0.21764892640926448,
+      },
+      {
+          {1, 6, 2, 9}, {9, 0, 4, 2}, {15, 13, 0, 9}, {8, 13, 15, 9},
+          {7, 1, 12, 15}, {1, 8, 12, 15}, {10, 1, 7, 15}, {9, 4, 15, 2},
+          {8, 9, 15, 1}, {0, 4, 15, 9}, {16, 4, 14, 2}, {15, 4, 16, 2},
+          {16, 2, 14, 11}, {5, 2, 16, 11}, {5, 6, 16, 2}, {16, 9, 15, 2},
+          {6, 9, 16, 2}, {16, 3, 6, 5}, {1, 3, 6, 16}, {1, 9, 16, 6},
+          {1, 9, 15, 16}, {10, 16, 1, 15}, {10, 3, 1, 16},
+      });
+  PHX_CHECK(fixture.cells.size() == 23);
+  if (fixture.cells.size() != 23) return;
+  constexpr std::uint64_t kFlatCell = 0;
+  const std::vector<std::int32_t> regions(fixture.cells.size(), 0);
+  const std::vector<std::int8_t> protected_vertices(fixture.points.size() / 3, 1);
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  PHX_CHECK(build_improvement_mesh(mesh, fixture, regions,
+                                   sequential_ids(fixture.points.size() / 3),
+                                   sequential_ids(fixture.cells.size()),
+                                   sequential_ids(fixture.faces.size()),
+                                   protected_vertices) == PHX_MC_OK);
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  {
+    std::array<const double*, 4> points{};
+    for (std::size_t corner = 0; corner < 4; ++corner) {
+      points[corner] = mesh.point(mesh.vertex_slot(before.cells[kFlatCell].vertices[corner]));
+    }
+    PHX_CHECK(before.cells[kFlatCell].id == kFlatCell);
+    PHX_CHECK(geometry::relative_determinant(points.data()) < 1.0e-12);
+    geometry::TetrahedronShape shape;
+    PHX_CHECK(geometry::tetrahedron_shape(points.data(), shape));
+    PHX_CHECK(shape.radius_edge_ratio <= 8.0);
+  }
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status = improve_mesh(mesh, TetQualityRequest{8.0, 0.0, 1.0e-12}, {},
+                                           inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_OK && unmet == 0);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  PHX_CHECK(same_source_banks(before, after));
+  PHX_CHECK(std::none_of(after.cells.begin(), after.cells.end(),
+                         [](const TetSnapshotCell& cell) { return cell.id == kFlatCell; }));
+  double minimum_angle = 0.0;
+  double minimum_determinant = 0.0;
+  double maximum_radius_edge = 0.0;
+  PHX_CHECK(minimum_quality(mesh, after, minimum_angle, minimum_determinant,
+                            maximum_radius_edge));
+  PHX_CHECK(minimum_determinant > 1.0e-12);
+}
+
 // Positively oriented replacement cell whose cavity-boundary faces carry the
 // sources of the matching constrained facets.
 TetEditCell sourced_cell(const TetMesh& mesh, const TetMeshSnapshot& snapshot,
@@ -2500,6 +2657,7 @@ void refused_boundary_insertion_restores_disk_constraints() {
 
 int main() {
   convex_bipyramid_reports_unresolved_radius_edge();
+  fixed_needle_face_reports_fixed_boundary_radius_edge();
   relocation_clears_stale_carrier_ancestry();
   unresolved_radius_target_reports_residuals_without_losing_constraints();
   unrepresentable_positive_sliver_is_measured_not_refused();
@@ -2513,6 +2671,7 @@ int main() {
   improvement_respects_refinement_size_field();
   size_excess_is_bounded_by_the_removed_cells();
   flat_fixed_boundary_cell_is_removed_by_edge_ring_insertion();
+  flat_cocircular_cap_cell_scores_below_every_valid_cell();
   incidence_route_matches_public_scan_after_collapse();
   cavity_local_reconnection_matches_public_batch();
   boundary_point_insertion_splits_segment_and_fans();

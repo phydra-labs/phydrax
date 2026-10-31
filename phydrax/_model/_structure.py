@@ -1283,6 +1283,123 @@ def _cell_quality_report_archive_recipe(value: Any, /) -> object | None:
     return recipe
 
 
+def _row_record_archive_recipe(value: Any, /) -> object | None:
+    """Project records with one static value per mesh entity to column recipes."""
+    module, name = type(value).__module__, type(value).__name__
+    if module == "phydrax.meshing._association" and name == "GeometryAssociation":
+        from ..meshing._association import (
+            GeometryAssociation,
+            GeometryAssociationArchiveRecipe,
+        )
+
+        if type(value) is not GeometryAssociation:
+            raise TypeError("Association archive projection requires its owner type.")
+        return GeometryAssociationArchiveRecipe.from_association(value)
+    if module == "phydrax.geometry._embedding_state" and name == "MeshEmbeddingWitness":
+        from ..geometry._embedding_state import (
+            MeshEmbeddingWitness,
+            MeshEmbeddingWitnessArchiveRecipe,
+        )
+
+        if type(value) is not MeshEmbeddingWitness:
+            raise TypeError("Witness archive projection requires its owner type.")
+        return MeshEmbeddingWitnessArchiveRecipe.from_witness(value)
+    if module == "phydrax.geometry.surface._contracts" and name == "SurfaceMetadata":
+        from ..geometry.surface._contracts import (
+            SurfaceMetadata,
+            SurfaceMetadataArchiveRecipe,
+        )
+
+        if type(value) is not SurfaceMetadata:
+            raise TypeError("Surface metadata projection requires its owner type.")
+        return SurfaceMetadataArchiveRecipe.from_metadata(value)
+    return None
+
+
+def _row_record_recipe_types() -> frozenset[type]:
+    from ..geometry._embedding_state import MeshEmbeddingWitnessArchiveRecipe
+    from ..geometry.surface._contracts import SurfaceMetadataArchiveRecipe
+    from ..meshing._association import GeometryAssociationArchiveRecipe
+
+    return frozenset(
+        {
+            GeometryAssociationArchiveRecipe,
+            MeshEmbeddingWitnessArchiveRecipe,
+            SurfaceMetadataArchiveRecipe,
+        }
+    )
+
+
+def restore_row_record_recipes(value: Any, /) -> Any:
+    """Rebuild column-archived row records in a freshly restored model tree.
+
+    Each record is rebuilt by its owning constructor and must reproduce its
+    stored identity. Containers created by the restore are updated in place or
+    rebuilt; shared nodes stay shared.
+    """
+    recipe_types = _row_record_recipe_types()
+    memo: dict[int, Any] = {}
+
+    def visit(node: Any, /) -> Any:
+        identity = id(node)
+        if identity in memo:
+            return memo[identity]
+        node_type = type(node)
+        if node_type in recipe_types:
+            result = node.restore()
+        elif (
+            node is None
+            or isinstance(
+                node,
+                (str, bytes, bool, int, float, complex, Fraction, enum.Enum, type),
+            )
+            or isinstance(node, (jax.Array, np.ndarray, np.generic))
+        ):
+            result = node
+        elif dataclasses.is_dataclass(node):
+            for field in dataclasses.fields(node):
+                child = object.__getattribute__(node, field.name)
+                restored = visit(child)
+                if restored is not child:
+                    object.__setattr__(node, field.name, restored)
+            result = node
+        elif isinstance(node, tuple):
+            items = tuple(visit(item) for item in node)
+            if all(a is b for a, b in zip(items, node, strict=True)):
+                result = node
+            elif "_fields" in vars(node_type):
+                result = node_type(*items)
+            else:
+                result = items
+        elif isinstance(node, list):
+            for index, item in enumerate(node):
+                node[index] = visit(item)
+            result = node
+        elif isinstance(node, (set, frozenset)):
+            items = [visit(item) for item in node]
+            result = (
+                node
+                if all(a is b for a, b in zip(items, node, strict=True))
+                else node_type(items)
+            )
+        elif isinstance(node, Mapping):
+            pairs = [(key, visit(item)) for key, item in node.items()]
+            if all(item is node[key] for key, item in pairs):
+                result = node
+            elif isinstance(node, frozendict):
+                result = frozendict(dict(pairs))
+            elif isinstance(node, MappingProxyType):
+                result = MappingProxyType(dict(pairs))
+            else:
+                result = dict(pairs)
+        else:
+            result = node
+        memo[identity] = result
+        return result
+
+    return visit(value)
+
+
 def model_archive_projection(value: Any, /) -> Any:
     """Return a structural archive view with query caches replaced by owner inputs."""
     if (
@@ -1340,6 +1457,9 @@ def model_archive_projection(value: Any, /) -> Any:
     quality_recipe = _cell_quality_report_archive_recipe(value)
     if quality_recipe is not None:
         return model_archive_projection(quality_recipe)
+    row_recipe = _row_record_archive_recipe(value)
+    if row_recipe is not None:
+        return model_archive_projection(row_recipe)
     conic_endpoint_recipe = _conic_root_line_endpoint_witness_archive_recipe(value)
     if conic_endpoint_recipe is not None:
         return model_archive_projection(conic_endpoint_recipe)
@@ -2508,9 +2628,11 @@ def model_from_array_recipe(
             restored[entry.tree_index] = jnp.asarray(payload)
         else:
             restored[entry.tree_index] = np.array(payload, copy=True, order="C")
-    model = jax.tree_util.tree_unflatten(definition, restored)
-    # Owner recipes may occupy fields whose live values have a different type.
-    # The scientific restore callback must reconstruct and validate those owners.
+    # Column-archived row records are value records: their owning constructors
+    # rebuild them here and must reproduce the stored identities.
+    model = restore_row_record_recipes(jax.tree_util.tree_unflatten(definition, restored))
+    # Other owner recipes may occupy fields whose live values have a different
+    # type; the scientific restore callback reconstructs and validates those.
     if validate:
         validate_tree(model)
     return model

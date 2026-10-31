@@ -48,6 +48,7 @@ from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_sources import NativePlcSource
 from phydrax.meshing.providers._native_volume import (
     _organization,
+    _source_associations,
     prepare_native_plc_volume,
 )
 
@@ -483,8 +484,8 @@ def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> 
 
 
 def _declared_rotated_cube(
-    facet_planes: object | None,
-    facet_plane_tolerances: object | None = None,
+    facet_planes: np.ndarray | None,
+    facet_plane_tolerances: np.ndarray | None = None,
     boundary: PlcBoundaryPolicy = "fixed",
 ) -> NativePlcSource:
     base = _grouped_cube_source(angle=0.3).complex
@@ -565,6 +566,81 @@ def test_declared_facet_planes_are_validated_rows() -> None:
     undeclared_rows = np.full((6, 3, 3), np.nan)
     accepted = _declared_rotated_cube(undeclared_rows)
     np.testing.assert_array_equal(accepted.complex.facet_plane_tolerances, np.zeros((6,)))
+
+
+@pytest.mark.parametrize("floor_plane", ("implicit", "declared", "undeclared"))
+def test_curved_facet_keeps_authored_diagonal_of_exactly_coplanar_trapezoid(
+    floor_plane: str,
+) -> None:
+    # A hip roof: the front and back trapezoids are exactly coplanar triangle
+    # pairs inside one non-planar "roof" facet, as symmetric trapezoids are on
+    # a discrete surface of revolution. Both trapezoids are cyclic, so either
+    # diagonal is a valid recovery; the authored one must be kept. The planar
+    # floor merges its two triangles without plane declarations or when its
+    # plane is declared; a complex declaring planes keeps the diagonal of an
+    # undeclared floor.
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (4.0, 0.0, 0.0),
+            (4.0, 2.0, 0.0),
+            (0.0, 2.0, 0.0),
+            (1.0, 1.0, 1.0),
+            (3.0, 1.0, 1.0),
+        ),
+        dtype=np.float64,
+    )
+    roof = ((0, 1, 5), (0, 5, 4), (2, 3, 4), (2, 4, 5), (1, 2, 5), (3, 0, 4))
+    floor = ((0, 3, 2), (0, 2, 1))
+    facet_planes = None
+    if floor_plane != "implicit":
+        facet_planes = np.full((2, 3, 3), np.nan, dtype=np.float64)
+        if floor_plane == "declared":
+            facet_planes[1] = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    complex_ = PiecewiseLinearComplex(
+        points,
+        np.asarray(roof + floor, dtype=np.int64),
+        np.asarray((0,) * len(roof) + (1,) * len(floor), dtype=np.int64),
+        np.asarray(((-1, 0), (-1, 0)), dtype=np.int64),
+        ("solid",),
+        segments=np.empty((0, 2), dtype=np.int64),
+        vertex_ids=tuple(f"roof-vertex-{row}" for row in range(points.shape[0])),
+        vertex_occurrence_paths=((),) * points.shape[0],
+        facet_ids=("roof", "floor"),
+        facet_occurrence_paths=((), ()),
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((),),
+        boundary="fixed",
+        facet_planes=facet_planes,
+    )
+    source = NativePlcSource(complex_, "hip-roof", "revision-1")
+    seed = RegionSeed(
+        np.asarray((2.0, 1.0, 0.3), dtype=np.float64),
+        "solid",
+        "solid-material",
+        RegionRole.SOLID,
+    )
+    construction = _construct(source, _request(source, region_seeds=(seed,)))
+
+    faces = np.asarray(construction.input_vertices)[
+        np.asarray(construction.boundary_faces)
+    ]
+    roof_faces = {tuple(sorted(face)) for face in faces.tolist() if {4, 5} & set(face)}
+    assert roof_faces == {tuple(sorted(face)) for face in roof}
+    edge_ids = {
+        tuple(sorted(edge)): identifier
+        for edge, identifier in zip(
+            complex_.plc_edge_vertices, complex_.plc_edge_ids, strict=True
+        )
+    }
+    segment_ids = set(construction.segment_source_ids)
+    assert {edge_ids[(0, 5)], edge_ids[(2, 4)]} <= segment_ids
+    floor_diagonal = edge_ids.get((0, 2))
+    if floor_plane == "undeclared":
+        assert floor_diagonal in segment_ids
+    else:
+        assert floor_diagonal not in segment_ids
 
 
 def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
@@ -1111,6 +1187,25 @@ def test_conforming_refinement_splits_declared_rotated_cube_faces_on_their_plane
         if len(facets) == 2
     }
     assert set(construction.segment_source_ids) == boundary_ids
+    # Plane points are facet-stratum vertices of their row's facet, with the
+    # facet's region sides and their nonzero rounding deviation.
+    vertex_association = _source_associations(source, construction)[0]
+    on_plane = np.flatnonzero(np.asarray(construction.witness_strata) == 3)
+    facets = np.asarray(construction.source_face_facets)[
+        np.asarray(construction.witness_entities)[on_plane]
+    ]
+    assert all(
+        vertex_association.source_roles[row] is GeometrySourceEntityRole.FACET
+        for row in on_plane.tolist()
+    )
+    assert [construction.vertex_source_ids[row] for row in on_plane.tolist()] == [
+        complex_.facet_ids[facet] for facet in facets.tolist()
+    ]
+    assert all(
+        vertex_association.source_region_sides[row] != (None, None)
+        for row in on_plane.tolist()
+    )
+    assert not vertex_association.exact
 
 
 def test_conforming_refinement_splits_declared_rotated_bipyramid_on_its_planes() -> None:

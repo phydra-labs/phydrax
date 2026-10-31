@@ -15,6 +15,7 @@
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "surface_remesh.hpp"
 #include "intersections.hpp"
 #include "topology_keys.hpp"
 
@@ -34,6 +35,12 @@ struct EnvelopeData {
   std::vector<V> surface_points, volume_points;
   std::vector<F> triangles;
   std::vector<C> cells;
+  // Certification state retained for band-constrained remeshing: the source
+  // covering cloud, its covering radius, the arithmetic error, the certified
+  // band and the sampling spacing.
+  std::vector<V> cloud;
+  double covering_radius = 0, arithmetic_error = 0, roundoff = 0, spacing = 0, offset = 0;
+  std::array<double, 4> bounds{};
 };
 V add(const V& a, const V& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 V mul(const V& a, double t) { return {a[0] * t, a[1] * t, a[2] * t}; }
@@ -587,6 +594,13 @@ phx_mc_surface_envelope_create(const phx_mc_surface_envelope_create_request* req
     if (status != PHX_MC_OK) return status;
     status = certify_envelope(*request, grid, data.get(), cloud);
     if (status != PHX_MC_OK) return status;
+    data->cloud = std::move(cloud);
+    data->covering_radius = grid.covering_radius;
+    data->arithmetic_error = grid.arithmetic_error;
+    data->roundoff = grid.roundoff;
+    data->spacing = grid.spacing;
+    data->offset = request->offset;
+    std::copy(request->bounds, request->bounds + 4, data->bounds.begin());
     *request->result = data.release();
     return PHX_MC_OK;
   });
@@ -642,4 +656,225 @@ extern "C" PHX_MC_API int32_t phx_mc_surface_envelope_arrays(
 
 extern "C" PHX_MC_API void phx_mc_surface_envelope_free(void* handle) {
   delete static_cast<EnvelopeData*>(handle);
+}
+// ---------------------------------------------------------------------------
+// Band-constrained remeshing of the extracted envelope surface.
+//
+// The marching-tetrahedra surface certifies that every point of every output
+// triangle lies in the band bounds[2] <= d_source <= bounds[1]. Its triangles
+// are cuts of grid tetrahedra, often needles and caps. The source-agnostic
+// remesher (surface_remesh.hpp) replaces them toward a target edge length h
+// (twice the sampling spacing) and a 30 degree minimum angle under the
+// kOffsetBand admission: vertex values are bounded through the covering cloud
+// exactly as in the certificate (d_cloud - covering - arithmetic <= d_source
+// <= d_cloud + arithmetic), and a triangle is admitted when its 1-Lipschitz
+// enclosure [min L_i - R, max U_i + R] (R its certified free radius) lies in
+// the band. The band bounds and the interpolation error are unchanged, and the
+// source-to-surface bound is recomputed on the remeshed vertices.
+namespace {
+
+// Uniform bucket grid over a point set answering nearest-distance queries.
+struct PointIndex {
+  const std::vector<V>* points = nullptr;
+  double cell = 1;
+  V lo{};
+  std::array<int64_t, 3> shape{1, 1, 1};
+  std::vector<int64_t> start, items;
+
+  int32_t build(const std::vector<V>& values, double cell_size) {
+    points = &values;
+    cell = cell_size;
+    if (values.empty() || !(cell > 0) || !std::isfinite(cell)) return PHX_MC_INVALID_INPUT;
+    lo = values[0];
+    V hi = values[0];
+    for (const V& p : values)
+      for (int d = 0; d < 3; ++d) {
+        lo[d] = std::min(lo[d], p[d]);
+        hi[d] = std::max(hi[d], p[d]);
+      }
+    int64_t total = 1;
+    for (int d = 0; d < 3; ++d) {
+      const double n = std::floor((hi[d] - lo[d]) / cell) + 1;
+      if (!std::isfinite(n) || n < 1 || n > 1 << 20) return PHX_MC_UNRESOLVED;
+      shape[d] = static_cast<int64_t>(n);
+      total *= shape[d];
+      if (total > (int64_t{1} << 31)) return PHX_MC_UNRESOLVED;
+    }
+    start.assign(static_cast<size_t>(total + 1), 0);
+    std::vector<int64_t> slot(values.size());
+    for (size_t i = 0; i < values.size(); ++i) {
+      slot[i] = flat(coordinates(values[i]));
+      ++start[static_cast<size_t>(slot[i] + 1)];
+    }
+    for (int64_t i = 0; i < total; ++i) start[i + 1] += start[i];
+    items.resize(values.size());
+    std::vector<int64_t> fill(start.begin(), start.end() - 1);
+    for (size_t i = 0; i < values.size(); ++i)
+      items[static_cast<size_t>(fill[static_cast<size_t>(slot[i])]++)] = static_cast<int64_t>(i);
+    return PHX_MC_OK;
+  }
+  std::array<int64_t, 3> coordinates(const V& p) const {
+    std::array<int64_t, 3> c{};
+    for (int d = 0; d < 3; ++d) {
+      const double t = std::floor((p[d] - lo[d]) / cell);
+      c[d] = static_cast<int64_t>(std::clamp(t, -1.0e15, 1.0e15));
+    }
+    return c;
+  }
+  int64_t flat(const std::array<int64_t, 3>& c) const {
+    return (c[0] * shape[1] + c[1]) * shape[2] + c[2];
+  }
+  // Binary64 distance to the nearest indexed point (each length rounded once).
+  double nearest(const V& x) const {
+    const auto c = coordinates(x);
+    int64_t reach = 0;
+    for (int d = 0; d < 3; ++d)
+      reach = std::max({reach, std::abs(c[d]), std::abs(c[d] - (shape[d] - 1))});
+    double best = std::numeric_limits<double>::infinity();
+    for (int64_t r = 0; r <= reach; ++r) {
+      if (r > 0 && best <= static_cast<double>(r - 1) * cell) break;
+      for (int64_t i = std::max<int64_t>(0, c[0] - r); i <= std::min(shape[0] - 1, c[0] + r); ++i)
+        for (int64_t j = std::max<int64_t>(0, c[1] - r); j <= std::min(shape[1] - 1, c[1] + r);
+             ++j) {
+          const bool shell = std::abs(i - c[0]) == r || std::abs(j - c[1]) == r;
+          for (int64_t k = std::max<int64_t>(0, c[2] - r);
+               k <= std::min(shape[2] - 1, c[2] + r); ++k) {
+            if (!shell && std::abs(k - c[2]) != r) continue;
+            const int64_t cell_index = flat({i, j, k});
+            for (int64_t s = start[static_cast<size_t>(cell_index)];
+                 s < start[static_cast<size_t>(cell_index + 1)]; ++s)
+              best = std::min(best, length(difference(x, (*points)[static_cast<size_t>(items[s])])));
+          }
+        }
+    }
+    return best;
+  }
+  // Nearest indexed point itself (for projection of candidate positions).
+  int64_t nearest_index(const V& x) const {
+    const auto c = coordinates(x);
+    int64_t reach = 0;
+    for (int d = 0; d < 3; ++d)
+      reach = std::max({reach, std::abs(c[d]), std::abs(c[d] - (shape[d] - 1))});
+    double best = std::numeric_limits<double>::infinity();
+    int64_t found = -1;
+    for (int64_t r = 0; r <= reach; ++r) {
+      if (r > 0 && best <= static_cast<double>(r - 1) * cell) break;
+      for (int64_t i = std::max<int64_t>(0, c[0] - r); i <= std::min(shape[0] - 1, c[0] + r); ++i)
+        for (int64_t j = std::max<int64_t>(0, c[1] - r); j <= std::min(shape[1] - 1, c[1] + r);
+             ++j) {
+          const bool shell = std::abs(i - c[0]) == r || std::abs(j - c[1]) == r;
+          for (int64_t k = std::max<int64_t>(0, c[2] - r);
+               k <= std::min(shape[2] - 1, c[2] + r); ++k) {
+            if (!shell && std::abs(k - c[2]) != r) continue;
+            const int64_t cell_index = flat({i, j, k});
+            for (int64_t s = start[static_cast<size_t>(cell_index)];
+                 s < start[static_cast<size_t>(cell_index + 1)]; ++s) {
+              const int64_t item = items[static_cast<size_t>(s)];
+              const double value = length(difference(x, (*points)[static_cast<size_t>(item)]));
+              if (value < best || (value == best && item < found)) {
+                best = value;
+                found = item;
+              }
+            }
+          }
+        }
+    }
+    return found;
+  }
+};
+
+class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
+ public:
+  EnvelopeBandAdmission(const EnvelopeData& envelope, const PointIndex& cloud_index)
+      : data(envelope), cloud(cloud_index), lower(envelope.bounds[2]), upper(envelope.bounds[1]) {}
+
+  phx::mc::remesh::AdmissionKind kind() const override {
+    return phx::mc::remesh::AdmissionKind::kOffsetBand;
+  }
+  phx::mc::remesh::VertexEvidence evaluate(const V& position) const override {
+    const double nearest = cloud.nearest(position);
+    return {next_down(next_down(nearest - data.covering_radius) - data.arithmetic_error),
+            next_up(nearest + data.arithmetic_error)};
+  }
+  bool admits(const V& a, const V& b, const V& c,
+              const std::array<phx::mc::remesh::VertexEvidence, 3>& evidence) const override {
+    const double radius = phx::mc::remesh::certified_free_radius(a, b, c, data.roundoff);
+    if (!std::isfinite(radius)) return false;
+    double high = 0, low = std::numeric_limits<double>::infinity();
+    for (const auto& vertex : evidence) {
+      high = std::max(high, vertex.upper);
+      low = std::min(low, vertex.lower);
+    }
+    return next_up(high + radius) <= upper && next_down(low - radius) >= lower;
+  }
+  // Radial projection onto the offset sphere of the nearest cloud point.
+  V project(const V& x) const override {
+    const int64_t item = cloud.nearest_index(x);
+    if (item < 0) return x;
+    const V& p = data.cloud[static_cast<size_t>(item)];
+    const V direction = difference(x, p);
+    const double norm = length(direction);
+    if (!(norm > 0) || !std::isfinite(norm)) return x;
+    return add(p, mul(direction, data.offset / norm));
+  }
+
+ private:
+  const EnvelopeData& data;
+  const PointIndex& cloud;
+  double lower, upper;
+};
+
+int32_t remesh_envelope(EnvelopeData& data, phx::mc::remesh::RemeshCounters& counters) {
+  const double h = 2 * data.spacing;
+  const double lower = data.bounds[2], upper = data.bounds[1];
+  if (!(h > 0) || !(lower > 0) || !(upper > lower)) return PHX_MC_INVALID_ARGUMENT;
+  PointIndex cloud;
+  int32_t status = cloud.build(data.cloud, std::max(h / 2, data.covering_radius));
+  if (status != PHX_MC_OK) return status;
+  const EnvelopeBandAdmission admission(data, cloud);
+  std::vector<V> points = data.surface_points;
+  std::vector<F> triangles = data.triangles;
+  status = phx::mc::remesh::remesh_surface(points, triangles, admission, {h, 30.0}, counters);
+  if (status != PHX_MC_OK) return status;
+  // Source-to-surface: every source point lies within the covering radius of
+  // a cloud point, which lies within its nearest-vertex distance of the
+  // surface.
+  PointIndex vertices;
+  status = vertices.build(points, h);
+  if (status != PHX_MC_OK) return status;
+  double source_upper = 0;
+  for (const V& p : data.cloud)
+    source_upper = std::max(source_upper,
+                            upper_sum(upper_sum(next_up(vertices.nearest(p)),
+                                                data.covering_radius),
+                                      data.arithmetic_error));
+  if (!std::isfinite(source_upper)) return PHX_MC_RANGE_ERROR;
+  data.bounds[0] = next_up(source_upper);
+  data.surface_points = std::move(points);
+  data.triangles = std::move(triangles);
+  // The marching-tetrahedra carrier no longer bounds the remeshed surface.
+  data.volume_points = data.surface_points;
+  data.cells.clear();
+  return PHX_MC_OK;
+}
+}  // namespace
+
+extern "C" PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* handle, double* bounds,
+                                                              int64_t* counters) {
+  if (handle == nullptr || bounds == nullptr || counters == nullptr)
+    return PHX_MC_INVALID_ARGUMENT;
+  return phx::mc::guarded([&]() -> int32_t {
+    auto& data = *static_cast<EnvelopeData*>(handle);
+    if (data.cloud.empty() || data.triangles.empty()) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::remesh::RemeshCounters result;
+    const int32_t status = remesh_envelope(data, result);
+    if (status != PHX_MC_OK) return status;
+    std::copy(data.bounds.begin(), data.bounds.end(), bounds);
+    counters[0] = result.splits;
+    counters[1] = result.collapses;
+    counters[2] = result.flips;
+    counters[3] = result.relocations;
+    counters[4] = result.unmet;
+    return PHX_MC_OK;
+  });
 }

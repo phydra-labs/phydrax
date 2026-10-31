@@ -264,7 +264,10 @@ enum phx_mc_tet_unmet_criterion {
   PHX_MC_TET_UNMET_CONSTRUCTION = 3,
   PHX_MC_TET_UNMET_VALIDITY = 4
 };
-/* INPUT_ANGLE: conforming refinement left the cell because the boundary split
+/* FIXED_BOUNDARY: refinement's circumcenter lies beyond a fixed face, or an
+ * improvement radius-edge residual lies on a constrained face whose own
+ * triangle already exceeds the bound (no tetrahedron on it can meet it).
+ * INPUT_ANGLE: conforming refinement left the cell because the boundary split
  * it required falls in the protected region of an acute input feature
  * (segments, or a segment and a facet, meeting below 90 degrees, or facets
  * meeting at a dihedral angle below 90 degrees through the domain). */
@@ -278,15 +281,20 @@ enum phx_mc_tet_unmet_reason {
 };
 /* Apex vertex ID of an unmet row without INPUT_ANGLE evidence. */
 #define PHX_MC_TET_UNMET_NO_APEX UINT64_MAX
+/* Facet ID of an unmet row without a forcing constrained facet. */
+#define PHX_MC_TET_UNMET_NO_FACET UINT64_MAX
 PHX_MC_API int32_t phx_mc_tet_mesh_unmet_count(const phx_mc_tet_mesh* mesh,
                                                 int64_t* count);
 /* One row per unmet (cell, criterion). INPUT_ANGLE rows carry the acute
  * feature's apex vertex ID (a ridge's first endpoint) and its angle in
- * degrees; other rows PHX_MC_TET_UNMET_NO_APEX and NaN. */
+ * degrees; other rows PHX_MC_TET_UNMET_NO_APEX and NaN. Improvement
+ * FIXED_BOUNDARY radius-edge rows carry the forcing constrained facet's ID and
+ * its triangle radius-edge ratio; other rows PHX_MC_TET_UNMET_NO_FACET and
+ * NaN. */
 PHX_MC_API int32_t phx_mc_tet_mesh_unmet(
     const phx_mc_tet_mesh* mesh, int64_t capacity, uint64_t* cell_ids,
     int32_t* criteria, int32_t* reasons, double* values, uint64_t* apex_vertex_ids,
-    double* apex_angles);
+    double* apex_angles, uint64_t* facet_ids, double* facet_ratios);
 #define PHX_MC_TET_MESH_SNAPSHOT_SIZES 19
 typedef struct phx_mc_tet_periodic_vertex_member {
   uint64_t vertex_id;
@@ -967,6 +975,14 @@ PHX_MC_API int32_t phx_mc_surface_envelope_arrays(
     int64_t volume_vertex_capacity, int64_t tetrahedron_capacity, double* surface_vertices,
     int64_t* surface_triangles, double* volume_vertices, int64_t* tetrahedra);
 PHX_MC_API void phx_mc_surface_envelope_free(void* result);
+/* Remeshes a created envelope surface in place toward edge length 2 * spacing and a
+ * 30 degree minimum angle; every edit keeps its triangles inside the certified
+ * distance band [bounds[2], bounds[1]] and the surface an embedded oriented closed
+ * 2-manifold. Writes the updated four bounds and counters (splits, collapses, flips,
+ * relocations, triangles still below the angle or size target). The tetrahedral
+ * carrier is dropped: the volume vertices become the surface vertices, no cells. */
+PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* result, double* bounds,
+                                                  int64_t* counters);
 
 /* --------------------------------------------------------------- level sets */
 #define PHX_MC_LEVEL_SET_FULL_CARRIERS 0

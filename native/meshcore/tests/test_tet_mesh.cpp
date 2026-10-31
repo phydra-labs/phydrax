@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 #include <vector>
 #include "check.hpp"
@@ -335,7 +336,7 @@ void persistent_create_snapshot_and_rejection() {
   PHX_CHECK(phx_mc_tet_mesh_unmet_count(mesh, &unmet_count) == PHX_MC_OK);
   PHX_CHECK(unmet_count == 0);
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, 0, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                  nullptr) == PHX_MC_OK);
+                                  nullptr, nullptr, nullptr) == PHX_MC_OK);
 
   phx_mc_tet_mesh_edit_request edit{};
   int32_t edit_status = -1;
@@ -571,8 +572,8 @@ void persistent_create_snapshot_and_rejection() {
   const uint64_t untouched_report_id = 987;
   uint64_t short_report_id = untouched_report_id;
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, report_count - 1, &short_report_id,
-                                  nullptr, nullptr, nullptr, nullptr, nullptr) ==
-            PHX_MC_CAPACITY_EXCEEDED);
+                                  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                  nullptr) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(short_report_id == untouched_report_id);
   std::vector<uint64_t> report_cells(static_cast<std::size_t>(report_count));
   std::vector<int32_t> report_criteria(static_cast<std::size_t>(report_count));
@@ -580,10 +581,13 @@ void persistent_create_snapshot_and_rejection() {
   std::vector<double> report_values(static_cast<std::size_t>(report_count));
   std::vector<uint64_t> report_apexes(static_cast<std::size_t>(report_count));
   std::vector<double> report_angles(static_cast<std::size_t>(report_count));
+  std::vector<uint64_t> report_facets(static_cast<std::size_t>(report_count));
+  std::vector<double> report_facet_ratios(static_cast<std::size_t>(report_count));
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, report_count, report_cells.data(),
                                   report_criteria.data(), report_reasons.data(),
                                   report_values.data(), report_apexes.data(),
-                                  report_angles.data()) == PHX_MC_OK);
+                                  report_angles.data(), report_facets.data(),
+                                  report_facet_ratios.data()) == PHX_MC_OK);
   // The domain is one tetrahedron: its dihedral angles are acute, so a
   // boundary split near an edge is protected and its cell carries the apex
   // (a vertex present at refinement) and the angle as evidence.
@@ -602,6 +606,9 @@ void persistent_create_snapshot_and_rejection() {
       PHX_CHECK(report_apexes[row] == PHX_MC_TET_UNMET_NO_APEX &&
                 std::isnan(report_angles[row]));
     }
+    // Refinement records never carry an improvement forcing facet.
+    PHX_CHECK(report_facets[row] == PHX_MC_TET_UNMET_NO_FACET &&
+              std::isnan(report_facet_ratios[row]));
   }
   int64_t collapsed_vertices = 0;
   int64_t relocated_vertices = 0;
@@ -626,14 +633,28 @@ void persistent_create_snapshot_and_rejection() {
   report_values.resize(static_cast<std::size_t>(report_count));
   report_apexes.resize(static_cast<std::size_t>(report_count));
   report_angles.resize(static_cast<std::size_t>(report_count));
+  report_facets.resize(static_cast<std::size_t>(report_count));
+  report_facet_ratios.resize(static_cast<std::size_t>(report_count));
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, report_count, report_cells.data(),
                                   report_criteria.data(), report_reasons.data(),
                                   report_values.data(), report_apexes.data(),
-                                  report_angles.data()) == PHX_MC_OK);
+                                  report_angles.data(), report_facets.data(),
+                                  report_facet_ratios.data()) == PHX_MC_OK);
   for (std::size_t row = 0; row < report_cells.size(); ++row) {
     PHX_CHECK(report_criteria[row] == PHX_MC_TET_UNMET_RADIUS_EDGE);
-    PHX_CHECK(report_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT);
+    PHX_CHECK(report_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT ||
+              report_reasons[row] == PHX_MC_TET_UNMET_FIXED_BOUNDARY);
     PHX_CHECK(report_values[row] > 2.0);
+    // A forcing facet is recorded exactly for FIXED_BOUNDARY rows, and its
+    // own ratio bounds the cell's from below.
+    if (report_reasons[row] == PHX_MC_TET_UNMET_FIXED_BOUNDARY) {
+      PHX_CHECK(report_facets[row] != PHX_MC_TET_UNMET_NO_FACET &&
+                report_facet_ratios[row] > 2.0 &&
+                report_facet_ratios[row] <= report_values[row] * (1.0 + 1.0e-12));
+    } else {
+      PHX_CHECK(report_facets[row] == PHX_MC_TET_UNMET_NO_FACET &&
+                std::isnan(report_facet_ratios[row]));
+    }
   }
   phx_mc_tet_mesh_free(mesh);
   mesh = nullptr;
@@ -2497,6 +2518,103 @@ void exact_boundary_subface_coverage_rejects_gap_reversal_and_overlap() {
                                   three_faces, three_rows, contributors));
 }
 
+// Face row 3 of the tetrahedron (1, 1, 1) + unit simplex lies on z = 1 and
+// declares the plane through vertex 0 with axes (1, 0, slope) and (0, 1, 0);
+// the other rows declare none. Vertex 1 = (2, 1, 1) is the only corner off
+// the plane, at distance slope / sqrt(1 + slope^2) ~ slope.
+int32_t create_declared_tet(double slope, double tolerance, phx_mc_tet_mesh** mesh,
+                            phx_mc_tet_plane_refusal* refusal) {
+  static constexpr std::array<double, 12> points{
+      1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0};
+  static constexpr std::array<int32_t, 4> tetrahedra{0, 1, 2, 3};
+  static constexpr std::array<int32_t, 1> regions{0};
+  static constexpr std::array<int32_t, 12> faces{1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  static constexpr std::array<int32_t, 4> sources{0, 1, 2, 3};
+  static constexpr std::array<int64_t, 4> source_ids{101, 102, 103, 104};
+  static constexpr std::array<double, 4> source_tolerances{};
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  std::array<double, 36> planes{};
+  planes.fill(nan);
+  const std::array<double, 9> declared{1.0, 1.0, 1.0, 1.0, 0.0, slope, 0.0, 1.0, 0.0};
+  std::copy(declared.begin(), declared.end(), planes.begin() + 27);
+  const std::array<double, 4> plane_tolerances{0.0, 0.0, 0.0, tolerance};
+  phx_mc_tet_mesh_create_request create{};
+  create.point_count = 4;
+  create.points = points.data();
+  create.tetrahedron_count = 1;
+  create.tetrahedra = tetrahedra.data();
+  create.tetrahedron_regions = regions.data();
+  create.face_count = 4;
+  create.faces = faces.data();
+  create.face_sources = sources.data();
+  create.source_point_count = 4;
+  create.source_points = points.data();
+  create.source_face_count = 4;
+  create.source_faces = faces.data();
+  create.source_face_groups = sources.data();
+  create.source_face_ids = source_ids.data();
+  create.source_face_tolerances = source_tolerances.data();
+  create.source_face_planes = planes.data();
+  create.source_face_plane_tolerances = plane_tolerances.data();
+  create.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_CONFORMING;
+  create.plane_refusal = refusal;
+  create.result = mesh;
+  return phx_mc_tet_mesh_create(&create);
+}
+
+void declared_plane_admission_refuses_and_records_vertices() {
+  constexpr double tilt = 0x1p-40;
+  // Refusal: the plane misses vertex 1's rounding box and no tolerance is
+  // declared. The typed record names the vertex, the plane row, the rounded
+  // projection parameters and an outward distance bound; nothing is created.
+  phx_mc_tet_mesh* mesh = nullptr;
+  phx_mc_tet_plane_refusal refusal{};
+  PHX_CHECK(create_declared_tet(tilt, 0.0, &mesh, &refusal) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(mesh == nullptr);
+  PHX_CHECK(refusal.refused == 1);
+  PHX_CHECK(refusal.vertex == 1 && refusal.face_row == 3);
+  PHX_CHECK(refusal.parameters[0] == 1.0 && refusal.parameters[1] == 0.0);
+  PHX_CHECK(refusal.deviation >= tilt * (1.0 - 0x1p-30) &&
+            refusal.deviation <= tilt * (1.0 + 0x1p-30));
+  PHX_CHECK(refusal.tolerance == 0.0);
+
+  // Tolerance admission: the same plane within the declared tolerance.
+  refusal = phx_mc_tet_plane_refusal{};
+  PHX_CHECK(create_declared_tet(tilt, 2.0 * tilt, &mesh, &refusal) == PHX_MC_OK);
+  PHX_CHECK(mesh != nullptr && refusal.refused == 0);
+  if (mesh == nullptr) return;
+  int64_t count = -1;
+  PHX_CHECK(phx_mc_tet_mesh_plane_record_count(mesh, &count) == PHX_MC_OK);
+  PHX_CHECK(count == 3);
+  std::array<uint64_t, 3> ids{};
+  std::array<int32_t, 3> rows{};
+  std::array<double, 6> parameters{};
+  std::array<double, 3> deviations{};
+  PHX_CHECK(phx_mc_tet_mesh_plane_records(mesh, 2, ids.data(), rows.data(), parameters.data(),
+                                          deviations.data()) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(phx_mc_tet_mesh_plane_records(mesh, 3, ids.data(), rows.data(), parameters.data(),
+                                          deviations.data()) == PHX_MC_OK);
+  PHX_CHECK((ids == std::array<uint64_t, 3>{0, 1, 2}));
+  PHX_CHECK((rows == std::array<int32_t, 3>{3, 3, 3}));
+  PHX_CHECK((parameters == std::array<double, 6>{0.0, 0.0, 1.0, 0.0, 0.0, 1.0}));
+  PHX_CHECK(deviations[0] == 0.0 && deviations[2] == 0.0);
+  PHX_CHECK(deviations[1] >= tilt * (1.0 - 0x1p-30) && deviations[1] <= 2.0 * tilt);
+  phx_mc_tet_mesh_free(mesh);
+
+  // Rounding-box admission: a plane 2^-60 off vertex 1 meets the box of
+  // reals rounding to its carrier (half an ulp of 1 is 2^-53), so it is
+  // admitted without a tolerance and recorded with its nonzero distance.
+  mesh = nullptr;
+  refusal = phx_mc_tet_plane_refusal{};
+  PHX_CHECK(create_declared_tet(0x1p-60, 0.0, &mesh, &refusal) == PHX_MC_OK);
+  PHX_CHECK(mesh != nullptr && refusal.refused == 0);
+  if (mesh == nullptr) return;
+  PHX_CHECK(phx_mc_tet_mesh_plane_records(mesh, 3, ids.data(), rows.data(), parameters.data(),
+                                          deviations.data()) == PHX_MC_OK);
+  PHX_CHECK(deviations[1] > 0.0 && deviations[1] <= 0x1p-59);
+  phx_mc_tet_mesh_free(mesh);
+}
+
 }  // namespace
 
 int main() {
@@ -2513,5 +2631,6 @@ int main() {
   split_edge_preserves_exact_ghost_boundary_coverage();
   relocation_checks_incident_source_facets_atomically();
   exact_boundary_subface_coverage_rejects_gap_reversal_and_overlap();
+  declared_plane_admission_refuses_and_records_vertices();
   return phx::mc::test::finish("test_tet_mesh");
 }

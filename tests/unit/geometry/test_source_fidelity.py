@@ -51,7 +51,7 @@ from phydrax.geometry._source_fidelity import (
     polyhedral_face_triangle_vertex_ids,
 )
 from phydrax.geometry._source_identity import source_entity_id as _source_entity_id
-from phydrax.geometry.brep import brep_cylinder
+from phydrax.geometry.brep import brep_cylinder, brep_sphere
 from phydrax.geometry.brep._patches import (
     AbstractSurfacePatch,
     CircleCurve,
@@ -1355,6 +1355,40 @@ def test_curved_cell_normal_deviation_bound_is_first_order_in_cell_width() -> No
         span = float(np.ptp(np.unwrap(np.arctan2(points[:, 1], points[:, 0]))))
         assert bound is not None
         assert 0.0 <= float(bound[0]) <= float(bound[1]) <= 2.0 * span
+
+
+def test_sphere_cell_normal_bound_splits_until_it_decides_the_limit() -> None:
+    domain = MeshingDomain.from_brep(
+        brep_sphere(1.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
+    # A chart cell elongated in latitude: its box enclosure of the closed-form
+    # normal exceeds the limit although the cell meets it.
+    triangle = (
+        (Fraction(3.8288160465625602), Fraction(0.9817477042468101)),
+        (Fraction(3.877903431774901), Fraction(1.079922474671491)),
+        (Fraction(3.730641276137879), Fraction(1.178097245096172)),
+    )
+    points = np.asarray(
+        domain.evaluate(
+            np.zeros((3,), dtype=np.int64),
+            np.asarray([[float(u), float(v)] for u, v in triangle], dtype=np.float64),
+        ),
+        dtype=np.float64,
+    )
+    cross = np.cross(points[1] - points[0], points[2] - points[0])
+    target = (
+        Fraction(float(cross[0])),
+        Fraction(float(cross[1])),
+        Fraction(float(cross[2])),
+    )
+    limit = Fraction(1, 5)
+    whole = _normal_deviation_for_cell(domain, 0, triangle, target, _DerivativeCache())
+    split = _normal_deviation_for_cell(
+        domain, 0, triangle, target, _DerivativeCache(), limit
+    )
+    assert whole is not None and split is not None
+    assert whole[1] > limit
+    assert whole[0] <= split[0] <= split[1] <= limit
 
 
 def test_source_boundary_chart_witness_retains_non_dyadic_partition_exactly() -> None:

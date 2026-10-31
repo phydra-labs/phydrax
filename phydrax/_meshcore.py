@@ -976,6 +976,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _I64, _I64, _I64, _P, _P, _P, _P),
     ),
     "phx_mc_surface_envelope_free": (None, (_P,)),
+    "phx_mc_surface_envelope_remesh": (_I32, (_P, _P, _P)),
     "phx_mc_level_set_split_3d": (_I32, (ctypes.POINTER(_LevelSetSplit3DRequest),)),
     "phx_mc_mixed_template_counts": (_I32, (_I32, _I32, _I32, _P)),
     "phx_mc_mixed_template": (_I32, (_I32, _I32, _I32, _I64, _P)),
@@ -1015,7 +1016,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _P),
     ),
     "phx_mc_tet_mesh_unmet_count": (_I32, (_P, _P)),
-    "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_plane_record_count": (_I32, (_P, _P)),
     "phx_mc_tet_mesh_plane_records": (_I32, (_P, _I64, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_snapshot": (
@@ -2807,6 +2808,9 @@ class TetMeshPlaneRefusal(MeshcoreError):
 
 
 class TetMeshUnmetReason(IntEnum):
+    # Refinement: the circumcenter lies beyond a fixed face. Improvement: a
+    # radius-edge residual on a constrained face whose own triangle already
+    # exceeds the bound, so no tetrahedron on that face can meet it.
     FIXED_BOUNDARY = 0
     PROTECTED = 1
     NONREPRESENTABLE = 2
@@ -2821,6 +2825,8 @@ class TetMeshUnmetReason(IntEnum):
 
 # Apex vertex ID of an unmet row without INPUT_ANGLE evidence.
 TET_MESH_UNMET_NO_APEX = np.iinfo(np.uint64).max
+# Facet ID of an unmet row without a forcing constrained facet.
+TET_MESH_UNMET_NO_FACET = np.iinfo(np.uint64).max
 
 
 class TetMeshUnmet(NamedTuple):
@@ -2832,6 +2838,11 @@ class TetMeshUnmet(NamedTuple):
     # endpoint) and angle in degrees; TET_MESH_UNMET_NO_APEX and NaN otherwise.
     apex_vertex_ids: np.ndarray
     apex_angles: np.ndarray
+    # Improvement FIXED_BOUNDARY radius-edge rows: the constrained facet whose
+    # own triangle radius-edge ratio (at most the cell's) exceeds the bound;
+    # TET_MESH_UNMET_NO_FACET and NaN otherwise.
+    facet_ids: np.ndarray
+    facet_ratios: np.ndarray
 
 
 class TetMeshRun(NamedTuple):
@@ -3128,6 +3139,7 @@ class SurfaceEnvelopeResult(NamedTuple):
     surface_triangles: np.ndarray
     volume_vertices: np.ndarray
     tetrahedra: np.ndarray
+    remesh_counters: np.ndarray | None = None
 
 
 # Periodic kernels also bound lattice (fractional) coordinates by 2**30 so that
@@ -3179,6 +3191,8 @@ def surface_envelope(
     spacing: float,
     certificate_spacing: float,
     /,
+    *,
+    remesh: bool = False,
 ) -> SurfaceEnvelopeResult:
     """Tetrahedralize an explicit unsigned-distance envelope around a triangle soup.
 
@@ -3187,6 +3201,14 @@ def surface_envelope(
     interpolation error in ``bounds``; it refuses when the offset cannot
     dominate those certified errors. This does not infer an interior from an
     unsigned zero set.
+
+    With ``remesh`` the extracted surface is remeshed in place toward edge length
+    ``2 * spacing`` and a 30 degree minimum angle; every edit keeps its triangles
+    inside the certified band ``[bounds[2], bounds[1]]`` and the surface an
+    embedded oriented closed 2-manifold, and ``bounds[0]`` is recomputed. The
+    tetrahedral carrier is then dropped (no tetrahedra; the volume vertices are
+    the surface vertices), and ``remesh_counters`` reports the splits, collapses,
+    flips, relocations and the triangles still below the angle or size target.
     """
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     faces = np.ascontiguousarray(
@@ -3234,6 +3256,16 @@ def surface_envelope(
             "surface_envelope_create returned no owned result handle.",
         )
     try:
+        remesh_counters: np.ndarray | None = None
+        if remesh:
+            remesh_counters = np.zeros((5,), dtype=np.int64)
+            _raise_for_call(
+                library["phx_mc_surface_envelope_remesh"](
+                    handle, bounds.ctypes.data, remesh_counters.ctypes.data
+                ),
+                "surface_envelope_remesh",
+            )
+            remesh_counters.setflags(write=False)
         sizes = np.empty((4,), dtype=np.int64)
         _raise_for_call(
             library["phx_mc_surface_envelope_sizes"](handle, sizes.ctypes.data),
@@ -3280,7 +3312,7 @@ def surface_envelope(
             surface_vertices.shape[0] == 0
             or surface_triangles.shape[0] == 0
             or volume_vertices.shape[0] == 0
-            or tetrahedra.shape[0] == 0
+            or (tetrahedra.shape[0] == 0) != remesh
             or np.any(~np.isfinite(bounds))
             or np.any(~np.isfinite(surface_vertices))
             or np.any(~np.isfinite(volume_vertices))
@@ -3307,6 +3339,7 @@ def surface_envelope(
             surface_triangles,
             volume_vertices,
             tetrahedra,
+            remesh_counters,
         )
     finally:
         library["phx_mc_surface_envelope_free"](handle)
@@ -7290,6 +7323,8 @@ class TetMesh3D:
             values = np.empty((row_count,), dtype=np.float64)
             apex_vertex_ids = np.empty((row_count,), dtype=np.uint64)
             apex_angles = np.empty((row_count,), dtype=np.float64)
+            facet_ids = np.empty((row_count,), dtype=np.uint64)
+            facet_ratios = np.empty((row_count,), dtype=np.float64)
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_unmet"](
                     self._live(),
@@ -7300,11 +7335,20 @@ class TetMesh3D:
                     _tet_mesh_pointer(values),
                     _tet_mesh_pointer(apex_vertex_ids),
                     _tet_mesh_pointer(apex_angles),
+                    _tet_mesh_pointer(facet_ids),
+                    _tet_mesh_pointer(facet_ratios),
                 ),
                 "tet_mesh_unmet",
             )
             return TetMeshUnmet(
-                tetrahedra, criteria, reasons, values, apex_vertex_ids, apex_angles
+                tetrahedra,
+                criteria,
+                reasons,
+                values,
+                apex_vertex_ids,
+                apex_angles,
+                facet_ids,
+                facet_ratios,
             )
 
     def plane_records(self) -> TetMeshPlaneRecords:
@@ -8068,6 +8112,7 @@ __all__ = [
     "TetMeshUnmet",
     "TetMeshUnmetReason",
     "TET_MESH_UNMET_NO_APEX",
+    "TET_MESH_UNMET_NO_FACET",
     "QuadraticValidityDecision",
     "RestrictedPowerCells",
     "RestrictedDual3D",
