@@ -25,6 +25,9 @@ from phydrax.discretization.finite_volume._material_schedule import (
     prepare_material_chain_schedule,
 )
 from phydrax.discretization.finite_volume._remap_csr_view import material_csr_rows
+from phydrax.discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumePlan,
+)
 from phydrax.geometry._common_root_volume_overlap import CommonRootVolumeWitness
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
@@ -203,6 +206,8 @@ def _curved_material_refinement_case() -> tuple[
     MeshAdaptationResult,
     object,
     tuple[str, str],
+    CellMesh,
+    CellGeometrySpec,
 ]:
     """Certified curved two-tetrahedron source and its material-following refinement."""
     (
@@ -277,7 +282,18 @@ def _curved_material_refinement_case() -> tuple[
             material_reference=reference,
         )
     )
-    return source, reference, prior, route, source_ids, refined, domain, occurrence
+    return (
+        source,
+        reference,
+        prior,
+        route,
+        source_ids,
+        refined,
+        domain,
+        occurrence,
+        root_mesh,
+        root_geometry,
+    )
 
 
 def _tetrahedral_fv_plan(
@@ -311,6 +327,8 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
         refined,
         domain,
         occurrence,
+        root_mesh,
+        root_geometry,
     ) = _curved_material_refinement_case()
     with pytest.raises(ValueError, match="mutually exclusive"):
         prepare_mesh_adaptation(
@@ -653,7 +671,7 @@ def _euler_fv_runtime(
 
 
 def test_fv_commit_remesh_routes_material_and_eulerian_content() -> None:
-    source, _, prior, _, _, refined, _, _ = _curved_material_refinement_case()
+    source, _, prior, _, _, refined, _, _, _, _ = _curved_material_refinement_case()
     transition = refined.transition
     assert transition is not None and transition.volume_material_chain is not None
     system = phx.equations.EulerSystem(3)
