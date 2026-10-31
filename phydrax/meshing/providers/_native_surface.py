@@ -3439,41 +3439,64 @@ def _chart_curve_bounds(
 
 
 _FOLD_PROBE_STEP = 1.0e-6
+# A normal aim also probes each cell this far from a corner toward its centroid.
+_CORNER_PROBE_WEIGHT = 0.9
 
 
-def _folded_cells(
+def _facet_normal_violations(
     domain: domain_owner.MeshingDomain,
     patches: np.ndarray,
     chart_parameters: np.ndarray,
     corners: np.ndarray,
+    normal_aim: float | None,
     /,
 ) -> np.ndarray:
-    """Mark cells whose vertex order opposes the oriented source normal.
+    """Mark cells whose facet opposes or turns away from the oriented source normal.
 
-    The source normal is sampled at the chart centroid by central differences of
-    the source map. This only selects cells to refine; certification does not
-    rely on it.
+    The source normal is sampled by central differences of the source map at the
+    chart centroid and, with a normal aim, also near each corner inside the cell.
+    A cell is marked when its vertex order opposes the sampled normal or when the
+    facet turns from it by more than the aim. A chart cell that is well shaped
+    in parameters can still be a physical sliver whose facet normal departs from
+    the source although its chord deviation and size meet the schedule. This
+    only selects cells to refine; certification does not rely on it.
     """
     centroids = np.mean(chart_parameters, axis=1)
-    steps = _FOLD_PROBE_STEP * np.maximum(1.0, np.abs(centroids))
+    probe_points = [centroids]
+    if normal_aim is not None:
+        probe_points.extend(
+            _CORNER_PROBE_WEIGHT * chart_parameters[:, corner]
+            + (1.0 - _CORNER_PROBE_WEIGHT) * centroids
+            for corner in range(chart_parameters.shape[1])
+        )
+    points = np.concatenate(probe_points)
+    steps = _FOLD_PROBE_STEP * np.maximum(1.0, np.abs(points))
     probes = np.concatenate(
         (
-            centroids + steps * np.asarray((1.0, 0.0)),
-            centroids - steps * np.asarray((1.0, 0.0)),
-            centroids + steps * np.asarray((0.0, 1.0)),
-            centroids - steps * np.asarray((0.0, 1.0)),
+            points + steps * np.asarray((1.0, 0.0)),
+            points - steps * np.asarray((1.0, 0.0)),
+            points + steps * np.asarray((0.0, 1.0)),
+            points - steps * np.asarray((0.0, 1.0)),
         )
     )
     values = np.asarray(
-        domain.evaluate(np.tile(patches, 4), probes), dtype=np.float64
-    ).reshape((4, centroids.shape[0], 3))
+        domain.evaluate(np.tile(patches, 4 * len(probe_points)), probes),
+        dtype=np.float64,
+    ).reshape((4, len(probe_points), centroids.shape[0], 3))
     normal = np.cross(values[0] - values[1], values[2] - values[3])
     orientation = np.asarray(
         [domain.patches[int(patch)].orientation for patch in patches.tolist()],
         dtype=np.float64,
     )
     facet = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
-    return orientation * np.sum(facet * normal, axis=1) <= 0.0
+    alignment = orientation * np.sum(facet * normal, axis=-1)
+    marked = alignment[0] <= 0.0
+    if normal_aim is not None:
+        lengths = np.linalg.norm(facet, axis=-1) * np.linalg.norm(normal, axis=-1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cosines = alignment / lengths
+        marked |= np.any(~(cosines >= math.cos(normal_aim)), axis=0)
+    return marked
 
 
 type _CellBoundKey = tuple[int, tuple[_ChartUV, ...]]
@@ -3678,9 +3701,17 @@ def _refine_charts(
         if specification.maximum_normal_deviation is not None:
             bad |= normal_bounds > specification.maximum_normal_deviation
         # A chart triangle near a singular chart row can map to a cell whose
-        # vertex order reverses the oriented source normal; split it like any
-        # other schedule violation.
-        bad |= _folded_cells(domain, patches, chart_parameters, physical[triangles])
+        # vertex order reverses the oriented source normal, and an anisotropic
+        # chart can map a well-shaped chart triangle to a physical sliver whose
+        # facet turns from the source beyond the schedule's normal aim; split
+        # both like any other schedule violation.
+        bad |= _facet_normal_violations(
+            domain,
+            patches,
+            chart_parameters,
+            physical[triangles],
+            schedule.normal_deviation_aim,
+        )
         if not np.any(bad):
             break
 
