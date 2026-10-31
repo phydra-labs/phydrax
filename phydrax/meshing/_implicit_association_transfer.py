@@ -699,21 +699,23 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         new_ids = np.asarray(record.target_global_ids, dtype=np.int64)
         parent_dimensions = np.full(identifiers.shape, -1, dtype=np.int8)
         parent_ids = np.full(identifiers.shape, -1, dtype=np.int64)
-        for row, identifier in enumerate(identifiers.tolist()):
-            parents = old_ids[new_ids == identifier]
-            valid_rows = entity_rows(source, dimension, parents)
-            valid_parents = parents[valid_rows >= 0]
-            if valid_parents.size:
-                parent_dimensions[row] = dimension
-                parent_ids[row] = np.min(valid_parents)
-            elif (
-                entity_rows(source, dimension, np.asarray((identifier,), dtype=np.int64))[
-                    0
-                ]
-                >= 0
-            ):
-                parent_dimensions[row] = dimension
-                parent_ids[row] = identifier
+        # Each target's parent is its least lineage source present in the source
+        # mesh, else itself when retained; one sorted pass serves every target.
+        present = entity_rows(source, dimension, old_ids) >= 0
+        lineage_new = new_ids[present]
+        lineage_old = old_ids[present]
+        order = np.lexsort((lineage_old, lineage_new))
+        lineage_new = lineage_new[order]
+        lineage_old = lineage_old[order]
+        positions = np.searchsorted(lineage_new, identifiers, side="left")
+        inside = positions < lineage_new.size
+        has_parent = np.zeros(identifiers.shape, dtype=np.bool_)
+        has_parent[inside] = lineage_new[positions[inside]] == identifiers[inside]
+        parent_dimensions[has_parent] = dimension
+        parent_ids[has_parent] = lineage_old[positions[has_parent]]
+        retained = ~has_parent & (entity_rows(source, dimension, identifiers) >= 0)
+        parent_dimensions[retained] = dimension
+        parent_ids[retained] = identifiers[retained]
         if dimension == 0:
             created_rows = np.flatnonzero(entity_rows(source, 0, identifiers) < 0)
             if created_rows.size:
