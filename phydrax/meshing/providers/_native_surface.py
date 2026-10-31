@@ -2737,6 +2737,17 @@ def _pole_graded_rings(
             beyond_value, beyond_radius = ring_distance(beyond)
             if beyond_radius - next_radius <= step / 2:
                 next_alpha, next_value, next_radius = beyond, beyond_value, beyond_radius
+        # A ring leaving less than half its step to the extent would bound a
+        # thin last band, whose short radial gap forces a dense ring beside the
+        # coarse chart beyond; the ring moves onto the extent instead.
+        if next_alpha < alpha_limit:
+            limit_value, limit_radius = ring_distance(alpha_limit)
+            if limit_radius - next_radius < (next_radius - radius) / 2:
+                next_alpha, next_value, next_radius = (
+                    alpha_limit,
+                    limit_value,
+                    limit_radius,
+                )
         gap = next_radius - radius
         if next_alpha == alpha or gap <= 0.0 or next_value == value:
             break
@@ -3500,6 +3511,15 @@ def _facet_normal_violations(
 
 
 type _CellBoundKey = tuple[int, tuple[_ChartUV, ...]]
+type _TrimIdentity = tuple[Literal[1], int, Fraction, Fraction]
+# One lockstep refinement round of owner-local charts: given this owner's
+# requested trim-edge splits and whether it still has schedule violations,
+# return the trim splits every incident owner requested and whether any owner
+# still has violations.
+type _SeamRounds = Callable[
+    [frozenset[_TrimIdentity], bool],
+    tuple[frozenset[_TrimIdentity], bool],
+]
 
 
 def _cached_cell_bounds(
@@ -3549,7 +3569,17 @@ def _refine_charts(
     specification: SurfaceMeshingSpec,
     schedule: NativeSurfaceSchedule,
     /,
+    *,
+    seam_rounds: _SeamRounds | None = None,
 ) -> _RefinedSurface:
+    """Refine source charts until every cell meets the physical schedule.
+
+    Bad cells are bisected along their longest-edge propagation path inside
+    their own chart; a trim edge is a chart boundary, so a path ending there
+    splits the trim edge in every incident chart. Refinement of a chart therefore
+    depends on other charts only through the trim splits they request, which
+    `seam_rounds` exchanges between owner-local chart sets in lockstep rounds.
+    """
     global_rows: dict[_GlobalVertexKey, int] = {}
     coordinates: list[np.ndarray] = []
     source_dimensions: list[int] = []
@@ -3712,56 +3742,77 @@ def _refine_charts(
             physical[triangles],
             schedule.normal_deviation_aim,
         )
-        if not np.any(bad):
-            break
+        local_bad = bool(np.any(bad))
 
-        # Bisect along the longest-edge propagation path of every bad cell:
-        # the split edge is the longest edge of each cell sharing it, so no
-        # cell is bisected across a shorter edge and refinement never creates
-        # thinner cells than it splits. A trim edge is identified through its
-        # canonical curve identity, so every chart using that curve interval
-        # receives the same exact midpoint parameter.
-        identities: list[tuple[_LocalEdgeIdentity, ...]] = []
-        for chart in charts:
-            identities.extend(
-                tuple(
-                    _local_edge_identity(chart, first, last)
-                    for first, last in (
-                        (triangle[0], triangle[1]),
-                        (triangle[1], triangle[2]),
-                        (triangle[2], triangle[0]),
-                    )
-                )
-                for triangle in chart.triangles
-            )
-        cells_by_edge: dict[_LocalEdgeIdentity, list[int]] = {}
-        for cell, cell_identities in enumerate(identities):
-            for identity in cell_identities:
-                cells_by_edge.setdefault(identity, []).append(cell)
-
-        def longest_identity(cell: int, /) -> _LocalEdgeIdentity:
-            index = max(
-                range(3),
-                key=lambda index: (edge_lengths[cell, index], identities[cell][index]),
-            )
-            return identities[cell][index]
-
+        # Bisect along the longest-edge propagation path of every bad cell
+        # inside its chart: the split edge is the longest edge of each cell of
+        # the chart sharing it, so no cell is bisected across a shorter interior
+        # edge. A trim edge bounds the chart, so a path reaching it as the
+        # longest edge splits it; its canonical curve identity gives every chart
+        # using that curve interval the same exact midpoint parameter.
         split_edges: set[_LocalEdgeIdentity] = set()
-        for cell in np.flatnonzero(bad).tolist():
-            while True:
-                identity = longest_identity(cell)
-                onward = next(
-                    (
-                        other
-                        for other in cells_by_edge[identity]
-                        if other != cell and longest_identity(other) != identity
-                    ),
-                    None,
+        if local_bad:
+            identities: list[tuple[_LocalEdgeIdentity, ...]] = []
+            cell_charts: list[int] = []
+            for chart_row, chart in enumerate(charts):
+                identities.extend(
+                    tuple(
+                        _local_edge_identity(chart, first, last)
+                        for first, last in (
+                            (triangle[0], triangle[1]),
+                            (triangle[1], triangle[2]),
+                            (triangle[2], triangle[0]),
+                        )
+                    )
+                    for triangle in chart.triangles
                 )
-                if onward is None:
-                    split_edges.add(identity)
-                    break
-                cell = onward
+                cell_charts.extend((chart_row,) * len(chart.triangles))
+            cells_by_edge: dict[_LocalEdgeIdentity, list[int]] = {}
+            for cell, cell_identities in enumerate(identities):
+                for identity in cell_identities:
+                    cells_by_edge.setdefault(identity, []).append(cell)
+
+            def longest_identity(cell: int, /) -> _LocalEdgeIdentity:
+                index = max(
+                    range(3),
+                    key=lambda index: (
+                        edge_lengths[cell, index],
+                        identities[cell][index],
+                    ),
+                )
+                return identities[cell][index]
+
+            for cell in np.flatnonzero(bad).tolist():
+                while True:
+                    identity = longest_identity(cell)
+                    onward = next(
+                        (
+                            other
+                            for other in cells_by_edge[identity]
+                            if other != cell
+                            and cell_charts[other] == cell_charts[cell]
+                            and longest_identity(other) != identity
+                        ),
+                        None,
+                    )
+                    if onward is None:
+                        split_edges.add(identity)
+                        break
+                    cell = onward
+        if seam_rounds is None:
+            pending = local_bad
+        else:
+            shared_splits, pending = seam_rounds(
+                frozenset(
+                    (1, identity[1], identity[2], identity[3])
+                    for identity in split_edges
+                    if identity[0] == 1
+                ),
+                local_bad,
+            )
+            split_edges.update(shared_splits)
+        if not pending:
+            break
 
         changed = False
         for chart, mapping in zip(charts, local_rows, strict=True):
@@ -3933,7 +3984,7 @@ def _refine_charts(
                         entity_ids=(int(chart.patch),),
                     )
             chart.triangles = children
-        if not changed:
+        if local_bad and not changed:
             raise _failure(
                 "surface refinement is stalled while physical schedule violations remain",
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,

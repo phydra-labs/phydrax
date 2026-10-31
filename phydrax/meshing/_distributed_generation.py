@@ -625,12 +625,12 @@ def _validate_refined_shared_coordinates(
                 continue
             canonical = points.get(parameter)
             if canonical is None:
-                # Serial refinement splits a trim edge jointly in every incident
-                # chart; an owner-local split of a shared seam has no incident
-                # owner agreement, so it is refused rather than published.
+                # Every split of a shared seam is exchanged in its refinement
+                # round with its canonical point; a sample without one has no
+                # incident owner agreement, so it is refused rather than published.
                 domain = prepared.surface.domain
                 raise native_surface_owner._failure(
-                    "owner-local physical refinement split a shared source curve; the shared seam schedule does not meet the request",
+                    "owner-local physical refinement split a shared source curve without incident owner agreement",
                     category=native_surface_owner.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                     entity_ids=(int(domain.scope_entity_ids(1)[curve]),),
                 )
@@ -666,6 +666,152 @@ def _validate_refined_shared_coordinates(
                 refined.coordinates[physical_row] = np.asarray(
                     canonical, dtype=np.float64
                 )
+
+
+@final
+class _SeamRefinementRounds:
+    """Lockstep owner-local refinement rounds that close shared trim splits.
+
+    Serial refinement splits a trim edge jointly in every incident chart. Each
+    round here first agrees on owner failures, then sends every requested split
+    of a shared source curve, as its exact midpoint parameter and canonical
+    point, to the curve's other incident owners. A receiver maps the midpoint to
+    the trim interval of its own charts, so every incident chart splits the same
+    interval in the same round, and the round continues while any owner still
+    has schedule violations.
+    """
+
+    __slots__ = ("canonical_points", "charts", "prepared", "rank", "settled", "shared")
+
+    def __init__(
+        self,
+        prepared: PreparedDistributedSurfaceGeneration,
+        rank: int,
+        charts: list[native_surface_owner._ChartMesh],
+        canonical_points: dict[int, dict[Fraction, tuple[float, float, float]]],
+        /,
+    ) -> None:
+        self.prepared = prepared
+        self.rank = rank
+        self.charts = charts
+        self.canonical_points = canonical_points
+        self.shared = {
+            curve: owners for curve, owners in prepared.curve_owners if len(owners) > 1
+        }
+        # True once no further round can follow: refinement settled, or a
+        # round failed collectively.
+        self.settled = False
+
+    def abandon(self) -> None:
+        """Report this owner's failure to the round every other owner awaits."""
+        self.settled = True
+        _owner_group_allgather(
+            np.asarray((True,), dtype=np.bool_),
+            self.prepared.execution_group,
+            f"{self.prepared.axis_name}_refinement_round_failure",
+        )
+
+    def __call__(
+        self,
+        splits: frozenset[native_surface_owner._TrimIdentity],
+        pending: bool,
+        /,
+    ) -> tuple[frozenset[native_surface_owner._TrimIdentity], bool]:
+        prepared = self.prepared
+        group = prepared.execution_group
+        axis = prepared.axis_name
+        self.settled = True
+        _collective_error(
+            None,
+            group,
+            f"{axis}_refinement_round_failure",
+            "owner-local physical refinement",
+        )
+        part_count = len(group.spec.process_indices)
+        outgoing: list[list[_CurveSampleRecord]] = [[] for _ in range(part_count)]
+        local_error: Exception | None = None
+        try:
+            for _, curve, lower, upper in sorted(splits):
+                owners = self.shared.get(curve)
+                if owners is None:
+                    continue
+                midpoint = (lower + upper) / 2
+                point = _canonical_curve_point(prepared, curve, midpoint)
+                self.canonical_points.setdefault(curve, {})[midpoint] = point
+                for owner in owners:
+                    if owner != self.rank:
+                        outgoing[owner].append((curve, midpoint, point))
+        except Exception as caught:
+            local_error = caught
+        _collective_error(
+            local_error,
+            group,
+            f"{axis}_refinement_split_evaluation_failure",
+            "shared trim split evaluation",
+        )
+        incoming = _exchange_sample_records(
+            tuple(tuple(rows) for rows in outgoing),
+            prepared,
+            "refinement_trim_splits",
+        )
+        received: set[native_surface_owner._TrimIdentity] = set()
+        local_error = None
+        try:
+            intervals: dict[tuple[int, Fraction], native_surface_owner._TrimIdentity] = {}
+            for chart in self.charts:
+                for curve, _, first, last in chart.boundary_edges.values():
+                    lower, upper = min(first, last), max(first, last)
+                    intervals[(curve, (lower + upper) / 2)] = (1, curve, lower, upper)
+            for sender, bank in incoming.items():
+                for curve, midpoint, point in _decode_sample_bank(bank):
+                    owners = self.shared.get(curve)
+                    if owners is None or sender not in owners or self.rank not in owners:
+                        raise ValueError(
+                            "A shared trim split arrived from a nonincident owner."
+                        )
+                    identity = intervals.get((curve, midpoint))
+                    if identity is None:
+                        raise native_surface_owner._failure(
+                            "incident patch owners split different intervals of one shared source curve",
+                            category=native_surface_owner.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                            entity_ids=(
+                                int(prepared.surface.domain.scope_entity_ids(1)[curve]),
+                            ),
+                        )
+                    if not _coordinates_match(
+                        _canonical_curve_point(prepared, curve, midpoint), point
+                    ):
+                        raise native_surface_owner._failure(
+                            "an incident patch owner cannot reproduce a shared trim split's canonical source-curve coordinate",
+                            category=native_surface_owner.MeshingFailureCategory.INVALID_SOURCE,
+                            entity_ids=(
+                                int(prepared.surface.domain.scope_entity_ids(1)[curve]),
+                            ),
+                        )
+                    self.canonical_points.setdefault(curve, {})[midpoint] = point
+                    received.add(identity)
+        except Exception as caught:
+            local_error = caught
+        _collective_error(
+            local_error,
+            group,
+            f"{axis}_refinement_split_receipt_failure",
+            "shared trim split receipt",
+        )
+        any_pending = bool(
+            np.any(
+                np.asarray(
+                    _owner_group_allgather(
+                        np.asarray((pending,), dtype=np.bool_),
+                        group,
+                        f"{axis}_refinement_pending",
+                    ),
+                    dtype=np.bool_,
+                )
+            )
+        )
+        self.settled = not any_pending
+        return frozenset(received), any_pending
 
 
 def _reconcile_curve_parameters(
@@ -962,8 +1108,9 @@ def execute_distributed_surface_initial(
     This is the serial chart fixed point executed per owner: every round first
     unions the seam samples of all incident owners through the curve steward,
     then regenerates the local charts from that common sample set. Physical
-    refinement never splits source-curve edges, so it runs once after the
-    seams are closed and reproduces the serial construction patch by patch.
+    refinement then runs in lockstep rounds; a trim split requested by any
+    incident owner is applied in every incident chart of the same round, so
+    refinement reproduces the serial construction patch by patch.
     """
     rank = _execution_rank(prepared.execution_group)
     domain = prepared.surface.domain
@@ -1062,6 +1209,7 @@ def execute_distributed_surface_initial(
         local_parameters = discovered
 
     refined: native_surface_owner._RefinedSurface | None = None
+    rounds = _SeamRefinementRounds(prepared, rank, charts, canonical_points)
     local_error = None
     try:
         if charts:
@@ -1072,7 +1220,11 @@ def execute_distributed_surface_initial(
                 local_sizes,
                 prepared.surface.specification,
                 prepared.surface.schedule,
+                seam_rounds=rounds,
             )
+        else:
+            while rounds(frozenset(), False)[1]:
+                pass
         _validate_refined_shared_coordinates(
             prepared,
             charts,
@@ -1081,6 +1233,8 @@ def execute_distributed_surface_initial(
         )
     except Exception as error:
         local_error = error
+        if not rounds.settled:
+            rounds.abandon()
     _collective_error(
         local_error,
         prepared.execution_group,

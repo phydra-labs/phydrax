@@ -30,7 +30,7 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
 )
-from phydrax.geometry.brep import brep_cone, brep_sphere
+from phydrax.geometry.brep import brep_cone, brep_cylinder, brep_sphere
 from phydrax.geometry.brep._patches import (
     BSplineCurve,
     BSplineSurfacePatch,
@@ -1011,6 +1011,47 @@ def test_parametric_surface_route_meshes_collapsed_poles(shape: str) -> None:
             base = float(np.hypot(point[2], max(radial - 1.0, 0.0)))
             source_distances[row] = min(side, base)
     assert float(np.max(source_distances, initial=0.0)) <= 0.061
+
+
+def test_parametric_surface_route_grades_planar_disk_poles_without_thin_bands() -> None:
+    # A cylinder cap is a revolution of a radial line, so its polar chart
+    # never becomes isotropic and graded rings run up to their extent. A ring
+    # placed just inside the extent left a thin last band whose short radial gap
+    # forced a dense ring beside the coarse chart beyond, i.e. cap slivers of
+    # hundredths of a degree that no volume refinement can repair.
+    contract = SpatialCoordinateContract.si()
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    )
+    construction = prepare_native_surface(
+        domain,
+        _surface_specification(domain, maximum_deviation=0.05),
+        NativeMeshingOptions("parametric_surface"),
+        contract,
+    ).execute()
+
+    assert construction.compliance.passed
+    coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    triangles = coordinates[
+        np.concatenate(
+            tuple(
+                np.asarray(block.vertices, dtype=np.int64)
+                for block in construction.mesh.blocks
+            )
+        )
+    ]
+    caps = np.all(triangles[:, :, 2] == triangles[:, :1, 2], axis=1)
+    assert np.any(caps)
+    corners = triangles[caps]
+    angles = []
+    for corner in range(3):
+        first = corners[:, (corner + 1) % 3] - corners[:, corner]
+        second = corners[:, (corner + 2) % 3] - corners[:, corner]
+        cosine = np.sum(first * second, axis=1) / (
+            np.linalg.norm(first, axis=1) * np.linalg.norm(second, axis=1)
+        )
+        angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    assert float(np.min(angles)) >= 10.0
 
 
 def test_parametric_surface_route_samples_seams_at_the_curvature_rate() -> None:
