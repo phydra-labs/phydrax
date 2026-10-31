@@ -11,14 +11,20 @@ Phydrax-specific deviations (kept intentionally):
   annotation, so without this they silently become concrete dataclass fields.
 - Classes that declare `__strict_contract__ = True` (or inherit it) check their
   `phydrax.typing` field contracts, read-only, after Equinox construction.
+- Binds methods as Equinox `BoundMethod` pytrees without Equinox's construction
+  pass. That pass walks every receiver leaf to warn about JAX-transformed
+  fields, so each method access cost the size of the receiver.
 """
 
 import abc
 import dataclasses
 import re
+import types
 from typing import Any, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
+from equinox._module._flatten import WRAPPER_FIELD_NAMES
+from equinox._module._prebuilt import BoundMethod
 
 from ._typing_plan import validate_constructed
 
@@ -212,6 +218,28 @@ _STRINGIFIED_ABSTRACT = re.compile(
 )
 
 
+def _bind_method(function: Any, receiver: "StrictModule", /) -> BoundMethod[Any]:
+    """Return Equinox's bound-method pytree of one method without a leaf walk.
+
+    The value is the one `BoundMethod(function, receiver)` builds: the same type,
+    fields, wrapper metadata and PyTree structure, holding the receiver as its
+    subnode. Equinox's module construction would first flatten every receiver
+    leaf to warn about JAX-transformed fields, which the receiver's own
+    construction has already checked, and its remaining checks cannot fail for
+    these two fields.
+    """
+    bound = object.__new__(BoundMethod)
+    object.__setattr__(bound, "__func__", function)
+    object.__setattr__(bound, "__self__", receiver)
+    for name in WRAPPER_FIELD_NAMES:
+        try:
+            value = getattr(function, name)
+        except AttributeError:
+            continue
+        object.__setattr__(bound, name, value)
+    return bound
+
+
 class _StrictEqxMeta(_StrictMeta, type(eqx.Module)):
     def __new__(
         mcs: type[_StrictEqxMetaT],
@@ -238,3 +266,19 @@ class StrictModule(eqx.Module, Strict, metaclass=_StrictEqxMeta):
             f"Cannot delete attribute '{name}' on frozen instance "
             f"of {type(self).__name__}. strict objects are immutable."
         )
+
+    # Every method access returns a `BoundMethod` pytree, as on any Equinox
+    # module, so a bound method still passes through `jit`/`vmap` with its
+    # receiver as a PyTree; binding never flattens the receiver (see `_bind_method`).
+    if not TYPE_CHECKING:
+
+        def __getattribute__(self, name: str, /) -> Any:
+            out = super(eqx.Module, self).__getattribute__(name)
+            if (
+                isinstance(out, types.MethodType)
+                and out.__self__ is self
+                and not (name.startswith("__") and name.endswith("__"))
+                and name != "_abc_impl"
+            ):
+                return _bind_method(out.__func__, self)
+            return out

@@ -5058,26 +5058,32 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
     assert restored.stdout.strip() == "finite-element-transfer-cold-restored"
 
     source = tmp_path / "finite-element-transfer.phx"
-    corrupted = tmp_path / "changed-finite-element-transfer-coefficient.phx"
+    corrupted = tmp_path / "changed-finite-element-transfer-coefficient"
+    corrupted.mkdir()
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
-
     _register_model_archive_types()
+    # Tamper a transfer-map coefficient: the entry evidence binds it. Space
+    # pairings also carry coefficient leaves, so select the map path exactly.
     coefficient_leaf = next(
         (
             entry
             for entry in model_recipe_array_inventory(
                 manifest["model_recipe"], prefix="model/leaves", limits=None
             )
-            if "coefficients" in entry.path and arrays[entry.name].size
+            if entry.path.startswith(".complex_map.maps[")
+            and entry.path.endswith("].coefficients")
+            and arrays[entry.name].size
         ),
         None,
     )
     assert coefficient_leaf is not None
-    coefficients = arrays[coefficient_leaf.name].copy()
-    coefficients.flat[0] += 1.0
-    arrays[coefficient_leaf.name] = coefficients
+    damaged_arrays = {name: array.copy() for name, array in arrays.items()}
+    damaged_arrays[coefficient_leaf.name].flat[0] += 1.0
     write_model_archive(
-        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+        corrupted / "finite-element-transfer.phx",
+        manifest=manifest,
+        arrays=damaged_arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -5200,23 +5206,30 @@ def test_periodic_distributed_fe_transfer_rebuilds_from_mesh_and_rejects_corrupt
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
     _register_model_archive_types()
-    coefficient_leaf = next(
+    inventory = model_recipe_array_inventory(
+        manifest["model_recipe"], prefix="model/leaves", limits=None
+    )
+    # Derived quotient operators and evidence are recomputed from the mesh and
+    # settings on restore; only the authoritative owner rows are stored.
+    assert not any("coefficients" in entry.path for entry in inventory)
+    owner_leaf = next(
         (
             entry
-            for entry in model_recipe_array_inventory(
-                manifest["model_recipe"], prefix="model/leaves", limits=None
-            )
-            if "forward_coefficients" in entry.path and arrays[entry.name].size
+            for entry in inventory
+            if "source_owners" in entry.path and arrays[entry.name].size
         ),
         None,
     )
-    assert coefficient_leaf is not None
-    coefficients = arrays[coefficient_leaf.name].copy()
-    coefficients.flat[0] += 1.0
-    arrays[coefficient_leaf.name] = coefficients
-    corrupted = tmp_path / "changed-periodic-distributed-fe-transfer.phx"
+    assert owner_leaf is not None
+    damaged_arrays = {name: array.copy() for name, array in arrays.items()}
+    damaged_owners = damaged_arrays[owner_leaf.name]
+    damaged_owners.flat[0] = (damaged_owners.flat[0] + 1) % expected["settings"][5]
+    corrupted = tmp_path / "changed-periodic-distributed-fe-owner-row.phx"
     write_model_archive(
-        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+        corrupted,
+        manifest=manifest,
+        arrays=damaged_arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [

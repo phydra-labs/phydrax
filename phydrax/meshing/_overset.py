@@ -4013,7 +4013,16 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         solid_queries: Mapping[str, Any] | None = None,
         successor_specs: Mapping[str, OversetPartSpec] | None = None,
         couplings: tuple[MeshCoupling, ...] | None = None,
+        execution_group: ExecutionGroup | None = None,
+        axis_name: str = "overset_reregister",
     ) -> OversetConnectivity:
+        """Register successor parts as the next connectivity epoch.
+
+        Serial connectivity is rebuilt directly. Owner-local connectivity is a
+        collective preparation candidate over the successor local views (for
+        example a graph-repartitioned part); its prepared field exchange
+        resolves the donor winners, and the epoch chain is kept.
+        """
         if (
             not isinstance(replacements, Mapping)
             or not replacements
@@ -4064,6 +4073,57 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         ):
             raise ValueError(
                 "Non-overset couplings touching moved parts must be reprepared by their owner."
+            )
+        if self.owner_local:
+            if not isinstance(execution_group, ExecutionGroup):
+                raise TypeError(
+                    "Owner-local reregistration requires its execution_group."
+                )
+            if retained:
+                raise ValueError(
+                    "Owner-local assemblies prepare coupling routes collectively."
+                )
+            successor_assembly = MeshAssembly(
+                parts,
+                global_parts=tuple(
+                    MeshPartManifest.from_part(part)
+                    if part.name in moved_names
+                    else self.assembly.declared_part(part.name)
+                    for part in parts
+                ),
+                local_rank=self.assembly.local_rank,
+            )
+            candidate = prepare_overset_connectivity(
+                successor_assembly,
+                specs,
+                policy=self.policy,
+                execution_group=execution_group,
+                axis_name=axis_name,
+            )
+            return OversetConnectivity(
+                candidate.assembly,
+                candidate.specs,
+                candidate.policy,
+                candidate.blanking,
+                candidate.receptors,
+                candidate.packets,
+                candidate.geometries,
+                epoch=self.epoch + 1,
+                predecessor_id=self.connectivity_id,
+                connectivity_id=canonical_fingerprint(
+                    {
+                        "kind": "owner-local-reregistered-overset-connectivity",
+                        "predecessor": self.connectivity_id,
+                        "candidate": candidate.connectivity_id,
+                        "epoch": self.epoch + 1,
+                    }
+                ),
+                global_conflict_count=candidate.conflict_count,
+                global_ambiguous_count=candidate.ambiguous_count,
+            )
+        if execution_group is not None:
+            raise ValueError(
+                "execution_group is only valid for owner-local connectivity."
             )
         return _prepare_connectivity(
             tuple(parts),
