@@ -3858,6 +3858,15 @@ def _line_cylinder_region_intersections(
     if discriminant < 0:
         return CurveIntersectionResult()
     if discriminant == 0:
+        # The line touches the cylinder at one exact rational parameter; a touch
+        # outside the edge's own range is no contact with this edge.
+        touch = -linear / (2 * quadratic)
+        if not (
+            Fraction.from_float(float(source.first))
+            <= touch
+            <= Fraction.from_float(float(source.last))
+        ):
+            return CurveIntersectionResult()
         return CurveIntersectionResult(
             unresolved=(
                 UnresolvedParameterRegion(domain_lower, domain_upper, "singular"),
@@ -6829,6 +6838,52 @@ class _IsolineArc:
     across_seam: bool = False
 
 
+def _edge_tangency_misses_segment(
+    center: Sequence[ExactScalar],
+    cosine: Sequence[ExactScalar],
+    sine: Sequence[ExactScalar],
+    bounds: np.ndarray,
+    axis: int,
+    edge: int,
+    /,
+) -> bool:
+    """Prove a circle reaches one rectangle edge line without entering the chart.
+
+    ``c + a cos t + b sin t = e`` has a double root exactly when the rational
+    discriminant ``a^2 + b^2 - (e - c)^2`` vanishes; the circle then touches
+    the edge line once, at the unit direction ``(a, b) / (e - c)``, where the
+    other chart coordinate is rational. A negative discriminant means no
+    contact. A touch outside the edge, or one from the rectangle's exterior
+    side (the circle's extreme coordinate is the edge value of a lower edge,
+    or its least coordinate that of an upper edge), never enters the chart.
+    """
+    other = 1 - axis
+    values = (
+        center[axis],
+        cosine[axis],
+        sine[axis],
+        center[other],
+        cosine[other],
+        sine[other],
+    )
+    if not all(isinstance(item, Fraction) for item in values):
+        return False
+    c, a, b, other_center, other_cosine, other_sine = cast(tuple[Fraction, ...], values)
+    gap = Fraction.from_float(float(bounds[edge, axis])) - c
+    discriminant = a * a + b * b - gap * gap
+    if discriminant < 0:
+        return True
+    if discriminant > 0 or gap == 0:
+        return False
+    if (gap > 0) == (edge == 0):
+        return True
+    # The double root has cos t = a / gap and sin t = b / gap exactly.
+    touch = other_center + (other_cosine * a + other_sine * b) / gap
+    return touch < Fraction.from_float(float(bounds[0, other])) or touch > (
+        Fraction.from_float(float(bounds[1, other]))
+    )
+
+
 def _isoline_rectangle_arcs(
     center: Sequence[ExactScalar],
     cosine: Sequence[ExactScalar],
@@ -6889,6 +6944,10 @@ def _isoline_rectangle_arcs(
             if ratio.b < -1 or ratio.a > 1:
                 continue
             if not (-1 < ratio.a and ratio.b < 1):
+                if _edge_tangency_misses_segment(
+                    center, cosine, sine, bounds, axis, edge
+                ):
+                    continue
                 return None
             offset = context.atan2(context.sqrt(1 - ratio**2), ratio)
             for angle in (phase - offset, phase + offset):
@@ -6912,7 +6971,14 @@ def _isoline_rectangle_arcs(
     for index, (start, start_axis, start_value) in enumerate(events):
         across_seam = index == len(events) - 1
         end, end_axis, end_value = events[(index + 1) % len(events)]
-        state = side(0.5 * (start + end + (two_pi if across_seam else 0)))
+        stop = end + (two_pi if across_seam else 0)
+        # The arc stays on one side of every edge line; only an exterior
+        # tangent touch can sit on a boundary, so further samples settle it.
+        state = None
+        for weight in (0.5, 0.381966, 0.618034, 0.25, 0.75):
+            state = side(start + weight * (stop - start))
+            if state is not None:
+                break
         if state is None:
             return None
         if state < 0:
@@ -7380,8 +7446,6 @@ def _revolution_plane_generator_lines(
     squared_amplitude = cosine_coefficient**2 + sine_coefficient**2
     if offset**2 > squared_amplitude:
         return SurfaceIntersectionResult()
-    if offset**2 == squared_amplitude:
-        return _unresolved_surface(first, second, "singular")
     base_point = tuple(axis_origin[index] + axial * axis[index] for index in range(3))
     uv_base = _plane_chart_coordinates(plane, base_point, point=True)
     uv_radial = _plane_chart_coordinates(plane, radial, point=False)
@@ -7390,6 +7454,107 @@ def _revolution_plane_generator_lines(
     if uv_base is None or uv_radial is None or uv_tangent is None or uv_rate is None:
         return None
     plane_bounds = np.asarray(plane_region.parameter_box, dtype=np.float64)
+    if offset**2 == squared_amplitude:
+        # A tangent plane touches along the one generator at the exact unit
+        # direction (a, b) / h. Only a touch outside the trimmed plane chart
+        # and profile range is proved empty here.
+        touch = [
+            uv_base[index]
+            + (
+                cosine_coefficient * uv_radial[index]
+                + sine_coefficient * uv_tangent[index]
+            )
+            / offset
+            for index in range(2)
+        ]
+        touch_rates = [uv_rate[index] for index in range(2)]
+        if not all(isinstance(value, Fraction) for value in (*touch, *touch_rates)):
+            return _unresolved_surface(first, second, "singular")
+        lowest = Fraction.from_float(profile_lower)
+        highest = Fraction.from_float(profile_upper)
+        for index in range(2):
+            base = cast(Fraction, touch[index])
+            rate = cast(Fraction, touch_rates[index])
+            edge_lower = Fraction.from_float(float(plane_bounds[0, index]))
+            edge_upper = Fraction.from_float(float(plane_bounds[1, index]))
+            if rate == 0:
+                if not edge_lower <= base <= edge_upper:
+                    return SurfaceIntersectionResult()
+                continue
+            ends = sorted(((edge_lower - base) / rate, (edge_upper - base) / rate))
+            lowest, highest = max(lowest, ends[0]), min(highest, ends[1])
+        if lowest > highest:
+            return SurfaceIntersectionResult()
+        # The cylinder lies on one side of its tangent plane, so the contact
+        # never crosses material: it is a typed tangent-curve contact with the
+        # exact touching generator, not a branch.
+        cosine_value = cosine_coefficient / offset
+        sine_value = sine_coefficient / offset
+        touch_angle = math.atan2(float(sine_value), float(cosine_value))
+        touch_angle += math.ceil((angle_lower - touch_angle) / math.tau) * math.tau
+        segment = [lowest, highest]
+        plane_points = [
+            [
+                float(cast(Fraction, touch[index]) + rate_value * value)
+                for index, rate_value in enumerate(
+                    cast(Fraction, rate_item) for rate_item in touch_rates
+                )
+            ]
+            for value in segment
+        ]
+        middle = [0.5 * (start + stop) for start, stop in zip(*plane_points, strict=True)]
+        profile_middle = 0.5 * (float(lowest) + float(highest))
+        revolution_values = (touch_angle, profile_middle)
+        revolution_lower = (touch_angle, float(lowest))
+        revolution_upper = (touch_angle, float(highest))
+        plane_lower = [
+            min(start, stop) for start, stop in zip(*plane_points, strict=True)
+        ]
+        plane_upper = [
+            max(start, stop) for start, stop in zip(*plane_points, strict=True)
+        ]
+
+        def ordered(
+            plane_part: Sequence[float], revolution_part: Sequence[float]
+        ) -> np.ndarray:
+            values = (
+                (*plane_part, *revolution_part)
+                if plane_is_first
+                else (*revolution_part, *plane_part)
+            )
+            return np.asarray(values, dtype=np.float64)
+
+        contact_point = np.asarray(
+            revolution.evaluate(jnp.asarray(revolution_values, dtype=jnp.float64)),
+            dtype=np.float64,
+        )
+        contact = ParametricIntersectionPoint(
+            kind="tangent_curve",
+            certificate="analytic-contact",
+            parameters=ordered(middle, revolution_values),
+            parameter_lower=np.nextafter(ordered(plane_lower, revolution_lower), -np.inf),
+            parameter_upper=np.nextafter(ordered(plane_upper, revolution_upper), np.inf),
+            point=contact_point,
+            gap_bound=0.0,
+            condition_estimate=float("inf"),
+            branch_count=0,
+            root_id=canonical_fingerprint(
+                {
+                    "kind": "plane-cylinder-exact-tangent-generator",
+                    "first": first.identity_payload(),
+                    "second": second.identity_payload(),
+                    "direction": (
+                        (cosine_value.numerator, cosine_value.denominator),
+                        (sine_value.numerator, sine_value.denominator),
+                    ),
+                    "profile": (
+                        (lowest.numerator, lowest.denominator),
+                        (highest.numerator, highest.denominator),
+                    ),
+                }
+            ),
+        )
+        return SurfaceIntersectionResult(points=(contact,))
     context = interval_context(80)
 
     def interval(value: ExactScalar, /) -> Any:

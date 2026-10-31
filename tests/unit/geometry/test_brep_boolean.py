@@ -21,15 +21,24 @@ from phydrax.geometry.brep._boolean_core import (
     pcurve_surface_period_shifts,
     PeriodicPCurve,
 )
-from phydrax.geometry.brep._intersection import IntersectionCurvePointRoot
+from phydrax.geometry.brep._intersection import (
+    intersect_surface_regions,
+    IntersectionCurvePointRoot,
+)
 from phydrax.geometry.brep._intersection_curve import (
     CurveTrimSegment,
     IntersectionCurve,
     IntersectionPCurve,
     IntersectionSide,
+    SurfaceRegion,
 )
 from phydrax.geometry.brep._model import BRepModel
-from phydrax.geometry.brep._patches import AbstractCurve, CylinderPatch, LineCurve
+from phydrax.geometry.brep._patches import (
+    AbstractCurve,
+    CylinderPatch,
+    LineCurve,
+    PlanePatch,
+)
 from phydrax.geometry.brep._root_bindings import (
     BRepBranchNodeRoots,
     BRepVertexRoot,
@@ -506,6 +515,55 @@ def test_notch_arc_across_the_cylinder_seam_splits_under_an_exact_deck() -> None
         # Both ends fix the exact plane edge coordinate they lie on.
         assert {int(arc.node_axes[0]), int(arc.node_axes[-1])} == {2}
         assert {float(arc.node_values[0]), float(arc.node_values[-1])} == {0.0, 0.5}
+
+
+def test_notch_tangent_contacts_outside_the_trim_are_exactly_empty() -> None:
+    # The notch face y = 1 is a tangent plane of the cylinder and its cap edges
+    # are tangent lines, touching at x = 0, outside the notch (x >= 0.5). The
+    # exact zero discriminants place those double roots outside each trim.
+    _, branches = _notch_branches((0.5, 0.25, 0.5), (1.5, 1.0, 1.5))
+    assert len(branches) == 4
+    lines = [branch for branch in branches if int(branch.chart_axes[0]) == 1]
+    arcs = [branch for branch in branches if int(branch.chart_axes[0]) == 0]
+    assert len(lines) == 2 and len(arcs) == 2
+    for arc in arcs:
+        # Each arc runs from the edge y = 0.25 to the edge x = 0.5 of its cap.
+        assert {int(arc.node_axes[0]), int(arc.node_axes[-1])} == {2, 3}
+        assert {float(arc.node_values[0]), float(arc.node_values[-1])} == {0.0}
+
+
+def test_notch_on_a_tangent_plane_is_a_typed_line_contact() -> None:
+    # The notch face x = 1 touches the cylinder along the generator y = 0 and
+    # every other notch face stays outside: no branch, no material change.
+    cylinder = brep_cylinder(1.0, 2.0, coordinate_contract=_COORDINATES)
+    notch = brep_box(
+        (1.0, -0.25, 0.5), (1.5, 0.25, 1.5), coordinate_contract=_COORDINATES
+    )
+    lateral = SurfaceRegion(
+        cylinder.patches[1], np.asarray([[0.0, 0.0], [2.0 * np.pi, 1.0]])
+    )
+    tangent_face = next(
+        face
+        for face, patch in enumerate(notch.patches)
+        if isinstance(patch, PlanePatch)
+        and np.allclose(np.asarray(patch.origin)[0], 1.0)
+        and np.allclose(np.asarray(patch.first_axis)[0], 0.0)
+        and np.allclose(np.asarray(patch.second_axis)[0], 0.0)
+    )
+    contact = intersect_surface_regions(
+        lateral,
+        SurfaceRegion(notch.patches[tangent_face], np.asarray([[0.0, 0.0], [1.0, 1.0]])),
+    )
+    assert contact.complete and not contact.curves
+    (point,) = contact.points
+    assert (point.kind, point.certificate) == ("tangent_curve", "analytic-contact")
+    np.testing.assert_allclose(np.asarray(point.point)[:2], (1.0, 0.0), atol=1e-12)
+    result = boolean_brep(cylinder, notch, "difference")
+    assert result.model.topology.num_solids == 1
+    geometry = result.model.geometry
+    assert geometry is not None
+    assert len(geometry.face_loops) == 3
+    assert not any(isinstance(curve, IntersectionCurve) for curve in geometry.curves)
 
 
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:

@@ -46,6 +46,18 @@ occurrence lineage.
 Fully covered exact equal-radius perpendicular cylinders are either proved
 disjoint by normal separation or returned as typed singular unresolved regions.
 
+Planes that cut a straight cylinder only partly publish exact boundary branches.
+A plane normal to the axis yields the arcs its face rectangle leaves, including
+arcs across the cylinder's seam, and a plane parallel to the axis yields trimmed
+generator lines; every branch end fixes the exact edge value it lies on.
+Exterior tangencies are exact typed contacts rather than branches: a tangent
+plane along a generator, a face edge touching the circle from outside the face,
+and any touch outside a trim or edge range. The remaining refusals return typed
+unresolved regions: a circle touching a face edge from inside the face; a
+crossing exactly through a face corner, which for an axis-aligned box puts a box
+edge on a cylinder generator; and a junction of two branches whose partner faces
+are not both planes of one model.
+
 T-spline B-rep intersections use cell-local rational Bézier source pieces and
 native interval enclosures. Transverse graph branches against planes, cylinders,
 spheres, NURBS surfaces, and other T-spline surfaces retain their source
