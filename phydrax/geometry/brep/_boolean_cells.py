@@ -200,6 +200,89 @@ def _outward_tangent(
     return (lo, hi) if piece.sense > 0 else (-hi, -lo)
 
 
+def _tangent_contact_order(
+    first: Piece,
+    second: Piece,
+    first_tangent: tuple[np.ndarray, np.ndarray],
+    second_tangent: tuple[np.ndarray, np.ndarray],
+    /,
+) -> int | None:
+    """Order a straight edge ray and a branch ray leaving one exact tangent contact.
+
+    Both rays share a tangent direction, so no first-order determinant
+    separates them. The contact vertex is an exact double root of the edge
+    line on a cylinder: the edge lies in a tangent plane, and the solid
+    cylinder lies in the half-space ``(x - p) . r <= 0`` for the contact's
+    radial vector ``r``. The branch lies on the cylinder inside the face plane,
+    so away from the contact it is strictly on the side ``g . d < 0`` of the
+    edge line, with ``g`` the chart pullback of ``r``; the edge ray lies on the
+    line. The sign of ``det(edge ray, -g)`` therefore orders the pair.
+    """
+    from ._intersection import CurveSurfaceIntersectionRoot
+    from ._patches import PlanePatch
+
+    def contact(piece: Piece, /) -> CurveSurfaceIntersectionRoot | None:
+        binding = (piece.first if piece.sense > 0 else piece.last).vertex_root
+        if binding is None:
+            return None
+        for root in (binding.primary, binding.spatial_root):
+            if isinstance(root, CurveSurfaceIntersectionRoot):
+                return root
+        return None
+
+    root, other = contact(first), contact(second)
+    if (
+        root is None
+        or other is None
+        or root.root_id != other.root_id
+        or root.tangent_witness is None
+    ):
+        return None
+    witness = root.tangent_witness
+    pieces = ((first, first_tangent, -1), (second, second_tangent, 1))
+    edges = [item for item in pieces if item[0].arc.branch is None]
+    branches = [item for item in pieces if item[0].arc.branch is not None]
+    if len(edges) != 1 or len(branches) != 1:
+        return None
+    edge, edge_tangent, edge_sign = edges[0]
+    branch = branches[0][0].arc.branch
+    assert branch is not None
+    cylinder = witness.surface.identity_payload()
+    surfaces = (branch.first, branch.second)
+    owners = [region for region in surfaces if region.identity_payload() != cylinder]
+    if (
+        edge.arc.curve is None
+        or carrier_payload(edge.arc.curve) != carrier_payload(witness.curve)
+        or len(owners) != 1
+        or not isinstance(owners[0].patch, PlanePatch)
+    ):
+        return None
+    plane = owners[0].patch
+    radial = witness.radial_exact
+    pullback = []
+    for axis in (plane.first_axis, plane.second_axis):
+        components = [Fraction.from_float(float(value)) for value in np.asarray(axis)]
+        if any(
+            float(value) != float(source)
+            for value, source in zip(components, np.asarray(axis), strict=True)
+        ):
+            return None
+        pullback.append(
+            sum((a * b for a, b in zip(components, radial, strict=True)), Fraction(0))
+        )
+    if pullback[0] == 0 and pullback[1] == 0:
+        return None
+    inward = np.asarray([float(-value) for value in pullback], dtype=np.float64)
+    lo, hi = _cross_bounds(edge_tangent, (inward, inward))
+    if not (lo > 0 or hi < 0):
+        return None
+    # The branch ray turns counterclockwise from the edge ray exactly when the
+    # inward side is to the edge ray's left.
+    branch_after_edge = bool(lo > 0)
+    edge_first = edge_sign < 0
+    return -1 if branch_after_edge == edge_first else 1
+
+
 def _cyclic_order(
     pieces: tuple[Piece, ...],
 ) -> tuple[Piece, ...]:
@@ -238,6 +321,11 @@ def _cyclic_order(
                 return -1
             if hi < 0:
                 return 1
+            touch = _tangent_contact_order(
+                pieces[first], pieces[second], tangents[first], tangents[second]
+            )
+            if touch is not None:
+                return touch
             raise BRepBooleanFailure(
                 f"face_cells.tangent_determinant must exclude zero; got {(lo, hi)!r}",
                 (pieces[first].arc.token, pieces[second].arc.token),

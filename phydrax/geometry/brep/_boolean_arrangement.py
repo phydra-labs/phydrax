@@ -51,6 +51,7 @@ from ._intersection import (
     CurveIntersectionResult,
     CurveRange,
     CurveSurfaceIntersectionRoot,
+    ExactLineCylinderTangency,
     intersect_curve_region,
     intersect_trim_curves,
     IntersectionCurvePointRoot,
@@ -1126,7 +1127,15 @@ def _edge_spatial_roots(
                 _face_id(state.models[opposite[0]], opposite[1]),
             ),
         )
-    if any(point.kind != "crossing" for point in result.points):
+    # A crossing is a Krawczyk root; an analytic tangent point is an exact
+    # double root whose multiplicity witness replaces the contraction proof.
+    if any(
+        point.kind != "crossing"
+        and not (
+            point.kind == "tangent_point" and point.certificate == "analytic-contact"
+        )
+        for point in result.points
+    ):
         raise BRepBooleanFailure(
             "BRepBoolean.source_edge.junction must be transversal; got a singular contact",
             (
@@ -1134,16 +1143,18 @@ def _edge_spatial_roots(
                 _face_id(state.models[opposite[0]], opposite[1]),
             ),
         )
-    points = sorted(
-        (point for point in result.points if point.kind == "crossing"),
-        key=lambda point: float(point.parameters[0]),
-    )
+    points = sorted(result.points, key=lambda point: float(point.parameters[0]))
     roots = tuple(
         CurveSurfaceIntersectionRoot(
             curve,
             region,
             parameter_lower=point.parameter_lower,
             parameter_upper=point.parameter_upper,
+            tangent_witness=(
+                None
+                if point.kind == "crossing"
+                else ExactLineCylinderTangency(curve, region)
+            ),
         )
         for point in points
     )
@@ -2660,7 +2671,8 @@ def _append_spatial_root_cuts(
         source_endpoint, 1.0 / source_arc.scale, -source_arc.offset / source_arc.scale
     )
     source_lower, source_upper = source_local.parameter_enclosure()
-    if not 0.0 < source_lower < source_upper < 1.0:
+    # An exact double root encloses its edge parameter as one float.
+    if not 0.0 < source_lower <= source_upper < 1.0:
         raise BRepBooleanFailure(
             "BRepBoolean.source_root.interval must lie strictly inside the source edge; got a corner root without a vertex alias",
             (source_arc.token,),

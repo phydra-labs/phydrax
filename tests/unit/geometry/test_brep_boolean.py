@@ -22,6 +22,8 @@ from phydrax.geometry.brep._boolean_core import (
     PeriodicPCurve,
 )
 from phydrax.geometry.brep._intersection import (
+    CurveSurfaceIntersectionRoot,
+    ExactLineCylinderTangency,
     intersect_surface_regions,
     IntersectionCurvePointRoot,
 )
@@ -564,6 +566,64 @@ def test_notch_on_a_tangent_plane_is_a_typed_line_contact() -> None:
     assert geometry is not None
     assert len(geometry.face_loops) == 3
     assert not any(isinstance(curve, IntersectionCurve) for curve in geometry.curves)
+
+
+def test_notch_edge_touching_the_cap_circle_from_inside_is_an_exact_double_root(
+    tmp_path: Path,
+) -> None:
+    # The notch's cap edges x = 1 touch each cap-plane circle at y = 0 from
+    # inside the notch face: an exact double root of the edge on the cylinder.
+    result, branches = _notch_branches((0.5, -0.25, 0.5), (1.0, 0.25, 1.5))
+    arcs = [branch for branch in branches if int(branch.chart_axes[0]) == 0]
+    assert len(arcs) == 2
+    for arc in arcs:
+        axes = np.asarray(arc.node_axes)
+        values = np.asarray(arc.node_values)
+        # The arc meets the edge at one node fixing the exact plane coordinate
+        # along the edge, between its two y = -0.25 and y = 0.25 crossings.
+        touches = [index for index in range(1, len(axes) - 1) if axes[index] != 0]
+        assert len(touches) == 1
+        assert {int(axes[0]), int(axes[-1]), int(axes[touches[0]])} == {3}
+        assert float(values[touches[0]]) == 0.25
+    geometry = result.model.geometry
+    assert geometry is not None
+    contacts = [
+        root.primary
+        for root in geometry.vertex_roots
+        if root is not None
+        and isinstance(root.primary, CurveSurfaceIntersectionRoot)
+        and root.primary.tangent_witness is not None
+    ]
+    assert len(contacts) == 2
+    for contact in contacts:
+        witness = contact.tangent_witness
+        assert witness is not None
+        assert contact.multiplicity == witness.multiplicity == 2
+        assert witness.parameter_exact == Fraction(1, 2)
+        assert witness.radial_exact == (Fraction(1), Fraction(0), Fraction(0))
+        enclosure = contact.parameter_enclosure()
+        assert enclosure[0, 0] == enclosure[1, 0] == 0.5
+    with pytest.raises(ValueError, match="double root"):
+        ExactLineCylinderTangency(
+            LineCurve((0.9, -1.0, 1.0), (0.0, 1.0, 0.0)),
+            contacts[0].surface,
+        )
+    archive = tmp_path / "interior-tangent-notch.phx"
+    save_brep_archive(result.model, archive)
+    restored = load_brep_archive(archive).geometry
+    assert restored is not None
+    assert tuple(
+        None if root is None else root.root_id for root in restored.vertex_roots
+    ) == tuple(None if root is None else root.root_id for root in geometry.vertex_roots)
+    assert (
+        sum(
+            root is not None
+            and isinstance(root.primary, CurveSurfaceIntersectionRoot)
+            and root.primary.multiplicity == 2
+            for root in restored.vertex_roots
+        )
+        == 2
+    )
 
 
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:
