@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import final, Literal
@@ -201,6 +202,26 @@ class _PoleChartSample:
     chart_point: tuple[Fraction, Fraction]
     ring_point: tuple[Fraction, Fraction]
     cap_bound: float
+
+
+type _PoleRing = tuple[tuple[Fraction, tuple[Fraction, Fraction]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PoleChart:
+    """Chart layout of one collapsed pole trim.
+
+    ``samples`` carry the pole points and the inner cap ring. ``rings`` are the
+    graded rings beyond it toward the regular chart, each as ordered pole-use
+    parameters with their chart points; every ring's parameters contain those
+    of the ring inside it.
+    """
+
+    samples: tuple[_PoleChartSample, ...]
+    rings: tuple[_PoleRing, ...]
+
+
+type _PoleCharts = dict[tuple[int, int, int], _PoleChart]
 
 
 def _edge_key(first: int, last: int, /) -> tuple[int, int]:
@@ -627,7 +648,7 @@ def _chart_inputs(
     domain: domain_owner.MeshingDomain,
     patch: int,
     curves: dict[int, tuple[Fraction, ...]],
-    pole_samples: dict[tuple[int, int, int], tuple[_PoleChartSample, ...]],
+    pole_charts: _PoleCharts,
     /,
 ) -> tuple[
     list[tuple[Fraction, Fraction]],
@@ -641,8 +662,15 @@ def _chart_inputs(
     tuple[tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...],
     tuple[int | None, ...],
     float,
+    tuple[tuple[int, int, int, int], ...],
 ]:
-    """Create source-curve and singular-pole constraints in the exact chart."""
+    """Create source-curve and singular-pole constraints in the exact chart.
+
+    The last result lists each pole band cell as chart rows ``(inner_first,
+    inner_last, outer_first, outer_last)`` over one inner sample interval: the
+    strip between the collapsed pole side and the cap ring, or between two
+    graded rings. The outer side runs along the outer ring's chart points.
+    """
     points: list[tuple[Fraction, Fraction]] = []
     point_rows: dict[tuple[Fraction, Fraction], int] = {}
     point_corners: dict[int, int] = {}
@@ -659,6 +687,7 @@ def _chart_inputs(
     chart = domain.patches[patch]
     internal_segments: list[tuple[int, int, tuple[int, int, int]]] = []
     pole_deviation_bound = 0.0
+    pole_bands: list[tuple[int, int, int, int]] = []
 
     def point_row(uv: tuple[Fraction, Fraction], /) -> int:
         existing = point_rows.get(uv)
@@ -765,13 +794,14 @@ def _chart_inputs(
 
             if not isinstance(use, domain_owner.PatchPoleUse):
                 raise RuntimeError("MeshingDomain contains an unknown surface trim use.")
-            samples = pole_samples.get((patch, loop_index, use_index))
-            if samples is None or len(samples) < 2:
+            pole_chart = pole_charts.get((patch, loop_index, use_index))
+            if pole_chart is None or len(pole_chart.samples) < 2:
                 raise _failure(
                     "collapsed pole trim has no continuous singular-chart ring",
                     category=MeshingFailureCategory.INVALID_SOURCE,
                     entity_ids=(int(patch),),
                 )
+            samples = pole_chart.samples
             rows = []
             ring_rows = []
             for sample in samples:
@@ -806,6 +836,33 @@ def _chart_inputs(
                 add_internal_segment(first_row, first_ring, occurrence)
                 add_internal_segment(last_row, last_ring, occurrence)
                 add_internal_segment(first_ring, last_ring, occurrence)
+                pole_bands.append((first_row, last_row, first_ring, last_ring))
+            inner_parameters = tuple(sample.parameter for sample in samples)
+            inner_rows = tuple(ring_rows)
+            for ring in pole_chart.rings:
+                outer_rows = tuple(point_row(point) for _, point in ring)
+                outer_index = {
+                    parameter: index for index, (parameter, _) in enumerate(ring)
+                }
+                for first_outer, last_outer in zip(
+                    outer_rows[:-1], outer_rows[1:], strict=True
+                ):
+                    add_internal_segment(first_outer, last_outer, occurrence)
+                for index in range(len(inner_parameters) - 1):
+                    first_outer = outer_rows[outer_index[inner_parameters[index]]]
+                    last_outer = outer_rows[outer_index[inner_parameters[index + 1]]]
+                    add_internal_segment(inner_rows[index], first_outer, occurrence)
+                    add_internal_segment(inner_rows[index + 1], last_outer, occurrence)
+                    pole_bands.append(
+                        (
+                            inner_rows[index],
+                            inner_rows[index + 1],
+                            first_outer,
+                            last_outer,
+                        )
+                    )
+                inner_parameters = tuple(parameter for parameter, _ in ring)
+                inner_rows = outer_rows
         if len(set(traversed)) < 3:
             raise _failure(
                 "a source trim loop must retain at least three distinct chart vertices",
@@ -813,6 +870,72 @@ def _chart_inputs(
                 entity_ids=(int(patch),),
             )
         loop_rows.append(tuple(traversed))
+    # A graded ring cell whose radial sides carry source-curve samples much
+    # denser than its ring edges is left to the quality triangulation, which
+    # grades away from those samples; explicit ears would fan them to a far
+    # corner. Pole fan cells always stay explicit.
+    fixed_by_free: tuple[dict[Fraction, list[int]], ...] = ({}, {})
+    for row, point in enumerate(points):
+        for axis in range(2):
+            fixed_by_free[axis].setdefault(point[axis], []).append(row)
+
+    def side_rows(first: int, last: int, /) -> list[int]:
+        start, stop = points[first], points[last]
+        axis = 0 if start[0] == stop[0] else 1
+        low, high = sorted((start[1 - axis], stop[1 - axis]))
+        return sorted(
+            (
+                row
+                for row in fixed_by_free[axis][start[axis]]
+                if low <= points[row][1 - axis] <= high
+            ),
+            key=lambda row: points[row][1 - axis],
+        )
+
+    sides = {
+        band: (side_rows(band[0], band[2]), side_rows(band[1], band[3]))
+        for band in pole_bands
+        if band[0] not in point_corners
+    }
+    crowded = {
+        band: rows for band, rows in sides.items() if len(rows[0]) + len(rows[1]) > 4
+    }
+    if crowded:
+        used = sorted(
+            {row for band, rows in crowded.items() for row in (*band, *rows[0], *rows[1])}
+        )
+        physical = dict(
+            zip(
+                used,
+                np.asarray(
+                    domain.evaluate(
+                        np.full((len(used),), patch, dtype=np.int64),
+                        np.asarray(
+                            [[float(value) for value in points[row]] for row in used],
+                            dtype=np.float64,
+                        ),
+                    ),
+                    dtype=np.float64,
+                ),
+                strict=True,
+            )
+        )
+
+        def length(first: int, last: int, /) -> float:
+            return float(np.linalg.norm(physical[first] - physical[last]))
+
+        def explicit(band: tuple[int, int, int, int], /) -> bool:
+            spacing = min(
+                length(first, last)
+                for side in crowded[band]
+                for first, last in zip(side[:-1], side[1:], strict=True)
+            )
+            ring = max(length(band[0], band[1]), length(band[2], band[3]))
+            return _POLE_SIDE_DENSITY * spacing >= ring
+
+        pole_bands = [
+            band for band in pole_bands if band not in crowded or explicit(band)
+        ]
     constrained_pairs = {_edge_key(first, last) for first, last in segments}
     curves_by_point: dict[int, set[int]] = {}
     for row, curve in point_curve_parameters:
@@ -851,6 +974,7 @@ def _chart_inputs(
         tuple(segment_chart_endpoints),
         tuple(segment_pole_corners),
         pole_deviation_bound,
+        tuple(pole_bands),
     )
 
 
@@ -945,11 +1069,172 @@ def _source_curve_parameters(
     return result
 
 
+def _pole_band_triangles(
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    chart_points: list[tuple[Fraction, Fraction]],
+    segments: np.ndarray,
+    pole_bands: tuple[tuple[int, int, int, int], ...],
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Triangulate each pole band cell by physically best ears.
+
+    A band cell ``(a, b, c, d)`` is the chart rectangle between the inner side
+    from ``a`` to ``b`` (the collapsed pole side or a ring) and the outer ring
+    side from ``c`` to ``d``. Its boundary holds every chart point on these
+    sides and on its radial sides: ring samples of different density and source
+    seam samples. The convex cell is clipped one chart-positive ear at a time,
+    always the ear of best physical shape, so a cell joins rings of different
+    sample density without thin triangles. On the pole side every ear ends at
+    the pole and the cell becomes its pole fan. Returns positively oriented
+    chart triangles and, per opposite edge, the constraint segment row or
+    ``-1``.
+    """
+    floats = np.asarray(
+        [[float(value) for value in point] for point in chart_points],
+        dtype=np.float64,
+    )
+
+    def chain(first: int, last: int, /) -> tuple[int, ...]:
+        start, stop = chart_points[first], chart_points[last]
+        low = np.minimum(floats[first], floats[last])
+        high = np.maximum(floats[first], floats[last])
+        candidates = np.flatnonzero(
+            np.all((floats >= low) & (floats <= high), axis=1)
+        ).tolist()
+        direction = (stop[0] - start[0], stop[1] - start[1])
+        rows = [
+            row
+            for row in candidates
+            if (chart_points[row][0] - start[0]) * direction[1]
+            == (chart_points[row][1] - start[1]) * direction[0]
+        ]
+        return tuple(
+            sorted(
+                rows,
+                key=lambda row: (
+                    (chart_points[row][0] - start[0]) * direction[0]
+                    + (chart_points[row][1] - start[1]) * direction[1]
+                ),
+            )
+        )
+
+    polygons: list[list[int]] = []
+    for inner_first, inner_last, outer_first, outer_last in pole_bands:
+        polygons.append(
+            [
+                *chain(inner_first, inner_last)[:-1],
+                *chain(inner_last, outer_last)[:-1],
+                *chain(outer_last, outer_first)[:-1],
+                *chain(outer_first, inner_first)[:-1],
+            ]
+        )
+    polygon_rows = {row for polygon in polygons for row in polygon}
+    edge_segments: dict[tuple[int, int], int] = {}
+    for segment, (first, last) in enumerate(segments.tolist()):
+        if first not in polygon_rows and last not in polygon_rows:
+            continue
+        rows = chain(int(first), int(last))
+        for start, stop in zip(rows[:-1], rows[1:], strict=True):
+            edge_segments[_edge_key(start, stop)] = segment
+    used = sorted(polygon_rows)
+    physical = dict(
+        zip(
+            used,
+            np.asarray(
+                domain.evaluate(
+                    np.full((len(used),), patch, dtype=np.int64), floats[used]
+                ),
+                dtype=np.float64,
+            ),
+            strict=True,
+        )
+    )
+
+    def chart_area(first: int, second: int, third: int, /) -> Fraction:
+        a, b, c = chart_points[first], chart_points[second], chart_points[third]
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def shape(first: int, second: int, third: int, /) -> float:
+        a, b, c = physical[first], physical[second], physical[third]
+        squares = float(
+            np.sum((b - a) ** 2) + np.sum((c - b) ** 2) + np.sum((a - c) ** 2)
+        )
+        area = float(np.linalg.norm(np.cross(b - a, c - a)))
+        return 0.0 if squares == 0.0 else area / squares
+
+    triangles: list[tuple[int, int, int]] = []
+    for polygon in polygons:
+        orientation = sum(
+            (
+                chart_area(polygon[0], polygon[index], polygon[index + 1])
+                for index in range(1, len(polygon) - 1)
+            ),
+            Fraction(0),
+        )
+        if orientation == 0:
+            raise _failure(
+                "a pole band cell has zero chart area",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                entity_ids=(int(patch),),
+            )
+        sign = 1 if orientation > 0 else -1
+        remaining = list(polygon)
+        while len(remaining) > 3:
+            # A clipped ear must keep chart area on both sides: the ear itself
+            # and the remaining polygon, which may hold collinear side points.
+            ears = {
+                index: sign
+                * chart_area(
+                    remaining[index - 1],
+                    remaining[index],
+                    remaining[(index + 1) % len(remaining)],
+                )
+                for index in range(len(remaining))
+            }
+            best = max(
+                (index for index, area in ears.items() if 0 < area < sign * orientation),
+                key=lambda index: shape(
+                    remaining[index - 1],
+                    remaining[index],
+                    remaining[(index + 1) % len(remaining)],
+                ),
+            )
+            first, second, third = (
+                remaining[best - 1],
+                remaining[best],
+                remaining[(best + 1) % len(remaining)],
+            )
+            triangles.append(
+                (first, second, third) if sign > 0 else (first, third, second)
+            )
+            orientation -= sign * ears[best]
+            del remaining[best]
+        first, second, third = remaining
+        triangles.append((first, second, third) if sign > 0 else (first, third, second))
+    constraints = np.asarray(
+        [
+            [
+                edge_segments.get(
+                    _edge_key(triangle[(opposite + 1) % 3], triangle[(opposite + 2) % 3]),
+                    -1,
+                )
+                for opposite in range(3)
+            ]
+            for triangle in triangles
+        ],
+        dtype=np.int64,
+    )
+    return np.asarray(triangles, dtype=np.int64).reshape((-1, 3)), constraints.reshape(
+        (-1, 3)
+    )
+
+
 def _make_chart_mesh(
     domain: domain_owner.MeshingDomain,
     patch: int,
     parameters_by_curve: dict[int, set[Fraction]],
-    pole_samples: dict[tuple[int, int, int], tuple[_PoleChartSample, ...]],
+    pole_charts: _PoleCharts,
     minimum_angle: float,
     /,
 ) -> _ChartMesh:
@@ -969,12 +1254,26 @@ def _make_chart_mesh(
         segment_chart_endpoints,
         segment_pole_corners,
         pole_deviation_bound,
-    ) = _chart_inputs(domain, patch, values, pole_samples)
+        pole_bands,
+    ) = _chart_inputs(domain, patch, values, pole_charts)
     point_array = np.asarray(
         [[float(component) for component in point] for point in input_points],
         dtype=np.float64,
     )
-    hole_points = tuple(domain_boundary_owner._hole_seed(loop) for loop in loops[1:])
+    # Pole bands are thin chart strips whose physical image is a cap of the
+    # pole; chart-space quality refinement would split them into slivers of
+    # vanishing physical size. They are holes of the quality triangulation and
+    # receive explicit pole fans below.
+    hole_points = (
+        *(domain_boundary_owner._hole_seed(loop) for loop in loops[1:]),
+        *(
+            (
+                sum((input_points[row][0] for row in band), Fraction(0)) / 4,
+                sum((input_points[row][1] for row in band), Fraction(0)) / 4,
+            )
+            for band in pole_bands
+        ),
+    )
     holes = (
         None
         if not hole_points
@@ -1073,6 +1372,15 @@ def _make_chart_mesh(
             category=MeshingFailureCategory.INVALID_SOURCE,
             entity_ids=(int(patch),),
         )
+    constraint_rows = np.asarray(triangulation.segment_ids, dtype=np.int64)
+    if constraint_rows.shape != (triangles.shape[0], 3):
+        raise ValueError("Native CDT constraint incidence must align with triangles.")
+    if pole_bands:
+        band_triangles, band_constraints = _pole_band_triangles(
+            domain, patch, chart_points, np.asarray(segments, dtype=np.int64), pole_bands
+        )
+        triangles = np.concatenate((triangles, band_triangles))
+        constraint_rows = np.concatenate((constraint_rows, band_constraints))
     signed_area = Fraction(0)
     for triangle in triangles.tolist():
         first, second, third = (chart_points[int(row)] for row in triangle)
@@ -1100,9 +1408,6 @@ def _make_chart_mesh(
             category=MeshingFailureCategory.INVALID_SOURCE,
             entity_ids=(int(patch),),
         )
-    constraint_rows = np.asarray(triangulation.segment_ids, dtype=np.int64)
-    if constraint_rows.shape != (triangles.shape[0], 3):
-        raise ValueError("Native CDT constraint incidence must align with triangles.")
     boundary_edges: dict[
         tuple[int, int], tuple[int, tuple[int, int, int], Fraction, Fraction]
     ] = {}
@@ -2031,7 +2336,45 @@ def _curve_parameters(
     return parameters
 
 
-def _pole_interval_enclosures(
+def _surface_fidelity_tolerance(
+    domain: domain_owner.MeshingDomain, specification: SurfaceMeshingSpec, /
+) -> float | None:
+    """Source deviation bound every surface cell must meet, if any."""
+    tolerance = specification.maximum_deviation
+    if (
+        tolerance is None
+        and domain.accuracy in ("bounded_approximation", "certified_enclosure")
+        and domain.tolerance > 0.0
+    ):
+        tolerance = domain.tolerance
+    if tolerance is not None and (not math.isfinite(tolerance) or tolerance < 0.0):
+        raise _failure(
+            "surface fidelity tolerance must be finite and nonnegative",
+            category=MeshingFailureCategory.INVALID_SPECIFICATION,
+        )
+    return tolerance
+
+
+# Pole fans and graded rings. The cap ring keeps every fan apex angle at the
+# pole within _POLE_FAN_ANGLE; each graded ring at most doubles the physical
+# ring radius (or adds one edge target), keeps ring chords within
+# _POLE_RING_CHORD_RATIO of its radial gap, and the last ring is the first whose
+# chart metric along the ring reaches _POLE_RING_ISOTROPY of the metric across
+# it, where chart-isotropic quality triangulation is physically sound again.
+_POLE_FAN_ANGLE = math.pi / 3
+_POLE_RING_PROBES = 64
+_POLE_RING_GROWTH = 2.0
+_POLE_RING_CHORD_RATIO = 2.5
+_POLE_RING_ISOTROPY = 0.5
+_POLE_RING_EXTENT = Fraction(7, 16)
+_POLE_RING_BISECTIONS = 24
+# A ring cell stays explicit while its radial-side samples are no denser than
+# its ring edges divided by _POLE_SIDE_DENSITY; denser sides are left to the
+# quality triangulation.
+_POLE_SIDE_DENSITY = 4.0
+
+
+def _pole_cap_bound(
     surface: AbstractSurfacePatch,
     use: domain_owner.PatchPoleUse,
     lower: Fraction,
@@ -2041,7 +2384,18 @@ def _pole_interval_enclosures(
     ring_fixed: float,
     pole_point: np.ndarray,
     /,
-) -> tuple[np.ndarray, float]:
+) -> float:
+    """Bound the distance from the pole of the cap between the pole and its ring.
+
+    The cap is the chart box over the interval's p-curve between the pole row and
+    the ring row. Every cap point joins the pole row, whose image is the pole,
+    along the fixed chart axis, so its distance from the pole is at most the
+    enclosed fixed-axis Jacobian norm times the ring offset. A box enclosure of
+    the source map widens with the long chart extent of the cap, which this
+    bound does not; the smaller of both bounds is returned.
+    """
+    from phydrax.geometry._source_fidelity import _surface_jacobian_bounds
+
     native_first = float(_use_source_parameter(use, lower))
     native_last = float(_use_source_parameter(use, upper))
     chart_box = np.asarray(
@@ -2056,24 +2410,246 @@ def _pole_interval_enclosures(
         or np.any(chart_box[0] > chart_box[1])
     ):
         raise ValueError("Pole p-curve interval has no finite ordered chart box.")
-    ring_box = np.array(chart_box, copy=True)
-    ring_box[:, fixed_axis] = ring_fixed
     cap_box = np.array(chart_box, copy=True)
-    cap_box[:, fixed_axis] = (
-        min(pole_fixed, ring_fixed),
-        max(pole_fixed, ring_fixed),
-    )
-    ring_bounds = np.asarray(
-        surface.bounding_box(_positive_surface_parameter_box(surface, ring_box)),
-        dtype=np.float64,
-    )
+    cap_box[:, fixed_axis] = (min(pole_fixed, ring_fixed), max(pole_fixed, ring_fixed))
     cap_bounds = np.asarray(
         surface.bounding_box(_positive_surface_parameter_box(surface, cap_box)),
         dtype=np.float64,
     )
-    if ring_bounds.shape != (2, 3) or cap_bounds.shape != (2, 3):
+    if cap_bounds.shape != (2, 3):
         raise ValueError("Pole surface chart boxes must realize finite 3D bounds.")
-    return ring_bounds, _box_point_distance_upper(cap_bounds, pole_point)
+    bound = _box_point_distance_upper(cap_bounds, pole_point)
+    corners = tuple(
+        (
+            Fraction.from_float(float(cap_box[row, 0])),
+            Fraction.from_float(float(cap_box[column, 1])),
+        )
+        for row, column in ((0, 0), (1, 0), (1, 1), (0, 1))
+    )
+    halves = tuple(
+        _surface_jacobian_bounds(surface, triangle)
+        for triangle in (
+            (corners[0], corners[1], corners[2]),
+            (corners[0], corners[2], corners[3]),
+        )
+    )
+    if halves[0] is not None and halves[1] is not None:
+        speed = float(
+            np.linalg.norm(
+                np.maximum(
+                    np.maximum(np.abs(halves[0][0]), np.abs(halves[0][1])),
+                    np.maximum(np.abs(halves[1][0]), np.abs(halves[1][1])),
+                )[:, fixed_axis]
+            )
+        )
+        offset = abs(Fraction.from_float(ring_fixed) - Fraction.from_float(pole_fixed))
+        # The norm and product carry a few binary64 roundings; widen past them.
+        swept = float(Fraction.from_float(speed) * offset) * (
+            1.0 + 16.0 * float(np.finfo(np.float64).eps)
+        )
+        if math.isfinite(swept):
+            bound = min(bound, math.nextafter(swept, math.inf))
+    return bound
+
+
+def _pole_ring_extent(
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    loop_index: int,
+    use_index: int,
+    fixed_axis: int,
+    pole_fixed: float,
+    inside_fixed: float,
+    /,
+) -> Fraction:
+    """Largest graded ring offset as a fraction of the pole-to-interior chart span.
+
+    Graded rings stay below half the distance to the nearest other trim that
+    crosses the pole's open chart strip, so rings of facing poles never meet.
+    Trims along the strip ends, such as seams leaving the pole, do not cross it.
+    """
+    loops = domain.patches[patch].loops
+    use = loops[loop_index][use_index]
+    free_axis = 1 - fixed_axis
+    strip = np.asarray(
+        use.pcurve.bounding_box(min(use.first, use.last), max(use.first, use.last)),
+        dtype=np.float64,
+    )
+    low, high = float(strip[0, free_axis]), float(strip[1, free_axis])
+    tolerance = 128.0 * np.finfo(np.float64).eps * max(abs(low), abs(high), 1.0)
+    span = inside_fixed - pole_fixed
+    nearest = 1.0
+    for other_loop_index, other_loop in enumerate(loops):
+        for other_use_index, other in enumerate(other_loop):
+            if (other_loop_index, other_use_index) == (loop_index, use_index):
+                continue
+            box = np.asarray(
+                other.pcurve.bounding_box(
+                    min(other.first, other.last), max(other.first, other.last)
+                ),
+                dtype=np.float64,
+            )
+            if (
+                box[1, free_axis] <= low + tolerance
+                or box[0, free_axis] >= high - tolerance
+            ):
+                continue
+            offsets = sorted(
+                float(value) for value in (box[:, fixed_axis] - pole_fixed) / span
+            )
+            if offsets[1] <= 0.0:
+                continue
+            nearest = min(nearest, max(offsets[0], 0.0))
+    return Fraction.from_float(nearest) * _POLE_RING_EXTENT
+
+
+def _pole_graded_rings(
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    chart_point: Callable[[Fraction], tuple[Fraction, Fraction]],
+    fixed_axis: int,
+    ring_distance: Callable[[Fraction], tuple[float, float]],
+    inner_alpha: Fraction,
+    alpha_limit: Fraction,
+    stops: tuple[Fraction, ...],
+    inner_parameters: list[Fraction],
+    edge_limit: float,
+    /,
+) -> tuple[_PoleRing, ...]:
+    """Grade rings from the cap ring toward the regular chart.
+
+    ``ring_distance(alpha)`` returns the fixed chart coordinate at fraction
+    ``alpha`` of the pole-to-interior span and its physical distance from the
+    pole. Without these rings the chart-isotropic quality triangulation would
+    join the small cap ring to vertices far from the pole by needle triangles.
+    ``stops`` are the increasing offsets of source-curve samples on the strip
+    ends; a ring snaps onto a stop within its step (or within half a step
+    beyond it), so no curve sample sits just beside a ring.
+    """
+    free_axis = 1 - fixed_axis
+    free_values: dict[Fraction, Fraction] = {}
+
+    def free_value(parameter: Fraction, /) -> Fraction:
+        value = free_values.get(parameter)
+        if value is None:
+            value = chart_point(parameter)[free_axis]
+            free_values[parameter] = value
+        return value
+
+    def ring_point(parameter: Fraction, fixed: Fraction, /) -> tuple[Fraction, Fraction]:
+        point = [fixed, fixed]
+        point[free_axis] = free_value(parameter)
+        return point[0], point[1]
+
+    def evaluate(
+        parameters: list[Fraction], fixed: Fraction, /
+    ) -> dict[Fraction, np.ndarray]:
+        values = np.asarray(
+            domain.evaluate(
+                np.full((len(parameters),), patch, dtype=np.int64),
+                np.asarray(
+                    [
+                        [float(value) for value in ring_point(parameter, fixed)]
+                        for parameter in parameters
+                    ],
+                    dtype=np.float64,
+                ),
+            ),
+            dtype=np.float64,
+        )
+        return {parameter: values[row] for row, parameter in enumerate(parameters)}
+
+    rings: list[_PoleRing] = []
+    parameters = list(inner_parameters)
+    alpha = inner_alpha
+    value, radius = ring_distance(alpha)
+    while alpha < alpha_limit:
+        target = min(_POLE_RING_GROWTH * radius, radius + edge_limit)
+        next_alpha = alpha_limit
+        next_value, next_radius = ring_distance(alpha_limit)
+        if next_radius > target:
+            next_alpha, next_value, next_radius = alpha, value, radius
+            low, high = alpha, alpha_limit
+            for _ in range(_POLE_RING_BISECTIONS):
+                middle = (low + high) / 2
+                middle_value, middle_radius = ring_distance(middle)
+                if middle_radius <= target:
+                    low = next_alpha = middle
+                    next_value, next_radius = middle_value, middle_radius
+                else:
+                    high = middle
+        # A ring snaps down onto the last curve stop within its step, or up
+        # onto the next stop when that lies within half a step beyond it, so
+        # no stop sits just beside a ring. Stops denser than the rings stay
+        # radial side points of their band cells.
+        step = next_radius - radius
+        within = [stop for stop in stops if alpha < stop <= next_alpha]
+        beyond = next((stop for stop in stops if stop > next_alpha), None)
+        if within:
+            next_alpha = within[-1]
+            next_value, next_radius = ring_distance(next_alpha)
+        elif beyond is not None and beyond <= alpha_limit:
+            beyond_value, beyond_radius = ring_distance(beyond)
+            if beyond_radius - next_radius <= step / 2:
+                next_alpha, next_value, next_radius = beyond, beyond_value, beyond_radius
+        gap = next_radius - radius
+        if next_alpha == alpha or gap <= 0.0 or next_value == value:
+            break
+        fixed = Fraction.from_float(next_value)
+        chord_limit = min(edge_limit, _POLE_RING_CHORD_RATIO * gap)
+        physical = evaluate(parameters, fixed)
+        while True:
+            ordered = sorted(physical)
+            midpoints = [
+                (first + last) / 2
+                for first, last in zip(ordered[:-1], ordered[1:], strict=True)
+                if np.linalg.norm(physical[last] - physical[first]) > chord_limit
+            ]
+            if not midpoints:
+                break
+            physical.update(evaluate(midpoints, fixed))
+        rings.append(
+            tuple((parameter, ring_point(parameter, fixed)) for parameter in ordered)
+        )
+        along = min(
+            float(np.linalg.norm(physical[last] - physical[first]))
+            / abs(float(free_value(last) - free_value(first)))
+            for first, last in zip(ordered[:-1], ordered[1:], strict=True)
+            if free_value(last) != free_value(first)
+        )
+        across = gap / abs(next_value - value)
+        parameters, alpha, value, radius = ordered, next_alpha, next_value, next_radius
+        if along >= _POLE_RING_ISOTROPY * across:
+            break
+    return tuple(rings)
+
+
+def _pole_ring_stops(
+    loop: tuple[domain_owner.PatchCurveUse | domain_owner.PatchPoleUse, ...],
+    use_index: int,
+    fixed_axis: int,
+    pole_fixed: float,
+    inside_fixed: float,
+    alpha_limit: Fraction,
+    parameters_by_curve: dict[int, set[Fraction]],
+    /,
+) -> tuple[Fraction, ...]:
+    """Offsets of the samples of the trims leaving the pole along its strip ends."""
+    use = loop[use_index]
+    free_axis = 1 - fixed_axis
+    ends = {point[free_axis] for point in _canonical_use_endpoints(use)}
+    pole = Fraction.from_float(pole_fixed)
+    span = Fraction.from_float(inside_fixed) - pole
+    stops: set[Fraction] = set()
+    for neighbor in (loop[use_index - 1], loop[(use_index + 1) % len(loop)]):
+        if not isinstance(neighbor, domain_owner.PatchCurveUse):
+            continue
+        for parameter in parameters_by_curve.get(neighbor.curve, ()):
+            point = _use_chart_point(neighbor, parameter)
+            offset = (point[fixed_axis] - pole) / span
+            if point[free_axis] in ends and 0 < offset < alpha_limit:
+                stops.add(offset)
+    return tuple(sorted(stops))
 
 
 def _pole_sampling(
@@ -2082,13 +2658,15 @@ def _pole_sampling(
     patch_sizes: np.ndarray,
     specification: SurfaceMeshingSpec,
     schedule: NativeSurfaceSchedule,
+    parameters_by_curve: dict[int, set[Fraction]],
     /,
-) -> dict[tuple[int, int, int], tuple[_PoleChartSample, ...]]:
+) -> _PoleCharts:
     sizes = {
         patch: float(size)
         for patch, size in zip(selected_patches, patch_sizes, strict=True)
     }
-    result: dict[tuple[int, int, int], tuple[_PoleChartSample, ...]] = {}
+    result: _PoleCharts = {}
+    fidelity_tolerance = _surface_fidelity_tolerance(domain, specification)
     for patch in selected_patches:
         surface = domain.patches[patch].surface
         parameter_domain = surface.parameter_domain
@@ -2263,9 +2841,35 @@ def _pole_sampling(
                     point[fixed_axis] = Fraction.from_float(ring_fixed)
                     return point[0], point[1]
 
-                sample_count = max(schedule.minimum_edge_samples, 4)
+                # The cap ring count follows the size field: no ring interval
+                # longer than the edge target and no pole fan apex angle above
+                # _POLE_FAN_ANGLE. Enclosure bounds below may only add samples.
+                ring_radius = pointwise_ring_distance(lower_alpha)[1]
+                probes = tuple(
+                    ring_chart_point(Fraction(index, _POLE_RING_PROBES))
+                    for index in range(_POLE_RING_PROBES + 1)
+                )
+                probe_points = np.asarray(
+                    domain.evaluate(
+                        np.full((len(probes),), patch, dtype=np.int64),
+                        np.asarray(
+                            [[float(value) for value in point] for point in probes],
+                            dtype=np.float64,
+                        ),
+                    ),
+                    dtype=np.float64,
+                )
+                ring_length = float(
+                    np.sum(np.linalg.norm(np.diff(probe_points, axis=0), axis=1))
+                )
+                interval_count = max(
+                    1,
+                    schedule.minimum_edge_samples - 1,
+                    math.ceil(ring_length / (ring_radius * _POLE_FAN_ANGLE)),
+                    math.ceil(ring_length / edge_limit),
+                )
                 initial = {
-                    Fraction(index, sample_count - 1) for index in range(sample_count)
+                    Fraction(index, interval_count) for index in range(interval_count + 1)
                 }
                 accepted_bounds: dict[tuple[Fraction, Fraction], float] = {}
                 expanded = set(initial)
@@ -2274,16 +2878,6 @@ def _pole_sampling(
                     intervals = [(first, last)]
                     while intervals:
                         interval_first, interval_last = intervals.pop()
-                        ring_box, cap_bound = _pole_interval_enclosures(
-                            surface,
-                            use,
-                            interval_first,
-                            interval_last,
-                            fixed_axis,
-                            pole_fixed,
-                            ring_fixed,
-                            pole_point,
-                        )
                         ring_first = ring_chart_point(interval_first)
                         ring_last = ring_chart_point(interval_last)
                         physical_first = domain.evaluate(
@@ -2300,21 +2894,51 @@ def _pole_sampling(
                                 dtype=np.float64,
                             ),
                         )[0]
-                        chord_bound = _box_chord_bound(
-                            ring_box, physical_first, physical_last
+                        # An interval is accepted when its ring chord meets the
+                        # edge target, its cap stays within the cap limit of the
+                        # pole, and its pole fan cells meet the refinement bounds
+                        # as laid out: refining a fan would raise the pole degree.
+                        fans = np.asarray(
+                            [
+                                [
+                                    [float(value) for value in chart_point(pole)],
+                                    [float(value) for value in ring_last],
+                                    [float(value) for value in ring_first],
+                                ]
+                                for pole in (interval_first, interval_last)
+                            ],
+                            dtype=np.float64,
                         )
-                        edge_bound = float(
-                            np.nextafter(
-                                np.linalg.norm(ring_box[1] - ring_box[0]), math.inf
+                        accepted = (
+                            float(np.linalg.norm(physical_last - physical_first))
+                            <= edge_limit
+                            and (
+                                fidelity_tolerance is None
+                                or float(np.max(domain.interpolation_bounds(patch, fans)))
+                                <= fidelity_tolerance
+                            )
+                            and (
+                                specification.maximum_normal_deviation is None
+                                or float(np.max(domain.normal_turn_bounds(patch, fans)))
+                                <= specification.maximum_normal_deviation
                             )
                         )
-                        if (
-                            cap_bound <= cap_limit
-                            and chord_bound <= cap_limit
-                            and edge_bound <= edge_limit
-                        ):
-                            accepted_bounds[(interval_first, interval_last)] = cap_bound
-                            continue
+                        if accepted:
+                            cap_bound = _pole_cap_bound(
+                                surface,
+                                use,
+                                interval_first,
+                                interval_last,
+                                fixed_axis,
+                                pole_fixed,
+                                ring_fixed,
+                                pole_point,
+                            )
+                            if cap_bound <= cap_limit:
+                                accepted_bounds[(interval_first, interval_last)] = (
+                                    cap_bound
+                                )
+                                continue
                         midpoint_parameter = (interval_first + interval_last) / 2
                         if midpoint_parameter in (interval_first, interval_last) or float(
                             midpoint_parameter
@@ -2345,17 +2969,56 @@ def _pole_sampling(
                         category=MeshingFailureCategory.INVALID_SOURCE,
                         entity_ids=(int(patch),),
                     )
-                result[(patch, loop_index, use_index)] = samples
+                alpha_limit = _pole_ring_extent(
+                    domain,
+                    patch,
+                    loop_index,
+                    use_index,
+                    fixed_axis,
+                    pole_fixed,
+                    inside_fixed,
+                )
+                result[(patch, loop_index, use_index)] = _PoleChart(
+                    samples,
+                    _pole_graded_rings(
+                        domain,
+                        patch,
+                        chart_point,
+                        fixed_axis,
+                        pointwise_ring_distance,
+                        lower_alpha,
+                        alpha_limit,
+                        _pole_ring_stops(
+                            loop,
+                            use_index,
+                            fixed_axis,
+                            pole_fixed,
+                            inside_fixed,
+                            alpha_limit,
+                            parameters_by_curve,
+                        ),
+                        ordered,
+                        edge_limit,
+                    ),
+                )
     return result
 
 
 def _integrate_pole_ring_parameters(
     domain: domain_owner.MeshingDomain,
     selected_patches: tuple[int, ...],
-    pole_samples: dict[tuple[int, int, int], tuple[_PoleChartSample, ...]],
+    pole_charts: _PoleCharts,
     parameters_by_curve: dict[int, set[Fraction]],
     /,
 ) -> None:
+    """Add ring points lying on a loop's trims to those trims' parameters.
+
+    A ring point on a straight trim (constant along one chart axis) is solved
+    for its trim parameter; when the trim's own chart point at that parameter
+    differs from the ring point only by the rounding of the p-curve evaluation,
+    the ring point is replaced by the trim's chart point so the pole spoke and
+    the trim segment share the vertex instead of overlapping collinearly.
+    """
     for patch in selected_patches:
         for loop_index, loop in enumerate(domain.patches[patch].loops):
             poles = tuple(
@@ -2363,6 +3026,9 @@ def _integrate_pole_ring_parameters(
                 for index, use in enumerate(loop)
                 if isinstance(use, domain_owner.PatchPoleUse)
             )
+            if not poles:
+                continue
+            replaced: dict[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] = {}
             for use in loop:
                 if not isinstance(use, domain_owner.PatchCurveUse):
                     continue
@@ -2370,21 +3036,78 @@ def _integrate_pole_ring_parameters(
                 if parameters is None:
                     continue
                 first, last = _canonical_use_endpoints(use)
+                # A ring point already sampled on the curve keeps its parameter:
+                # its chart inverse may differ from it in the last bits.
+                known = {_use_chart_point(use, value) for value in parameters}
                 for pole_use_index, _pole_use in poles:
-                    samples = pole_samples[(patch, loop_index, pole_use_index)]
-                    for sample in samples:
-                        point = sample.ring_point
+                    pole_chart = pole_charts[(patch, loop_index, pole_use_index)]
+                    ring_points = (
+                        *(sample.ring_point for sample in pole_chart.samples),
+                        *(point for ring in pole_chart.rings for _, point in ring),
+                    )
+                    for point in ring_points:
+                        if point in known or point in replaced:
+                            continue
                         for axis in range(2):
                             delta = last[axis] - first[axis]
                             if delta == 0:
                                 continue
                             parameter = (point[axis] - first[axis]) / delta
-                            if (
-                                0 <= parameter <= 1
-                                and _use_chart_point(use, parameter) == point
+                            if not 0 <= parameter <= 1:
+                                continue
+                            chart = _use_chart_point(use, parameter)
+                            if chart != point and not _rounded_straight_trim_point(
+                                first, last, axis, point, chart
                             ):
-                                parameters.add(parameter)
-                                break
+                                continue
+                            parameters.add(parameter)
+                            known.add(chart)
+                            if chart != point:
+                                replaced[point] = chart
+                            break
+            if replaced:
+                for pole_use_index, _pole_use in poles:
+                    key = (patch, loop_index, pole_use_index)
+                    pole_chart = pole_charts[key]
+                    pole_charts[key] = _PoleChart(
+                        tuple(
+                            _PoleChartSample(
+                                sample.parameter,
+                                sample.chart_point,
+                                replaced.get(sample.ring_point, sample.ring_point),
+                                sample.cap_bound,
+                            )
+                            for sample in pole_chart.samples
+                        ),
+                        tuple(
+                            tuple(
+                                (parameter, replaced.get(point, point))
+                                for parameter, point in ring
+                            )
+                            for ring in pole_chart.rings
+                        ),
+                    )
+
+
+def _rounded_straight_trim_point(
+    first: tuple[Fraction, Fraction],
+    last: tuple[Fraction, Fraction],
+    axis: int,
+    point: tuple[Fraction, Fraction],
+    chart: tuple[Fraction, Fraction],
+    /,
+) -> bool:
+    """Whether ``chart`` is ``point`` on a straight trim up to p-curve rounding.
+
+    The trim keeps the other chart coordinate constant and ``point`` lies on
+    it; the trim's evaluated coordinate along ``axis`` then differs from the
+    solved one only by the binary64 rounding of the p-curve evaluation.
+    """
+    other = 1 - axis
+    if not first[other] == last[other] == point[other] == chart[other]:
+        return False
+    value = float(point[axis])
+    return abs(float(chart[axis]) - value) <= 4.0 * math.ulp(value)
 
 
 def _global_vertex_key(
@@ -2578,6 +3301,44 @@ def _chart_curve_bounds(
     return bounds
 
 
+_FOLD_PROBE_STEP = 1.0e-6
+
+
+def _folded_cells(
+    domain: domain_owner.MeshingDomain,
+    patches: np.ndarray,
+    chart_parameters: np.ndarray,
+    corners: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Mark cells whose vertex order opposes the oriented source normal.
+
+    The source normal is sampled at the chart centroid by central differences of
+    the source map. This only selects cells to refine; certification does not
+    rely on it.
+    """
+    centroids = np.mean(chart_parameters, axis=1)
+    steps = _FOLD_PROBE_STEP * np.maximum(1.0, np.abs(centroids))
+    probes = np.concatenate(
+        (
+            centroids + steps * np.asarray((1.0, 0.0)),
+            centroids - steps * np.asarray((1.0, 0.0)),
+            centroids + steps * np.asarray((0.0, 1.0)),
+            centroids - steps * np.asarray((0.0, 1.0)),
+        )
+    )
+    values = np.asarray(
+        domain.evaluate(np.tile(patches, 4), probes), dtype=np.float64
+    ).reshape((4, centroids.shape[0], 3))
+    normal = np.cross(values[0] - values[1], values[2] - values[3])
+    orientation = np.asarray(
+        [domain.patches[int(patch)].orientation for patch in patches.tolist()],
+        dtype=np.float64,
+    )
+    facet = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    return orientation * np.sum(facet * normal, axis=1) <= 0.0
+
+
 type _CellBoundKey = tuple[int, tuple[_ChartUV, ...]]
 
 
@@ -2655,24 +3416,7 @@ def _refine_charts(
             }
         )
 
-    fidelity_tolerance = specification.maximum_deviation
-    if (
-        fidelity_tolerance is None
-        and domain.accuracy
-        in (
-            "bounded_approximation",
-            "certified_enclosure",
-        )
-        and domain.tolerance > 0.0
-    ):
-        fidelity_tolerance = domain.tolerance
-    if fidelity_tolerance is not None and (
-        not math.isfinite(fidelity_tolerance) or fidelity_tolerance < 0.0
-    ):
-        raise _failure(
-            "surface fidelity tolerance must be finite and nonnegative",
-            category=MeshingFailureCategory.INVALID_SPECIFICATION,
-        )
+    fidelity_tolerance = _surface_fidelity_tolerance(domain, specification)
     protected_curve_tolerance: dict[int, float] = {}
     for feature in specification.protected_features:
         if feature.feature_kind.value == "curve" and feature.hard:
@@ -2798,6 +3542,10 @@ def _refine_charts(
         bad = (maximum_edge > edge_targets) | (deviations > deviation_targets)
         if specification.maximum_normal_deviation is not None:
             bad |= normal_bounds > specification.maximum_normal_deviation
+        # A chart triangle near a singular chart row can map to a cell whose
+        # vertex order reverses the oriented source normal; split it like any
+        # other schedule violation.
+        bad |= _folded_cells(domain, patches, chart_parameters, physical[triangles])
         if not np.any(bad):
             break
 
@@ -3999,17 +4747,18 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.specification,
             self.schedule,
         )
-        pole_samples = _pole_sampling(
+        pole_charts = _pole_sampling(
             domain,
             self.selected_patches,
             self.size_values,
             self.specification,
             self.schedule,
+            parameters_by_curve,
         )
         _integrate_pole_ring_parameters(
             domain,
             self.selected_patches,
-            pole_samples,
+            pole_charts,
             parameters_by_curve,
         )
         quality_angle = self.schedule.quality_angle_degrees
@@ -4025,7 +4774,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                     domain,
                     patch,
                     parameters_by_curve,
-                    pole_samples,
+                    pole_charts,
                     quality_angle,
                 )
                 for patch in self.selected_patches

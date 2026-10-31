@@ -440,6 +440,7 @@ class CurvedTrimLens(NamedTuple):
 
 
 _CHAIN_PARAMETER_REFINEMENTS = 14
+_POLE_SLIVER_PIECE_LIMIT = 256
 
 
 def _target_boundary_successors(
@@ -1135,7 +1136,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         """Upper bound on the source-image diameter of one collapsed pole sliver.
 
         The sliver contains its owner's pole chart corner, so every source point of
-        the sliver lies within this bound of that corner's exact source point.
+        the sliver lies within this bound of that corner's exact source point. The
+        chart box is enclosed by pieces no wider than its short side, because a
+        source box enclosure widens with its longest chart extent.
         """
         from ._meshing_domain import _outward_surface_parameter_box
         from ._source_interpolation import _fraction_float_interval
@@ -1149,16 +1152,40 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             _fraction_float_interval(max(point[axis] for point in sliver))[1]
             for axis in range(2)
         )
-        bounds = np.asarray(
-            surface.bounding_box(_outward_surface_parameter_box(surface, lower, upper)),
-            dtype=np.float64,
+        extents = (upper[0] - lower[0], upper[1] - lower[1])
+        long_axis = 0 if extents[0] >= extents[1] else 1
+        short = extents[1 - long_axis]
+        pieces = (
+            _POLE_SLIVER_PIECE_LIMIT
+            if short <= 0.0
+            else min(
+                _POLE_SLIVER_PIECE_LIMIT,
+                max(1, math.ceil(extents[long_axis] / short)),
+            )
         )
-        if (
-            bounds.shape != (2, 3)
-            or np.any(~np.isfinite(bounds))
-            or np.any(bounds[0] > bounds[1])
-        ):
-            raise ValueError("Collapsed pole sliver has no finite ordered source box.")
+        cuts = np.linspace(lower[long_axis], upper[long_axis], pieces + 1)
+        cuts[0], cuts[-1] = lower[long_axis], upper[long_axis]
+        bounds = np.empty((2, 3), dtype=np.float64)
+        bounds[0], bounds[1] = np.inf, -np.inf
+        for first, last in zip(cuts[:-1], cuts[1:], strict=True):
+            piece_lower, piece_upper = list(lower), list(upper)
+            piece_lower[long_axis], piece_upper[long_axis] = float(first), float(last)
+            piece = np.asarray(
+                surface.bounding_box(
+                    _outward_surface_parameter_box(surface, piece_lower, piece_upper)
+                ),
+                dtype=np.float64,
+            )
+            if (
+                piece.shape != (2, 3)
+                or np.any(~np.isfinite(piece))
+                or np.any(piece[0] > piece[1])
+            ):
+                raise ValueError(
+                    "Collapsed pole sliver has no finite ordered source box."
+                )
+            bounds[0] = np.minimum(bounds[0], piece[0])
+            bounds[1] = np.maximum(bounds[1], piece[1])
         widths = tuple(
             Fraction(float(bounds[1, axis])) - Fraction(float(bounds[0, axis]))
             for axis in range(3)
