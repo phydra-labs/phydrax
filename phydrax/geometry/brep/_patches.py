@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import cached_property
+from functools import cached_property, partial
 from math import atan2, gcd, lcm, tau, ulp
 from typing import cast, final, Literal, overload
 
@@ -213,9 +213,7 @@ class OffsetSurface(AbstractSurfacePatch):
                     sum(
                         (
                             a * b
-                            for a, b in zip(
-                                columns[first], columns[second], strict=True
-                            )
+                            for a, b in zip(columns[first], columns[second], strict=True)
                         ),
                         Fraction(0),
                     )
@@ -229,16 +227,12 @@ class OffsetSurface(AbstractSurfacePatch):
             )
             if gram == identity:
                 rows = tuple(
-                    tuple(columns[column][row] for column in range(3))
-                    for row in range(3)
+                    tuple(columns[column][row] for column in range(3)) for row in range(3)
                 )
                 determinant = (
-                    rows[0][0]
-                    * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
-                    - rows[0][1]
-                    * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
-                    + rows[0][2]
-                    * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0])
+                    rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
+                    - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
+                    + rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0])
                 )
                 computed_frame_sign = (
                     1 if determinant > 0 else -1 if determinant < 0 else 0
@@ -270,8 +264,7 @@ class OffsetSurface(AbstractSurfacePatch):
             )
             if gram == identity:
                 rows = tuple(
-                    tuple(columns[column][row] for column in range(3))
-                    for row in range(3)
+                    tuple(columns[column][row] for column in range(3)) for row in range(3)
                 )
                 determinant = rational_determinant(*rows)
                 computed_frame_sign = (
@@ -345,9 +338,10 @@ class OffsetSurface(AbstractSurfacePatch):
                 )
             point = base.evaluate(uv)
             radial = (point - base.curve.center) / base.curve.radius
-            return base.curve.center + (
-                base.curve.radius + self.frame_sign * self.distance
-            ) * radial
+            return (
+                base.curve.center
+                + (base.curve.radius + self.frame_sign * self.distance) * radial
+            )
         if isinstance(self.base, CylinderPatch) and self.frame_sign != 0:
             angle, height = uv[0], uv[1]
             radial = (
@@ -412,9 +406,7 @@ class OffsetSurface(AbstractSurfacePatch):
     def is_c1_on(self, parameter_box: ConvertibleToArray, /) -> bool:
         return self.base.is_c1_on(parameter_box)
 
-    def exact_sphere_revolution_witness(
-        self, /
-    ) -> _ExactSphereRevolutionWitness | None:
+    def exact_sphere_revolution_witness(self, /) -> _ExactSphereRevolutionWitness | None:
         """Return exact source sphere data retained by a revolution offset."""
         return self._sphere_revolution_witness
 
@@ -813,9 +805,7 @@ class ExactLineCurve(AbstractCurve):
         )
 
     @overload
-    def evaluate_exact(
-        self, parameter: Fraction, /
-    ) -> tuple[Fraction, ...]: ...
+    def evaluate_exact(self, parameter: Fraction, /) -> tuple[Fraction, ...]: ...
 
     @overload
     def evaluate_exact(
@@ -1055,16 +1045,23 @@ class CircleCurve(AbstractCurve):
                 self.radius_exact * self.second_axis_exact[axis]
             )
             sine_term = interval_multiply(
-                (np.asarray(fraction_down(sine_coefficient[0])), np.asarray(fraction_up(sine_coefficient[1]))),
+                (
+                    np.asarray(fraction_down(sine_coefficient[0])),
+                    np.asarray(fraction_up(sine_coefficient[1])),
+                ),
                 sine,
             )
             cosine_term = interval_multiply(
-                (np.asarray(fraction_down(cosine_coefficient[0])), np.asarray(fraction_up(cosine_coefficient[1]))),
+                (
+                    np.asarray(fraction_down(cosine_coefficient[0])),
+                    np.asarray(fraction_up(cosine_coefficient[1])),
+                ),
                 cosine,
             )
             derivative = interval_add(sine_term, cosine_term)
             lower[axis], upper[axis] = float(derivative[0]), float(derivative[1])
         return lower, upper
+
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         cosine = tuple(self.radius_exact * value for value in self.first_axis_exact)
         sine = tuple(self.radius_exact * value for value in self.second_axis_exact)
@@ -1758,16 +1755,10 @@ class RuledSurface(AbstractSurfacePatch):
 
     def bounding_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
         box = np.asarray(parameter_box, dtype=np.float64)
-        if (
-            box.shape != (2, 2)
-            or not np.all(np.isfinite(box))
-            or np.any(box[1] < box[0])
-        ):
+        if box.shape != (2, 2) or not np.all(np.isfinite(box)) or np.any(box[1] < box[0]):
             raise ValueError("Ruled source interval boxes must be finite and ordered.")
         domain = self.parameter_domain
-        if domain is not None and (
-            box[0, 0] < domain[0][0] or box[1, 0] > domain[1][0]
-        ):
+        if domain is not None and (box[0, 0] < domain[0][0] or box[1, 0] > domain[1][0]):
             raise ValueError("Ruled source interval must lie within its rail domain.")
         first = self.first.bounding_box(float(box[0, 0]), float(box[1, 0]))
         second = self.second.bounding_box(float(box[0, 0]), float(box[1, 0]))
@@ -1787,9 +1778,7 @@ class RuledSurface(AbstractSurfacePatch):
         )
 
         v_interval = (np.asarray(v_lower), np.asarray(v_upper))
-        complement = interval_subtract(
-            (np.asarray(1.0), np.asarray(1.0)), v_interval
-        )
+        complement = interval_subtract((np.asarray(1.0), np.asarray(1.0)), v_interval)
         first_part = interval_multiply(complement, (first[0], first[1]))
         second_part = interval_multiply(v_interval, (second[0], second[1]))
         lower, upper = interval_add(first_part, second_part)
@@ -1900,12 +1889,8 @@ class RuledSurface(AbstractSurfacePatch):
                 )
                 angle = (chart[0, 0], chart[1, 0])
                 height = (chart[0, 1], chart[1, 1])
-                cosine = interval_cos(
-                    (np.asarray(angle[0]), np.asarray(angle[1]))
-                )
-                sine = interval_sin(
-                    (np.asarray(angle[0]), np.asarray(angle[1]))
-                )
+                cosine = interval_cos((np.asarray(angle[0]), np.asarray(angle[1])))
+                sine = interval_sin((np.asarray(angle[0]), np.asarray(angle[1])))
                 lower: list[float] = []
                 upper: list[float] = []
                 for axis in range(3):
@@ -1938,19 +1923,13 @@ class RuledSurface(AbstractSurfacePatch):
             first_box = rail_box(patch_first, source_first)
             second_box = rail_box(patch_second, source_second)
             v_interval = (np.asarray(box[0, 1]), np.asarray(box[1, 1]))
-            complement = interval_subtract(
-                (np.asarray(1.0), np.asarray(1.0)), v_interval
-            )
+            complement = interval_subtract((np.asarray(1.0), np.asarray(1.0)), v_interval)
             first_velocity = tuple(
-                exact_interval(
-                    source_first.height_direction_exact * value
-                )
+                exact_interval(source_first.height_direction_exact * value)
                 for value in patch_first.axis_exact
             )
             second_velocity = tuple(
-                exact_interval(
-                    source_second.height_direction_exact * value
-                )
+                exact_interval(source_second.height_direction_exact * value)
                 for value in patch_second.axis_exact
             )
             lower = np.empty((3, 2), dtype=np.float64)
@@ -1976,9 +1955,7 @@ class RuledSurface(AbstractSurfacePatch):
                     "Ruled source rails are not C1 on the analytic v extension."
                 )
         elif not self.is_c1_on(box):
-            raise NotImplementedError(
-                "Ruled surface rail continuity is not established."
-            )
+            raise NotImplementedError("Ruled surface rail continuity is not established.")
         prepared = self._prepared_derivative_program
         lower, upper = prepared.evaluate(box[0:1], box[1:2])
         return lower[0], upper[0]
@@ -2140,19 +2117,15 @@ class RevolutionSurface(AbstractSurfacePatch):
         self, parameter_box: ConvertibleToArray, /
     ) -> np.ndarray:
         box = np.asarray(parameter_box, dtype=np.float64)
-        if (
-            box.shape != (2, 2)
-            or not np.all(np.isfinite(box))
-            or np.any(box[1] < box[0])
-        ):
+        if box.shape != (2, 2) or not np.all(np.isfinite(box)) or np.any(box[1] < box[0]):
             raise ValueError(
                 "A surface parameter box must be finite, shaped (2, 2), and ordered."
             )
         domain = self.parameter_domain
-        if domain is not None and (
-            box[0, 1] < domain[0][1] or box[1, 1] > domain[1][1]
-        ):
-            raise ValueError("The profile parameter box must lie within its source domain.")
+        if domain is not None and (box[0, 1] < domain[0][1] or box[1, 1] > domain[1][1]):
+            raise ValueError(
+                "The profile parameter box must lie within its source domain."
+            )
         for axis, period in enumerate(self.periods):
             if period is not None and box[1, axis] - box[0, axis] > period * (
                 1.0 + 128.0 * np.finfo(np.float64).eps
@@ -2172,12 +2145,12 @@ class RevolutionSurface(AbstractSurfacePatch):
             interval_subtract,
         )
         from .._rational import fraction_down, fraction_up, rational_vector
+
         if isinstance(self.curve, CircleCurve):
             box = self._validate_source_parameter_box(parameter_box)
             axis_origin = rational_vector(np.asarray(self.axis_origin, dtype=np.float64))
             axis = rational_vector(np.asarray(self.axis_direction, dtype=np.float64))
             profile = self.curve
-
 
             def exact_interval(value: ExactScalar, /) -> Interval:
                 lower, upper = coefficient_interval(value, bits=128)
@@ -2187,8 +2160,7 @@ class RevolutionSurface(AbstractSurfacePatch):
                 )
 
             profile_relative_center = tuple(
-                profile.center_exact[index] - axis_origin[index]
-                for index in range(3)
+                profile.center_exact[index] - axis_origin[index] for index in range(3)
             )
             profile_cosine_exact = tuple(
                 profile.radius_exact * profile.first_axis_exact[index]
@@ -2223,7 +2195,8 @@ class RevolutionSurface(AbstractSurfacePatch):
             axial = (np.asarray(0.0), np.asarray(0.0))
             for component in range(3):
                 axial = interval_add(
-                    axial, interval_multiply(axis_intervals[component], relative[component])
+                    axial,
+                    interval_multiply(axis_intervals[component], relative[component]),
                 )
             cross_axis = (
                 interval_subtract(
@@ -2264,7 +2237,6 @@ class RevolutionSurface(AbstractSurfacePatch):
                 upper.append(float(point[1]))
             return np.asarray((lower, upper), dtype=np.float64)
 
-
         if not isinstance(self.curve, (LineCurve, ExactLineCurve)):
             return super().bounding_box(parameter_box)
         box = self._validate_source_parameter_box(parameter_box)
@@ -2288,10 +2260,7 @@ class RevolutionSurface(AbstractSurfacePatch):
             /,
         ) -> ExactScalar:
             return sum(
-                (
-                    left * right
-                    for left, right in zip(first, second, strict=True)
-                ),
+                (left * right for left, right in zip(first, second, strict=True)),
                 Fraction(0),
             )
 
@@ -2308,12 +2277,10 @@ class RevolutionSurface(AbstractSurfacePatch):
         axial_origin = dot(axis, relative_origin)
         axial_direction = dot(axis, profile_direction)
         radial_origin = tuple(
-            relative_origin[index] - axis[index] * axial_origin
-            for index in range(3)
+            relative_origin[index] - axis[index] * axial_origin for index in range(3)
         )
         radial_direction = tuple(
-            profile_direction[index] - axis[index] * axial_direction
-            for index in range(3)
+            profile_direction[index] - axis[index] * axial_direction for index in range(3)
         )
         v_lower = Fraction.from_float(float(box[0, 1]))
         v_upper = Fraction.from_float(float(box[1, 1]))
@@ -2432,8 +2399,7 @@ class RevolutionSurface(AbstractSurfacePatch):
         origin_exact = rational_vector(np.asarray(self.axis_origin))
         if isinstance(profile, CircleCurve):
             relative_center = tuple(
-                profile.center_exact[index] - origin_exact[index]
-                for index in range(3)
+                profile.center_exact[index] - origin_exact[index] for index in range(3)
             )
             cosine_coefficients = tuple(
                 profile.radius_exact * profile.first_axis_exact[index]
@@ -2494,7 +2460,8 @@ class RevolutionSurface(AbstractSurfacePatch):
             axial_tangent = (np.asarray(0.0), np.asarray(0.0))
             for component in range(3):
                 axial = interval_add(
-                    axial, interval_multiply(axis_intervals[component], relative[component])
+                    axial,
+                    interval_multiply(axis_intervals[component], relative[component]),
                 )
                 axial_tangent = interval_add(
                     axial_tangent,
@@ -2524,9 +2491,7 @@ class RevolutionSurface(AbstractSurfacePatch):
                                 ),
                             ),
                             interval_multiply(
-                                interval_multiply(
-                                    axis_intervals[component], axial
-                                ),
+                                interval_multiply(axis_intervals[component], axial),
                                 angle_sine,
                             ),
                         )
@@ -2536,12 +2501,8 @@ class RevolutionSurface(AbstractSurfacePatch):
                     array_interval(
                         interval_add(
                             interval_add(
-                                interval_multiply(
-                                    tangent[component], angle_cosine
-                                ),
-                                interval_multiply(
-                                    cross_tangent[component], angle_sine
-                                ),
+                                interval_multiply(tangent[component], angle_cosine),
+                                interval_multiply(cross_tangent[component], angle_sine),
                             ),
                             interval_multiply(
                                 interval_multiply(
@@ -2578,8 +2539,7 @@ class RevolutionSurface(AbstractSurfacePatch):
                     )
                 )
             relative_origin = tuple(
-                profile_origin_exact[index] - origin_exact[index]
-                for index in range(3)
+                profile_origin_exact[index] - origin_exact[index] for index in range(3)
             )
             axial_origin = exact_dot(axis_exact, relative_origin)
             axial_direction = exact_dot(axis_exact, profile_direction_exact)
@@ -2668,7 +2628,10 @@ class RevolutionSurface(AbstractSurfacePatch):
                     interval_add(
                         interval_add(
                             interval_multiply(
-                                (np.asarray(axis[component]), np.asarray(axis[component])),
+                                (
+                                    np.asarray(axis[component]),
+                                    np.asarray(axis[component]),
+                                ),
                                 axial_tangent,
                             ),
                             interval_multiply(tangent_component, angle_cosine),
@@ -2696,15 +2659,14 @@ class RevolutionSurface(AbstractSurfacePatch):
 
     def exact_quadric_witness(
         self,
-        profile_parameter_interval: tuple[float | Fraction, float | Fraction] | None = None,
+        profile_parameter_interval: tuple[float | Fraction, float | Fraction]
+        | None = None,
         /,
     ) -> RevolutionQuadricWitness | None:
         """Return exact quadric data while retaining this authored source patch."""
         return _revolution_quadric_witness(self, profile_parameter_interval)
 
-    def exact_sphere_revolution_witness(
-        self, /
-    ) -> _ExactSphereRevolutionWitness | None:
+    def exact_sphere_revolution_witness(self, /) -> _ExactSphereRevolutionWitness | None:
         """Prove this circular meridian revolves to a source sphere."""
         return _exact_spherical_revolution_witness(self)
 
@@ -2778,20 +2740,29 @@ class RevolutionQuadricWitness:
             self.axial_direction_exact,
             self.dr_dz_exact,
         )
-        if any(
-            len(vector) != 3
-            or any(not isinstance(value, (Fraction, RadicalElement)) for value in vector)
-            for vector in vectors
-        ) or any(
-            point is not None
-            and (
-                len(point) != 3
-                or any(not isinstance(value, (Fraction, RadicalElement)) for value in point)
+        if (
+            any(
+                len(vector) != 3
+                or any(
+                    not isinstance(value, (Fraction, RadicalElement)) for value in vector
+                )
+                for vector in vectors
             )
-            for point in points
-        ) or any(
-            value is not None and not isinstance(value, (Fraction, RadicalElement))
-            for value in scalars
+            or any(
+                point is not None
+                and (
+                    len(point) != 3
+                    or any(
+                        not isinstance(value, (Fraction, RadicalElement))
+                        for value in point
+                    )
+                )
+                for point in points
+            )
+            or any(
+                value is not None and not isinstance(value, (Fraction, RadicalElement))
+                for value in scalars
+            )
         ):
             raise TypeError("Quadric witness coefficients must be exact source scalars.")
         if (
@@ -2814,10 +2785,13 @@ class RevolutionQuadricWitness:
             )
             or self.profile_parameter_interval[0] >= self.profile_parameter_interval[1]
         ):
-            raise ValueError("Quadric witness profile interval must be exact and ordered.")
-        if _exact_profile_interval(
-            self.source.curve, self.profile_parameter_interval
-        ) != self.profile_parameter_interval:
+            raise ValueError(
+                "Quadric witness profile interval must be exact and ordered."
+            )
+        if (
+            _exact_profile_interval(self.source.curve, self.profile_parameter_interval)
+            != self.profile_parameter_interval
+        ):
             raise ValueError("Quadric witness profile interval is not source-valid.")
         if self.frame_sign not in (-1, 1):
             raise ValueError("Quadric witness frame_sign must be -1 or 1.")
@@ -2945,8 +2919,7 @@ def _prepare_revolution_line_profile(
         relative[index] - axis[index] * axial_origin for index in range(3)
     )
     radial_direction = tuple(
-        profile_direction[index] - axis[index] * axial_direction
-        for index in range(3)
+        profile_direction[index] - axis[index] * axial_direction for index in range(3)
     )
     if any(_exact_cross3(radial_origin, radial_direction)):
         return None
@@ -3011,9 +2984,7 @@ def _line_revolution_quadric_witness(
     direction_nonzero = any(value != 0 for value in line.radial_direction)
     if not origin_nonzero and not direction_nonzero:
         return None
-    radial = _exact_unit3(
-        line.radial_origin if origin_nonzero else line.radial_direction
-    )
+    radial = _exact_unit3(line.radial_origin if origin_nonzero else line.radial_direction)
     if radial is None:
         return None
     transverse = _exact_cross3(line.axis, radial)
@@ -3115,7 +3086,9 @@ def _exact_spherical_revolution_witness(
         return None
     axis = (axis_values[0], axis_values[1], axis_values[2])
 
-    def dot(first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /) -> ExactScalar:
+    def dot(
+        first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
+    ) -> ExactScalar:
         return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
 
     normal = (
@@ -3432,7 +3405,9 @@ class SurfaceMappedCurve(AbstractCurve):
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("SurfaceMappedCurve derivative bounds support order=1 only.")
         if not np.isfinite(first) or not np.isfinite(last) or first > last:
-            raise ValueError("SurfaceMappedCurve derivative bounds must be finite and ordered.")
+            raise ValueError(
+                "SurfaceMappedCurve derivative bounds must be finite and ordered."
+            )
         if not self.pcurve.is_c1_on(first, last):
             raise NotImplementedError(
                 "SurfaceMappedCurve p-curve is not C1 on the requested interval."
@@ -3636,7 +3611,9 @@ class SurfaceIsoparametricCurve(AbstractCurve):
             PeriodOffset(Fraction(0), Fraction(1))
         )
         wrapped_upper = float(
-            fraction_up(Fraction.from_float(last) - Fraction.from_float(float(period_lower)))
+            fraction_up(
+                Fraction.from_float(last) - Fraction.from_float(float(period_lower))
+            )
         )
         if wrapped_upper > domain[1]:
             raise ValueError("Periodic source enclosure crosses more than one turn.")
@@ -3839,16 +3816,16 @@ class ConicParameterRoot(StrictModule):
             or not np.isfinite(hint)
             or not isinstance(point_exact, Sequence)
             or len(point_exact) != 3
-            or any(not isinstance(value, (Fraction, RadicalElement)) for value in point_exact)
+            or any(
+                not isinstance(value, (Fraction, RadicalElement)) for value in point_exact
+            )
         ):
             return None
 
         def exact_dot(
             first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
         ) -> ExactScalar:
-            return sum(
-                (a * b for a, b in zip(first, second, strict=True)), Fraction(0)
-            )
+            return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
 
         first_axis, second_axis = conic.first_axis_exact, conic.second_axis_exact
         gram = (
@@ -3930,15 +3907,13 @@ def _combine_conic_parameter_roots(
     from ._trim_helpers import period_scalar_bounds, PeriodOffset
 
     cosine = (
-        first.cosine_exact * second.cosine_exact
-        + first.sine_exact * second.sine_exact
+        first.cosine_exact * second.cosine_exact + first.sine_exact * second.sine_exact
         if subtract
         else first.cosine_exact * second.cosine_exact
         - first.sine_exact * second.sine_exact
     )
     sine = (
-        first.sine_exact * second.cosine_exact
-        - first.cosine_exact * second.sine_exact
+        first.sine_exact * second.cosine_exact - first.cosine_exact * second.sine_exact
         if subtract
         else first.sine_exact * second.cosine_exact
         + first.cosine_exact * second.sine_exact
@@ -3978,12 +3953,8 @@ def _combine_conic_parameter_roots(
         period_lower, period_upper = period_scalar_bounds(
             PeriodOffset(Fraction(0), Fraction(candidate))
         )
-        candidate_lower = principal_lower + Fraction.from_float(
-            float(period_lower)
-        )
-        candidate_upper = principal_upper + Fraction.from_float(
-            float(period_upper)
-        )
+        candidate_lower = principal_lower + Fraction.from_float(float(period_lower))
+        candidate_upper = principal_upper + Fraction.from_float(float(period_upper))
         if total_lower <= candidate_upper and candidate_lower <= total_upper:
             matched_turns.append(candidate)
     if len(matched_turns) != 1:
@@ -4155,9 +4126,7 @@ class ConicRootLinePCurve(AbstractCurve):
                 )
             return exact, shadow
 
-        origin_exact, origin_numeric = exact_coefficient(
-            height_origin, "height_origin"
-        )
+        origin_exact, origin_numeric = exact_coefficient(height_origin, "height_origin")
         direction_exact, direction_numeric = exact_coefficient(
             height_direction, "height_direction"
         )
@@ -4165,9 +4134,7 @@ class ConicRootLinePCurve(AbstractCurve):
             raise ValueError(
                 "ConicRootLinePCurve.height_direction must be nonzero and representable."
             )
-        angle_lower, angle_upper = _conic_root_phase_enclosure(
-            root, phase_shift_exact
-        )
+        angle_lower, angle_upper = _conic_root_phase_enclosure(root, phase_shift_exact)
         try:
             phase_numeric = float(phase_shift_exact)
         except (TypeError, ValueError, OverflowError) as error:
@@ -4303,14 +4270,20 @@ class PlaneCylinderSectionPCurve(AbstractCurve):
         def exact_vector(
             values: tuple[ExactScalar, ExactScalar], name: str, /
         ) -> tuple[tuple[ExactScalar, ExactScalar], np.ndarray]:
-            if not isinstance(values, tuple) or len(values) != 2 or any(
-                not isinstance(value, (Fraction, RadicalElement)) for value in values
+            if (
+                not isinstance(values, tuple)
+                or len(values) != 2
+                or any(
+                    not isinstance(value, (Fraction, RadicalElement)) for value in values
+                )
             ):
                 raise TypeError(
                     f"PlaneCylinderSectionPCurve.{name} must contain two exact source scalars."
                 )
             try:
-                shadow = np.asarray(tuple(float(value) for value in values), dtype=np.float64)
+                shadow = np.asarray(
+                    tuple(float(value) for value in values), dtype=np.float64
+                )
             except (OverflowError, ValueError) as error:
                 raise ValueError(
                     f"PlaneCylinderSectionPCurve.{name} must have finite numeric shadows."
@@ -4395,9 +4368,7 @@ class PlaneCylinderSectionPCurve(AbstractCurve):
         if not np.isfinite(first) or not np.isfinite(last) or first > last:
             raise ValueError("Curve ranges must be finite and nondecreasing.")
         if first < self.parameter_range[0] or last > self.parameter_range[1]:
-            raise ValueError(
-                "Curve range must lie in its source parameter domain."
-            )
+            raise ValueError("Curve range must lie in its source parameter domain.")
         return True
 
     def derivative_bounds(
@@ -4428,9 +4399,7 @@ class PlaneCylinderSectionPCurve(AbstractCurve):
             derivative = exact_interval(self.linear_exact[axis])
             derivative = interval_add(
                 derivative,
-                interval_multiply(
-                    exact_interval(-self.cosine_exact[axis]), sine
-                ),
+                interval_multiply(exact_interval(-self.cosine_exact[axis]), sine),
             )
             derivative = interval_add(
                 derivative,
@@ -4695,9 +4664,7 @@ class CylinderPatch(AbstractSurfacePatch):
         first_term = interval_multiply(
             interval_multiply(negative_radius, sine), first_axis
         )
-        second_term = interval_multiply(
-            interval_multiply(radius, cosine), second_axis
-        )
+        second_term = interval_multiply(interval_multiply(radius, cosine), second_axis)
         lower, upper = interval_add(first_term, second_term)
         return (
             np.column_stack((lower, axis[0])),
@@ -4959,9 +4926,7 @@ class TorusPatch(AbstractSurfacePatch):
                     f"TorusPatch.{name} must have a finite binary64 realization."
                 ) from error
             if not np.all(np.isfinite(rounded)) or not np.array_equal(rounded, shadow):
-                raise ValueError(
-                    f"TorusPatch.{name} shadow must round its exact source."
-                )
+                raise ValueError(f"TorusPatch.{name} shadow must round its exact source.")
             return result
 
         def exact_scalar(
@@ -4991,8 +4956,12 @@ class TorusPatch(AbstractSurfacePatch):
                 strict=True,
             )
         )
-        exact_major = exact_scalar(major_radius_exact, radius_numeric[0], "major_radius_exact")
-        exact_minor = exact_scalar(minor_radius_exact, radius_numeric[1], "minor_radius_exact")
+        exact_major = exact_scalar(
+            major_radius_exact, radius_numeric[0], "major_radius_exact"
+        )
+        exact_minor = exact_scalar(
+            minor_radius_exact, radius_numeric[1], "minor_radius_exact"
+        )
         self.center, self.first_axis, self.second_axis, self.axis = tuple(
             jnp.asarray(value, dtype=jnp.float64) for value in numeric
         )
@@ -5081,9 +5050,7 @@ class TorusPatch(AbstractSurfacePatch):
             interval_multiply(sin_u, second_axis),
         )
         tangent_u = interval_add(
-            interval_multiply(
-                (-np.asarray(sin_u[1]), -np.asarray(sin_u[0])), first_axis
-            ),
+            interval_multiply((-np.asarray(sin_u[1]), -np.asarray(sin_u[0])), first_axis),
             interval_multiply(cos_u, second_axis),
         )
         major = exact_interval(self.major_radius_exact)
@@ -5091,9 +5058,7 @@ class TorusPatch(AbstractSurfacePatch):
         ring_radius = interval_add(major, interval_multiply(minor, cos_v))
         du = interval_multiply(ring_radius, tangent_u)
         tube_tangent = interval_add(
-            interval_multiply(
-                (-np.asarray(sin_v[1]), -np.asarray(sin_v[0])), radial
-            ),
+            interval_multiply((-np.asarray(sin_v[1]), -np.asarray(sin_v[0])), radial),
             interval_multiply(cos_v, axis),
         )
         dv = interval_multiply(minor, tube_tangent)
@@ -5180,6 +5145,7 @@ def _exact_bspline_source_bank(
         if not np.isfinite(rounded) or rounded != float(shadow):
             raise ValueError(f"{name} does not match its numeric realization.")
     return bank
+
 
 # Exact span extraction of a high-degree source dominates repeated source
 # enclosure queries; spans are shared per complete source definition.
@@ -5521,28 +5487,16 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
             _SURFACE_SPANS[key] = spans
         return spans
 
-    def _evaluate_one(self, parameters: Array) -> Array:
-        u_stencil = bspline_jet_stencil(
-            self.u_knots,
-            parameters[0],
-            degree=self.u_degree,
-            maximum_order=0,
-            bounds="clip",
-        )
-        v_stencil = bspline_jet_stencil(
-            self.v_knots,
-            parameters[1],
-            degree=self.v_degree,
-            maximum_order=0,
-            bounds="clip",
-        )
-        plan = TensorBSplineJetPlan((u_stencil, v_stencil), maximum_order=0)
-        return RationalSplineJet(plan, self.weights).apply(self.control_points)
-
     def evaluate(self, parameters: Array, /) -> Array:
-        return _bspline_surface_evaluate(
-            self, jnp.asarray(parameters, dtype=self.control_points.dtype)
-        )
+        values = jnp.asarray(parameters, dtype=self.control_points.dtype)
+        arrays = (self.control_points, self.weights, self.u_knots, self.v_knots)
+        degrees = (self.u_degree, self.v_degree)
+        if values.ndim == 1:
+            return _bspline_surface_rows(*arrays, values, *degrees)
+        flat = values.reshape((-1, 2))
+        return _bucketed_rows(
+            lambda rows: _bspline_surface_rows(*arrays, rows, *degrees), flat, arrays
+        ).reshape((*values.shape[:-1], 3))
 
     def derivative_bounds(
         self, parameter_box: ConvertibleToArray, /, *, order: int = 1
@@ -5596,14 +5550,75 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
         return lower, upper
 
 
-@eqx.filter_jit
-def _bspline_surface_evaluate(surface: BSplineSurfacePatch, parameters: Array, /) -> Array:
-    """Compiled rational tensor B-spline evaluation; eager tracing dominates queries."""
+_MINIMUM_QUERY_BUCKET = 8
+
+
+def _bucketed_rows(
+    function: Callable[[Array], Array],
+    rows: Array,
+    operands: tuple[Array, ...],
+    /,
+) -> Array:
+    """Evaluate concrete query rows at a power-of-two padded batch size.
+
+    Each distinct batch shape compiles its own executable, and refinement
+    queries vary in size every round; padding with copies of the last row on
+    the host bounds the compiled shapes to one per octave. Traced rows or
+    operands keep their shape, so enclosing programs see no padding operations.
+    """
+    count = rows.shape[0]
+    if count == 0 or any(isinstance(value, Tracer) for value in (rows, *operands)):
+        return function(rows)
+    bucket = max(_MINIMUM_QUERY_BUCKET, 1 << (count - 1).bit_length())
+    if bucket == count:
+        return function(rows)
+    host = np.asarray(rows)
+    padded = np.concatenate((host, np.repeat(host[-1:], bucket - count, axis=0)))
+    return jnp.asarray(np.asarray(function(jnp.asarray(padded)))[:count])
+
+
+def _bspline_surface_point(
+    control_points: Array,
+    weights: Array,
+    u_knots: Array,
+    v_knots: Array,
+    parameters: Array,
+    u_degree: int,
+    v_degree: int,
+    /,
+) -> Array:
+    u_stencil = bspline_jet_stencil(
+        u_knots, parameters[0], degree=u_degree, maximum_order=0, bounds="clip"
+    )
+    v_stencil = bspline_jet_stencil(
+        v_knots, parameters[1], degree=v_degree, maximum_order=0, bounds="clip"
+    )
+    plan = TensorBSplineJetPlan((u_stencil, v_stencil), maximum_order=0)
+    return RationalSplineJet(plan, weights).apply(control_points)
+
+
+@partial(jax.jit, static_argnums=(5, 6))
+def _bspline_surface_rows(
+    control_points: Array,
+    weights: Array,
+    u_knots: Array,
+    v_knots: Array,
+    parameters: Array,
+    u_degree: int,
+    v_degree: int,
+    /,
+) -> Array:
+    """Compiled rational tensor B-spline evaluation keyed by degrees and shapes only.
+
+    Surfaces of one structure share the traced program and its derivative and
+    batching transforms; exact source banks never enter the compilation key.
+    """
+    arrays = (control_points, weights, u_knots, v_knots)
     if parameters.ndim == 1:
-        return surface._evaluate_one(parameters)
-    leading = parameters.shape[:-1]
-    values = jax.vmap(surface._evaluate_one)(parameters.reshape((-1, 2)))
-    return values.reshape((*leading, 3))
+        return _bspline_surface_point(*arrays, parameters, u_degree, v_degree)
+    return jax.vmap(
+        lambda point: _bspline_surface_point(*arrays, point, u_degree, v_degree)
+    )(parameters)
 
 
 _CURVE_SPAN_CAPACITY = 256
@@ -5883,29 +5898,42 @@ class BSplineCurve(AbstractCurve):
     def ambient_dimension(self) -> int:
         return self.control_points.shape[1]
 
-    def _evaluate_one(self, parameter: Array) -> Array:
-        stencil = bspline_jet_stencil(
-            self.knots,
-            parameter,
-            degree=self.degree,
-            maximum_order=0,
-        )
-        plan = TensorBSplineJetPlan((stencil,), maximum_order=0)
-        return RationalSplineJet(plan, self.weights).apply(self.control_points)
-
     def evaluate(self, parameters: Array, /) -> Array:
-        return _bspline_curve_evaluate(
-            self, jnp.asarray(parameters, dtype=self.control_points.dtype)
-        )
+        values = jnp.asarray(parameters, dtype=self.control_points.dtype)
+        arrays = (self.control_points, self.weights, self.knots)
+        if values.ndim == 0:
+            return _bspline_curve_rows(*arrays, values, self.degree)
+        return _bucketed_rows(
+            lambda rows: _bspline_curve_rows(*arrays, rows, self.degree),
+            values.reshape((-1,)),
+            arrays,
+        ).reshape((*values.shape, self.control_points.shape[1]))
 
 
-@eqx.filter_jit
-def _bspline_curve_evaluate(curve: BSplineCurve, parameters: Array, /) -> Array:
-    """Compiled rational B-spline curve evaluation; eager tracing dominates queries."""
+def _bspline_curve_point(
+    control_points: Array, weights: Array, knots: Array, parameter: Array, degree: int, /
+) -> Array:
+    stencil = bspline_jet_stencil(knots, parameter, degree=degree, maximum_order=0)
+    plan = TensorBSplineJetPlan((stencil,), maximum_order=0)
+    return RationalSplineJet(plan, weights).apply(control_points)
+
+
+@partial(jax.jit, static_argnums=(4,))
+def _bspline_curve_rows(
+    control_points: Array, weights: Array, knots: Array, parameters: Array, degree: int, /
+) -> Array:
+    """Compiled rational B-spline curve evaluation keyed by degree and shapes only.
+
+    Curves of one structure share the traced program and its derivative and
+    batching transforms; exact source banks never enter the compilation key.
+    """
     if parameters.ndim == 0:
-        return curve._evaluate_one(parameters)
-    values = jax.vmap(curve._evaluate_one)(parameters.reshape((-1,)))
-    return values.reshape((*parameters.shape, curve.control_points.shape[1]))
+        return _bspline_curve_point(control_points, weights, knots, parameters, degree)
+    return jax.vmap(
+        lambda parameter: _bspline_curve_point(
+            control_points, weights, knots, parameter, degree
+        )
+    )(parameters)
 
 
 type BRepCurve = AbstractCurve
@@ -5954,9 +5982,7 @@ def _validate_placed_source_shadows(
     from ._assembly import BRepAffinePlacement
     from ._placed import _exact_affine
 
-    _exact_affine(
-        rotation, translation, cast(BRepAffinePlacement | None, affine)
-    )
+    _exact_affine(rotation, translation, cast(BRepAffinePlacement | None, affine))
 
 
 def _validate_conic_parameter_root(
@@ -6019,11 +6045,11 @@ def _validate_source_shadows(
         _require_exact_numeric_shadow(
             value.first, value.first_exact, "ExactLineCurve.first"
         )
-        _require_exact_numeric_shadow(
-            value.last, value.last_exact, "ExactLineCurve.last"
-        )
+        _require_exact_numeric_shadow(value.last, value.last_exact, "ExactLineCurve.last")
     elif isinstance(value, LineCurve):
-        _require_exact_numeric_shadow(value.origin, value.origin_exact, "LineCurve.origin")
+        _require_exact_numeric_shadow(
+            value.origin, value.origin_exact, "LineCurve.origin"
+        )
         _require_exact_numeric_shadow(
             value.direction, value.direction_exact, "LineCurve.direction"
         )
@@ -6046,7 +6072,11 @@ def _validate_source_shadows(
             (value.first_axis, value.first_axis_exact, "EllipseCurve.first_axis"),
             (value.second_axis, value.second_axis_exact, "EllipseCurve.second_axis"),
             (value.first_radius, value.first_radius_exact, "EllipseCurve.first_radius"),
-            (value.second_radius, value.second_radius_exact, "EllipseCurve.second_radius"),
+            (
+                value.second_radius,
+                value.second_radius_exact,
+                "EllipseCurve.second_radius",
+            ),
         ):
             _require_exact_numeric_shadow(numeric, exact, role)
     elif isinstance(value, BSplineCurve):
@@ -6133,9 +6163,7 @@ def _validate_source_shadows(
             value.height_direction_exact,
             "ConicRootLinePCurve.height_direction",
         )
-        lower, upper = _conic_root_phase_enclosure(
-            value.root, value.phase_shift_exact
-        )
+        lower, upper = _conic_root_phase_enclosure(value.root, value.phase_shift_exact)
         angle = float(np.asarray(value.angle))
         if not lower <= angle <= upper:
             raise ValueError(
@@ -6152,9 +6180,7 @@ def _validate_source_shadows(
         if value.angle_offset_root is not None:
             _validate_conic_parameter_root(value.angle_offset_root, visited)
         expected_phase = (
-            0.0
-            if value.angle_offset_root is None
-            else value.angle_offset_root.parameter
+            0.0 if value.angle_offset_root is None else value.angle_offset_root.parameter
         )
         _require_exact_numeric_shadow(
             value.angle_offset,
@@ -6195,14 +6221,10 @@ def _validate_source_shadows(
         _validate_source_shadows(value.first.patch, visited)
         _validate_source_shadows(value.second.patch, visited)
     elif isinstance(value, PlacedCurve):
-        _validate_placed_source_shadows(
-            value.rotation, value.translation, value.affine
-        )
+        _validate_placed_source_shadows(value.rotation, value.translation, value.affine)
         _validate_source_shadows(value.definition, visited)
     elif isinstance(value, PlacedSurface):
-        _validate_placed_source_shadows(
-            value.rotation, value.translation, value.affine
-        )
+        _validate_placed_source_shadows(value.rotation, value.translation, value.affine)
         _validate_source_shadows(value.definition, visited)
 
 

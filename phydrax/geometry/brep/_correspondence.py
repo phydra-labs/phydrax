@@ -13,9 +13,6 @@ from typing import cast, TYPE_CHECKING
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
-from ..._interpolation import (
-    rational_bspline_curve_spans,
-)
 from ..._strict import StrictModule
 from ...discretization._exact_algebraic_geometry import (
     coefficient_interval,
@@ -2387,15 +2384,7 @@ def _exact_bspline_curve_spans(
         for value in (*curve.exact_weights, *curve.exact_knots)
     ):
         return None
-    spans = rational_bspline_curve_spans(
-        np.asarray(curve.control_points, dtype=np.float64).tolist(),
-        np.asarray(curve.weights, dtype=np.float64).tolist(),
-        np.asarray(curve.knots, dtype=np.float64).tolist(),
-        curve.degree,
-        exact_control_points=curve.exact_control_points,
-        exact_weights=curve.exact_weights,
-        exact_knots=curve.exact_knots,
-    )
+    spans = curve.rational_spans()
     result = []
     for span in spans:
         lower, upper = span.parameter_bounds
