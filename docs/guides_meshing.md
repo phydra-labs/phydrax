@@ -815,7 +815,14 @@ contracts:
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores
   0 whatever its angles and ratio (a flat cell on a cocircular boundary quad
-  has a finite circumsphere and could otherwise score 1). Every face flip,
+  has a finite circumsphere and could otherwise score 1; a sliver has a small
+  radius-edge ratio and, with a dihedral target of 0, would also score 1).
+  The floor is the requested relative determinant (|det E| over the largest
+  product of a vertex's three edge lengths) or 2^-22, whichever is larger:
+  downstream consumers evaluate the metric determinant det(E^T E) = det(E)^2
+  in binary64, whose rounding error is a small multiple of u times the
+  squared edge-length product, so its sign is certain only above that floor
+  (2^-44 = 2^9 u once squared). Every face flip,
   edge-ring reconnection, interior vertex insertion, collapse, and relocation
   is accepted only if the cells it creates pass the hard gates (relative
   determinant above its floor, source constraints preserved) and the size

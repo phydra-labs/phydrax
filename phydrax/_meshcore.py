@@ -8205,11 +8205,15 @@ class TetMesh3D:
     ) -> TetMeshRun:
         """Quality improvement gated by the determinant floor and the size field.
 
-        No edit creates a cell whose circumradius exceeds its size target by more
-        than the largest excess among the cells it removes (none where they were
-        within target), except one removing a degenerate cell. ``sizes`` follows
-        :meth:`refine` (``None`` keeps the retained field, e.g. refinement's). The
-        run reports its score quantum.
+        The determinant floor is ``minimum_relative_determinant`` or 2^-22,
+        whichever is larger: below 2^-22 a cell's binary64 metric determinant
+        det(E^T E) cannot be certified positive, so such cells are repaired
+        (or reported) whatever floor is requested. No edit creates a cell whose
+        circumradius exceeds its size target by more than the largest excess
+        among the cells it removes (none where they were within target), except
+        one removing a degenerate cell. ``sizes`` follows :meth:`refine`
+        (``None`` keeps the retained field, e.g. refinement's). The run reports
+        its score quantum.
         """
         radius_edge = finite_real_scalar(radius_edge_bound, "radius_edge_bound")
         minimum_angle = finite_real_scalar(min_dihedral_degrees, "min_dihedral_degrees")
