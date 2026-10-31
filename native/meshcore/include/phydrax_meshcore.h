@@ -264,7 +264,10 @@ enum phx_mc_tet_unmet_criterion {
   PHX_MC_TET_UNMET_CONSTRUCTION = 3,
   PHX_MC_TET_UNMET_VALIDITY = 4
 };
-/* INPUT_ANGLE: conforming refinement left the cell because the boundary split
+/* FIXED_BOUNDARY: refinement's circumcenter lies beyond a fixed face, or an
+ * improvement radius-edge residual lies on a constrained face whose own
+ * triangle already exceeds the bound (no tetrahedron on it can meet it).
+ * INPUT_ANGLE: conforming refinement left the cell because the boundary split
  * it required falls in the protected region of an acute input feature
  * (segments, or a segment and a facet, meeting below 90 degrees, or facets
  * meeting at a dihedral angle below 90 degrees through the domain). */
@@ -278,15 +281,20 @@ enum phx_mc_tet_unmet_reason {
 };
 /* Apex vertex ID of an unmet row without INPUT_ANGLE evidence. */
 #define PHX_MC_TET_UNMET_NO_APEX UINT64_MAX
+/* Facet ID of an unmet row without a forcing constrained facet. */
+#define PHX_MC_TET_UNMET_NO_FACET UINT64_MAX
 PHX_MC_API int32_t phx_mc_tet_mesh_unmet_count(const phx_mc_tet_mesh* mesh,
                                                 int64_t* count);
 /* One row per unmet (cell, criterion). INPUT_ANGLE rows carry the acute
  * feature's apex vertex ID (a ridge's first endpoint) and its angle in
- * degrees; other rows PHX_MC_TET_UNMET_NO_APEX and NaN. */
+ * degrees; other rows PHX_MC_TET_UNMET_NO_APEX and NaN. Improvement
+ * FIXED_BOUNDARY radius-edge rows carry the forcing constrained facet's ID and
+ * its triangle radius-edge ratio; other rows PHX_MC_TET_UNMET_NO_FACET and
+ * NaN. */
 PHX_MC_API int32_t phx_mc_tet_mesh_unmet(
     const phx_mc_tet_mesh* mesh, int64_t capacity, uint64_t* cell_ids,
     int32_t* criteria, int32_t* reasons, double* values, uint64_t* apex_vertex_ids,
-    double* apex_angles);
+    double* apex_angles, uint64_t* facet_ids, double* facet_ratios);
 #define PHX_MC_TET_MESH_SNAPSHOT_SIZES 19
 typedef struct phx_mc_tet_periodic_vertex_member {
   uint64_t vertex_id;

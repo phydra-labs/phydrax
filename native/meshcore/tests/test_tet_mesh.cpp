@@ -336,7 +336,7 @@ void persistent_create_snapshot_and_rejection() {
   PHX_CHECK(phx_mc_tet_mesh_unmet_count(mesh, &unmet_count) == PHX_MC_OK);
   PHX_CHECK(unmet_count == 0);
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, 0, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                  nullptr) == PHX_MC_OK);
+                                  nullptr, nullptr, nullptr) == PHX_MC_OK);
 
   phx_mc_tet_mesh_edit_request edit{};
   int32_t edit_status = -1;
@@ -572,8 +572,8 @@ void persistent_create_snapshot_and_rejection() {
   const uint64_t untouched_report_id = 987;
   uint64_t short_report_id = untouched_report_id;
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, report_count - 1, &short_report_id,
-                                  nullptr, nullptr, nullptr, nullptr, nullptr) ==
-            PHX_MC_CAPACITY_EXCEEDED);
+                                  nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                  nullptr) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(short_report_id == untouched_report_id);
   std::vector<uint64_t> report_cells(static_cast<std::size_t>(report_count));
   std::vector<int32_t> report_criteria(static_cast<std::size_t>(report_count));
@@ -581,10 +581,13 @@ void persistent_create_snapshot_and_rejection() {
   std::vector<double> report_values(static_cast<std::size_t>(report_count));
   std::vector<uint64_t> report_apexes(static_cast<std::size_t>(report_count));
   std::vector<double> report_angles(static_cast<std::size_t>(report_count));
+  std::vector<uint64_t> report_facets(static_cast<std::size_t>(report_count));
+  std::vector<double> report_facet_ratios(static_cast<std::size_t>(report_count));
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, report_count, report_cells.data(),
                                   report_criteria.data(), report_reasons.data(),
                                   report_values.data(), report_apexes.data(),
-                                  report_angles.data()) == PHX_MC_OK);
+                                  report_angles.data(), report_facets.data(),
+                                  report_facet_ratios.data()) == PHX_MC_OK);
   // The domain is one tetrahedron: its dihedral angles are acute, so a
   // boundary split near an edge is protected and its cell carries the apex
   // (a vertex present at refinement) and the angle as evidence.
@@ -603,6 +606,9 @@ void persistent_create_snapshot_and_rejection() {
       PHX_CHECK(report_apexes[row] == PHX_MC_TET_UNMET_NO_APEX &&
                 std::isnan(report_angles[row]));
     }
+    // Refinement records never carry an improvement forcing facet.
+    PHX_CHECK(report_facets[row] == PHX_MC_TET_UNMET_NO_FACET &&
+              std::isnan(report_facet_ratios[row]));
   }
   int64_t collapsed_vertices = 0;
   int64_t relocated_vertices = 0;
@@ -627,14 +633,28 @@ void persistent_create_snapshot_and_rejection() {
   report_values.resize(static_cast<std::size_t>(report_count));
   report_apexes.resize(static_cast<std::size_t>(report_count));
   report_angles.resize(static_cast<std::size_t>(report_count));
+  report_facets.resize(static_cast<std::size_t>(report_count));
+  report_facet_ratios.resize(static_cast<std::size_t>(report_count));
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, report_count, report_cells.data(),
                                   report_criteria.data(), report_reasons.data(),
                                   report_values.data(), report_apexes.data(),
-                                  report_angles.data()) == PHX_MC_OK);
+                                  report_angles.data(), report_facets.data(),
+                                  report_facet_ratios.data()) == PHX_MC_OK);
   for (std::size_t row = 0; row < report_cells.size(); ++row) {
     PHX_CHECK(report_criteria[row] == PHX_MC_TET_UNMET_RADIUS_EDGE);
-    PHX_CHECK(report_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT);
+    PHX_CHECK(report_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT ||
+              report_reasons[row] == PHX_MC_TET_UNMET_FIXED_BOUNDARY);
     PHX_CHECK(report_values[row] > 2.0);
+    // A forcing facet is recorded exactly for FIXED_BOUNDARY rows, and its
+    // own ratio bounds the cell's from below.
+    if (report_reasons[row] == PHX_MC_TET_UNMET_FIXED_BOUNDARY) {
+      PHX_CHECK(report_facets[row] != PHX_MC_TET_UNMET_NO_FACET &&
+                report_facet_ratios[row] > 2.0 &&
+                report_facet_ratios[row] <= report_values[row] * (1.0 + 1.0e-12));
+    } else {
+      PHX_CHECK(report_facets[row] == PHX_MC_TET_UNMET_NO_FACET &&
+                std::isnan(report_facet_ratios[row]));
+    }
   }
   phx_mc_tet_mesh_free(mesh);
   mesh = nullptr;
