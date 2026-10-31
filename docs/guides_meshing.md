@@ -745,8 +745,17 @@ contracts:
   per criterion with its reason. Refinement reports the radius-edge ratio and
   size (circumradius over target); improvement reports the radius-edge ratio,
   minimum dihedral, and determinant validity, since the size field constrains
-  improvement but is not one of its targets. Volume routes refuse a mesh with
-  improvement residuals rather than publish it.
+  improvement but is not one of its targets. Improvement never edits a
+  constrained face, and a tetrahedron's radius-edge ratio is at least that of
+  each of its faces (its circumsphere contains the face's circumcircle and its
+  shortest edge is at most the face's). A radius-edge residual on a
+  constrained face whose own triangle already exceeds the bound is therefore
+  `FIXED_BOUNDARY`: no tetrahedron on that face can meet it, and the boundary
+  producer must supply better-shaped faces. The record names that facet and
+  its triangle ratio (`TetMeshUnmet.facet_ids`, `facet_ratios`; the largest
+  when several force the cell). Other improvement residuals are
+  `NO_IMPROVEMENT`. Volume routes refuse a mesh with improvement residuals
+  rather than publish it.
 
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`
