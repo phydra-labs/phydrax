@@ -20,7 +20,7 @@ from .._cell_mesh import CellMesh
 
 
 class PreparedPolyhedralFiniteVolumeGeometry(StrictModule, NonTrainableState):
-    """Certified planar-face polyhedral FV geometry."""
+    """Certified polyhedral FV geometry with planar and warped faces."""
 
     cell_volumes: Array
     cell_centers: Array
@@ -40,6 +40,58 @@ class PreparedPolyhedralFiniteVolumeGeometry(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
 
 
+def _face_triangles(
+    polygon: np.ndarray, planarity: float
+) -> tuple[list[tuple[int, np.ndarray, float]], np.ndarray, float]:
+    """Positive sub-triangles ``(slot, corners, weight)``, area vector, measure.
+
+    A face within ``planarity`` (relative to its diameter) of its Newell plane
+    fans from its first vertex. A warped face is decomposed about its vertex
+    centroid and its area vector is the sum of those triangle area vectors.
+    """
+    newell = 0.5 * np.sum(np.cross(polygon, np.roll(polygon, -1, axis=0)), axis=0)
+    measure = float(np.linalg.norm(newell))
+    if not np.isfinite(measure) or measure <= 0:
+        raise ValueError("Polyhedral faces require positive finite measure.")
+    unit = newell / measure
+    distance = (polygon - polygon[0]) @ unit
+    scale = max(1.0, float(np.max(np.linalg.norm(polygon - polygon[0], axis=1))))
+    triangles: list[tuple[int, np.ndarray, float]] = []
+    if np.max(np.abs(distance)) <= planarity * scale:
+        # Conforming faces may carry collinear vertices on their edges; the
+        # zero-area fan triangles they produce carry no measure and are skipped.
+        degenerate_area = planarity * scale * scale
+        for local in range(1, polygon.shape[0] - 1):
+            triangle = polygon[[0, local, local + 1]]
+            vector = 0.5 * np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])
+            weight = float(np.dot(vector, unit))
+            if not np.isfinite(weight) or weight < -degenerate_area:
+                raise ValueError(
+                    "Polyhedral face loop is not consistently oriented/convex."
+                )
+            if weight > degenerate_area:
+                triangles.append((local - 1, triangle, weight))
+        return triangles, newell, measure
+    apex = np.mean(polygon, axis=0)
+    following = np.roll(polygon, -1, axis=0)
+    vectors = 0.5 * np.cross(polygon - apex, following - apex)
+    area_vector = np.sum(vectors, axis=0)
+    measure = float(np.linalg.norm(area_vector))
+    if not np.isfinite(measure) or measure <= 0:
+        raise ValueError("Polyhedral faces require positive finite measure.")
+    unit = area_vector / measure
+    for local in range(polygon.shape[0]):
+        weight = float(np.dot(vectors[local], unit))
+        if not np.isfinite(weight) or weight <= 0:
+            raise ValueError(
+                "Warped polyhedral face is not star-shaped about its vertex centroid."
+            )
+        triangles.append(
+            (local, np.stack((apex, polygon[local], following[local])), weight)
+        )
+    return triangles, area_vector, measure
+
+
 def prepare_polyhedral_finite_volume_geometry(
     mesh: CellMesh,
     /,
@@ -47,7 +99,15 @@ def prepare_polyhedral_finite_volume_geometry(
     planarity_tolerance: float = 1.0e-10,
     closure_tolerance: float = 1.0e-10,
 ) -> PreparedPolyhedralFiniteVolumeGeometry:
-    """Prepare Newell/divergence geometry from canonical polyhedral connectivity."""
+    """Prepare Newell/divergence geometry from canonical polyhedral connectivity.
+
+    Faces within ``planarity_tolerance`` of their Newell plane fan from their
+    first vertex. Warped faces are decomposed into triangles about their vertex
+    centroid; the face area vector is the sum of those triangle area vectors and
+    both adjacent cells integrate volume and centroid over the same triangles,
+    so the shared triangulated surface keeps closure and the divergence theorem
+    exact.
+    """
     if not isinstance(mesh, CellMesh) or not isinstance(
         mesh.connectivity, PolyhedralConnectivity
     ):
@@ -72,57 +132,46 @@ def prepare_polyhedral_finite_volume_geometry(
     face_centers = np.zeros((face_count, points.shape[1]), dtype=np.float64)
     area_vectors = np.zeros_like(face_centers)
     face_measures = np.zeros((face_count,), dtype=np.float64)
-    face_q_points = np.zeros(
-        (face_count, max_vertices - 2, points.shape[1]), dtype=np.float64
-    )
-    face_q_weights = np.zeros((face_count, max_vertices - 2), dtype=np.float64)
-    face_q_valid = np.zeros((face_count, max_vertices - 2), dtype=np.bool_)
+    face_triangles: list[list[tuple[int, np.ndarray, float]]] = []
     for face in range(face_count):
         polygon = points[face_vertices[face, face_valid[face]]]
         if polygon.shape[0] < 3:
             raise ValueError("Every polyhedral face requires at least three vertices.")
-        newell = 0.5 * np.sum(np.cross(polygon, np.roll(polygon, -1, axis=0)), axis=0)
-        measure = float(np.linalg.norm(newell))
-        if not np.isfinite(measure) or measure <= 0:
-            raise ValueError("Polyhedral faces require positive finite measure.")
-        unit = newell / measure
-        distance = (polygon - polygon[0]) @ unit
-        scale = max(1.0, float(np.max(np.linalg.norm(polygon - polygon[0], axis=1))))
-        if np.max(np.abs(distance)) > planarity * scale:
-            raise ValueError("Polyhedral face fails its planarity certificate.")
-        triangle_areas, triangle_centers = [], []
-        # Conforming faces may carry collinear vertices on their edges; the
-        # zero-area fan triangles they produce carry no measure and are skipped.
-        degenerate_area = planarity * scale * scale
-        for local in range(1, polygon.shape[0] - 1):
-            triangle = polygon[[0, local, local + 1]]
-            vector = 0.5 * np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])
-            weight = float(np.dot(vector, unit))
-            if not np.isfinite(weight) or weight < -degenerate_area:
-                raise ValueError(
-                    "Polyhedral face loop is not consistently oriented/convex."
-                )
-            if weight <= degenerate_area:
-                continue
-            center = np.mean(triangle, axis=0)
-            triangle_areas.append(weight)
-            triangle_centers.append(center)
-            face_q_points[face, local - 1] = center
-            face_q_weights[face, local - 1] = weight
-            face_q_valid[face, local - 1] = True
-        if not triangle_areas:
+        triangles, area_vector, measure = _face_triangles(polygon, planarity)
+        if not triangles:
             raise ValueError("Polyhedral faces require positive finite measure.")
         face_centers[face] = np.average(
-            np.asarray(triangle_centers), axis=0, weights=np.asarray(triangle_areas)
+            np.asarray([np.mean(triangle, axis=0) for _, triangle, _ in triangles]),
+            axis=0,
+            weights=np.asarray([weight for _, _, weight in triangles]),
         )
-        area_vectors[face], face_measures[face] = newell, measure
+        area_vectors[face], face_measures[face] = area_vector, measure
+        face_triangles.append(triangles)
+    # Planar n-gons fan into n - 2 triangles; warped n-gons need n slots.
+    face_capacity = max(
+        max_vertices - 2,
+        max(
+            (slot + 1 for triangles in face_triangles for slot, _, _ in triangles),
+            default=0,
+        ),
+    )
+    face_q_points = np.zeros(
+        (face_count, face_capacity, points.shape[1]), dtype=np.float64
+    )
+    face_q_weights = np.zeros((face_count, face_capacity), dtype=np.float64)
+    face_q_valid = np.zeros((face_count, face_capacity), dtype=np.bool_)
+    for face, triangles in enumerate(face_triangles):
+        for slot, triangle, weight in triangles:
+            face_q_points[face, slot] = np.mean(triangle, axis=0)
+            face_q_weights[face, slot] = weight
+            face_q_valid[face, slot] = True
     cell_faces = np.asarray(worksets.cell_faces, dtype=np.int32)
     cell_face_signs = np.asarray(worksets.cell_face_signs, dtype=np.int8)
     cell_face_valid = np.asarray(worksets.cell_face_valid, dtype=np.bool_)
     cell_vertices = np.asarray(worksets.cell_vertices, dtype=np.int32)
     cell_vertex_valid = np.asarray(worksets.cell_vertex_valid, dtype=np.bool_)
     cell_count, max_faces = cell_faces.shape
-    cell_capacity = max_faces * (max_vertices - 2)
+    cell_capacity = max_faces * face_capacity
     cell_centers = np.zeros((cell_count, points.shape[1]), dtype=np.float64)
     cell_volumes = np.zeros((cell_count,), dtype=np.float64)
     cell_q_points = np.zeros(
@@ -142,12 +191,8 @@ def prepare_polyhedral_finite_volume_geometry(
             cell_face_signs[cell, cell_face_valid[cell]],
             strict=True,
         ):
-            polygon = points[face_vertices[face, face_valid[face]]]
             closure_vector += float(sign) * area_vectors[face]
-            for local in range(1, polygon.shape[0] - 1):
-                if not face_q_valid[face, local - 1]:
-                    continue
-                triangle = polygon[[0, local, local + 1]]
+            for _, triangle, _ in face_triangles[face]:
                 volume = (
                     float(sign)
                     * np.dot(

@@ -529,7 +529,15 @@ and saltation remain owned by the solver hybrid-event APIs.
 canonical root `PolyhedralConnectivity`. Planar outward face loops are certified with
 Newell area vectors, divergence-theorem volume/centroid identities, positive
 star-tetrahedron quadrature, manifold owner/neighbor routes, and per-cell closure
-residuals. Padded face/cell quadrature capacities remain fixed.
+residuals. A face farther than `planarity_tolerance` (relative to its diameter) from
+its Newell plane is warped, for example the bilinear prism sides of boundary-layer
+columns that diverge at a sharp edge. It is split into triangles about its vertex
+centroid, each of which must have positive area along the face normal. The face area
+vector is the sum of the triangle area vectors, and both adjacent cells integrate
+volume, centroid and quadrature over the same triangles. The shared triangulated
+surface therefore keeps per-cell closure and global conservation exact. Planar faces
+keep their first-vertex fan unchanged. Padded face/cell quadrature capacities stay
+fixed per mesh: n - 2 fan slots for a planar n-gon and n slots for a warped n-gon.
 `UnstructuredFiniteVolumePlan.from_cell_mesh(mesh)` wires this certified geometry into
 the ordinary owner/neighbor face block, spaces, quality report, reconstruction, and
 dynamics path without a private polyhedral topology.
