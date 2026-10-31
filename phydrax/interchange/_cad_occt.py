@@ -24,6 +24,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Protocol, Self, Sequence, TYPE_CHECKING, TypeVar
 
+from .._host_io import open_regular_file
 from .._physical import SpatialCoordinateContract
 from .._publication import PublicationMode, publish_bytes
 from ..geometry.brep._model import BRepModel
@@ -174,9 +175,7 @@ def explore_unique(
     return entities
 
 
-def shape_index(
-    entities: Sequence[_IsSameEntity], candidate: _IsSameEntity, /
-) -> int:
+def shape_index(entities: Sequence[_IsSameEntity], candidate: _IsSameEntity, /) -> int:
     """Return the first-seen source index of one ``IsSame`` OCCT entity."""
     for index, entity in enumerate(entities):
         if entity.IsSame(candidate):
@@ -354,9 +353,6 @@ def model_from_occt_shape(
         raise refuse("inconsistent-geometry", identifier, str(error)) from error
 
 
-
-
-
 def persist_occt_shape(
     shape: TopoDS_Shape,
     destination: str | Path,
@@ -381,10 +377,12 @@ def persist_occt_shape(
     digest = hashlib.sha256(payload).hexdigest()
 
     def validate_staged(path: os.PathLike[str], /) -> None:
+        # The staged carrier is named relative to the held publication directory,
+        # so it is read through that descriptor rather than by a cwd-relative name.
         staged = occt.TopoDS.TopoDS_Shape()
-        if not occt.BRepTools.BRepTools.Read_s(
-            staged, os.fspath(path), occt.BRep.BRep_Builder()
-        ) or staged.IsNull():
+        with open_regular_file(path) as stream:
+            occt.BRepTools.BRepTools.Read_s(staged, stream, occt.BRep.BRep_Builder())
+        if staged.IsNull():
             raise ValueError("OCCT could not validate staged native BRep text.")
 
     mode: PublicationMode = "atomic_replace" if overwrite else "exclusive"
