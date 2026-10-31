@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from fractions import Fraction
 from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
@@ -41,6 +42,7 @@ from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._domain_boundary import CurvedTrimLens, MeshingDomainBoundarySource
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import (
+    Interval,
     interval_cos,
     interval_sin,
     IntervalExtensionError,
@@ -71,7 +73,13 @@ from ._source_boundary_records import (
     SurfaceEnvelopeDistanceWitness,
 )
 from ._source_identity import source_entity_id
-from .brep._patches import AbstractSurfacePatch, PlanePatch
+from .brep._patches import (
+    AbstractSurfacePatch,
+    CircleCurve,
+    PlanePatch,
+    RevolutionSurface,
+    SpherePatch,
+)
 
 
 if TYPE_CHECKING:
@@ -4023,6 +4031,300 @@ def _span_jacobian_bounds(
     return lower, upper
 
 
+type _FractionInterval = tuple[Fraction, Fraction]
+
+
+def _interval_sum(*intervals: _FractionInterval) -> _FractionInterval:
+    return (
+        sum((value[0] for value in intervals), Fraction(0)),
+        sum((value[1] for value in intervals), Fraction(0)),
+    )
+
+
+def _interval_scale(value: Fraction, interval: _FractionInterval, /) -> _FractionInterval:
+    return _interval_product((value, value), interval)
+
+
+def _interval_cross(
+    first: tuple[_FractionInterval, ...], second: tuple[_FractionInterval, ...], /
+) -> tuple[_FractionInterval, ...]:
+    return tuple(
+        _interval_difference(
+            _interval_product(first[(axis + 1) % 3], second[(axis + 2) % 3]),
+            _interval_product(first[(axis + 2) % 3], second[(axis + 1) % 3]),
+        )
+        for axis in range(3)
+    )
+
+
+def _trig_interval(
+    function: Callable[[Interval], Interval],
+    lower: float,
+    upper: float,
+    /,
+) -> _FractionInterval:
+    low, high = function((np.asarray(lower), np.asarray(upper)))
+    return Fraction(float(low)), Fraction(float(high))
+
+
+def _exact_cross(
+    first: tuple[Fraction, ...], second: tuple[Fraction, ...], /
+) -> tuple[Fraction, Fraction, Fraction]:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _exact_dot(first: tuple[Fraction, ...], second: tuple[Fraction, ...], /) -> Fraction:
+    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+
+def _sphere_normal_direction(
+    surface: SpherePatch, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[_FractionInterval, ...] | None:
+    """Enclose a positive multiple of ``X_u x X_v`` over a sphere chart box.
+
+    ``X_u = r cos(v) E'(u)`` and ``X_v = r T(u, v)`` with ``E = cos u f + sin u s``
+    and ``T = -sin v E + cos v a``, so ``X_u x X_v = r^2 cos(v) E' x T``. On the
+    latitude domain ``|v| <= 0.5 * pi`` (binary64, below the real ``pi / 2``)
+    ``cos v > 0``, so ``E' x T`` has the oriented normal's direction, also at the
+    poles where ``X_u`` vanishes.
+    """
+    radius = Fraction(float(np.asarray(surface.radius)))
+    half_turn = Fraction(0.5 * math.pi)
+    if radius == 0 or lower[1] < -half_turn or upper[1] > half_turn:
+        return None
+    first_axis, second_axis, axis = (
+        rational_vector(np.asarray(value, dtype=np.float64))
+        for value in (surface.first_axis, surface.second_axis, surface.axis)
+    )
+    cos_u = _trig_interval(interval_cos, lower[0], upper[0])
+    sin_u = _trig_interval(interval_sin, lower[0], upper[0])
+    cos_v = _trig_interval(interval_cos, lower[1], upper[1])
+    sin_v = _trig_interval(interval_sin, lower[1], upper[1])
+    equatorial = tuple(
+        _interval_sum(
+            _interval_scale(first_axis[index], cos_u),
+            _interval_scale(second_axis[index], sin_u),
+        )
+        for index in range(3)
+    )
+    equatorial_derivative = tuple(
+        _interval_sum(
+            _interval_scale(-first_axis[index], sin_u),
+            _interval_scale(second_axis[index], cos_u),
+        )
+        for index in range(3)
+    )
+    meridian = tuple(
+        _interval_sum(
+            _interval_product((-sin_v[1], -sin_v[0]), equatorial[index]),
+            _interval_scale(axis[index], cos_v),
+        )
+        for index in range(3)
+    )
+    return _interval_cross(equatorial_derivative, meridian)
+
+
+def _profile_meridian_sign(
+    offset: Fraction,
+    cosine_weight: Fraction,
+    sine_weight: Fraction,
+    lower: float,
+    upper: float,
+    /,
+) -> int | None:
+    """Sign of ``offset + cosine_weight cos t + sine_weight sin t`` inside ``[lower, upper]``.
+
+    The sign is decided by its enclosure, or, when that contains zero, by a
+    derivative enclosure excluding zero (at most one root) and endpoint
+    enclosures of one sign: the function then vanishes at most at one end.
+    """
+
+    def value(first: float, last: float, /) -> _FractionInterval:
+        return _interval_sum(
+            (offset, offset),
+            _interval_scale(cosine_weight, _trig_interval(interval_cos, first, last)),
+            _interval_scale(sine_weight, _trig_interval(interval_sin, first, last)),
+        )
+
+    whole = value(lower, upper)
+    if whole[0] > 0:
+        return 1
+    if whole[1] < 0:
+        return -1
+    slope = _interval_sum(
+        _interval_scale(-cosine_weight, _trig_interval(interval_sin, lower, upper)),
+        _interval_scale(sine_weight, _trig_interval(interval_cos, lower, upper)),
+    )
+    if slope[0] <= 0 <= slope[1]:
+        return None
+    ends = (value(lower, lower), value(upper, upper))
+    if all(end[0] >= 0 for end in ends):
+        return 1
+    if all(end[1] <= 0 for end in ends):
+        return -1
+    return None
+
+
+def _revolution_normal_direction(
+    surface: RevolutionSurface, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[_FractionInterval, ...] | None:
+    """Enclose a positive multiple of ``X_u x X_v`` over a circle-revolution box.
+
+    With an exactly unit axis ``a`` the Rodrigues map is a rotation ``R(u)``, so
+    ``X_u = R(u)(a x q)``, ``X_v = R(u) q'`` for the profile offset ``q(t)``. A
+    circle profile whose plane contains the axis keeps ``q`` in ``span(w, a)``
+    with ``w = n x a`` (``n`` the circle-plane normal), and then
+    ``X_u x X_v = (q . w) / |w|^2 R(u)((a . q') w - (w . q') a)``. The rotated
+    profile normal stays regular on the axis where ``q . w`` vanishes; the sign
+    of ``q . w`` inside the profile interval orients it.
+    """
+    profile = surface.curve
+    if not isinstance(profile, CircleCurve):
+        return None
+    axis = rational_vector(np.asarray(surface.axis_direction, dtype=np.float64))
+    if _exact_dot(axis, axis) != 1:
+        return None
+    origin = rational_vector(np.asarray(surface.axis_origin, dtype=np.float64))
+    center, first_axis, second_axis = (
+        rational_vector(np.asarray(value, dtype=np.float64))
+        for value in (profile.center, profile.first_axis, profile.second_axis)
+    )
+    radius = Fraction(float(np.asarray(profile.radius)))
+    offset = tuple(center[index] - origin[index] for index in range(3))
+    plane_normal = _exact_cross(first_axis, second_axis)
+    if (
+        radius == 0
+        or not any(plane_normal)
+        or _exact_dot(plane_normal, axis) != 0
+        or _exact_dot(plane_normal, offset) != 0
+    ):
+        return None
+    meridian = _exact_cross(plane_normal, axis)
+    sign = _profile_meridian_sign(
+        _exact_dot(offset, meridian),
+        radius * _exact_dot(first_axis, meridian),
+        radius * _exact_dot(second_axis, meridian),
+        float(lower[1]),
+        float(upper[1]),
+    )
+    if sign is None:
+        return None
+    cos_t = _trig_interval(interval_cos, lower[1], upper[1])
+    sin_t = _trig_interval(interval_sin, lower[1], upper[1])
+    tangent = tuple(
+        _interval_sum(
+            _interval_scale(-radius * first_axis[index], sin_t),
+            _interval_scale(radius * second_axis[index], cos_t),
+        )
+        for index in range(3)
+    )
+    tangent_axis = _interval_sum(
+        *(_interval_scale(axis[index], tangent[index]) for index in range(3))
+    )
+    tangent_meridian = _interval_sum(
+        *(_interval_scale(meridian[index], tangent[index]) for index in range(3))
+    )
+    binormal = _exact_cross(axis, meridian)
+    cos_u = _trig_interval(interval_cos, lower[0], upper[0])
+    sin_u = _trig_interval(interval_sin, lower[0], upper[0])
+    direction = tuple(
+        _interval_sum(
+            _interval_product(
+                tangent_axis,
+                _interval_sum(
+                    _interval_scale(meridian[index], cos_u),
+                    _interval_scale(binormal[index], sin_u),
+                ),
+            ),
+            _interval_scale(-axis[index], tangent_meridian),
+        )
+        for index in range(3)
+    )
+    if sign < 0:
+        return tuple((-high, -low) for low, high in direction)
+    return direction
+
+
+def _closed_form_normal_deviation(
+    surface: AbstractSurfacePatch,
+    orientation: int,
+    uv_triangle: Triangle2,
+    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    """Normal deviation from a closed-form normal direction of a revolution chart.
+
+    The Jacobian cross product of sphere and revolution charts vanishes on the
+    axis, so its interval enclosure loses the normal direction near a pole; the
+    closed-form direction stays regular there. Other carriers return ``None``.
+    """
+    from ._meshing_domain import _PlacedSurfacePatch
+
+    # A placed chart X' = L X + b has X'_u x X'_v = cof(L) (X_u x X_v).
+    cofactors: list[tuple[tuple[Fraction, ...], ...]] = []
+    while isinstance(surface, _PlacedSurfacePatch):
+        linear = tuple(
+            rational_vector(np.asarray(row, dtype=np.float64))
+            for row in np.asarray(surface.linear)
+        )
+        # Row r of cof(L) = det(L) L^-T is l_(r+1) x l_(r+2) for rows l of L.
+        cofactors.append(
+            tuple(
+                _exact_cross(linear[(row + 1) % 3], linear[(row + 2) % 3])
+                for row in range(3)
+            )
+        )
+        surface = surface.source
+    if not isinstance(surface, (SpherePatch, RevolutionSurface)):
+        return None
+    lower = np.asarray(
+        tuple(
+            fraction_endpoint(min(point[axis] for point in uv_triangle), upper=False)
+            for axis in range(2)
+        ),
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        tuple(
+            fraction_endpoint(max(point[axis] for point in uv_triangle), upper=True)
+            for axis in range(2)
+        ),
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+        return None
+    direction = (
+        _sphere_normal_direction(surface, lower, upper)
+        if isinstance(surface, SpherePatch)
+        else _revolution_normal_direction(surface, lower, upper)
+    )
+    if direction is None:
+        return None
+    for cofactor in reversed(cofactors):
+        direction = tuple(
+            _interval_sum(
+                *(
+                    _interval_scale(cofactor[row][column], direction[column])
+                    for column in range(3)
+                )
+            )
+            for row in range(3)
+        )
+    source_cross = (
+        direction if orientation > 0 else tuple((-high, -low) for low, high in direction)
+    )
+    cosine = _normal_cosine_bounds(source_cross, target_cross)
+    if cosine is None:
+        return None
+    return _acos_lower(cosine[1]), _normal_angle_upper(
+        source_cross, target_cross, cosine[0]
+    )
+
+
 def _normal_deviation_for_cell(
     domain: MeshingDomain,
     patch: int,
@@ -4043,6 +4345,11 @@ def _normal_deviation_for_cell(
     )
     if exact_plane is not None:
         return exact_plane
+    closed_form = _closed_form_normal_deviation(
+        surface_patch.surface, surface_patch.orientation, uv_triangle, target_cross
+    )
+    if closed_form is not None:
+        return closed_form
     surface = surface_patch.surface
     from ._source_interpolation import (
         _has_unexpanded_exact_surface_carrier,
