@@ -549,6 +549,8 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
             exact_centroids[0].view(np.uint64),
         )
         if degree == 2:
+            # The prepared map is passed explicitly; certification checks it
+            # against its operands instead of preparing the charts again.
             fidelity = certify_adaptive_implicit_charts(
                 mesh,
                 curved,
@@ -556,6 +558,7 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
                 witness,
                 tolerance=0.5,
                 maximum_normal_deviation=np.pi,
+                root_charts=chart_map,
             )
             assert fidelity.status == "certified"
             assert (
@@ -573,9 +576,20 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
                     tolerance=0.5,
                     maximum_normal_deviation=np.pi,
                     witness=witness,
+                    root_charts=chart_map,
                 ).certificate_id
                 == fidelity.certificate_id
             )
+            with pytest.raises(ValueError, match="prepared for a different"):
+                certify_adaptive_implicit_charts(
+                    mesh,
+                    curved,
+                    source,
+                    witness,
+                    tolerance=0.25,
+                    maximum_normal_deviation=np.pi,
+                    root_charts=chart_map,
+                )
 
 
 def test_adaptive_implicit_fidelity_retains_scoped_target_extent() -> None:
