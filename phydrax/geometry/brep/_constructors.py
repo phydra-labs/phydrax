@@ -1686,7 +1686,9 @@ def _curved_loop_is_simple(loop: ProfileLoop, /) -> bool:
     segments may meet only at their shared profile vertices.
     """
     edges = _profile_loop_edges(loop)
-    vertices = tuple((_fraction(point[0]), _fraction(point[1])) for point in loop.vertices)
+    vertices = tuple(
+        (_fraction(point[0]), _fraction(point[1])) for point in loop.vertices
+    )
     count = len(edges)
     for first_index in range(count):
         for second_index in range(first_index + 1, count):
@@ -3542,6 +3544,7 @@ def _offset_period_roots(
         )
     return rebound[0], rebound[1]
 
+
 def _offset_chart_pcurve(
     pcurve: AbstractCurve,
     source_patch: AbstractSurfacePatch,
@@ -3575,7 +3578,6 @@ def _offset_native_turn_roots(
         NativePeriodEndpoint(carrier, patch, axis, rational=0, turns=0),
         NativePeriodEndpoint(carrier, patch, axis, rational=0, turns=1),
     )
-
 
 
 def _single_chart_torus_offset(
@@ -3902,7 +3904,9 @@ def _single_chart_torus_offset(
             last,
             0,
             0,
-            endpoint_roots=_offset_native_turn_roots(offset_curve, offset_patch, axis_index),
+            endpoint_roots=_offset_native_turn_roots(
+                offset_curve, offset_patch, axis_index
+            ),
         )
     for coedge, edge in enumerate(geometry.coedge_edges):
         axis_index, shifts = coedge_lines[coedge]
