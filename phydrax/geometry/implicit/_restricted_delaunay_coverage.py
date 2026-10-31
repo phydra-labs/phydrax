@@ -9,7 +9,7 @@ import math
 from collections.abc import Iterable
 from fractions import Fraction
 from itertools import combinations
-from typing import final, Literal, NamedTuple
+from typing import final, Literal, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -28,6 +28,10 @@ from ...typing import Identifier
 from .._planar_coverage import FacetOverlap
 from .._source_boundary_records import SourceBoundaryDistanceWitness
 from ._analytic_profile import AnalyticImplicitProfile
+
+
+if TYPE_CHECKING:
+    from .._global_embedding import GlobalEmbeddingCertificate
 
 
 type ReferencePoint3 = tuple[Fraction, Fraction, Fraction]
@@ -120,6 +124,7 @@ class RestrictedDelaunayBoundaryWitness(StrictModule, NonTrainableState):
             }
         )
 
+
 @final
 class RestrictedDelaunayCoverageTransportWitness(StrictModule, NonTrainableState):
     """Flattened exact transition chain preserving a restricted source degree."""
@@ -149,37 +154,64 @@ class RestrictedDelaunayCoverageTransportWitness(StrictModule, NonTrainableState
         if not isinstance(root_witness, RestrictedDelaunayBoundaryWitness):
             raise TypeError("root_witness must be RestrictedDelaunayBoundaryWitness.")
         if not isinstance(root_distance_witness, SourceBoundaryDistanceWitness):
-            raise TypeError("root_distance_witness must be SourceBoundaryDistanceWitness.")
+            raise TypeError(
+                "root_distance_witness must be SourceBoundaryDistanceWitness."
+            )
         transition_chain = tuple(transitions)
-        if not transition_chain or any(not isinstance(value, CellGeometryTransition) for value in transition_chain):
-            raise TypeError("transitions must be a nonempty tuple of CellGeometryTransition values.")
-        distance_id = canonical_identifier(target_distance_witness_id, "target_distance_witness_id")
+        if not transition_chain or any(
+            not isinstance(value, CellGeometryTransition) for value in transition_chain
+        ):
+            raise TypeError(
+                "transitions must be a nonempty tuple of CellGeometryTransition values."
+            )
+        distance_id = canonical_identifier(
+            target_distance_witness_id, "target_distance_witness_id"
+        )
         if root_witness.distance_witness_id != root_distance_witness.witness_id:
-            raise ValueError("Root restricted and distance witnesses bind different source-distance records.")
+            raise ValueError(
+                "Root restricted and distance witnesses bind different source-distance records."
+            )
         first = transition_chain[0]
         if (
             first.source_mesh.mesh_id != root_witness.mesh_id
             or first.source_mesh.topology_id != root_witness.topology_id
             or first.source_geometry_id != root_witness.geometry_id
         ):
-            raise ValueError("First transition source endpoint differs from the retained direct source witness.")
-        for previous, current in zip(transition_chain, transition_chain[1:], strict=False):
+            raise ValueError(
+                "First transition source endpoint differs from the retained direct source witness."
+            )
+        for previous, current in zip(
+            transition_chain, transition_chain[1:], strict=False
+        ):
             if (
                 previous.target_mesh.mesh_id != current.source_mesh.mesh_id
                 or previous.target_topology_id != current.source_topology_id
                 or previous.target_geometry_id != current.source_geometry_id
             ):
                 raise ValueError("Transition chain endpoints are not exactly contiguous.")
-        endpoint_meshes = (first.source_mesh, *(value.target_mesh for value in transition_chain))
+        endpoint_meshes = (
+            first.source_mesh,
+            *(value.target_mesh for value in transition_chain),
+        )
         raw_regions = tuple(stage_cell_regions)
         if len(raw_regions) != len(endpoint_meshes):
-            raise ValueError("stage_cell_regions must retain one dense assignment for every transition endpoint.")
+            raise ValueError(
+                "stage_cell_regions must retain one dense assignment for every transition endpoint."
+            )
         immutable_regions: list[np.ndarray] = []
-        for index, (regions, mesh) in enumerate(zip(raw_regions, endpoint_meshes, strict=True)):
+        for index, (regions, mesh) in enumerate(
+            zip(raw_regions, endpoint_meshes, strict=True)
+        ):
             raw = np.asarray(regions)
             cell_count = sum(block.cell_count for block in mesh.blocks)
-            if raw.shape != (cell_count,) or raw.dtype.kind not in "iu" or np.any(raw != 0):
-                raise ValueError(f"Transition stage {index} must retain the single interior material assignment.")
+            if (
+                raw.shape != (cell_count,)
+                or raw.dtype.kind not in "iu"
+                or np.any(raw != 0)
+            ):
+                raise ValueError(
+                    f"Transition stage {index} must retain the single interior material assignment."
+                )
             copied = np.array(raw, dtype=np.int64, copy=True)
             copied.setflags(write=False)
             immutable_regions.append(copied)
@@ -198,7 +230,9 @@ class RestrictedDelaunayCoverageTransportWitness(StrictModule, NonTrainableState
                 "root": root_witness.witness_id,
                 "root_distance": root_distance_witness.witness_id,
                 "transitions": tuple(value.transition_id for value in transition_chain),
-                "stage_regions": tuple(array_tree_fingerprint(value) for value in immutable_regions),
+                "stage_regions": tuple(
+                    array_tree_fingerprint(value) for value in immutable_regions
+                ),
                 "target_distance": distance_id,
             }
         )
@@ -219,17 +253,32 @@ class RestrictedDelaunayCoverageProof(NamedTuple):
     facet_overlaps: tuple[FacetOverlap, ...] = ()
 
 
-def _unavailable(check: str, detail: str, /, *, status: Literal["violated", "unresolved"] = "unresolved") -> RestrictedDelaunayCoverageUnavailable:
+def _unavailable(
+    check: str,
+    detail: str,
+    /,
+    *,
+    status: Literal["violated", "unresolved"] = "unresolved",
+) -> RestrictedDelaunayCoverageUnavailable:
     return RestrictedDelaunayCoverageUnavailable(check, detail, status=status)
 
 
-
-def _fraction_det(a: tuple[Fraction, Fraction, Fraction], b: tuple[Fraction, Fraction, Fraction], c: tuple[Fraction, Fraction, Fraction]) -> Fraction:
-    return a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])
+def _fraction_det(
+    a: tuple[Fraction, Fraction, Fraction],
+    b: tuple[Fraction, Fraction, Fraction],
+    c: tuple[Fraction, Fraction, Fraction],
+) -> Fraction:
+    return (
+        a[0] * (b[1] * c[2] - b[2] * c[1])
+        - a[1] * (b[0] * c[2] - b[2] * c[0])
+        + a[2] * (b[0] * c[1] - b[1] * c[0])
+    )
 
 
 def _contains_point(tetra: np.ndarray, points: np.ndarray, point: np.ndarray) -> bool:
-    vertices = [tuple(Fraction(float(value)) for value in points[int(row)]) for row in tetra]
+    vertices = [
+        tuple(Fraction(float(value)) for value in points[int(row)]) for row in tetra
+    ]
     query = tuple(Fraction(float(value)) for value in point)
     origin = vertices[0]
     subtract = lambda a, b: tuple(x - y for x, y in zip(a, b, strict=True))
@@ -237,7 +286,11 @@ def _contains_point(tetra: np.ndarray, points: np.ndarray, point: np.ndarray) ->
     relative = subtract(query, origin)
     denominator = _fraction_det(first, second, third)
     if denominator == 0:
-        raise _unavailable("restricted_target_degeneracy", "A target tetrahedron is exactly degenerate.", status="violated")
+        raise _unavailable(
+            "restricted_target_degeneracy",
+            "A target tetrahedron is exactly degenerate.",
+            status="violated",
+        )
     coordinates = (
         _fraction_det(relative, second, third) / denominator,
         _fraction_det(first, relative, third) / denominator,
@@ -247,15 +300,22 @@ def _contains_point(tetra: np.ndarray, points: np.ndarray, point: np.ndarray) ->
     return all(value >= 0 for value in weights)
 
 
-def _outward_add(first: tuple[float, float], second: tuple[float, float]) -> tuple[float, float]:
+def _outward_add(
+    first: tuple[float, float], second: tuple[float, float]
+) -> tuple[float, float]:
     if first == (0.0, 0.0):
         return second
     if second == (0.0, 0.0):
         return first
-    return (float(np.nextafter(first[0] + second[0], -np.inf)), float(np.nextafter(first[1] + second[1], np.inf)))
+    return (
+        float(np.nextafter(first[0] + second[0], -np.inf)),
+        float(np.nextafter(first[1] + second[1], np.inf)),
+    )
 
 
-def _outward_sub(first: tuple[float, float], second: tuple[float, float]) -> tuple[float, float]:
+def _outward_sub(
+    first: tuple[float, float], second: tuple[float, float]
+) -> tuple[float, float]:
     if second == (0.0, 0.0):
         return first
     lower = float(np.nextafter(first[0] - second[1], -np.inf))
@@ -286,9 +346,7 @@ def _outward_sqrt(interval: tuple[float, float], /) -> tuple[float, float]:
     root_upper = math.sqrt(upper)
     outward_lower = 0.0 if lower == 0.0 else float(np.nextafter(root_lower, -np.inf))
     outward_upper = (
-        np.inf
-        if math.isinf(root_upper)
-        else float(np.nextafter(root_upper, np.inf))
+        np.inf if math.isinf(root_upper) else float(np.nextafter(root_upper, np.inf))
     )
     return outward_lower, outward_upper
 
@@ -349,14 +407,23 @@ def _ring_torus_gradient_intervals(
     )
 
 
-
-def _outward_mul(first: tuple[float, float], second: tuple[float, float]) -> tuple[float, float]:
+def _outward_mul(
+    first: tuple[float, float], second: tuple[float, float]
+) -> tuple[float, float]:
     if first == (0.0, 0.0) or second == (0.0, 0.0):
         return (0.0, 0.0)
-    products = (first[0] * second[0], first[0] * second[1], first[1] * second[0], first[1] * second[1])
+    products = (
+        first[0] * second[0],
+        first[0] * second[1],
+        first[1] * second[0],
+        first[1] * second[1],
+    )
     if not all(math.isfinite(value) for value in products):
         return (-np.inf, np.inf)
-    return (float(np.nextafter(min(products), -np.inf)), float(np.nextafter(max(products), np.inf)))
+    return (
+        float(np.nextafter(min(products), -np.inf)),
+        float(np.nextafter(max(products), np.inf)),
+    )
 
 
 def _fraction_float_lower(value: Fraction, /) -> float:
@@ -368,7 +435,11 @@ def _fraction_float_lower(value: Fraction, /) -> float:
         return float(np.finfo(np.float64).max)
     if rounded == -np.inf:
         return -np.inf
-    return float(np.nextafter(rounded, -np.inf)) if Fraction.from_float(rounded) > value else rounded
+    return (
+        float(np.nextafter(rounded, -np.inf))
+        if Fraction.from_float(rounded) > value
+        else rounded
+    )
 
 
 def _fraction_float_upper(value: Fraction, /) -> float:
@@ -380,13 +451,21 @@ def _fraction_float_upper(value: Fraction, /) -> float:
         return np.inf
     if rounded == -np.inf:
         return -float(np.finfo(np.float64).max)
-    return float(np.nextafter(rounded, np.inf)) if Fraction.from_float(rounded) < value else rounded
+    return (
+        float(np.nextafter(rounded, np.inf))
+        if Fraction.from_float(rounded) < value
+        else rounded
+    )
 
 
 def _fraction_point(point: ArrayLike, /) -> ReferencePoint3:
     values = np.asarray(point, dtype=np.float64)
     if values.shape != (3,) or not np.all(np.isfinite(values)):
-        raise _unavailable("restricted_target_geometry", "A target boundary vertex is not a finite physical point.", status="violated")
+        raise _unavailable(
+            "restricted_target_geometry",
+            "A target boundary vertex is not a finite physical point.",
+            status="violated",
+        )
     return (
         Fraction.from_float(float(values[0])),
         Fraction.from_float(float(values[1])),
@@ -411,10 +490,14 @@ def _cross3(first: ReferencePoint3, second: ReferencePoint3, /) -> ReferencePoin
 
 
 def _dot3(first: ReferencePoint3, second: ReferencePoint3, /) -> Fraction:
-    return sum((left * right for left, right in zip(first, second, strict=True)), Fraction(0))
+    return sum(
+        (left * right for left, right in zip(first, second, strict=True)), Fraction(0)
+    )
 
 
-def _canonical_analytic_profile(profile: AnalyticImplicitProfile, /) -> AnalyticImplicitProfile:
+def _canonical_analytic_profile(
+    profile: AnalyticImplicitProfile, /
+) -> AnalyticImplicitProfile:
     try:
         profile.validate_source_integrity()
         renewed = AnalyticImplicitProfile(
@@ -426,9 +509,17 @@ def _canonical_analytic_profile(profile: AnalyticImplicitProfile, /) -> Analytic
             source_revision=profile.source_revision,
         )
     except (TypeError, ValueError, IndexError, ArithmeticError) as error:
-        raise _unavailable("analytic_profile_integrity", f"Analytic profile does not reconstruct from its nominal source: {error}", status="violated") from error
+        raise _unavailable(
+            "analytic_profile_integrity",
+            f"Analytic profile does not reconstruct from its nominal source: {error}",
+            status="violated",
+        ) from error
     if renewed.profile_id != profile.profile_id or renewed.domain_id != profile.domain_id:
-        raise _unavailable("analytic_profile_integrity", "Analytic profile fields differ from their canonical source reconstruction.", status="violated")
+        raise _unavailable(
+            "analytic_profile_integrity",
+            "Analytic profile fields differ from their canonical source reconstruction.",
+            status="violated",
+        )
     return renewed
 
 
@@ -448,23 +539,39 @@ def _canonical_cell_mesh(mesh: CellMesh, /) -> CellMesh:
             periodic_topology=mesh.periodic_topology,
         )
     except (TypeError, ValueError, IndexError, ArithmeticError) as error:
-        raise _unavailable("restricted_mesh_identity", f"Target mesh does not reconstruct from its canonical topology and coordinates: {error}", status="violated") from error
+        raise _unavailable(
+            "restricted_mesh_identity",
+            f"Target mesh does not reconstruct from its canonical topology and coordinates: {error}",
+            status="violated",
+        ) from error
     if (
         renewed.mesh_id != mesh.mesh_id
         or renewed.topology_id != mesh.topology_id
         or renewed.geometry_id != mesh.geometry_id
     ):
-        raise _unavailable("restricted_mesh_identity", "Target mesh content differs from its retained mesh, topology, or geometry identity.", status="violated")
+        raise _unavailable(
+            "restricted_mesh_identity",
+            "Target mesh content differs from its retained mesh, topology, or geometry identity.",
+            status="violated",
+        )
     return renewed
 
 
-def _triangle_box(triangle: tuple[ReferencePoint3, ReferencePoint3, ReferencePoint3], /) -> tuple[np.ndarray, np.ndarray]:
+def _triangle_box(
+    triangle: tuple[ReferencePoint3, ReferencePoint3, ReferencePoint3], /
+) -> tuple[np.ndarray, np.ndarray]:
     lower = np.asarray(
-        [_fraction_float_lower(min(point[axis] for point in triangle)) for axis in range(3)],
+        [
+            _fraction_float_lower(min(point[axis] for point in triangle))
+            for axis in range(3)
+        ],
         dtype=np.float64,
     )
     upper = np.asarray(
-        [_fraction_float_upper(max(point[axis] for point in triangle)) for axis in range(3)],
+        [
+            _fraction_float_upper(max(point[axis] for point in triangle))
+            for axis in range(3)
+        ],
         dtype=np.float64,
     )
     return lower, upper
@@ -501,8 +608,7 @@ def _face_normal_interval(
             Fraction.from_float(float(profile.center[2])),
         )
         projections = tuple(
-            _dot3(outward_normal, _subtract3(point, center))
-            for point in triangle
+            _dot3(outward_normal, _subtract3(point, center)) for point in triangle
         )
         if any(value <= 0 for value in projections):
             raise _unavailable(
@@ -621,7 +727,9 @@ def _triangle_barycentric_line(
     direction: ReferencePoint3,
     triangle: tuple[ReferencePoint3, ReferencePoint3, ReferencePoint3],
     /,
-) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction], tuple[Fraction, Fraction]]:
+) -> tuple[
+    tuple[Fraction, Fraction], tuple[Fraction, Fraction], tuple[Fraction, Fraction]
+]:
     first, second, third = triangle
     edge_first = _subtract3(second, first)
     edge_second = _subtract3(third, first)
@@ -635,18 +743,23 @@ def _triangle_barycentric_line(
         None,
     )
     if coordinate_pair is None:
-        raise _unavailable("restricted_target_boundary", "A target boundary triangle has zero exact area.", status="violated")
+        raise _unavailable(
+            "restricted_target_boundary",
+            "A target boundary triangle has zero exact area.",
+            status="violated",
+        )
     left, right = coordinate_pair
     determinant = (
-        edge_first[left] * edge_second[right]
-        - edge_first[right] * edge_second[left]
+        edge_first[left] * edge_second[right] - edge_first[right] * edge_second[left]
     )
     relative = _subtract3(point, first)
 
     def coordinates(value: ReferencePoint3) -> tuple[Fraction, Fraction]:
         return (
-            (value[left] * edge_second[right] - value[right] * edge_second[left]) / determinant,
-            (edge_first[left] * value[right] - edge_first[right] * value[left]) / determinant,
+            (value[left] * edge_second[right] - value[right] * edge_second[left])
+            / determinant,
+            (edge_first[left] * value[right] - edge_first[right] * value[left])
+            / determinant,
         )
 
     alpha, beta = coordinates(relative)
@@ -668,7 +781,11 @@ def _line_triangle_intersection(
     first, second, third = triangle
     normal = _cross3(_subtract3(second, first), _subtract3(third, first))
     if normal == (Fraction(0), Fraction(0), Fraction(0)):
-        raise _unavailable("restricted_target_boundary", "A target boundary triangle has zero exact area.", status="violated")
+        raise _unavailable(
+            "restricted_target_boundary",
+            "A target boundary triangle has zero exact area.",
+            status="violated",
+        )
     denominator = _dot3(normal, direction)
     numerator = _dot3(normal, _subtract3(first, point))
     if denominator == 0:
@@ -763,7 +880,11 @@ def _sphere_or_torus_anchors(
                         center[2] + radius * sine_latitude,
                     )
                 if _dot3(normal, normal) != 1:
-                    raise _unavailable("analytic_projection_anchor", "Canonical rational source normal is not exactly unit length.", status="violated")
+                    raise _unavailable(
+                        "analytic_projection_anchor",
+                        "Canonical rational source normal is not exactly unit length.",
+                        status="violated",
+                    )
                 yield point, normal, (first_parameter, second_parameter)
         denominator += 1
 
@@ -789,6 +910,8 @@ def _regular_normal_fiber_count(
             return True, 0
         count += intersections
     return False, count
+
+
 def _revalidate_oriented_surface_topology(
     faces: tuple[tuple[int, int, int], ...],
     expected_euler: int,
@@ -829,9 +952,7 @@ def _revalidate_oriented_surface_topology(
             edge_faces.setdefault(key, []).append(face_index)
             edge_signs.setdefault(key, []).append(1 if first < second else -1)
         for vertex_position, vertex in enumerate(face):
-            others = tuple(
-                face[index] for index in range(3) if index != vertex_position
-            )
+            others = tuple(face[index] for index in range(3) if index != vertex_position)
             vertex_links.setdefault(vertex, []).append((others[0], others[1]))
 
     if any(
@@ -935,6 +1056,8 @@ def validate_restricted_delaunay_boundary_witness(
     distance_witness: SourceBoundaryDistanceWitness,
     witness: RestrictedDelaunayBoundaryWitness,
     /,
+    *,
+    embedding: GlobalEmbeddingCertificate | None = None,
 ) -> RestrictedDelaunayCoverageProof:
     """Prove degree-one source coverage by exact tubular projection.
 
@@ -947,7 +1070,9 @@ def validate_restricted_delaunay_boundary_witness(
     source normal fiber has exactly one preimage. Face/edge/vertex positivity
     makes this a proper positive branched covering; degree one removes every
     branch and duplicate/missing component. The retained witness stores only
-    input identities; all topology and degree evidence is recomputed.
+    input identities; all topology and degree evidence is recomputed. A
+    prepared ``embedding`` computed for exactly this mesh, coordinate map and
+    local-validity proof (no junctions) replaces recomputing that theorem.
     """
     from ...discretization._cell_geometry_validity import (
         certify_cell_geometry_validity,
@@ -955,17 +1080,24 @@ def validate_restricted_delaunay_boundary_witness(
     from ...discretization._coordinate_enclosure import affine_map
     from ...discretization._reference_cell import reference_cell_topology
     from .._domain_numerics import cell_coordinate_expressions, evaluate_map
-    from .._global_embedding import certify_global_embedding
+    from .._global_embedding import (
+        certify_global_embedding,
+        GlobalEmbeddingCertificate as EmbeddingCertificate,
+    )
     from .._source_fidelity import _analytic_profile_distance_evidence
 
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
         raise TypeError("Restricted coverage requires CellMesh and CellGeometrySpec.")
     if not isinstance(profile, AnalyticImplicitProfile):
-        raise TypeError("Restricted coverage requires AnalyticImplicitProfile source authority.")
+        raise TypeError(
+            "Restricted coverage requires AnalyticImplicitProfile source authority."
+        )
     if not isinstance(distance_witness, SourceBoundaryDistanceWitness):
         raise TypeError("distance_witness must be SourceBoundaryDistanceWitness.")
     if not isinstance(witness, RestrictedDelaunayBoundaryWitness):
         raise TypeError("witness must be RestrictedDelaunayBoundaryWitness.")
+    if embedding is not None and not isinstance(embedding, EmbeddingCertificate):
+        raise TypeError("embedding must be GlobalEmbeddingCertificate or None.")
 
     profile = _canonical_analytic_profile(profile)
     mesh = _canonical_cell_mesh(mesh)
@@ -1068,9 +1200,7 @@ def validate_restricted_delaunay_boundary_witness(
         )
     try:
         mesh_to_source_lower, mesh_to_source_upper, source_to_mesh_upper = (
-            _analytic_profile_distance_evidence(
-                mesh, geometry, profile, distance_witness
-            )
+            _analytic_profile_distance_evidence(mesh, geometry, profile, distance_witness)
         )
     except (TypeError, ValueError, IndexError, ArithmeticError, OverflowError) as error:
         raise _unavailable(
@@ -1094,10 +1224,19 @@ def validate_restricted_delaunay_boundary_witness(
                 "restricted_target_map",
                 "Every target tetrahedron needs a certified positive affine P1 map.",
             )
-        embedding = certify_global_embedding(mesh, geometry, validity)
+        if embedding is None:
+            embedding = certify_global_embedding(mesh, geometry, validity)
+        else:
+            embedding.require_inputs(mesh, geometry, validity)
     except RestrictedDelaunayCoverageUnavailable:
         raise
-    except (TypeError, ValueError, IndexError, ArithmeticError, FloatingPointError) as error:
+    except (
+        TypeError,
+        ValueError,
+        IndexError,
+        ArithmeticError,
+        FloatingPointError,
+    ) as error:
         raise _unavailable(
             "restricted_target_embedding",
             f"Target map or exact global embedding could not be revalidated: {error}",
@@ -1107,7 +1246,8 @@ def validate_restricted_delaunay_boundary_witness(
         detail = "; ".join(value.detail for value in embedding.findings)
         raise _unavailable(
             "restricted_target_embedding",
-            detail or "Target cell contacts and outward boundary shells are not certified.",
+            detail
+            or "Target cell contacts and outward boundary shells are not certified.",
             status=status,
         )
 
@@ -1260,9 +1400,7 @@ def validate_restricted_delaunay_boundary_witness(
         )
 
     surface_faces: list[tuple[int, int, int]] = []
-    surface_triangles: list[
-        tuple[ReferencePoint3, ReferencePoint3, ReferencePoint3]
-    ] = []
+    surface_triangles: list[tuple[ReferencePoint3, ReferencePoint3, ReferencePoint3]] = []
     face_leaf_counts: list[int] = []
     for boundary_position, face_row_raw in enumerate(boundary_rows):
         face_row = int(face_row_raw)
@@ -1303,9 +1441,7 @@ def validate_restricted_delaunay_boundary_witness(
             sum((triangle[index][1] for index in range(3)), Fraction(0)) / 3,
             sum((triangle[index][2] for index in range(3)), Fraction(0)) / 3,
         )
-        inward_measure = _dot3(
-            outward_normal, _subtract3(cell_center, face_center)
-        )
+        inward_measure = _dot3(outward_normal, _subtract3(cell_center, face_center))
         if inward_measure == 0:
             raise _unavailable(
                 "restricted_target_boundary",
@@ -1326,7 +1462,7 @@ def validate_restricted_delaunay_boundary_witness(
                 -outward_normal[2],
             )
         face_id = int(boundary_ids[boundary_position])
-        leaf_count, = _prove_face_projection_orientation(
+        (leaf_count,) = _prove_face_projection_orientation(
             profile, triangle, outward_normal, face_id
         )
         face_leaf_counts.append(leaf_count)
@@ -1350,9 +1486,7 @@ def validate_restricted_delaunay_boundary_witness(
     # local homeomorphism at faces, edges, and vertices, and compactness makes
     # it a proper covering. The exact regular-fiber count proves its degree.
     selected_anchor, selected_normal, selected_parameters = (
-        _prove_degree_one_normal_fiber(
-            profile, tuple(surface_triangles), tube_radius
-        )
+        _prove_degree_one_normal_fiber(profile, tuple(surface_triangles), tube_radius)
     )
     degree_id = canonical_fingerprint(
         {
@@ -1392,6 +1526,7 @@ def validate_restricted_delaunay_boundary_witness(
         profile.region_ids,
     )
 
+
 def _transition_mesh_ids(mesh: CellMesh, /) -> tuple[int, ...]:
     return tuple(
         int(identifier)
@@ -1424,9 +1559,7 @@ def _reference_tetrahedron(
     )
 
 
-def _reference_tetra_volume(
-    vertices: tuple[tuple[Fraction, ...], ...], /
-) -> Fraction:
+def _reference_tetra_volume(vertices: tuple[tuple[Fraction, ...], ...], /) -> Fraction:
     tetrahedron = _reference_tetrahedron(vertices)
     origin = tetrahedron[0]
     vectors: tuple[ReferencePoint3, ReferencePoint3, ReferencePoint3] = (
@@ -1480,12 +1613,21 @@ def _require_nested_reference_partition(
         fine_ids_expected = set(_transition_mesh_ids(source_mesh))
         coarse_ids_expected = set(_transition_mesh_ids(target_mesh))
     else:
-        raise _unavailable("nested_reference_partition", f"Transition kind {kind!r} has no exact nested reference partition.")
+        raise _unavailable(
+            "nested_reference_partition",
+            f"Transition kind {kind!r} has no exact nested reference partition.",
+        )
 
     source_kinds = _transition_cell_kinds(source_mesh)
     target_kinds = _transition_cell_kinds(target_mesh)
-    if any(value != "tetrahedron" for value in (*source_kinds.values(), *target_kinds.values())):
-        raise _unavailable("nested_reference_cell_kind", "Restricted analytic transport currently supports tetrahedral whole-root cells only.")
+    if any(
+        value != "tetrahedron"
+        for value in (*source_kinds.values(), *target_kinds.values())
+    ):
+        raise _unavailable(
+            "nested_reference_cell_kind",
+            "Restricted analytic transport currently supports tetrahedral whole-root cells only.",
+        )
 
     # Rows are always oriented as source-fine cell -> target/coarse cell.
     rows_by_fine: dict[int, tuple[int, ReferenceTetrahedron]] = {}
@@ -1494,7 +1636,11 @@ def _require_nested_reference_partition(
             validate_nested_reference_witnesses(nested, dimension=3)
             nested_vertices = exact_reference_vertices(nested)
         except (TypeError, ValueError, ArithmeticError) as error:
-            raise _unavailable("nested_reference_partition", f"Nested whole-root reference witness does not revalidate: {error}", status="violated") from error
+            raise _unavailable(
+                "nested_reference_partition",
+                f"Nested whole-root reference witness does not revalidate: {error}",
+                status="violated",
+            ) from error
         for fine_id, coarse_id, vertices in zip(
             np.asarray(nested.fine_cell_ids, dtype=np.int64),
             np.asarray(nested.coarse_cell_ids, dtype=np.int64),
@@ -1503,7 +1649,11 @@ def _require_nested_reference_partition(
         ):
             fine, coarse = int(fine_id), int(coarse_id)
             if fine not in fine_ids_expected or coarse not in coarse_ids_expected:
-                raise _unavailable("nested_reference_partition", "Nested reference rows name cells outside their transition endpoints.", status="violated")
+                raise _unavailable(
+                    "nested_reference_partition",
+                    "Nested reference rows name cells outside their transition endpoints.",
+                    status="violated",
+                )
             rows_by_fine[fine] = (coarse, _reference_tetrahedron(vertices))
 
     reference_maps = transition.reference_map
@@ -1516,7 +1666,11 @@ def _require_nested_reference_partition(
     elif reference_maps is None:
         map_groups = ()
     else:
-        raise _unavailable("nested_reference_partition", "Transition reference maps have an unsupported retained representation.", status="violated")
+        raise _unavailable(
+            "nested_reference_partition",
+            "Transition reference maps have an unsupported retained representation.",
+            status="violated",
+        )
 
     def inverse_tetra_map(
         target_vertices: tuple[tuple[Fraction, ...], ...], /
@@ -1542,7 +1696,11 @@ def _require_nested_reference_partition(
         )
         determinant = _fraction_det(columns[0], columns[1], columns[2])
         if determinant == 0:
-            raise _unavailable("nested_reference_partition", "A preserved tetrahedral reference map is singular.", status="violated")
+            raise _unavailable(
+                "nested_reference_partition",
+                "A preserved tetrahedral reference map is singular.",
+                status="violated",
+            )
         source_corners: ReferenceTetrahedron = (
             (Fraction(0), Fraction(0), Fraction(0)),
             (Fraction(1), Fraction(0), Fraction(0)),
@@ -1570,9 +1728,19 @@ def _require_nested_reference_partition(
             validate_reference_cell_map_witnesses(group)
             exact_maps = exact_reference_cell_vertices(group)
         except (TypeError, ValueError, ArithmeticError) as error:
-            raise _unavailable("nested_reference_partition", f"Direct preserved-cell reference map does not revalidate: {error}", status="violated") from error
-        if group.source_cell_kind != "tetrahedron" or group.target_cell_kind != "tetrahedron":
-            raise _unavailable("nested_reference_cell_kind", "Restricted analytic transport currently supports tetrahedral preserved cells only.")
+            raise _unavailable(
+                "nested_reference_partition",
+                f"Direct preserved-cell reference map does not revalidate: {error}",
+                status="violated",
+            ) from error
+        if (
+            group.source_cell_kind != "tetrahedron"
+            or group.target_cell_kind != "tetrahedron"
+        ):
+            raise _unavailable(
+                "nested_reference_cell_kind",
+                "Restricted analytic transport currently supports tetrahedral preserved cells only.",
+            )
         for target_id_raw, source_id_raw, target_in_source in zip(
             np.asarray(group.target_cell_ids, dtype=np.int64),
             np.asarray(group.source_cell_ids, dtype=np.int64),
@@ -1587,28 +1755,48 @@ def _require_nested_reference_partition(
                 fine, coarse = source_id, target_id
                 vertices = inverse_tetra_map(target_in_source)
             if fine not in fine_ids_expected or coarse not in coarse_ids_expected:
-                raise _unavailable("nested_reference_partition", "Direct reference maps name cells outside their transition endpoints.", status="violated")
+                raise _unavailable(
+                    "nested_reference_partition",
+                    "Direct reference maps name cells outside their transition endpoints.",
+                    status="violated",
+                )
             existing = rows_by_fine.get(fine)
             value = (coarse, vertices)
             if existing is not None and existing != value:
-                raise _unavailable("nested_reference_partition", "Nested and direct reference maps disagree on a retained cell ancestry.", status="violated")
+                raise _unavailable(
+                    "nested_reference_partition",
+                    "Nested and direct reference maps disagree on a retained cell ancestry.",
+                    status="violated",
+                )
             rows_by_fine[fine] = value
 
     if set(rows_by_fine) != fine_ids_expected:
-        raise _unavailable("nested_reference_partition", "Nested and direct reference maps do not cover every source or target fine cell.", status="violated")
+        raise _unavailable(
+            "nested_reference_partition",
+            "Nested and direct reference maps do not cover every source or target fine cell.",
+            status="violated",
+        )
     coarse_ids = {coarse for coarse, _ in rows_by_fine.values()}
     if coarse_ids != coarse_ids_expected:
-        raise _unavailable("nested_reference_partition", "Nested and direct reference maps do not cover every target or source parent cell.", status="violated")
+        raise _unavailable(
+            "nested_reference_partition",
+            "Nested and direct reference maps do not cover every target or source parent cell.",
+            status="violated",
+        )
 
     volume_by_parent: dict[int, Fraction] = {}
     for coarse_id, vertices in rows_by_fine.values():
-        volume_by_parent[coarse_id] = volume_by_parent.get(coarse_id, Fraction(0)) + _reference_tetra_volume(vertices)
+        volume_by_parent[coarse_id] = volume_by_parent.get(
+            coarse_id, Fraction(0)
+        ) + _reference_tetra_volume(vertices)
     if set(volume_by_parent) != coarse_ids_expected or any(
         value != Fraction(1, 6) for value in volume_by_parent.values()
     ):
-        raise _unavailable("nested_reference_partition", "Fine tetrahedra do not exactly partition every whole-root reference tetrahedron.", status="violated")
-
-
+        raise _unavailable(
+            "nested_reference_partition",
+            "Fine tetrahedra do not exactly partition every whole-root reference tetrahedron.",
+            status="violated",
+        )
 
 
 def validate_restricted_delaunay_coverage_transport_witness(
@@ -1619,8 +1807,13 @@ def validate_restricted_delaunay_coverage_transport_witness(
     distance_witness: SourceBoundaryDistanceWitness,
     witness: RestrictedDelaunayCoverageTransportWitness,
     /,
+    *,
+    embedding: GlobalEmbeddingCertificate | None = None,
 ) -> RestrictedDelaunayCoverageProof:
-    """Revalidate every exact transport stage and its analytic projection degree."""
+    """Revalidate every exact transport stage and its analytic projection degree.
+
+    A prepared ``embedding`` of the current target is reused by the final stage.
+    """
     from ...discretization._cell_geometry_validity import cell_geometry_id
 
     if not isinstance(witness, RestrictedDelaunayCoverageTransportWitness):
@@ -1743,15 +1936,12 @@ def validate_restricted_delaunay_coverage_transport_witness(
             )
         source_cells = _transition_mesh_ids(source_mesh)
         target_cells = _transition_mesh_ids(target_mesh)
-        if (
-            not np.array_equal(
-                witness.stage_cell_regions[index],
-                np.zeros((len(source_cells),), dtype=np.int64),
-            )
-            or not np.array_equal(
-                witness.stage_cell_regions[index + 1],
-                np.zeros((len(target_cells),), dtype=np.int64),
-            )
+        if not np.array_equal(
+            witness.stage_cell_regions[index],
+            np.zeros((len(source_cells),), dtype=np.int64),
+        ) or not np.array_equal(
+            witness.stage_cell_regions[index + 1],
+            np.zeros((len(target_cells),), dtype=np.int64),
         ):
             raise _unavailable(
                 "transport_region_assignment",
@@ -1836,6 +2026,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
             stage_regions,
             stage_distance,
             stage_witness,
+            embedding=embedding if index + 1 == len(transitions) else None,
         )
         stage_degree_ids.append(stage_proof.degree_id)
         if index + 1 == len(transitions):
@@ -1878,17 +2069,38 @@ def validate_restricted_delaunay_coverage_witness(
     distance_witness: SourceBoundaryDistanceWitness,
     witness: RestrictedDelaunayCoverageWitness,
     /,
+    *,
+    embedding: GlobalEmbeddingCertificate | None = None,
 ) -> RestrictedDelaunayCoverageProof:
-    """Validate the direct restricted proof or its exact transported continuation."""
+    """Validate the direct restricted proof or its exact transported continuation.
+
+    ``embedding`` is an optional prepared global-embedding certificate of the
+    current target; it is checked against these inputs, then reused.
+    """
     if isinstance(witness, RestrictedDelaunayBoundaryWitness):
         return validate_restricted_delaunay_boundary_witness(
-            mesh, geometry, profile, cell_regions, distance_witness, witness
+            mesh,
+            geometry,
+            profile,
+            cell_regions,
+            distance_witness,
+            witness,
+            embedding=embedding,
         )
     if isinstance(witness, RestrictedDelaunayCoverageTransportWitness):
         return validate_restricted_delaunay_coverage_transport_witness(
-            mesh, geometry, profile, cell_regions, distance_witness, witness
+            mesh,
+            geometry,
+            profile,
+            cell_regions,
+            distance_witness,
+            witness,
+            embedding=embedding,
         )
-    raise TypeError("witness must be a direct or transported restricted-Delaunay coverage witness.")
+    raise TypeError(
+        "witness must be a direct or transported restricted-Delaunay coverage witness."
+    )
+
 
 __all__ = [
     "RestrictedDelaunayBoundaryWitness",

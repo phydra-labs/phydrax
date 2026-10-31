@@ -23,6 +23,7 @@ from ..discretization._cell_geometry import (
 from ..discretization._cell_geometry_validity import CellValidityStatus
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
+from ..geometry._global_embedding import GlobalEmbeddingCertificate
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.surface import SurfaceModel
@@ -224,8 +225,13 @@ def certify_cell_mesh(
     region_boundary_evidence: tuple[RegionBoundaryEvidence, ...] = (),
     planar_embedding: PlanarEmbedding | None = None,
     layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
+    embedding: GlobalEmbeddingCertificate | None = None,
 ) -> CellMeshingResult:
-    """Canonicalize and certify one existing CellMesh through native substrates."""
+    """Canonicalize and certify one existing CellMesh through native substrates.
+
+    ``embedding`` is a prepared global-embedding certificate of the canonical
+    mesh; acceptance with ``certification_inputs`` checks and reuses it.
+    """
 
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
@@ -238,6 +244,8 @@ def certify_cell_mesh(
     geometry_ = CellGeometrySpec.affine(canonical) if geometry is None else geometry
     if not isinstance(geometry_, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec or None.")
+    if embedding is not None and certification_inputs is None:
+        raise ValueError("A prepared embedding is reused only by certified acceptance.")
     certification = None
     if certification_inputs is None:
         audit = audit_cell_mesh(
@@ -271,6 +279,7 @@ def certify_cell_mesh(
                 surface_source=surface_source,
                 region_boundary_evidence=region_boundary_evidence,
             ),
+            embedding=embedding,
         )
         certification.require_passed()
         audit = certification.audit
@@ -507,7 +516,9 @@ def _accept_native_construction(
         source_coverage_witness=request.source_coverage_witness,
     )
     organization = construction.organization
-    certification = MeshCertificationReport(inputs, organization=organization)
+    certification = MeshCertificationReport(
+        inputs, organization=organization, embedding=request.global_embedding
+    )
     certification.require_passed()
     runtime = MeshingRuntimeInfo(
         provider.provider_id,

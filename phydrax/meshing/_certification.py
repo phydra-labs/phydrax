@@ -288,13 +288,24 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         *,
         audit_policy: CellMeshAuditPolicy | None = None,
         organization: NativeMeshOrganization | None = None,
+        embedding: GlobalEmbeddingCertificate | None = None,
     ) -> None:
+        """Compute acceptance from ``inputs``.
+
+        ``embedding`` is an optional prepared global-embedding certificate. It
+        is reused only after it is shown to bind these exact mesh, coordinate
+        map, local-validity and junction inputs; otherwise it is computed here.
+        """
         if not isinstance(inputs, MeshCertificationInputs):
             raise TypeError("inputs must be MeshCertificationInputs.")
         if organization is not None and not isinstance(
             organization, NativeMeshOrganization
         ):
             raise TypeError("organization must be NativeMeshOrganization or None.")
+        if embedding is not None and not isinstance(
+            embedding, GlobalEmbeddingCertificate
+        ):
+            raise TypeError("embedding must be GlobalEmbeddingCertificate or None.")
         _require_route_geometry(inputs)
         organization_ = NativeMeshOrganization() if organization is None else organization
         policy = (
@@ -308,12 +319,20 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             mesh=inputs.mesh,
             policy=policy.validity_policy,
         )
-        embedding = certify_global_embedding(
-            inputs.mesh,
-            inputs.geometry,
-            validity,
-            junction_vertices=inputs.junction_vertices,
-        )
+        if embedding is None:
+            embedding = certify_global_embedding(
+                inputs.mesh,
+                inputs.geometry,
+                validity,
+                junction_vertices=inputs.junction_vertices,
+            )
+        else:
+            embedding.require_inputs(
+                inputs.mesh,
+                inputs.geometry,
+                validity,
+                junction_vertices=inputs.junction_vertices,
+            )
         audit = audit_cell_mesh(
             inputs.mesh,
             inputs.geometry,
@@ -469,8 +488,20 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 ),
             )
 
-    def revalidate(self, mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
-        """Recompute scientific acceptance; stored identities are not proof authority."""
+    def revalidate(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        /,
+        *,
+        embedding: GlobalEmbeddingCertificate | None = None,
+    ) -> None:
+        """Recompute scientific acceptance; stored identities are not proof authority.
+
+        ``embedding`` may supply an in-hand global-embedding certificate; it is
+        reused only when it binds exactly the current inputs, and every other
+        proof obligation is recomputed.
+        """
         self.inputs.require_current(
             mesh, geometry, domain=self.inputs.domain, source=self.inputs.source
         )
@@ -485,6 +516,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 attributes=self.attributes,
                 associations=self.associations,
             ),
+            embedding=embedding,
         )
         if not _same_tree_content(self, renewed):
             raise ValueError(
