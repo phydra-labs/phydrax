@@ -391,11 +391,6 @@ def prepare_distributed_surface_generation(
     )
 
 
-type _PoleSamples = dict[
-    tuple[int, int, int], tuple[native_surface_owner._PoleChartSample, ...]
-]
-
-
 def _local_patches(
     prepared: PreparedDistributedSurfaceGeneration,
     local_patch_rows: tuple[int, ...],
@@ -414,7 +409,7 @@ def _initial_curve_parameters(
     prepared: PreparedDistributedSurfaceGeneration,
     local_patch_rows: tuple[int, ...],
     /,
-) -> tuple[dict[int, set[Fraction]], _PoleSamples]:
+) -> tuple[dict[int, set[Fraction]], native_surface_owner._PoleCharts]:
     """Serial initial seam samples restricted to the curves this owner trims.
 
     Curve chord sampling uses every selected incident patch size, so incident
@@ -434,24 +429,25 @@ def _initial_curve_parameters(
         surface.specification,
         surface.schedule,
     )
-    pole_samples = native_surface_owner._pole_sampling(
+    pole_charts = native_surface_owner._pole_sampling(
         surface.domain,
         patches,
         sizes,
         surface.specification,
         surface.schedule,
+        parameters,
     )
     native_surface_owner._integrate_pole_ring_parameters(
-        surface.domain, patches, pole_samples, parameters
+        surface.domain, patches, pole_charts, parameters
     )
-    return parameters, pole_samples
+    return parameters, pole_charts
 
 
 def _generate_local_charts(
     prepared: PreparedDistributedSurfaceGeneration,
     local_patch_rows: tuple[int, ...],
     parameters_by_curve: dict[int, set[Fraction]],
-    pole_samples: _PoleSamples,
+    pole_charts: native_surface_owner._PoleCharts,
     /,
 ) -> list[native_surface_owner._ChartMesh]:
     surface = prepared.surface
@@ -468,7 +464,7 @@ def _generate_local_charts(
             surface.domain,
             patch,
             parameters_by_curve,
-            pole_samples,
+            pole_charts,
             quality_angle,
         )
         for patch in patches
@@ -973,7 +969,7 @@ def execute_distributed_surface_initial(
     domain = prepared.surface.domain
     local_patch_rows: tuple[int, ...] = ()
     local_parameters: dict[int, set[Fraction]] = {}
-    pole_samples: _PoleSamples = {}
+    pole_charts: native_surface_owner._PoleCharts = {}
     local_error: Exception | None = None
     try:
         domain.require_current(domain.source_id, domain.source_revision)
@@ -982,7 +978,7 @@ def execute_distributed_surface_initial(
             for row, owner in enumerate(prepared.patch_owner_slots.tolist())
             if owner == rank
         )
-        local_parameters, pole_samples = _initial_curve_parameters(
+        local_parameters, pole_charts = _initial_curve_parameters(
             prepared, local_patch_rows
         )
     except Exception as error:
@@ -1025,7 +1021,7 @@ def execute_distributed_surface_initial(
                 prepared,
                 local_patch_rows,
                 local_parameters,
-                pole_samples,
+                pole_charts,
             )
             discovered = {
                 curve: set(values) for curve, values in local_parameters.items()
