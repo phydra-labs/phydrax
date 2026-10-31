@@ -726,10 +726,6 @@ class _FaceEnclosure:
 # tangents for their chart Jacobian.
 _CONDITIONING_THRESHOLD = 8.0
 
-# Endpoint-sign failures double the root bracket at most this often before the
-# piece splits; each doubling costs one batched tube evaluation.
-_ROOT_BRACKET_DOUBLINGS = 4
-
 
 def _tangent_conditioner(
     tangents: tuple[
@@ -1855,11 +1851,12 @@ def _face_piece_steps(
             float(np.nextafter(gradient_norm[1] ** 2, np.inf)),
         )
     else:
-        # A bracket that misses a strict endpoint sign doubles on the failing
-        # side while its tube stays in the certified domain and phi' stays
-        # positive on it, so sign success never hinges on how the bracket
-        # estimate and the endpoint enclosures happen to scale with the piece.
-        attempt = 0
+        # A bracket that misses a strict endpoint sign widens on the failing
+        # side until it is signed, its tube leaves the certified domain, or
+        # phi' loses strict positivity on it; sign success then never hinges on
+        # how the bracket estimate and the endpoint enclosures scale with the
+        # piece. Each widening at least doubles the side, so the tube reaches
+        # the domain boundary (or binary64 overflow) after finitely many rounds.
         while True:
             tube = _lifted_box(base_box, root_parameters, gradient_p)
             tube_lower, tube_upper = _box_arrays(tube)
@@ -1966,19 +1963,21 @@ def _face_piece_steps(
             plus_signed = plus_value_lower > 0.0
             if minus_signed and plus_signed:
                 break
-            if attempt == _ROOT_BRACKET_DOUBLINGS:
-                return (
-                    None,
-                    "normal-line root chart lacks strict interval endpoint signs",
-                    True,
-                )
-            attempt += 1
             span = max(-root_parameters[0], root_parameters[1])
             lower, upper = root_parameters
+            # The monotone bounds above sign an endpoint once |T| D_lo exceeds
+            # the residual on its side; jump past that point when it beats
+            # doubling (the margin absorbs D_lo shrinking on the wider tube).
             if not minus_signed:
-                lower = 2.0 * lower if lower < 0.0 else -span
+                lower = min(
+                    2.0 * lower if lower < 0.0 else -span,
+                    -1.25 * value_high / directional_derivative[0],
+                )
             if not plus_signed:
-                upper = 2.0 * upper if upper > 0.0 else span
+                upper = max(
+                    2.0 * upper if upper > 0.0 else span,
+                    -1.25 * value_low / directional_derivative[0],
+                )
             root_parameters = (
                 float(np.nextafter(lower, -np.inf)),
                 float(np.nextafter(upper, np.inf)),
