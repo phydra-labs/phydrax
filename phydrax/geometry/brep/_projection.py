@@ -1344,6 +1344,10 @@ def _project_face(
             longitude = float(np.asarray(model.parameter_bounds)[face, 0, 0])
         uv = np.asarray((longitude, latitude), dtype=np.float64)
         candidate = center + radius * relative / length
+        # The radial point is the closest point of the whole sphere, so inside
+        # the parameter rectangle it is also the rectangle's closest point,
+        # including on the seam and at a pole.
+        rectangle_closest = True
     elif isinstance(patch, ConePatch):
         origin = np.asarray(patch.origin, dtype=np.float64)
         first = np.asarray(patch.first_axis, dtype=np.float64)
@@ -1626,9 +1630,7 @@ def _project_face(
         trim = 1
     else:
         trim = 0 if outside_bounds else _trim_classification(model, face, uv)
-    if trim is None:
-        return _unresolved(2, face, path)
-    if trim == 0:
+    if trim is None or trim == 0:
         if (
             isinstance(patch, PlanePatch)
             or affine_spline
@@ -1647,8 +1649,31 @@ def _project_face(
                 policy,
                 embedding=embedding,
             )
-            if boundary_hit is not None:
+            if boundary_hit is not None and trim == 0:
                 return boundary_hit
+            if boundary_hit is not None:
+                # An undecided trim point lies on or beside a curved boundary.
+                # The face lies in its plane and contains its boundary, so its
+                # distance lies between the plane's and the boundary point's;
+                # within the tie band that boundary point is the closest.
+                plane_lower = (
+                    _distance_bounds(point, candidate)[0]
+                    if affine_distance_squared is None
+                    else _affine_distance_bounds(affine_distance_squared)[0]
+                )
+                if boundary_hit.upper - plane_lower <= policy.ambiguity_tolerance:
+                    return _Hit(
+                        2,
+                        face,
+                        boundary_hit.point,
+                        boundary_hit.parameters,
+                        min(plane_lower, boundary_hit.lower),
+                        boundary_hit.upper,
+                        _SEAM,
+                        boundary_hit.normal,
+                        boundary_hit.tangents,
+                        path,
+                    )
         return _unresolved(2, face, path)
     if nonisolated and trim > 0:
         if affine_distance_squared is None:
