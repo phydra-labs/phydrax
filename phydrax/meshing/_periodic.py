@@ -493,6 +493,11 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             source_point_exact_coordinates,
             vertex_ids_value,
             vertex_sources,
+            vertex_windings,
+            tuple(
+                tuple(Fraction.from_float(float(value)) for value in row)
+                for row in np.asarray(periodic_cell.vectors, dtype=np.float64)
+            ),
             key_sources,
             exact_vertex_coordinates,
             vertex_coordinate_stencil,
@@ -691,6 +696,8 @@ def _candidate_vertex_ancestry(
     source_point_exact_coordinates: tuple[tuple[Fraction, ...], ...],
     vertex_ids: np.ndarray,
     vertex_sources: np.ndarray,
+    vertex_windings: np.ndarray,
+    lattice: tuple[tuple[Fraction, ...], ...],
     key_sources: np.ndarray,
     exact_vertex_coordinates: tuple[tuple[Fraction, ...], ...],
     stencil: VertexInterpolationStencil | None,
@@ -752,14 +759,49 @@ def _candidate_vertex_ancestry(
             raise ValueError(
                 "Adapted periodic vertex ancestry does not reproduce its exact vertex."
             )
-    # Self-keyed adapted vertices are the only non-site keys a cell may cite.
-    absent = sorted(referenced.difference(point_by_id).difference(map(int, vertex_ids)))
+    # Adapted vertices are keyed by themselves or by the root vertex of their
+    # periodic orbit, which may be resident on another owner only. Every image
+    # of such an orbit determines the root exactly (its vertex minus its lattice
+    # winding), so a non-site key is admissible when a resident vertex is keyed
+    # by it, and all resident images of one orbit must agree on that root.
+    vertex_keys = {int(identifier) for identifier in vertex_sources}
+    absent = sorted(
+        referenced.difference(point_by_id)
+        .difference(map(int, vertex_ids))
+        .difference(vertex_keys)
+    )
     if absent:
         raise ValueError(
-            "Owner-local periodic cell keys or vertices reference "
+            "Owner-local periodic cell keys reference "
             f"{len(absent)} keys that are neither resident source sites nor "
-            f"adapted resident vertices (first {absent[:8]})."
+            f"adapted resident vertices or their orbit roots (first {absent[:8]})."
         )
+    row_by_vertex = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
+    orbit_roots: dict[int, tuple[Fraction, ...]] = {}
+    for row, key in enumerate(vertex_sources.tolist()):
+        key = int(key)
+        if key in point_by_id:
+            continue
+        # A resident vertex used as a key must be the root of its own orbit.
+        if key in row_by_vertex and int(vertex_sources[row_by_vertex[key]]) != key:
+            raise ValueError(
+                "Adapted periodic vertex is keyed by a vertex that is not an orbit root."
+            )
+        root = tuple(
+            exact_vertex_coordinates[row][axis]
+            - sum(
+                (
+                    int(vertex_windings[row, generator]) * lattice[generator][axis]
+                    for generator in range(len(lattice))
+                ),
+                Fraction(0),
+            )
+            for axis in range(len(exact_vertex_coordinates[row]))
+        )
+        if orbit_roots.setdefault(key, root) != root:
+            raise ValueError(
+                "Adapted periodic vertex images of one orbit disagree on its root."
+            )
     return {
         "sources": array_tree_fingerprint((source_ids, valid)),
         "weights": tuple(

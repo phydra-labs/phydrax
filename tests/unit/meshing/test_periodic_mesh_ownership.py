@@ -38,6 +38,7 @@ from phydrax.meshing._distribution import (
 from phydrax.meshing._lineage import EntityLineageKind, VertexInterpolationStencil
 from phydrax.meshing._local_metric import execute_local_metric_adaptation
 from phydrax.meshing._periodic import (
+    _candidate_vertex_ancestry,
     _cell_edge_rows,
     _entity_layout,
     _periodic_cell_layout,
@@ -1823,3 +1824,43 @@ def test_periodic_tetra_distribution_keeps_owner_local_orbit_halos() -> None:
         np.unique(owner[cell_orbits == quotient_row]).size == 1
         for quotient_row in range(layout.entity_ids.size)
     )
+
+
+def test_periodic_candidate_ancestry_admits_nonresident_orbit_roots_exactly() -> None:
+    # Adapted midpoint images 100 and 101 are keyed by their orbit root 99, which
+    # is resident on another owner only; each image fixes that root exactly.
+    lattice = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+    points = ((Fraction(0), Fraction(0)), (Fraction(1, 2), Fraction(0)))
+    stencil = VertexInterpolationStencil(
+        "sites",
+        "adapted-vertices",
+        np.asarray((100, 101), dtype=np.int64),
+        np.asarray(((1, 2), (1, 2)), dtype=np.int64),
+        np.full((2, 2), 0.5, dtype=np.float64),
+        np.ones((2, 2), dtype=np.bool_),
+        exact_weights=((Fraction(1, 2), Fraction(1, 2)),) * 2,
+    )
+
+    def ancestry(
+        second_offset: tuple[Fraction, Fraction], key_sources: tuple[int, ...]
+    ) -> Any:
+        offsets = ((Fraction(1), Fraction(0)), second_offset)
+        exact = tuple((Fraction(1, 4) + offset[0], offset[1]) for offset in offsets)
+        return _candidate_vertex_ancestry(
+            np.asarray((1, 2), dtype=np.int64),
+            points,
+            np.asarray((100, 101), dtype=np.int64),
+            np.asarray((99, 99), dtype=np.int64),
+            np.asarray(((1, 0), (0, 1)), dtype=np.int64),
+            lattice,
+            np.asarray(key_sources, dtype=np.int64),
+            exact,
+            stencil,
+            offsets,
+        )
+
+    assert ancestry((Fraction(0), Fraction(1)), (1, 2, 99)) is not None
+    with pytest.raises(ValueError, match="disagree on its root"):
+        ancestry((Fraction(0), Fraction(2)), (1, 2, 99))
+    with pytest.raises(ValueError, match="neither resident source sites"):
+        ancestry((Fraction(0), Fraction(1)), (1, 2, 555))
