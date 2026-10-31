@@ -1799,11 +1799,15 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise TypeError("topology_epoch must be TopologyEpoch.")
         if not isinstance(initial_topology_artifacts, FiniteVolumeTopologyArtifacts):
             raise TypeError("topology_artifacts must be FiniteVolumeTopologyArtifacts.")
+        # A topology epoch binds the fixed runtime geometry, partition and prepared
+        # artifacts. Its topology id names the realized topology over that geometry
+        # (an AMR selection reprepared by ``reprepare_for_epoch`` differs from the
+        # discretization topology by construction); transactions that change the
+        # discretization derive their candidate epochs from the target geometry.
         if (
             initial_topology_artifacts.epoch_id != initial_topology_epoch.epoch_id
             or initial_topology_artifacts.prepared_id != discretization.prepared_id
             or initial_topology_epoch.geometry_id != epoch_geometry_id
-            or initial_topology_epoch.topology_id != epoch_topology_id
             or initial_topology_epoch.partition_id != partition_id
         ):
             raise ValueError("Reprepared topology does not match runtime geometry.")
