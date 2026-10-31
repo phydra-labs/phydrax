@@ -29,6 +29,7 @@ tabulation refuses them (collapsed quadrature never samples the apex).
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import IntEnum
@@ -446,11 +447,28 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         mesh: CellMesh | None = None,
     ) -> None:
         self.require_bound(geometry, mesh=mesh)
+        # The identity binds the geometry content, mesh, policy and every proof
+        # array; one already derived in this process is the current proof.
+        if self.certificate_id in _REPRODUCED:
+            return
         fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
         if fresh.certificate_id != self.certificate_id:
             raise ValueError(
                 "Validity certificate does not reproduce the current mathematical proof."
             )
+
+
+# Identities of validity proofs derived from their inputs in this process,
+# oldest first; bounded so a long-lived process does not accumulate them.
+_REPRODUCED: OrderedDict[str, None] = OrderedDict()
+_REPRODUCED_LIMIT = 1024
+
+
+def _record_reproduced(certificate_id: str, /) -> None:
+    _REPRODUCED[certificate_id] = None
+    _REPRODUCED.move_to_end(certificate_id)
+    while len(_REPRODUCED) > _REPRODUCED_LIMIT:
+        _REPRODUCED.popitem(last=False)
 
 
 _EPSILON = float(np.finfo(np.float64).eps)
@@ -2328,7 +2346,7 @@ def certify_cell_geometry_validity(
         if distinct_source
         else execution_proof
     )
-    return CellValidityCertificate(
+    certificate = CellValidityCertificate(
         execution_proof.status,
         execution_proof.lower,
         execution_proof.upper,
@@ -2351,6 +2369,8 @@ def certify_cell_geometry_validity(
         geometry_layout_id=spec.geometry_layout_id,
         policy_id=policy_.policy_id,
     )
+    _record_reproduced(certificate.certificate_id)
+    return certificate
 
 
 __all__ = [
