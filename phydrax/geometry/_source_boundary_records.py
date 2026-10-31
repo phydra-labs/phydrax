@@ -25,6 +25,7 @@ from ._embedding_state import MeshCertificateFinding
 if TYPE_CHECKING:
     from ..discretization._cell_geometry import CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh
+    from .reconstruction._envelope import SurfaceEnvelopeReproduction
 
 
 type SourceBoundSemantics = Literal["certified", "sampled"]
@@ -878,7 +879,13 @@ class SourceBoundaryPointWitness(StrictModule, NonTrainableState):
 
 @final
 class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
-    """Continuous distance evidence for a distinct PWL surface envelope."""
+    """Continuous distance evidence for a distinct PWL surface envelope.
+
+    ``reproduction`` optionally carries the record of the kernel run that
+    produced the envelope; validation trusts it only when it binds exactly the
+    witnessed source triangles, controls, and envelope, and otherwise reruns
+    the kernel. It is evidence about the bound content, not part of its identity.
+    """
 
     mesh_id: str
     geometry_id: str
@@ -895,6 +902,7 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
     target_vertex_global_ids: np.ndarray
     target_facet_global_ids: np.ndarray
     witness_id: str
+    reproduction: SurfaceEnvelopeReproduction | None
 
     def __init__(
         self,
@@ -913,7 +921,16 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
         envelope_triangles: ConvertibleToArray,
         target_vertex_global_ids: ConvertibleToArray,
         target_facet_global_ids: ConvertibleToArray,
+        reproduction: SurfaceEnvelopeReproduction | None = None,
     ) -> None:
+        from .reconstruction._envelope import SurfaceEnvelopeReproduction
+
+        if reproduction is not None and not isinstance(
+            reproduction, SurfaceEnvelopeReproduction
+        ):
+            raise TypeError(
+                "reproduction must be a SurfaceEnvelopeReproduction when provided."
+            )
         identities = tuple(
             canonical_identifier(value, name)
             for value, name in (
@@ -1004,6 +1021,7 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
             self.target_vertex_global_ids,
             self.target_facet_global_ids,
         ) = arrays
+        self.reproduction = reproduction
         self.witness_id = canonical_fingerprint(
             {
                 "kind": "surface-envelope-distance-witness",

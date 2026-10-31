@@ -1648,6 +1648,7 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             envelope_triangles=np.asarray(source.domain.facets, dtype=np.int64),
             target_vertex_global_ids=vertex_ids,
             target_facet_global_ids=facet_ids,
+            reproduction=source.reproduction,
         )
         try:
             distance_witness.require_current(
