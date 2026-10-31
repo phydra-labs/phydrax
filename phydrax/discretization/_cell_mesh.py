@@ -1090,7 +1090,10 @@ def _rebuild_polyhedral_connectivity_from_stored(
                 if cell_id not in cell_rows:
                     raise ValueError("Polyhedral connectivity lost a standard cell row.")
                 entries.append(
-                    (block.cell_kind, np.asarray(block.vertices[row], dtype=np.int32))
+                    (
+                        block.cell_kind,
+                        np.asarray(block.vertices[row : row + 1], dtype=np.int32),
+                    )
                 )
                 rebuilt_cell_ids.append(cell_id)
         elif type(block) is PolyhedralBlock:
