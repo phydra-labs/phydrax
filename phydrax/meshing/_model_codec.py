@@ -22,6 +22,7 @@ from .._model._artifacts import artifact_value, artifact_value_id
 from .._model._structure import (
     AdaptiveImplicitBoundarySourceArchiveRecipe,
     AnalyticImplicitProfileArchiveRecipe,
+    expand_shared_model_archive_recipe,
     FiniteElementAcceptedStateArchiveRecipe,
     FiniteVolumeOversetPartSpecArchiveRecipe,
     FiniteVolumeOversetPolicyArchiveRecipe,
@@ -42,6 +43,7 @@ from .._model._structure import (
     PiecewiseLinearBoundarySourceArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
+    share_model_archive_recipe,
     SparseCoordinateOperatorArchiveRecipe,
     SphereMaterialCellAtlasArchiveRecipe,
     SurfaceChartBoundarySourceArchiveRecipe,
@@ -1489,11 +1491,14 @@ def write_model_artifact(
     arrays = pack_model_array_tree(
         archive_model, recipe, prefix=_MODEL_ARRAYS, limits=limits
     )
+    shared_recipe, members = share_model_archive_recipe(
+        recipe, arrays, prefix=_MODEL_ARRAYS
+    )
     return write_array_archive(
         path,
-        manifest={"kind": _MODEL_KIND, "model_recipe": recipe},
+        manifest={"kind": _MODEL_KIND, "model_recipe": shared_recipe},
         limits=limits,
-        arrays=arrays,
+        arrays=members,
     )
 
 
@@ -1510,7 +1515,7 @@ def read_model_artifact(
     _require_model_type(expected_type)
     if not callable(restore):
         raise TypeError("restore must be the owning model's reconstruction function.")
-    manifest, arrays = read_array_archive(path, limits=limits)
+    manifest, members = read_array_archive(path, limits=limits)
     if (
         set(manifest) != {"arrays", "kind", "model_recipe"}
         or manifest["kind"] != _MODEL_KIND
@@ -1518,11 +1523,13 @@ def read_model_artifact(
         raise ArrayArchiveCorruptionError(
             "Native model archive fields are not canonical."
         )
-    recipe = manifest["model_recipe"]
-    if not isinstance(recipe, dict) or recipe.get("kind") != "dataclass":
+    shared_recipe = manifest["model_recipe"]
+    if not isinstance(shared_recipe, dict) or shared_recipe.get("kind") != "dataclass":
         raise ArrayArchiveCorruptionError("Native model archive has no dataclass recipe.")
     try:
-        validate_model_structure_recipe(recipe, limits=limits)
+        recipe, arrays = expand_shared_model_archive_recipe(
+            shared_recipe, members, prefix=_MODEL_ARRAYS, limits=limits
+        )
         declared_type = artifact_value(recipe["type"])
         _require_model_type(declared_type)
         if declared_type is not expected_type:
