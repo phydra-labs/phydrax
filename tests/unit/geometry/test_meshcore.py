@@ -7,6 +7,7 @@ import importlib.metadata
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1059,6 +1060,35 @@ def test_fixed_refinement_next_to_thin_pole_fans_is_bounded() -> None:
         assert 0 < run.inserted_vertices <= 4 * points.shape[0]
         assert state.arrays().points.shape[0] == points.shape[0] + run.inserted_vertices
         assert run.unmet_cells == np.unique(np.asarray(state.unmet().cell_ids)).size
+
+
+def test_fixed_cad_sphere_recovery_suppresses_its_splits_promptly() -> None:
+    # A FIXED CAD unit-sphere PLC (640 points, 1276 triangles) whose recovery
+    # leaves three split points to suppress through the volume. Each one's
+    # star spans much of the ball (476 to 718 link walls) and has no
+    # constrained Delaunay fill: a stuck wrap that went on past its stuck
+    # sides laid thousands of overlapping cells and did not finish in 20
+    # minutes, and ranking every visible apex of a side took 70 s.
+    data = np.load(
+        Path(__file__).resolve().parents[2] / "data" / "meshing" / "cad_sphere_plc.npz"
+    )
+    started = time.process_time()
+    recovered = recover_plc_3d(
+        data["points"],
+        data["polygon_offsets"],
+        data["polygon_vertices"],
+        data["polygon_facets"],
+        data["facet_regions"],
+        segments=data["segments"],
+        facet_tolerances=data["facet_tolerances"],
+        segment_tolerances=data["segment_tolerances"],
+        boundary_policy=PlcBoundaryPolicy.FIXED,
+    )
+    elapsed = time.process_time() - started
+    np.testing.assert_array_equal(recovered.points, data["points"])
+    assert recovered.faces.shape[0] == data["polygon_facets"].shape[0]
+    assert recovered.tetrahedra.shape[0] == 1329
+    assert elapsed < 20.0
 
 
 def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
