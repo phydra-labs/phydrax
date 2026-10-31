@@ -509,7 +509,12 @@ void sort_quality_vector(QualityVector& quality);
 // keep making strictly smaller improvements. Target attainment (score 1) and
 // the final per-criterion residual records use the unresolved measures.
 // The validity class separates cells below the determinant floor from the
-// rest; the size excess is gated separately (admissible_size_excess).
+// rest, and such a cell scores 0 whatever its angles and radius-edge ratio:
+// the score orders every edit, and a flat cell can have target angles and
+// ratio (a cocircular boundary quad split by its diagonal has a finite
+// circumsphere), so its removal would otherwise not count as an improvement
+// and the vertex phase would skip its star. The size excess is gated
+// separately (admissible_size_excess).
 FlipQuality quality_from_measure(const CellMeasure& measure,
                                  const TetQualityRequest& request) {
   const double angle_score =
@@ -522,11 +527,14 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
           ? 1.0
           : request.radius_edge_bound / measure.radius_edge_ratio;
   const double unresolved = std::min(angle_score, radius_score);
-  const double quality_score = std::floor(unresolved / kTetScoreQuantum) * kTetScoreQuantum;
   const std::int8_t validity =
       !(measure.relative_determinant > request.minimum_relative_determinant)
           ? kBelowDeterminantFloor
           : kAboveDeterminantFloor;
+  const double quality_score =
+      validity == kBelowDeterminantFloor
+          ? 0.0
+          : std::floor(unresolved / kTetScoreQuantum) * kTetScoreQuantum;
   const double size_excess = std::isinf(measure.size_target)
                                  ? 0.0
                                  : measure.circumradius / measure.size_target;

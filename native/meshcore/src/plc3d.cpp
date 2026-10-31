@@ -727,6 +727,34 @@ class SourcePreparer {
         }
       }
     }
+    // Internal edges of declared facets between triangles that are not
+    // exactly coplanar follow as hidden trailing rows: no planar flip can
+    // recover them, so recovery keeps them as edges, while published results
+    // omit them (PlcRecovery::hidden_plc_edges).
+    const std::size_t visible = edges_.size() / 2;
+    for (std::size_t begin = 0; begin < edge_uses_.size();) {
+      std::size_t end = begin + 1;
+      while (end < edge_uses_.size() && edge_uses_[end].first == edge_uses_[begin].first) ++end;
+      const uint64_t key = edge_uses_[begin].first;
+      const int32_t a = edge_uses_[begin].second;
+      const int32_t b = edge_uses_[end - 1].second;
+      begin = end;
+      if (!internal_edge(key) || edge_ids_.contains(key) ||
+          !declared(triangle_facet_[static_cast<std::size_t>(a)]) || coplanar(a, b)) {
+        continue;
+      }
+      const Triple& first = triangles_[static_cast<std::size_t>(a)];
+      const Triple& second = triangles_[static_cast<std::size_t>(b)];
+      std::vector<int32_t> ends;
+      for (int32_t vertex : first) {
+        if (std::find(second.begin(), second.end(), vertex) != second.end()) ends.push_back(vertex);
+      }
+      if (ends.size() != 2) return PHX_MC_INTERNAL_ERROR;
+      if (add_edge(std::min(ends[0], ends[1]), std::max(ends[0], ends[1])) < 0) {
+        return PHX_MC_INDEX_RANGE_ERROR;
+      }
+    }
+    hidden_edges_ = edges_.size() / 2 - visible;
     return PHX_MC_OK;
   }
 
@@ -888,6 +916,7 @@ class SourcePreparer {
   void publish_source() {
     output_.points.assign(input_.points, input_.points + 3 * input_.point_count);
     output_.plc_edges = edges_;
+    output_.hidden_plc_edges = static_cast<int64_t>(hidden_edges_);
     output_.vertex_dimension.assign(static_cast<std::size_t>(input_.point_count), 0);
     output_.protection.assign(static_cast<std::size_t>(input_.point_count), 0.0);
     output_.witnesses.assign(static_cast<std::size_t>(input_.point_count), PlcRecoveryWitness{});
@@ -907,6 +936,7 @@ class SourcePreparer {
   std::vector<int32_t> triangle_facet_;
   std::vector<int32_t> triangle_group_;
   std::vector<char> declared_;
+  std::size_t hidden_edges_ = 0;
   std::vector<std::pair<uint64_t, int32_t>> edge_uses_;
   std::vector<int32_t> edges_;
   std::unordered_map<uint64_t, int32_t> edge_ids_;
@@ -947,10 +977,25 @@ int32_t collect_edge_cavity(const TetrahedralComplex& complex, const double* poi
   return PHX_MC_OK;
 }
 
-int32_t prepare_plc_source(const PlcInput& input, PlcRecovery& result) {
+namespace {
+
+// Source preparation keeping the hidden internal edge rows recovery needs.
+int32_t prepare_recovery_source(const PlcInput& input, PlcRecovery& result) {
   result = PlcRecovery{};
   SourcePreparer preparer(input, result);
   return preparer.run();
+}
+
+}  // namespace
+
+int32_t prepare_plc_source(const PlcInput& input, PlcRecovery& result) {
+  const int32_t status = prepare_recovery_source(input, result);
+  if (status == PHX_MC_OK) {
+    result.plc_edges.resize(result.plc_edges.size() -
+                            2 * static_cast<std::size_t>(result.hidden_plc_edges));
+    result.hidden_plc_edges = 0;
+  }
+  return status;
 }
 
 namespace {
@@ -1172,7 +1217,16 @@ struct CarrierKeyHash {
 class PlcRecoveryBuilder {
  public:
   PlcRecoveryBuilder(const PlcInput& input, const PlcRecovery& source)
-      : input_(input), candidate_(source) {}
+      : input_(input), candidate_(source),
+        visible_edges_(source.plc_edges.size() / 2 -
+                       static_cast<std::size_t>(source.hidden_plc_edges)) {
+    if (input_.facet_planes == nullptr) return;
+    plane_normals_.resize(static_cast<std::size_t>(input_.facet_count));
+    for (std::size_t facet = 0; facet < plane_normals_.size(); ++facet) {
+      const double* row = input_.facet_planes + 9 * facet;
+      if (!std::isnan(row[0])) plane_normals_[facet] = declared_plane_normal(row);
+    }
+  }
 
 
   int32_t run(PlcRecovery& output) {
@@ -1205,7 +1259,24 @@ class PlcRecoveryBuilder {
   }
 
   const PlcSourceRefusal& source_refusal() const { return candidate_.source_refusal; }
-  const PlcFailure& failure() const { return failure_; }
+  // The failure, with a hidden internal edge (never published) named by its
+  // facet.
+  PlcFailure failure() const {
+    PlcFailure published = failure_;
+    const auto name = [&](int32_t& kind, int64_t& entity) {
+      if (kind != kPlcEdge || entity < 0 || static_cast<std::size_t>(entity) < visible_edges_ ||
+          static_cast<std::size_t>(entity) + 1 >= edge_triangle_offsets_.size()) {
+        return;
+      }
+      const auto triangle = static_cast<std::size_t>(
+          edge_triangle_rows_[edge_triangle_offsets_[static_cast<std::size_t>(entity)]]);
+      kind = kPlcFacet;
+      entity = input_.polygon_facets[candidate_.input_polygons[triangle]];
+    };
+    name(published.first_kind, published.first);
+    name(published.second_kind, published.second);
+    return published;
+  }
   const PlcSuppressionSearch& suppression_search() const {
     return candidate_.suppression_search;
   }
@@ -4165,6 +4236,38 @@ class PlcRecoveryBuilder {
     std::vector<Triple> new_faces;
   };
 
+  // Whether split point s is suppressed under either policy: it lies on a
+  // hidden internal edge (never published), or on a facet with a declared
+  // plane that does not admit its carrier (declared_plane_admits: a vertex
+  // of a declared facet must round a point of the plane or lie within the
+  // facet's tolerance of it).
+  bool suppression_required(int32_t s) const {
+    const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
+    std::vector<int32_t> facets;
+    if (witness.stratum == SourceStratum::kSegment) {
+      const auto edge = static_cast<std::size_t>(witness.entity);
+      if (edge >= visible_edges_) return true;
+      for (std::size_t use = edge_triangle_offsets_[edge]; use < edge_triangle_offsets_[edge + 1];
+           ++use) {
+        facets.push_back(input_.polygon_facets[candidate_.input_polygons[static_cast<std::size_t>(
+            edge_triangle_rows_[use])]]);
+      }
+    } else if (witness.stratum == SourceStratum::kFacet) {
+      facets.push_back(input_.polygon_facets[
+          candidate_.input_polygons[static_cast<std::size_t>(witness.entity)]]);
+    }
+    if (plane_normals_.empty()) return false;
+    return std::any_of(facets.begin(), facets.end(), [&](int32_t facet) {
+      const double* row = input_.facet_planes + 9 * static_cast<std::size_t>(facet);
+      if (std::isnan(row[0])) return false;
+      const double tolerance = input_.facet_plane_tolerances == nullptr
+          ? 0.0 : input_.facet_plane_tolerances[facet];
+      double distance = 0.0;
+      return !declared_plane_admits(row, plane_normals_[static_cast<std::size_t>(facet)],
+                                    tolerance, point(s), distance);
+    });
+  }
+
   // Points are tried newest first (undoing later splits before the earlier
   // ones they refined), in passes: a point none of whose replacements
   // applies is retried after the others have been removed. A pass that
@@ -4177,7 +4280,8 @@ class PlcRecoveryBuilder {
     suppressed_.assign(static_cast<std::size_t>(count), 0);
     std::vector<int32_t> pending;
     for (int32_t vertex = count - 1; vertex >= source_point_count_; --vertex) {
-      if (input_.policy != BoundaryPolicy::kFixed && exact_points_.position(vertex) == nullptr) {
+      if (input_.policy != BoundaryPolicy::kFixed && exact_points_.position(vertex) == nullptr &&
+          !suppression_required(vertex)) {
         continue;
       }
       pending.push_back(vertex);
@@ -5571,17 +5675,22 @@ class PlcRecoveryBuilder {
   // A point that cannot be removed is a STEINER_SUPPRESSION refusal naming
   // its source segment or facet; under FIXED it is the FIXED_SEGMENT /
   // FIXED_FACET refusal of that entity (its boundary could not be recovered
-  // unmodified).
+  // unmodified). A point on a hidden internal edge names the edge's facet.
   int32_t refuse_suppression(int32_t s) {
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
     const bool fixed = input_.policy == BoundaryPolicy::kFixed;
     const int32_t status = fixed ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_UNRESOLVED;
+    int32_t triangle = witness.entity;
     if (witness.stratum == SourceStratum::kSegment) {
-      return fail(status, fixed ? kPlcFixedSegment : kPlcSteinerSuppression, kPlcEdge,
-                  static_cast<int64_t>(witness.entity), kPlcPoint, s);
+      const auto edge = static_cast<std::size_t>(witness.entity);
+      if (edge < visible_edges_) {
+        return fail(status, fixed ? kPlcFixedSegment : kPlcSteinerSuppression, kPlcEdge,
+                    static_cast<int64_t>(witness.entity), kPlcPoint, s);
+      }
+      triangle = static_cast<int32_t>(edge_triangle_rows_[edge_triangle_offsets_[edge]]);
     }
     const int32_t facet = input_.polygon_facets[
-        candidate_.input_polygons[static_cast<std::size_t>(witness.entity)]];
+        candidate_.input_polygons[static_cast<std::size_t>(triangle)]];
     return fail(status, fixed ? kPlcFixedFacet : kPlcSteinerSuppression, kPlcFacet, facet,
                 kPlcPoint, s);
   }
@@ -5884,12 +5993,18 @@ class PlcRecoveryBuilder {
       (void)key;
       publish_face(source);
     }
+    // Hidden internal edges (the trailing rows past visible_edges_) are
+    // neither PLC edges nor segments of the result; their split points were
+    // all suppressed.
+    candidate_.plc_edges.resize(2 * visible_edges_);
+    candidate_.hidden_plc_edges = 0;
     std::size_t segment_count = 0;
-    for (const auto& chain : edge_chains_)
-      if (chain.size() > 1) segment_count += chain.size() - 1;
+    for (std::size_t edge = 0; edge < visible_edges_; ++edge) {
+      if (edge_chains_[edge].size() > 1) segment_count += edge_chains_[edge].size() - 1;
+    }
     candidate_.segments.reserve(2 * segment_count);
     candidate_.segment_sources.reserve(segment_count);
-    for (std::size_t edge = 0; edge < edge_chains_.size(); ++edge) {
+    for (std::size_t edge = 0; edge < visible_edges_; ++edge) {
       const auto& chain = edge_chains_[edge];
       if (chain.size() < 2) continue;
       for (std::size_t interval = 0; interval + 1 < chain.size(); ++interval) {
@@ -5928,6 +6043,10 @@ class PlcRecoveryBuilder {
 
   const PlcInput& input_;
   PlcRecovery candidate_;
+  // PLC edge rows published (the rest are hidden internal edges), and the
+  // exact normals of the declared facet planes (empty without any).
+  std::size_t visible_edges_ = 0;
+  std::vector<std::array<Expansion, 3>> plane_normals_;
   int32_t status_ = PHX_MC_OK;
   int32_t source_point_count_ = 0;
   int32_t corner_count_ = 0;
@@ -6006,7 +6125,7 @@ int32_t fill_suppression_cavity(const SuppressionCavity& cavity, SuppressionCavi
 int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
   try {
     PlcRecovery prepared;
-    const int32_t source_status = prepare_plc_source(input, prepared);
+    const int32_t source_status = prepare_recovery_source(input, prepared);
     if (source_status != PHX_MC_OK) {
       result.failure = prepared.failure;
       result.source_refusal = prepared.source_refusal;

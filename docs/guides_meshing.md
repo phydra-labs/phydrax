@@ -676,23 +676,46 @@ contracts:
   within the feature's protected radius is not inserted, and a cell left for
   that reason is reported as `INPUT_ANGLE` with the feature's apex vertex and
   angle (`TetMeshUnmet.apex_vertex_ids`, `apex_angles`).
+- **Declared exact planes.** A PLC facet may declare an exact plane
+  (`facet_planes`: origin, first axis, second axis in binary64, with
+  `facet_plane_tolerances`); the TetMesh source carries it per face row
+  (`TetMeshSourceComplex.face_planes`, `face_plane_tolerances`). Its
+  triangles then form one face group whatever their rounding, and the shared
+  edges between them are not segments. A boundary vertex of the group is
+  admitted on the plane if and only if the plane meets the closed box of reals
+  that round to its carrier, or the carrier lies within the declared
+  tolerance of the plane; both tests are exact. Creation refuses the
+  declaration otherwise, raising `TetMeshPlaneRefusal` with the first refused
+  vertex, the plane's face row, the rounded parameters of the carrier's
+  projection onto the plane, its outward distance bound and the tolerance;
+  nothing is created. `TetMesh3D.plane_records()` lists every admitted
+  (vertex, plane) incidence with the same record. Boundary split points of a
+  declared group are placed on the plane itself (witness stratum 3: the point
+  `origin + s * first_axis + t * second_axis` of the face row's plane, carrier
+  its correctly rounded realization), a subfacet is valid when every corner
+  is admitted and its projection onto the plane keeps the facet's orientation
+  inside the group's triangles, and acute input angles use the plane normals.
+  Downstream, a stratum-3 vertex is a facet point of that face row's facet.
+  Without a declaration a rotated facet keeps its authored triangles, as above.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
-  `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
-  interior vertex insertion, collapse, and relocation is accepted only if the
-  cells it creates pass the hard gates (relative determinant above its floor,
-  source constraints preserved) and the size gate, and the affected cells'
-  worst-first sorted scores strictly improve. An interior insertion either
-  cones a circumsphere cavity to a candidate point or, for a cell whose edits
-  are otherwise exhausted, cones the closed ring of one of its unconstrained
-  edges to a point in the ring's kernel. The latter removes a flat cell whose
-  four vertices lie on a fixed boundary (two constrained faces splitting a
-  planar quad) without moving the boundary: no flip can remove such a cell and
-  no circumsphere cavity contains it. A relocation must also make sufficient
-  progress: at the first position where its star's sorted scores change, the
-  new score meets the target or closes at least an eighth of that score's gap
-  to the target (at least one quantum). A cell's gap therefore shrinks
-  geometrically rather than one quantum per move.
+  `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores
+  0 whatever its angles and ratio (a flat cell on a cocircular boundary quad
+  has a finite circumsphere and could otherwise score 1). Every face flip,
+  edge-ring reconnection, interior vertex insertion, collapse, and relocation
+  is accepted only if the cells it creates pass the hard gates (relative
+  determinant above its floor, source constraints preserved) and the size
+  gate, and the affected cells' worst-first sorted scores strictly improve. An
+  interior insertion either cones a circumsphere cavity to a candidate point
+  or, for a cell whose edits are otherwise exhausted, cones the closed ring of
+  one of its unconstrained edges to a point in the ring's kernel. The latter
+  removes a flat cell whose four vertices lie on a fixed boundary (two
+  constrained faces splitting a planar quad) without moving the boundary: no
+  flip can remove such a cell and no circumsphere cavity contains it. A
+  relocation must also make sufficient progress: at the first position where
+  its star's sorted scores change, the new score meets the target or closes at
+  least an eighth of that score's gap to the target (at least one quantum). A
+  cell's gap therefore shrinks geometrically rather than one quantum per move.
 - **Precedence.** The determinant floor binds every edit. The size gate is
   relative to the cells an edit removes: no created cell may exceed its target
   by more than the largest excess (circumradius over target) among them, or at

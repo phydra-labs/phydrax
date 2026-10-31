@@ -1429,6 +1429,44 @@ def _exact_patch_plane(domain: MeshingDomain, patch: int, /) -> np.ndarray | Non
     )
 
 
+def _cad_plane_witness_uv(
+    chart: _ExactPlaneChart, plane: np.ndarray, parameters: np.ndarray, /
+) -> tuple[Fraction, Fraction]:
+    """Exact chart parameters of a declared-plane (stratum-3) witness point.
+
+    The witness is ``origin + s * first_axis + t * second_axis`` of the
+    declared binary64 plane rows; its parameters are those of its orthogonal
+    projection onto the exact patch chart (the declared rows round the chart,
+    so they are ``(s, t)`` whenever the rounding is exact).
+    """
+    rows = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in plane
+    )
+    s, t = (Fraction.from_float(float(value)) for value in parameters)
+    origin, first, second = chart
+    delta = tuple(
+        rows[0][axis] + s * rows[1][axis] + t * rows[2][axis] - origin[axis]
+        for axis in range(3)
+    )
+
+    def dot(left: tuple[Fraction, ...], right: tuple[Fraction, ...]) -> Fraction:
+        return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
+
+    first_first, first_second, second_second = (
+        dot(first, first),
+        dot(first, second),
+        dot(second, second),
+    )
+    determinant = first_first * second_second - first_second * first_second
+    if determinant == 0:
+        raise ValueError("CAD planar patch chart axes are parallel.")
+    first_delta, second_delta = dot(first, delta), dot(second, delta)
+    return (
+        (first_delta * second_second - second_delta * first_second) / determinant,
+        (first_first * second_delta - first_second * first_delta) / determinant,
+    )
+
+
 def _cad_volume_chart_witness(
     source: NativeCadVolumeSource,
     construction: VolumeConstruction,
@@ -1671,6 +1709,77 @@ def _cad_volume_chart_witness(
     source_entity_ids: list[str] = []
     occurrence_paths: list[tuple[str, ...]] = []
     orientations: list[int] = []
+    declared_planes = source.plc_source.complex.facet_planes
+    exact_charts: dict[int, _ExactPlaneChart | None] = {}
+
+    def patch_witness_row(vertex: int, patch: int, /) -> int:
+        row = int(witness_entities[vertex])
+        if not 0 <= row < source_faces.shape[0]:
+            raise ValueError("CAD facet witness names an absent source triangle.")
+        if int(source_face_facets[row]) != patch:
+            raise ValueError("CAD facet witness changed its source patch.")
+        return row
+
+    def patch_input_uv(input_vertex: int, patch: int, /) -> tuple[Fraction, Fraction]:
+        parameter_candidates = patch_vertex_parameters.get(patch, {}).get(
+            input_vertex, set()
+        )
+        if input_vertex < 0 or len(parameter_candidates) != 1:
+            raise ValueError(
+                "CAD planar patch lacks one exact root parameter per output vertex."
+            )
+        return next(iter(parameter_candidates))
+
+    def planar_vertex_uv(
+        vertex: int, patch: int, chart: _ExactPlaneChart, /
+    ) -> tuple[Fraction, Fraction]:
+        """Chart parameters of a face vertex in its planar patch's one exact chart."""
+        input_vertex = int(input_vertices[vertex])
+        stratum = int(witness_strata[vertex])
+        if input_vertex >= 0:
+            return patch_input_uv(input_vertex, patch)
+        if stratum == 1:
+            edge_row = int(witness_entities[vertex])
+            if not 0 <= edge_row < source_segment_vertices.shape[0]:
+                raise ValueError("CAD edge witness names an absent source segment.")
+            first, second = (
+                patch_input_uv(int(input_vertices[int(value)]), patch)
+                for value in source_segment_vertices[edge_row]
+            )
+            parameter = Fraction.from_float(float(witness_parameters[vertex, 0]))
+            if not 0 <= parameter <= 1:
+                raise ValueError("CAD edge witness lies outside its source segment.")
+            return (
+                first[0] + parameter * (second[0] - first[0]),
+                first[1] + parameter * (second[1] - first[1]),
+            )
+        if stratum == 2:
+            root = chart_parameters_by_source_face[patch_witness_row(vertex, patch)]
+            u, v = (
+                Fraction.from_float(float(value)) for value in witness_parameters[vertex]
+            )
+            if u < 0 or v < 0 or u + v > 1:
+                raise ValueError("CAD facet witness lies outside its source triangle.")
+            return (
+                root[0][0]
+                + u * (root[1][0] - root[0][0])
+                + v * (root[2][0] - root[0][0]),
+                root[0][1]
+                + u * (root[1][1] - root[0][1])
+                + v * (root[2][1] - root[0][1]),
+            )
+        if stratum == 3:
+            patch_witness_row(vertex, patch)
+            plane = (
+                None if declared_planes is None else np.asarray(declared_planes[patch])
+            )
+            if plane is None or not np.all(np.isfinite(plane)):
+                raise ValueError("CAD plane witness lies on an undeclared source patch.")
+            return _cad_plane_witness_uv(chart, plane, witness_parameters[vertex])
+        raise ValueError(
+            "CAD boundary vertex has no exact source vertex, edge, facet, or plane witness."
+        )
+
     for face_row in range(boundary_faces.shape[0]):
         face = (
             int(boundary_faces[face_row, 0]),
@@ -1770,9 +1879,13 @@ def _cad_volume_chart_witness(
                 vertex_candidates = triangles_by_edge.get(
                     tuple(sorted(edge_inputs)), set()
                 )
+            elif int(witness_strata[vertex]) == 3:
+                # A point on its patch's declared plane is not bound to one
+                # source triangle: its face takes the patch's planar chart.
+                vertex_candidates = set()
             else:
                 raise ValueError(
-                    "CAD boundary vertex has no exact source vertex, edge, or facet witness."
+                    "CAD boundary vertex has no exact source vertex, edge, facet, or plane witness."
                 )
             vertex_candidate_sets.append(vertex_candidates)
         smallest_candidates = min(vertex_candidate_sets, key=len)
@@ -1785,6 +1898,7 @@ def _cad_volume_chart_witness(
                 "CAD output face has ambiguous original surface triangle ancestry."
             )
         patch_orientation = int(domain.patches[patch].orientation)
+        planar_parameters: list[tuple[Fraction, Fraction]] | None = None
         if candidates:
             source_face_row = next(iter(candidates))
             root_parameters = chart_parameters_by_source_face[source_face_row]
@@ -1793,7 +1907,10 @@ def _cad_volume_chart_witness(
                 int(value) for value in source_faces[source_face_row]
             )
         else:
-            if _exact_patch_plane(domain, patch) is None:
+            if patch not in exact_charts:
+                exact_charts[patch] = _exact_patch_chart(domain, patch)
+            chart = exact_charts[patch]
+            if chart is None:
                 raise ValueError(
                     "CAD output face spans source triangles without an exact planar patch chart."
                 )
@@ -1801,22 +1918,11 @@ def _cad_volume_chart_witness(
                 raise ValueError(
                     "CAD planar patch source triangles do not share one exact oriented chart."
                 )
-            patch_vertex_parameters_for_face = patch_vertex_parameters.get(patch, {})
-            source_triangle_values: list[int] = []
-            root_parameter_values: list[tuple[Fraction, Fraction]] = []
-            for vertex in face_vertex_rows:
-                input_vertex = int(input_vertices[vertex])
-                parameter_candidates = patch_vertex_parameters_for_face.get(
-                    input_vertex, set()
-                )
-                if input_vertex < 0 or len(parameter_candidates) != 1:
-                    raise ValueError(
-                        "CAD planar patch lacks one exact root parameter per output vertex."
-                    )
-                source_triangle_values.append(input_vertex)
-                root_parameter_values.append(next(iter(parameter_candidates)))
-            source_triangle = tuple(source_triangle_values)
-            root_parameters = tuple(root_parameter_values)
+            planar_parameters = [
+                planar_vertex_uv(vertex, patch, chart) for vertex in face_vertex_rows
+            ]
+            source_triangle = ()
+            root_parameters = ()
             root_orientation = patch_orientation
         if root_orientation != patch_orientation:
             raise ValueError(
@@ -1825,8 +1931,12 @@ def _cad_volume_chart_witness(
         source_corner_by_vertex = {
             vertex: corner for corner, vertex in enumerate(source_triangle)
         }
-        child_parameters: list[tuple[Fraction, Fraction]] = []
-        for vertex in face_vertex_rows:
+        # A face of a planar chart already carries its vertices' chart
+        # parameters; a face inside one source triangle restricts each vertex to
+        # that triangle's roots.
+        child_parameters = [] if planar_parameters is None else planar_parameters
+        triangle_vertex_rows = face_vertex_rows if planar_parameters is None else ()
+        for vertex in triangle_vertex_rows:
             input_vertex = int(input_vertices[vertex])
             if input_vertex >= 0:
                 corner = source_corner_by_vertex.get(input_vertex)

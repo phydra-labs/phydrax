@@ -40,6 +40,7 @@ from phydrax.meshing._controls import (
 from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.meshing.providers._native_cad_volume import (
     NativeCadVolumeSource,
@@ -733,3 +734,94 @@ def test_native_cad_region_control_identity_is_preserved_in_boundary_evidence() 
         construction.organization.labels,
         construction.organization.patches,
     )
+
+
+def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnesses() -> (
+    None
+):
+    # Each planar box face is a declared exact plane: conforming refinement
+    # places facet split points on it (TetMesh witness stratum 3), and the
+    # chart witness maps every boundary vertex through the patch's one exact
+    # planar chart.
+    contract = phx.SpatialCoordinateContract.si()
+    domain, surface = _cad_surface()
+    source = NativeCadVolumeSource(
+        domain, surface, maximum_deviation=0.1, boundary="conforming"
+    )
+    planes = np.asarray(source.plc_source.complex.facet_planes, dtype=np.float64)
+    assert planes.shape == (len(domain.patches), 3, 3)
+    assert np.all(np.isfinite(planes))
+    scope = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        domain.scope_entity_ids(2),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(scope, 0.3),),
+        region_seeds=(
+            RegionSeed(
+                np.asarray((0.5, 0.5, 0.5), dtype=np.float64),
+                domain.regions[0].name,
+                "solid-material",
+                RegionRole.SOLID,
+            ),
+        ),
+        maximum_deviation=0.05,
+    )
+    construction = prepare_native_cad_volume(
+        source,
+        specification,
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=2.0, minimum_dihedral_degrees=0.0
+            ),
+        ),
+        contract,
+    ).execute()
+    witness = construction.certification.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    assert construction.geometry is not None
+    witness.require_current(
+        construction.mesh, construction.geometry, source.fidelity_source
+    )
+
+    coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    block = construction.mesh.blocks[0]
+    cell_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(block.global_ids).tolist())
+    }
+    cells = np.asarray(block.vertices, dtype=np.int64)
+    patch_by_entity = {domain.entity_id(2, patch): patch for patch in range(len(planes))}
+    surface_points = {
+        tuple(point) for point in np.asarray(surface.mesh.coordinates).tolist()
+    }
+    face_interior_vertices = 0
+    for cell_id, chart_id, references, parameters in zip(
+        np.asarray(witness.cell_global_ids).tolist(),
+        witness.source_chart_ids,
+        np.asarray(witness.target_reference_vertices),
+        np.asarray(witness.source_parameters),
+        strict=True,
+    ):
+        patch = domain.patches[patch_by_entity[chart_id]].surface
+        for reference, uv in zip(references, parameters, strict=True):
+            local = 0 if not np.any(reference) else int(np.argmax(reference)) + 1
+            point = coordinates[cells[cell_rows[int(cell_id)], local]]
+            np.testing.assert_allclose(
+                np.asarray(patch.evaluate(np.asarray(uv))), point, rtol=0.0, atol=1e-12
+            )
+            if (
+                tuple(point.tolist()) not in surface_points
+                and np.count_nonzero((point > 0.0) & (point < 1.0)) == 2
+            ):
+                face_interior_vertices += 1
+    # Refinement split the declared faces inside their planes.
+    assert face_interior_vertices > 0
