@@ -67,6 +67,8 @@ from ..discretization._nested_reference_types import (
 )
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._surface_chart_records import (
+    _exact_chart_from_tokens,
+    rational_chart_tokens as surface_chart_tokens,
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
 )
@@ -113,7 +115,7 @@ from ._association import (
 )
 from ._association_composition import ComposedAssociationTransfer
 from ._association_transfer import propagate_material_association_rows
-from ._audit import CellMeshAuditPolicy
+from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from ._bisection import (
     BisectionCompatibility,
     BisectionEvidence,
@@ -882,6 +884,25 @@ def _cell_ids(mesh: CellMesh, /) -> np.ndarray:
     return np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
+
+
+def _acceptance_audit_policy(
+    policy: CellMeshAuditPolicy, inputs: MeshCertificationInputs | None, /
+) -> CellMeshAuditPolicy:
+    """Keep schedule-required audit checks evaluated under the route's policy."""
+    if (
+        inputs is None
+        or "open_boundary" not in inputs.schedule.required_audit_checks
+        or policy.watertight_boundary is not CellMeshAuditDisposition.SKIP
+    ):
+        return policy
+    settings = {
+        field.name: getattr(policy, field.name)
+        for field in dataclasses.fields(policy)
+        if field.name != "policy_id"
+    }
+    settings["watertight_boundary"] = CellMeshAuditDisposition.REJECT
+    return CellMeshAuditPolicy(**settings)
 
 
 def _require_native_source(
@@ -3006,7 +3027,6 @@ def _retarget_surface_chart_witness(
         )
     }
     maps = _reference_map_rows(reference_maps)
-    source_charts = np.asarray(witness.charts, dtype=np.float64)
     source_patches = np.asarray(witness.patches, dtype=np.int64)
     source_roots = np.asarray(witness.source_root_cell_ids, dtype=np.int64)
     relation = lineage.entity_lineage(target.topological_dimension)
@@ -3048,7 +3068,7 @@ def _retarget_surface_chart_witness(
 
     target_ids: list[int] = []
     patches: list[int] = []
-    charts: list[np.ndarray] = []
+    charts: list[tuple[tuple[Fraction, ...], ...]] = []
     roots: list[int] = []
     root_mesh_bindings: list[SurfaceRootMeshCellBinding | None] = []
     pieces: list[tuple[int, ...]] = []
@@ -3074,24 +3094,29 @@ def _retarget_surface_chart_witness(
                 source_block_index, source_row = source_rows[source_id]
                 source_kind = source.mesh.blocks[source_block_index].cell_kind
                 basis = coordinate_source_basis(lagrange_element(source_kind, 1))
-                source_chart = source_charts[parent]
+                source_chart = _exact_chart_from_tokens(
+                    witness.chart_rational_tokens, parent
+                )
                 chart_expressions = linear_combinations(
                     basis,
                     tuple(
-                        tuple(Fraction(float(value)) for value in source_chart[:, axis])
-                        for axis in range(2)
+                        tuple(point[axis] for point in source_chart) for axis in range(2)
                     ),
                 )
-                chart = np.asarray(
-                    [
-                        [
-                            float(evaluate_expression(value, point))
-                            for value in chart_expressions
-                        ]
-                        for point in exact_points
-                    ],
-                    dtype=np.float64,
+                corner_values = tuple(
+                    tuple(
+                        evaluate_expression(value, point) for value in chart_expressions
+                    )
+                    for point in exact_points
                 )
+                chart = tuple(
+                    tuple(value for value in point if isinstance(value, Fraction))
+                    for point in corner_values
+                )
+                if chart != corner_values:
+                    raise ValueError(
+                        "A refined surface chart left the rational source chart."
+                    )
                 patch = int(source_patches[parent])
                 root = int(source_roots[parent])
                 root_mesh_binding = witness.root_mesh_cell_bindings[parent]
@@ -3104,7 +3129,7 @@ def _retarget_surface_chart_witness(
                     raise ValueError(
                         "Preserved chart cell ID is absent from its source mesh."
                     )
-                chart = source_charts[parent].copy()
+                chart = _exact_chart_from_tokens(witness.chart_rational_tokens, parent)
                 patch = int(source_patches[parent])
                 root = int(source_roots[parent])
                 root_mesh_binding = witness.root_mesh_cell_bindings[parent]
@@ -3132,6 +3157,8 @@ def _retarget_surface_chart_witness(
                         "A coarsened surface cell lost source chart ancestry."
                     )
                 parent_rows = [value for value in rows if value is not None]
+                # Root-mesh bindings name each child cell itself; only their
+                # presence is family identity, and the parent rebinds below.
                 identities = {
                     (
                         int(source_patches[parent]),
@@ -3139,7 +3166,7 @@ def _retarget_surface_chart_witness(
                         witness.source_piece_ids[parent],
                         witness.geometry_entity_ids[parent],
                         witness.occurrence_paths[parent],
-                        witness.root_mesh_cell_bindings[parent],
+                        witness.root_mesh_cell_bindings[parent] is None,
                     )
                     for parent in parent_rows
                 }
@@ -3147,10 +3174,11 @@ def _retarget_surface_chart_witness(
                     raise ValueError(
                         "Coarsening crosses distinct source chart pieces or occurrences."
                     )
-                patch, root, piece, entity, occurrence, root_mesh_binding = next(
-                    iter(identities)
+                patch, root, piece, entity, occurrence, unbound = next(iter(identities))
+                root_mesh_binding = (
+                    None if unbound else witness.root_mesh_cell_bindings[parent_rows[0]]
                 )
-                vertex_chart: dict[int, np.ndarray] = {}
+                vertex_chart: dict[int, tuple[Fraction, ...]] = {}
                 for parent, parent_row in zip(parents, parent_rows, strict=True):
                     source_block_index, source_row = source_rows[parent]
                     source_block = source.mesh.blocks[source_block_index]
@@ -3158,30 +3186,26 @@ def _retarget_surface_chart_witness(
                         np.asarray(source_block.vertices[source_row], dtype=np.int64)
                     ]
                     for vertex_id, value in zip(
-                        source_vertices.tolist(), source_charts[parent_row], strict=True
+                        source_vertices.tolist(),
+                        _exact_chart_from_tokens(
+                            witness.chart_rational_tokens, parent_row
+                        ),
+                        strict=True,
                     ):
                         previous = vertex_chart.get(int(vertex_id))
-                        if previous is not None and not np.array_equal(previous, value):
+                        if previous is not None and previous != value:
                             raise ValueError(
                                 "Neighboring source chart cells disagree at a shared vertex."
                             )
-                        vertex_chart[int(vertex_id)] = np.asarray(value, dtype=np.float64)
+                        vertex_chart[int(vertex_id)] = value
                 target_vertices = target_vertex_ids[cell_vertices[row]]
                 try:
-                    chart = np.stack(
-                        [vertex_chart[int(value)] for value in target_vertices]
-                    )
+                    chart = tuple(vertex_chart[int(value)] for value in target_vertices)
                 except KeyError as error:
                     raise ValueError(
                         "A coarsened chart corner has no exact source vertex ancestry."
                     ) from error
-                parent_chart = _reference_chart_expressions(
-                    block.cell_kind,
-                    tuple(
-                        tuple(Fraction(float(value)) for value in point)
-                        for point in chart
-                    ),
-                )
+                parent_chart = _reference_chart_expressions(block.cell_kind, chart)
                 for parent in parents:
                     _, child_to_parent = exact_coarsening[parent]
                     child_map = _reference_chart_expressions(
@@ -3191,9 +3215,11 @@ def _retarget_surface_chart_witness(
                         compose_expression(value, child_map) for value in parent_chart
                     )
                     parent_row = witness_rows[parent]
-                    for local_point, source_chart_point in zip(
+                    for local_point, observed in zip(
                         reference_cell_topology(block.cell_kind).vertices,
-                        source_charts[parent_row],
+                        _exact_chart_from_tokens(
+                            witness.chart_rational_tokens, parent_row
+                        ),
                         strict=True,
                     ):
                         exact_local_point = tuple(
@@ -3202,9 +3228,6 @@ def _retarget_surface_chart_witness(
                         predicted = tuple(
                             evaluate_expression(value, exact_local_point)
                             for value in child_chart
-                        )
-                        observed = tuple(
-                            Fraction(float(value)) for value in source_chart_point
                         )
                         if predicted != observed:
                             raise ValueError(
@@ -3215,7 +3238,14 @@ def _retarget_surface_chart_witness(
             patches.append(patch)
             charts.append(chart)
             roots.append(root)
-            root_mesh_bindings.append(root_mesh_binding)
+            # Root-mesh ancestry rebinds to the actual target cell, as for the root.
+            root_mesh_bindings.append(
+                None
+                if root_mesh_binding is None
+                else SurfaceRootMeshCellBinding(
+                    cell_geometry_id(geometry), target.topology_id, cell_id
+                )
+            )
             pieces.append(tuple(piece))
             entities.append(entity)
             occurrences.append(tuple(occurrence))
@@ -3225,7 +3255,11 @@ def _retarget_surface_chart_witness(
         domain_id=witness.domain_id,
         cell_global_ids=np.asarray(target_ids, dtype=np.int64),
         patches=np.asarray(patches, dtype=np.int32),
-        charts=np.asarray(charts, dtype=np.float64),
+        charts=np.asarray(
+            [[[float(value) for value in point] for point in chart] for chart in charts],
+            dtype=np.float64,
+        ),
+        chart_rational_tokens=surface_chart_tokens(tuple(charts)),
         source_root_cell_ids=np.asarray(roots, dtype=np.int64),
         source_piece_ids=tuple(pieces),
         geometry_entity_ids=tuple(entities),
@@ -5269,7 +5303,9 @@ def _finalize_native(
         source.coordinate_contract,
         geometry=geometry,
         boundary=target_boundary,
-        audit_policy=prepared.policy.audit_policy,
+        audit_policy=_acceptance_audit_policy(
+            prepared.policy.audit_policy, certification_inputs
+        ),
         certification_inputs=certification_inputs,
         patches=patches,
         zones=zones,
@@ -6027,7 +6063,9 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         mesh,
         source.coordinate_contract,
         geometry=target_geometry,
-        audit_policy=prepared.policy.audit_policy,
+        audit_policy=_acceptance_audit_policy(
+            prepared.policy.audit_policy, certification_inputs
+        ),
         certification_inputs=certification_inputs,
         patches=patches,
         zones=zones,

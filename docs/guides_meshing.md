@@ -1057,9 +1057,10 @@ identity are checked before the target is certified.
 
 Surface-material charts coarsen only when exact ancestry preserves their source
 root and piece. Source-boundary chart pieces compose through exact fine-to-parent
-reference maps and remain multiple witness rows partitioning the target edge or
-face; missing or ambiguous lineage refuses rather than merging source chart,
-entity, or occurrence identities.
+reference maps. When a restored parent entity is covered by its children's
+pieces of one source chart, the pieces must agree on one exact affine parent
+chart and are published as that single row; missing or ambiguous lineage refuses
+rather than merging source chart, entity, or occurrence identities.
 
 Source-boundary chart witnesses retain exact rational reference/source-parameter
 tokens; their float arrays are checked realizations, not ancestry authority.
@@ -1463,7 +1464,12 @@ restricted map is still checked.
 Simplex coarsening of a piecewise-linear mesh keeps the restored parents affine
 on their exact corners; refine/coarsen round trips through the bisection
 hierarchy restore the original topology, coordinates, and global IDs exactly.
-Non-P1 coarsening requires one exact root chart per restored parent.
+Adapting an already restricted (non-P1) map composes every target chart through
+the source's retained root restriction, so restriction ancestry always names the
+original root cells rather than an intermediate mesh. Non-P1 coarsening rebuilds
+each restored parent's exact root chart from its children's root charts and the
+inverse bisection maps; it refuses when the children name different root cells,
+coordinate dofs, or charts.
 
 `NATIVE_POLYHEDRAL` selects one explicit operation: `PLANE_SPLIT`,
 `AGGLOMERATE`, or `REGENERATE`. Plane splits and agglomerations retain exact

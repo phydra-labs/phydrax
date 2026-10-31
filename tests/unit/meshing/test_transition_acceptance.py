@@ -13,7 +13,10 @@ from phydrax.discretization._cell_geometry import CellGeometryRestrictionSource
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
 from phydrax.discretization._reference_cell import reference_cell_topology
-from phydrax.discretization._surface_chart_records import SurfaceChartWitness
+from phydrax.discretization._surface_chart_records import (
+    SurfaceChartWitness,
+    SurfaceRootMeshCellBinding,
+)
 from phydrax.discretization.finite_volume._automatic_remap import (
     prepare_unstructured_conservative_remap,
 )
@@ -788,11 +791,17 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
     )
     certification = refined.target.certification
     assert certification is not None and certification.passed
-    assert certification.inputs.domain is domain
+    assert certification.inputs.feature_source is domain
     target_witness = certification.inputs.fidelity_witness
     assert isinstance(target_witness, SurfaceChartWitness)
-    assert set(target_witness.root_mesh_cell_bindings) == set(
-        original.root_mesh_cell_bindings
+    # Root-mesh bindings name the actual target cells of the adapted mesh.
+    assert target_witness.root_mesh_cell_bindings == tuple(
+        SurfaceRootMeshCellBinding(
+            cell_geometry_id(refined.target.geometry),
+            refined.target.mesh.topology_id,
+            int(identifier),
+        )
+        for identifier in np.asarray(target_witness.cell_global_ids, dtype=np.int64)
     )
     source_roots = set(
         zip(
@@ -835,7 +844,15 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
     coarsened_witness = coarsened_report.inputs.fidelity_witness
     assert isinstance(coarsened_witness, SurfaceChartWitness)
     assert coarsened.target.mesh.topology_id == source.mesh.topology_id
-    assert coarsened_witness.root_mesh_cell_bindings == original.root_mesh_cell_bindings
+    assert [
+        (binding.root_topology_id, binding.root_cell_global_id)
+        for binding in coarsened_witness.root_mesh_cell_bindings
+        if binding is not None
+    ] == [
+        (binding.root_topology_id, binding.root_cell_global_id)
+        for binding in original.root_mesh_cell_bindings
+        if binding is not None
+    ]
     assert coarsened_witness.domain_id == original.domain_id
     np.testing.assert_array_equal(
         coarsened_witness.source_root_cell_ids,
