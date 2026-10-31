@@ -732,6 +732,147 @@ def _cad_chart_curve_use(
     return matches[0]
 
 
+def _cad_corner_key(domain: MeshingDomain, corner: int, /) -> tuple[object, ...]:
+    return ("corner", domain.entity_id(0, corner), domain.source_occurrences[0][corner])
+
+
+def _cad_plane_point_keys(
+    domain: MeshingDomain,
+    patch: int,
+    curve_keys: dict[int, set[tuple[object, ...]]],
+    /,
+) -> dict[_Point2, tuple[object, ...]]:
+    """Authored keys of the plane chart points of a patch's trim samples.
+
+    A trim sample keyed by another patch as an authored line p-curve parameter
+    is located on this patch's own authored use of that curve, then mapped by
+    the exact plane chart; trim ends map to their corners and the pole to its
+    corner. Plane chart points not reached this way are patch-interior points.
+    """
+    from ._domain_boundary import exact_plane_chart
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse
+    from .brep._patches import ExactLineCurve, LineCurve
+
+    plane = exact_plane_chart(domain, patch)
+    if plane is None:
+        raise SourceCoverageUnavailable(
+            "A CAD plane chart row names a patch without an exact plane chart.",
+            status="violated",
+        )
+    keys: dict[_Point2, tuple[object, ...]] = {}
+
+    def bind(point: _Point2, key: tuple[object, ...], /) -> None:
+        if keys.setdefault(point, key) != key:
+            raise SourceCoverageUnavailable(
+                "Distinct authored CAD points meet in one plane chart point.",
+                status="unresolved",
+            )
+
+    for loop in domain.patches[patch].loops:
+        for use in loop:
+            if isinstance(use, PatchPoleUse):
+                bind((Fraction(0), Fraction(0)), _cad_corner_key(domain, use.corner))
+                continue
+            if not isinstance(use, PatchCurveUse) or not isinstance(
+                use.pcurve, (ExactLineCurve, LineCurve)
+            ):
+                continue
+            curve = domain.curves[use.curve]
+            for parameter, corner in ((use.first, curve.start), (use.last, curve.end)):
+                point = tuple(use.pcurve.evaluate_exact(Fraction.from_float(parameter)))
+                bind(
+                    plane.chart_point(_triangle_point(point)),
+                    _cad_corner_key(domain, corner),
+                )
+            for key in curve_keys.get(int(use.curve), ()):
+                parameter = key[3]
+                if not isinstance(parameter, Fraction):
+                    continue
+                point = tuple(use.pcurve.evaluate_exact(parameter))
+                bind(plane.chart_point(_triangle_point(point)), key)
+    return keys
+
+
+def _triangle_point(values: tuple[object, ...], /) -> _Point2:
+    first, second = values
+    if not isinstance(first, Fraction) or not isinstance(second, Fraction):
+        raise SourceCoverageUnavailable(
+            "A CAD trim p-curve point is not rational.", status="unresolved"
+        )
+    return first, second
+
+
+def _cad_plane_curve_use(
+    domain: MeshingDomain,
+    patch: int,
+    first: tuple[object, ...],
+    second: tuple[object, ...],
+    /,
+) -> tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse]:
+    """Authored coedge of a plane-charted patch between two keyed trim points.
+
+    Each end takes its key's p-curve parameter on the patch's own authored use;
+    a corner end of a closed curve takes the use end nearer the other end.
+    """
+    from ._meshing_domain import PatchCurveUse
+
+    matches: list[
+        tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse]
+    ] = []
+    for loop in domain.patches[patch].loops:
+        for use in loop:
+            if not isinstance(use, PatchCurveUse):
+                continue
+            curve_row = int(use.curve)
+            curve_key = (
+                domain.entity_id(1, curve_row),
+                domain.source_occurrences[1][curve_row],
+            )
+            curve = domain.curves[curve_row]
+            ends = (Fraction.from_float(use.first), Fraction.from_float(use.last))
+            parameters: list[Fraction | None] = []
+            for key in (first, second):
+                if key[0] == "curve" and (key[1], key[2]) == curve_key:
+                    parameter = key[3]
+                    parameters.append(
+                        parameter if isinstance(parameter, Fraction) else None
+                    )
+                elif key[0] == "corner" and key in (
+                    _cad_corner_key(domain, curve.start),
+                    _cad_corner_key(domain, curve.end),
+                ):
+                    candidates = [
+                        end
+                        for end, corner in zip(
+                            ends, (curve.start, curve.end), strict=True
+                        )
+                        if _cad_corner_key(domain, corner) == key
+                    ]
+                    parameters.append(candidates[0] if len(candidates) == 1 else None)
+                else:
+                    break
+            else:
+                first_parameter, second_parameter = parameters
+                if first_parameter is None and second_parameter is not None:
+                    known = second_parameter
+                    first_parameter = min(ends, key=lambda end: abs(end - known))
+                if second_parameter is None and first_parameter is not None:
+                    known = first_parameter
+                    second_parameter = min(ends, key=lambda end: abs(end - known))
+                if (
+                    first_parameter is not None
+                    and second_parameter is not None
+                    and first_parameter != second_parameter
+                ):
+                    matches.append((curve_key, first_parameter, second_parameter, use))
+    if len(matches) != 1:
+        raise SourceCoverageUnavailable(
+            "A CAD chart seam does not select one authored affine coedge occurrence.",
+            status="unresolved",
+        )
+    return matches[0]
+
+
 def _cad_chart_topology_degree(
     domain: MeshingDomain,
     mesh: CellMesh,
@@ -742,9 +883,14 @@ def _cad_chart_topology_degree(
     by_cell_face: dict[tuple[int, int], tuple[int, ...]],
     cell_region: dict[int, int],
     face_outward_sign: dict[tuple[int, int], int],
+    plane_patches: frozenset[int],
     /,
 ) -> tuple[tuple[tuple[int, ...], int, int, int, int, int], ...]:
-    """Prove a per-region chart homeomorphism and compute its oriented degree."""
+    """Prove a per-region chart homeomorphism and compute its oriented degree.
+
+    Rows of ``plane_patches`` are charted in their patch's exact plane chart;
+    their trim points take the authored keys their neighbors give them.
+    """
     from ..discretization._reference_cell import reference_cell_topology
 
     cell_rows = {
@@ -816,13 +962,51 @@ def _cad_chart_topology_degree(
             )
         row_targets.append((ids[0], ids[1], ids[2]))
         row_uv.append(uv)
+        # Plane-chart rows are labelled below, once every curve label is known.
         row_labels.append(
-            (
+            ((), (), ())
+            if patch in plane_patches
+            else (
                 _cad_chart_vertex_key(domain, patch, uv[0]),
                 _cad_chart_vertex_key(domain, patch, uv[1]),
                 _cad_chart_vertex_key(domain, patch, uv[2]),
             )
         )
+    if plane_patches:
+        curve_rows: dict[tuple[object, object], int] = {
+            (domain.entity_id(1, curve), domain.source_occurrences[1][curve]): curve
+            for curve in range(len(domain.curves))
+        }
+        curve_keys: dict[int, set[tuple[object, ...]]] = {}
+        for labels, patch in zip(row_labels, patch_rows, strict=True):
+            if patch in plane_patches:
+                continue
+            for label in labels:
+                if label[0] == "curve":
+                    curve_keys.setdefault(curve_rows[(label[1], label[2])], set()).add(
+                        label
+                    )
+        plane_keys = {
+            patch: _cad_plane_point_keys(domain, patch, curve_keys)
+            for patch in plane_patches
+        }
+        for row, patch in enumerate(patch_rows):
+            if patch not in plane_patches:
+                continue
+            keys = plane_keys[patch]
+            first, second, third = (
+                keys.get(
+                    point,
+                    (
+                        "patch",
+                        domain.entity_id(2, patch),
+                        domain.source_occurrences[2][patch],
+                        point,
+                    ),
+                )
+                for point in row_uv[row]
+            )
+            row_labels[row] = (first, second, third)
 
     target_edges: dict[tuple[int, tuple[int, int]], list[int]] = {}
     source_edges: dict[
@@ -956,11 +1140,35 @@ def _cad_chart_topology_degree(
                 first_patch, second_patch = patch_rows[first_row], patch_rows[second_row]
                 first_uv = dict(zip(first_targets, row_uv[first_row], strict=True))
                 second_uv = dict(zip(second_targets, row_uv[second_row], strict=True))
-                first_use = _cad_chart_curve_use(
-                    domain, first_patch, first_uv[endpoints[0]], first_uv[endpoints[1]]
+                first_use = (
+                    _cad_plane_curve_use(
+                        domain,
+                        first_patch,
+                        first_labels[endpoints[0]],
+                        first_labels[endpoints[1]],
+                    )
+                    if first_patch in plane_patches
+                    else _cad_chart_curve_use(
+                        domain,
+                        first_patch,
+                        first_uv[endpoints[0]],
+                        first_uv[endpoints[1]],
+                    )
                 )
-                second_use = _cad_chart_curve_use(
-                    domain, second_patch, second_uv[endpoints[0]], second_uv[endpoints[1]]
+                second_use = (
+                    _cad_plane_curve_use(
+                        domain,
+                        second_patch,
+                        second_labels[endpoints[0]],
+                        second_labels[endpoints[1]],
+                    )
+                    if second_patch in plane_patches
+                    else _cad_chart_curve_use(
+                        domain,
+                        second_patch,
+                        second_uv[endpoints[0]],
+                        second_uv[endpoints[1]],
+                    )
                 )
                 if first_use[0] != second_use[0] or (first_use[1], first_use[2]) != (
                     second_use[1],
@@ -1087,7 +1295,7 @@ def _cad_chart_partition(
     cell_regions: np.ndarray,
     /,
 ) -> tuple[int, tuple[str, ...]]:
-    from ._domain_boundary import MeshingDomainBoundarySource
+    from ._domain_boundary import exact_plane_chart, MeshingDomainBoundarySource
 
     if not isinstance(source, MeshingDomainBoundarySource) or not _same_domain(
         source.domain, domain
@@ -1125,6 +1333,7 @@ def _cad_chart_partition(
     pairs, signs_by_patch = cad_material_sides(domain)
     declared_by_patch = dict(source.boundary_parameter_triangles())
     targets_by_patch: dict[int, list[_Triangle2]] = {}
+    plane_by_patch: dict[int, bool] = {}
     patch_rows: list[int] = []
     for row, (source_chart_id, source_entity_id, occurrence) in enumerate(
         zip(
@@ -1134,10 +1343,6 @@ def _cad_chart_partition(
             strict=True,
         )
     ):
-        if source_chart_id != source_entity_id:
-            raise SourceCoverageUnavailable(
-                "CAD source chart and authored face identity differ.", status="violated"
-            )
         try:
             patch = domain.resolve_entity_id(
                 2, source_entity_id, occurrence_path=occurrence
@@ -1147,6 +1352,18 @@ def _cad_chart_partition(
                 f"CAD chart witness names an invalid source face: {error}",
                 status="violated",
             ) from error
+        plane = source_chart_id != source_entity_id
+        if plane:
+            plane_chart = exact_plane_chart(domain, patch)
+            if plane_chart is None or source_chart_id != plane_chart.chart_id:
+                raise SourceCoverageUnavailable(
+                    "CAD source chart and authored face identity differ.",
+                    status="violated",
+                )
+        if plane_by_patch.setdefault(patch, plane) != plane:
+            raise SourceCoverageUnavailable(
+                "CAD chart witness mixes charts of one source face.", status="violated"
+            )
         patch_rows.append(patch)
         triangle = _triangle2(witness.source_parameter_chart(row))
         targets_by_patch.setdefault(patch, []).append(triangle)
@@ -1155,14 +1372,23 @@ def _cad_chart_partition(
             "CAD boundary chart witness omits or adds an authored source patch.",
             status="violated",
         )
+    for patch, plane in plane_by_patch.items():
+        if plane:
+            # A curved plane-chart trim is referenced by the target's boundary
+            # chords, each separated from its source arc by a certified lens.
+            declared_by_patch[patch] = source._trim_partition_reference_unchecked(
+                patch, tuple(targets_by_patch[patch]), plane=True
+            )[0]
+    plane_patches = frozenset(patch for patch, plane in plane_by_patch.items() if plane)
     for patch in source.patches:
         declared = tuple(declared_by_patch[patch])
         target = tuple(targets_by_patch.get(patch, ()))
-        # Collapsed pole slivers are part of their owner cells' chart preimages.
-        target = (
-            *target,
-            *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
-        )
+        if patch not in plane_patches:
+            # Collapsed pole slivers are part of their owner cells' chart preimages.
+            target = (
+                *target,
+                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+            )
         if not declared or not target:
             raise SourceCoverageUnavailable(
                 f"CAD patch {patch} lacks a complete chart partition.", status="violated"
@@ -1267,6 +1493,7 @@ def _cad_chart_partition(
         by_cell_face,
         cell_region,
         face_outward_sign,
+        plane_patches,
     )
     degrees = tuple(
         canonical_fingerprint(
