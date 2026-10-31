@@ -59,7 +59,11 @@ def _reconstructed_tetrahedron() -> ReconstructedGeometrySource:
         ((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)),
         dtype=np.int32,
     )
-    region = MeshRegion(jnp.asarray(vertices), jnp.asarray(faces), feature_id="consumer-surface-envelope-tetrahedron")
+    region = MeshRegion(
+        jnp.asarray(vertices),
+        jnp.asarray(faces),
+        feature_id="consumer-surface-envelope-tetrahedron",
+    )
     report = ReconstructionReport(
         source_kind="point_cloud",
         algorithm="screened-poisson-reconstruction",
@@ -191,7 +195,9 @@ def test_surface_envelope_route_retains_original_and_derived_region_authority() 
         source.native_facet_rows,
         np.arange(source.result.surface_triangles.shape[0], dtype=np.int64),
     )
-    assert np.unique(source.native_vertex_entity_ids).size == source.native_vertex_rows.size
+    assert (
+        np.unique(source.native_vertex_entity_ids).size == source.native_vertex_rows.size
+    )
     assert np.unique(source.native_facet_entity_ids).size == source.native_facet_rows.size
 
     construction = prepare_native_surface_envelope(
@@ -213,7 +219,9 @@ def test_surface_envelope_route_retains_original_and_derived_region_authority() 
     )
     target_rows_by_id = {
         int(identifier): row
-        for row, identifier in enumerate(np.asarray(mesh.vertex_global_ids, dtype=np.int64))
+        for row, identifier in enumerate(
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        )
     }
     target_ids_by_source_key = {
         (key, occurrence): int(target_id)
@@ -285,17 +293,26 @@ def test_surface_envelope_route_retains_original_and_derived_region_authority() 
     assert cell_association.source_roles == (GeometrySourceEntityRole.REGION,) * (
         mesh.blocks[0].cell_count
     )
-    assert cell_association.source_entity_ids == (region_key[0],) * mesh.blocks[0].cell_count
+    assert (
+        cell_association.source_entity_ids == (region_key[0],) * mesh.blocks[0].cell_count
+    )
     assert construction.organization.zones[0].name == domain.region_ids[0]
     assert construction.organization.zones[0].material_id == "envelope-material"
     assert construction.organization.boundary is not None
     assert construction.organization.boundary.metadata.source_id == source.source_id
-    assert construction.organization.boundary.metadata.source_revision == source.source_revision
+    assert (
+        construction.organization.boundary.metadata.source_revision
+        == source.source_revision
+    )
     assert construction.compliance.passed
-    assert all(label.name != "internal_curve" for label in construction.organization.labels)
+    assert all(
+        label.name != "internal_curve" for label in construction.organization.labels
+    )
 
 
-def test_surface_envelope_hard_point_curve_and_face_features_keep_exact_witnesses() -> None:
+def test_surface_envelope_hard_point_curve_and_face_features_keep_exact_witnesses() -> (
+    None
+):
     _, source, specification, options, contract = _request(
         protected_features=((0, True), (1, True), (2, True))
     )
@@ -329,10 +346,13 @@ def test_surface_envelope_hard_point_curve_and_face_features_keep_exact_witnesse
             tolerance=tolerance,
             witness=witness,
         )
-        assert max(
-            certificate.mesh_to_source_upper,
-            certificate.source_to_mesh_upper,
-        ) <= tolerance
+        assert (
+            max(
+                certificate.mesh_to_source_upper,
+                certificate.source_to_mesh_upper,
+            )
+            <= tolerance
+        )
 
 
 def test_surface_envelope_soft_features_are_measured_not_mandatory_scopes() -> None:
@@ -368,14 +388,11 @@ def test_envelope_chart_query_rejects_a_witness_with_an_omitted_source_facet() -
     assert query.entity_dimension == 2
     selected = np.asarray(source.scope_entity_ids(2), dtype=np.int64)[:2]
     assert selected.size == 2
-    broader_query = PiecewiseLinearBoundarySource(
-        source, 2, entity_ids=selected
-    )
+    broader_query = PiecewiseLinearBoundarySource(source, 2, entity_ids=selected)
     assert isinstance(witness, SourceBoundaryChartWitness)
     assert witness.entity_global_ids.size == 1
     with pytest.raises(ValueError):
         broader_query.validate_chart_witness(witness)
-
 
 
 def test_envelope_point_query_rejects_a_witness_with_an_omitted_source_vertex() -> None:
@@ -423,8 +440,12 @@ def test_envelope_source_scopes_are_the_derived_plc_entity_banks() -> None:
     assert source.plc_source.source_id == source.source_id
     assert source.plc_source.source_revision == source.source_revision
     for dimension in range(4):
-        row_ids = np.asarray(source.scope_entity_ids_by_mesh_row[dimension], dtype=np.int64)
-        np.testing.assert_array_equal(np.sort(row_ids), source.scope_entity_ids(dimension))
+        row_ids = np.asarray(
+            source.scope_entity_ids_by_mesh_row[dimension], dtype=np.int64
+        )
+        np.testing.assert_array_equal(
+            np.sort(row_ids), source.scope_entity_ids(dimension)
+        )
         for row, identifier in enumerate(row_ids.tolist()):
             assert source.source_entity_key_for_mesh_row(dimension, row) == (
                 source.plc_source.source_entity_key_for_scope(dimension, int(identifier))
@@ -442,6 +463,17 @@ def test_surface_envelope_source_refuses_an_insufficient_distance_bound() -> Non
             spacing=0.4,
             certificate_spacing=0.4,
             maximum_deviation=1.5,
+        )
+    # The offset must dominate the native sampling error sqrt(3) h + h_c.
+    with pytest.raises(ValueError, match="must exceed"):
+        SurfaceEnvelopeSource(
+            original,
+            source_id=f"{original.source_id}:unsigned-distance-envelope",
+            coordinate_contract=SpatialCoordinateContract.si(),
+            offset=0.02,
+            spacing=0.16,
+            certificate_spacing=0.08,
+            maximum_deviation=3.0,
         )
 
 
@@ -461,7 +493,12 @@ def _authored_open_sheet() -> tuple[np.ndarray, np.ndarray]:
         for i in range(3):
             if (i, j) == (1, 1):
                 continue  # interior hole
-            quad = (corner[(i, j)], corner[(i + 1, j)], corner[(i + 1, j + 1)], corner[(i, j + 1)])
+            quad = (
+                corner[(i, j)],
+                corner[(i + 1, j)],
+                corner[(i + 1, j + 1)],
+                corner[(i, j + 1)],
+            )
             if (i, j) == (1, 2):
                 quad = tuple(crack.get(vertex, vertex) for vertex in quad)
             triangles.extend(((quad[0], quad[1], quad[2]), (quad[0], quad[2], quad[3])))
@@ -471,7 +508,9 @@ def _authored_open_sheet() -> tuple[np.ndarray, np.ndarray]:
     vertices.extend(((1.0, 1.0, 0.75), (2.0, 1.0, 0.75), (1.0, 2.0, 0.75)))
     triangles.append((first, first + 1, first + 2))  # second component
     # Exact dyadic scaling keeps the envelope small enough for a focused fill.
-    return 0.25 * np.asarray(vertices, dtype=np.float64), np.asarray(triangles, dtype=np.int64)
+    return 0.25 * np.asarray(vertices, dtype=np.float64), np.asarray(
+        triangles, dtype=np.int64
+    )
 
 
 def _point_triangle_distances(points: np.ndarray, triangles: np.ndarray) -> np.ndarray:
@@ -506,19 +545,24 @@ def _point_triangle_distances(points: np.ndarray, triangles: np.ndarray) -> np.n
     )
     choices = (a, b, on_ab, c, on_ac, on_bc)
     for condition, choice in zip(reversed(conditions), reversed(choices), strict=True):
-        closest = np.where(condition[..., None], np.broadcast_to(choice, closest.shape), closest)
+        closest = np.where(
+            condition[..., None], np.broadcast_to(choice, closest.shape), closest
+        )
     return np.min(np.linalg.norm(p - closest, axis=-1), axis=1)
 
 
 def _triangle_samples(triangles: np.ndarray, divisions: int) -> np.ndarray:
-    weights = np.asarray(
-        [
-            (i, j, divisions - i - j)
-            for i in range(divisions + 1)
-            for j in range(divisions + 1 - i)
-        ],
-        dtype=np.float64,
-    ) / divisions
+    weights = (
+        np.asarray(
+            [
+                (i, j, divisions - i - j)
+                for i in range(divisions + 1)
+                for j in range(divisions + 1 - i)
+            ],
+            dtype=np.float64,
+        )
+        / divisions
+    )
     return np.einsum("wk,tkd->twd", weights, triangles).reshape((-1, 3))
 
 
@@ -547,7 +591,9 @@ def test_surface_envelope_wraps_an_authored_imperfect_open_sheet() -> None:
     np.testing.assert_array_equal(sheet.vertices, vertices)
     np.testing.assert_array_equal(sheet.triangles, triangles)
     # Repair moves no point: the repaired triangles are the authored triangle set.
-    authored_keys = {tuple(sorted(map(tuple, vertices[face].tolist()))) for face in triangles}
+    authored_keys = {
+        tuple(sorted(map(tuple, vertices[face].tolist()))) for face in triangles
+    }
     repaired_keys = {
         tuple(sorted(map(tuple, sheet.repaired_vertices[face].tolist())))
         for face in sheet.repaired_triangles
@@ -587,14 +633,19 @@ def test_surface_envelope_wraps_an_authored_imperfect_open_sheet() -> None:
     )
     assert np.max(input_to_envelope) <= bounds[0] + roundoff
     envelope_points = np.concatenate(
-        (np.asarray(source.domain.vertices, dtype=np.float64), envelope_triangles.mean(axis=1))
+        (
+            np.asarray(source.domain.vertices, dtype=np.float64),
+            envelope_triangles.mean(axis=1),
+        )
     )
     envelope_to_input = _point_triangle_distances(envelope_points, authored_triangles)
     assert np.min(envelope_to_input) >= bounds[2] - roundoff
     assert np.max(envelope_to_input) <= bounds[1] + roundoff
 
     specification, options = _specification(source, ())
-    construction = prepare_native_surface_envelope(source, specification, options, contract).execute()
+    construction = prepare_native_surface_envelope(
+        source, specification, options, contract
+    ).execute()
     assert tuple(block.cell_kind for block in construction.mesh.blocks) == ("simplex:3",)
     assert construction.mesh.blocks[0].cell_count > 0
     assert construction.compliance.passed
@@ -622,7 +673,10 @@ def _mobius_strip() -> tuple[np.ndarray, np.ndarray]:
     for row in range(count):
         angle = 2.0 * np.pi * row / count
         radial = np.asarray((np.cos(angle), np.sin(angle), 0.0))
-        width = 0.3 * (np.cos(angle / 2.0) * radial + np.sin(angle / 2.0) * np.asarray((0.0, 0.0, 1.0)))
+        width = 0.3 * (
+            np.cos(angle / 2.0) * radial
+            + np.sin(angle / 2.0) * np.asarray((0.0, 0.0, 1.0))
+        )
         top.append(tuple((2.0 * radial + width).tolist()))
         bottom.append(tuple((2.0 * radial - width).tolist()))
     vertices = np.asarray(top + bottom, dtype=np.float64)
@@ -646,10 +700,18 @@ def test_authored_sheet_refuses_non_orientable_and_non_manifold_topology() -> No
     assert refused.value.entity_ids == tuple(range(12))
 
     fan = np.asarray(
-        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, -1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ),
         dtype=np.float64,
     )
-    with pytest.raises(MeshingFailure, match="more than two distinct triangles") as refused:
+    with pytest.raises(
+        MeshingFailure, match="more than two distinct triangles"
+    ) as refused:
         AuthoredTriangleSheet(
             fan,
             np.asarray(((0, 1, 2), (1, 0, 3), (0, 1, 4)), dtype=np.int64),
