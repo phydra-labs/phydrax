@@ -10,6 +10,10 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <map>
+#include <set>
+#include <unordered_map>
 #include <vector>
 
 #include "facet_coverage.hpp"
@@ -49,7 +53,86 @@ TetEditVertex source_witness_record(std::uint64_t id, const double* carrier,
   vertex.ancestry = {};
   return vertex;
 }
+
+// n = first axis x second axis of a declared plane (origin, first axis,
+// second axis), exactly.
+void plane_normal(const double* plane, Expansion* normal) {
+  const double* u = plane + 3;
+  const double* v = plane + 6;
+  normal[0] = Expansion::product(u[1], v[2]) - Expansion::product(u[2], v[1]);
+  normal[1] = Expansion::product(u[2], v[0]) - Expansion::product(u[0], v[2]);
+  normal[2] = Expansion::product(u[0], v[1]) - Expansion::product(u[1], v[0]);
+}
+
+// n.(point - origin), exactly.
+Expansion plane_offset(const double* plane, const Expansion* normal, const double* point) {
+  return normal[0] * Expansion::difference(point[0], plane[0]) +
+         normal[1] * Expansion::difference(point[1], plane[1]) +
+         normal[2] * Expansion::difference(point[2], plane[2]);
+}
+
+// Sign of n.(a x b).
+int triple_sign(const Expansion* n, const Expansion* a, const Expansion* b) {
+  return (n[0] * (a[1] * b[2] - a[2] * b[1]) + n[1] * (a[2] * b[0] - a[0] * b[2]) +
+          n[2] * (a[0] * b[1] - a[1] * b[0]))
+      .sign();
+}
+
+// Orientation of the orthogonal projections of a, b, c onto a plane of
+// normal n, seen from n: projection changes b - a and c - a only by multiples
+// of n, which leave n.((b - a) x (c - a)) unchanged.
+int projected_orientation(const Expansion* n, const Expansion* a, const Expansion* b,
+                          const Expansion* c) {
+  Expansion ab[3];
+  Expansion ac[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    ab[axis] = b[axis] - a[axis];
+    ac[axis] = c[axis] - a[axis];
+  }
+  return triple_sign(n, ab, ac);
+}
+
+// Whether the projected closed segment pq meets the open interior of the
+// positively oriented projected triangle t (separating-axis test over the
+// triangle's edges and the segment's line, all exact).
+bool segment_meets_open_triangle(const Expansion* n, const Expansion* p, const Expansion* q,
+                                 const Expansion* const* t) {
+  for (int edge = 0; edge < 3; ++edge) {
+    const Expansion* a = t[edge];
+    const Expansion* b = t[(edge + 1) % 3];
+    if (projected_orientation(n, a, b, p) <= 0 && projected_orientation(n, a, b, q) <= 0) {
+      return false;
+    }
+  }
+  const int sides[3] = {projected_orientation(n, p, q, t[0]), projected_orientation(n, p, q, t[1]),
+                        projected_orientation(n, p, q, t[2])};
+  const bool nonnegative = sides[0] >= 0 && sides[1] >= 0 && sides[2] >= 0;
+  const bool nonpositive = sides[0] <= 0 && sides[1] <= 0 && sides[2] <= 0;
+  return !nonnegative && !nonpositive;
+}
+
+bool declared_plane_point(const double* plane, const double* parameters, Expansion* point) {
+  if (!std::isfinite(parameters[0]) || !std::isfinite(parameters[1])) return false;
+  for (int axis = 0; axis < 3; ++axis) {
+    point[axis] = Expansion(plane[axis]) + Expansion(plane[3 + axis]).scaled(parameters[0]) +
+                  Expansion(plane[6 + axis]).scaled(parameters[1]);
+  }
+  return true;
+}
+
+double plane_deviation(const double* plane, const Expansion* point, const double* position) {
+  Expansion normal[3];
+  plane_normal(plane, normal);
+  return plane_offset(plane, normal, position).is_zero() ? 0.0 : outward_distance(position, point);
+}
 }  // namespace
+
+double declared_plane_deviation(const double* plane, const double* parameters,
+                                const double* position) {
+  Expansion point[3];
+  return declared_plane_point(plane, parameters, point) ? plane_deviation(plane, point, position)
+                                                         : -1.0;
+}
 
 bool TetMesh::source_carrier_valid(const TetEditVertex& vertex) const {
   for (double coordinate : vertex.carrier) {
@@ -106,25 +189,32 @@ bool TetMesh::source_carrier_valid(const TetEditVertex& vertex) const {
   if (witness.stratum == SourceStratum::kNone) {
     return witness.entity == -1 && witness.deviation == 0.0;
   }
-  if (!source_parameters_valid(witness.stratum, witness.parameters) ||
-      !std::isfinite(witness.deviation) || witness.deviation < 0.0) {
-    return false;
-  }
+  if (!std::isfinite(witness.deviation) || witness.deviation < 0.0) return false;
   // The exact source point S of the witness is authoritative and the carrier
   // must be its correctly rounded realization. The recorded deviation must
   // bound |carrier - S|; it may exceed the entity tolerance (which governs an
   // authored approximation) only when it is exactly the realization rounding
-  // bound, i.e. the carrier is round(S) and nothing else was approximated.
-  const double* corners[3] = {nullptr, nullptr, nullptr};
+  // bound, i.e. the carrier is round(S) and nothing else was approximated. A
+  // plane witness names the declared plane of its face row; any binary64
+  // parameters address a point of it.
   double carrier[3];
   double deviation = 0.0;
-  if (!source_corners(witness.stratum, witness.entity, corners)) return false;
-  const std::size_t row = static_cast<std::size_t>(witness.entity);
-  const double tolerance = witness.stratum == SourceStratum::kSegment
-                               ? source_segment_tolerances_[row]
-                               : source_face_tolerances_[row];
-  if (!source_carrier(corners, witness.stratum, witness.parameters, carrier, deviation) ||
-      witness.deviation < deviation ||
+  double tolerance = 0.0;
+  if (witness.stratum == SourceStratum::kPlane) {
+    if (!plane_carrier(witness.entity, witness.parameters, carrier, deviation)) return false;
+    tolerance = source_face_tolerances_[static_cast<std::size_t>(witness.entity)];
+  } else {
+    const double* corners[3] = {nullptr, nullptr, nullptr};
+    if (!source_parameters_valid(witness.stratum, witness.parameters) ||
+        !source_corners(witness.stratum, witness.entity, corners) ||
+        !source_carrier(corners, witness.stratum, witness.parameters, carrier, deviation)) {
+      return false;
+    }
+    const std::size_t row = static_cast<std::size_t>(witness.entity);
+    tolerance = witness.stratum == SourceStratum::kSegment ? source_segment_tolerances_[row]
+                                                           : source_face_tolerances_[row];
+  }
+  if (witness.deviation < deviation ||
       (witness.deviation > tolerance && witness.deviation != deviation)) {
     return false;
   }
@@ -162,6 +252,9 @@ bool TetMesh::witness_position(const SourceWitness& witness, const double* carri
     for (int axis = 0; axis < 3; ++axis) position[axis] = Expansion(carrier[axis]);
     return true;
   }
+  if (witness.stratum == SourceStratum::kPlane) {
+    return plane_point(witness.entity, witness.parameters, position);
+  }
   const double* corners[3] = {nullptr, nullptr, nullptr};
   return source_corners(witness.stratum, witness.entity, corners) &&
          source_point(corners, witness.stratum, witness.parameters, position);
@@ -170,6 +263,275 @@ bool TetMesh::witness_position(const SourceWitness& witness, const double* carri
 bool TetMesh::exact_position(std::int32_t slot, Expansion* position) const {
   return live_vertex(slot) &&
          witness_position(witnesses_[static_cast<std::size_t>(slot)], point(slot), position);
+}
+
+const double* TetMesh::face_plane(std::int32_t row) const noexcept {
+  if (row < 0 || static_cast<std::size_t>(row) >= source_face_plane_tolerances_.size()) {
+    return nullptr;
+  }
+  const double* plane = source_face_planes_.data() + 9 * static_cast<std::size_t>(row);
+  return std::isnan(plane[0]) ? nullptr : plane;
+}
+
+bool TetMesh::plane_point(std::int32_t row, const double* parameters, Expansion* point) const {
+  const double* plane = face_plane(row);
+  return plane != nullptr && declared_plane_point(plane, parameters, point);
+}
+
+bool TetMesh::plane_carrier(std::int32_t row, const double* parameters, double* carrier,
+                            double& deviation) const {
+  Expansion point[3];
+  if (!plane_point(row, parameters, point)) return false;
+  for (int axis = 0; axis < 3; ++axis) carrier[axis] = nearest_double(point[axis]);
+  if (!geometry::point_in_domain(carrier)) return false;
+  deviation = plane_deviation(face_plane(row), point, carrier);
+  return true;
+}
+
+bool TetMesh::plane_admits(std::int32_t row, const double* carrier) const {
+  const double* plane = face_plane(row);
+  if (plane == nullptr) return false;
+  Expansion normal[3];
+  plane_normal(plane, normal);
+  const Expansion offset = plane_offset(plane, normal, carrier);
+  const int side = offset.sign();
+  if (side == 0) return true;
+  // The closed rounding box of coordinate k spans half the gap to each
+  // neighbouring binary64 value. Doubled: the plane meets the box iff
+  // 2 n.(c - o) - side * sum_k |n_k| gap_k does not keep the sign of n.(c - o),
+  // gap_k the gap on the side that moves c toward the plane.
+  Expansion reach = offset.scaled(2.0);
+  constexpr double kInfinity = std::numeric_limits<double>::infinity();
+  for (int axis = 0; axis < 3; ++axis) {
+    const int direction = normal[axis].sign();
+    if (direction == 0) continue;
+    const double value = carrier[axis];
+    const double gap = direction == side ? value - std::nextafter(value, -kInfinity)
+                                         : std::nextafter(value, kInfinity) - value;
+    const Expansion magnitude = direction < 0 ? -normal[axis] : normal[axis];
+    reach = side > 0 ? reach - magnitude.scaled(gap) : reach + magnitude.scaled(gap);
+  }
+  if (reach.sign() * side <= 0) return true;
+  const double tolerance = source_face_plane_tolerances_[static_cast<std::size_t>(row)];
+  if (!(tolerance > 0.0)) return false;
+  const Expansion squared_norm =
+      normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+  return (offset * offset - squared_norm * Expansion::product(tolerance, tolerance)).sign() <= 0;
+}
+
+bool TetMesh::plane_record(std::int32_t row, const double* carrier,
+                           TetPlaneRecord& record) const {
+  const double* plane = face_plane(row);
+  if (plane == nullptr) return false;
+  Dyadic first[3];
+  Dyadic second[3];
+  Dyadic offset[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    first[axis] = Dyadic(plane[3 + axis]);
+    second[axis] = Dyadic(plane[6 + axis]);
+    offset[axis] = Dyadic(carrier[axis]) - Dyadic(plane[axis]);
+  }
+  const auto dot = [](const Dyadic* a, const Dyadic* b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  };
+  const Dyadic uu = dot(first, first);
+  const Dyadic uv = dot(first, second);
+  const Dyadic vv = dot(second, second);
+  const Dyadic ur = dot(first, offset);
+  const Dyadic vr = dot(second, offset);
+  // Gram determinant |u|^2 |v|^2 - (u.v)^2 = |u x v|^2, positive for a
+  // declared plane.
+  const Dyadic gram = uu * vv - uv * uv;
+  const Dyadic normal[3] = {first[1] * second[2] - first[2] * second[1],
+                            first[2] * second[0] - first[0] * second[2],
+                            first[0] * second[1] - first[1] * second[0]};
+  const Dyadic height = dot(normal, offset);
+  record.face_row = row;
+  record.parameters[0] = exact::rounded_quotient(ur * vv - vr * uv, gram);
+  record.parameters[1] = exact::rounded_quotient(vr * uu - ur * uv, gram);
+  record.deviation = 0.0;
+  if (height.sign() != 0) {
+    // |n.(c - o)| / |n| rounded up through an upward quotient and square root.
+    const double squared = exact::directed_quotient_bounds(height * height, gram).upper;
+    double distance = std::sqrt(squared);
+    while ((Dyadic(distance) * Dyadic(distance) - Dyadic(squared)).sign() < 0) {
+      distance = std::nextafter(distance, std::numeric_limits<double>::infinity());
+    }
+    record.deviation = distance;
+  }
+  return true;
+}
+
+void TetMesh::plane_records(std::vector<std::uint64_t>& vertex_ids,
+                            std::vector<TetPlaneRecord>& records) const {
+  vertex_ids.clear();
+  records.clear();
+  std::set<std::pair<std::uint64_t, std::int32_t>> incidences;
+  for (const TetSnapshotFacet& facet : facets_) {
+    const auto group = declared_groups_.find(facet.source);
+    if (group == declared_groups_.end()) continue;
+    for (std::uint64_t vertex : facet.vertices) incidences.emplace(vertex, group->second.rows.front());
+  }
+  for (const auto& [vertex, row] : incidences) {
+    const std::int32_t slot = vertex_slot(vertex);
+    TetPlaneRecord record;
+    if (!live_vertex(slot) || !plane_record(row, point(slot), record)) continue;
+    vertex_ids.push_back(vertex);
+    records.push_back(record);
+  }
+}
+
+int32_t TetMesh::install_declared_planes(std::span<const double> planes,
+                                         std::span<const double> tolerances) {
+  plane_refusal_.reset();
+  declared_groups_.clear();
+  const std::size_t face_count = source_faces_.size() / 3;
+  if ((!planes.empty() && planes.size() != 9 * face_count) ||
+      (!tolerances.empty() && tolerances.size() != face_count)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  source_face_planes_.assign(9 * face_count, std::numeric_limits<double>::quiet_NaN());
+  source_face_plane_tolerances_.assign(face_count, 0.0);
+  std::copy(planes.begin(), planes.end(), source_face_planes_.begin());
+  std::copy(tolerances.begin(), tolerances.end(), source_face_plane_tolerances_.begin());
+  std::unordered_map<std::int32_t, std::int32_t> first_rows;
+  for (std::size_t row = 0; row < face_count; ++row) {
+    const double* plane = source_face_planes_.data() + 9 * row;
+    const double tolerance = source_face_plane_tolerances_[row];
+    const auto undeclared = std::count_if(plane, plane + 9, [](double value) {
+      return std::isnan(value);
+    });
+    if (!std::isfinite(tolerance) || tolerance < 0.0 || (undeclared != 0 && undeclared != 9) ||
+        (undeclared == 0 && !std::all_of(plane, plane + 9, [](double value) {
+          return std::isfinite(value);
+        }))) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    if (undeclared == 0) {
+      Expansion normal[3];
+      plane_normal(plane, normal);
+      if (normal[0].is_zero() && normal[1].is_zero() && normal[2].is_zero()) {
+        return PHX_MC_INVALID_INPUT;
+      }
+    }
+    const auto [first, inserted] =
+        first_rows.emplace(source_face_groups_[row], static_cast<std::int32_t>(row));
+    if (inserted) continue;
+    // Every row of a group declares the same plane, or none does.
+    const double* group_plane = source_face_planes_.data() + 9 * static_cast<std::size_t>(first->second);
+    for (int value = 0; value < 9; ++value) {
+      if (std::isnan(plane[value]) != std::isnan(group_plane[value]) ||
+          (!std::isnan(plane[value]) && !same_bits(plane[value], group_plane[value]))) {
+        return PHX_MC_INVALID_INPUT;
+      }
+    }
+    if (!same_bits(tolerance, source_face_plane_tolerances_[static_cast<std::size_t>(first->second)])) {
+      return PHX_MC_INVALID_INPUT;
+    }
+  }
+  using Edge = std::array<std::int32_t, 2>;
+  std::map<std::int32_t, std::map<Edge, std::vector<Edge>>> group_edges;
+  for (std::size_t row = 0; row < face_count; ++row) {
+    const std::int32_t plane_row = static_cast<std::int32_t>(row);
+    const double* plane = face_plane(plane_row);
+    if (plane == nullptr) continue;
+    DeclaredGroup& group = declared_groups_[source_face_groups_[row]];
+    Expansion normal[3];
+    plane_normal(plane, normal);
+    Expansion corners[3][3];
+    for (int corner = 0; corner < 3; ++corner) {
+      const double* source = source_points_.data() + 3 * static_cast<std::size_t>(source_faces_[3 * row + static_cast<std::size_t>(corner)]);
+      for (int axis = 0; axis < 3; ++axis) corners[corner][axis] = Expansion(source[axis]);
+    }
+    const int orientation = projected_orientation(normal, corners[0], corners[1], corners[2]);
+    if (orientation == 0 || (group.orientation != 0 && orientation != group.orientation)) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    group.orientation = static_cast<std::int8_t>(orientation);
+    group.rows.push_back(plane_row);
+    auto& edges = group_edges[source_face_groups_[row]];
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t a = source_faces_[3 * row + corner];
+      const std::int32_t b = source_faces_[3 * row + (corner + 1) % 3];
+      edges[Edge{std::min(a, b), std::max(a, b)}].push_back(Edge{a, b});
+    }
+  }
+  // The rows of a declared group triangulate their union as an oriented
+  // manifold: an edge is used once (on the union's boundary) or twice in
+  // opposite directions.
+  for (const auto& [group, edges] : group_edges) {
+    DeclaredGroup& declared = declared_groups_.at(group);
+    for (const auto& [key, uses] : edges) {
+      if (uses.size() == 1) {
+        declared.boundary_edges.push_back(key);
+      } else if (uses.size() != 2 || uses[0][0] != uses[1][1] || uses[0][1] != uses[1][0]) {
+        return PHX_MC_INVALID_INPUT;
+      }
+    }
+  }
+  return PHX_MC_OK;
+}
+
+bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
+                                  const SourceWitness* const* witness_records,
+                                  std::int8_t orientation) const {
+  // Every corner has an admitted record on the plane; the exact positions,
+  // projected onto the plane, form a triangle of the facet's orientation that
+  // the union of the group's rows covers: no edge of the union's boundary
+  // meets its open interior, and its centroid lies in a row.
+  const std::int32_t plane_row = group.rows.front();
+  const double* plane = face_plane(plane_row);
+  if (plane == nullptr) return false;
+  Expansion corners[3][3];
+  for (int corner = 0; corner < 3; ++corner) {
+    if (!plane_admits(plane_row, carriers[corner]) ||
+        !witness_position(*witness_records[corner], carriers[corner], corners[corner])) {
+      return false;
+    }
+  }
+  Expansion normal[3];
+  plane_normal(plane, normal);
+  const int side = projected_orientation(normal, corners[0], corners[1], corners[2]);
+  if (side == 0 || side != orientation * group.orientation) return false;
+  const Expansion* triangle[3] = {corners[0], side > 0 ? corners[1] : corners[2],
+                                  side > 0 ? corners[2] : corners[1]};
+  Expansion ends[2][3];
+  for (const std::array<std::int32_t, 2>& edge : group.boundary_edges) {
+    for (int end = 0; end < 2; ++end) {
+      const double* source = source_points_.data() + 3 * static_cast<std::size_t>(edge[static_cast<std::size_t>(end)]);
+      for (int axis = 0; axis < 3; ++axis) ends[end][axis] = Expansion(source[axis]);
+    }
+    if (segment_meets_open_triangle(normal, ends[0], ends[1], triangle)) return false;
+  }
+  // Three times the centroid, against each row's edges (p, q):
+  // n.((q - p) x (3 centroid - 3 p)) has the sign of the centroid's side.
+  Expansion sum[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    sum[axis] = corners[0][axis] + corners[1][axis] + corners[2][axis];
+  }
+  for (std::int32_t row : group.rows) {
+    const double* points[3];
+    for (int corner = 0; corner < 3; ++corner) {
+      points[corner] = source_points_.data() +
+                       3 * static_cast<std::size_t>(source_faces_[3 * static_cast<std::size_t>(row) +
+                                                                  static_cast<std::size_t>(corner)]);
+    }
+    if (group.orientation < 0) std::swap(points[1], points[2]);
+    bool inside = true;
+    for (int corner = 0; corner < 3 && inside; ++corner) {
+      const double* p = points[corner];
+      const double* q = points[(corner + 1) % 3];
+      Expansion along[3];
+      Expansion toward[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        along[axis] = Expansion::difference(q[axis], p[axis]);
+        toward[axis] = sum[axis] - Expansion(p[axis]).scaled(3.0);
+      }
+      inside = triple_sign(normal, along, toward) >= 0;
+    }
+    if (inside) return true;
+  }
+  return false;
 }
 
 bool TetMesh::source_face_valid(const TetEditFacet& facet,
@@ -194,6 +556,20 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
                ? witnesses_[static_cast<std::size_t>(slot)]
                : changed->witness;
   };
+  if (const auto declared = declared_groups_.find(facet.source);
+      declared != declared_groups_.end()) {
+    const double* carriers[3];
+    const SourceWitness* witness_records[3];
+    for (int corner = 0; corner < 3; ++corner) {
+      carriers[corner] = carrier_at(slots[corner]);
+      witness_records[corner] = &witness_at(slots[corner]);
+      if (!source_carrier_valid(source_witness_record(vertex_id(slots[corner]), carriers[corner],
+                                                      *witness_records[corner]))) {
+        return false;
+      }
+    }
+    return declared_face_valid(declared->second, carriers, witness_records, facet.orientation);
+  }
 
   std::vector<std::array<std::int32_t, 4>> primitives;
   std::vector<std::int32_t> rows;

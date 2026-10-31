@@ -64,6 +64,14 @@ struct PlcInput {
   BoundaryPolicy policy = BoundaryPolicy::kConforming;
   const double* facet_tolerances = nullptr;
   const double* segment_tolerances = nullptr;
+  // Declared exact facet planes, 9 values per facet (origin, first axis,
+  // second axis); an all-NaN row declares none. A declared facet groups its
+  // triangles across shared edges whatever their binary64 rounding, so its
+  // internal edges are not PLC edges, once every vertex of its polygons is
+  // admitted: the plane meets the vertex's rounding box or lies within the
+  // facet's declared tolerance of it (null tolerances are 0).
+  const double* facet_planes = nullptr;
+  const double* facet_plane_tolerances = nullptr;
 };
 
 namespace detail {
@@ -119,7 +127,9 @@ struct PlcSourceRefusal {
 // the most layers one needed, and wedges whose constraint-delimited region
 // was exhausted without a fill with the largest such region in cells (a
 // suppression refusal follows only such exhaustion or a wedge that cannot
-// merge at all).
+// merge at all). Last, the work of the gift-wrapped constrained Delaunay
+// fills (complete, stopped at a stuck side, or partial): how many ran, the
+// cells they laid in total and at most in one fill (each cell is one step).
 struct PlcSuppressionSearch {
   int64_t searches = 0;
   int64_t fills = 0;
@@ -130,6 +140,9 @@ struct PlcSuppressionSearch {
   int64_t max_merge_layers = 0;
   int64_t exhausted = 0;
   int64_t max_exhausted_cells = 0;
+  int64_t wraps = 0;
+  int64_t wrap_cells = 0;
+  int64_t max_wrap_cells = 0;
 };
 
 // Recovered complex: input point ids are preserved and new vertices follow.
@@ -170,6 +183,11 @@ struct SourceComplexView {
   std::span<const int64_t> segment_ids;
   std::span<const double> segment_tolerances;
   std::span<const SourceWitness> witnesses;
+  // Declared exact facet planes, one per source face row (origin, first and
+  // second axis, binary64; NaN rows are undeclared), and their declared
+  // authored tolerances. Empty when no facet declares a plane.
+  std::span<const double> face_planes;
+  std::span<const double> face_plane_tolerances;
 };
 
 // Reused scratch for adjacency traversal and its conservative candidates.

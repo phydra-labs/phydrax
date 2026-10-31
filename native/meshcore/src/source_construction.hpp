@@ -31,10 +31,12 @@
 
 namespace phx::mc {
 
-enum class SourceStratum : int8_t { kNone = 0, kSegment = 1, kFacet = 2 };
+enum class SourceStratum : int8_t { kNone = 0, kSegment = 1, kFacet = 2, kPlane = 3 };
 // Entity is a row in the exact canonical source bank: source_segments for
-// kSegment and source_faces for kFacet. It is never a recovery-carrier row,
-// face group, or external identity; kNone uses -1.
+// kSegment and source_faces for kFacet and kPlane. It is never a
+// recovery-carrier row, face group, or external identity; kNone uses -1. A
+// kPlane witness lies on the declared exact plane of its face row's facet:
+// origin + parameters[0] * first_axis + parameters[1] * second_axis.
 struct SourceWitness {
   SourceStratum stratum = SourceStratum::kNone;
   int32_t entity = -1;

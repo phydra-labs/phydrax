@@ -1102,8 +1102,9 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
 
 // A constrained boundary point p (a source witness whose exact point S is
 // authoritative) inserted into the cavity `cavity` of finite and hull ghost
-// cells around it: on a facet (facet-stratum witness), or on the constrained
-// segment (a, b) of `segment_rows` (segment-stratum witness on its source).
+// cells around it: on a facet (a facet-stratum witness, or a plane-stratum
+// witness on the facet's declared plane), or on the constrained segment
+// (a, b) of `segment_rows` (segment-stratum witness on its source).
 // The constrained faces strictly inside the cavity (`facet_rows`) are disks
 // of their facets, one around p in its facet, or one per facet through
 // (a, b) on that facet's side of the segment; each is replaced by the fan of
@@ -1134,7 +1135,9 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
       return TetEditStatus::kRejectedTopology;
     }
     const SourceStratum stratum =
-        segment_rows.empty() ? SourceStratum::kFacet : SourceStratum::kSegment;
+        !segment_rows.empty() ? SourceStratum::kSegment
+        : vertex.witness.stratum == SourceStratum::kPlane ? SourceStratum::kPlane
+                                                          : SourceStratum::kFacet;
     if (vertex.id == std::numeric_limits<std::uint64_t>::max() ||
         used_vertex_ids_.contains(vertex.id) || vertex.protected_vertex ||
         vertex.protection_radius != 0.0 || vertex.has_edge_parameter ||

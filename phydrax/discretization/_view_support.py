@@ -1606,21 +1606,26 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
         graph_neighbor_ids = np.zeros((0,), dtype=np.int64)
         graph_neighbor_owner_ranks = np.zeros((0,), dtype=np.int32)
         graph_neighbor_weights = np.zeros((0,), dtype=np.int64)
-        if periodic_topology_id is not None and not serial_source_view:
-            if not isinstance(periodic_shell_certificate, Mapping):
-                raise ValueError(
-                    "Native periodic graph rows require the shell proof record."
+        # Native (non-serial) owner shards carry their owned face-neighbor graph;
+        # periodic shards additionally bind it to their quotient face coverage.
+        if not serial_source_view and (
+            periodic_topology_id is not None or record.get("owned_cell_ids") is not None
+        ):
+            if periodic_topology_id is not None:
+                if not isinstance(periodic_shell_certificate, Mapping):
+                    raise ValueError(
+                        "Native periodic graph rows require the shell proof record."
+                    )
+                periodic_face_coverage_id = periodic_shell_certificate.get(
+                    "quotient_face_coverage_id"
                 )
-            periodic_face_coverage_id = periodic_shell_certificate.get(
-                "quotient_face_coverage_id"
-            )
-            if (
-                not isinstance(periodic_face_coverage_id, str)
-                or not periodic_face_coverage_id
-            ):
-                raise ValueError(
-                    "Native periodic graph rows require exact face coverage."
-                )
+                if (
+                    not isinstance(periodic_face_coverage_id, str)
+                    or not periodic_face_coverage_id
+                ):
+                    raise ValueError(
+                        "Native periodic graph rows require exact face coverage."
+                    )
             graph_owned_ids = np.asarray(record.get("owned_cell_ids"))
             raw_graph_owner_ranks = np.asarray(record.get("owned_cell_owner_ranks"))
             raw_graph_weights = np.asarray(record.get("owned_cell_weights"))

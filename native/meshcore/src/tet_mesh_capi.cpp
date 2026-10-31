@@ -532,7 +532,9 @@ bool valid_create_request(const phx_mc_tet_mesh_create_request& request) noexcep
       (request.protection_radii != nullptr && request.point_count == 0) ||
       (request.protected_vertices != nullptr && request.point_count == 0) ||
       (request.source_face_tolerances != nullptr && request.source_face_count == 0) ||
-      (request.source_segment_tolerances != nullptr && request.source_segment_count == 0)) {
+      (request.source_segment_tolerances != nullptr && request.source_segment_count == 0) ||
+      (request.source_face_planes != nullptr && request.source_face_count == 0) ||
+      (request.source_face_plane_tolerances != nullptr && request.source_face_planes == nullptr)) {
     return false;
   }
   if (request.protected_vertices != nullptr) {
@@ -750,7 +752,8 @@ int32_t validate_snapshot_request(const phx_mc_tet_mesh_snapshot_request& reques
       !addressable(request.cell_capacity, 1, sizeof(int32_t)) ||
       !addressable(request.periodic_entity_lifted_capacity, 1, sizeof(int32_t)) ||
       !addressable(request.periodic_entity_quotient_capacity, 1, sizeof(int32_t)) ||
-      !addressable(request.periodic_entity_representative_capacity, 1, sizeof(int32_t))) {
+      !addressable(request.periodic_entity_representative_capacity, 1, sizeof(int32_t)) ||
+      !addressable(request.source_face_capacity, 9, sizeof(double))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   const auto required = [](const void* pointer, int64_t count) {
@@ -778,6 +781,7 @@ int32_t validate_snapshot_request(const phx_mc_tet_mesh_snapshot_request& reques
       !check(request.source_face_tolerances, 5) || !check(request.source_segments, 6) ||
       !check(request.source_segment_groups, 6) || !check(request.source_segment_ids, 6) ||
       !check(request.source_segment_tolerances, 6) ||
+      !check(request.source_face_planes, 5) || !check(request.source_face_plane_tolerances, 5) ||
       !check(request.periodic_orbits, 7) || !check(request.periodic_members, 8) ||
       !check(request.periodic_quotient_cells, 9) ||
       !check(request.periodic_quotient_lifted_cell_ids, 10) ||
@@ -831,7 +835,8 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
                                                                   : request->witness_deviations[row];
         if (witness.stratum != SourceStratum::kNone &&
             witness.stratum != SourceStratum::kSegment &&
-            witness.stratum != SourceStratum::kFacet) return PHX_MC_INVALID_INPUT;
+            witness.stratum != SourceStratum::kFacet &&
+            witness.stratum != SourceStratum::kPlane) return PHX_MC_INVALID_INPUT;
       }
     }
 
@@ -867,6 +872,14 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
         request->source_segment_tolerances != nullptr
         ? input_span(request->source_segment_tolerances, request->source_segment_count)
         : std::span<const double>{};
+    const std::span<const double> source_face_planes =
+        explicit_source && request->source_face_planes != nullptr
+            ? input_span(request->source_face_planes, request->source_face_count * 9)
+            : std::span<const double>{};
+    const std::span<const double> source_face_plane_tolerances =
+        explicit_source && request->source_face_plane_tolerances != nullptr
+            ? input_span(request->source_face_plane_tolerances, request->source_face_count)
+            : std::span<const double>{};
 
     if (!witnesses.empty()) {
       for (std::size_t row = 0; row < witnesses.size(); ++row) {
@@ -890,14 +903,21 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
           witness.deviation = phx::mc::source_deviation(
               corners, witness.stratum, witness.parameters,
               request->points + 3 * row);
+        } else if (witness.stratum == SourceStratum::kPlane && entity < source_faces.size() / 3 &&
+                   !source_face_planes.empty()) {
+          witness.deviation = phx::mc::declared_plane_deviation(
+              source_face_planes.data() + 9 * entity, witness.parameters,
+              request->points + 3 * row);
         }
       }
     }
 
+    if (request->plane_refusal != nullptr) *request->plane_refusal = phx_mc_tet_plane_refusal{};
     const phx::mc::SourceComplexView source{
         source_points, source_faces, source_face_groups, source_face_ids,
         source_face_tolerances, source_segments, source_segment_groups,
-        source_segment_ids, source_segment_tolerances, witnesses};
+        source_segment_ids, source_segment_tolerances, witnesses,
+        source_face_planes, source_face_plane_tolerances};
     const int32_t status = handle->state.build(
         input_span(request->points, request->point_count * 3),
         input_span(request->tetrahedra, request->tetrahedron_count * 4),
@@ -918,7 +938,20 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
         request->protected_vertices == nullptr
             ? std::span<const int8_t>{}
             : input_span(request->protected_vertices, request->point_count));
-    if (status != PHX_MC_OK) return status;
+    if (status != PHX_MC_OK) {
+      const auto& refusal = handle->state.plane_refusal();
+      if (request->plane_refusal != nullptr && refusal.has_value()) {
+        phx_mc_tet_plane_refusal& out = *request->plane_refusal;
+        out.refused = 1;
+        out.face_row = refusal->record.face_row;
+        out.vertex = refusal->vertex;
+        out.parameters[0] = refusal->record.parameters[0];
+        out.parameters[1] = refusal->record.parameters[1];
+        out.deviation = refusal->record.deviation;
+        out.tolerance = refusal->tolerance;
+      }
+      return status;
+    }
     const int32_t id_status = handle->state.assign_initial_ids(
         request->vertex_ids == nullptr
             ? std::span<const uint64_t>{}
@@ -1175,6 +1208,8 @@ int32_t phx_mc_tet_mesh_snapshot(const phx_mc_tet_mesh* mesh,
     copy_bank(snapshot.source_segment_groups, request->source_segment_groups);
     copy_bank(snapshot.source_segment_ids, request->source_segment_ids);
     copy_bank(snapshot.source_segment_tolerances, request->source_segment_tolerances);
+    copy_bank(snapshot.source_face_planes, request->source_face_planes);
+    copy_bank(snapshot.source_face_plane_tolerances, request->source_face_plane_tolerances);
     std::size_t member_offset = 0;
     for (std::size_t row = 0; row < snapshot.periodic_orbits.size(); ++row) {
       const TetPeriodicOrbit& orbit = snapshot.periodic_orbits[row];
@@ -1312,7 +1347,8 @@ int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
                                        ? 0.0 : request->changed_witness_deviations[row];
         if (vertex.witness.stratum != SourceStratum::kNone &&
             vertex.witness.stratum != SourceStratum::kSegment &&
-            vertex.witness.stratum != SourceStratum::kFacet) return PHX_MC_INVALID_INPUT;
+            vertex.witness.stratum != SourceStratum::kFacet &&
+            vertex.witness.stratum != SourceStratum::kPlane) return PHX_MC_INVALID_INPUT;
       }
       vertex.protection_radius = request->changed_protection_radii == nullptr
                                      ? 0.0 : request->changed_protection_radii[row];
@@ -1609,6 +1645,44 @@ int32_t phx_mc_tet_mesh_unmet(const phx_mc_tet_mesh* mesh, int64_t capacity,
     apex_angles[row] = records[row].apex_angle;
   }
   return PHX_MC_OK;
+}
+
+int32_t phx_mc_tet_mesh_plane_record_count(const phx_mc_tet_mesh* mesh, int64_t* count) {
+  if (mesh == nullptr || count == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  return guarded([&]() -> int32_t {
+    std::vector<uint64_t> vertex_ids;
+    std::vector<phx::mc::TetPlaneRecord> records;
+    mesh->state.plane_records(vertex_ids, records);
+    *count = static_cast<int64_t>(records.size());
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_plane_records(const phx_mc_tet_mesh* mesh, int64_t capacity,
+                                      uint64_t* vertex_ids, int32_t* face_rows,
+                                      double* parameters, double* deviations) {
+  if (mesh == nullptr || capacity < 0 || !addressable(capacity, 2, sizeof(double))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return guarded([&]() -> int32_t {
+    std::vector<uint64_t> ids;
+    std::vector<phx::mc::TetPlaneRecord> records;
+    mesh->state.plane_records(ids, records);
+    if (records.size() > static_cast<std::size_t>(capacity)) return PHX_MC_CAPACITY_EXCEEDED;
+    const int64_t count = static_cast<int64_t>(records.size());
+    if (!required_bank(vertex_ids, count) || !required_bank(face_rows, count) ||
+        !required_bank(parameters, count) || !required_bank(deviations, count)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    for (std::size_t row = 0; row < records.size(); ++row) {
+      vertex_ids[row] = ids[row];
+      face_rows[row] = records[row].face_row;
+      parameters[2 * row] = records[row].parameters[0];
+      parameters[2 * row + 1] = records[row].parameters[1];
+      deviations[row] = records[row].deviation;
+    }
+    return PHX_MC_OK;
+  });
 }
 
 void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh) { delete mesh; }

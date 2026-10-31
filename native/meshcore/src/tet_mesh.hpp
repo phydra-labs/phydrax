@@ -160,6 +160,10 @@ struct TetMeshSnapshot {
   std::vector<std::int32_t> source_segment_groups;
   std::vector<std::int64_t> source_segment_ids;
   std::vector<double> source_segment_tolerances;
+  // Declared exact facet planes per source face row (9 values: origin, first
+  // and second axis; NaN rows undeclared) and their authored tolerances.
+  std::vector<double> source_face_planes;
+  std::vector<double> source_face_plane_tolerances;
   std::vector<TetPeriodicOrbit> periodic_orbits;
   std::vector<TetPeriodicQuotientCell> quotient_cells;
   TetPeriodicIdentity periodic_identity;
@@ -275,6 +279,30 @@ struct TetUnmetRecord {
   double apex_angle = std::numeric_limits<double>::quiet_NaN();
 };
 
+// A boundary vertex's record on the declared exact plane of source face row
+// `face_row`: the correctly rounded parameters of the orthogonal projection
+// of its carrier onto the plane and an outward bound of their distance.
+struct TetPlaneRecord {
+  std::int32_t face_row = -1;
+  double parameters[2] = {0.0, 0.0};
+  double deviation = 0.0;
+};
+// Typed refusal of a declared plane: input vertex row `vertex` of a
+// constrained facet on it is neither in the plane's rounding-box reach nor
+// within its declared tolerance (record.deviation > tolerance).
+struct TetPlaneRefusal {
+  std::int64_t vertex = -1;
+  TetPlaneRecord record;
+  double tolerance = 0.0;
+};
+// Deviation of `position` from the point origin + parameters[0] * first axis
+// + parameters[1] * second axis of the declared plane `plane` (nine values):
+// zero when `position` lies exactly on the plane, else an outward bound of
+// their distance; -1 for non-finite parameters.
+double declared_plane_deviation(const double* plane, const double* parameters,
+                                const double* position);
+
+
 // Star-shaped cavity of a candidate interior point for cone insertion.
 enum class TetCavityStatus : std::uint8_t {
   kFound,    // `cells` (root first) is star-shaped from the point
@@ -380,6 +408,33 @@ class TetMesh {
   // Pointers into the source point bank: the two corners of source segment
   // row `row` (corners[2] null) or the three of source face row `row`.
   bool source_corners(SourceStratum stratum, std::int32_t row, const double** corners) const;
+  // The declared exact plane of source face row `row` (origin, first axis,
+  // second axis: nine binary64 values), or null when its facet declares none.
+  const double* face_plane(std::int32_t row) const noexcept;
+  // The exact point origin + parameters[0] * first axis + parameters[1] *
+  // second axis of the declared plane of source face row `row`.
+  bool plane_point(std::int32_t row, const double* parameters, Expansion* point) const;
+  // The carrier of that point (correctly rounded per coordinate) and its
+  // deviation: zero when the carrier lies exactly on the plane, else an
+  // outward bound of |carrier - point|.
+  bool plane_carrier(std::int32_t row, const double* parameters, double* carrier,
+                     double& deviation) const;
+  // Admission of a boundary vertex record on the declared plane of source
+  // face row `row`: the plane meets the closed rounding box of `carrier` (the
+  // reals that round to it, so the carrier is a correct rounding of a point
+  // of the plane), or the carrier lies within the plane's declared tolerance
+  // of it. Both tests are exact.
+  bool plane_admits(std::int32_t row, const double* carrier) const;
+  // The record of `carrier` on the declared plane of row `row`: correctly
+  // rounded parameters of its orthogonal projection onto the plane and an
+  // outward bound of its distance to it. False when the row declares none.
+  bool plane_record(std::int32_t row, const double* carrier, TetPlaneRecord& record) const;
+  // One record per (live vertex, declared group) incidence of the constrained
+  // facets, ordered by vertex ID then face row (the group's first row).
+  void plane_records(std::vector<std::uint64_t>& vertex_ids,
+                     std::vector<TetPlaneRecord>& records) const;
+  // The declaration a boundary vertex refused in the last build, if any.
+  const std::optional<TetPlaneRefusal>& plane_refusal() const noexcept { return plane_refusal_; }
 
   // Algorithmic entry points share the same validation and transaction path.
   TetEditStatus split_edge(std::uint64_t first, std::uint64_t second,
@@ -489,6 +544,26 @@ class TetMesh {
                       std::span<const double> protection_radii,
                       const SourceComplexView* source,
                       std::span<const std::int8_t> protected_vertices);
+  // A face group whose facet declares an exact plane: every row carries the
+  // same plane, `rows` in bank order (the first is the group's plane row),
+  // `boundary_edges` the source point pairs used by exactly one row (the
+  // boundary of their union), `orientation` the common sign of the rows'
+  // corners projected onto the plane (normal first axis x second axis).
+  struct DeclaredGroup {
+    std::vector<std::int32_t> rows;
+    std::vector<std::array<std::int32_t, 2>> boundary_edges;
+    std::int8_t orientation = 0;
+  };
+  // Installs the declared planes (empty: none) and derives declared_groups_;
+  // INVALID_INPUT for a partially declared row, non-finite values, parallel
+  // axes, a group mixing planes, or rows that do not form an oriented
+  // manifold triangulation in projection.
+  int32_t install_declared_planes(std::span<const double> planes,
+                                  std::span<const double> tolerances);
+  // Subfacet validity on a declared group (see source_face_valid).
+  bool declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
+                           const SourceWitness* const* witness_records,
+                           std::int8_t orientation) const;
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,
                          const RelocationOverlay* overlay = nullptr) const;
@@ -544,6 +619,13 @@ class TetMesh {
   std::vector<std::int32_t> source_segment_groups_;
   std::vector<double> source_segment_tolerances_;
   std::vector<std::int64_t> source_segment_ids_;
+  // Declared exact planes per source face row (nine values; NaN rows are
+  // undeclared) and their declared tolerances, always one row per face row.
+  std::vector<double> source_face_planes_;
+  std::vector<double> source_face_plane_tolerances_;
+  // Face group -> its declared plane data, derived from the immutable banks.
+  std::unordered_map<std::int32_t, DeclaredGroup> declared_groups_;
+  std::optional<TetPlaneRefusal> plane_refusal_;
   std::vector<TetPeriodicOrbit> periodic_orbits_;
   std::vector<TetPeriodicQuotientCell> quotient_cells_;
   std::vector<TetPeriodicEntityOrbitMap> periodic_entity_maps_;

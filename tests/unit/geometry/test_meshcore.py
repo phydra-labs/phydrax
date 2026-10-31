@@ -7,7 +7,7 @@ import importlib.metadata
 import os
 import subprocess
 import sys
-import time
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,10 @@ from phydrax._meshcore import (
     MixedElementKind,
     parallel_for,
     PlcBoundaryPolicy,
+    PlcEntityKind,
+    PlcFailureReason,
     PlcRecovery3D,
+    PlcSourceFailure,
     polygon_intersection_moments,
     polygon_intersection_simplices,
     polyhedron_clip_moments,
@@ -39,6 +42,7 @@ from phydrax._meshcore import (
     TetMeshEdit,
     TetMeshEditKind,
     TetMeshEditStatus,
+    TetMeshPlaneRefusal,
     TetMeshSourceComplex,
     TetMeshSourceEvidence,
     tetrahedron_dual_hexes,
@@ -595,6 +599,93 @@ def test_triangle_dual_quads_validates_and_preserves_shared_node_ids() -> None:
         triangle_dual_quads(duplicate, 7)
 
 
+def _declared_unit_tet(plane: np.ndarray, tolerance: float) -> TetMesh3D:
+    # Face row 3 (z = 0) declares `plane`; the other rows declare none.
+    faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
+    face_ids = np.asarray((101, 102, 103, 104), dtype=np.int64)
+    planes = np.full((4, 3, 3), np.nan, dtype=np.float64)
+    planes[3] = plane
+    source = TetMeshSourceComplex(
+        UNIT_TET.copy(),
+        faces.copy(),
+        np.arange(4, dtype=np.int32),
+        np.zeros((4,), dtype=np.float64),
+        np.empty((0, 2), dtype=np.int32),
+        np.empty((0,), dtype=np.int32),
+        np.empty((0,), dtype=np.float64),
+        np.zeros((4,), dtype=np.int8),
+        np.full((4,), -1, dtype=np.int32),
+        np.zeros((4, 2), dtype=np.float64),
+        face_ids,
+        np.empty((0,), dtype=np.int64),
+        planes,
+        np.asarray((0.0, 0.0, 0.0, tolerance), dtype=np.float64),
+    )
+    return TetMesh3D(
+        UNIT_TET.copy(),
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+        None,
+        faces,
+        face_ids,
+        np.empty((0, 2), dtype=np.int32),
+        np.empty((0,), dtype=np.int64),
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
+        source=source,
+    )
+
+
+def test_declared_facet_plane_admits_records_and_refuses_boundary_vertices() -> None:
+    lifted = np.asarray(((0.0, 0.0, 1e-3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    # A plane 1e-3 above the face misses every corner's rounding box: the
+    # first corner of the face refuses it with its record as evidence.
+    with pytest.raises(TetMeshPlaneRefusal) as refusal:
+        _declared_unit_tet(lifted, 0.0)
+    assert (refusal.value.vertex, refusal.value.face_row) == (0, 3)
+    assert refusal.value.parameters == (0.0, 0.0)
+    assert 1e-3 <= refusal.value.deviation <= 1e-3 * (1.0 + 1e-12)
+    assert refusal.value.tolerance == 0.0
+    # The declared tolerance admits the corners instead.
+    state = _declared_unit_tet(lifted, 2e-3)
+    try:
+        records = state.plane_records()
+        np.testing.assert_array_equal(records.vertex_ids, (0, 1, 2))
+        np.testing.assert_array_equal(records.face_rows, (3, 3, 3))
+        np.testing.assert_array_equal(
+            records.parameters, ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
+        )
+        assert np.all(records.deviations >= 1e-3)
+        arrays = state.arrays()
+        np.testing.assert_array_equal(arrays.source_face_planes[3], lifted)
+        assert np.all(np.isnan(arrays.source_face_planes[:3]))
+        np.testing.assert_array_equal(
+            arrays.source_face_plane_tolerances, (0, 0, 0, 2e-3)
+        )
+    finally:
+        state.close()
+    # Refinement splits the declared face on its exact plane (stratum 3).
+    exact = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    state = _declared_unit_tet(exact, 0.0)
+    try:
+        run = state.refine(radius_edge_bound=2.0, sizes=np.full((4,), 0.2))
+        assert run.status is MeshcoreStatus.OK
+        arrays = state.arrays()
+        on_plane = arrays.witness_strata == 3
+        assert np.count_nonzero(on_plane) > 0
+        np.testing.assert_array_equal(arrays.witness_entities[on_plane], 3)
+        np.testing.assert_array_equal(arrays.points[on_plane, 2], 0.0)
+        np.testing.assert_array_equal(
+            arrays.points[on_plane, :2], arrays.witness_parameters[on_plane]
+        )
+        # Undeclared faces keep facet witnesses on their source rows.
+        facet_points = arrays.witness_strata == 2
+        assert np.count_nonzero(facet_points) > 0
+        assert not np.any(arrays.witness_entities[facet_points] == 3)
+        records = state.plane_records()
+        assert np.all(records.deviations == 0.0)
+    finally:
+        state.close()
+
+
 def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
     mesh_points = UNIT_TET.copy()
     source_points = UNIT_TET.copy()
@@ -617,6 +708,8 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
         np.zeros((4, 2), dtype=np.float64),
         face_ids,
         segment_ids,
+        np.full((4, 3, 3), np.nan, dtype=np.float64),
+        np.zeros((4,), dtype=np.float64),
     )
     state = TetMesh3D(
         mesh_points,
@@ -801,6 +894,8 @@ def make_state():
         np.zeros((SOURCE_POINTS.shape[0], 2), dtype=np.float64),
         SOURCE_FACE_IDS,
         np.asarray((201,), dtype=np.int64),
+        np.full((SOURCE_FACES.shape[0], 3, 3), np.nan, dtype=np.float64),
+        np.zeros((SOURCE_FACES.shape[0],), dtype=np.float64),
     )
     return TetMesh3D(
         SOURCE_POINTS,
@@ -990,6 +1085,8 @@ source = TetMeshSourceComplex(
     np.zeros((4, 2), dtype=np.float64),
     face_ids,
     segment_ids,
+    np.full((4, 3, 3), np.nan, dtype=np.float64),
+    np.zeros((4,), dtype=np.float64),
 )
 state = TetMesh3D(
     points,
@@ -1063,17 +1160,17 @@ def test_fixed_refinement_next_to_thin_pole_fans_is_bounded() -> None:
         assert run.unmet_cells == np.unique(np.asarray(state.unmet().cell_ids)).size
 
 
-def test_fixed_cad_sphere_recovery_suppresses_its_splits_promptly() -> None:
+def test_fixed_cad_sphere_recovery_suppresses_its_splits_with_bounded_wraps() -> None:
     # A FIXED CAD unit-sphere PLC (640 points, 1276 triangles) whose recovery
     # leaves three split points to suppress through the volume. Each one's
     # star spans much of the ball (476 to 718 link walls) and has no
-    # constrained Delaunay fill: a stuck wrap that went on past its stuck
-    # sides laid thousands of overlapping cells and did not finish in 20
-    # minutes, and ranking every visible apex of a side took 70 s.
+    # constrained Delaunay fill. Each wrap stops at its first stuck side
+    # (34, 52 and 15 cells) before a later fill option succeeds; a wrap that
+    # went on past its stuck sides laid 17,405 overlapping cells in the first
+    # star alone and did not finish in 20 minutes.
     data = np.load(
         Path(__file__).resolve().parents[2] / "data" / "meshing" / "cad_sphere_plc.npz"
     )
-    started = time.process_time()
     recovered = recover_plc_3d(
         data["points"],
         data["polygon_offsets"],
@@ -1085,11 +1182,122 @@ def test_fixed_cad_sphere_recovery_suppresses_its_splits_promptly() -> None:
         segment_tolerances=data["segment_tolerances"],
         boundary_policy=PlcBoundaryPolicy.FIXED,
     )
-    elapsed = time.process_time() - started
     np.testing.assert_array_equal(recovered.points, data["points"])
     assert recovered.faces.shape[0] == data["polygon_facets"].shape[0]
     assert recovered.tetrahedra.shape[0] == 1329
-    assert elapsed < 20.0
+    evidence = recovered.suppression_search
+    assert (evidence.wraps, evidence.wrap_cells, evidence.max_wrap_cells) == (3, 101, 52)
+    assert evidence.searches == 0
+    assert evidence.max_wrap_cells < recovered.tetrahedra.shape[0]
+
+
+def _tilted_prism() -> tuple[np.ndarray, ...]:
+    # A unit-square prism whose top facet lies on z = 1 + 0.1 x + 0.3 y, with
+    # six correctly rounded top vertices fanned into six triangles that are
+    # not exactly coplanar.
+    def top(x: float, y: float) -> float:
+        return float(1 + Fraction(0.1) * Fraction(x) + Fraction(0.3) * Fraction(y))
+
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    tops = (*corners, (0.5, 0.5), (0.3, 0.7))
+    points = np.asarray(
+        [(x, y, 0.0) for x, y in corners] + [(x, y, top(x, y)) for x, y in tops],
+        dtype=np.float64,
+    )
+    polygons = (
+        (0, 3, 2, 1),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+        (4, 5, 8),
+        (5, 6, 8),
+        (6, 7, 9),
+        (7, 4, 9),
+        (6, 9, 8),
+        (4, 8, 9),
+    )
+    offsets = np.cumsum([0, *(len(polygon) for polygon in polygons)])
+    vertices = np.concatenate([np.asarray(polygon) for polygon in polygons])
+    facets = np.asarray((0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5))
+    regions = np.tile(np.asarray((-1, 0)), (6, 1))
+    planes = np.full((6, 3, 3), np.nan)
+    planes[5] = ((0.0, 0.0, 1.0), (1.0, 0.0, 0.1), (0.0, 1.0, 0.3))
+    return points, offsets, vertices, facets, regions, planes
+
+
+def test_declared_facet_plane_groups_rounded_triangles_and_refuses_off_plane_vertices() -> (
+    None
+):
+    points, offsets, vertices, facets, regions, planes = _tilted_prism()
+    no_segments = np.empty((0, 2), dtype=np.int64)
+    undeclared = prepare_plc_source(
+        points, offsets, vertices, facets, regions, no_segments
+    )
+    declared = prepare_plc_source(
+        points, offsets, vertices, facets, regions, no_segments, facet_planes=planes
+    )
+    # Rounding bends the top triangles, so only the declaration groups them:
+    # its five internal diagonals stop being PLC edges.
+    assert undeclared.plc_edges.shape[0] == 17
+    assert declared.plc_edges.shape[0] == 12
+    for policy in (PlcBoundaryPolicy.FIXED, PlcBoundaryPolicy.CONFORMING):
+        recovered = recover_plc_3d(
+            points,
+            offsets,
+            vertices,
+            facets,
+            regions,
+            facet_planes=planes,
+            boundary_policy=policy,
+        )
+        np.testing.assert_array_equal(recovered.points, points)
+        assert recovered.faces.shape[0] == 16
+        assert recovered.segments.shape[0] == 12
+
+    lifted = points.copy()
+    lifted[9, 2] += 1e-6
+    with pytest.raises(PlcSourceFailure) as refusal:
+        recover_plc_3d(lifted, offsets, vertices, facets, regions, facet_planes=planes)
+    failure = refusal.value
+    assert failure.reason is PlcFailureReason.SOURCE_DEVIATION
+    assert (failure.first_kind, failure.first) == (PlcEntityKind.FACET, 5)
+    assert (failure.second_kind, failure.second) == (PlcEntityKind.POINT, 9)
+    normal = np.cross(planes[5, 1], planes[5, 2])
+    distance = abs(np.dot(normal, lifted[9] - planes[5, 0])) / np.linalg.norm(normal)
+    assert distance <= failure.certified_deviation <= distance * (1 + 1e-9)
+    assert failure.declared_bound == 0.0
+    tolerances = np.zeros((6,))
+    tolerances[5] = 1e-5
+    tolerated = recover_plc_3d(
+        lifted,
+        offsets,
+        vertices,
+        facets,
+        regions,
+        facet_planes=planes,
+        facet_plane_tolerances=tolerances,
+    )
+    assert tolerated.segments.shape[0] == 12
+
+    for row in (
+        ((0.0, 0.0, 1.0), (1.0, 0.0, 0.1), (0.0, np.nan, 0.3)),
+        ((0.0, 0.0, 1.0), (1.0, 0.0, 0.1), (2.0, 0.0, 0.2)),
+    ):
+        invalid = planes.copy()
+        invalid[5] = row
+        with pytest.raises(PlcSourceFailure) as refusal:
+            prepare_plc_source(
+                points,
+                offsets,
+                vertices,
+                facets,
+                regions,
+                no_segments,
+                facet_planes=invalid,
+            )
+        assert refusal.value.reason is PlcFailureReason.SOURCE_DEVIATION
+        assert (refusal.value.first_kind, refusal.value.first) == (PlcEntityKind.FACET, 5)
 
 
 def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:

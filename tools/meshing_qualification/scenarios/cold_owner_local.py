@@ -662,12 +662,29 @@ def _periodic_p0_content_values(view: Any, discretization: Any, /) -> np.ndarray
         raise ValueError(
             "Periodic P0 cell rows differ from the compact triangle geometry."
         )
-    # Compact vertex rows are lifted images: each cell vertex is its fundamental
-    # representative displaced by the cell's vertex shift. Recover the
-    # representatives independently and require them in the fundamental cell.
+    # Compact vertex rows are lifted images: each cell vertex is its orbit root
+    # displaced by the cell's vertex shift. Recover the roots independently:
+    # authored-site roots lie in the fundamental cell, and every image of one
+    # orbit (an adapted vertex root may lie outside it) recovers the same root.
     fractional_vertices = (coordinates[vertices] - origin) @ np.linalg.inv(basis)
     representatives = fractional_vertices - shifts
-    if np.any(representatives < -1.0e-12) or np.any(representatives >= 1.0 + 1.0e-12):
+    vertex_roots = np.asarray(view.vertex_source_ids, dtype=np.int64)
+    if vertex_roots.shape != (coordinates.shape[0],):
+        raise ValueError("Periodic P0 vertex rows lost their orbit roots.")
+    cell_roots = vertex_roots[vertices].reshape(-1)
+    flat_representatives = representatives.reshape(-1, 2)
+    authored_roots = np.isin(cell_roots, _INPUT_POINT_IDS)
+    root_order = np.argsort(cell_roots, kind="stable")
+    sorted_roots = cell_roots[root_order]
+    sorted_representatives = flat_representatives[root_order]
+    first_rows = np.searchsorted(sorted_roots, sorted_roots, side="left")
+    if (
+        np.any(flat_representatives[authored_roots] < -1.0e-12)
+        or np.any(flat_representatives[authored_roots] >= 1.0 + 1.0e-12)
+        or np.any(
+            np.abs(sorted_representatives - sorted_representatives[first_rows]) > 1.0e-12
+        )
+    ):
         raise ValueError(
             "Periodic P0 lifted vertex rows disagree with their cell vertex shifts."
         )
@@ -872,13 +889,17 @@ def _view_winding_images(view: Any, /) -> tuple[int, float]:
         )
     windings_by_source: dict[int, set[tuple[int, ...]]] = {}
     lifted_x_by_source: dict[int, list[float]] = {}
-    # Adapted vertices are their own quotient keys; only authored-site keys carry
-    # lifted images of the authored registry.
-    resident_vertex_ids = set(np.asarray(view.vertex_ids, dtype=np.int64).tolist())
+    # Adapted vertices are keyed by themselves or by their orbit root, which may
+    # be resident on another owner only; only authored-site keys carry lifted
+    # images of the authored registry.
+    resident_vertex_keys = set(np.asarray(view.vertex_ids, dtype=np.int64).tolist())
+    resident_vertex_keys.update(
+        np.asarray(view.vertex_source_ids, dtype=np.int64).tolist()
+    )
     for source_id, winding in zip(key_source_ids, key_windings, strict=True):
         source_id = int(source_id)
         if source_id not in authored_row:
-            if source_id not in resident_vertex_ids:
+            if source_id not in resident_vertex_keys:
                 raise RuntimeError(
                     "Periodic winding row references an unknown source representative "
                     f"{source_id}."
@@ -1593,6 +1614,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     from jax.experimental import multihost_utils
 
     import phydrax as phx
+    from phydrax._fingerprint import canonical_fingerprint
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
     from phydrax.graph._partition import GraphPartitionPlan
     from phydrax.lifecycle import Composition, CompositionEntry
@@ -1607,6 +1629,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     from phydrax.solver._finite_element_adaptivity import (
         FiniteElementOwnerLocalFieldTransferEvidence,
         FiniteElementOwnerLocalTopologyResult,
+        FiniteElementRepartitionResult,
         FiniteElementTopologyTransaction,
     )
     from phydrax.solver._finite_element_schedule import (
@@ -2614,47 +2637,56 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         target_graph_plan,
     )
     source_root_entry = source_composition.entry("mesh/source")
-    target_root_entry = source_root_entry
-    target_topology_id = target_manifest.source_topology_id
-    target_geometry_id = target_manifest.source_geometry_id
-    if target_topology_id is None or target_geometry_id is None:
-        raise RuntimeError(
-            "Current target manifest lacks exact topology or geometry identity."
+
+    def placement_entries(manifest: Any, /) -> tuple[Any, Any]:
+        topology_id = manifest.source_topology_id
+        geometry_id = manifest.source_geometry_id
+        if topology_id is None or geometry_id is None:
+            raise RuntimeError(
+                "Current placement manifest lacks exact topology or geometry identity."
+            )
+        topology_entry = CompositionEntry(
+            manifest,
+            entry_id="mesh/topology",
+            role="topology",
+            owner_id="phydrax.meshing",
+            structure_id=topology_id,
+            revision_id=manifest.manifest_id,
+            semantics_id="cell-mesh",
+            dependencies=(
+                source_root_entry.binding("structure"),
+                source_root_entry.binding("revision"),
+                source_root_entry.binding("semantics"),
+                source_composition.entry("mesh/specification").binding("revision"),
+                source_composition.entry("mesh/adaptation-specification").binding(
+                    "revision"
+                ),
+                source_composition.entry("mesh/source-graph-plan").binding("revision"),
+                source_composition.entry("mesh/target-graph-plan").binding("revision"),
+            ),
         )
-    target_topology_entry = CompositionEntry(
-        target_manifest,
-        entry_id="mesh/topology",
-        role="topology",
-        owner_id="phydrax.meshing",
-        structure_id=target_topology_id,
-        revision_id=target_manifest.manifest_id,
-        semantics_id="cell-mesh",
-        dependencies=(
-            target_root_entry.binding("structure"),
-            target_root_entry.binding("revision"),
-            target_root_entry.binding("semantics"),
-            source_composition.entry("mesh/specification").binding("revision"),
-            source_composition.entry("mesh/adaptation-specification").binding("revision"),
-            source_composition.entry("mesh/source-graph-plan").binding("revision"),
-            source_composition.entry("mesh/target-graph-plan").binding("revision"),
-        ),
-    )
-    target_geometry_entry = CompositionEntry(
-        target_manifest,
-        entry_id="mesh/geometry",
-        role="discretization",
-        owner_id="phydrax.meshing",
-        structure_id=target_geometry_id,
-        revision_id=target_manifest.manifest_id,
-        semantics_id="compact-owner-local-geometry",
-        dependencies=(
-            target_topology_entry.binding("structure"),
-            target_root_entry.binding("structure"),
-            target_root_entry.binding("revision"),
-            target_root_entry.binding("semantics"),
-        ),
-    )
-    target_reprepared_entries = (target_topology_entry, target_geometry_entry)
+        geometry_entry = CompositionEntry(
+            manifest,
+            entry_id="mesh/geometry",
+            role="discretization",
+            owner_id="phydrax.meshing",
+            structure_id=geometry_id,
+            revision_id=manifest.manifest_id,
+            semantics_id="compact-owner-local-geometry",
+            dependencies=(
+                topology_entry.binding("structure"),
+                source_root_entry.binding("structure"),
+                source_root_entry.binding("revision"),
+                source_root_entry.binding("semantics"),
+            ),
+        )
+        return topology_entry, geometry_entry
+
+    # The supported FE route mirrors the mesh route: the accepted state adapts on
+    # the source placement, then the adapted state repartitions onto the target
+    # placement through the FE-weighted graph migration.
+    adaptation_reprepared_entries = placement_entries(adaptation_manifest)
+    target_reprepared_entries = placement_entries(target_manifest)
     migration = target_view.graph_migration_evidence
     if migration is None:
         raise RuntimeError(
@@ -2688,25 +2720,28 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     clock_history_name = auxiliary_layouts[2].name
     previous_name = integrator_layouts[0].name
     rng_name = integrator_layouts[1].name
-    target_u_history_layout = phx.solver.FiniteElementRestartStateLayout(
-        u_history_name,
-        phx.solver.FiniteElementRestartStateRole.HISTORY,
-        phx.solver.FiniteElementRestartStateAssociation.OWNED_ROWS,
-        ownership=target_u_identity.ownership(),
-    )
-    target_content_history_layout = phx.solver.FiniteElementRestartStateLayout(
-        content_history_name,
-        phx.solver.FiniteElementRestartStateRole.HISTORY,
-        phx.solver.FiniteElementRestartStateAssociation.OWNED_ROWS,
-        ownership=target_content_identity.ownership(),
-    )
-    target_auxiliary_layouts = (
-        target_u_history_layout,
-        target_content_history_layout,
-        phx.solver.FiniteElementRestartStateLayout.from_stored_fields(
-            auxiliary_layouts[2]
-        ),
-    )
+
+    def owned_auxiliary_layouts(identities: tuple[Any, ...], /) -> tuple[Any, ...]:
+        return (
+            phx.solver.FiniteElementRestartStateLayout(
+                u_history_name,
+                phx.solver.FiniteElementRestartStateRole.HISTORY,
+                phx.solver.FiniteElementRestartStateAssociation.OWNED_ROWS,
+                ownership=identities[0].ownership(),
+            ),
+            phx.solver.FiniteElementRestartStateLayout(
+                content_history_name,
+                phx.solver.FiniteElementRestartStateRole.HISTORY,
+                phx.solver.FiniteElementRestartStateAssociation.OWNED_ROWS,
+                ownership=identities[1].ownership(),
+            ),
+            phx.solver.FiniteElementRestartStateLayout.from_stored_fields(
+                auxiliary_layouts[2]
+            ),
+        )
+
+    adaptation_auxiliary_layouts = owned_auxiliary_layouts(adaptation_identities)
+    target_auxiliary_layouts = owned_auxiliary_layouts(target_identities)
     transaction = FiniteElementTopologyTransaction(
         lambda mesh, fields, materials, lineage, args: (
             len(fields) == 2
@@ -2716,60 +2751,100 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         ),
         transaction_id="native-cold-owner-local-fe-topology-adaptation",
     )
+    field_entry_ids = (
+        ("u", "solver/state/field/u"),
+        ("content", "solver/state/field/content"),
+    )
+    auxiliary_entry_ids = (
+        (u_history_name, f"solver/restart/auxiliary/{u_history_name}"),
+        (
+            content_history_name,
+            f"solver/restart/auxiliary/{content_history_name}",
+        ),
+        (clock_history_name, f"solver/restart/auxiliary/{clock_history_name}"),
+    )
+    integrator_entry_ids = (
+        (previous_name, f"solver/restart/integrator/{previous_name}"),
+        (rng_name, f"solver/restart/integrator/{rng_name}"),
+    )
+    retained_mesh_entry_ids = (
+        "mesh/source",
+        "mesh/specification",
+        "mesh/adaptation-specification",
+        "mesh/source-graph-plan",
+        "mesh/target-graph-plan",
+    )
 
     def adapt(
-        candidate_target_view: OwnerLocalCellGeometry,
-        declared_auxiliary_layouts: tuple[Any, ...],
-        /,
+        declared_auxiliary_layouts: tuple[Any, ...], /
     ) -> FiniteElementOwnerLocalTopologyResult:
         return transaction.adapt_owner_local(
             restart_manifest,
             source_compiled,
-            target_compiled,
+            adaptation_compiled,
             source_identities,
-            target_identities,
-            adaptive_result,
+            adaptation_identities,
+            pre_graph_adaptive_result,
             source_composition,
             group,
             source_view,
-            candidate_target_view,
+            adaptation_view,
             state_entry_id="solver/state",
             geometry_entry_id="mesh/geometry",
-            field_entry_ids=(
-                ("u", "solver/state/field/u"),
-                ("content", "solver/state/field/content"),
-            ),
+            field_entry_ids=field_entry_ids,
             material_entry_id="solver/state/materials",
-            auxiliary_entry_ids=(
-                (u_history_name, f"solver/restart/auxiliary/{u_history_name}"),
-                (
-                    content_history_name,
-                    f"solver/restart/auxiliary/{content_history_name}",
-                ),
-                (clock_history_name, f"solver/restart/auxiliary/{clock_history_name}"),
-            ),
-            integrator_entry_ids=(
-                (previous_name, f"solver/restart/integrator/{previous_name}"),
-                (rng_name, f"solver/restart/integrator/{rng_name}"),
-            ),
+            auxiliary_entry_ids=auxiliary_entry_ids,
+            integrator_entry_ids=integrator_entry_ids,
             target_auxiliary_layouts=declared_auxiliary_layouts,
             target_integrator_layouts=integrator_layouts,
             target_material_layouts=material_layouts,
-            retain_entry_ids=(
-                "mesh/source",
-                "mesh/specification",
-                "mesh/adaptation-specification",
-                "mesh/source-graph-plan",
-                "mesh/target-graph-plan",
-            ),
-            reprepare_entries=target_reprepared_entries,
+            retain_entry_ids=retained_mesh_entry_ids,
+            reprepare_entries=adaptation_reprepared_entries,
             axis_name=f"{_AXIS_NAME}_topology_adaptation",
+        )
+
+    def repartition(
+        adapted: FiniteElementOwnerLocalTopologyResult,
+        candidate_target_view: OwnerLocalCellGeometry,
+        /,
+    ) -> FiniteElementRepartitionResult:
+        candidate_migration = candidate_target_view.graph_migration_evidence
+        if adapted.rebind_receipt is None or candidate_migration is None:
+            raise RuntimeError(
+                "Adapted FE state has no published composition or target migration."
+            )
+        return transaction.repartition(
+            adapted.manifest,
+            adaptation_compiled,
+            target_compiled,
+            adapted.target_identity_plans,
+            target_identities,
+            candidate_migration,
+            adapted.rebind_receipt.composition,
+            group,
+            adaptation_view,
+            candidate_target_view,
+            state_entry_id="solver/state",
+            geometry_entry_id="mesh/geometry",
+            field_entry_ids=field_entry_ids,
+            material_entry_id="solver/state/materials",
+            auxiliary_entry_ids=auxiliary_entry_ids,
+            integrator_entry_ids=integrator_entry_ids,
+            target_auxiliary_layouts=target_auxiliary_layouts,
+            target_integrator_layouts=integrator_layouts,
+            target_material_layouts=material_layouts,
+            retain_entry_ids=retained_mesh_entry_ids,
+            reprepare_entries=target_reprepared_entries,
+            axis_name=f"{_AXIS_NAME}_adapted_repartition",
         )
 
     source_composition_id = source_composition.composition_id
 
     def refused_without_partial_commit(
-        refusal: FiniteElementOwnerLocalTopologyResult, /
+        refusal: FiniteElementOwnerLocalTopologyResult | FiniteElementRepartitionResult,
+        expected_state: FiniteElementAcceptedState,
+        expected_manifest: FiniteElementRestartManifest,
+        /,
     ) -> bool:
         def same_bytes(left: Any, right: Any, /) -> bool:
             left_array = np.asarray(left)
@@ -2786,74 +2861,115 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
             )
 
         if (
-            not isinstance(refusal, FiniteElementOwnerLocalTopologyResult)
+            not isinstance(
+                refusal,
+                (FiniteElementOwnerLocalTopologyResult, FiniteElementRepartitionResult),
+            )
             or bool(np.asarray(refusal.committed))
-            or refusal.state.accepted_id != stored_state.accepted_id
-            or refusal.manifest.manifest_id != restart_manifest.manifest_id
+            or refusal.state.accepted_id != expected_state.accepted_id
+            or refusal.manifest.manifest_id != expected_manifest.manifest_id
             or (refusal.rebind_receipt is not None and refusal.rebind_receipt.published)
-            or refusal.state.time != stored_state.time
-            or refusal.state.step != stored_state.step
-            or refusal.state.state_version != stored_state.state_version
-            or refusal.state.schedule_cursor != stored_state.schedule_cursor
-            or refusal.state.topology_id != stored_state.topology_id
-            or refusal.state.prepared_id != stored_state.prepared_id
-            or refusal.state.compilation_id != stored_state.compilation_id
+            or refusal.state.time != expected_state.time
+            or refusal.state.step != expected_state.step
+            or refusal.state.state_version != expected_state.state_version
+            or refusal.state.schedule_cursor != expected_state.schedule_cursor
+            or refusal.state.topology_id != expected_state.topology_id
+            or refusal.state.prepared_id != expected_state.prepared_id
+            or refusal.state.compilation_id != expected_state.compilation_id
             or layout_ids(refusal.state.field_layouts)
-            != layout_ids(stored_state.field_layouts)
+            != layout_ids(expected_state.field_layouts)
             or len(refusal.state.fields) != 2
             or any(
                 not same_bytes(actual, expected)
                 for actual, expected in zip(
-                    refusal.state.fields, stored_state.fields, strict=True
+                    refusal.state.fields, expected_state.fields, strict=True
                 )
             )
             or layout_ids(refusal.manifest.auxiliary_layouts)
-            != layout_ids(restart_manifest.auxiliary_layouts)
+            != layout_ids(expected_manifest.auxiliary_layouts)
             or layout_ids(refusal.manifest.integrator_layouts)
-            != layout_ids(restart_manifest.integrator_layouts)
+            != layout_ids(expected_manifest.integrator_layouts)
             or layout_ids(refusal.manifest.material_layouts)
-            != layout_ids(restart_manifest.material_layouts)
+            != layout_ids(expected_manifest.material_layouts)
         ):
             return False
-        source_auxiliary = dict(restart_manifest.auxiliary_state)
+        expected_auxiliary = dict(expected_manifest.auxiliary_state)
         refused_auxiliary = dict(refusal.manifest.auxiliary_state)
-        source_integrators = dict(restart_manifest.integrator_state)
+        expected_integrators = dict(expected_manifest.integrator_state)
         refused_integrators = dict(refusal.manifest.integrator_state)
         if (
-            source_auxiliary.keys() != refused_auxiliary.keys()
-            or source_integrators.keys() != refused_integrators.keys()
+            expected_auxiliary.keys() != refused_auxiliary.keys()
+            or expected_integrators.keys() != refused_integrators.keys()
             or any(
-                not same_bytes(refused_auxiliary[name], source_auxiliary[name])
-                for name in source_auxiliary
+                not same_bytes(refused_auxiliary[name], expected_auxiliary[name])
+                for name in expected_auxiliary
             )
             or any(
-                same_bytes(
+                not same_bytes(
                     jax.random.key_data(refused_integrators[name]),
-                    jax.random.key_data(source_integrators[name]),
+                    jax.random.key_data(expected_integrators[name]),
                 )
                 if name == rng_name
-                else same_bytes(refused_integrators[name], source_integrators[name])
-                for name in source_integrators
+                else not same_bytes(refused_integrators[name], expected_integrators[name])
+                for name in expected_integrators
             )
         ):
             return False
-        source_materials = stored_state.materials
+        expected_materials = expected_state.materials
         refused_materials = refusal.state.materials
-        if source_materials is None or refused_materials is None:
-            return source_materials is refused_materials
+        if expected_materials is None or refused_materials is None:
+            return expected_materials is refused_materials
         site = phx.equations.MaterialSiteId("steel:integration-site:0")
         try:
-            source_material = source_materials.state(site)
+            expected_material = expected_materials.state(site)
             refused_material = refused_materials.state(site)
         except KeyError:
             return False
         return (
-            source_material.model_id == refused_material.model_id
-            and source_material.state_version == refused_material.state_version
-            and same_bytes(source_material.committed, refused_material.committed)
-            and same_bytes(source_material.trial, refused_material.trial)
+            expected_material.model_id == refused_material.model_id
+            and expected_material.state_version == refused_material.state_version
+            and same_bytes(expected_material.committed, refused_material.committed)
+            and same_bytes(expected_material.trial, refused_material.trial)
         )
 
+    # A history bank declared with another field's ownership on one rank refuses
+    # the adaptation on every rank without a partial commit.
+    invalid_content_history_layout = phx.solver.FiniteElementRestartStateLayout(
+        content_history_name,
+        phx.solver.FiniteElementRestartStateRole.HISTORY,
+        phx.solver.FiniteElementRestartStateAssociation.OWNED_ROWS,
+        ownership=adaptation_u_identity.ownership(),
+    )
+    rank_layouts = (
+        (
+            adaptation_auxiliary_layouts[0],
+            invalid_content_history_layout,
+            adaptation_auxiliary_layouts[2],
+        )
+        if rank == 1
+        else adaptation_auxiliary_layouts
+    )
+    refused_bank = adapt(rank_layouts)
+    bank_refused = (
+        refused_without_partial_commit(refused_bank, stored_state, restart_manifest)
+        and bool(refused_bank.diagnostics)
+        and source_composition.composition_id == source_composition_id
+    )
+    require_global_flag(bank_refused, "collective P1/P0 restart-bank refusal")
+    result = adapt(adaptation_auxiliary_layouts)
+    if (
+        not isinstance(result, FiniteElementOwnerLocalTopologyResult)
+        or not bool(np.asarray(result.committed))
+        or result.rebind_receipt is None
+        or not result.rebind_receipt.published
+    ):
+        diagnostics = "invalid owner-local FE topology result"
+        if isinstance(result, FiniteElementOwnerLocalTopologyResult):
+            diagnostics = result.diagnostics
+        raise RuntimeError(f"Owner-local FE topology adaptation refused: {diagnostics!r}")
+    adapted_composition_id = result.rebind_receipt.composition.composition_id
+    # A migration naming another target directory refuses the repartition on
+    # every rank and leaves the adapted state unpublished.
     stale_migration = OwnerLocalGraphMigrationEvidence(
         migration.result,
         migration.source_candidate_id,
@@ -2872,47 +2988,28 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         target_view,
         stale_migration,
     )
-    refused_migration = adapt(stale_target_view, target_auxiliary_layouts)
+    refused_migration = repartition(result, stale_target_view)
     stale_refused = (
-        refused_without_partial_commit(refused_migration)
+        refused_without_partial_commit(refused_migration, result.state, result.manifest)
         and bool(refused_migration.diagnostics)
-        and source_composition.composition_id == source_composition_id
+        and result.rebind_receipt.composition.composition_id == adapted_composition_id
     )
     require_global_flag(stale_refused, "collective stale graph-migration refusal")
-    invalid_content_history_layout = phx.solver.FiniteElementRestartStateLayout(
-        content_history_name,
-        phx.solver.FiniteElementRestartStateRole.HISTORY,
-        phx.solver.FiniteElementRestartStateAssociation.OWNED_ROWS,
-        ownership=target_u_identity.ownership(),
-    )
-    rank_layouts = (
-        (
-            target_u_history_layout,
-            invalid_content_history_layout,
-            target_auxiliary_layouts[2],
-        )
-        if rank == 1
-        else target_auxiliary_layouts
-    )
-    refused_bank = adapt(target_view, rank_layouts)
-    bank_refused = (
-        refused_without_partial_commit(refused_bank)
-        and bool(refused_bank.diagnostics)
-        and source_composition.composition_id == source_composition_id
-    )
-    require_global_flag(bank_refused, "collective P1/P0 restart-bank refusal")
-    result = adapt(target_view, target_auxiliary_layouts)
+    moved = repartition(result, target_view)
     if (
-        not isinstance(result, FiniteElementOwnerLocalTopologyResult)
-        or not bool(np.asarray(result.committed))
-        or result.rebind_receipt is None
-        or not result.rebind_receipt.published
+        not isinstance(moved, FiniteElementRepartitionResult)
+        or not bool(np.asarray(moved.committed))
+        or moved.rebind_receipt is None
+        or not moved.rebind_receipt.published
+        or tuple(plan.plan_id for plan in moved.target_identity_plans)
+        != tuple(plan.plan_id for plan in target_identities)
     ):
-        diagnostics = "invalid owner-local FE topology result"
-        if isinstance(result, FiniteElementOwnerLocalTopologyResult):
-            diagnostics = result.diagnostics
-        raise RuntimeError(f"Owner-local FE topology adaptation refused: {diagnostics!r}")
-    continued_state = result.state
+        diagnostics = "invalid owner-local FE repartition result"
+        if isinstance(moved, FiniteElementRepartitionResult):
+            diagnostics = moved.diagnostics
+        raise RuntimeError(f"Adapted owner-local FE repartition refused: {diagnostics!r}")
+    adapted_state = result.state
+    continued_state = moved.state
     if (
         continued_state.time <= 0.0
         or continued_state.time != stored_state.time
@@ -2920,7 +3017,11 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         or continued_state.topology_id != target_view.source_topology_id
         or continued_state.prepared_id != target_discretization.prepared_id
         or continued_state.compilation_id != target_compiled.compilation_id
-        or result.manifest.state.accepted_id != continued_state.accepted_id
+        or moved.manifest.state.accepted_id != continued_state.accepted_id
+        or adapted_state.time != stored_state.time
+        or adapted_state.topology_id != adaptation_view.source_topology_id
+        or adapted_state.prepared_id != adaptation_discretization.prepared_id
+        or adapted_state.compilation_id != adaptation_compiled.compilation_id
         or continued_state.materials is None
     ):
         raise RuntimeError(
@@ -2948,12 +3049,19 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         raise RuntimeError(
             "Committed P1 FE rows differ from the current target identity plan."
         )
+    # An owner with no adapted cells has no local vertex stencil by design.
+    adapted_owner_is_empty = int(np.asarray(adaptation_view.owned_cell_ids).size) == 0
+    expected_stencil_id = (
+        None
+        if pre_graph_adaptive_result.vertex_stencil is None
+        else pre_graph_adaptive_result.vertex_stencil.stencil_id
+    )
     if (
-        result.adaptive_result_id != adaptive_result.result_id
-        or adaptive_result.vertex_stencil is None
-        or result.vertex_stencil_id != adaptive_result.vertex_stencil.stencil_id
+        result.adaptive_result_id != pre_graph_adaptive_result.result_id
+        or (expected_stencil_id is None) != adapted_owner_is_empty
+        or result.vertex_stencil_id != expected_stencil_id
         or tuple(plan.plan_id for plan in result.target_identity_plans)
-        != tuple(plan.plan_id for plan in target_identities)
+        != tuple(plan.plan_id for plan in adaptation_identities)
         or len(result.field_transfers) != 2
         or any(
             not isinstance(transfer, FiniteElementOwnerLocalFieldTransferEvidence)
@@ -2973,6 +3081,36 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     u_transfer = transfer_by_layout[target_layouts[0].layout_id]
     content_transfer = transfer_by_layout[target_layouts[1].layout_id]
     expected_content_values = np.asarray(content_transfer.target_values, dtype=np.float64)
+
+    # A field transfer binds its source field entry's structure and the
+    # group-wide owned-field structure of the adapted target placement, whose
+    # owner directory is the adaptation view's graph-migration target.
+    adaptation_migration = adaptation_view.graph_migration_evidence
+    if adaptation_migration is None:
+        raise RuntimeError("Adapted FE view lost its graph-migration authority.")
+
+    def target_field_structure(layout_id: str, identity: Any, /) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "owner-local-finite-element-owned-field",
+                "layout": layout_id,
+                "identity": identity.ownership().identity_id,
+                "target_topology": adaptation_view.source_topology_id,
+                "target_geometry": adaptation_view.source_geometry_id,
+                "target_directory": adaptation_migration.target_directory_id,
+            }
+        )
+
+    u_source_structure = source_composition.entry("solver/state/field/u").structure_id
+    content_source_structure = source_composition.entry(
+        "solver/state/field/content"
+    ).structure_id
+    u_target_structure = target_field_structure(
+        u_transfer.field_layout_id, adaptation_u_identity
+    )
+    content_target_structure = target_field_structure(
+        content_transfer.field_layout_id, adaptation_content_identity
+    )
     if tuple(plan.plan_id for plan in source_identities) != tuple(
         transfer.source_plan_id for transfer in result.field_transfers
     ) and set(transfer.source_plan_id for transfer in result.field_transfers) != {
@@ -2981,49 +3119,101 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         raise RuntimeError(
             "Atomic FE field transfers do not bind both source identity plans."
         )
-    if (
-        u_transfer.conservative
-        or u_transfer.semantics
-        is not phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION
-        or u_transfer.adaptive_result_id != adaptive_result.result_id
-        or u_transfer.vertex_stencil_id != result.vertex_stencil_id
-        or u_transfer.source_plan_id != source_u_identity.plan_id
-        or u_transfer.target_plan_id != target_u_identity.plan_id
-        or u_transfer.source_structure_id != source_view.source_topology_id
-        or u_transfer.target_structure_id != target_view.source_topology_id
-    ):
-        raise RuntimeError(
-            "P1 owner-local transfer lost its interpolation/stencil identity."
+    u_failures = tuple(
+        name
+        for name, failed in (
+            ("conservative", u_transfer.conservative),
+            (
+                "semantics",
+                u_transfer.semantics
+                is not phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION,
+            ),
+            (
+                "adaptive-result",
+                u_transfer.adaptive_result_id != pre_graph_adaptive_result.result_id,
+            ),
+            ("vertex-stencil", u_transfer.vertex_stencil_id != result.vertex_stencil_id),
+            ("source-plan", u_transfer.source_plan_id != source_u_identity.plan_id),
+            ("target-plan", u_transfer.target_plan_id != adaptation_u_identity.plan_id),
+            ("source-structure", u_transfer.source_structure_id != u_source_structure),
+            ("target-structure", u_transfer.target_structure_id != u_target_structure),
         )
-    if (
-        not content_transfer.conservative
-        or content_transfer.semantics
-        is not phx.solver.FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE
-        or content_transfer.adaptive_result_id != adaptive_result.result_id
-        or content_transfer.source_plan_id != source_content_identity.plan_id
-        or content_transfer.target_plan_id != target_content_identity.plan_id
-        or content_transfer.source_structure_id != source_view.source_topology_id
-        or content_transfer.target_structure_id != target_view.source_topology_id
-        or not content_transfer.conservation_evidence_id
-        or content_transfer.source_integral is None
-        or content_transfer.target_integral is None
-        or content_transfer.conservation_defect is None
-        or content_transfer.conservation_bound is None
-        or expected_content_values.shape != target_content_values.shape
-    ):
+        if failed
+    )
+    if u_failures:
         raise RuntimeError(
-            "Conservative P0 content transfer omitted its exact identity or integral evidence."
+            "P1 owner-local transfer lost its interpolation/stencil identity: "
+            f"{', '.join(u_failures)}."
+        )
+    content_failures = tuple(
+        name
+        for name, failed in (
+            ("conservative", not content_transfer.conservative),
+            (
+                "semantics",
+                content_transfer.semantics
+                is not phx.solver.FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE,
+            ),
+            (
+                "adaptive-result",
+                content_transfer.adaptive_result_id
+                != pre_graph_adaptive_result.result_id,
+            ),
+            (
+                "source-plan",
+                content_transfer.source_plan_id != source_content_identity.plan_id,
+            ),
+            (
+                "target-plan",
+                content_transfer.target_plan_id != adaptation_content_identity.plan_id,
+            ),
+            (
+                "source-structure",
+                content_transfer.source_structure_id != content_source_structure,
+            ),
+            (
+                "target-structure",
+                content_transfer.target_structure_id != content_target_structure,
+            ),
+            ("conservation-evidence", not content_transfer.conservation_evidence_id),
+            (
+                "integrals",
+                content_transfer.source_integral is None
+                or content_transfer.target_integral is None
+                or content_transfer.conservation_defect is None
+                or content_transfer.conservation_bound is None,
+            ),
+            (
+                "target-rows",
+                expected_content_values.shape != np.shape(adapted_state.fields[1]),
+            ),
+        )
+        if failed
+    )
+    if content_failures:
+        raise RuntimeError(
+            "Conservative P0 content transfer omitted its exact identity or integral "
+            f"evidence: {', '.join(content_failures)}."
         )
     u_transfer_values = np.asarray(u_transfer.target_values, dtype=np.float64)
-    if u_transfer_values.shape != migrated_values.shape:
+    adapted_values = np.asarray(adapted_state.fields[0], dtype=np.float64)
+    if u_transfer_values.shape != adapted_values.shape:
         raise RuntimeError(
-            "P1 field-transfer evidence rows differ from the committed accepted field."
+            "P1 field-transfer evidence rows differ from the committed adapted field."
         )
+    # The adaptation commits exactly its transfer evidence; the repartition then
+    # moves those rows, and the moved P1 field matches a fresh target solve.
     target_content_transfer_error = float(
-        np.max(np.abs(target_content_values - expected_content_values), initial=0.0)
+        np.max(
+            np.abs(
+                np.asarray(adapted_state.fields[1], dtype=np.float64)
+                - expected_content_values
+            ),
+            initial=0.0,
+        )
     )
     target_u_transfer_error = float(
-        np.max(np.abs(migrated_values - u_transfer_values), initial=0.0)
+        np.max(np.abs(adapted_values - u_transfer_values), initial=0.0)
     )
     transfer_error = max(
         float(np.max(np.abs(migrated_values - expected_values), initial=0.0)),
@@ -3101,7 +3291,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         raise RuntimeError(
             "Conservative periodic P0 content failed its owner-reduced integral or variation oracle."
         )
-    committed_banks = dict(result.manifest.auxiliary_state)
+    committed_banks = dict(moved.manifest.auxiliary_state)
     source_banks = dict(restart_manifest.auxiliary_state)
     if (
         not np.array_equal(
@@ -3120,7 +3310,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         raise RuntimeError(
             "Owner-local FE P1/P0 history or clock banks changed during commit."
         )
-    committed_integrators = dict(result.manifest.integrator_state)
+    committed_integrators = dict(moved.manifest.integrator_state)
     source_integrators = dict(restart_manifest.integrator_state)
     if (
         not np.array_equal(
@@ -3160,7 +3350,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         raise RuntimeError(
             "Replicated FE material state changed during owner-local commit."
         )
-    receipt_composition = result.rebind_receipt.composition
+    receipt_composition = moved.rebind_receipt.composition
     if (
         receipt_composition.entry("mesh/geometry").revision_id
         != target_manifest.manifest_id
@@ -3446,6 +3636,19 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         )
     ):
         raise RuntimeError("Accepted FE next solve lost its typed restart-bank state.")
+    # The stationary next solve re-analyses P0 content on the target cells. The
+    # committed conservative transfer matches it in integral, not row by row
+    # (cell averages of a nonconstant field change under refinement), so the
+    # accepted rows are compared to the independent target cell averages.
+    next_content_reanalysis_error = float(
+        np.max(
+            np.abs(
+                np.asarray(next_state.fields[1], dtype=np.float64)
+                - np.asarray(target_content_reference_values, dtype=np.float64)
+            ),
+            initial=0.0,
+        )
+    )
     if (
         abs(next_step_evidence["integral"] - target_integral)
         > 2.0e-9 * max(1.0, abs(domain_measure))
@@ -3457,10 +3660,8 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         or not np.isfinite(next_step_evidence["content_maximum"])
         or next_step_evidence["content_maximum"] - next_step_evidence["content_minimum"]
         <= 1.0e-8
-        or not np.array_equal(
-            np.asarray(next_state.fields[1]),
-            np.asarray(continued_state.fields[1]),
-        )
+        or np.shape(next_state.fields[1]) != np.shape(continued_state.fields[1])
+        or next_content_reanalysis_error > 2.0e-10
     ):
         raise RuntimeError(
             "Accepted FE next solve changed positive P1 or nonconstant P0 state."

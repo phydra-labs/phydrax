@@ -1088,6 +1088,8 @@ def _prepare_native_state(
         witness_parameters=np.zeros((vertex_ids.size, 2), dtype=np.float64),
         face_ids=source_face_ids,
         segment_ids=source_segment_ids,
+        face_planes=np.full((source_faces.shape[0], 3, 3), np.nan, dtype=np.float64),
+        face_plane_tolerances=np.zeros((source_faces.shape[0],), dtype=np.float64),
     )
 
     source_map = source.geometry.source_map
