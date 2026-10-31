@@ -1376,6 +1376,11 @@ def _poisson_surface_source(
         vertices, faces = extract_indicator_surface(indicator)
     except MemoryError as error:
         fail_allocation("level-set extraction", error)
+    # Level-set interpolation can leave coordinates a few ulps from zero, far below
+    # the 2**-120 magnitude the native exact predicates admit. The extracted
+    # surface is an approximation, so such coordinates are defined as zero
+    # before the source exists.
+    vertices = np.where(np.abs(vertices) < 2.0**-120, 0.0, vertices)
     try:
         _, coverage = sampling_coverage(
             retained_points,
