@@ -301,7 +301,12 @@ def test_cell_inverse_refusal_is_static_validated_box_evidence() -> None:
     assert jax.tree.leaves(refusal) == []
     with pytest.raises(ValueError, match="reason"):
         phx.discretization.CellInverseRefusal(
-            0, 1, "converged", (Fraction(0),), (Fraction(1),), ()
+            0,
+            1,
+            "converged",  # ty: ignore[invalid-argument-type]
+            (Fraction(0),),
+            (Fraction(1),),
+            (),
         )
     with pytest.raises(ValueError, match="ordered box"):
         phx.discretization.CellInverseRefusal(
@@ -312,6 +317,60 @@ def test_cell_inverse_refusal_is_static_validated_box_evidence() -> None:
             (Fraction(1),),
             ((Fraction(2),),),
         )
+
+
+def test_overset_receptor_evidence_carries_donor_inverse_refusals() -> None:
+    # The quadratic donor is a 1e-5-thin triangle; receptor vertex 0 lies just below
+    # its edge, within the residual tolerance but with no exact preimage.
+    corners = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0e-5)), dtype=np.float64)
+    nodes = np.concatenate(
+        (corners, 0.5 * (corners[[0, 1, 0]] + corners[[1, 2, 2]])), axis=0
+    )
+    donor_mesh = phx.discretization.CellMesh.from_triangles(
+        corners, np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    donor = MeshPart(
+        "donor",
+        phx.meshing.certify_cell_mesh(
+            donor_mesh,
+            phx.SpatialCoordinateContract.si(),
+            geometry=phx.discretization.CellGeometrySpec(
+                {"triangles": phx.discretization.lagrange_element("triangle", 2)},
+                {"triangles": np.arange(6, dtype=np.int64)[None, :]},
+                nodes,
+            ),
+        ),
+    )
+    receptor = _part(
+        "receptor",
+        ((0.5, -2.0e-15), (0.6, 2.0e-6), (0.55, 4.0e-6)),
+        ((0, 1, 2),),
+    )
+
+    connectivity = prepare_overset_connectivity(
+        MeshAssembly((donor, receptor)),
+        (
+            OversetPartSpec("donor"),
+            OversetPartSpec("receptor", boundary=_boundary_facets(receptor)),
+        ),
+        policy=OversetPolicy(fringe_layers=1),
+    )
+
+    evidence = next(
+        item for item in connectivity.receptors if item.part_name == "receptor"
+    )
+    assert np.asarray(evidence.status).tolist() == [
+        int(phx.meshing.CouplingSearchStatus.UNRESOLVED),
+        int(phx.meshing.CouplingSearchStatus.FOUND),
+        int(phx.meshing.CouplingSearchStatus.FOUND),
+    ]
+    (refusal,) = evidence.donor_refusals
+    assert (refusal.donor_part, refusal.donor_block) == ("donor", "triangles")
+    assert (refusal.refusal.point, refusal.refusal.cell, refusal.refusal.reason) == (
+        0,
+        0,
+        "rootless-tolerance-root",
+    )
 
 
 def test_polyhedral_locator_uses_authored_planar_faces() -> None:

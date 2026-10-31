@@ -39,7 +39,12 @@ from ..discretization._cell_complex import (
     TetrahedralConnectivity,
 )
 from ..discretization._cell_geometry_validity import cell_geometry_id
-from ..discretization._cell_locator import AbstractCellLocator, CellLocationStatus
+from ..discretization._cell_locator import (
+    AbstractCellLocator,
+    CellInverseRefusal,
+    CellLocationRefusalError,
+    CellLocationStatus,
+)
 from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._field_query import PreparedFieldQuery
 from ..discretization._hexahedral import HexahedralConnectivity
@@ -487,9 +492,11 @@ def _source_solid_membership(
             classified.location.candidates_complete
         )
         if not np.all(resolved):
-            raise ValueError(
+            raise CellLocationRefusalError(
                 "Mapped source-wall membership is unresolved or ambiguous for vertex IDs "
-                f"{tuple(int(value) for value in vertex_ids[~resolved])!r}."
+                f"{tuple(int(value) for value in vertex_ids[~resolved])!r}; refusal "
+                "points index those query vertices.",
+                classified.location.inverse_refusals,
             )
         return np.asarray(classified.inside), np.asarray(classified.boundary)
     from ..geometry._contracts import CompiledGeometry
@@ -803,7 +810,32 @@ class OversetPartBlanking(StrictModule, NonTrainableState):
         )
 
 
+@final
+class OversetDonorRefusal(StrictModule):
+    """A donor block whose mapped locator left one receptor's inverse map undecided.
+
+    ``refusal.point`` is the receptor's slot in its receptor evidence and
+    ``refusal.cell`` the donor block's local cell; the box and witness are the
+    locator's exact evidence.
+    """
+
+    donor_part: str = eqx.field(static=True)
+    donor_block: str = eqx.field(static=True)
+    refusal: CellInverseRefusal
+
+    def __init__(
+        self, donor_part: str, donor_block: str, refusal: CellInverseRefusal, /
+    ) -> None:
+        if not isinstance(refusal, CellInverseRefusal):
+            raise TypeError("refusal must be CellInverseRefusal.")
+        self.donor_part, self.donor_block = str(donor_part), str(donor_block)
+        self.refusal = refusal
+
+
 class OversetReceptorEvidence(StrictModule, NonTrainableState):
+    """Donor-search outcome per receptor, with the donor inverse-map refusals behind
+    unresolved receptors ordered by receptor slot, donor part, and block."""
+
     receptor_ids: Array
     receptor_rows: Array
     status: Array
@@ -813,6 +845,7 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
     residuals: Array
     donor_measures: Array
     owner_ranks: Array
+    donor_refusals: tuple[OversetDonorRefusal, ...]
     part_name: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
@@ -829,6 +862,8 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
         donor_measures: ConvertibleToArray,
         owner_ranks: ConvertibleToArray,
         /,
+        *,
+        donor_refusals: tuple[OversetDonorRefusal, ...],
     ) -> None:
         arrays = (
             np.asarray(receptor_ids, dtype=np.int64),
@@ -853,6 +888,16 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "Overset receptor IDs must be strictly increasing and unique."
             )
+        refusals = tuple(donor_refusals)
+        if any(
+            not isinstance(refusal, OversetDonorRefusal)
+            or refusal.refusal.point >= arrays[0].size
+            or arrays[2][refusal.refusal.point] != int(CouplingSearchStatus.UNRESOLVED)
+            for refusal in refusals
+        ):
+            raise ValueError(
+                "Overset donor refusals must name unresolved receptor slots."
+            )
         (
             self.receptor_ids,
             self.receptor_rows,
@@ -865,6 +910,7 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
             self.owner_ranks,
         ) = tuple(jnp.asarray(value) for value in arrays)
         self.part_name = str(part_name)
+        self.donor_refusals = refusals
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "overset-receptors",
@@ -2646,6 +2692,7 @@ def _owner_local_prepare_blanking(
                 np.full((count,), np.inf, dtype=np.float64),
                 np.full((count,), np.inf, dtype=np.float64),
                 owners,
+                donor_refusals=(),
             )
         )
     counts = _owner_local_all_gather_rows(
@@ -3039,6 +3086,7 @@ class _DonorChoice(StrictModule, NonTrainableState):
     status: np.ndarray
     candidate_parts: np.ndarray
     residuals: np.ndarray
+    refusals: tuple[OversetDonorRefusal, ...]
 
 
 def _resolve_donors(
@@ -3057,6 +3105,7 @@ def _resolve_donors(
     candidate_parts = [set() for _ in range(count)]
     blocked = np.zeros((count,), dtype=np.bool_)
     unresolved = np.zeros((count,), dtype=np.bool_)
+    refusals: list[tuple[int, int, int, OversetDonorRefusal]] = []
     source_vertices = [
         np.asarray(_cell_result(part).mesh.coordinates, dtype=np.float64)
         for part in parts
@@ -3092,6 +3141,17 @@ def _resolve_donors(
         for block, locator in enumerate(geometry.cell_locators):
             start, _ = geometry.block_offsets[block : block + 2]
             location = locator.locate(donor_points)
+            refusals.extend(
+                (
+                    refusal.point,
+                    donor,
+                    block,
+                    OversetDonorRefusal(
+                        spec.part_name, geometry.block_names[block], refusal
+                    ),
+                )
+                for refusal in location.inverse_refusals
+            )
             complete = np.asarray(location.candidates_complete, dtype=np.bool_)
             status = np.asarray(location.status, dtype=np.int32)
             unresolved |= ~complete | ~np.isin(
@@ -3228,6 +3288,7 @@ def _resolve_donors(
         status,
         candidate_counts,
         residuals,
+        tuple(record for *_, record in sorted(refusals, key=lambda item: item[:3])),
     )
 
 
@@ -3298,6 +3359,7 @@ def _receptor_records(
                 choices.residuals,
                 choices.measures,
                 receptor_owner_ranks,
+                donor_refusals=choices.refusals,
             )
         )
         for donor_index, donor in enumerate(parts):
