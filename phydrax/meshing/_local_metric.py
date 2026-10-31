@@ -1282,7 +1282,6 @@ def _split_round(
         return state, counts, 0
     first, second = topology.edges[candidates].T
     t = _metric_midpoint(state, first, second)
-    periodic_midpoint_inconsistent: set[int] = set()
     if periodic_context is not None:
         complete_orbits, _ = _complete_periodic_operations(
             candidates,
@@ -1290,19 +1289,23 @@ def _split_round(
             np.ones((candidates.size,), dtype=np.bool_),
             periodic_context.edge_quotient_ids.size,
         )
+        position_of_edge = {
+            int(edge): position for position, edge in enumerate(candidates.tolist())
+        }
         canonical_first = periodic_context.edge_canonical_vertices[candidates, 0]
         canonical_parameter = np.where(first == canonical_first, t, 1.0 - t)
         candidate_orbits = periodic_context.edge_orbits[candidates]
+        # An orbit is one quotient edge: its members' metric midpoints may differ
+        # by rounding of their chart images, so every member takes the canonical
+        # split parameter of the orbit's representative edge.
         for orbit in complete_orbits:
+            root = position_of_edge.get(
+                int(periodic_context.edge_representative_rows[int(orbit)])
+            )
+            if root is None:
+                raise ValueError("A complete split orbit lost its representative edge.")
             member_positions = np.flatnonzero(candidate_orbits == orbit)
-            parameters = canonical_parameter[member_positions]
-            if not np.array_equal(
-                parameters,
-                np.full(parameters.shape, parameters[0], dtype=np.float64),
-            ):
-                periodic_midpoint_inconsistent.add(int(orbit))
-                continue
-            common_parameter = float(parameters[0])
+            common_parameter = float(canonical_parameter[root])
             t[member_positions] = np.where(
                 first[member_positions] == canonical_first[member_positions],
                 common_parameter,
@@ -1319,13 +1322,8 @@ def _split_round(
         cell_value = source.periodic_cell
         if cell_value is None:
             raise ValueError("Periodic splits require the source lattice.")
-        position_of_edge = {
-            int(edge): position for position, edge in enumerate(candidates.tolist())
-        }
         member_windings = periodic_context.edge_member_windings[candidates]
         for orbit in complete_orbits:
-            if int(orbit) in periodic_midpoint_inconsistent:
-                continue
             root = position_of_edge.get(
                 int(periodic_context.edge_representative_rows[int(orbit)])
             )
@@ -1404,10 +1402,6 @@ def _split_round(
             state.cells.shape[0],
         )
         selected = np.flatnonzero(selected_operations)
-        selected_orbits = eligible[selected]
-        for orbit in selected_orbits:
-            if int(orbit) in periodic_midpoint_inconsistent:
-                raise ValueError("Periodic metric midpoints differ across an edge orbit.")
         chosen = np.flatnonzero(np.isin(operation_of_candidate, selected))
         chosen_edges = candidates[chosen]
         # The root member is allocated first so it carries the smallest new

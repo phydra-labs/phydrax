@@ -9,11 +9,12 @@ from __future__ import annotations
 import math
 from bisect import bisect_right
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import final, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -24,6 +25,12 @@ import phydrax.geometry._surface_source_support as surface_support_owner
 import phydrax.meshing._association as association_owner
 from phydrax.geometry import ConstrainedDelaunayTriangulation
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
+from phydrax.geometry._interval_enclosure import (
+    IntervalExtensionError,
+    prepare_interval_function,
+    PreparedIntervalFunction,
+)
+from phydrax.geometry._rational import fraction_endpoint
 from phydrax.geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -38,6 +45,7 @@ from phydrax.geometry.brep._patches import (
 )
 from phydrax.geometry.reconstruction._core import ReconstructedGeometrySource
 from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
+from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import (
     CellMeshingTarget,
@@ -2199,64 +2207,200 @@ def _surface_mapped_curve_bounds(
     first: float,
     last: float,
     /,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
+    """Chart box of a p-curve interval and the box of its mapped image."""
     chart_box = np.asarray(pcurve.bounding_box(first, last), dtype=np.float64)
     chart_box = _positive_surface_parameter_box(surface, chart_box)
-    return np.asarray(surface.bounding_box(chart_box), dtype=np.float64)
+    return chart_box, np.asarray(surface.bounding_box(chart_box), dtype=np.float64)
 
 
-def _curve_interval_bounds(
-    domain: domain_owner.MeshingDomain,
-    curve: int,
-    lower: Fraction,
-    upper: Fraction,
+def _mapped_curve_is_c1(
+    surface: AbstractSurfacePatch,
+    pcurve: AbstractCurve,
+    chart_box: np.ndarray,
+    first: float,
+    last: float,
     /,
-) -> tuple[float, float]:
-    first = _source_curve_point(domain, curve, lower)
-    last = _source_curve_point(domain, curve, upper)
-    deviation = 0.0
-    length = 0.0
-    uses = domain.curve_uses(curve)
-    if not uses:
-        raise _failure(
-            "source curve has no authored chart use",
-            category=MeshingFailureCategory.INVALID_SOURCE,
-            entity_ids=(int(curve),),
+) -> bool:
+    """Established C1 continuity of ``surface o pcurve`` on one interval.
+
+    An affine placement keeps the continuity class of its source surface.
+    """
+    source = (
+        surface.source
+        if isinstance(surface, domain_owner._PlacedSurfacePatch)
+        else surface
+    )
+    return pcurve.is_c1_on(first, last) and source.is_c1_on(chart_box)
+
+
+def _mapped_curve_hessian(
+    surface: AbstractSurfacePatch, pcurve: AbstractCurve, /
+) -> PreparedIntervalFunction | None:
+    """Interval program of ``d^2/ds^2 surface(pcurve(s))``, if the maps trace."""
+
+    def mapped(parameter: jax.Array) -> jax.Array:
+        return surface.evaluate(pcurve.evaluate(parameter[0]))
+
+    try:
+        return prepare_interval_function(
+            jax.jacfwd(jax.jacfwd(mapped)), 1, batch_capacity=1
         )
-    for patch, use in uses:
-        if not isinstance(use, domain_owner.PatchCurveUse):
-            continue
-        native_first = float(_use_source_parameter(use, lower))
-        native_last = float(_use_source_parameter(use, upper))
-        try:
-            bounds = _surface_mapped_curve_bounds(
-                domain.patches[patch].surface,
-                use.pcurve,
-                min(native_first, native_last),
-                max(native_first, native_last),
-            )
-        except (ArithmeticError, NotImplementedError, TypeError, ValueError) as error:
+    except (IntervalExtensionError, NotImplementedError):
+        return None
+
+
+def _second_order_chord_bound(
+    program: PreparedIntervalFunction,
+    endpoints: tuple[np.ndarray, np.ndarray],
+    native: tuple[float, float],
+    chord: tuple[np.ndarray, np.ndarray],
+    /,
+) -> float:
+    """Distance bound from a mapped p-curve interval to a chord.
+
+    Componentwise linear interpolation of ``g = surface o pcurve`` over a
+    parameter interval of width ``h`` deviates by at most
+    ``h^2 / 8 * sup|g_i''|``; the interpolant of ``g``'s endpoints is within
+    the larger endpoint offset of the chord between the canonical points.
+    """
+    lower, upper = min(native), max(native)
+    try:
+        low, high = program.evaluate(
+            np.asarray(((lower,),), dtype=np.float64),
+            np.asarray(((upper,),), dtype=np.float64),
+        )
+    except (IntervalExtensionError, NotImplementedError):
+        return math.inf
+    if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
+        return math.inf
+    magnitudes = np.maximum(np.abs(low), np.abs(high)).reshape((-1,))
+    width = Fraction(upper) - Fraction(lower)
+    squared = sum((Fraction(float(value)) ** 2 for value in magnitudes), Fraction(0))
+    interpolation = fraction_sqrt_interval(squared)[1] * width * width / 8
+    offset = max(
+        float(np.linalg.norm(point - target))
+        for point, target in zip(endpoints, chord, strict=True)
+    )
+    bound = float(fraction_endpoint(interpolation, upper=True, saturate=True)) + offset
+    return float(np.nextafter(np.nextafter(bound, math.inf), math.inf))
+
+
+@final
+@dataclass(slots=True)
+class _CurveChordBounds:
+    """Continuous chord deviation and length bounds of source-curve intervals.
+
+    Every authored p-curve use bounds its mapped interval by the smaller of a
+    box enclosure of the mapped curve (first order in the interval width) and
+    the second-order interpolation bound of `_second_order_chord_bound`, so
+    sampling converges at the curvature rate instead of to the tolerance
+    itself. Interval bounds and second-derivative programs are cached.
+    """
+
+    domain: domain_owner.MeshingDomain
+    intervals: dict[tuple[int, Fraction, Fraction], tuple[float, float]] = field(
+        default_factory=dict
+    )
+    hessians: dict[tuple[int, int], PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
+
+    def interval(
+        self, curve: int, lower: Fraction, upper: Fraction, /
+    ) -> tuple[float, float]:
+        key = (int(curve), lower, upper)
+        cached = self.intervals.get(key)
+        if cached is None:
+            cached = self._interval(int(curve), lower, upper)
+            self.intervals[key] = cached
+        return cached
+
+    def _interval(
+        self, curve: int, lower: Fraction, upper: Fraction, /
+    ) -> tuple[float, float]:
+        domain = self.domain
+        first = _source_curve_point(domain, curve, lower)
+        last = _source_curve_point(domain, curve, upper)
+        deviation = 0.0
+        length = 0.0
+        uses = domain.curve_uses(curve)
+        if not uses:
             raise _failure(
-                f"source p-curve has no finite mapped continuous interval enclosure: {error}",
+                "source curve has no authored chart use",
+                category=MeshingFailureCategory.INVALID_SOURCE,
+                entity_ids=(int(curve),),
+            )
+        for row, (patch, use) in enumerate(uses):
+            if not isinstance(use, domain_owner.PatchCurveUse):
+                continue
+            surface = domain.patches[patch].surface
+            native_first = float(_use_source_parameter(use, lower))
+            native_last = float(_use_source_parameter(use, upper))
+            interval_first = min(native_first, native_last)
+            interval_last = max(native_first, native_last)
+            try:
+                chart_box, bounds = _surface_mapped_curve_bounds(
+                    surface, use.pcurve, interval_first, interval_last
+                )
+            except (ArithmeticError, NotImplementedError, TypeError, ValueError) as error:
+                raise _failure(
+                    f"source p-curve has no finite mapped continuous interval enclosure: {error}",
+                    category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    entity_ids=(int(curve),),
+                ) from error
+            if bounds.shape != (2, 3) or np.any(~np.isfinite(bounds)):
+                raise _failure(
+                    "source p-curve has no finite mapped continuous interval enclosure",
+                    category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    entity_ids=(int(curve),),
+                )
+            use_deviation = _box_chord_bound(bounds, first, last)
+            if _mapped_curve_is_c1(
+                surface, use.pcurve, chart_box, interval_first, interval_last
+            ):
+                if (curve, row) not in self.hessians:
+                    self.hessians[(curve, row)] = _mapped_curve_hessian(
+                        surface, use.pcurve
+                    )
+                program = self.hessians[(curve, row)]
+            else:
+                program = None
+            if program is not None:
+                endpoints = tuple(
+                    domain.evaluate(
+                        np.asarray((patch,), dtype=np.int64),
+                        np.asarray(
+                            [
+                                [
+                                    float(value)
+                                    for value in _use_chart_point(use, parameter)
+                                ]
+                            ],
+                            dtype=np.float64,
+                        ),
+                    )[0]
+                    for parameter in (lower, upper)
+                )
+                use_deviation = min(
+                    use_deviation,
+                    _second_order_chord_bound(
+                        program,
+                        (endpoints[0], endpoints[1]),
+                        (native_first, native_last),
+                        (first, last),
+                    ),
+                )
+            deviation = max(deviation, use_deviation)
+            diagonal = float(np.linalg.norm(bounds[1] - bounds[0]))
+            length = max(length, float(np.nextafter(diagonal, math.inf)))
+        if not math.isfinite(deviation) or not math.isfinite(length):
+            raise _failure(
+                "source p-curve continuous chord or length enclosure is nonfinite",
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 entity_ids=(int(curve),),
-            ) from error
-        if bounds.shape != (2, 3) or np.any(~np.isfinite(bounds)):
-            raise _failure(
-                "source p-curve has no finite mapped continuous interval enclosure",
-                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                entity_ids=(int(curve),),
             )
-        deviation = max(deviation, _box_chord_bound(bounds, first, last))
-        diagonal = float(np.linalg.norm(bounds[1] - bounds[0]))
-        length = max(length, float(np.nextafter(diagonal, math.inf)))
-    if not math.isfinite(deviation) or not math.isfinite(length):
-        raise _failure(
-            "source p-curve continuous chord or length enclosure is nonfinite",
-            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            entity_ids=(int(curve),),
-        )
-    return deviation, length
+        return deviation, length
 
 
 def _curve_parameters(
@@ -2283,6 +2427,7 @@ def _curve_parameters(
                     hard_tolerances.get(int(identifier), math.inf),
                     feature.maximum_deviation,
                 )
+    chords = _CurveChordBounds(domain)
     for curve in curve_ids:
         selected_uses = tuple(
             (patch, use) for patch, use in domain.curve_uses(curve) if patch in sizes
@@ -2316,7 +2461,7 @@ def _curve_parameters(
             intervals = [(first, last)]
             while intervals:
                 lower, upper = intervals.pop()
-                deviation, length = _curve_interval_bounds(domain, curve, lower, upper)
+                deviation, length = chords.interval(curve, lower, upper)
                 if deviation <= fidelity_limit and length <= edge_limit:
                     continue
                 midpoint = (lower + upper) / 2
@@ -2592,6 +2737,17 @@ def _pole_graded_rings(
             beyond_value, beyond_radius = ring_distance(beyond)
             if beyond_radius - next_radius <= step / 2:
                 next_alpha, next_value, next_radius = beyond, beyond_value, beyond_radius
+        # A ring leaving less than half its step to the extent would bound a
+        # thin last band, whose short radial gap forces a dense ring beside the
+        # coarse chart beyond; the ring moves onto the extent instead.
+        if next_alpha < alpha_limit:
+            limit_value, limit_radius = ring_distance(alpha_limit)
+            if limit_radius - next_radius < (next_radius - radius) / 2:
+                next_alpha, next_value, next_radius = (
+                    alpha_limit,
+                    limit_value,
+                    limit_radius,
+                )
         gap = next_radius - radius
         if next_alpha == alpha or gap <= 0.0 or next_value == value:
             break
@@ -3272,10 +3428,7 @@ def _triangle_boundary_curves(
 
 
 def _chart_curve_bounds(
-    domain: domain_owner.MeshingDomain,
-    chart: _ChartMesh,
-    interval_bounds: dict[tuple[int, Fraction, Fraction], float],
-    /,
+    chart: _ChartMesh, chords: _CurveChordBounds, /
 ) -> dict[tuple[int, int], float]:
     """Chord deviation bound of every trim edge; shared intervals are bounded once."""
     bounds: dict[tuple[int, int], float] = {}
@@ -3292,12 +3445,7 @@ def _chart_curve_bounds(
                 category=MeshingFailureCategory.INVALID_SOURCE,
                 entity_ids=(int(curve),),
             )
-        key = (int(curve), min(first, last), max(first, last))
-        deviation = interval_bounds.get(key)
-        if deviation is None:
-            deviation, _length = _curve_interval_bounds(domain, curve, key[1], key[2])
-            interval_bounds[key] = deviation
-        bounds[edge] = deviation
+        bounds[edge] = chords.interval(curve, min(first, last), max(first, last))[0]
     return bounds
 
 
@@ -3363,6 +3511,15 @@ def _facet_normal_violations(
 
 
 type _CellBoundKey = tuple[int, tuple[_ChartUV, ...]]
+type _TrimIdentity = tuple[Literal[1], int, Fraction, Fraction]
+# One lockstep refinement round of owner-local charts: given this owner's
+# requested trim-edge splits and whether it still has schedule violations,
+# return the trim splits every incident owner requested and whether any owner
+# still has violations.
+type _SeamRounds = Callable[
+    [frozenset[_TrimIdentity], bool],
+    tuple[frozenset[_TrimIdentity], bool],
+]
 
 
 def _cached_cell_bounds(
@@ -3412,7 +3569,17 @@ def _refine_charts(
     specification: SurfaceMeshingSpec,
     schedule: NativeSurfaceSchedule,
     /,
+    *,
+    seam_rounds: _SeamRounds | None = None,
 ) -> _RefinedSurface:
+    """Refine source charts until every cell meets the physical schedule.
+
+    Bad cells are bisected along their longest-edge propagation path inside
+    their own chart; a trim edge is a chart boundary, so a path ending there
+    splits the trim edge in every incident chart. Refinement of a chart therefore
+    depends on other charts only through the trim splits they request, which
+    `seam_rounds` exchanges between owner-local chart sets in lockstep rounds.
+    """
     global_rows: dict[_GlobalVertexKey, int] = {}
     coordinates: list[np.ndarray] = []
     source_dimensions: list[int] = []
@@ -3454,10 +3621,8 @@ def _refine_charts(
     # Trim-edge chord bounds change only when a round splits a trim edge, and each
     # curve interval is bounded once. Unchanged cells keep their exact UV corners
     # and therefore their source bounds.
-    interval_bounds: dict[tuple[int, Fraction, Fraction], float] = {}
-    curve_bounds_by_chart = tuple(
-        _chart_curve_bounds(domain, chart, interval_bounds) for chart in charts
-    )
+    chords = _CurveChordBounds(domain)
+    curve_bounds_by_chart = tuple(_chart_curve_bounds(chart, chords) for chart in charts)
     trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
     cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
     while True:
@@ -3577,56 +3742,77 @@ def _refine_charts(
             physical[triangles],
             schedule.normal_deviation_aim,
         )
-        if not np.any(bad):
-            break
+        local_bad = bool(np.any(bad))
 
-        # Bisect along the longest-edge propagation path of every bad cell:
-        # the split edge is the longest edge of each cell sharing it, so no
-        # cell is bisected across a shorter edge and refinement never creates
-        # thinner cells than it splits. A trim edge is identified through its
-        # canonical curve identity, so every chart using that curve interval
-        # receives the same exact midpoint parameter.
-        identities: list[tuple[_LocalEdgeIdentity, ...]] = []
-        for chart in charts:
-            identities.extend(
-                tuple(
-                    _local_edge_identity(chart, first, last)
-                    for first, last in (
-                        (triangle[0], triangle[1]),
-                        (triangle[1], triangle[2]),
-                        (triangle[2], triangle[0]),
-                    )
-                )
-                for triangle in chart.triangles
-            )
-        cells_by_edge: dict[_LocalEdgeIdentity, list[int]] = {}
-        for cell, cell_identities in enumerate(identities):
-            for identity in cell_identities:
-                cells_by_edge.setdefault(identity, []).append(cell)
-
-        def longest_identity(cell: int, /) -> _LocalEdgeIdentity:
-            index = max(
-                range(3),
-                key=lambda index: (edge_lengths[cell, index], identities[cell][index]),
-            )
-            return identities[cell][index]
-
+        # Bisect along the longest-edge propagation path of every bad cell
+        # inside its chart: the split edge is the longest edge of each cell of
+        # the chart sharing it, so no cell is bisected across a shorter interior
+        # edge. A trim edge bounds the chart, so a path reaching it as the
+        # longest edge splits it; its canonical curve identity gives every chart
+        # using that curve interval the same exact midpoint parameter.
         split_edges: set[_LocalEdgeIdentity] = set()
-        for cell in np.flatnonzero(bad).tolist():
-            while True:
-                identity = longest_identity(cell)
-                onward = next(
-                    (
-                        other
-                        for other in cells_by_edge[identity]
-                        if other != cell and longest_identity(other) != identity
-                    ),
-                    None,
+        if local_bad:
+            identities: list[tuple[_LocalEdgeIdentity, ...]] = []
+            cell_charts: list[int] = []
+            for chart_row, chart in enumerate(charts):
+                identities.extend(
+                    tuple(
+                        _local_edge_identity(chart, first, last)
+                        for first, last in (
+                            (triangle[0], triangle[1]),
+                            (triangle[1], triangle[2]),
+                            (triangle[2], triangle[0]),
+                        )
+                    )
+                    for triangle in chart.triangles
                 )
-                if onward is None:
-                    split_edges.add(identity)
-                    break
-                cell = onward
+                cell_charts.extend((chart_row,) * len(chart.triangles))
+            cells_by_edge: dict[_LocalEdgeIdentity, list[int]] = {}
+            for cell, cell_identities in enumerate(identities):
+                for identity in cell_identities:
+                    cells_by_edge.setdefault(identity, []).append(cell)
+
+            def longest_identity(cell: int, /) -> _LocalEdgeIdentity:
+                index = max(
+                    range(3),
+                    key=lambda index: (
+                        edge_lengths[cell, index],
+                        identities[cell][index],
+                    ),
+                )
+                return identities[cell][index]
+
+            for cell in np.flatnonzero(bad).tolist():
+                while True:
+                    identity = longest_identity(cell)
+                    onward = next(
+                        (
+                            other
+                            for other in cells_by_edge[identity]
+                            if other != cell
+                            and cell_charts[other] == cell_charts[cell]
+                            and longest_identity(other) != identity
+                        ),
+                        None,
+                    )
+                    if onward is None:
+                        split_edges.add(identity)
+                        break
+                    cell = onward
+        if seam_rounds is None:
+            pending = local_bad
+        else:
+            shared_splits, pending = seam_rounds(
+                frozenset(
+                    (1, identity[1], identity[2], identity[3])
+                    for identity in split_edges
+                    if identity[0] == 1
+                ),
+                local_bad,
+            )
+            split_edges.update(shared_splits)
+        if not pending:
+            break
 
         changed = False
         for chart, mapping in zip(charts, local_rows, strict=True):
@@ -3798,7 +3984,7 @@ def _refine_charts(
                         entity_ids=(int(chart.patch),),
                     )
             chart.triangles = children
-        if not changed:
+        if local_bad and not changed:
             raise _failure(
                 "surface refinement is stalled while physical schedule violations remain",
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
@@ -3808,7 +3994,7 @@ def _refine_charts(
             )
         if any(identity[0] == 1 for identity in split_edges):
             curve_bounds_by_chart = tuple(
-                _chart_curve_bounds(domain, chart, interval_bounds) for chart in charts
+                _chart_curve_bounds(chart, chords) for chart in charts
             )
             trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
 
