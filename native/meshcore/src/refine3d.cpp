@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "cavity.hpp"
+#include "local_incidence.hpp"
 #include "predicates.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_scalar.hpp"
@@ -36,6 +37,14 @@ double cell_size_target(const std::array<double, 4>& corner_sizes) noexcept {
 }
 
 namespace {
+
+template <class Exit>
+struct ScopeExit {
+  Exit exit;
+  ~ScopeExit() { exit(); }
+};
+template <class Exit>
+ScopeExit(Exit) -> ScopeExit<Exit>;
 
 bool tetrahedron_geometry(const TetMesh& mesh, const TetSnapshotCell& cell,
                           std::array<std::int32_t, 4>& slots,
@@ -161,96 +170,123 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     edge_target = mean_size * radius_to_edge;
     return edge_target > 0.0 && !std::isnan(edge_target);
   };
+  // Local incidence and constrained-bank row indices: a boundary split or a
+  // cone insertion touches only the cells, facets and segments around it.
+  detail::LocalIncidence incidence;
+  if (!incidence.initialize(mesh, initial)) return PHX_MC_INTERNAL_ERROR;
+  initial = TetMeshSnapshot{};
+  std::map<FaceKey, std::size_t> facet_rows_by_face;
+  for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {
+    if (!facet_rows_by_face.emplace(sorted_face(mesh.facets_[row].vertices), row).second) {
+      return PHX_MC_INTERNAL_ERROR;
+    }
+  }
+  std::map<EdgeKey, std::size_t> segment_rows_by_edge;
+  for (std::size_t row = 0; row < mesh.segments_.size(); ++row) {
+    const TetSnapshotSegment& segment = mesh.segments_[row];
+    if (!segment_rows_by_edge
+             .emplace(sorted_edge(segment.vertices[0], segment.vertices[1]), row)
+             .second) {
+      return PHX_MC_INTERNAL_ERROR;
+    }
+  }
+  // TetMesh::split_local_edge leaves the banks out of ID order.
+  const auto restore_bank_order = [&]() noexcept {
+    std::sort(mesh.facets_.begin(), mesh.facets_.end(),
+              [](const TetSnapshotFacet& a, const TetSnapshotFacet& b) { return a.id < b.id; });
+    std::sort(mesh.segments_.begin(), mesh.segments_.end(),
+              [](const TetSnapshotSegment& a, const TetSnapshotSegment& b) {
+                return a.id < b.id;
+              });
+  };
+  const ScopeExit bank_order_guard{restore_bank_order};
+  std::unordered_map<std::int32_t, std::vector<std::int32_t>> source_face_rows;
+  for (std::size_t row = 0; row < mesh.source_face_groups_.size(); ++row) {
+    source_face_rows[mesh.source_face_groups_[row]].push_back(static_cast<std::int32_t>(row));
+  }
+  std::unordered_map<std::int32_t, std::vector<std::int32_t>> source_segment_rows;
+  for (std::size_t row = 0; row < mesh.source_segment_groups_.size(); ++row) {
+    source_segment_rows[mesh.source_segment_groups_[row]].push_back(
+        static_cast<std::int32_t>(row));
+  }
+
+  // Source witness of a boundary midpoint: the first source row of the split
+  // segment's group (else of a split facet's group, by ascending group) whose
+  // exact carrier is the midpoint. Rows witnessing an edge endpoint are tried
+  // before the rest of their group.
   const auto make_boundary_witness =
       [&](const EdgeKey& edge, const std::array<double, 3>& carrier,
+          std::span<const std::size_t> facet_rows, const TetSnapshotSegment* segment,
           TetEditVertex& vertex) {
-        const auto install = [&](SourceStratum stratum, std::size_t row,
-                                 const double* const corners[3]) {
-          if (row > static_cast<std::size_t>(
-                        std::numeric_limits<std::int32_t>::max())) {
-            return false;
+        const auto install = [&](SourceStratum stratum, std::int32_t row) {
+          const double* corners[3]{nullptr, nullptr, nullptr};
+          const std::size_t entity = static_cast<std::size_t>(row);
+          const int arity = stratum == SourceStratum::kSegment ? 2 : 3;
+          const std::vector<std::int32_t>& bank = stratum == SourceStratum::kSegment
+                                                       ? mesh.source_segments_
+                                                       : mesh.source_faces_;
+          for (int corner = 0; corner < arity; ++corner) {
+            corners[corner] =
+                mesh.source_points_.data() +
+                3 * static_cast<std::size_t>(bank[arity * entity + static_cast<std::size_t>(corner)]);
           }
           double parameters[2]{};
           source_locator(corners, stratum, carrier.data(), parameters, false);
           if (!source_parameters_valid(stratum, parameters)) return false;
           double source_position[3]{};
           double deviation = 0.0;
-          if (!source_carrier(corners, stratum, parameters, source_position,
-                              deviation) ||
-              deviation != 0.0 ||
-              !same_point(source_position, carrier.data())) {
+          if (!source_carrier(corners, stratum, parameters, source_position, deviation) ||
+              deviation != 0.0 || !same_point(source_position, carrier.data())) {
             return false;
           }
           vertex.witness.stratum = stratum;
-          vertex.witness.entity = static_cast<std::int32_t>(row);
+          vertex.witness.entity = row;
           vertex.witness.parameters[0] = parameters[0];
           vertex.witness.parameters[1] = parameters[1];
           vertex.witness.deviation = deviation;
           return true;
         };
-
-        const TetSnapshotSegment* source_segment = nullptr;
-        for (const TetSnapshotSegment& segment : mesh.segments_) {
-          if (sorted_edge(segment.vertices[0], segment.vertices[1]) != edge) {
-            continue;
-          }
-          if (segment.protected_segment ||
-              (source_segment != nullptr &&
-               source_segment->source != segment.source)) {
-            return false;
-          }
-          source_segment = &segment;
-        }
-        if (source_segment != nullptr) {
-          for (std::size_t row = 0;
-               row < mesh.source_segment_groups_.size(); ++row) {
-            if (mesh.source_segment_groups_[row] != source_segment->source) {
-              continue;
+        const auto install_in_group = [&](SourceStratum stratum, std::int32_t group) {
+          const std::vector<std::int32_t>& groups = stratum == SourceStratum::kSegment
+                                                         ? mesh.source_segment_groups_
+                                                         : mesh.source_face_groups_;
+          for (std::uint64_t id : edge) {
+            const SourceWitness& endpoint = mesh.witness(mesh.vertex_slot(id));
+            if (endpoint.stratum == stratum && endpoint.entity >= 0 &&
+                static_cast<std::size_t>(endpoint.entity) < groups.size() &&
+                groups[static_cast<std::size_t>(endpoint.entity)] == group &&
+                install(stratum, endpoint.entity)) {
+              return true;
             }
-            const std::int32_t first =
-                mesh.source_segments_[2 * row];
-            const std::int32_t second =
-                mesh.source_segments_[2 * row + 1];
-            const double* corners[3]{
-                mesh.source_points_.data() + 3 * static_cast<std::size_t>(first),
-                mesh.source_points_.data() + 3 * static_cast<std::size_t>(second),
-                nullptr};
-            if (install(SourceStratum::kSegment, row, corners)) return true;
           }
-          return false;
+          const auto& rows =
+              stratum == SourceStratum::kSegment ? source_segment_rows : source_face_rows;
+          const auto found = rows.find(group);
+          if (found == rows.end()) return false;
+          return std::any_of(found->second.begin(), found->second.end(),
+                             [&](std::int32_t row) { return install(stratum, row); });
+        };
+        if (segment != nullptr) {
+          return !segment->protected_segment &&
+                 install_in_group(SourceStratum::kSegment, segment->source);
         }
-
         std::set<std::int32_t> source_groups;
-        for (const TetSnapshotFacet& facet : mesh.facets_) {
-          if (facet.source < 0) continue;
-          bool has_first = false;
-          bool has_second = false;
-          for (std::uint64_t vertex_id : facet.vertices) {
-            has_first = has_first || vertex_id == edge[0];
-            has_second = has_second || vertex_id == edge[1];
-          }
-          if (has_first && has_second) source_groups.insert(facet.source);
+        for (std::size_t row : facet_rows) {
+          if (mesh.facets_[row].source >= 0) source_groups.insert(mesh.facets_[row].source);
         }
-        for (std::int32_t group : source_groups) {
-          for (std::size_t row = 0; row < mesh.source_face_groups_.size();
-               ++row) {
-            if (mesh.source_face_groups_[row] != group) continue;
-            const std::int32_t first = mesh.source_faces_[3 * row];
-            const std::int32_t second = mesh.source_faces_[3 * row + 1];
-            const std::int32_t third = mesh.source_faces_[3 * row + 2];
-            const double* corners[3]{
-                mesh.source_points_.data() + 3 * static_cast<std::size_t>(first),
-                mesh.source_points_.data() + 3 * static_cast<std::size_t>(second),
-                mesh.source_points_.data() + 3 * static_cast<std::size_t>(third)};
-            if (install(SourceStratum::kFacet, row, corners)) return true;
-          }
-        }
-        return false;
+        return std::any_of(source_groups.begin(), source_groups.end(), [&](std::int32_t group) {
+          return install_in_group(SourceStratum::kFacet, group);
+        });
       };
   std::vector<std::uint64_t> split_cells;
+  std::vector<std::size_t> split_facet_rows;
+  std::vector<std::size_t> split_segment_rows;
+  std::vector<FaceKey> split_faces;
   const auto split_boundary_edge =
       [&](const EdgeKey& edge, std::uint64_t& inserted_id) {
         split_cells.clear();
+        split_facet_rows.clear();
+        split_segment_rows.clear();
         if (mesh.policy_ == BoundaryPolicy::kFixed) {
           return TetEditStatus::kRejectedProtected;
         }
@@ -291,262 +327,125 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
           return TetEditStatus::kRejectedTopology;
         }
 
+        // Constrained faces through the edge, from its local star.
+        for (std::int32_t cell : incidence.edge_star(first_slot, second_slot)) {
+          const Tetrahedron& tetrahedron = mesh.tet(cell);
+          for (int face = 0; face < 4; ++face) {
+            if (tetrahedron.v[face] == first_slot || tetrahedron.v[face] == second_slot ||
+                mesh.complex_.constraint(cell, face) == kNoConstraint) {
+              continue;
+            }
+            FaceKey key{};
+            int offset = 0;
+            for (int corner = 0; corner < 4; ++corner) {
+              if (corner != face) {
+                key[static_cast<std::size_t>(offset++)] = mesh.vertex_id(tetrahedron.v[corner]);
+              }
+            }
+            const auto row = facet_rows_by_face.find(sorted_face(key));
+            if (row == facet_rows_by_face.end()) return TetEditStatus::kRejectedTopology;
+            if (std::find(split_facet_rows.begin(), split_facet_rows.end(), row->second) ==
+                split_facet_rows.end()) {
+              split_facet_rows.push_back(row->second);
+            }
+          }
+        }
+        if (split_facet_rows.empty()) return TetEditStatus::kRejectedTopology;
+        const auto segment = segment_rows_by_edge.find(edge);
+        if (segment != segment_rows_by_edge.end()) split_segment_rows.push_back(segment->second);
+
         TetEditVertex inserted;
         inserted.id = mesh.next_vertex_id_;
         inserted.carrier = midpoint;
         inserted.ancestry.push_back({edge[0], {}, 0.5});
         inserted.ancestry.push_back({edge[1], {}, 0.5});
-        if (!make_boundary_witness(edge, midpoint, inserted)) {
+        if (!make_boundary_witness(
+                edge, midpoint, split_facet_rows,
+                segment == segment_rows_by_edge.end() ? nullptr
+                                                      : &mesh.segments_[segment->second],
+                inserted)) {
           return TetEditStatus::kRejectedTopology;
-        }
-
-        struct ParentCell {
-          std::uint64_t id;
-          std::int32_t region;
-          std::array<std::uint64_t, 4> vertices;
-        };
-        std::vector<ParentCell> parents;
-        parents.reserve(static_cast<std::size_t>(mesh.complex_.finite_count));
-        std::map<FaceKey, std::int32_t> source_by_child_face;
-        const auto record_source =
-            [&](FaceKey face, std::int32_t source) {
-              const auto [found, inserted_face] =
-                  source_by_child_face.emplace(sorted_face(face), source);
-              return inserted_face || found->second == source;
-            };
-        for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
-          const std::int32_t cell = static_cast<std::int32_t>(row);
-          if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
-          const Tetrahedron& tetrahedron = mesh.tet(cell);
-          ParentCell parent{mesh.cell_id(cell), mesh.complex_.region(cell), {}};
-          bool has_first = false;
-          bool has_second = false;
-          for (int corner = 0; corner < 4; ++corner) {
-            parent.vertices[static_cast<std::size_t>(corner)] =
-                mesh.vertex_id(tetrahedron.v[corner]);
-            has_first = has_first || parent.vertices[corner] == edge[0];
-            has_second = has_second || parent.vertices[corner] == edge[1];
-          }
-          if (!has_first || !has_second) continue;
-          parents.push_back(parent);
-          for (int face_slot = 0; face_slot < 4; ++face_slot) {
-            const std::int32_t source =
-                mesh.complex_.constraint(cell, face_slot);
-            if (source < 0) continue;
-            std::int32_t oriented[3];
-            oriented_facet(tetrahedron.v, face_slot, oriented);
-            FaceKey face{
-                mesh.vertex_id(oriented[0]), mesh.vertex_id(oriented[1]),
-                mesh.vertex_id(oriented[2])};
-            bool face_has_first = false;
-            bool face_has_second = false;
-            std::uint64_t third = 0;
-            for (std::uint64_t vertex_id : face) {
-              face_has_first = face_has_first || vertex_id == edge[0];
-              face_has_second = face_has_second || vertex_id == edge[1];
-              if (vertex_id != edge[0] && vertex_id != edge[1]) {
-                third = vertex_id;
-              }
-            }
-            if (face_has_first && face_has_second) {
-              if (!record_source({edge[0], inserted.id, third}, source) ||
-                  !record_source({inserted.id, edge[1], third}, source)) {
-                return TetEditStatus::kRejectedTopology;
-              }
-            } else if (!record_source(face, source)) {
-              return TetEditStatus::kRejectedTopology;
-            }
-          }
-        }
-        if (parents.empty()) return TetEditStatus::kRejectedTopology;
-
-        const std::uint64_t max_id =
-            std::numeric_limits<std::uint64_t>::max();
-        if (parents.size() >
-                static_cast<std::size_t>(max_id / 2) ||
-            2 * parents.size() >
-                static_cast<std::size_t>(max_id - mesh.next_cell_id_)) {
-          return TetEditStatus::kIndexOverflow;
-        }
-        const std::size_t replacement_cell_count = 2 * parents.size();
-        TetEdit operation;
-        operation.kind = TetEditKind::kSplit;
-        operation.split_edges.push_back(edge);
-        operation.changed_vertices.push_back(inserted);
-        operation.removed_cell_ids.reserve(parents.size());
-        operation.replacement_cells.reserve(replacement_cell_count);
-        for (const ParentCell& parent : parents) {
-          operation.removed_cell_ids.push_back(parent.id);
-          std::array<std::uint64_t, 4> children[2]{
-              parent.vertices, parent.vertices};
-          for (std::uint64_t& vertex_id : children[0]) {
-            if (vertex_id == edge[1]) vertex_id = inserted.id;
-          }
-          for (std::uint64_t& vertex_id : children[1]) {
-            if (vertex_id == edge[0]) vertex_id = inserted.id;
-          }
-          for (const auto& child_vertices : children) {
-            TetEditCell child;
-            child.id = mesh.next_cell_id_ +
-                       static_cast<std::uint64_t>(
-                           operation.replacement_cells.size());
-            child.vertices = child_vertices;
-            child.region = parent.region;
-            child.ancestor_cell_ids.push_back(parent.id);
-            for (int face_slot = 0; face_slot < 4; ++face_slot) {
-              FaceKey face{};
-              int offset = 0;
-              for (int corner = 0; corner < 4; ++corner) {
-                if (corner == face_slot) continue;
-                face[static_cast<std::size_t>(offset++)] =
-                    child.vertices[static_cast<std::size_t>(corner)];
-              }
-              const auto source =
-                  source_by_child_face.find(sorted_face(face));
-              if (source != source_by_child_face.end()) {
-                child.facet_sources[static_cast<std::size_t>(face_slot)] =
-                    source->second;
-              }
-            }
-            operation.replacement_cells.push_back(std::move(child));
-          }
-        }
-
-        std::size_t split_facet_count = 0;
-        for (const TetSnapshotFacet& facet : mesh.facets_) {
-          if (sorted_edge(facet.vertices[0], facet.vertices[1]) == edge ||
-              sorted_edge(facet.vertices[1], facet.vertices[2]) == edge ||
-              sorted_edge(facet.vertices[2], facet.vertices[0]) == edge) {
-            if (facet.protected_facet) {
-              return TetEditStatus::kRejectedProtected;
-            }
-            ++split_facet_count;
-          }
-        }
-        if (split_facet_count == 0) return TetEditStatus::kRejectedTopology;
-        std::size_t split_segment_count = 0;
-        for (const TetSnapshotSegment& segment : mesh.segments_) {
-          if (sorted_edge(segment.vertices[0], segment.vertices[1]) == edge) {
-            if (segment.protected_segment) {
-              return TetEditStatus::kRejectedProtected;
-            }
-            ++split_segment_count;
-          }
-        }
-        const std::size_t replacement_facet_count = 2 * split_facet_count;
-        const std::size_t replacement_segment_count = 2 * split_segment_count;
-        if (replacement_facet_count >
-                static_cast<std::size_t>(max_id - mesh.next_facet_id_) ||
-            replacement_segment_count >
-                static_cast<std::size_t>(max_id - mesh.next_segment_id_)) {
-          return TetEditStatus::kIndexOverflow;
-        }
-        operation.removed_facet_ids.reserve(split_facet_count);
-        operation.replacement_facets.reserve(replacement_facet_count);
-        std::uint64_t next_facet = mesh.next_facet_id_;
-        for (const TetSnapshotFacet& facet : mesh.facets_) {
-          bool split = false;
-          for (int offset = 0; offset < 3; ++offset) {
-            const std::uint64_t first = facet.vertices[offset];
-            const std::uint64_t second = facet.vertices[(offset + 1) % 3];
-            if (sorted_edge(first, second) != edge) continue;
-            const std::uint64_t third = facet.vertices[(offset + 2) % 3];
-            operation.removed_facet_ids.push_back(facet.id);
-            TetEditFacet first_child;
-            first_child.id = next_facet++;
-            first_child.vertices = {first, inserted.id, third};
-            first_child.source = facet.source;
-            first_child.orientation = facet.orientation;
-            TetEditFacet second_child;
-            second_child.id = next_facet++;
-            second_child.vertices = {inserted.id, second, third};
-            second_child.source = facet.source;
-            second_child.orientation = facet.orientation;
-            operation.replacement_facets.push_back(std::move(first_child));
-            operation.replacement_facets.push_back(std::move(second_child));
-            split = true;
-            break;
-          }
-          if (!split &&
-              (sorted_edge(facet.vertices[0], facet.vertices[1]) == edge ||
-               sorted_edge(facet.vertices[1], facet.vertices[2]) == edge ||
-               sorted_edge(facet.vertices[2], facet.vertices[0]) == edge)) {
-            return TetEditStatus::kRejectedTopology;
-          }
-        }
-        operation.removed_segment_ids.reserve(split_segment_count);
-        operation.replacement_segments.reserve(replacement_segment_count);
-        std::uint64_t next_segment = mesh.next_segment_id_;
-        for (const TetSnapshotSegment& segment : mesh.segments_) {
-          if (sorted_edge(segment.vertices[0], segment.vertices[1]) != edge) {
-            continue;
-          }
-          operation.removed_segment_ids.push_back(segment.id);
-          TetEditSegment first_child;
-          first_child.id = next_segment++;
-          first_child.vertices = {segment.vertices[0], inserted.id};
-          first_child.source = segment.source;
-          TetEditSegment second_child;
-          second_child.id = next_segment++;
-          second_child.vertices = {inserted.id, segment.vertices[1]};
-          second_child.source = segment.source;
-          operation.replacement_segments.push_back(std::move(first_child));
-          operation.replacement_segments.push_back(std::move(second_child));
         }
         if (inserted_vertices == std::numeric_limits<std::int64_t>::max()) {
           return TetEditStatus::kIndexOverflow;
         }
         inserted_id = inserted.id;
-        TetEditBatch batch{mesh.generation_, mesh.source_revision_,
-                           mesh.frame_id_, mesh.identity_bound_,
-                           {std::move(operation)}, mesh.source_id_,
-                           mesh.source_map_id_, mesh.periodic_identity_};
-        std::vector<TetEditResult> results;
-        const TetEditStatus status = mesh.apply_edit_batch(batch, results);
-        if (status != TetEditStatus::kApplied) return status;
-        if (results.size() != 1) return TetEditStatus::kRejectedTopology;
-        if (results.front().status == TetEditStatus::kApplied) {
-          split_cells = results.front().accepted_cell_ids;
+        split_faces.clear();
+        for (std::size_t row : split_facet_rows) {
+          split_faces.push_back(sorted_face(mesh.facets_[row].vertices));
         }
-        return results.front().status;
+        const TetEditStatus status =
+            incidence.split_edge(mesh, first_slot, second_slot, inserted, split_facet_rows,
+                                 split_segment_rows, split_cells);
+        if (status != TetEditStatus::kApplied) return status;
+        // Halves: the first overwrote each split row, the second was appended.
+        const std::size_t appended_facets = mesh.facets_.size() - split_facet_rows.size();
+        for (std::size_t index = 0; index < split_facet_rows.size(); ++index) {
+          const std::size_t row = split_facet_rows[index];
+          facet_rows_by_face.erase(split_faces[index]);
+          if (!facet_rows_by_face.emplace(sorted_face(mesh.facets_[row].vertices), row).second ||
+              !facet_rows_by_face
+                   .emplace(sorted_face(mesh.facets_[appended_facets + index].vertices),
+                            appended_facets + index)
+                   .second) {
+            return TetEditStatus::kStaleGeneration;
+          }
+        }
+        if (!split_segment_rows.empty()) {
+          const std::size_t row = split_segment_rows.front();
+          const std::size_t appended = mesh.segments_.size() - 1;
+          segment_rows_by_edge.erase(edge);
+          const auto& first_half = mesh.segments_[row].vertices;
+          const auto& second_half = mesh.segments_[appended].vertices;
+          if (!segment_rows_by_edge.emplace(sorted_edge(first_half[0], first_half[1]), row)
+                   .second ||
+              !segment_rows_by_edge
+                   .emplace(sorted_edge(second_half[0], second_half[1]), appended)
+                   .second) {
+            return TetEditStatus::kStaleGeneration;
+          }
+        }
+        return TetEditStatus::kApplied;
       };
   std::set<EdgeKey> blocked_boundary_edges;
   if (!sizes.empty()) {
-    for (;;) {
-      std::set<EdgeKey> boundary_edges;
-      for (const TetSnapshotFacet& facet : mesh.facets_) {
-        boundary_edges.insert(sorted_edge(facet.vertices[0], facet.vertices[1]));
-        boundary_edges.insert(sorted_edge(facet.vertices[1], facet.vertices[2]));
-        boundary_edges.insert(sorted_edge(facet.vertices[2], facet.vertices[0]));
-      }
-      EdgeKey selected_edge{};
+    // Longest boundary edge relative to its target first (ties: smallest
+    // key). Splitting never moves a vertex, so a queued ratio stays exact
+    // until its edge is split; split edges never reappear.
+    std::set<std::pair<double, EdgeKey>> boundary_queue;
+    const auto queue_boundary_edge = [&](std::uint64_t first_id, std::uint64_t second_id) {
+      const EdgeKey edge = sorted_edge(first_id, second_id);
+      double mean_size = 0.0;
+      double edge_target = 0.0;
+      if (!boundary_target(edge, mean_size, edge_target)) return true;
+      const std::int32_t first_slot = mesh.vertex_slot(edge[0]);
+      const std::int32_t second_slot = mesh.vertex_slot(edge[1]);
+      if (!mesh.live_vertex(first_slot) || !mesh.live_vertex(second_slot)) return false;
+      const double* first = mesh.point(first_slot);
+      const double* second = mesh.point(second_slot);
+      const double length = std::hypot(
+          std::hypot(second[0] - first[0], second[1] - first[1]), second[2] - first[2]);
+      const double ratio = length / edge_target;
+      if (ratio > 1.0) boundary_queue.emplace(-ratio, edge);
+      return true;
+    };
+    const auto queue_facet_edges = [&](const TetSnapshotFacet& facet) {
+      return queue_boundary_edge(facet.vertices[0], facet.vertices[1]) &&
+             queue_boundary_edge(facet.vertices[1], facet.vertices[2]) &&
+             queue_boundary_edge(facet.vertices[2], facet.vertices[0]);
+    };
+    for (const TetSnapshotFacet& facet : mesh.facets_) {
+      if (!queue_facet_edges(facet)) return PHX_MC_INTERNAL_ERROR;
+    }
+    while (!boundary_queue.empty()) {
+      const EdgeKey selected_edge = boundary_queue.begin()->second;
+      boundary_queue.erase(boundary_queue.begin());
+      if (blocked_boundary_edges.contains(selected_edge)) continue;
       double selected_size = 0.0;
-      double selected_ratio = 1.0;
-      bool found_candidate = false;
-      for (const EdgeKey& edge : boundary_edges) {
-        if (blocked_boundary_edges.contains(edge)) continue;
-        double mean_size = 0.0;
-        double edge_target = 0.0;
-        if (!boundary_target(edge, mean_size, edge_target)) continue;
-        const std::int32_t first_slot = mesh.vertex_slot(edge[0]);
-        const std::int32_t second_slot = mesh.vertex_slot(edge[1]);
-        if (!mesh.live_vertex(first_slot) || !mesh.live_vertex(second_slot)) {
-          return PHX_MC_INTERNAL_ERROR;
-        }
-        const double* first = mesh.point(first_slot);
-        const double* second = mesh.point(second_slot);
-        const double length = std::hypot(
-            std::hypot(second[0] - first[0], second[1] - first[1]),
-            second[2] - first[2]);
-        const double ratio = length / edge_target;
-        if (ratio > selected_ratio) {
-          selected_edge = edge;
-          selected_size = mean_size;
-          selected_ratio = ratio;
-          found_candidate = true;
-        }
+      double edge_target = 0.0;
+      if (!boundary_target(selected_edge, selected_size, edge_target)) {
+        return PHX_MC_INTERNAL_ERROR;
       }
-      if (!found_candidate) break;
       std::uint64_t inserted_id = 0;
       const TetEditStatus status =
           split_boundary_edge(selected_edge, inserted_id);
@@ -562,6 +461,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
           return PHX_MC_INTERNAL_ERROR;
         }
         ++inserted_vertices;
+        const std::size_t appended = mesh.facets_.size() - split_facet_rows.size();
+        for (std::size_t index = 0; index < split_facet_rows.size(); ++index) {
+          if (!queue_facet_edges(mesh.facets_[split_facet_rows[index]]) ||
+              !queue_facet_edges(mesh.facets_[appended + index])) {
+            return PHX_MC_INTERNAL_ERROR;
+          }
+        }
         continue;
       }
       blocked_boundary_edges.insert(selected_edge);
@@ -891,7 +797,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     TetEditVertex inserted;
     inserted.id = mesh.next_vertex_id_;
     std::copy(shape.circumcenter.begin(), shape.circumcenter.end(), inserted.carrier.begin());
-    const TetEditStatus status = mesh.insert_local_cone(inserted, cavity.cells, created_cells);
+    const TetEditStatus status =
+        incidence.insert_cone(mesh, inserted, cavity.cells, created_cells);
     const std::int32_t error = edit_error(status);
     if (error != PHX_MC_OK) return error;
     if (status != TetEditStatus::kApplied) {
@@ -904,6 +811,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     for (std::uint64_t id : created_cells) enqueue(id);
   }
 
+  restore_bank_order();
   TetMeshSnapshot final_state;
   if (mesh.snapshot(final_state) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
   std::vector<TetUnmetRecord> records;
@@ -911,24 +819,27 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                 unmet_cells);
   std::map<std::uint64_t, double> boundary_unmet;
   for (const EdgeKey& edge : blocked_boundary_edges) {
-    bool remains_constrained = false;
-    for (const TetSnapshotFacet& facet : mesh.facets_) {
-      if (sorted_edge(facet.vertices[0], facet.vertices[1]) == edge ||
-          sorted_edge(facet.vertices[1], facet.vertices[2]) == edge ||
-          sorted_edge(facet.vertices[2], facet.vertices[0]) == edge) {
-        remains_constrained = true;
-        break;
-      }
-    }
-    if (!remains_constrained) continue;
-    double mean_size = 0.0;
-    double edge_target = 0.0;
-    if (!boundary_target(edge, mean_size, edge_target)) continue;
     const std::int32_t first_slot = mesh.vertex_slot(edge[0]);
     const std::int32_t second_slot = mesh.vertex_slot(edge[1]);
     if (!mesh.live_vertex(first_slot) || !mesh.live_vertex(second_slot)) {
       return PHX_MC_INTERNAL_ERROR;
     }
+    const std::span<const std::int32_t> star = incidence.edge_star(first_slot, second_slot);
+    const bool remains_constrained =
+        std::any_of(star.begin(), star.end(), [&](std::int32_t cell) {
+          for (int face = 0; face < 4; ++face) {
+            const std::int32_t opposite = mesh.tet(cell).v[face];
+            if (opposite != first_slot && opposite != second_slot &&
+                mesh.complex_.constraint(cell, face) != kNoConstraint) {
+              return true;
+            }
+          }
+          return false;
+        });
+    if (!remains_constrained) continue;
+    double mean_size = 0.0;
+    double edge_target = 0.0;
+    if (!boundary_target(edge, mean_size, edge_target)) continue;
     const double* first = mesh.point(first_slot);
     const double* second = mesh.point(second_slot);
     const double length = std::hypot(
@@ -936,21 +847,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         second[2] - first[2]);
     const double ratio = length / edge_target;
     if (!(ratio > 1.0)) continue;
-    bool incident = false;
-    for (const TetSnapshotCell& cell : final_state.cells) {
-      bool has_first = false;
-      bool has_second = false;
-      for (std::uint64_t vertex_id : cell.vertices) {
-        has_first = has_first || vertex_id == edge[0];
-        has_second = has_second || vertex_id == edge[1];
-      }
-      if (has_first && has_second) {
-        auto& value = boundary_unmet[cell.id];
-        value = std::max(value, ratio);
-        incident = true;
-      }
+    for (std::int32_t cell : star) {
+      auto& value = boundary_unmet[mesh.cell_id(cell)];
+      value = std::max(value, ratio);
     }
-    if (!incident) return PHX_MC_INTERNAL_ERROR;
   }
   for (const auto& [cell_id, ratio] : boundary_unmet) {
     const auto existing = std::find_if(
