@@ -1071,10 +1071,6 @@ class PreparedStructured(StrictModule):
         coordinate_contract: SpatialCoordinateContract,
         /,
     ) -> None:
-        if not isinstance(source, NativeStructuredSource):
-            raise TypeError("source must be a NativeStructuredSource.")
-        if not isinstance(schedule, NativeStructuredSchedule):
-            raise TypeError("structured route requires a NativeStructuredSchedule.")
         issues = structured_support_issues(source, specification)
         if issues:
             raise MeshingFailure(
@@ -1145,8 +1141,6 @@ class PreparedSweep(StrictModule):
         coordinate_contract: SpatialCoordinateContract,
         /,
     ) -> None:
-        if not isinstance(source, NativeSweepSource):
-            raise TypeError("source must be a NativeSweepSource.")
         issues = sweep_support_issues(source, specification)
         if issues:
             raise MeshingFailure(

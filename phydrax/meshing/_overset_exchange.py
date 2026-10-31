@@ -2349,10 +2349,6 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
         *,
         axis_name: str = "overset",
     ) -> None:
-        if not isinstance(transfer, PreparedOversetFieldTransfer):
-            raise TypeError("transfer must be PreparedOversetFieldTransfer.")
-        if not isinstance(execution_group, ExecutionGroup):
-            raise TypeError("execution_group must be ExecutionGroup.")
         if not isinstance(owner_local_geometry, Mapping):
             raise TypeError(
                 "owner_local_geometry must map local part names to source-bound views."

@@ -773,12 +773,6 @@ def prepare_balanced_cut_grid(
     frame_layout: _HexFrameIntegerLayout | None = None,
 ) -> BalancedCutGridPlan:
     """Choose an exact generic grid or bind an exact field-block integer layout."""
-    if not isinstance(source, PiecewiseLinearComplex):
-        raise TypeError("source must be PiecewiseLinearComplex.")
-    if not isinstance(source_mesh, CellMesh):
-        raise TypeError("source_mesh must be CellMesh.")
-    if not isinstance(schedule, NativeHexGridSchedule):
-        raise TypeError("schedule must be NativeHexGridSchedule.")
     if (
         source.boundary != "conforming"
         or source_mesh.topological_dimension != 3

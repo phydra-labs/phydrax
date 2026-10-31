@@ -23,7 +23,6 @@ from ..._external_runtime import (
     NativeWorkerPolicy,
 )
 from ...logging import emit
-from ...typing import checked
 from .._contracts import MeshingFailure, MeshingFailureCategory
 
 
@@ -154,7 +153,6 @@ class ProviderWorker:
     def identity(self) -> NativeWorkerIdentity:
         return self.session().identity
 
-    @checked
     def call(
         self,
         operation: str,

@@ -505,10 +505,6 @@ def prepare_native_compartment(
         raise TypeError(
             "source must be a CompartmentMeshingSource or accepted label-field extraction."
         )
-    if not isinstance(specification, VolumeMeshingSpec):
-        raise TypeError("specification must be a VolumeMeshingSpec.")
-    if not isinstance(options, NativeMeshingOptions):
-        raise TypeError("options must be NativeMeshingOptions.")
     if isinstance(source, CompartmentMeshingSource):
         if options.route != "image_material_tetrahedral":
             raise ValueError(

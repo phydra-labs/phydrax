@@ -13,7 +13,6 @@ import numpy as np
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry import CellGeometryElement
 from ..discretization.fem._reference import FiniteElementSpec
-from ..typing import checked
 from ._controls import BlockInterfaceControl
 from ._structured import StructuredConstruction
 
@@ -153,7 +152,6 @@ def _geometry_face_shape(
     return tuple((size - 1) * element.degree + 1 for size in construction.logical_shape)
 
 
-@checked
 def construct_glued_structured_blocks(
     blocks: tuple[StructuredConstruction, ...],
     interfaces: tuple[BlockInterfaceControl, ...],

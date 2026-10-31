@@ -422,8 +422,6 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(mesh, CellMesh) or not isinstance(cap, (CellMesh, type(None))):
             raise TypeError("mesh must be CellMesh and cap CellMesh or None.")
-        if not isinstance(source_wall, CellMesh):
-            raise TypeError("source_wall must be the exact input CellMesh.")
         if source_wall.topological_dimension != 2 or source_wall.ambient_dimension != 3:
             raise ValueError("source_wall must be an ambient-3 surface mesh.")
         cell_count = sum(block.cell_count for block in mesh.blocks)
