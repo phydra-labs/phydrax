@@ -39,6 +39,7 @@ from ._intersection import (
     BranchRootEndpoint,
     ConicParameterEndpoint,
     CurveSurfaceIntersectionRoot,
+    endpoint_root_payload,
     IntersectionCurvePointRoot,
     NativePeriodEndpoint,
     RootEndpoint,
@@ -1660,6 +1661,70 @@ def _curve_surface_root_shares_trim_support(
     return False
 
 
+class BRepBranchNodeRoots(StrictModule):
+    """Source-edge roots each certified as one isolated intersection-branch node.
+
+    Where periodic seams of both branch faces cross on a branch, each seam edge
+    has its own root against the opposite face; all of them are the branch
+    node. Every endpoint carries the exact chart and deck evidence that
+    certifies its root as that node, and the constructor checks it.
+    """
+
+    node: IntersectionCurvePointRoot
+    endpoints: tuple[BranchRootEndpoint, ...]
+    root_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        node: IntersectionCurvePointRoot,
+        endpoints: tuple[BranchRootEndpoint, ...],
+        /,
+    ) -> None:
+        if (
+            not isinstance(node, IntersectionCurvePointRoot)
+            or not float(node.parameter).is_integer()
+        ):
+            raise TypeError(
+                "BRepBranchNodeRoots.node must be an integer intersection-branch node."
+            )
+        if (
+            not isinstance(endpoints, tuple)
+            or len(endpoints) < 2
+            or any(not isinstance(value, BranchRootEndpoint) for value in endpoints)
+        ):
+            raise TypeError(
+                "BRepBranchNodeRoots.endpoints must hold at least two branch endpoints."
+            )
+        root_ids = tuple(endpoint.root.root_id for endpoint in endpoints)
+        if len(set(root_ids)) != len(root_ids):
+            raise ValueError("BRepBranchNodeRoots endpoints must name distinct roots.")
+        for endpoint in endpoints:
+            if endpoint.curve.branch_id != node.curve.branch_id or not (
+                endpoint.certifies_point_root(node)
+            ):
+                raise ValueError(
+                    "BRepBranchNodeRoots endpoints must each certify the branch node."
+                )
+        self.node, self.endpoints = node, endpoints
+        self.root_id = canonical_fingerprint(branch_node_roots_payload(self))
+
+    def binds(self, root: object, /) -> bool:
+        return any(
+            _same_parameter_source(endpoint.root, root) for endpoint in self.endpoints
+        )
+
+
+def branch_node_roots_payload(roots: BRepBranchNodeRoots, /) -> dict[str, object]:
+    return {
+        "kind": "brep-branch-node-roots",
+        "node": _root_definition_payload(roots.node),
+        "endpoints": tuple(
+            endpoint_root_payload(endpoint) for endpoint in roots.endpoints
+        ),
+    }
+
+
 class BRepVertexRoot(StrictModule):
     """One exact source-root vertex and its alternative face/edge witnesses."""
 
@@ -1668,6 +1733,7 @@ class BRepVertexRoot(StrictModule):
     spatial_root: CurveSurfaceIntersectionRoot | None
     joint_root: TripleSurfaceIntersectionRoot | None
     source_edge_lifts: tuple[BRepCurveSurfaceLift, ...]
+    branch_node: BRepBranchNodeRoots | None
     root_id: str = eqx.field(static=True)
 
     @checked
@@ -1680,6 +1746,7 @@ class BRepVertexRoot(StrictModule):
         spatial_root: CurveSurfaceIntersectionRoot | None = None,
         joint_root: TripleSurfaceIntersectionRoot | None = None,
         source_edge_lifts: tuple[BRepCurveSurfaceLift, ...] = (),
+        branch_node: BRepBranchNodeRoots | None = None,
     ) -> None:
         if not isinstance(
             primary,
@@ -1753,9 +1820,18 @@ class BRepVertexRoot(StrictModule):
             raise ValueError(
                 "TripleSurfaceIntersectionRoot aliases need an exact joint-root proof."
             )
+        if branch_node is not None and (
+            not isinstance(branch_node, BRepBranchNodeRoots)
+            or not isinstance(primary, CurveSurfaceIntersectionRoot)
+            or not branch_node.binds(primary)
+        ):
+            raise ValueError(
+                "BRepVertexRoot.branch_node must certify the primary source root as its node."
+            )
         self.primary, self.aliases = primary, aliases
         self.spatial_root, self.joint_root = spatial_root, joint_root
         self.source_edge_lifts = source_edge_lifts
+        self.branch_node = branch_node
         self.root_id = canonical_fingerprint(vertex_root_payload(self))
 
     @classmethod
@@ -1847,6 +1923,8 @@ class BRepVertexRoot(StrictModule):
             )
             if endpoint_root.root_id == root_id:
                 return True
+        if self.branch_node is not None and self.branch_node.binds(endpoint_root):
+            return True
         return any(alias.root.root_id == endpoint_root.root_id for alias in self.aliases)
 
     def _trim_endpoint_uv_box(
@@ -2048,7 +2126,7 @@ class BRepVertexRoot(StrictModule):
             return any(
                 candidate is not None and _same_parameter_source(candidate, root)
                 for candidate in (self.primary, self.spatial_root, self.joint_root)
-            )
+            ) or (self.branch_node is not None and self.branch_node.binds(root))
 
         first_binding = self._endpoint_uv_binding(patch, first_curve, first_endpoint)
         second_binding = self._endpoint_uv_binding(patch, second_curve, second_endpoint)
@@ -2125,6 +2203,14 @@ class BRepVertexRoot(StrictModule):
 
             if binds_spatial_root(first_root) and binds_spatial_root(second_root):
                 return True
+        # Roots certified as one branch node name one point; the sheet bounds
+        # above already place both on the same chart representative.
+        if (
+            self.branch_node is not None
+            and self.branch_node.binds(first_root)
+            and self.branch_node.binds(second_root)
+        ):
+            return True
         return joint is None and _same_parameter_source(first_root, second_root)
 
 
@@ -2308,7 +2394,7 @@ def _primary_payload(root: BRepPrimaryVertexRoot, /) -> dict[str, object]:
 
 
 def vertex_root_payload(root: BRepVertexRoot, /) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "kind": "brep-vertex-root",
         "primary": _primary_payload(root.primary),
         "aliases": tuple(
@@ -2339,6 +2425,10 @@ def vertex_root_payload(root: BRepVertexRoot, /) -> dict[str, object]:
             for lift in root.source_edge_lifts
         ),
     }
+    if root.branch_node is not None:
+        # Absent for every vertex without one, so existing identities are kept.
+        payload["branch_node"] = branch_node_roots_payload(root.branch_node)
+    return payload
 
 
 def _primary_point_enclosure(root: BRepPrimaryVertexRoot, /) -> np.ndarray:
