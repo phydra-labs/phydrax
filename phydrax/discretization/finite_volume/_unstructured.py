@@ -2110,10 +2110,13 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     boundary_patch_ids: Array
     boundary_patch_names: tuple[str, ...] = eqx.field(static=True)
     # Owner-local periodic seams joined across lattice images: the lifted
-    # topology face of every FV face and, per FV face, the translation from the
-    # owner's frame to the neighbor's frame (zero off seams). ``None`` when no
-    # face is joined, so every FV face is its topology face in one embedding.
+    # topology face of every FV face (the owner's side), the topology face its
+    # neighbor holds (the unwelded twin on seams, the same face elsewhere) and,
+    # per FV face, the translation from the owner's frame to the neighbor's
+    # frame (zero off seams). ``None`` when no face is joined, so every FV face
+    # is its topology face in one embedding.
     face_topology_ids: Array | None
+    neighbor_face_topology_ids: Array | None
     periodic_face_translations: Array | None
     topology_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
@@ -2185,6 +2188,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             self.face_block = None
             self.face_blocks = ()
             self.face_topology_ids = None
+            self.neighbor_face_topology_ids = None
             self.periodic_face_translations = None
             self.cell_volumes = jnp.empty((0,), dtype=dtype)
             self.cell_centers = empty_points
@@ -2323,6 +2327,8 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         neighbor = np.array(neighbor, dtype=np.int32)
         neighbor_offsets: Array | None = None
         face_topology_ids: Array | None = None
+        neighbor_face_topology_ids: Array | None = None
+        twins_host = np.arange(face_count, dtype=np.int32)
         periodic_face_translations: Array | None = None
         if plan.periodic_face_joins is not None:
             joins = np.asarray(plan.periodic_face_joins, dtype=np.int32)
@@ -2344,6 +2350,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             # The kept face carries the quotient face; its merged twin is the
             # same face resident at the neighbor's lattice image.
             neighbor[kept] = owner[merged]
+            twins_host[kept] = merged
             offsets_host = np.zeros((face_count, cell_centers.shape[1]), dtype=np.float64)
             offsets_host[kept] = translations
             neighbor_offsets = jnp.asarray(offsets_host, dtype=cell_centers.dtype)
@@ -2375,6 +2382,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             quadrature_weights = quadrature_weights[keep]
             periodic_face_translations = neighbor_offsets[keep]
             face_topology_ids = keep
+            neighbor_face_topology_ids = jnp.asarray(twins_host[keep_faces])
             face_count = int(keep_faces.size)
         embedding_id = canonical_fingerprint(
             {
@@ -2495,6 +2503,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.face_block = face_block
         self.face_blocks = (face_block,)
         self.face_topology_ids = face_topology_ids
+        self.neighbor_face_topology_ids = neighbor_face_topology_ids
         self.periodic_face_translations = periodic_face_translations
         self.cell_volumes = cell_volumes
         self.cell_centers = cell_centers

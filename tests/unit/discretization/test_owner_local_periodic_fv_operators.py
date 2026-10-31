@@ -406,3 +406,100 @@ def test_owner_local_periodic_viscous_operator_matches_tiled_serial() -> None:
         float(report.maximum_diffusive_rate), float(np.max(rates)), rtol=1e-12
     )
     assert int(report.limiting_cell_flat_index) == int(np.argmax(rates))
+
+
+@pytest.mark.parametrize("kind", ("polynomial", "weno"))
+def test_owner_local_periodic_side_traces_match_tiled_serial(kind: str) -> None:
+    """A seam's neighbor trace reads the neighbor's twin facet in its own frame."""
+    from phydrax.discretization import FacetTraceRule
+
+    system = phx.equations.EulerSystem(2)
+    view, geometry = _single_owner_periodic_geometry(system.component_names)
+    reference = _TiledReference(view, geometry)
+    lift = np.asarray(view.periodic_lift_matrix, dtype=np.float64)[:, :2]
+    state = jnp.asarray(_euler_state(system, np.asarray(geometry.cell_centers), lift))
+    tiled_state = jnp.asarray(reference.tile(np.asarray(state)))
+    if kind == "polynomial":
+        plan: Any = phx.discretization.CellPolynomialReconstructionPlan(2)
+    else:
+        plan = phx.discretization.UnstructuredWENOZReconstructionPlan(2)
+    reconstruction: Any = plan.prepare(geometry)
+    tiled: Any = plan.prepare(reference.geometry)
+    domain = geometry.integration_domain("interior_facet")
+    facets = np.asarray(domain.entity_indices)
+    translations = np.asarray(geometry.periodic_face_translations)[facets]
+    seams = np.any(translations != 0.0, axis=1)
+    assert np.any(seams)
+    np.testing.assert_array_equal(np.asarray(domain.periodic_face_mask), seams)
+    rule = FacetTraceRule(points=3)
+    traces = {}
+    for side in ("owner", "neighbor"):
+        if kind == "polynomial":
+            trace: Any = geometry.prepare_side_trace(
+                geometry.cell_space.name,
+                domain,
+                rule=rule,
+                reconstruction=reconstruction,
+                side=side,
+            )
+        else:
+            trace = geometry.prepare_nonlinear_face_trace(
+                geometry.cell_space.name,
+                domain,
+                rule=rule,
+                reconstruction=reconstruction,
+                side=side,
+            )
+        assert trace.descriptor.representation == "face-state"
+        sites = np.asarray(trace.sites)
+        cells = np.asarray(
+            (geometry.owner_cells if side == "owner" else geometry.neighbor_cells)
+        )[facets]
+        # Both sides publish the facet's shared sites in the owner's frame;
+        # the neighbor's central copy evaluates them at its lattice image.
+        evaluation = sites if side == "owner" else sites + translations[:, None, :]
+        if kind == "polynomial":
+            expected = tiled.evaluate(
+                tiled_state, jnp.asarray(cells), jnp.asarray(evaluation)
+            )
+        else:
+            expected = tiled.evaluate_cells(
+                tiled_state, jnp.asarray(cells), jnp.asarray(evaluation)
+            )
+        traces[side] = np.asarray(trace.apply(state))
+        np.testing.assert_allclose(
+            traces[side], np.asarray(expected), rtol=1e-9, atol=1e-10
+        )
+    # Untranslated neighbor sites would read the neighbor's polynomial far
+    # outside its cell.
+    untranslated = tiled.evaluate_cells if kind == "weno" else tiled.evaluate
+    wrong = np.asarray(
+        untranslated(
+            tiled_state,
+            jnp.asarray(np.asarray(geometry.neighbor_cells)[facets]),
+            jnp.asarray(trace.sites),
+        )
+    )
+    assert float(np.max(np.abs(wrong[seams] - traces["neighbor"][seams]))) > 1.0e-3
+    # Sites are shared and normals opposite on both sides of every facet.
+    owner_trace = geometry.prepare_side_trace(
+        geometry.cell_space.name, domain, rule=rule, side="owner"
+    )
+    neighbor_trace = geometry.prepare_side_trace(
+        geometry.cell_space.name, domain, rule=rule, side="neighbor"
+    )
+    np.testing.assert_array_equal(
+        np.asarray(owner_trace.sites), np.asarray(neighbor_trace.sites)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(owner_trace.normals), -np.asarray(neighbor_trace.normals)
+    )
+    np.testing.assert_allclose(
+        np.sum(
+            np.asarray(owner_trace.sites) * np.asarray(owner_trace.weights)[..., None],
+            axis=1,
+        )
+        / np.sum(np.asarray(owner_trace.weights), axis=1)[:, None],
+        np.asarray(geometry.face_centers)[facets],
+        atol=1e-12,
+    )
