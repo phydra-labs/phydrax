@@ -1685,6 +1685,8 @@ def _child_sources(
     )
     source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
     cell_keys = np.sort(source_vertex_ids[source_cell_vertices], axis=1)
+    # Supports are looked up once per dimension: each lookup sorts its whole key table.
+    supports: dict[int, list[tuple[int, np.ndarray]]] = {}
     for created_row, stencil_row in zip(open_rows, stencil_rows, strict=True):
         support = np.sort(
             np.unique(
@@ -1696,20 +1698,25 @@ def _child_sources(
         )
         if support.size < 2 or support.size > top + 1:
             continue
-        dimension = int(support.size - 1)
-        query = support.reshape((1, -1))
+        supports.setdefault(int(support.size - 1), []).append((int(created_row), support))
+    for dimension, entries in sorted(supports.items()):
+        queries = np.stack([support for _, support in entries])
         if dimension == top:
-            cell_row = int(key_rows(cell_keys, query)[0])
-            entity_row = (
-                int(_entity_rows(source_mesh, top, source_cell_ids[[cell_row]])[0])
-                if cell_row >= 0
-                else -1
-            )
+            cell_rows = key_rows(cell_keys, queries)
+            entity_rows = np.full(cell_rows.shape, -1, dtype=np.int64)
+            found = cell_rows >= 0
+            if np.any(found):
+                entity_rows[found] = _entity_rows(
+                    source_mesh, top, source_cell_ids[cell_rows[found]]
+                )
         else:
-            entity_row = int(key_rows(entity_keys(source_mesh, dimension), query)[0])
-        if entity_row >= 0:
-            dims[created_row] = dimension
-            rows[created_row] = entity_row
+            entity_rows = key_rows(entity_keys(source_mesh, dimension), queries)
+        for (created_row, _), entity_row in zip(
+            entries, entity_rows.tolist(), strict=True
+        ):
+            if entity_row >= 0:
+                dims[created_row] = dimension
+                rows[created_row] = entity_row
     return dims, rows
 
 

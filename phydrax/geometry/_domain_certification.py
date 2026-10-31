@@ -41,10 +41,8 @@ from ._mesh_certificates import (
 from ._meshing_domain import MeshingDomain
 from ._planar_coverage import FacetOverlap, PlcSourcePoints, PlcSourcePointWitness
 from ._source_boundary_records import SourceBoundaryDistanceWitness, SourceBoundaryQuery
-from ._source_fidelity import (
-    _AdaptiveImplicitBoundaryCarrier,
-    SourceFidelityCertificate,
-)
+from ._source_fidelity import _AdaptiveImplicitBoundaryCarrier
+from ._source_fidelity_certificate import SourceFidelityCertificate
 from .implicit._adaptive_discovery import AdaptiveImplicitSurface
 from .implicit._analytic_profile import AnalyticImplicitProfile
 from .implicit._restricted_delaunay_coverage import (

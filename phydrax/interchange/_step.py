@@ -79,7 +79,7 @@ from ._cad import (
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_assembly_identifier_losses,
-    cad_import_synthesis_losses,
+    cad_import_stage_losses,
     CadCodecInvariantError,
     CadExportPolicy,
     CadExportResult,
@@ -2990,7 +2990,7 @@ def _import_report(
         )
     losses += tolerance_evidence.losses
     losses += tuple(decoder.repairs)
-    losses += cad_import_synthesis_losses(stage)
+    losses += cad_import_stage_losses(stage)
     uncertainty = tolerance_evidence.uncertainty
     qualifiers = {
         "schema": schema,

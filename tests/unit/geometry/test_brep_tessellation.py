@@ -61,6 +61,7 @@ def _policy(*, linear: float = 0.02, angular: float = 0.2) -> BRepTessellationPo
 
 
 def _attach_tessellation(model: BRepModel, policy: BRepTessellationPolicy) -> BRepModel:
+    tessellation, certificate = tessellate_brep_model(model, policy)
     return BRepModel(
         geometry=model.geometry,
         patches=model.patches,
@@ -70,7 +71,8 @@ def _attach_tessellation(model: BRepModel, policy: BRepTessellationPolicy) -> BR
         coordinate_contract=model.coordinate_contract,
         report=model.report,
         trim_domains=model.trim_domains,
-        tessellation=tessellate_brep_model(model, policy),
+        tessellation=tessellation,
+        tessellation_certificate=certificate,
     )
 
 
@@ -326,6 +328,44 @@ def test_direct_native_tessellation_smoke_and_source_identity() -> None:
     )
 
 
+def test_model_reuses_only_the_certificate_bound_to_its_tessellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _source_fidelity
+
+    contract = SpatialCoordinateContract.si()
+    source = brep_box((0.0, 0.0, 0.0), (1.0, 1.5, 2.0), coordinate_contract=contract)
+    tessellation, certificate = tessellate_brep_model(source, _policy())
+    _, other_certificate = tessellate_brep_model(source, _policy(linear=0.01))
+
+    def model(**realization: object) -> BRepModel:
+        return BRepModel(
+            geometry=source.geometry,
+            patches=source.patches,
+            parameter_bounds=np.asarray(source.parameter_bounds),
+            orientation=np.asarray(source.orientation),
+            physical_tags=source.physical_tags,
+            coordinate_contract=contract,
+            report=source.report,
+            trim_domains=source.trim_domains,
+            **realization,  # ty: ignore[invalid-argument-type]
+        )
+
+    def recomputed(*args: object, **kwargs: object) -> None:
+        raise AssertionError("An in-hand bound certificate must not be recomputed.")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_source_fidelity, "certify_source_fidelity", recomputed)
+        reused = model(tessellation=tessellation, tessellation_certificate=certificate)
+    assert reused.tessellation is tessellation
+    with pytest.raises(ValueError, match="another"):
+        model(tessellation=tessellation, tessellation_certificate=other_certificate)
+    with pytest.raises(ValueError, match="requires its tessellation"):
+        model(tessellation_certificate=certificate)
+    with pytest.raises(TypeError, match="tessellation_certificate"):
+        model(tessellation=tessellation, tessellation_certificate=tessellation)
+
+
 def test_trimmed_planar_profile_excludes_hole_and_meets_physical_bounds() -> None:
     contract = SpatialCoordinateContract.si()
     profile = PlanarProfile(
@@ -524,7 +564,7 @@ def test_reflected_reused_solid_occurrences_remain_distinct_in_tessellation() ->
 def test_singular_pole_trim_certifies_a_tessellation_with_bounded_evidence() -> None:
     source = brep_sphere(1.0, coordinate_contract=SpatialCoordinateContract.si())
     policy = _policy()
-    tessellation = tessellate_brep_model(source, policy)
+    tessellation, _ = tessellate_brep_model(source, policy)
 
     vertices = np.asarray(tessellation.vertices, dtype=np.float64)
     triangles = np.asarray(tessellation.triangles, dtype=np.int64)

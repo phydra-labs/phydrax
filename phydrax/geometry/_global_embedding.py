@@ -131,6 +131,11 @@ from ._separating_normals import (
     strict_separation_planes,
     unique_projective_normals,
 )
+from ._stratum_subdivision import (
+    glued_face_monotone,
+    StratumSubdivisionCache,
+    subdivided_stratum_separation,
+)
 
 
 class _SingularReferenceFactorMap(ValueError):
@@ -4339,6 +4344,94 @@ def _shared_vertex_findings(
     return findings
 
 
+def _stratum_residuals(
+    cell: EmbeddingCell, shared_ids: tuple[int, ...], /
+) -> tuple[Expression, ...] | None:
+    """Physical polynomials vanishing on the exact image of a shared stratum.
+
+    A vertex uses its three coordinate offsets, a straight edge two planes
+    through it, and a quadratic edge its plane and in-plane conic residual. Each
+    zero set contains the stratum image; ``None`` when no exact residual is
+    available (faces are proved by `glued_face_monotone`).
+    """
+    if not shared_ids:
+        return ()
+    ambient = len(cell.coordinates)
+    if ambient not in (2, 3) or not cell.corner_images:
+        return None
+    if len(shared_ids) == 1:
+        point = cell.corner_images[cell.vertex_ids.index(shared_ids[0])]
+        if len(point) != ambient:
+            return None
+        return tuple(
+            subtract(
+                {tuple(int(index == axis) for index in range(ambient)): Fraction(1)},
+                constant(point[axis], ambient),
+            )
+            for axis in range(ambient)
+        )
+    if len(shared_ids) == 2:
+        if ambient != 3:
+            return None
+        arguments = _trace_arguments(cell, shared_ids)
+        if arguments is None:
+            return None
+        trace = tuple(
+            compose_expression(expression, arguments) for expression in cell.coordinates
+        )
+        if any(not isinstance(expression, dict) for expression in trace):
+            return None
+        degree = max(
+            (
+                exponent[0]
+                for expression in trace
+                if isinstance(expression, dict)
+                for exponent in expression
+            ),
+            default=0,
+        )
+        if degree == 2:
+            return _quadratic_edge_residuals(trace)
+        if degree != 1:
+            return None
+        origin = tuple(
+            cast(dict, expression).get((0,), Fraction(0)) for expression in trace
+        )
+        direction = tuple(
+            cast(dict, expression).get((1,), Fraction(0)) for expression in trace
+        )
+        axis = min(range(3), key=lambda index: abs(float(direction[index])))
+        unit = tuple(Fraction(int(index == axis)) for index in range(3))
+        first_normal = (
+            direction[1] * unit[2] - direction[2] * unit[1],
+            direction[2] * unit[0] - direction[0] * unit[2],
+            direction[0] * unit[1] - direction[1] * unit[0],
+        )
+        second_normal = (
+            direction[1] * first_normal[2] - direction[2] * first_normal[1],
+            direction[2] * first_normal[0] - direction[0] * first_normal[2],
+            direction[0] * first_normal[1] - direction[1] * first_normal[0],
+        )
+        residuals: list[Expression] = []
+        for normal in (first_normal, second_normal):
+            if not any(_sign(value) for value in normal):
+                return None
+            residuals.append(
+                subtract(
+                    _physical_linear_form(normal),
+                    constant(
+                        sum(
+                            (normal[index] * origin[index] for index in range(3)),
+                            Fraction(0),
+                        ),
+                        3,
+                    ),
+                )
+            )
+        return tuple(residuals)
+    return None
+
+
 def _straight_planar_polygon(
     cell: EmbeddingCell,
     pieces: tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None,
@@ -4524,6 +4617,8 @@ def _nonperiodic_contacts(
     findings: list[MeshCertificateFinding] = []
     vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
     shadows: dict[int, CellShadow | None] = {}
+    stratum_residuals: dict[tuple[int, ...], tuple[Expression, ...] | None] = {}
+    subdivision_cache = StratumSubdivisionCache()
     for cell in cells:
         if not cell.affine and cell.coordinates:
             simplices.append(None)
@@ -4680,6 +4775,43 @@ def _nonperiodic_contacts(
                         )
                     )
                     continue
+                if (
+                    trace is True
+                    and len(shared) == first_cell.dimension
+                    and glued_face_monotone(first_cell, second_cell, shared)
+                ):
+                    if proof_values is not None:
+                        proof_values.append(
+                            f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                            "glued-face-monotone-map"
+                        )
+                    continue
+                if trace is True and len(shared) <= 2:
+                    stratum_key = tuple(sorted(shared))
+                    if stratum_key not in stratum_residuals:
+                        stratum_residuals[stratum_key] = _stratum_residuals(
+                            first_cell, stratum_key
+                        )
+                    residuals = stratum_residuals[stratum_key]
+                    subdivided = (
+                        None
+                        if residuals is None
+                        else subdivided_stratum_separation(
+                            first_cell,
+                            second_cell,
+                            stratum_key,
+                            residuals,
+                            subdivision_cache,
+                        )
+                    )
+                    if subdivided is not None:
+                        if proof_values is not None:
+                            proof_values.append(
+                                f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                                f"bernstein-subdivided-shared-stratum:{len(stratum_key)}:"
+                                f"cone-pieces:{subdivided[0]}:hull-pieces:{subdivided[1]}"
+                            )
+                        continue
                 if trace is True and _shared_facet_separation(
                     first_cell, second_cell, shared, shadows
                 ):

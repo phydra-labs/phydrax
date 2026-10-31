@@ -900,6 +900,32 @@ def _coordinate_measure_key(
     )
 
 
+def _measure_degree(coordinate_measure: CoordinateMeasurePlan | None, /) -> int:
+    """Polynomial degree the rotational factor (1, r, or r²) adds to an integrand."""
+
+    if coordinate_measure is None or coordinate_measure.kind == "cartesian":
+        return 0
+    return 2 if coordinate_measure.kind == "spherical-radial" else 1
+
+
+def _measure_weights(
+    points: np.ndarray,
+    weights: np.ndarray,
+    /,
+    *,
+    coordinate_measure: CoordinateMeasurePlan | None,
+    coordinate_frame: CoordinateFrame,
+) -> np.ndarray:
+    """Metric-weighted physical quadrature times the declared rotational factor."""
+
+    if coordinate_measure is None:
+        return weights
+    coordinate_measure.validate_coordinates(points)
+    return weights * np.asarray(
+        coordinate_measure.factor(points, frame=coordinate_frame), dtype=np.float64
+    )
+
+
 def _overlap_quadrature(
     simplices: np.ndarray,
     degree: int,
@@ -910,16 +936,9 @@ def _overlap_quadrature(
 ) -> tuple[np.ndarray, np.ndarray, str]:
     """Physical points/weights with the declared coordinate measure."""
     dimension = simplices.shape[-1]
-    measure_degree = (
-        0
-        if coordinate_measure is None or coordinate_measure.kind == "cartesian"
-        else 2
-        if coordinate_measure.kind == "spherical-radial"
-        else 1
-    )
     # ty: ignore[invalid-argument-type]
     rule = cubature_rule_data(
-        _SIMPLEX_KINDS[dimension], degree + measure_degree
+        _SIMPLEX_KINDS[dimension], degree + _measure_degree(coordinate_measure)
     )
     frames = np.swapaxes(simplices[:, 1:, :] - simplices[:, :1, :], -1, -2)
     measures = np.linalg.det(frames)
@@ -929,9 +948,11 @@ def _overlap_quadrature(
     weights = measures[:, None] * np.asarray(rule.weights)[None, :]
     if coordinate_measure is None:
         return points, weights, rule.rule_id
-    coordinate_measure.validate_coordinates(points)
-    weights = weights * np.asarray(
-        coordinate_measure.factor(points, frame=coordinate_frame), dtype=np.float64
+    weights = _measure_weights(
+        points,
+        weights,
+        coordinate_measure=coordinate_measure,
+        coordinate_frame=coordinate_frame,
     )
     rule_id = canonical_fingerprint(
         {
@@ -993,12 +1014,17 @@ def _cell_integrals(
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray] | None]:
     """Integrals of every global basis function and, optionally, mass COO triples.
 
-    The per-block rule is exact for degree ``2p`` (mass) or ``p`` (integrals).
+    The per-block rule is exact for degree ``2p`` (mass) or ``p`` (integrals)
+    times the rotational factor of the declared coordinate measure, so the target
+    mass, its integrals, and the overlap mixed mass share one measure.
     """
 
     dof_map = discretization.dof_maps[field_index]
-    _, frames = _affine_frames(discretization)
+    origins, frames = _affine_frames(discretization)
     determinants = np.abs(np.linalg.det(frames))
+    coordinate_measure = discretization.coordinate_measure
+    coordinate_frame = discretization.default_runtime.coordinate_frame
+    measure_degree = _measure_degree(coordinate_measure)
     size = dof_map.global_dof_count
     measures = np.zeros((size,), dtype=np.float64)
     rows, columns, values = [], [], []
@@ -1007,13 +1033,23 @@ def _cell_integrals(
         routes = np.asarray(dof_map.cell_dofs[block_index])
         stop = start + routes.shape[0]
         # ty: ignore[invalid-argument-type]
-        rule = cubature_rule_data(element.cell_kind, (2 if mass else 1) * element.degree)
+        rule = cubature_rule_data(
+            element.cell_kind, (2 if mass else 1) * element.degree + measure_degree
+        )
         basis = _oriented_basis(
             element,
             np.asarray(dof_map.orientations[block_index]),
             np.asarray(rule.points)[None],
         )
-        weights = determinants[start:stop, None] * np.asarray(rule.weights)[None, :]
+        points = origins[start:stop, None, :] + np.asarray(rule.points)[
+            None
+        ] @ np.swapaxes(frames[start:stop], -1, -2)
+        weights = _measure_weights(
+            points,
+            determinants[start:stop, None] * np.asarray(rule.weights)[None, :],
+            coordinate_measure=coordinate_measure,
+            coordinate_frame=coordinate_frame,
+        )
         weighted = weights[:, :, None] * basis
         measures += np.bincount(
             routes.reshape((-1,)),

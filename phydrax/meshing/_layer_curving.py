@@ -50,7 +50,8 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryProjectionQuery,
     SourceBoundaryQuery,
 )
-from ..geometry._source_fidelity import certify_source_fidelity, SourceFidelityCertificate
+from ..geometry._source_fidelity import certify_source_fidelity
+from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 from ..geometry._source_identity import source_entity_id
 from ..geometry._source_interpolation import exact_surface_coordinate_expressions
 from ..geometry._surface_source_support import SurfaceSourceCharts

@@ -20,7 +20,7 @@ import numpy as np
 
 from ..discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from ..discretization._cell_complex import polyhedral_connectivity
-from ..discretization._cell_mesh import PolyhedralBlock
+from ..discretization._cell_mesh import PolyhedralBlock, SimplicialConnectivity
 from ..discretization._nested_reference_types import (
     exact_reference_vertices,
     NestedReferenceWitnesses,
@@ -137,9 +137,10 @@ class CellTopologyEdit(NamedTuple):
     stencil_exact_weights: tuple[tuple[Fraction, ...], ...] | None = None
 
 
-def _exact_stencil_row(
-    edit: CellTopologyEdit, row: int, /
-) -> tuple[tuple[int, Fraction], ...]:
+def _exact_stencil_rows(
+    edit: CellTopologyEdit, /
+) -> tuple[tuple[tuple[int, Fraction], ...], ...]:
+    """Validate an edit's exact source stencils once and return each row's active terms."""
     sources = np.asarray(edit.stencil_sources, dtype=np.int64)
     valid = np.asarray(edit.stencil_valid, dtype=np.bool_)
     weights = np.asarray(edit.stencil_weights, dtype=np.float64)
@@ -147,27 +148,40 @@ def _exact_stencil_row(
         sources.ndim != 2
         or sources.shape != valid.shape
         or sources.shape != weights.shape
-        or not 0 <= row < sources.shape[0]
     ):
         raise ValueError("Exact source stencil row is unavailable.")
     if edit.stencil_exact_weights is None:
-        exact = tuple(Fraction.from_float(float(value)) for value in weights[row])
+        exact_rows: tuple[tuple[Fraction, ...], ...] = tuple(
+            tuple(Fraction.from_float(float(value)) for value in row) for row in weights
+        )
     else:
         exact_rows = edit.stencil_exact_weights
         if len(exact_rows) != sources.shape[0] or any(
             len(values) != sources.shape[1] for values in exact_rows
         ):
             raise ValueError("Exact source stencil weights must align with rows.")
-        exact = exact_rows[row]
-        if any(not isinstance(value, Fraction) for value in exact):
+        if any(
+            not isinstance(value, Fraction) for values in exact_rows for value in values
+        ):
             raise TypeError("Exact source stencil coefficients must be Fractions.")
     return tuple(
-        (int(source), coefficient)
-        for source, coefficient, is_valid in zip(
-            sources[row], exact, valid[row], strict=True
+        tuple(
+            (int(source), coefficient)
+            for source, coefficient, is_valid in zip(
+                sources[row], exact_rows[row], valid[row], strict=True
+            )
+            if is_valid
         )
-        if is_valid
+        for row in range(sources.shape[0])
     )
+
+
+def _stencil_row(
+    stencils: tuple[tuple[tuple[int, Fraction], ...], ...], row: int, /
+) -> tuple[tuple[int, Fraction], ...]:
+    if not 0 <= row < len(stencils):
+        raise ValueError("Exact source stencil row is unavailable.")
+    return stencils[row]
 
 
 def _edit_stencil_preserves_constants(edit: CellTopologyEdit, /) -> bool:
@@ -231,6 +245,10 @@ def source_family_blocks(
 
 def _face_rows(connectivity: object, dimension: int) -> tuple[np.ndarray, ...]:
     """Return each intermediate entity's ordered vertex row."""
+    if isinstance(connectivity, SimplicialConnectivity):
+        if not 0 < dimension < connectivity.dimension:
+            raise ValueError(f"Vertex rows of dimension {dimension} are unavailable.")
+        return tuple(np.asarray(connectivity.entities[dimension], dtype=np.int64))
     if dimension == 1:
         edges = getattr(connectivity, "edges", None)
         if edges is None:
@@ -487,6 +505,7 @@ def _validate_nested_stencil(
         raise ValueError(
             "Topology edit vertex stencils must align with target vertex IDs."
         )
+    stencils = _exact_stencil_rows(edit)
     for row, (fine_id, coarse_id) in enumerate(
         zip(witnesses.fine_cell_ids, witnesses.coarse_cell_ids, strict=True)
     ):
@@ -502,7 +521,7 @@ def _validate_nested_stencil(
             raise ValueError("Nested target corners must have vertex stencils.")
         rows = order[position]
         for local, stencil_row in enumerate(rows):
-            active = _exact_stencil_row(edit, int(stencil_row))
+            active = _stencil_row(stencils, int(stencil_row))
             if not active or any(weight < 0 for _, weight in active):
                 raise ValueError(
                     "Nested target corners need nonnegative source stencils."
@@ -571,6 +590,7 @@ def nested_reference_witnesses_from_edit(
         or stencil_sources.shape[0] != target_vertices.size
     ):
         raise ValueError("Topology edit stencils must align with target vertex IDs.")
+    stencils = _exact_stencil_rows(edit)
     dimension = source.topological_dimension
     exact_cells: list[tuple[tuple[Fraction, ...], ...]] = []
     rounded = np.empty((fine_ids.size, dimension + 1, dimension), dtype=np.float64)
@@ -600,7 +620,7 @@ def nested_reference_witnesses_from_edit(
         stencil_rows = vertex_order[target_positions]
         vertices: list[tuple[Fraction, ...]] = []
         for local, stencil_row in enumerate(stencil_rows):
-            active = _exact_stencil_row(edit, int(stencil_row))
+            active = _stencil_row(stencils, int(stencil_row))
             if not active or any(weight < 0 for _, weight in active):
                 raise ValueError(
                     "Nested target corners need nonnegative finite stencils."
@@ -769,6 +789,7 @@ def reference_cell_maps_from_edit(
             "Topology-edit vertex stencils must cover target global vertices."
         )
     vertex_rows = {int(identifier): row for row, identifier in enumerate(target_vertices)}
+    stencils = _exact_stencil_rows(edit)
     grouped: dict[
         tuple[str, str],
         list[tuple[int, int, tuple[tuple[Fraction, ...], ...]]],
@@ -783,7 +804,7 @@ def reference_cell_maps_from_edit(
         exact_vertices = []
         for target_vertex in child_vertices:
             stencil_row = vertex_rows[target_vertex]
-            active = _exact_stencil_row(edit, stencil_row)
+            active = _stencil_row(stencils, stencil_row)
             if not active:
                 raise ValueError("Nested target corner has no exact source stencil.")
             accumulated = [Fraction(0) for _ in parent_vertices]
@@ -995,6 +1016,10 @@ def _build_mesh(
         cell_ids.append(ids)
     if not blocks:
         raise ValueError("A topology edit must retain at least one target cell block.")
+    if source.topological_dimension == 2:
+        # Polygonal meshes order blocks by increasing arity; the stable sort keeps
+        # the edit's block order among equal arities.
+        blocks.sort(key=lambda block: block.arity)
     packed = (
         polyhedral_connectivity(
             entries,

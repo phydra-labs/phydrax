@@ -23,7 +23,7 @@ from ..spatial_sampling import (
     PreparedObservationOperator,
 )
 from ._cell_complex import TetrahedralConnectivity
-from ._cell_mesh import CellMesh
+from ._cell_mesh import CellMesh, SimplicialConnectivity
 
 
 class EmbeddedKernelKind(StrEnum):
@@ -284,8 +284,14 @@ class EmbeddedMeasureTransferPlan:
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source_mesh, CellMesh) or not isinstance(
-            self.source_mesh.connectivity, TetrahedralConnectivity
+        connectivity = (
+            self.source_mesh.connectivity
+            if isinstance(self.source_mesh, CellMesh)
+            else None
+        )
+        if not isinstance(connectivity, TetrahedralConnectivity) and not (
+            isinstance(connectivity, SimplicialConnectivity)
+            and connectivity.dimension == 3
         ):
             raise TypeError("Embedded transfer requires a tetrahedral source mesh.")
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
