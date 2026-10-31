@@ -39,7 +39,11 @@ from ..discretization._surface_chart_records import (
     SurfaceChartWitness,
 )
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
-from ._domain_boundary import CurvedTrimLens, MeshingDomainBoundarySource
+from ._domain_boundary import (
+    CurvedTrimLens,
+    exact_plane_chart,
+    MeshingDomainBoundarySource,
+)
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import (
     Interval,
@@ -293,7 +297,12 @@ def _surface_source_chart_rows(
     source: MeshingDomainBoundarySource,
     witness: SourceBoundaryChartWitness,
     /,
-) -> tuple[np.ndarray, tuple[Triangle2, ...]]:
+) -> tuple[np.ndarray, tuple[Triangle2, ...], frozenset[int]]:
+    """Patch rows, exact chart triangles, and the patches charted in their plane.
+
+    A row's chart is its patch's authored chart, or the `exact_plane_chart` of a
+    patch proved planar; every row of one patch uses the same chart.
+    """
     if (
         witness.chart_dimension != 2
         or witness.source_id != source.source_id
@@ -305,6 +314,8 @@ def _surface_source_chart_rows(
         )
     domain = source.domain
     patch_rows = np.empty((len(witness.source_entity_ids),), dtype=np.int64)
+    plane_by_patch: dict[int, bool] = {}
+    plane_chart_ids: dict[int, str | None] = {}
     for row, (chart_id, entity_id, occurrence) in enumerate(
         zip(
             witness.source_chart_ids,
@@ -318,17 +329,37 @@ def _surface_source_chart_rows(
             patch not in source.patches
             or domain.entity_id(2, patch) != entity_id
             or domain.source_occurrences[2][patch] != occurrence
-            or chart_id != entity_id
         ):
             raise ValueError(
                 "Source surface witness changes its authored chart or occurrence."
             )
+        if chart_id == entity_id:
+            plane = False
+        else:
+            if patch not in plane_chart_ids:
+                plane_chart = exact_plane_chart(domain, patch)
+                plane_chart_ids[patch] = (
+                    None if plane_chart is None else plane_chart.chart_id
+                )
+            if chart_id != plane_chart_ids[patch]:
+                raise ValueError(
+                    "Source surface witness changes its authored chart or occurrence."
+                )
+            plane = True
+        if plane_by_patch.setdefault(patch, plane) != plane:
+            raise ValueError("Source surface witness mixes charts of one source patch.")
         patch_rows[row] = patch
-    return patch_rows, tuple(
-        _exact_triangle2(
-            _fractions_from_chart_tokens(witness.source_parameter_rational_tokens, row)
-        )
-        for row in range(len(patch_rows))
+    return (
+        patch_rows,
+        tuple(
+            _exact_triangle2(
+                _fractions_from_chart_tokens(
+                    witness.source_parameter_rational_tokens, row
+                )
+            )
+            for row in range(len(patch_rows))
+        ),
+        frozenset(patch for patch, plane in plane_by_patch.items() if plane),
     )
 
 
@@ -487,8 +518,9 @@ def _partition_findings(
             _exact_chart_from_tokens(witness.chart_rational_tokens, row)
             for row in range(len(patches))
         )
+        plane_patches: frozenset[int] = frozenset()
     else:
-        patches, charts = _surface_source_chart_rows(source, witness)
+        patches, charts, plane_patches = _surface_source_chart_rows(source, witness)
     target_triangles: dict[int, list[Triangle2]] = {}
     for patch, chart in zip(patches, charts, strict=True):
         target_triangles.setdefault(int(patch), []).append(chart)
@@ -534,12 +566,16 @@ def _partition_findings(
                 )
             )
             continue
-        # Collapsed pole slivers are part of their owner cells' chart preimages.
-        target = (
-            *target,
-            *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+        plane = patch in plane_patches
+        if not plane:
+            # Collapsed pole slivers are part of their owner cells' chart preimages.
+            target = (
+                *target,
+                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+            )
+        declared, _ = source._trim_partition_reference_unchecked(
+            patch, target, plane=plane
         )
-        declared, _ = source._trim_partition_reference_unchecked(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -1407,7 +1443,7 @@ def validate_source_fidelity_witness(
             raise ValueError(
                 "Reconstructed chart witness changes its persistent source scope."
             )
-        _, charts = _surface_source_chart_rows(domain_source, witness)
+        _, charts, _ = _surface_source_chart_rows(domain_source, witness)
         findings = _partition_findings(domain_source, witness)
         if any(finding.status != "certified" for finding in findings):
             raise ValueError(
@@ -1446,7 +1482,7 @@ def validate_source_fidelity_witness(
                 source.require_current()
             else:
                 domain_source.require_current()
-            patch_rows, charts = _surface_source_chart_rows(domain_source, witness)
+            patch_rows, charts, _ = _surface_source_chart_rows(domain_source, witness)
             findings = _partition_findings(domain_source, witness)
             if any(finding.status != "certified" for finding in findings):
                 raise ValueError(
@@ -3903,8 +3939,22 @@ def _plane_normal_deviation(
     exact_points = tuple(_exact_surface_point(surface, point) for point in uv_triangle)
     if any(point is None for point in exact_points):
         return None
-    first = rational_vector(np.asarray(surface.first_axis))
-    second = rational_vector(np.asarray(surface.second_axis))
+    return _plane_axes_normal_deviation(
+        rational_vector(np.asarray(surface.first_axis)),
+        rational_vector(np.asarray(surface.second_axis)),
+        orientation,
+        target_cross,
+    )
+
+
+def _plane_axes_normal_deviation(
+    first: tuple[Fraction, ...],
+    second: tuple[Fraction, ...],
+    orientation: int,
+    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    """Normal deviation from the oriented normal of exact plane chart axes."""
     source_cross = (
         first[1] * second[2] - first[2] * second[1],
         first[2] * second[0] - first[0] * second[2],
@@ -5068,7 +5118,7 @@ def _certify_domain_surface_chart_fidelity(
     domain_source = _surface_query_root(source)
 
     validate_source_fidelity_witness(mesh, geometry, source, witness)
-    patch_rows, charts = _surface_source_chart_rows(domain_source, witness)
+    patch_rows, charts, plane_patches = _surface_source_chart_rows(domain_source, witness)
     target_rows, _, _ = _surface_target_chart_rows(mesh, geometry, domain_source, witness)
     evidence = certify_domain_surface_charts(
         mesh,
@@ -5078,6 +5128,7 @@ def _certify_domain_surface_chart_fidelity(
         patch_rows,
         target_rows,
         tolerance=tolerance,
+        plane_patches=plane_patches,
     )
     coverage = domain_source.boundary_chart_cover()
     findings = [*coverage.findings, *evidence.findings]
@@ -5112,14 +5163,25 @@ def _certify_domain_surface_chart_fidelity(
                 continue
             target_cross = _triangle_physical_normal(evidence.target_corners[row])
             try:
-                normal_evidence = _normal_deviation_for_cell(
-                    domain_source.domain,
-                    int(patch),
-                    chart,
-                    target_cross,
-                    derivatives,
-                    normal_limit,
-                )
+                if int(patch) in plane_patches:
+                    plane_chart = exact_plane_chart(domain_source.domain, int(patch))
+                    if plane_chart is None:
+                        raise ValueError("Source patch lost its exact plane chart.")
+                    normal_evidence = _plane_axes_normal_deviation(
+                        plane_chart.first_axis,
+                        plane_chart.second_axis,
+                        int(domain_source.domain.patches[int(patch)].orientation),
+                        target_cross,
+                    )
+                else:
+                    normal_evidence = _normal_deviation_for_cell(
+                        domain_source.domain,
+                        int(patch),
+                        chart,
+                        target_cross,
+                        derivatives,
+                        normal_limit,
+                    )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None
             if normal_evidence is None:

@@ -20,6 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, positive_integer
+from ..discretization._coordinate_enclosure import Polynomial
 from ..discretization._exact_algebraic_geometry import (
     coefficient_payload,
     coefficient_rounding_error,
@@ -37,7 +38,7 @@ from ._source_boundary_records import (
     SourceBoundarySamples,
 )
 from ._triangulation import ConstrainedDelaunayTriangulation
-from .brep._patches import AbstractSurfacePatch, ExactLineCurve, LineCurve
+from .brep._patches import AbstractSurfacePatch, CircleCurve, ExactLineCurve, LineCurve
 
 
 _Point2 = tuple[Fraction, Fraction]
@@ -287,6 +288,7 @@ def _patch_chart_polygon(
     | None = None,
     *,
     drop_enclosed_curved_loops: bool = False,
+    trim_loops: tuple[tuple[PatchCurveUse | PatchPoleUse, ...], ...] | None = None,
 ) -> (
     tuple[
         tuple[_Point2, ...],
@@ -300,13 +302,14 @@ def _patch_chart_polygon(
     With ``drop_enclosed_curved_loops`` a curved loop whose chords enclose no
     chart area (a single full circle, two half arcs) is omitted: every point it
     bounds lies in the convex hull of its arcs, which the curved-trim enclosure
-    boxes cover, so only cover construction may request it.
+    boxes cover, so only cover construction may request it. ``trim_loops``
+    replaces the authored trim by the same trim in another exact patch chart.
     """
     points: list[tuple[Fraction, Fraction]] = []
     segments: list[tuple[int, int]] = []
     loops: list[tuple[tuple[Fraction, Fraction], ...]] = []
     dropped = False
-    for loop in domain.patches[patch].loops:
+    for loop in domain.patches[patch].loops if trim_loops is None else trim_loops:
         if not all(isinstance(use, (PatchCurveUse, PatchPoleUse)) for use in loop):
             return None
         loop_points: list[tuple[Fraction, Fraction]] = []
@@ -422,6 +425,233 @@ def _exact_trim_triangles(
             "Source parameter triangles do not cover the oriented trim chain."
         )
     return tuple(exact_triangles)
+
+
+_TURN = 2.0 * math.pi
+
+
+class ExactPlaneChart(NamedTuple):
+    """Exact affine chart of a planar patch whose authored chart is not affine.
+
+    The patch point of plane chart ``(s, t)`` is ``origin + s * first_axis +
+    t * second_axis``. The chart has the authored chart's orientation, and its
+    trim loops are the authored trims mapped exactly into it: a revolution of a
+    profile line perpendicular to the axis whose radial offset is collinear
+    with the line is the disk or annulus of its rim circles, and the authored
+    seam and pole are interior to it.
+    """
+
+    chart_id: str
+    origin: _Point3
+    first_axis: _Point3
+    second_axis: _Point3
+    loops: tuple[tuple[PatchCurveUse, ...], ...]
+    radius_offset: Fraction
+    radius_sign: int
+
+    def chart_point(self, parameters: _Point2, /) -> _Point2:
+        """Binary64 plane chart point of one authored ``(angle, profile)`` point.
+
+        The plane point is ``r (cos angle, -sign sin angle)`` with radius
+        ``r = sign (offset + profile)``; the authored seam's turn end is the
+        angle-zero side, and an angle-zero point is exact, as is a trim circle's
+        start point.
+        """
+        angle, profile = parameters
+        radius = self.radius_sign * (self.radius_offset + profile)
+        if radius < 0:
+            raise ValueError("Authored point lies outside the planar revolution chart.")
+        turn_angle = 0.0 if float(angle) == _TURN else float(angle)
+        scale = float(radius)
+        return (
+            Fraction.from_float(scale * math.cos(turn_angle)),
+            Fraction.from_float(-self.radius_sign * scale * math.sin(turn_angle)),
+        )
+
+    def coordinate_expressions(self, /) -> tuple[Polynomial, ...]:
+        """Exact affine coordinate polynomials of the plane chart."""
+        expressions: list[Polynomial] = []
+        for axis in range(3):
+            expression: Polynomial = {
+                (0, 0): self.origin[axis],
+                (1, 0): self.first_axis[axis],
+                (0, 1): self.second_axis[axis],
+            }
+            expressions.append(expression)
+        return tuple(expressions)
+
+
+def _exact_line_profile(
+    curve: object, /
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
+    """Rational base point and direction of an exact affine profile line."""
+    if isinstance(curve, LineCurve):
+        base, direction = tuple(curve.origin_exact), tuple(curve.direction_exact)
+    elif isinstance(curve, ExactLineCurve):
+        base = tuple(curve.first_exact)
+        direction = tuple(
+            last - first
+            for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
+        )
+    else:
+        return None
+    exact_base = tuple(value for value in base if isinstance(value, Fraction))
+    exact_direction = tuple(value for value in direction if isinstance(value, Fraction))
+    if len(base) != 3 or len(exact_base) != 3 or len(exact_direction) != 3:
+        return None
+    return exact_base, exact_direction
+
+
+def _constant_line_coordinate(
+    use: PatchCurveUse | PatchPoleUse, axis: int, /
+) -> Fraction | None:
+    """Exact chart coordinate ``axis`` of a straight authored use constant in it."""
+    pcurve = use.pcurve
+    if not isinstance(pcurve, (ExactLineCurve, LineCurve)):
+        from .brep._boolean_core import PeriodicPCurve
+
+        if not isinstance(pcurve, PeriodicPCurve) or not isinstance(
+            pcurve.source_curve, (ExactLineCurve, LineCurve)
+        ):
+            return None
+        values = np.asarray(use.traversal_endpoints(), dtype=np.float64)
+        source_values = np.asarray(
+            pcurve.source_curve.evaluate(jnp.asarray((use.first, use.last))),
+            dtype=np.float64,
+        )
+        if source_values[0, axis] != source_values[1, axis]:
+            return None
+        if values[0, axis] != values[1, axis]:
+            return None
+        return Fraction.from_float(float(values[0, axis]))
+    first, last = _line_endpoints(use)
+    if first[axis] != last[axis]:
+        return None
+    return first[axis]
+
+
+def exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
+    """Exact plane chart of a patch proved planar by its carrier, if any.
+
+    A surface of revolution of an exact profile line ``P(v) = P0 + v d`` about
+    the axis ``(O, a)`` evaluates ``C + rho(v) (d cos u + (a x d) sin u)`` with
+    ``C = O + a ((P0 - O) . a)`` whenever ``d . a == 0`` and the radial offset
+    ``(P0 - O) - a ((P0 - O) . a) == rho0 d`` hold exactly, where
+    ``rho(v) = rho0 + v``. Its full-turn trim is then the exact disk or annulus
+    of its rim circles in the chart ``first_axis = sign d``,
+    ``second_axis = -(a x d)``, which preserves the authored orientation. Every
+    other carrier, a partial turn, or any inexact premise returns ``None``.
+    """
+    from ._meshing_domain import _PlacedSurfacePatch
+    from ._rational import rational_cross
+    from .brep._patches import RevolutionSurface
+
+    surface = domain.patches[patch].surface
+    placement = None
+    if isinstance(surface, _PlacedSurfacePatch):
+        surface, placement = surface.source, surface.placement
+    if not isinstance(surface, RevolutionSurface):
+        return None
+    profile = _exact_line_profile(surface.curve)
+    if profile is None:
+        return None
+    base, direction = profile
+    axis_origin = rational_vector(np.asarray(surface.axis_origin, dtype=np.float64))
+    axis = rational_vector(np.asarray(surface.axis_direction, dtype=np.float64))
+
+    def dot(first: tuple[Fraction, ...], second: tuple[Fraction, ...], /) -> Fraction:
+        return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+    if dot(direction, axis) != 0:
+        return None
+    relative = tuple(
+        point - origin for point, origin in zip(base, axis_origin, strict=True)
+    )
+    along = dot(relative, axis)
+    radial = tuple(
+        value - along * unit for value, unit in zip(relative, axis, strict=True)
+    )
+    if any(value != 0 for value in rational_cross(radial, direction)):
+        return None
+    radius_offset = dot(radial, direction) / dot(direction, direction)
+    loops = domain.patches[patch].loops
+    if len(loops) != 1 or len(loops[0]) != 4:
+        return None
+    rims: list[tuple[PatchCurveUse, Fraction]] = []
+    seams: dict[int, list[Fraction]] = {}
+    for use in loops[0]:
+        if isinstance(use, PatchPoleUse):
+            profile_value = _constant_line_coordinate(use, 1)
+            if profile_value is None or radius_offset + profile_value != 0:
+                return None
+            continue
+        angle = _constant_line_coordinate(use, 0)
+        if angle is not None:
+            seams.setdefault(use.curve, []).append(angle)
+            continue
+        profile_value = _constant_line_coordinate(use, 1)
+        if profile_value is None:
+            return None
+        first, last = _line_endpoints(use)
+        if {first[0], last[0]} != {Fraction(0), Fraction.from_float(_TURN)}:
+            return None
+        rims.append((use, profile_value))
+    if (
+        not rims
+        or len(seams) != 1
+        or sorted(next(iter(seams.values()))) != [Fraction(0), Fraction.from_float(_TURN)]
+    ):
+        return None
+    offsets = {radius_offset + value for _, value in rims}
+    if 0 in offsets or len({value > 0 for value in offsets}) != 1:
+        return None
+    sign = 1 if next(iter(offsets)) > 0 else -1
+    ordered = sorted(rims, key=lambda item: -sign * (radius_offset + item[1]))
+    plane_loops: list[tuple[PatchCurveUse, ...]] = []
+    for row, (use, profile_value) in enumerate(ordered):
+        radius = sign * (radius_offset + profile_value)
+        circle = CircleCurve(
+            (0.0, 0.0), (1.0, 0.0), (0.0, 1.0), float(radius), radius_exact=radius
+        )
+        plane_loops.append(
+            (
+                PatchCurveUse(
+                    use.curve, circle, 0.0, circle.period, sense=1 if row == 0 else -1
+                ),
+            )
+        )
+    first_axis = tuple(sign * value for value in direction)
+    second_axis = tuple(-value for value in rational_cross(axis, direction))
+    origin = tuple(
+        point + along * unit for point, unit in zip(axis_origin, axis, strict=True)
+    )
+    if placement is not None:
+        matrix = placement.matrix
+
+        def place(
+            vector: tuple[Fraction, ...], translate: bool, /
+        ) -> tuple[Fraction, ...]:
+            return tuple(
+                sum(
+                    (matrix[row][column] * vector[column] for column in range(3)),
+                    Fraction(0),
+                )
+                + (matrix[row][3] if translate else Fraction(0))
+                for row in range(3)
+            )
+
+        origin = place(origin, True)
+        first_axis = place(first_axis, False)
+        second_axis = place(second_axis, False)
+    return ExactPlaneChart(
+        f"{domain.entity_id(2, patch)}#plane",
+        _point3(origin),
+        _point3(first_axis),
+        _point3(second_axis),
+        tuple(plane_loops),
+        radius_offset,
+        sign,
+    )
 
 
 class CurvedTrimLens(NamedTuple):
@@ -993,20 +1223,21 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         return tuple(result)
 
     def trim_partition_reference(
-        self, patch: int, triangles: tuple[_Triangle2, ...], /
+        self, patch: int, triangles: tuple[_Triangle2, ...], /, *, plane: bool = False
     ) -> tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]]:
         """Return the exact reference partition of one trim for target chart triangles.
 
         Straight trims are exact chart segments. Along a curved trim the reference
         follows the target's boundary chain between the trim's chart endpoints once
         every chain point is located in order on the source arc; each chord then
-        carries the certified lens separating it from the exact curved trim.
+        carries the certified lens separating it from the exact curved trim. With
+        ``plane`` the triangles and trim are in the patch's `exact_plane_chart`.
         """
         self.require_current()
-        return self._trim_partition_reference_unchecked(patch, triangles)
+        return self._trim_partition_reference_unchecked(patch, triangles, plane=plane)
 
     def _trim_partition_reference_unchecked(
-        self, patch: int, triangles: tuple[_Triangle2, ...], /
+        self, patch: int, triangles: tuple[_Triangle2, ...], /, *, plane: bool = False
     ) -> tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]]:
         # Per-patch callers validate currentness once before their loop: the
         # check fingerprints the whole domain, so it must not run per patch.
@@ -1026,7 +1257,15 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             )
             return chain[1:-1]
 
-        chart = _patch_chart_polygon(self.domain, patch, curved_chain)
+        trim_loops = None
+        if plane:
+            plane_chart = exact_plane_chart(self.domain, patch)
+            if plane_chart is None:
+                raise ValueError("Source patch has no exact plane chart.")
+            trim_loops = plane_chart.loops
+        chart = _patch_chart_polygon(
+            self.domain, patch, curved_chain, trim_loops=trim_loops
+        )
         if chart is None:
             raise ValueError(
                 "Source trim has no supported exact parameter triangulation."

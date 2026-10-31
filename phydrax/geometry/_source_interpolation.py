@@ -1017,11 +1017,18 @@ def certify_domain_surface_charts(
     /,
     *,
     tolerance: float,
+    plane_patches: frozenset[int] = frozenset(),
 ) -> SourceChartFidelity:
-    """Bound the two directed errors on complete affine material-chart pieces."""
+    """Bound the two directed errors on complete affine material-chart pieces.
+
+    Rows of ``plane_patches`` are charted in their patch's `exact_plane_chart`.
+    """
     from ..discretization._cell_geometry import CellGeometrySpec as _CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh as _CellMesh
-    from ._domain_boundary import _has_exact_rational_surface_span_source
+    from ._domain_boundary import (
+        _has_exact_rational_surface_span_source,
+        exact_plane_chart,
+    )
     from ._source_fidelity import (
         _affine_triangle_arguments,
         _affine_volume_triangle_arguments,
@@ -1081,7 +1088,13 @@ def certify_domain_surface_charts(
     for patch, rows in grouped_rows.items():
         surface = domain.patches[patch].surface
         try:
-            exact_surface = exact_surface_coordinate_expressions(surface)
+            if patch in plane_patches:
+                plane_chart = exact_plane_chart(domain, patch)
+                if plane_chart is None:
+                    raise ValueError("Source patch lost its exact plane chart.")
+                exact_surface = plane_chart.coordinate_expressions()
+            else:
+                exact_surface = exact_surface_coordinate_expressions(surface)
             has_exact_span_source = False
             unexpanded_exact_carrier = False
             if exact_surface is None:

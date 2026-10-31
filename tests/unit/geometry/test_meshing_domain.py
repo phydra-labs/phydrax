@@ -15,7 +15,10 @@ from phydrax.discretization._exact_algebraic_geometry import (
     coefficient_interval,
     ExactScalar,
 )
-from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+from phydrax.geometry._domain_boundary import (
+    exact_plane_chart,
+    MeshingDomainBoundarySource,
+)
 from phydrax.geometry._meshing_domain import (
     _exact_rational_surface_spans,
     _span_enclosures_for_chart,
@@ -48,6 +51,7 @@ from phydrax.geometry.brep._model import BRepGeometry, BRepModel
 from phydrax.geometry.brep._patches import (
     AbstractCurve,
     BSplineSurfacePatch,
+    CircleCurve,
     CylinderPatch,
     ExactLineCurve,
     LineCurve,
@@ -1185,3 +1189,106 @@ def test_meshing_domain_prepares_scope_banks_once_per_stratum(
         domain.resolve_entity_id(2, "absent-source-entity")
     with pytest.raises(ValueError, match="outside its source stratum"):
         domain.entity_ids(np.asarray((2,)), np.asarray((6,)))
+
+
+def test_planar_revolution_caps_partition_in_their_exact_plane_chart() -> None:
+    # A cylinder cap revolves a radial profile line: its authored polar chart is
+    # not affine, but the carrier proves it exactly planar, so it has an exact
+    # affine plane chart with the authored orientation whose trim is the rim
+    # circle; the authored seam and pole are interior to it.
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
+    charts = {
+        patch: exact_plane_chart(domain, patch) for patch in range(len(domain.patches))
+    }
+    caps = tuple(patch for patch, chart in charts.items() if chart is not None)
+    assert len(caps) == 2
+    source = MeshingDomainBoundarySource(domain, caps)
+    turn = Fraction.from_float(2.0 * np.pi)
+    for patch in caps:
+        chart = charts[patch]
+        assert chart is not None
+        assert chart.chart_id == f"{domain.entity_id(2, patch)}#plane"
+        origin, first, second = (
+            np.asarray([float(value) for value in row], dtype=np.float64)
+            for row in (chart.origin, chart.first_axis, chart.second_axis)
+        )
+        loops = domain.patches[patch].loops[0]
+        rim_profile = next(
+            Fraction.from_float(float(use.traversal_endpoints()[0, 1]))
+            for use in loops
+            if isinstance(use, PatchCurveUse)
+            and use.traversal_endpoints()[0, 1] == use.traversal_endpoints()[1, 1]
+        )
+        pole_profile = 1 - rim_profile
+        for angle, profile in ((0.3, 0.2), (2.0, 0.9), (5.5, 0.5)):
+            point = np.asarray(
+                domain.evaluate(
+                    np.asarray((patch,), dtype=np.int64),
+                    np.asarray(((angle, profile),), dtype=np.float64),
+                ),
+                dtype=np.float64,
+            )[0]
+            s, t = chart.chart_point(
+                (Fraction.from_float(angle), Fraction.from_float(profile))
+            )
+            np.testing.assert_allclose(
+                origin + float(s) * first + float(t) * second, point, atol=1.0e-15
+            )
+            step = 1.0e-6
+            derivatives = np.asarray(
+                domain.evaluate(
+                    np.full((4,), patch, dtype=np.int64),
+                    np.asarray(
+                        (
+                            (angle + step, profile),
+                            (angle - step, profile),
+                            (angle, profile + step),
+                            (angle, profile - step),
+                        ),
+                        dtype=np.float64,
+                    ),
+                ),
+                dtype=np.float64,
+            )
+            authored_normal = np.cross(
+                derivatives[0] - derivatives[1], derivatives[2] - derivatives[3]
+            )
+            assert float(authored_normal @ np.cross(first, second)) > 0.0
+        assert chart.chart_point((Fraction(0), Fraction(1, 2))) == chart.chart_point(
+            (turn, Fraction(1, 2))
+        )
+        assert chart.chart_point((Fraction(1), pole_profile)) == (
+            Fraction(0),
+            Fraction(0),
+        )
+        assert len(chart.loops) == 1 and len(chart.loops[0]) == 1
+        rim_circle = chart.loops[0][0].pcurve
+        assert isinstance(rim_circle, CircleCurve) and rim_circle.radius_exact == 1
+        rim = tuple(
+            chart.chart_point((Fraction.from_float(2.0 * np.pi * row / 8), rim_profile))
+            for row in range(8)
+        )
+        assert rim[0] == (Fraction(1), Fraction(0))
+        target = []
+        for row in range(8):
+            triangle = ((Fraction(0), Fraction(0)), rim[row], rim[(row + 1) % 8])
+            area = _area2(triangle)
+            target.append(
+                triangle if area > 0 else (triangle[0], triangle[2], triangle[1])
+            )
+        declared, lenses = source.trim_partition_reference(
+            patch, tuple(target), plane=True
+        )
+        assert len(lenses) == 8
+        assert sum(abs(_area2(triangle)) for triangle in declared) == sum(
+            abs(_area2(triangle)) for triangle in target
+        )
+    assert exact_plane_chart(domain, next(iter(set(range(3)) - set(caps)))) is None
+
+
+def _area2(triangle: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
+    return (triangle[1][0] - triangle[0][0]) * (triangle[2][1] - triangle[0][1]) - (
+        triangle[1][1] - triangle[0][1]
+    ) * (triangle[2][0] - triangle[0][0])

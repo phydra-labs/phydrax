@@ -326,6 +326,24 @@ the cap deviation bound while constructing positive fan triangles. Periodic
 chart seams identify their equivalent endpoint vertices, so a singular chart
 does not create zero-area output cells or duplicate seam nodes.
 
+A surface of revolution whose profile is an exact line perpendicular to the
+axis, with its radial offset along that line (a cylinder or cone cap, a flat
+annulus), is proved planar from its carrier alone. CAD tetrahedral filling
+declares the exact plane of such a patch on the PLC, and the volume chart
+witness charts its faces in that exact affine plane chart (chart ID
+`<face>#plane`). In the plane chart the rim circles are the trims, and the
+authored seam and pole are interior points. Region containment is proved there
+against the rim circles mapped exactly. Trim points take the curve and corner
+labels that the neighboring faces give the shared rim.
+
+Limitation: the cap surface itself is still meshed in its authored (angle,
+profile) chart with graded pole rings. A plane-chart triangulation cannot be
+stored in those authored rows: three rim vertices are collinear in
+(angle, profile), and triangles that span a large angle invert. Isotropic
+plane-chart surface meshing therefore needs explicit per-row chart identity in
+the surface chart records (`SurfaceSourceCharts`, `SurfaceChartWitness`), not an
+implicit rule that every consumer would have to re-derive.
+
 
 An empty `size_controls` tuple declares no physical size obligation. Routes
 whose discretization is already defined by authored sites, blocks, stations,
