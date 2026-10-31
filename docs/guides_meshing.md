@@ -815,7 +815,14 @@ contracts:
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores
   0 whatever its angles and ratio (a flat cell on a cocircular boundary quad
-  has a finite circumsphere and could otherwise score 1). Every face flip,
+  has a finite circumsphere and could otherwise score 1; a sliver has a small
+  radius-edge ratio and, with a dihedral target of 0, would also score 1).
+  The floor is the requested relative determinant (|det E| over the largest
+  product of a vertex's three edge lengths) or 2^-22, whichever is larger:
+  downstream consumers evaluate the metric determinant det(E^T E) = det(E)^2
+  in binary64, whose rounding error is a small multiple of u times the
+  squared edge-length product, so its sign is certain only above that floor
+  (2^-44 = 2^9 u once squared). Every face flip,
   edge-ring reconnection, interior vertex insertion, collapse, and relocation
   is accepted only if the cells it creates pass the hard gates (relative
   determinant above its floor, source constraints preserved) and the size
@@ -1487,6 +1494,18 @@ satisfies those claims is rejected with its failed report; the immutable accepte
 result remains available for retry. Audit-only results keep the monitor/audit
 contract without acquiring source claims.
 
+On periodic owner-local views, `advance_owner_local_mesh_motion` certifies each
+rank's resident patch (owned cells plus one face halo). That patch is legitimately
+pinched where its halo ends, and an owned vertex may still lack cells that only
+touch it. The certification
+therefore declares an owned-star `manifold_scope` (`CellMeshManifoldScope`): every
+owner checks vertex and edge manifoldness on the complete stars of its own
+vertices. The other owners send it the non-resident star cells by stable ID.
+Halo vertices belong to their owners' scopes. The audit report records the scope
+(`audit.manifold_scope`): the checked vertex IDs and the supplied star cells. The
+accepted owner-local `MeshMotionAdvance` returns it as `local_manifold_scope`. All
+other audit checks still apply to the whole resident patch.
+
 An adapted mesh reaches a running coupled problem only through one accepted
 cross-owner rebind (`phx.lifecycle.CompositionRebind`). A certified conservative
 `FiniteElementTopologyTransfer` (the adaptation transfer, or
@@ -2101,6 +2120,49 @@ distance of the envelope surface) and `source_envelope_envelope_to_input_lower`
 / `_upper` (every envelope-surface point lies in this distance band from the
 authored sheet). Original-source witnesses query the authored sheet itself, not
 the envelope.
+
+### Envelope remeshing certificate
+
+The envelope surface is extracted by marching tetrahedra on the sampled
+distance grid, which certifies that every point of every extracted triangle
+lies in the band `bounds[2] <= d_source <= bounds[1]`; its triangles are grid
+cuts, mostly needles and caps. `SurfaceEnvelopeSource` (and
+`surface_envelope(..., remesh=True)`) then remeshes that surface inside the same
+band toward edge length `h = 2 * spacing` and a 30 degree minimum angle, and
+drops the tetrahedral carrier.
+
+Every remeshing edit (edge split, flip, collapse, vertex relocation) is admitted
+only when each created triangle provably stays in the band and the surface stays
+an embedded, consistently oriented closed 2-manifold:
+
+- band: the source distance is 1-Lipschitz. Vertex values are enclosed through
+  the covering cloud exactly as in the extraction certificate
+  (`d_cloud - covering - arithmetic <= d_source <= d_cloud + arithmetic`), and
+  a triangle whose every point lies within its certified free radius `R` of a
+  corner has `d_source` in `[min L_i - R, max U_i + R]`, which must lie in the
+  band;
+- topology and embedding: link condition for collapses, no duplicate edge or
+  face, orientation agreeing with the replaced patch, and exact
+  triangle-triangle contact classification against every nearby triangle (only
+  shared vertices and shared edges are legal contacts).
+
+The passes run quality, regularization, quality. A quality edit must raise every
+created quantized score above the replaced patch's worst score, so the multiset
+of scores decreases. A regularization edit collapses an edge shorter than
+`4/5 h` or flips an edge to strictly lower the squared valence deviation from
+six, and never lowers the patch's worst score; (vertex count, valence energy)
+decreases lexicographically. Every pass therefore terminates without iteration
+caps. The band bounds and the interpolation error are unchanged; the
+input-to-envelope bound (`bounds[0]`) is recomputed on the remeshed vertices.
+`remesh_counters` reports splits, collapses, flips, relocations, and the
+surviving triangles still below the quality target.
+
+The remesher is a source-agnostic native substrate: the topology operations,
+quality acceptance, and manifold and self-intersection checks are shared, and
+the certified admission is a declared predicate kind. The offset band above is
+the envelope's kind; another surface carrier supplies its own sound triangle
+admission (for an implicit zero set, a certified distance to the zero set within
+the declared surface tolerance).
 
 ## Additional optional backends
 

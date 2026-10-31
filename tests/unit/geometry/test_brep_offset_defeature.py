@@ -79,7 +79,7 @@ def _assert_unchanged(model: BRepModel, snapshot: tuple[object, ...]) -> None:
 def _assert_offset_lineage(source: BRepModel, result: BRepOffsetResult) -> None:
     target = result.model
     assert target is not None
-    assert result.source_model_id == source.model_id
+    assert result.source_model_id == source.source_revision
     for kind in ("face", "edge", "vertex", "solid"):
         pairs = getattr(result, f"{kind}_images")
         assert all(source_id in getattr(source, f"{kind}_ids") for source_id, _ in pairs)
@@ -95,8 +95,8 @@ def _assert_offset_lineage(source: BRepModel, result: BRepOffsetResult) -> None:
             range(len(getattr(source, f"{kind}_ids")))
         )
     graph = result.association_graph
-    assert graph.source_revision.revision_id == source.model_id
-    assert graph.target_revision.revision_id == target.model_id
+    assert graph.source_revision.revision_id == source.source_revision
+    assert graph.target_revision.revision_id == target.source_revision
     assert graph.transaction.coverage.source_exhaustive
     assert graph.transaction.coverage.target_exhaustive
     assert not graph.transaction.unresolved_source_ids
@@ -106,18 +106,18 @@ def _assert_offset_lineage(source: BRepModel, result: BRepOffsetResult) -> None:
 def _assert_defeature_lineage(source: BRepModel, result: BRepDefeatureResult) -> None:
     target = result.model
     assert target is not None
-    assert result.source_model_id == source.model_id
+    assert result.source_model_id == source.source_revision
     assert result.removed_face.kind == "face"
     assert result.removed_face in source.face_ids
-    assert result.removed_face.source_revision == source.model_id
+    assert result.removed_face.source_revision == source.source_revision
     for kind in ("face", "edge", "vertex", "solid"):
         for source_id, target_id in getattr(result, f"{kind}_images"):
             assert source_id.kind == kind
             assert target_id.kind == kind
             assert source_id in getattr(source, f"{kind}_ids")
             assert target_id in getattr(target, f"{kind}_ids")
-            assert source_id.source_revision == source.model_id
-            assert target_id.source_revision == target.model_id
+            assert source_id.source_revision == source.source_revision
+            assert target_id.source_revision == target.source_revision
             assert source_id.occurrence_path == target_id.occurrence_path
     mapped_targets = {
         target_id
@@ -131,8 +131,8 @@ def _assert_defeature_lineage(source: BRepModel, result: BRepDefeatureResult) ->
         assert all(source_id in source.face_ids for source_id in support_ids)
     graph = result.association_graph
     assert graph is not None
-    assert graph.source_revision.revision_id == source.model_id
-    assert graph.target_revision.revision_id == target.model_id
+    assert graph.source_revision.revision_id == source.source_revision
+    assert graph.target_revision.revision_id == target.source_revision
     assert graph.transaction.coverage.source_exhaustive
     assert graph.transaction.coverage.target_exhaustive
     assert not graph.transaction.unresolved_source_ids

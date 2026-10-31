@@ -400,7 +400,7 @@ class BRepOffsetResult(StrictModule):
                 "BRepOffsetResult.evidence must align with model face and vertex rows; got different counts"
             )
         self.model = model
-        self.source_model_id = source_model.model_id
+        self.source_model_id = source_model.source_revision
         self.face_images = _images(source_model, model, "face")
         self.edge_images = _images(source_model, model, "edge")
         self.vertex_images = _images(source_model, model, "vertex")

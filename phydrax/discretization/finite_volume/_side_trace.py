@@ -296,7 +296,18 @@ def _mesh_table(discretization: _MeshOwner, /) -> _FacetTable:
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
     neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
     faces = np.arange(owner.size, dtype=np.int32)
-    interior = neighbor >= 0
+    periodic = np.zeros(owner.shape, dtype=np.bool_)
+    if (
+        isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+        and discretization.periodic_face_translations is not None
+    ):
+        # Owner-local periodic seams: FV faces name lifted topology faces, and a
+        # seam neighbor holds the face's twin at another lattice image.
+        faces = np.asarray(discretization.face_topology_ids, dtype=np.int32)
+        periodic = np.any(
+            np.asarray(discretization.periodic_face_translations) != 0.0, axis=1
+        )
+    interior = (neighbor >= 0) & ~periodic
     neighbor_local = np.full(owner.shape, -1, dtype=np.int32)
     neighbor_local[interior] = _local_positions(
         facets, valid, neighbor[interior], faces[interior]
@@ -308,7 +319,7 @@ def _mesh_table(discretization: _MeshOwner, /) -> _FacetTable:
         neighbor=neighbor,
         owner_local=_local_positions(facets, valid, owner, faces),
         neighbor_local=neighbor_local,
-        periodic=np.zeros(owner.shape, dtype=np.bool_),
+        periodic=periodic,
     )
 
 
@@ -611,10 +622,18 @@ def _mesh_frame(
     forward = owner_sign > 0.0
     shape: FacetShape
     connectivity = discretization.connectivity
+    topology_facets = facets
+    if (
+        isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+        and discretization.face_topology_ids is not None
+    ):
+        topology_facets = np.asarray(discretization.face_topology_ids, dtype=np.int32)[
+            facets
+        ]
     match connectivity:
         case TriangleConnectivity() | PolygonalConnectivity():
             shape = "edge"
-            vertices = np.asarray(connectivity.edges, dtype=np.int32)[facets]
+            vertices = np.asarray(connectivity.edges, dtype=np.int32)[topology_facets]
             ordered = np.where(forward[:, None], vertices, vertices[:, ::-1])
             start, stop = points[ordered[:, 0]], points[ordered[:, 1]]
             parameters, reference = rule.reference(shape)
@@ -626,7 +645,7 @@ def _mesh_frame(
             jacobian = length
         case TetrahedralConnectivity():
             shape = "triangle"
-            vertices = np.asarray(connectivity.faces, dtype=np.int32)[facets]
+            vertices = np.asarray(connectivity.faces, dtype=np.int32)[topology_facets]
             ordered = np.where(forward[:, None], vertices, vertices[:, (0, 2, 1)])
             first, second, third = (points[ordered[:, column]] for column in range(3))
             parameters, reference = rule.reference(shape)

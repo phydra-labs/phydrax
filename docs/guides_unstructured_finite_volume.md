@@ -301,6 +301,20 @@ integrals, source totals, and CFL decisions. A rank with no owned cells uses a
 genuine zero-cell plan and state, with no placeholder physical cell, and still
 participates in the same stage collectives.
 
+A periodic view's resident patch is a lifted piece of the quotient mesh. A cell's
+periodic neighbour is often resident at another lattice image, so their shared
+face appears twice and is not welded. The lowering joins these seam faces by
+quotient identity (vertex roots and their windings relative to an anchor, never
+coordinates) into interior faces. A periodic part therefore has no physical
+boundary faces: `__physical_boundary__` is empty, and only artificial halo cuts
+stay open. `periodic_face_translations` records, per FV face, the translation
+from the owner's frame to the neighbour's lifted frame (zero off the seams).
+`face_topology_ids` maps FV faces back to the lifted connectivity. Owner/neighbour
+fluxes are exact across seams. Operators that need both sides of a face in one
+embedding refuse a joined seam explicitly. These are cell-polynomial and WENO
+stencils, unstructured viscous terms, continuous ALE stage geometry, and side
+traces on seam facets.
+
 ```python
 plan = phx.discretization.finite_volume.prepare_owner_local_conservative_remap(
     source_view,
@@ -354,10 +368,25 @@ works as follows:
   uncovered receptors.
 - The coupling refuses only when no owner can add a cell. Every refusal names each
   failing owner's reason.
+- A route lives on its fringe receptor's owner. When its donor row there is a
+  ghost, every SSPRK stage returns that donor debit to the donor's owner, so the
+  global ledger balance equals the owned content change.
 
 `commit_owner_local_repartition(..., owner_local_part_name=...)` migrates one named
 part of a composite runtime through the native graph migration. The owned cells of
 the other parts stay on their owners and keep their exact content.
+
+`commit_moving_overset_update(..., owner_local_part_name=...)` likewise moves one
+named part of a composite runtime. The rebuilt successor coupling binds the moved
+part's successor view and the unchanged views of the other parts. The moved part's
+rows take the owner-routed conservative remap, and rows of the other parts keep
+their content by stable cell ID. Remote donor ghost rows follow the moved overlap and
+are refreshed from their owners before the successor state is admitted. An Eulerian
+commit constrains only the moved part's own physical boundary; a native periodic
+part closes its periodic cell and has none. Accepted Composition entries other than
+the overset registration and the FV state need the caller's explicit dispositions
+(`retained_state_entry_ids`, `reprepare_entries`, `invalidate_entry_ids`), as in
+`commit_owner_local_repartition`.
 
 
 ## Embedded boundaries and VOF
@@ -415,7 +444,10 @@ plus successor dynamics with an ALE plan that starts at that endpoint. The ALE t
 is formed from the realized endpoint geometry, so it does not replace or reset the
 accepted SSPRK/GCL update. In either mode, the topology event and
 `prepare_overset_motion_rebind` publish together; a failed candidate leaves the accepted
-predecessor state and its runtime executable.
+predecessor state and its runtime executable. The result then carries no
+`successor_runtime` and names the refusal in `topology_event_refusal`
+(`FiniteVolumeTopologyEventRefusal`: failed event status, reason, request and evidence
+IDs). `commit_remesh` reports its refusals the same way.
 
 `PeriodicSlidingInterfacePlan` rebuilds a periodic one-dimensional overlap at accepted
 step boundaries and transfers interface flux with equal-and-opposite integrated budget.

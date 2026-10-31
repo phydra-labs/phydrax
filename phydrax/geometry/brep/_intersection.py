@@ -3858,6 +3858,15 @@ def _line_cylinder_region_intersections(
     if discriminant < 0:
         return CurveIntersectionResult()
     if discriminant == 0:
+        # The line touches the cylinder at one exact rational parameter; a touch
+        # outside the edge's own range is no contact with this edge.
+        touch = -linear / (2 * quadratic)
+        if not (
+            Fraction.from_float(float(source.first))
+            <= touch
+            <= Fraction.from_float(float(source.last))
+        ):
+            return CurveIntersectionResult()
         return CurveIntersectionResult(
             unresolved=(
                 UnresolvedParameterRegion(domain_lower, domain_upper, "singular"),
@@ -5315,90 +5324,149 @@ def _angular_surface_branch(
     closed: bool = True,
     start_kind: IntersectionEndpointKind = "closed",
     end_kind: IntersectionEndpointKind = "closed",
+    end_nodes: tuple[tuple[int, float], tuple[int, float]] | None = None,
+    seam: tuple[float, float] | None = None,
 ) -> IntersectionCurve | None:
-    """Build an angular source branch with certified chart and node roots."""
+    """Build an angular source branch with certified chart and node roots.
+
+    ``end_nodes`` fixes the first and last node on another source coordinate
+    (the trim edge a boundary branch ends on) instead of the angle. Chart boxes
+    of such a branch may then reach past the trimmed region near its ends: the
+    branch itself stays inside, and each box only isolates the branch graph.
+
+    ``seam`` is the angle window ``(lower, upper)`` of a branch that runs from
+    ``theta_lower`` up to the window's upper end and on from its lower end to
+    ``theta_upper``. The crossing is one node fixing the angle at the exact
+    lower window value; the charts before it see it through one exact deck.
+    """
     from ._intersection_curve import _PreparedPair
 
     pair = SurfacePairSystem(first.patch, second.patch)
     prepared = _PreparedPair(pair)
-    breakpoints = [
-        theta_lower + (theta_upper - theta_lower) * index / 4.0 for index in range(5)
-    ]
-    pending = [(breakpoints[index], breakpoints[index + 1]) for index in range(4)]
+    region_lower = np.concatenate(
+        (np.asarray(first.parameter_box[0]), np.asarray(second.parameter_box[0]))
+    )
+    region_upper = np.concatenate(
+        (np.asarray(first.parameter_box[1]), np.asarray(second.parameter_box[1]))
+    )
+    free = np.asarray([axis for axis in range(4) if axis != chart_axis], dtype=np.int64)
+    pieces = (
+        ((theta_lower, theta_upper),)
+        if seam is None
+        else ((theta_lower, seam[1]), (seam[0], theta_upper))
+    )
+    resolution = policy.relative_resolution * max(
+        1.0, sum(upper - lower for lower, upper in pieces)
+    )
+    trimmed = end_nodes is not None
+
+    def subdivide(
+        piece_lower: float, piece_upper: float, /
+    ) -> list[tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] | None:
+        breakpoints = [
+            piece_lower + (piece_upper - piece_lower) * index / 4.0 for index in range(5)
+        ]
+        pending = [(breakpoints[index], breakpoints[index + 1]) for index in range(4)]
+        found = []
+        while pending:
+            lower_angle, upper_angle = pending.pop()
+            lower, upper = box_for(lower_angle, upper_angle)
+            if (
+                lower[chart_axis] < region_lower[chart_axis]
+                or upper[chart_axis] > region_upper[chart_axis]
+            ):
+                return None
+            if not trimmed and (
+                np.any(lower[free] < region_lower[free])
+                or np.any(upper[free] > region_upper[free])
+            ):
+                return None
+            desired = np.maximum(
+                0.25 * (upper[free] - lower[free]),
+                128.0
+                * np.finfo(np.float64).eps
+                * (1.0 + np.maximum(np.abs(lower[free]), np.abs(upper[free]))),
+            )
+            room = np.minimum(
+                lower[free] - region_lower[free],
+                region_upper[free] - upper[free],
+            )
+            padding = desired if trimmed else np.minimum(desired, 0.5 * room)
+            lower[free] -= padding
+            upper[free] += padding
+            witness = krawczyk(
+                prepared,
+                lower[None],
+                upper[None],
+                parameter_axis=chart_axis,
+            )
+            if bool(witness.certified[0]):
+                found.append(
+                    (
+                        lower_angle,
+                        upper_angle,
+                        point_at(lower_angle),
+                        point_at(upper_angle),
+                        lower,
+                        upper,
+                    )
+                )
+                continue
+            middle = lower_angle + 0.5 * (upper_angle - lower_angle)
+            if (
+                upper_angle - lower_angle <= resolution
+                or not lower_angle < middle < upper_angle
+            ):
+                return None
+            pending.append((middle, upper_angle))
+            pending.append((lower_angle, middle))
+        found.sort(key=lambda segment: segment[0])
+        return found
+
     segments: list[
         tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
     ] = []
-    resolution = policy.relative_resolution * max(1.0, theta_upper - theta_lower)
-    while pending:
-        lower_angle, upper_angle = pending.pop()
-        lower, upper = box_for(lower_angle, upper_angle)
-        region_lower = np.concatenate(
-            (np.asarray(first.parameter_box[0]), np.asarray(second.parameter_box[0]))
-        )
-        region_upper = np.concatenate(
-            (np.asarray(first.parameter_box[1]), np.asarray(second.parameter_box[1]))
-        )
-        if (
-            lower[chart_axis] < region_lower[chart_axis]
-            or upper[chart_axis] > region_upper[chart_axis]
-        ):
+    for piece_lower, piece_upper in pieces:
+        piece_segments = subdivide(piece_lower, piece_upper)
+        if piece_segments is None:
             return None
-        free = np.asarray(
-            [axis for axis in range(4) if axis != chart_axis], dtype=np.int64
-        )
-        if np.any(lower[free] < region_lower[free]) or np.any(
-            upper[free] > region_upper[free]
-        ):
-            return None
-        desired = np.maximum(
-            0.25 * (upper[free] - lower[free]),
-            128.0
-            * np.finfo(np.float64).eps
-            * (1.0 + np.maximum(np.abs(lower[free]), np.abs(upper[free]))),
-        )
-        room = np.minimum(
-            lower[free] - region_lower[free],
-            region_upper[free] - upper[free],
-        )
-        padding = np.minimum(desired, 0.5 * room)
-        lower[free] -= padding
-        upper[free] += padding
-        witness = krawczyk(
-            prepared,
-            lower[None],
-            upper[None],
-            parameter_axis=chart_axis,
-        )
-        if bool(witness.certified[0]):
-            segments.append(
-                (
-                    lower_angle,
-                    upper_angle,
-                    point_at(lower_angle),
-                    point_at(upper_angle),
-                    lower,
-                    upper,
-                )
-            )
-            continue
-        middle = lower_angle + 0.5 * (upper_angle - lower_angle)
-        if (
-            upper_angle - lower_angle <= resolution
-            or not lower_angle < middle < upper_angle
-        ):
-            return None
-        pending.append((middle, upper_angle))
-        pending.append((lower_angle, middle))
-    segments.sort(key=lambda segment: segment[0])
+        segments.extend(piece_segments)
+    # One node per chart boundary; the seam crossing's two chart ends share it.
     node_angles = [segments[0][0]] + [segment[1] for segment in segments]
+    if seam is not None:
+        seam_node = next(
+            index for index, angle in enumerate(node_angles) if angle == seam[1]
+        )
+        node_angles[seam_node] = seam[0]
     node_boxes = []
-    for angle in node_angles:
+    for index, angle in enumerate(node_angles):
+        node_axis, node_value = chart_axis, angle
+        if end_nodes is not None and index in (0, len(node_angles) - 1):
+            node_axis, node_value = end_nodes[0 if index == 0 else 1]
         isolated = _surface_branch_node_box(
-            pair, point_at(angle), chart_axis, angle, policy
+            pair, point_at(angle), node_axis, node_value, policy
         )
         if isolated is None:
             return None
         node_boxes.append(isolated)
+    node_shifts = np.zeros((len(node_angles), 2, 4), dtype=np.int32)
+    if seam is not None:
+        patches = first.patch, second.patch
+        for index, (lower, upper) in enumerate(node_boxes):
+            for direction, point in (
+                (0, segments[index - 1][3] if index > 0 else None),
+                (1, segments[index][2] if index < len(segments) else None),
+            ):
+                if point is None:
+                    continue
+                shifts = _periodic_endpoint_deck_shift(point, lower, upper, patches)
+                if shifts is None:
+                    return None
+                node_shifts[index, direction] = shifts
+    node_axes = np.full((len(node_angles),), chart_axis, dtype=np.int32)
+    node_values = np.asarray(node_angles, dtype=np.float64)
+    if end_nodes is not None:
+        (node_axes[0], node_values[0]), (node_axes[-1], node_values[-1]) = end_nodes
     try:
         return IntersectionCurve(
             first,
@@ -5408,11 +5476,11 @@ def _angular_surface_branch(
             chart_end=np.stack([segment[3] for segment in segments]),
             chart_lower=np.stack([segment[4] for segment in segments]),
             chart_upper=np.stack([segment[5] for segment in segments]),
-            node_axes=np.full((len(node_angles),), chart_axis, dtype=np.int32),
-            node_values=np.asarray(node_angles),
+            node_axes=node_axes,
+            node_values=node_values,
             node_lower=np.stack([bounds[0] for bounds in node_boxes]),
             node_upper=np.stack([bounds[1] for bounds in node_boxes]),
-            node_period_shifts=np.zeros((len(node_angles), 2, 4), dtype=np.int32),
+            node_period_shifts=node_shifts,
             closed=closed,
             start_kind=start_kind,
             end_kind=end_kind,
@@ -6750,6 +6818,187 @@ def _exact_harmonic_range(
     return float(lower_bounds[0]), float(upper_bounds[1])
 
 
+@dataclass(frozen=True, slots=True)
+class _IsolineArc:
+    """One arc of a plane circle inside a plane chart rectangle.
+
+    Each end is a crossing of one rectangle edge: the chart coordinate
+    ``*_axis`` equals the exact edge value ``*_value`` there, at an angle
+    enclosed by ``[*_lower, *_upper]``.
+    """
+
+    start_lower: float
+    start_upper: float
+    start_axis: int
+    start_value: float
+    end_lower: float
+    end_upper: float
+    end_axis: int
+    end_value: float
+    across_seam: bool = False
+
+
+def _edge_tangency_misses_segment(
+    center: Sequence[ExactScalar],
+    cosine: Sequence[ExactScalar],
+    sine: Sequence[ExactScalar],
+    bounds: np.ndarray,
+    axis: int,
+    edge: int,
+    /,
+) -> bool:
+    """Prove a circle reaches one rectangle edge line without entering the chart.
+
+    ``c + a cos t + b sin t = e`` has a double root exactly when the rational
+    discriminant ``a^2 + b^2 - (e - c)^2`` vanishes; the circle then touches
+    the edge line once, at the unit direction ``(a, b) / (e - c)``, where the
+    other chart coordinate is rational. A negative discriminant means no
+    contact. A touch outside the edge, or one from the rectangle's exterior
+    side (the circle's extreme coordinate is the edge value of a lower edge,
+    or its least coordinate that of an upper edge), never enters the chart.
+    """
+    other = 1 - axis
+    values = (
+        center[axis],
+        cosine[axis],
+        sine[axis],
+        center[other],
+        cosine[other],
+        sine[other],
+    )
+    if not all(isinstance(item, Fraction) for item in values):
+        return False
+    c, a, b, other_center, other_cosine, other_sine = cast(tuple[Fraction, ...], values)
+    gap = Fraction.from_float(float(bounds[edge, axis])) - c
+    discriminant = a * a + b * b - gap * gap
+    if discriminant < 0:
+        return True
+    if discriminant > 0 or gap == 0:
+        return False
+    if (gap > 0) == (edge == 0):
+        return True
+    # The double root has cos t = a / gap and sin t = b / gap exactly.
+    touch = other_center + (other_cosine * a + other_sine * b) / gap
+    return touch < Fraction.from_float(float(bounds[0, other])) or touch > (
+        Fraction.from_float(float(bounds[1, other]))
+    )
+
+
+def _isoline_rectangle_arcs(
+    center: Sequence[ExactScalar],
+    cosine: Sequence[ExactScalar],
+    sine: Sequence[ExactScalar],
+    bounds: np.ndarray,
+    window_lower: float,
+    /,
+) -> tuple[_IsolineArc, ...] | Literal["full"] | None:
+    """Split the circle ``center + cosine cos t + sine sin t`` by a chart rectangle.
+
+    Edge crossings solve ``c + a cos t + b sin t = e`` in closed form and are
+    enclosed at 80 digits; between consecutive crossings the circle stays on
+    one side of every edge line, so one interior sample decides each arc.
+    Returns ``"full"`` for a circle inside the rectangle, the inside arcs (an
+    arc that passes the angle window's seam is marked), or ``None`` for a
+    tangency or a corner crossing.
+    """
+    context = interval_context(80)
+
+    def interval(value: ExactScalar, /) -> Any:
+        lower, upper = coefficient_interval(value, bits=256)
+        first = context.mpf(lower.numerator) / context.mpf(lower.denominator)
+        last = context.mpf(upper.numerator) / context.mpf(upper.denominator)
+        return context.mpf([first.a, last.b])
+
+    centers = [interval(value) for value in center]
+    cosines = [interval(value) for value in cosine]
+    sines = [interval(value) for value in sine]
+    two_pi = 2 * context.pi
+    window = interval(Fraction.from_float(float(window_lower)))
+
+    def side(angle: Any, /) -> int | None:
+        # +1 strictly inside the rectangle, -1 strictly outside, None undecided.
+        inside = True
+        for axis in range(2):
+            value = (
+                centers[axis]
+                + cosines[axis] * context.cos(angle)
+                + sines[axis] * context.sin(angle)
+            )
+            lower = interval(Fraction.from_float(float(bounds[0, axis])))
+            upper = interval(Fraction.from_float(float(bounds[1, axis])))
+            if value.b < lower.a or value.a > upper.b:
+                return -1
+            if not (value.a > lower.b and value.b < upper.a):
+                inside = False
+        return 1 if inside else None
+
+    events: list[tuple[Any, int, float]] = []
+    for axis in range(2):
+        amplitude = context.sqrt(cosines[axis] ** 2 + sines[axis] ** 2)
+        if not amplitude.a > 0:
+            return None
+        phase = context.atan2(sines[axis], cosines[axis])
+        for edge in range(2):
+            value = float(bounds[edge, axis])
+            ratio = (interval(Fraction.from_float(value)) - centers[axis]) / amplitude
+            if ratio.b < -1 or ratio.a > 1:
+                continue
+            if not (-1 < ratio.a and ratio.b < 1):
+                if _edge_tangency_misses_segment(
+                    center, cosine, sine, bounds, axis, edge
+                ):
+                    continue
+                return None
+            offset = context.atan2(context.sqrt(1 - ratio**2), ratio)
+            for angle in (phase - offset, phase + offset):
+                middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+                angle = angle - math.floor((middle - window_lower) / math.tau) * two_pi
+                if not (window.b < angle.a and angle.b < (window + two_pi).a):
+                    return None
+                events.append((angle, axis, value))
+    if not events:
+        state = side(window + context.pi)
+        if state is None:
+            return None
+        return "full" if state > 0 else ()
+    events.sort(key=lambda event: float(event[0].a))
+    if any(
+        not events[index][0].b < events[index + 1][0].a
+        for index in range(len(events) - 1)
+    ):
+        return None
+    arcs = []
+    for index, (start, start_axis, start_value) in enumerate(events):
+        across_seam = index == len(events) - 1
+        end, end_axis, end_value = events[(index + 1) % len(events)]
+        stop = end + (two_pi if across_seam else 0)
+        # The arc stays on one side of every edge line; only an exterior
+        # tangent touch can sit on a boundary, so further samples settle it.
+        state = None
+        for weight in (0.5, 0.381966, 0.618034, 0.25, 0.75):
+            state = side(start + weight * (stop - start))
+            if state is not None:
+                break
+        if state is None:
+            return None
+        if state < 0:
+            continue
+        arcs.append(
+            _IsolineArc(
+                float(np.nextafter(float(start.a), -np.inf)),
+                float(np.nextafter(float(start.b), np.inf)),
+                start_axis,
+                start_value,
+                float(np.nextafter(float(end.a), -np.inf)),
+                float(np.nextafter(float(end.b), np.inf)),
+                end_axis,
+                end_value,
+                across_seam,
+            )
+        )
+    return tuple(arcs)
+
+
 def _plane_chart_coordinates(
     plane: PlanePatch, vector: Sequence[ExactScalar], /, *, point: bool
 ) -> tuple[ExactScalar, ExactScalar] | None:
@@ -6816,7 +7065,6 @@ def _revolution_plane_isoline(
     uv_cosine_source: tuple[ExactScalar, ExactScalar] = uv_cosine
     uv_sine_source: tuple[ExactScalar, ExactScalar] = uv_sine
 
-    partial = False
     for parameter_axis in range(2):
         image_range = _exact_harmonic_range(
             uv_center_source[parameter_axis],
@@ -6830,17 +7078,20 @@ def _revolution_plane_isoline(
             or image_range[0] > plane_bounds[1, parameter_axis]
         ):
             return SurfaceIntersectionResult()
-        if (
-            image_range[0] < plane_bounds[0, parameter_axis]
-            or image_range[1] > plane_bounds[1, parameter_axis]
-        ):
-            partial = True
-    if partial:
+    arcs = _isoline_rectangle_arcs(
+        uv_center_source, uv_cosine_source, uv_sine_source, plane_bounds, angle_lower
+    )
+    if arcs is None:
         return _unresolved_surface(first, second, "continuation")
+    if not arcs:
+        return SurfaceIntersectionResult()
 
     chart_axis = 2 if plane_is_first else 0
     profile_chart_lower = parameter_lower
     profile_chart_upper = parameter_upper
+    # A trimmed arc's chart boxes enclose the arc's own plane image; the whole
+    # plane chart would make every enclosure of the arc cover the face.
+    trimmed = False
 
     def point_at(angle: float, /) -> np.ndarray:
         cosine, sine = math.cos(angle), math.sin(angle)
@@ -6863,6 +7114,19 @@ def _revolution_plane_isoline(
     ) -> tuple[np.ndarray, np.ndarray]:
         plane_lower = np.asarray(plane_region.parameter_box[0], dtype=np.float64)
         plane_upper = np.asarray(plane_region.parameter_box[1], dtype=np.float64)
+        if trimmed:
+            harmonic = [
+                _plane_cylinder_harmonic_interval(
+                    uv_center_source[index],
+                    uv_cosine_source[index],
+                    uv_sine_source[index],
+                    lower_angle,
+                    upper_angle,
+                )
+                for index in range(2)
+            ]
+            plane_lower = np.asarray([value[0] for value in harmonic])
+            plane_upper = np.asarray([value[1] for value in harmonic])
         if plane_is_first:
             lower = np.asarray(
                 (plane_lower[0], plane_lower[1], lower_angle, profile_chart_lower),
@@ -6891,28 +7155,84 @@ def _revolution_plane_isoline(
         abs(parameter_lower - profile_lower),
         abs(profile_upper - parameter_upper),
     )
-    pad = initial_pad
-    while True:
-        profile_chart_lower = max(profile_lower, parameter_lower - pad)
-        profile_chart_upper = min(profile_upper, parameter_upper + pad)
-        curve = _angular_surface_branch(
-            first,
-            second,
-            chart_axis,
-            angle_lower,
-            angle_upper,
-            policy,
-            point_at,
-            box_for,
-        )
-        if curve is not None:
-            return curve
-        if pad >= maximum_pad:
-            return _unresolved_surface(first, second, "resolution")
-        next_pad = min(2.0 * pad, maximum_pad)
-        if next_pad <= pad:
-            return _unresolved_surface(first, second, "resolution")
-        pad = next_pad
+    plane_offset = 0 if plane_is_first else 2
+
+    def inner_angle(angle: float, step: float, /) -> float | None:
+        # The float that represents a trim crossing lies on the arc's side, so
+        # the chart endpoint stays inside the plane chart it is authored in.
+        for _ in range(8):
+            angle = float(np.nextafter(angle, step))
+            plane_uv = point_at(angle)[plane_offset : plane_offset + 2]
+            if np.all(plane_uv >= plane_bounds[0]) and np.all(
+                plane_uv <= plane_bounds[1]
+            ):
+                return angle
+        return None
+
+    def certified_branch(
+        arc: _IsolineArc | None, /
+    ) -> IntersectionCurve | SurfaceIntersectionResult:
+        nonlocal profile_chart_lower, profile_chart_upper, trimmed
+        trimmed = arc is not None
+        end_nodes: tuple[tuple[int, float], tuple[int, float]] | None = None
+        if arc is None:
+            theta_lower, theta_upper = angle_lower, angle_upper
+        else:
+            start = inner_angle(arc.start_upper, np.inf)
+            end = inner_angle(arc.end_lower, -np.inf)
+            if (
+                start is None
+                or end is None
+                or not (arc.across_seam or start < end)
+                or (arc.across_seam and not (end < angle_upper and angle_lower < start))
+            ):
+                return _unresolved_surface(first, second, "continuation")
+            theta_lower, theta_upper = start, end
+            end_nodes = (
+                (plane_offset + arc.start_axis, arc.start_value),
+                (plane_offset + arc.end_axis, arc.end_value),
+            )
+        pad = initial_pad
+        while True:
+            profile_chart_lower = max(profile_lower, parameter_lower - pad)
+            profile_chart_upper = min(profile_upper, parameter_upper + pad)
+            curve = _angular_surface_branch(
+                first,
+                second,
+                chart_axis,
+                theta_lower,
+                theta_upper,
+                policy,
+                point_at,
+                box_for,
+                closed=arc is None,
+                start_kind="closed" if arc is None else "boundary",
+                end_kind="closed" if arc is None else "boundary",
+                end_nodes=end_nodes,
+                seam=(
+                    (angle_lower, angle_upper)
+                    if arc is not None and arc.across_seam
+                    else None
+                ),
+            )
+            if curve is not None:
+                return curve
+            if pad >= maximum_pad:
+                return _unresolved_surface(first, second, "resolution")
+            next_pad = min(2.0 * pad, maximum_pad)
+            if next_pad <= pad:
+                return _unresolved_surface(first, second, "resolution")
+            pad = next_pad
+
+    if arcs == "full":
+        return certified_branch(None)
+    curves = []
+    for arc in arcs:
+        branch = certified_branch(arc)
+        if isinstance(branch, SurfaceIntersectionResult):
+            return branch
+        curves.append(branch)
+    return SurfaceIntersectionResult(curves=tuple(curves))
 
 
 def _revolution_plane_line_circle(
@@ -7032,6 +7352,401 @@ def _revolution_plane_line_circle(
     if branch is None or isinstance(branch, SurfaceIntersectionResult):
         return branch
     return SurfaceIntersectionResult(curves=(branch,))
+
+
+def _revolution_plane_generator_lines(
+    first: SurfaceRegion,
+    second: SurfaceRegion,
+    policy: ParametricIntersectionPolicy,
+    /,
+) -> SurfaceIntersectionResult | None:
+    """Intersect a straight cylinder revolution with a plane parallel to its axis.
+
+    The plane meets the cylinder in at most two generator lines at the angles
+    solving ``a cos t + b sin t = h`` exactly (rational ``a``, ``b``, ``h``).
+    Each line is affine in the profile parameter on the plane chart, so its
+    trim against the plane rectangle and the profile range is decided by
+    certified interval comparisons. A trimmed end fixes the exact coordinate
+    of the edge it ends on: a plane chart edge value or a profile range end.
+    """
+    from ._patches import ExactLineCurve, LineCurve, RevolutionSurface
+
+    if isinstance(first.patch, RevolutionSurface) and isinstance(
+        second.patch, PlanePatch
+    ):
+        revolution, plane = first.patch, second.patch
+        revolution_region, plane_region, plane_is_first = first, second, False
+    elif isinstance(first.patch, PlanePatch) and isinstance(
+        second.patch, RevolutionSurface
+    ):
+        revolution, plane = second.patch, first.patch
+        revolution_region, plane_region, plane_is_first = second, first, True
+    else:
+        return None
+    profile = revolution.curve
+    if isinstance(profile, LineCurve):
+        origin_values, direction_values = profile.origin_exact, profile.direction_exact
+    elif isinstance(profile, ExactLineCurve):
+        origin_values = profile.first_exact
+        direction_values = tuple(
+            last - start
+            for start, last in zip(profile.first_exact, profile.last_exact, strict=True)
+        )
+    else:
+        return None
+    if len(origin_values) != 3 or any(
+        not isinstance(value, Fraction) for value in (*origin_values, *direction_values)
+    ):
+        return None
+    origin = cast(tuple[Fraction, Fraction, Fraction], tuple(origin_values))
+    direction = cast(tuple[Fraction, Fraction, Fraction], tuple(direction_values))
+    axis_origin = rational_vector(np.asarray(revolution.axis_origin))
+    axis = rational_vector(np.asarray(revolution.axis_direction))
+    plane_origin = rational_vector(np.asarray(plane.origin))
+    plane_normal = rational_cross(
+        rational_vector(np.asarray(plane.first_axis)),
+        rational_vector(np.asarray(plane.second_axis)),
+    )
+    if (
+        rational_dot(axis, axis) != 1
+        or all(value == 0 for value in plane_normal)
+        or rational_dot(plane_normal, axis) != 0
+        or any(rational_cross(direction, axis))
+        or all(value == 0 for value in direction)
+    ):
+        return None
+    relative = tuple(origin[index] - axis_origin[index] for index in range(3))
+    axial = rational_dot(relative, axis)
+    radial = tuple(relative[index] - axial * axis[index] for index in range(3))
+    if all(value == 0 for value in radial):
+        return None
+    tangent = rational_cross(axis, radial)
+    box = np.asarray(revolution_region.parameter_box, dtype=np.float64)
+    angle_lower, angle_upper = float(box[0, 0]), float(box[1, 0])
+    profile_lower, profile_upper = float(box[0, 1]), float(box[1, 1])
+    period = revolution.periods[0]
+    if (
+        revolution.native_period_symbols()[0] != "two_pi"
+        or period is None
+        or Fraction.from_float(angle_upper) - Fraction.from_float(angle_lower)
+        != Fraction.from_float(float(period))
+    ):
+        return _unresolved_surface(first, second, "continuation")
+    # The plane through ``plane_origin`` holds the axis direction, so only the
+    # radial point ``cos t * radial + sin t * tangent`` decides incidence.
+    cosine_coefficient = rational_dot(plane_normal, radial)
+    sine_coefficient = rational_dot(plane_normal, tangent)
+    offset = rational_dot(
+        plane_normal,
+        tuple(
+            plane_origin[index] - axis_origin[index] - axial * axis[index]
+            for index in range(3)
+        ),
+    )
+    squared_amplitude = cosine_coefficient**2 + sine_coefficient**2
+    if offset**2 > squared_amplitude:
+        return SurfaceIntersectionResult()
+    base_point = tuple(axis_origin[index] + axial * axis[index] for index in range(3))
+    uv_base = _plane_chart_coordinates(plane, base_point, point=True)
+    uv_radial = _plane_chart_coordinates(plane, radial, point=False)
+    uv_tangent = _plane_chart_coordinates(plane, tangent, point=False)
+    uv_rate = _plane_chart_coordinates(plane, direction, point=False)
+    if uv_base is None or uv_radial is None or uv_tangent is None or uv_rate is None:
+        return None
+    plane_bounds = np.asarray(plane_region.parameter_box, dtype=np.float64)
+    if offset**2 == squared_amplitude:
+        # A tangent plane touches along the one generator at the exact unit
+        # direction (a, b) / h. Only a touch outside the trimmed plane chart
+        # and profile range is proved empty here.
+        touch = [
+            uv_base[index]
+            + (
+                cosine_coefficient * uv_radial[index]
+                + sine_coefficient * uv_tangent[index]
+            )
+            / offset
+            for index in range(2)
+        ]
+        touch_rates = [uv_rate[index] for index in range(2)]
+        if not all(isinstance(value, Fraction) for value in (*touch, *touch_rates)):
+            return _unresolved_surface(first, second, "singular")
+        lowest = Fraction.from_float(profile_lower)
+        highest = Fraction.from_float(profile_upper)
+        for index in range(2):
+            base = cast(Fraction, touch[index])
+            rate = cast(Fraction, touch_rates[index])
+            edge_lower = Fraction.from_float(float(plane_bounds[0, index]))
+            edge_upper = Fraction.from_float(float(plane_bounds[1, index]))
+            if rate == 0:
+                if not edge_lower <= base <= edge_upper:
+                    return SurfaceIntersectionResult()
+                continue
+            ends = sorted(((edge_lower - base) / rate, (edge_upper - base) / rate))
+            lowest, highest = max(lowest, ends[0]), min(highest, ends[1])
+        if lowest > highest:
+            return SurfaceIntersectionResult()
+        # The cylinder lies on one side of its tangent plane, so the contact
+        # never crosses material: it is a typed tangent-curve contact with the
+        # exact touching generator, not a branch.
+        cosine_value = cosine_coefficient / offset
+        sine_value = sine_coefficient / offset
+        touch_angle = math.atan2(float(sine_value), float(cosine_value))
+        touch_angle += math.ceil((angle_lower - touch_angle) / math.tau) * math.tau
+        segment = [lowest, highest]
+        plane_points = [
+            [
+                float(cast(Fraction, touch[index]) + rate_value * value)
+                for index, rate_value in enumerate(
+                    cast(Fraction, rate_item) for rate_item in touch_rates
+                )
+            ]
+            for value in segment
+        ]
+        middle = [0.5 * (start + stop) for start, stop in zip(*plane_points, strict=True)]
+        profile_middle = 0.5 * (float(lowest) + float(highest))
+        revolution_values = (touch_angle, profile_middle)
+        revolution_lower = (touch_angle, float(lowest))
+        revolution_upper = (touch_angle, float(highest))
+        plane_lower = [
+            min(start, stop) for start, stop in zip(*plane_points, strict=True)
+        ]
+        plane_upper = [
+            max(start, stop) for start, stop in zip(*plane_points, strict=True)
+        ]
+
+        def ordered(
+            plane_part: Sequence[float], revolution_part: Sequence[float]
+        ) -> np.ndarray:
+            values = (
+                (*plane_part, *revolution_part)
+                if plane_is_first
+                else (*revolution_part, *plane_part)
+            )
+            return np.asarray(values, dtype=np.float64)
+
+        contact_point = np.asarray(
+            revolution.evaluate(jnp.asarray(revolution_values, dtype=jnp.float64)),
+            dtype=np.float64,
+        )
+        contact = ParametricIntersectionPoint(
+            kind="tangent_curve",
+            certificate="analytic-contact",
+            parameters=ordered(middle, revolution_values),
+            parameter_lower=np.nextafter(ordered(plane_lower, revolution_lower), -np.inf),
+            parameter_upper=np.nextafter(ordered(plane_upper, revolution_upper), np.inf),
+            point=contact_point,
+            gap_bound=0.0,
+            condition_estimate=float("inf"),
+            branch_count=0,
+            root_id=canonical_fingerprint(
+                {
+                    "kind": "plane-cylinder-exact-tangent-generator",
+                    "first": first.identity_payload(),
+                    "second": second.identity_payload(),
+                    "direction": (
+                        (cosine_value.numerator, cosine_value.denominator),
+                        (sine_value.numerator, sine_value.denominator),
+                    ),
+                    "profile": (
+                        (lowest.numerator, lowest.denominator),
+                        (highest.numerator, highest.denominator),
+                    ),
+                }
+            ),
+        )
+        return SurfaceIntersectionResult(points=(contact,))
+    context = interval_context(80)
+
+    def interval(value: ExactScalar, /) -> Any:
+        lower, upper = coefficient_interval(value, bits=256)
+        start = context.mpf(lower.numerator) / context.mpf(lower.denominator)
+        stop = context.mpf(upper.numerator) / context.mpf(upper.denominator)
+        return context.mpf([start.a, stop.b])
+
+    def exact(value: float, /) -> Any:
+        return interval(Fraction.from_float(value))
+
+    amplitude = context.sqrt(interval(squared_amplitude))
+    phase = context.atan2(interval(sine_coefficient), interval(cosine_coefficient))
+    ratio = interval(offset) / amplitude
+    half_width = context.atan2(context.sqrt(1 - ratio**2), ratio)
+    window = exact(angle_lower)
+    two_pi = 2 * context.pi
+    revolution_offset = 2 if plane_is_first else 0
+    plane_offset = 0 if plane_is_first else 2
+    chart_axis = revolution_offset + 1
+    curves = []
+    for angle in (phase - half_width, phase + half_width):
+        middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+        angle = angle - math.floor((middle - angle_lower) / math.tau) * two_pi
+        if not (window.b < angle.a and angle.b < (window + two_pi).a):
+            # A generator on the revolution seam is a source edge contact.
+            return _unresolved_surface(first, second, "continuation")
+        cosine, sine = context.cos(angle), context.sin(angle)
+        line_base = [
+            interval(uv_base[index])
+            + interval(uv_radial[index]) * cosine
+            + interval(uv_tangent[index]) * sine
+            for index in range(2)
+        ]
+        # Each trim constraint is a lower or upper bound on the profile
+        # parameter, tagged with the coordinate and exact value it fixes.
+        lowers: list[tuple[Any, int, float]] = [
+            (exact(profile_lower), chart_axis, profile_lower)
+        ]
+        uppers: list[tuple[Any, int, float]] = [
+            (exact(profile_upper), chart_axis, profile_upper)
+        ]
+        outside = False
+        for index in range(2):
+            rate = uv_rate[index]
+            for edge in range(2):
+                value = float(plane_bounds[edge, index])
+                if rate == 0:
+                    gap = line_base[index] - exact(value)
+                    if gap.a <= 0 <= gap.b:
+                        return _unresolved_surface(first, second, "continuation")
+                    if (gap.a > 0) == (edge == 1):
+                        outside = True
+                    continue
+                bound = (exact(value) - line_base[index]) / interval(rate)
+                is_lower = (edge == 0) == (rate > 0)
+                (lowers if is_lower else uppers).append(
+                    (bound, plane_offset + index, value)
+                )
+        if outside:
+            continue
+
+        def binding(
+            candidates: list[tuple[Any, int, float]], largest: bool, /
+        ) -> tuple[Any, int, float] | None:
+            ordered = sorted(
+                candidates, key=lambda item: float(item[0].a), reverse=largest
+            )
+            first_bound, second_bound = ordered[0], ordered[1]
+            separated = (
+                first_bound[0].a > second_bound[0].b
+                if largest
+                else first_bound[0].b < second_bound[0].a
+            )
+            return first_bound if separated else None
+
+        start = binding(lowers, True)
+        stop = binding(uppers, False)
+        if start is None or stop is None:
+            return _unresolved_surface(first, second, "continuation")
+        if stop[0].b < start[0].a:
+            continue
+        if not start[0].b < stop[0].a:
+            return _unresolved_surface(first, second, "continuation")
+        angle_value = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+        # Chart boxes only need to contain the line and certify one root per
+        # profile slice. The angle margin absorbs the Krawczyk coupling of the
+        # constant angle to the chart's wide plane coordinates and the interval
+        # spread of the source surfaces around the transcendental angle.
+        margin = 2.0**-24 * max(1.0, abs(angle_value))
+        angle_bounds = (
+            float(np.nextafter(float(angle.a), -np.inf)) - margin,
+            float(np.nextafter(float(angle.b), np.inf)) + margin,
+        )
+        base_bounds = [
+            (
+                float(np.nextafter(float(value.a), -np.inf)),
+                float(np.nextafter(float(value.b), np.inf)),
+            )
+            for value in line_base
+        ]
+        rates = [float(uv_rate[index]) for index in range(2)]
+        line_point: tuple[float, ...] = tuple(
+            0.5 * (low + high) for low, high in base_bounds
+        )
+
+        def point_at(parameter: float, /) -> np.ndarray:
+            plane_uv = tuple(
+                line_point[index] + rates[index] * parameter for index in range(2)
+            )
+            revolution_uv = (angle_value, parameter)
+            return np.asarray(
+                (*plane_uv, *revolution_uv)
+                if plane_is_first
+                else (*revolution_uv, *plane_uv),
+                dtype=np.float64,
+            )
+
+        def box_for(
+            lower_parameter: float, upper_parameter: float, /
+        ) -> tuple[np.ndarray, np.ndarray]:
+            plane_lower, plane_upper = [], []
+            for index in range(2):
+                ends = [
+                    base_bounds[index][side] + rates[index] * parameter
+                    for side in range(2)
+                    for parameter in (lower_parameter, upper_parameter)
+                ]
+                # Plane coordinates move with the angle, and those that advance
+                # with the profile parameter get the chart's own advance again
+                # as slack: the Krawczyk image of a parameter chart overshoots
+                # the exact image range by about that much.
+                plane_margin = 2.0**-20 * max(1.0, abs(min(ends)), abs(max(ends))) + abs(
+                    rates[index]
+                ) * (upper_parameter - lower_parameter)
+                plane_lower.append(float(np.nextafter(min(ends) - plane_margin, -np.inf)))
+                plane_upper.append(float(np.nextafter(max(ends) + plane_margin, np.inf)))
+            revolution_lower = (angle_bounds[0], lower_parameter)
+            revolution_upper = (angle_bounds[1], upper_parameter)
+            if plane_is_first:
+                return (
+                    np.asarray((*plane_lower, *revolution_lower), dtype=np.float64),
+                    np.asarray((*plane_upper, *revolution_upper), dtype=np.float64),
+                )
+            return (
+                np.asarray((*revolution_lower, *plane_lower), dtype=np.float64),
+                np.asarray((*revolution_upper, *plane_upper), dtype=np.float64),
+            )
+
+        def inner(bound: tuple[Any, int, float], step: float, /) -> float | None:
+            # An exact profile end is its own representative; a plane edge
+            # crossing is represented by the nearest float on the line's side.
+            if bound[1] == chart_axis:
+                return bound[2]
+            parameter = float(bound[0].b if step > 0 else bound[0].a)
+            for _ in range(8):
+                parameter = float(np.nextafter(parameter, step))
+                plane_uv = point_at(parameter)[plane_offset : plane_offset + 2]
+                if (
+                    np.all(plane_uv >= plane_bounds[0])
+                    and np.all(plane_uv <= plane_bounds[1])
+                    and profile_lower <= parameter <= profile_upper
+                ):
+                    return parameter
+            return None
+
+        start_parameter = inner(start, np.inf)
+        stop_parameter = inner(stop, -np.inf)
+        if (
+            start_parameter is None
+            or stop_parameter is None
+            or not start_parameter < stop_parameter
+        ):
+            return _unresolved_surface(first, second, "continuation")
+        curve = _angular_surface_branch(
+            first,
+            second,
+            chart_axis,
+            start_parameter,
+            stop_parameter,
+            policy,
+            point_at,
+            box_for,
+            closed=False,
+            start_kind="boundary",
+            end_kind="boundary",
+            end_nodes=((start[1], start[2]), (stop[1], stop[2])),
+        )
+        if curve is None:
+            return _unresolved_surface(first, second, "resolution")
+        curves.append(curve)
+    return SurfaceIntersectionResult(curves=tuple(curves))
 
 
 def _exact_cylinder_axis(
@@ -8213,6 +8928,9 @@ def intersect_surface_regions(
     revolution_line_plane = _revolution_plane_line_circle(first, second, selected)
     if revolution_line_plane is not None:
         return revolution_line_plane
+    generator_lines = _revolution_plane_generator_lines(first, second, selected)
+    if generator_lines is not None:
+        return generator_lines
     parallel_cylinders = _parallel_cylinder_separation(first, second, selected)
     if parallel_cylinders is not None:
         return parallel_cylinders

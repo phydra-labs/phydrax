@@ -59,6 +59,7 @@ from ._adaptation import (
     MetricMeshAdaptation,
     prepare_mesh_adaptation,
 )
+from ._audit import CellMeshManifoldScope
 from ._canonical import certify_cell_mesh
 from ._certification import MeshCertificationReport
 from ._contracts import MeshingFailure
@@ -458,6 +459,9 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
     With an explicit material-bearing `prior_transition`, `material_transition`
     is the source-to-motion edge. An executed remesh retains its distinct
     candidate-to-target `transition`; both edges bind the same declaration.
+    ``local_manifold_scope`` is the declared manifold scope under which an
+    owner-local target patch was certified (``None``: every resident vertex
+    star was checked).
     """
 
     decision: MeshMotionDecision = eqx.field(static=True)
@@ -478,6 +482,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
     transition: CellMeshTransition | None
     geometry_transition: CellGeometryTransition | None
     material_transition: CellMeshTransition | None
+    local_manifold_scope: CellMeshManifoldScope | None
     advance_id: str = eqx.field(static=True)
 
     def __init__(
@@ -499,6 +504,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         adaptation: MeshAdaptationResult | None = None,
         geometry_transition: CellGeometryTransition | None = None,
         material_transition: CellMeshTransition | None = None,
+        local_manifold_scope: CellMeshManifoldScope | None = None,
     ) -> None:
         remesh = decision is MeshMotionDecision.REMESH
         source_mesh_id_ = str(source_mesh_id).strip()
@@ -573,6 +579,14 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         ):
             raise ValueError(
                 "Local motion identities require an owner-local target result."
+            )
+        if local_manifold_scope is not None and (
+            not isinstance(local_manifold_scope, CellMeshManifoldScope)
+            or local_result is None
+            or local_empty
+        ):
+            raise ValueError(
+                "A local manifold scope belongs to a non-empty owner-local target."
             )
         if (
             result is not None or (local_result is not None and not local_empty)
@@ -697,6 +711,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         self.transition = None if adaptation is None else adaptation.transition
         self.geometry_transition = geometry_transition
         self.material_transition = material_transition
+        self.local_manifold_scope = local_manifold_scope
         self.advance_id = canonical_fingerprint(
             {
                 "kind": "mesh-motion-advance",
@@ -730,6 +745,11 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
                     None
                     if material_transition is None
                     else material_transition.transition_id
+                ),
+                **(
+                    {}
+                    if local_manifold_scope is None
+                    else {"local_manifold_scope": local_manifold_scope.scope_id}
                 ),
             }
         )
@@ -1938,56 +1958,22 @@ def _prepare_owner_local_periodic_motion_target(
     return refreshed, target
 
 
-def _owner_local_periodic_motion_view(
-    source: Any,
-    specification: Any,
-    periodic_target: tuple[Any, Any],
-    candidate_revision_id: str,
-    periodic_margin: float,
-    periodic_shell_certificate: Any,
-    support_fractional_lower: np.ndarray | None,
-    support_fractional_upper: np.ndarray | None,
-    execution_group: Any,
-    local_rank: int,
-    axis_name: str,
-    /,
-) -> Any:
-    from ..discretization._periodic_topology import _entity_vertex_rows
-    from ..discretization._view_support import OwnerLocalCellGeometry
-    from ._distribution import _owner_group_fail_if_any
-    from .providers._native_periodic import (
-        _owner_local_periodic_assembly_from_state,
-        _owner_local_periodic_mesh_authority,
-        SurfaceMeshingSpec,
-        VolumeMeshingSpec,
-    )
-
-    specification_id = None
-    specification_error: str | None = None
-    try:
-        if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
-            raise TypeError(
-                "Periodic motion requires its exact typed meshing specification."
-            )
-        specification_id = specification.specification_id
-        if specification_id != source.specification_id:
-            raise ValueError(
-                "Periodic motion specification differs from its source view."
-            )
-    except Exception as error:
-        specification_error = f"{type(error).__name__}: {error}"
-    _owner_group_fail_if_any(
-        specification_error,
-        execution_group,
-        f"{axis_name}_specification",
-        "periodic motion specification identity",
-    )
-    if specification_id is None:
-        raise ValueError("Periodic motion specification preflight accepted no identity.")
-
-    refreshed, materialization = periodic_target
-    final_source = refreshed.final_source
-    source_authority_value = refreshed.source_authority_value
+def _periodic_motion_block_records(
+    source: Any, materialization: Any, /
+) -> tuple[
+    Any,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    Any,
+    tuple[Any, ...],
+    np.ndarray,
+    list[dict[str, Any]],
+]:
+    """Validate one periodic motion materialization against its source view rows."""
     target_mesh = materialization.mesh
     source_cell_ids = np.asarray(source.cell_ids, dtype=np.int64)
     source_vertex_ids = np.asarray(source.vertex_ids, dtype=np.int64)
@@ -2102,22 +2088,115 @@ def _owner_local_periodic_motion_view(
                 }
             )
         block_records.append(record)
+    if target_mesh is not None and not block_records:
+        raise ValueError("Periodic target mesh has no owner-local cell blocks.")
+    return (
+        target_mesh,
+        source_cell_ids,
+        source_vertex_ids,
+        cell_owner_ranks,
+        vertex_owner_ranks,
+        owned,
+        vertex_coordinates,
+        exact_vertex_coordinates,
+        exact_cell_measures,
+        cell_measures,
+        block_records,
+    )
+
+
+def _owner_local_periodic_motion_view(
+    source: Any,
+    specification: Any,
+    periodic_target: tuple[Any, Any],
+    candidate_revision_id: str,
+    periodic_margin: float,
+    periodic_shell_certificate: Any,
+    support_fractional_lower: np.ndarray | None,
+    support_fractional_upper: np.ndarray | None,
+    execution_group: Any,
+    local_rank: int,
+    axis_name: str,
+    /,
+) -> Any:
+    from ..discretization._view_support import OwnerLocalCellGeometry
+    from ._distribution import _owner_group_fail_if_any
+    from .providers._native_periodic import (
+        _owner_local_periodic_assembly_from_state,
+        _owner_local_periodic_mesh_authority,
+        SurfaceMeshingSpec,
+        VolumeMeshingSpec,
+    )
+
+    specification_id = None
+    specification_error: str | None = None
+    try:
+        if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
+            raise TypeError(
+                "Periodic motion requires its exact typed meshing specification."
+            )
+        specification_id = specification.specification_id
+        if specification_id != source.specification_id:
+            raise ValueError(
+                "Periodic motion specification differs from its source view."
+            )
+    except Exception as error:
+        specification_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_if_any(
+        specification_error,
+        execution_group,
+        f"{axis_name}_specification",
+        "periodic motion specification identity",
+    )
+    if specification_id is None:
+        raise ValueError("Periodic motion specification preflight accepted no identity.")
+
+    refreshed, materialization = periodic_target
+    final_source = refreshed.final_source
+    source_authority_value = refreshed.source_authority_value
+    block_error: str | None = None
+    try:
+        (
+            target_mesh,
+            source_cell_ids,
+            source_vertex_ids,
+            cell_owner_ranks,
+            vertex_owner_ranks,
+            owned,
+            vertex_coordinates,
+            exact_vertex_coordinates,
+            exact_cell_measures,
+            cell_measures,
+            block_records,
+        ) = _periodic_motion_block_records(source, materialization)
+    except Exception as error:
+        block_error = f"{type(error).__name__}: {error}"
+    # Local refusals join the group before its next collective.
+    _owner_group_fail_if_any(
+        block_error,
+        execution_group,
+        f"{axis_name}_materialization",
+        "periodic motion materialization",
+    )
 
     point_ids = np.asarray(refreshed.candidate["point_ids"], dtype=np.int64)
-    point_row_by_id = {int(identifier): row for row, identifier in enumerate(point_ids)}
-    old_coordinate_ids = np.asarray(source.source_point_ids, dtype=np.int64)[
-        np.asarray(source.coordinate_rows, dtype=np.int64)
-    ]
-    coordinate_rows = None
     coordinate_error: str | None = None
     try:
-        coordinate_rows = np.asarray(
-            [point_row_by_id[int(identifier)] for identifier in old_coordinate_ids],
-            dtype=np.int64,
-        )
+        # Periodic coordinate rows address the vertex bank. A coordinate whose
+        # quotient root is an authored site moves with that site; an adapted
+        # (self-keyed) root moves only through the exact coordinate ancestry.
+        coordinate_rows = np.asarray(source.coordinate_rows, dtype=np.int64)
+        roots = np.asarray(source.vertex_source_ids, dtype=np.int64)[coordinate_rows]
         if coordinate_rows.shape != vertex_coordinates.shape[:1]:
             raise ValueError(
                 "Periodic motion coordinate routes do not match target vertices."
+            )
+        if (
+            not np.all(np.isin(roots, point_ids))
+            and materialization.source_coordinate_stencil is None
+        ):
+            raise ValueError(
+                "Periodic motion coordinates lack an authored site or exact ancestry."
             )
     except Exception as error:
         coordinate_error = f"{type(error).__name__}: {error}"
@@ -2127,53 +2206,11 @@ def _owner_local_periodic_motion_view(
         f"{axis_name}_coordinate_routes",
         "periodic motion coordinate routes",
     )
-    if coordinate_rows is None:
-        raise ValueError("Periodic coordinate-route preflight accepted no rows.")
 
     if target_mesh is None:
-        local_entity_ids = {
-            degree: np.empty((0,), dtype=np.int64)
-            for degree in range(source.topological_dimension + 1)
-        }
-        entity_vertex_offsets = {
-            degree: np.zeros((1,), dtype=np.int64)
-            for degree in range(source.topological_dimension + 1)
-        }
-        entity_vertex_values = {
-            degree: np.empty((0,), dtype=np.int32)
-            for degree in range(source.topological_dimension + 1)
-        }
         vertices = np.empty((0, source.topological_dimension + 1), dtype=np.int32)
         vertex_valid = np.empty(vertices.shape, dtype=np.bool_)
     else:
-        entity_vertices = _entity_vertex_rows(target_mesh)
-        local_entity_ids: dict[int, np.ndarray] = {}
-        entity_vertex_offsets: dict[int, np.ndarray] = {}
-        entity_vertex_values: dict[int, np.ndarray] = {}
-        for degree, rows_at_degree in enumerate(entity_vertices):
-            identifiers = np.asarray(
-                target_mesh.entity_set(degree).entity_ids, dtype=np.int64
-            )
-            ordered_rows = (
-                np.arange(identifiers.size, dtype=np.int64)
-                if degree in (0, source.topological_dimension)
-                else np.argsort(identifiers, kind="stable")
-            )
-            local_entity_ids[degree] = identifiers[ordered_rows]
-            offsets = np.zeros((ordered_rows.size + 1,), dtype=np.int64)
-            values: list[np.ndarray] = []
-            for local_row, entity_row in enumerate(ordered_rows):
-                row_values = np.asarray(rows_at_degree[int(entity_row)], dtype=np.int32)
-                values.append(row_values)
-                offsets[local_row + 1] = offsets[local_row] + row_values.size
-            entity_vertex_offsets[degree] = offsets
-            entity_vertex_values[degree] = (
-                np.concatenate(values).astype(np.int32, copy=False)
-                if values
-                else np.empty((0,), dtype=np.int32)
-            )
-        if not block_records:
-            raise ValueError("Periodic target mesh has no owner-local cell blocks.")
         vertices = np.asarray(block_records[0]["vertices"], dtype=np.int32)
         vertex_valid = np.asarray(block_records[0]["vertex_valid"], dtype=np.bool_)
     mesh_data: dict[str, Any] = {
@@ -2204,7 +2241,44 @@ def _owner_local_periodic_motion_view(
         ),
         "cell_windings": np.asarray(materialization.cell_windings, dtype=np.int64),
         "blocks": tuple(block_records),
+        # Fixed topology: the row, entity and coordinate-route layout of the
+        # source view carries over; only geometry and its ancestry move.
+        "cell_rows": np.arange(source_cell_ids.size, dtype=np.int64),
+        "vertex_rows": np.asarray(source.vertex_rows, dtype=np.int64),
+        "coordinate_rows": np.asarray(source.coordinate_rows, dtype=np.int64),
+        "coordinates": vertex_coordinates.copy(),
+        "exact_coordinates": exact_vertex_coordinates,
+        "entity_set_ids": dict(source.entity_set_ids),
+        "local_entity_ids": dict(source.local_entity_ids),
+        "entity_vertex_offsets": dict(source.entity_vertex_offsets),
+        "entity_vertex_values": dict(source.entity_vertex_values),
+        "periodic_cell_ids": np.asarray(source.periodic_cell_ids, dtype=np.int64),
+        "vertex_representative_ids": np.asarray(
+            materialization.vertex_source_ids, dtype=np.int64
+        ).copy(),
+        "vertex_windings": np.asarray(
+            materialization.vertex_absolute_windings, dtype=np.int64
+        ).copy(),
+        # The periodic simplex layout is a group-wide identity (cell kind and
+        # element), unchanged by a fixed-topology motion.
+        "geometry_layout_id": source.geometry_layout_id,
+        "support_fractional_lower": support_fractional_lower,
+        "support_fractional_upper": support_fractional_upper,
+        "source_coordinate_stencil": materialization.source_coordinate_stencil,
+        "exact_vertex_coordinate_offsets": (
+            materialization.exact_vertex_coordinate_offsets
+        ),
+        "local_mesh": target_mesh,
     }
+    if refreshed.route == "periodic_delaunay":
+        dimension = source.topological_dimension
+        windings = np.asarray(materialization.vertex_absolute_windings, dtype=np.int64)
+        mesh_data["cell_kind"] = "triangle" if dimension == 2 else "tetrahedron"
+        mesh_data["cell_vertex_shifts"] = (
+            windings[vertices]
+            if vertices.size
+            else np.zeros((0, dimension + 1, dimension), dtype=np.int64)
+        )
     source_map = materialization.source_map
     source_map_id = None if source_map is None else source_map.source_map_id
     candidate = dict(refreshed.candidate)
@@ -2683,6 +2757,141 @@ def _owner_local_motion_view(
     return OwnerLocalCellGeometry.from_owner_local_result(record)
 
 
+def _owner_local_owned_star_scope(
+    view: Any,
+    execution_group: Any,
+    local_rank: int,
+    axis_name: str,
+    /,
+) -> CellMeshManifoldScope:
+    """Collect the owned-star manifold scope of one owner-local patch.
+
+    A face-halo patch is pinched where its resident cells end, and even an
+    owned vertex may miss star cells that only touch it. Every vertex is
+    certified by its owner on its complete star: the owner's resident cells
+    plus the incident cells other owners send it. Halo vertices are left to
+    their owners. Collective over ``execution_group``; empty owners join.
+    """
+    from ..discretization._reference_cell import REFERENCE_TOPOLOGIES
+    from ._distribution import (
+        _owner_exchange_message_banks,
+        _owner_group_allgather,
+        _owner_group_fail_if_any,
+    )
+
+    kinds = tuple(sorted(REFERENCE_TOPOLOGIES))
+    parts = len(execution_group.spec.process_indices)
+    local_error: str | None = None
+    vertex_ids = np.empty((0,), dtype=np.int64)
+    owned_vertex_ids = np.empty((0,), dtype=np.int64)
+    resident: dict[int, tuple[int, np.ndarray]] = {}
+    owned_cells: list[tuple[int, int, np.ndarray]] = []
+    local_width = 0
+    try:
+        vertex_ids = np.asarray(view.vertex_ids, dtype=np.int64)
+        vertex_owners = np.asarray(view.vertex_owner_ranks, dtype=np.int32)
+        cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
+        cell_owners = np.asarray(view.cell_owner_ranks, dtype=np.int32)
+        if (
+            vertex_owners.shape != vertex_ids.shape
+            or cell_owners.shape != cell_ids.shape
+            or np.any((vertex_owners < 0) | (vertex_owners >= parts))
+        ):
+            raise ValueError("Owner-local star ownership rows are malformed.")
+        owner_by_cell = dict(zip(cell_ids.tolist(), cell_owners.tolist(), strict=True))
+        for block in view.blocks:
+            identifiers = np.asarray(block.cell_ids, dtype=np.int64)
+            if not identifiers.size:
+                continue
+            vertices = np.asarray(block.vertices, dtype=np.int64)
+            if block.cell_kind not in kinds or not np.all(
+                np.asarray(block.vertex_valid, dtype=np.bool_)
+            ):
+                raise ValueError(
+                    "Owned-star certification requires dense reference cells."
+                )
+            code = kinds.index(block.cell_kind)
+            local_width = max(local_width, vertices.shape[1])
+            for identifier, row in zip(identifiers.tolist(), vertices, strict=True):
+                global_vertices = vertex_ids[row]
+                resident[identifier] = (code, global_vertices)
+                if owner_by_cell[identifier] == local_rank:
+                    owned_cells.append((identifier, code, global_vertices))
+        owned_vertex_ids = vertex_ids[vertex_owners == local_rank]
+        if owned_vertex_ids.size and not resident:
+            raise ValueError("An owner without resident cells cannot certify its stars.")
+    except Exception as error:
+        local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_if_any(
+        local_error, execution_group, axis_name, "owned-star scope admission"
+    )
+    width = int(
+        np.max(
+            _owner_group_allgather(
+                np.asarray((local_width,), dtype=np.int64),
+                execution_group,
+                f"{axis_name}_width",
+            )
+        )
+    )
+    owner_by_vertex = dict(
+        zip(
+            vertex_ids.tolist(),
+            np.asarray(view.vertex_owner_ranks, dtype=np.int32).tolist(),
+            strict=True,
+        )
+    )
+    outgoing: list[list[np.ndarray]] = [[] for _ in range(parts)]
+    for identifier, code, global_vertices in owned_cells:
+        message = np.full((width + 3,), -1, dtype=np.int64)
+        message[:3] = (identifier, code, global_vertices.size)
+        message[3 : 3 + global_vertices.size] = global_vertices
+        for owner in sorted(
+            {owner_by_vertex[int(vertex)] for vertex in global_vertices} - {local_rank}
+        ):
+            outgoing[owner].append(message)
+    incoming = _owner_exchange_message_banks(
+        tuple(
+            np.stack(rows) if rows else np.empty((0, width + 3), dtype=np.int64)
+            for rows in outgoing
+        ),
+        local_rank,
+        execution_group,
+        f"{axis_name}_cells",
+    )
+    local_error = None
+    owned = set(owned_vertex_ids.tolist())
+    star_cells: dict[int, dict[int, np.ndarray]] = {}
+    for sender in sorted(incoming):
+        for message in incoming[sender]:
+            identifier, code, arity = (int(value) for value in message[:3])
+            global_vertices = message[3 : 3 + arity]
+            if not owned.intersection(global_vertices.tolist()):
+                local_error = "A star cell reached a rank owning none of its vertices."
+            elif identifier in resident:
+                if resident[identifier][0] != code or not np.array_equal(
+                    resident[identifier][1], global_vertices
+                ):
+                    local_error = "Owner-local star cells disagree with their owner."
+            else:
+                star_cells.setdefault(code, {})[identifier] = global_vertices
+    _owner_group_fail_if_any(
+        local_error, execution_group, axis_name, "owned-star scope completion"
+    )
+    return CellMeshManifoldScope(
+        "owned-star",
+        owned_vertex_ids,
+        star_cells=tuple(
+            (
+                kinds[code],
+                np.asarray(sorted(cells), dtype=np.int64),
+                np.stack([cells[identifier] for identifier in sorted(cells)]),
+            )
+            for code, cells in sorted(star_cells.items())
+        ),
+    )
+
+
 def _owner_local_rejected(
     source: Any,
     coordinates: Any,
@@ -2822,6 +3031,7 @@ def advance_owner_local_mesh_motion(
     source_route_rows = np.empty((0,), dtype=np.int32)
     try:
         periodic_target = None
+        owned_star_scope = None
         if source.periodic_topology_id is not None:
             periodic_target = _prepare_owner_local_periodic_motion_target(
                 source,
@@ -2832,6 +3042,12 @@ def advance_owner_local_mesh_motion(
                 execution_group,
                 local_rank,
                 axis,
+            )
+            # The resident patch is pinched at its halo; each owner certifies
+            # the complete stars of its own vertices (fixed topology, so the
+            # source scope also covers the target).
+            owned_star_scope = _owner_local_owned_star_scope(
+                source, execution_group, local_rank, f"{axis}_owned_star"
             )
         if np.asarray(source.cell_ids).size:
             if periodic_target is not None:
@@ -2859,6 +3075,7 @@ def advance_owner_local_mesh_motion(
                     source_mesh,
                     source.coordinate_contract,
                     geometry=source_geometry,
+                    manifold_scope=owned_star_scope,
                 )
                 monitor = MeshMotionMonitor(source_mesh, policy=policy)
                 assessment = monitor.assess(
@@ -2873,6 +3090,7 @@ def advance_owner_local_mesh_motion(
                     target_mesh,
                     source.coordinate_contract,
                     geometry=target_geometry,
+                    manifold_scope=owned_star_scope,
                 )
                 transition = _transition_geometry_record(
                     source_local_result, target_mesh, target_geometry
@@ -2891,7 +3109,6 @@ def advance_owner_local_mesh_motion(
                     source_result_id=source_local_result.result_id,
                     result=target_result,
                     geometry_transition=transition,
-                    motion_driver_id=name,
                 )
                 target_coordinates = np.array(
                     synced_coordinates, dtype=np.float64, copy=True
@@ -2968,7 +3185,9 @@ def advance_owner_local_mesh_motion(
                         "Owner-authored motion coordinates differ from the accepted transition."
                     )
                 motion = local_motion
-        elif (
+        elif periodic_target is None and (
+            # The periodic coordinate bank is collective; only the local
+            # non-periodic bank may be rechecked on an empty owner alone.
             synced_coordinates.shape
             != _owner_local_motion_coordinate_bank(
                 source, execution_group, local_rank, f"{axis}_empty_bank"
@@ -3127,42 +3346,53 @@ def advance_owner_local_mesh_motion(
                 source, target_coordinates, boundary_residual, str(error)
             )
 
-    if motion is None:
-        measure_by_id = {}
-        local_transition = None
-        local_target_mesh_id = None
-        decision = MeshMotionDecision.ACCEPT_MOTION
-        assessments = ()
-    else:
+    measure_by_id: dict[int, float] = {}
+    local_transition = None
+    local_target_mesh_id = None
+    decision = MeshMotionDecision.ACCEPT_MOTION
+    assessments: tuple[MeshMotionAssessment, ...] = ()
+    local_manifold_scope = None
+    local_error = None
+    if motion is not None:
         if motion.adaptation is not None or motion.result is None:
-            return _owner_local_rejected(
-                source,
-                target_coordinates,
-                boundary_residual,
-                "Owner-local motion currently requires a fixed-topology accepted result.",
+            local_error = (
+                "Owner-local motion currently requires a fixed-topology accepted result."
             )
-        target_mesh = motion.result.mesh
-        target_quality = evaluate_cell_quality(target_mesh)
-        target_cell_ids = np.asarray(
-            target_mesh.entity_set(target_mesh.topological_dimension).entity_ids,
-            dtype=np.int64,
+        else:
+            target_mesh = motion.result.mesh
+            target_quality = evaluate_cell_quality(target_mesh)
+            target_cell_ids = np.asarray(
+                target_mesh.entity_set(target_mesh.topological_dimension).entity_ids,
+                dtype=np.int64,
+            )
+            target_measures = np.asarray(target_quality.measures, dtype=np.float64)
+            if target_cell_ids.shape != target_measures.shape:
+                local_error = (
+                    "Local motion measures do not align with stable target cell IDs."
+                )
+            measure_by_id = {
+                int(identifier): float(value)
+                for identifier, value in zip(
+                    target_cell_ids.tolist(), target_measures.tolist(), strict=False
+                )
+            }
+            local_transition = motion.geometry_transition
+            local_target_mesh_id = target_mesh.mesh_id
+            decision = motion.decision
+            assessments = motion.assessments
+            local_manifold_scope = motion.result.audit.manifold_scope
+    # Every owner joins the target admission before the collective view build.
+    try:
+        _owner_group_fail_if_any(
+            local_error,
+            execution_group,
+            f"{axis}_target_admission",
+            "owner-local motion target admission",
         )
-        target_measures = np.asarray(target_quality.measures, dtype=np.float64)
-        if target_cell_ids.shape != target_measures.shape:
-            return _owner_local_rejected(
-                source,
-                target_coordinates,
-                boundary_residual,
-                "Local motion measures do not align with stable target cell IDs.",
-            )
-        measure_by_id = {
-            int(identifier): float(target_measures[index])
-            for index, identifier in enumerate(target_cell_ids)
-        }
-        local_transition = motion.geometry_transition
-        local_target_mesh_id = target_mesh.mesh_id
-        decision = motion.decision
-        assessments = motion.assessments
+    except Exception as error:
+        return _owner_local_rejected(
+            source, target_coordinates, boundary_residual, str(error)
+        )
 
     target_view: Any = None
     local_error = None
@@ -3263,6 +3493,7 @@ def advance_owner_local_mesh_motion(
         local_fixed_vertex_ids=np.asarray(source.vertex_ids, dtype=np.int64)[fixed],
         geometry_transition=local_transition,
         relocation=None if motion is None else motion.relocation,
+        local_manifold_scope=local_manifold_scope,
     )
 
 
