@@ -55,6 +55,7 @@ from ._mesh_certificates import (
 from ._meshing_domain import MeshingDomain
 from ._planar_primitives import (
     area2 as _polygon_area2,
+    cross as _polygon_cross,
     intersection as _polygon_intersection,
     signed_area2 as _polygon_signed_area2,
 )
@@ -188,7 +189,29 @@ def _area2(polygon: tuple[Point2, ...], /) -> Fraction:
     return _polygon_signed_area2(polygon) / 2
 
 
+def _interiors_separated(first: Triangle2, second: Triangle2, /) -> bool:
+    """Whether an edge line of either triangle exactly separates their interiors.
+
+    Two convex polygons have disjoint interiors exactly when a supporting line
+    of one of their edges leaves the other polygon in its closed outer half
+    plane, so this decides zero overlap area without clipping.
+    """
+    for inner, outer in ((first, second), (second, first)):
+        orientation = _polygon_signed_area2(inner)
+        if orientation == 0:
+            return True
+        for index in range(3):
+            start, end = inner[index], inner[(index + 1) % 3]
+            if all(
+                _polygon_cross(start, end, point) * orientation <= 0 for point in outer
+            ):
+                return True
+    return False
+
+
 def _intersection_area(first: Triangle2, second: Triangle2, /) -> Fraction:
+    if _interiors_separated(first, second):
+        return Fraction(0)
     return _polygon_area2(_polygon_intersection(first, second)) / 2
 
 
