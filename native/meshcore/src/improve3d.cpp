@@ -417,30 +417,29 @@ TetEditStatus LocalIncidence::insert_cone(TetMesh& mesh, const TetEditVertex& ve
   }
 }
 
-TetEditStatus LocalIncidence::split_edge(TetMesh& mesh, std::int32_t first,
-                                         std::int32_t second, const TetEditVertex& vertex,
-                                         std::span<const std::size_t> facet_rows,
-                                         std::span<const std::size_t> segment_rows,
-                                         std::vector<std::uint64_t>& created_cells) {
+TetEditStatus LocalIncidence::insert_boundary_point(TetMesh& mesh, const TetEditVertex& vertex,
+                                                    std::span<const std::int32_t> cavity,
+                                                    std::span<const std::size_t> facet_rows,
+                                                    std::span<const std::size_t> segment_rows,
+                                                    std::vector<std::uint64_t>& created_cells) {
   try {
-    const std::span<const std::int32_t> star = edge_star(first, second);
-    if (star.empty()) return TetEditStatus::kRejectedTopology;
-    const std::vector<std::int32_t> removed_slots(star.begin(), star.end());
+    std::vector<std::int32_t> removed_slots;
     std::vector<LocalCell> removed_cells;
-    removed_cells.reserve(removed_slots.size());
-    for (std::int32_t slot : removed_slots) {
-      if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) {
-        return TetEditStatus::kRejectedTopology;
-      }
+    removed_slots.reserve(cavity.size());
+    removed_cells.reserve(cavity.size());
+    for (std::int32_t slot : cavity) {
+      if (!mesh.complex().live(slot)) return TetEditStatus::kRejectedTopology;
+      if (is_ghost(mesh.tet(slot))) continue;
       LocalCell vertices{};
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
+      removed_slots.push_back(slot);
       removed_cells.push_back(vertices);
     }
     if (vertex_positions_.contains(local_position_key(vertex.carrier.data()))) {
       return TetEditStatus::kInvalidGeometry;
     }
-    const TetEditStatus status = mesh.split_local_edge(
-        first, second, vertex, removed_slots, facet_rows, segment_rows, created_cells);
+    const TetEditStatus status = mesh.insert_local_boundary_point(vertex, cavity, facet_rows,
+                                                                  segment_rows, created_cells);
     if (status != TetEditStatus::kApplied) return status;
     for (std::size_t index = 0; index < removed_slots.size(); ++index) {
       if (!erase(removed_slots[index], removed_cells[index])) {
@@ -1712,6 +1711,105 @@ bool free_interior_vertex(const TetMesh& mesh, std::int32_t vertex) {
          mesh.witness(vertex).stratum == SourceStratum::kNone;
 }
 }  // namespace
+
+std::int32_t flip_to_constrained_delaunay(
+    TetMesh& mesh, detail::LocalIncidence& incidence, std::span<const std::uint64_t> seeds,
+    const std::function<bool(std::uint64_t, std::uint64_t)>& is_segment,
+    std::vector<std::uint64_t>& created) {
+  std::vector<std::pair<std::uint64_t, int>> pending;
+  for (std::uint64_t id : seeds) {
+    for (int face = 0; face < 4; ++face) pending.emplace_back(id, face);
+  }
+  const auto apply = [&](std::span<const std::int32_t> removed,
+                         std::span<const LocalCell> replacements, TetEditKind kind) {
+    TetEdit operation;
+    std::vector<std::uint64_t> neighbors;
+    TetEditStatus status = prepare_quality_reconnection(mesh, removed, replacements,
+                                                        mesh.next_cell_id_, kind, operation,
+                                                        neighbors);
+    if (status == TetEditStatus::kApplied) status = incidence.replace_cavity(mesh, operation, nullptr);
+    if (status != TetEditStatus::kApplied) return status;
+    for (const TetEditCell& cell : operation.replacement_cells) {
+      created.push_back(cell.id);
+      for (int face = 0; face < 4; ++face) pending.emplace_back(cell.id, face);
+    }
+    return TetEditStatus::kApplied;
+  };
+  while (!pending.empty()) {
+    const auto [cell_id, face] = pending.back();
+    pending.pop_back();
+    const std::int32_t slot = mesh.cell_slot(cell_id);
+    if (slot < 0 || !mesh.complex().live(slot)) continue;
+    const Tetrahedron& cell = mesh.tet(slot);
+    const std::int32_t other = cell.n[face];
+    if (!mesh.complex().live(other) || is_ghost(mesh.tet(other)) ||
+        mesh.complex().constraint(slot, face) != kNoConstraint ||
+        mesh.complex().region(other) != mesh.complex().region(slot)) {
+      continue;
+    }
+    const int back = neighbor_slot(mesh.tet(other), slot);
+    if (back < 0) return PHX_MC_INTERNAL_ERROR;
+    const std::int32_t apex = mesh.tet(other).v[back];
+    if (insphere(mesh.point(cell.v[0]), mesh.point(cell.v[1]), mesh.point(cell.v[2]),
+                 mesh.point(cell.v[3]), mesh.point(apex)) <= 0) {
+      continue;
+    }
+    // 2-3: the shared face is crossed by the edge between the apexes.
+    std::array<LocalCell, 3> three{};
+    bool convex = true;
+    for (int corner = 0, row = 0; corner < 4; ++corner) {
+      if (corner == face) continue;
+      LocalCell replacement{};
+      std::copy_n(cell.v, 4, replacement.begin());
+      replacement[static_cast<std::size_t>(corner)] = apex;
+      convex = convex && mesh.positive(replacement.data());
+      three[static_cast<std::size_t>(row++)] = replacement;
+    }
+    TetEditStatus status = TetEditStatus::kRejectedTopology;
+    if (convex) {
+      const std::array<std::int32_t, 2> removed{slot, other};
+      status = apply(removed, three, TetEditKind::kFlip23);
+    } else {
+      // 3-2: an edge of the shared face whose ring is this cell, its
+      // neighbor and one cell through both apexes.
+      for (int corner = 0; corner < 4 && status != TetEditStatus::kApplied; ++corner) {
+        if (corner == face) continue;
+        std::array<std::int32_t, 2> edge{};
+        for (int other_corner = 0, count = 0; other_corner < 4; ++other_corner) {
+          if (other_corner != face && other_corner != corner) edge[count++] = cell.v[other_corner];
+        }
+        if (is_segment(mesh.vertex_id(edge[0]), mesh.vertex_id(edge[1]))) continue;
+        const std::span<const std::int32_t> ring = incidence.edge_star(edge[0], edge[1]);
+        if (ring.size() != 3) continue;
+        std::int32_t third = -1;
+        for (std::int32_t member : ring) {
+          if (member != slot && member != other) third = member;
+        }
+        if (third < 0 || vertex_slot(mesh.tet(third), apex) < 0 ||
+            vertex_slot(mesh.tet(third), cell.v[face]) < 0) {
+          continue;
+        }
+        std::array<LocalCell, 2> two{};
+        bool positive = true;
+        for (std::size_t side = 0; side < 2; ++side) {
+          LocalCell replacement{};
+          std::copy_n(cell.v, 4, replacement.begin());
+          const int replaced = vertex_slot(cell, edge[side]);
+          replacement[static_cast<std::size_t>(replaced)] = apex;
+          positive = positive && mesh.positive(replacement.data());
+          two[side] = replacement;
+        }
+        if (!positive) continue;
+        const std::array<std::int32_t, 3> removed{slot, other, third};
+        status = apply(removed, two, TetEditKind::kFlip32);
+      }
+    }
+    if (status == TetEditStatus::kAllocationFailure) return PHX_MC_ALLOCATION_FAILURE;
+    if (status == TetEditStatus::kIndexOverflow) return PHX_MC_INDEX_RANGE_ERROR;
+    if (status == TetEditStatus::kStaleGeneration) return PHX_MC_INTERNAL_ERROR;
+  }
+  return PHX_MC_OK;
+}
 
 std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
                           std::span<const double> vertex_sizes,

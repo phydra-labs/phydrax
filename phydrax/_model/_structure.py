@@ -38,6 +38,7 @@ from .._array_archive import (
     ArrayArchiveLimits,
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
 )
+from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
 from .._typing_plan import validate_tree
@@ -379,6 +380,44 @@ class SparseCoordinateOperatorArchiveRecipe(NamedTuple):
     operator_id: str
     accumulation_dtype: object
     block_shape: tuple[int, int] | None
+
+
+# Entries of a periodic FE transfer archive root: the cover mesh and transfer
+# settings are authoritative; the periodic and distributed transfers are derived.
+PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS = frozenset(
+    {
+        "mesh/periodic-topology",
+        "transfer/settings",
+        "transfer/periodic",
+        "transfer/distributed",
+    }
+)
+
+
+class PeriodicFiniteElementTransferArchiveRecipe(NamedTuple):
+    """Identities a periodic FE transfer root recomputes from its mesh/settings.
+
+    Quotient maps, lifts, collapses and their entry, commuting, closure and
+    deck-descent evidence are derived data; the restore rebuilds them and
+    requires these stored identities.
+    """
+
+    transfer_id: str
+    map_id: str
+    lifted_evidence_id: str
+    quotient_evidence_id: str
+
+
+class DistributedFiniteElementTransferArchiveRecipe(NamedTuple):
+    """Per-degree DOF owner rows of a distributed periodic FE transfer.
+
+    The sparse owner plans are rebuilt from the periodic quotient transfer,
+    these rows and the root's part count; ``transfer_id`` binds the result.
+    """
+
+    source_owners: tuple[object, ...]
+    target_owners: tuple[object, ...]
+    transfer_id: str
 
 
 class _FiniteElementSpecArchiveProjection(NamedTuple):
@@ -991,6 +1030,79 @@ def _finite_element_accepted_state_archive_recipe(
     )
 
 
+def _periodic_finite_element_transfer_root_archive_projection(
+    value: Any, /
+) -> Any | None:
+    """Store a periodic FE transfer root by its authoritative inputs only.
+
+    The root retains the cover mesh, the transfer settings and the per-degree
+    DOF owner rows. Every quotient operator, its evidence and the distributed
+    sparse plans derive from them, so the transfer entries keep identities
+    and owner rows, and the restore recomputes and requires them.
+    """
+    if (
+        type(value).__module__ != "phydrax.lifecycle._composition_rebind"
+        or type(value).__name__ != "Composition"
+        or frozenset(value.entry_ids) != PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS
+    ):
+        return None
+    from ..discretization.fem._de_rham import (
+        DistributedFiniteElementTransfer,
+        PeriodicFiniteElementTransfer,
+    )
+    from ..lifecycle._composition_rebind import Composition, CompositionEntry
+
+    entries = {entry.entry_id: entry for entry in value.entries}
+    periodic = entries["transfer/periodic"].value
+    distributed = entries["transfer/distributed"].value
+    if (
+        type(periodic) is PeriodicFiniteElementTransferArchiveRecipe
+        and type(distributed) is DistributedFiniteElementTransferArchiveRecipe
+    ):
+        return None
+    if (
+        type(periodic) is not PeriodicFiniteElementTransfer
+        or type(distributed) is not DistributedFiniteElementTransfer
+    ):
+        raise TypeError("Periodic FE transfer root must retain its typed transfers.")
+    if (
+        distributed.transfer_result.evidence_id
+        != periodic.quotient_transfer_result.evidence_id
+    ):
+        raise ValueError(
+            "Distributed FE transfer must distribute its root's periodic quotient."
+        )
+    compact = {
+        "transfer/periodic": PeriodicFiniteElementTransferArchiveRecipe(
+            periodic.transfer_id,
+            periodic.complex_map.map_id,
+            periodic.lifted_transfer_result.evidence_id,
+            periodic.quotient_transfer_result.evidence_id,
+        ),
+        "transfer/distributed": DistributedFiniteElementTransferArchiveRecipe(
+            tuple(np.asarray(item.source_owner) for item in distributed.degree_maps),
+            tuple(np.asarray(item.target_owner) for item in distributed.degree_maps),
+            distributed.transfer_id,
+        ),
+    }
+    return Composition(
+        tuple(
+            CompositionEntry(
+                compact.get(entry.entry_id, entry.value),
+                entry_id=entry.entry_id,
+                role=entry.role,
+                owner_id=entry.owner_id,
+                structure_id=entry.structure_id,
+                revision_id=entry.revision_id,
+                semantics_id=entry.semantics_id,
+                dependencies=entry.dependencies,
+            )
+            for entry in value.entries
+        ),
+        boundary_id=value.boundary_id,
+    )
+
+
 def _finite_volume_runtime_state_archive_recipe(
     value: Any, /
 ) -> FiniteVolumeRuntimeStateArchiveRecipe | None:
@@ -1207,6 +1319,9 @@ def model_archive_projection(value: Any, /) -> Any:
     state_recipe = _finite_element_accepted_state_archive_recipe(value)
     if state_recipe is not None:
         return model_archive_projection(state_recipe)
+    periodic_root = _periodic_finite_element_transfer_root_archive_projection(value)
+    if periodic_root is not None:
+        return model_archive_projection(periodic_root)
     fv_state_recipe = _finite_volume_runtime_state_archive_recipe(value)
     if fv_state_recipe is not None:
         return model_archive_projection(fv_state_recipe)
@@ -2424,7 +2539,228 @@ def model_from_structure_recipe(
     return _restore_recipe(recipe, zeros)
 
 
+# Shared archive nodes ---------------------------------------------------------------
+#
+# A native model archive stores each distinct object subtree once. Every object
+# node (and every container holding arrays) has a content key: the canonical
+# fingerprint of its recipe with child subtrees replaced by their keys and array
+# descriptors bound to their payload content. In canonical traversal order the
+# first occurrence of a key is written in full; later equal nodes are written as
+# ``{"kind": "shared", "key": ...}`` and their arrays are not stored again. Keys
+# depend only on content, so archives are independent of object aliasing.
+
+_SHARED_RECIPE_KIND = "shared"
+_SHARED_OBJECT_KINDS = frozenset(
+    {"dataclass", "namedtuple", "strict_value", "finite_element_spec"}
+)
+_ARRAY_RECIPE_KINDS = frozenset({"array", "prng_key"})
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _RecipeArrayNode:
+    index: int
+
+
+def _recipe_array_nodes(recipe: Mapping[str, Any], /) -> list[Mapping[str, Any]]:
+    """Array recipe nodes in exact inventory (PyTree leaf) order.
+
+    A node reached through several parents repeats once per occurrence.
+    """
+    nodes: list[Mapping[str, Any]] = []
+
+    def marker(node: Mapping[str, Any], /) -> _RecipeArrayNode:
+        nodes.append(node)
+        return _RecipeArrayNode(len(nodes) - 1)
+
+    return [
+        nodes[leaf.index]
+        for leaf in jax.tree_util.tree_leaves(_restore_recipe(recipe, marker))
+        if isinstance(leaf, _RecipeArrayNode)
+    ]
+
+
+def _map_recipe_children(node: Mapping[str, Any], transform: Any, /) -> dict[str, Any]:
+    """Copy one recipe node, replacing direct children in canonical order."""
+    kind = node["kind"]
+    mapped = dict(node)
+    if kind == "slice":
+        for name in ("start", "stop", "step"):
+            mapped[name] = transform(node[name])
+    elif kind in ("dataclass", "strict_value"):
+        fields = node["fields"]
+        if not isinstance(fields, dict):
+            raise ValueError("Recipe fields must be a mapping.")
+        mapped["fields"] = {name: transform(fields[name]) for name in sorted(fields)}
+    elif kind == "finite_element_spec":
+        mapped["recipe"] = transform(node["recipe"])
+    elif kind == "rational_polynomial":
+        mapped["numerator"] = transform(node["numerator"])
+        mapped["denominator"] = transform(node["denominator"])
+    elif kind in ("tuple", "list", "set", "frozenset", "namedtuple"):
+        mapped["items"] = [transform(child) for child in node["items"]]
+    elif kind in ("mapping", "frozendict", "mappingproxy"):
+        mapped["items"] = [
+            [transform(key), transform(item)] for key, item in node["items"]
+        ]
+    return mapped
+
+
+@dataclasses.dataclass(slots=True)
+class _RecipeContent:
+    payloads: dict[int, np.ndarray]
+    keys: dict[int, str] = dataclasses.field(default_factory=dict)
+    with_arrays: set[int] = dataclasses.field(default_factory=set)
+
+    def digest(self, node: Mapping[str, Any], /) -> None:
+        """Key one node whose composite and array children are already keyed."""
+        identity = id(node)
+        if node["kind"] in _ARRAY_RECIPE_KINDS:
+            self.with_arrays.add(identity)
+            content: Any = {"node": dict(node), "payload": self.payloads[identity]}
+        else:
+
+            def child_content(child: Mapping[str, Any], /) -> Any:
+                child_identity = id(child)
+                if child_identity in self.keys:
+                    if child_identity in self.with_arrays:
+                        self.with_arrays.add(identity)
+                    return {"key": self.keys[child_identity]}
+                return child
+
+            content = {"node": _map_recipe_children(node, child_content)}
+        self.keys[identity] = canonical_fingerprint(
+            {"kind": "model-archive-recipe-node", **content}
+        )
+
+    def shareable(self, node: Mapping[str, Any], /) -> bool:
+        return node["kind"] in _SHARED_OBJECT_KINDS or (
+            node["kind"] not in _ARRAY_RECIPE_KINDS and id(node) in self.with_arrays
+        )
+
+
+def _is_recipe_leaf(node: Mapping[str, Any], /) -> bool:
+    return node["kind"] not in _ARRAY_RECIPE_KINDS and not _recipe_children(node)
+
+
+def share_model_archive_recipe(
+    recipe: Mapping[str, Any],
+    arrays: Mapping[str, np.ndarray],
+    /,
+    *,
+    prefix: str,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """Write each distinct object subtree and array bank once.
+
+    ``arrays`` is the exact per-occurrence inventory of ``recipe``. The result is
+    the canonical shared manifest recipe and its array members, named in
+    canonical traversal order.
+    """
+    nodes = _recipe_array_nodes(recipe)
+    names = [f"{prefix}/{index:06d}" for index in range(len(nodes))]
+    if set(arrays) != set(names):
+        raise ValueError("Model recipe arrays do not match its exact leaf inventory.")
+    content = _RecipeContent({})
+    for node, name in zip(nodes, names, strict=True):
+        content.payloads.setdefault(id(node), np.asarray(arrays[name]))
+
+    def digest(node: Mapping[str, Any], /) -> None:
+        if id(node) in content.keys:
+            return
+        for child in _recipe_children(node):
+            if not _is_recipe_leaf(child):
+                digest(child)
+        content.digest(node)
+
+    digest(recipe)
+    written: set[str] = set()
+    members: dict[str, np.ndarray] = {}
+
+    def emit(node: Mapping[str, Any], /) -> dict[str, Any]:
+        identity = id(node)
+        if node["kind"] in _ARRAY_RECIPE_KINDS:
+            members[f"{prefix}/{len(members):06d}"] = content.payloads[identity]
+            return dict(node)
+        if _is_recipe_leaf(node):
+            return dict(node)
+        if content.shareable(node):
+            key = content.keys[identity]
+            if key in written:
+                return {"kind": _SHARED_RECIPE_KIND, "key": key}
+            written.add(key)
+        return _map_recipe_children(node, emit)
+
+    return emit(recipe), members
+
+
+def expand_shared_model_archive_recipe(
+    shared: Mapping[str, Any],
+    members: Mapping[str, Any],
+    /,
+    *,
+    prefix: str,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """Resolve a canonical shared manifest into its recipe and array inventory.
+
+    Shared references resolve only to an earlier complete subtree with the same
+    recomputed content key, so a changed definition is refused for every
+    referrer. Equal subtrees written twice, unused members, or unresolved keys
+    are refused as noncanonical. The validated recipe reuses one node per key.
+    """
+    content = _RecipeContent({})
+    definitions: dict[str, dict[str, Any]] = {}
+    consumed = [0]
+
+    def expand(node: Any, /) -> dict[str, Any]:
+        if not isinstance(node, dict) or not isinstance(node.get("kind"), str):
+            raise ValueError("Shared model recipe nodes must be recipe objects.")
+        kind = node["kind"]
+        if kind == _SHARED_RECIPE_KIND:
+            if set(node) != {"kind", "key"} or not isinstance(node["key"], str):
+                raise ValueError("Shared model recipe references are not canonical.")
+            definition = definitions.get(node["key"])
+            if definition is None:
+                raise ValueError(
+                    "Shared model recipe reference has no earlier equal definition."
+                )
+            return definition
+        if kind in _ARRAY_RECIPE_KINDS:
+            name = f"{prefix}/{consumed[0]:06d}"
+            consumed[0] += 1
+            if name not in members:
+                raise ValueError("Shared model recipe array member is missing.")
+            expanded = dict(node)
+            content.payloads[id(expanded)] = np.asarray(members[name])
+            content.digest(expanded)
+            return expanded
+        if _is_recipe_leaf(node):
+            return dict(node)
+        expanded = _map_recipe_children(node, expand)
+        content.digest(expanded)
+        if content.shareable(expanded):
+            key = content.keys[id(expanded)]
+            if key in definitions:
+                raise ValueError("Shared model recipe repeats an equal subtree.")
+            definitions[key] = expanded
+        return expanded
+
+    try:
+        recipe = expand(shared)
+    except (AttributeError, KeyError, TypeError, RecursionError) as error:
+        raise ValueError("Shared model recipe is malformed.") from error
+    if consumed[0] != len(members):
+        raise ValueError("Shared model archive has unused array members.")
+    validate_model_structure_recipe(recipe, limits=limits)
+    arrays = {
+        f"{prefix}/{index:06d}": content.payloads[id(node)]
+        for index, node in enumerate(_recipe_array_nodes(recipe))
+    }
+    return recipe, arrays
+
+
 __all__ = [
+    "expand_shared_model_archive_recipe",
+    "share_model_archive_recipe",
     "deserialize_model_leaf",
     "model_from_array_recipe",
     "model_from_structure_recipe",

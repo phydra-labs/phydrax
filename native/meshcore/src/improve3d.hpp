@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -48,6 +49,19 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
                           std::int64_t& collapsed_vertices,
                           std::int64_t& relocated_vertices,
                           std::int64_t& unmet_cells);
+
+// Lawson flips from the faces of the cells `seeds` (2-3 across a face whose
+// neighbor's apex lies strictly inside the cell's circumsphere when the union
+// is convex, else 3-2 around an edge of that face with three cells, which may
+// not be a segment by `is_segment` on vertex IDs) over unconstrained,
+// same-region faces; the faces of flipped cells are revisited. Each flip
+// lowers the triangulation lifted to the paraboloid, so none repeats and the
+// pass terminates; faces whose flip is not available stay non-Delaunay.
+// Created cell IDs are appended to `created`.
+std::int32_t flip_to_constrained_delaunay(
+    TetMesh& mesh, detail::LocalIncidence& incidence, std::span<const std::uint64_t> seeds,
+    const std::function<bool(std::uint64_t, std::uint64_t)>& is_segment,
+    std::vector<std::uint64_t>& created);
 
 namespace geometry {
 // Caches only operands independent of one moving corner; candidate pivot and

@@ -654,6 +654,18 @@ def _corner_measures(
     return determinant, scaled, ratio, condition, metric_ratio
 
 
+def _metric_quality(metric_ratio: Array, metric: Array | None, /) -> Array:
+    """Per-cell minimum metric ratio, or canonical NaN when no metric applies.
+
+    The non-applicable value is built directly: XLA CPU min-reductions over
+    all-NaN rows do not propagate NaN for every array size (large inputs return
+    the +inf identity), which would make the summary size- and backend-dependent.
+    """
+    if metric is None:
+        return jnp.full(metric_ratio.shape[:1], jnp.nan, dtype=metric_ratio.dtype)
+    return jnp.min(metric_ratio, axis=1)
+
+
 def _interval_quality(points: Array, metric: Array | None, /) -> _BlockQuality:
     length = jnp.linalg.norm(points[:, 1] - points[:, 0], axis=-1)
     one = jnp.ones_like(length)
@@ -743,7 +755,7 @@ def _surface_quality(kind: str, points: Array, metric: Array | None, /) -> _Bloc
         jnp.max(condition, axis=1),
         jnp.full_like(measure, jnp.nan),
         warpage,
-        jnp.min(metric_ratio, axis=1),
+        _metric_quality(metric_ratio, metric),
         valid & jnp.isfinite(measure),
     )
 
@@ -838,7 +850,7 @@ def _solid_quality(kind: str, points: Array, metric: Array | None, /) -> _BlockQ
         jnp.max(condition, axis=1),
         sliver,
         warpage,
-        jnp.min(metric_ratio, axis=1),
+        _metric_quality(metric_ratio, metric),
         jnp.all(determinant > 0.0, axis=1) & (measure > 0.0) & jnp.isfinite(measure),
     )
 
