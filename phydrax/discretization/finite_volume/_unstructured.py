@@ -2551,22 +2551,6 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     def state_shape(self) -> tuple[int, ...]:
         return (self.cell_count, self.component_count)
 
-    def require_single_face_embedding(self, consumer: str, /) -> None:
-        """Refuse ``consumer`` when faces join cells at distinct lattice images.
-
-        Owner-local periodic seam faces are interior faces whose neighbor is
-        resident at another periodic image (``periodic_face_translations``).
-        Owner/neighbor fluxes across them are exact; operators that combine
-        neighbor-cell geometry with the face or the owner's geometry, or index
-        faces through the lifted connectivity, must refuse them explicitly.
-        """
-        if self.periodic_face_translations is not None:
-            raise ValueError(
-                f"{consumer} needs both sides of every face in one embedding; this "
-                "owner-local periodic FV discretization joins seam faces across "
-                "lattice images."
-            )
-
     def neighbor_side_points(
         self, points: Array, face_ids: Array | None = None, /
     ) -> Array:

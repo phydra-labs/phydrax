@@ -313,3 +313,96 @@ def test_owner_local_periodic_reconstruction_matches_tiled_serial(kind: str) -> 
         np.testing.assert_allclose(
             np.asarray(lengths), np.asarray(tiled_lengths)[:n], rtol=1.0e-12
         )
+
+
+def _stability_rates(geometry: Any, diffusivity: np.ndarray, /) -> np.ndarray:
+    """Serial graph diffusion rates of a seam-free unstructured FV mesh."""
+    owner = np.asarray(geometry.owner_cells)
+    neighbor = np.asarray(geometry.neighbor_cells)
+    centers = np.asarray(geometry.cell_centers)
+    face_centers = np.asarray(geometry.face_centers)
+    measures = np.asarray(geometry.face_measures)
+    normal = np.asarray(geometry.area_vectors) / measures[:, None]
+    interior = neighbor >= 0
+    safe = np.maximum(neighbor, 0)
+    owner_distance = np.abs(np.sum((face_centers - centers[owner]) * normal, axis=-1))
+    neighbor_distance = np.where(
+        interior,
+        np.abs(np.sum((centers[safe] - face_centers) * normal, axis=-1)),
+        owner_distance,
+    )
+    face_diffusivity = np.where(
+        interior, 0.5 * (diffusivity[owner] + diffusivity[safe]), diffusivity[owner]
+    )
+    weight = 2.0 * measures * face_diffusivity / (owner_distance + neighbor_distance)
+    rate = np.zeros((geometry.cell_count,))
+    np.add.at(rate, owner, weight)
+    np.add.at(rate, neighbor[interior], weight[interior])
+    return rate / np.asarray(geometry.cell_volumes)
+
+
+def test_owner_local_periodic_viscous_operator_matches_tiled_serial() -> None:
+    """Seam neighbors enter gradients and face distances at their lattice image."""
+    system = phx.equations.CompressibleNavierStokesSystem(
+        phx.equations.ConstantTransport(0.1, 0.2), 2
+    )
+    view, geometry = _single_owner_periodic_geometry(system.component_names)
+    reference = _TiledReference(view, geometry)
+    n = geometry.cell_count
+    lift = np.asarray(view.periodic_lift_matrix, dtype=np.float64)[:, :2]
+    centers = np.asarray(geometry.cell_centers)
+    state = jnp.asarray(_euler_state(system, centers, lift))
+    tiled_state = jnp.asarray(reference.tile(np.asarray(state)))
+    plan = phx.discretization.ViscousFluxPlan()
+    time = jnp.asarray(0.0)
+
+    gradient = np.asarray(plan.unstructured_conserved_gradient(system, state, geometry))
+    tiled_gradient = np.asarray(
+        plan.unstructured_conserved_gradient(system, tiled_state, reference.geometry)
+    )
+    np.testing.assert_allclose(gradient, tiled_gradient[:n], rtol=1e-9, atol=1e-10)
+    assert float(np.max(np.abs(gradient))) > 1.0e-2
+
+    # Face fluxes average the two central-row diffusive tensors.
+    evaluation = plan.evaluate_unstructured(system, time, state, geometry)
+    tensor = np.asarray(
+        system.diffusion_evaluation(tiled_state, jnp.asarray(tiled_gradient), None).flux
+    )[:n]
+    owner = np.asarray(geometry.owner_cells)
+    neighbor = np.asarray(geometry.neighbor_cells)
+    assert np.all(neighbor >= 0)
+    normal = (
+        np.asarray(geometry.area_vectors) / np.asarray(geometry.face_measures)[:, None]
+    )
+    expected_flux = np.einsum(
+        "fcd,fd->fc", 0.5 * (tensor[owner] + tensor[neighbor]), normal
+    )
+    np.testing.assert_allclose(
+        np.asarray(evaluation.face_fluxes[0]), expected_flux, rtol=1e-9, atol=1e-10
+    )
+
+    # The gradient is a face sum, so every interior tiled copy is a translate and
+    # the central rows of the serial residual are the periodic residual.
+    residual = np.asarray(plan.unstructured_residual(system, time, state, geometry))
+    tiled_residual = np.asarray(
+        plan.unstructured_residual(system, time, tiled_state, reference.geometry)
+    )
+    np.testing.assert_allclose(residual, tiled_residual[:n], rtol=1e-9, atol=1e-10)
+    assert float(np.max(np.abs(residual))) > 1.0e-3
+    volumes = np.asarray(geometry.cell_volumes)[:, None]
+    np.testing.assert_allclose(
+        np.sum(volumes * (residual - np.asarray(evaluation.cell_source)), axis=0),
+        0.0,
+        atol=1.0e-12,
+    )
+
+    report = plan.unstructured_stability_report(system, state, geometry)
+    diffusivity = np.broadcast_to(
+        np.asarray(system.maximum_diffusivity(tiled_state, None)),
+        (reference.geometry.cell_count,),
+    )
+    rates = _stability_rates(reference.geometry, diffusivity)[:n]
+    np.testing.assert_allclose(
+        float(report.maximum_diffusive_rate), float(np.max(rates)), rtol=1e-12
+    )
+    assert int(report.limiting_cell_flat_index) == int(np.argmax(rates))
