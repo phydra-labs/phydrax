@@ -202,6 +202,8 @@ def _compile_owner_local_problem(
         raise TypeError("Owner-local FE compilation requires OwnerLocalCellGeometry.")
     mesh, coordinate_spec = view.reconstruct_local_geometry()
     if mesh is None:
+        # An empty owner carries no blocks; the periodic Delaunay producer names
+        # its single simplex block "periodic" on every owner.
         authority = phx.discretization.EmptyLocalCellMeshAuthority(
             view.source_topology_id,
             view.source_geometry_id,
@@ -209,8 +211,8 @@ def _compile_owner_local_problem(
             group.spec.group_id,
             rank,
             view.owner_directory_data.part_count,
-            view.blocks[0].name,
-            view.blocks[0].cell_kind,
+            view.blocks[0].name if view.blocks else "periodic",
+            view.blocks[0].cell_kind if view.blocks else "triangle",
             view.topological_dimension,
             view.coordinates.shape[1],
         )
@@ -629,7 +631,11 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
             target_auxiliary_layouts=(auxiliary_layout,),
             target_integrator_layouts=(previous_layout, rng_layout),
             target_material_layouts=(material_layout,),
-            retain_entry_ids=(material_entry.entry_id,),
+            # Materials are transported; graph migration keeps the authored
+            # source root, and only a changed root is re-prepared.
+            retain_entry_ids=(
+                () if target_root_reprepared else (source_root_entry.entry_id,)
+            ),
             reprepare_entries=target_reprepared_entries,
             axis_name="native_owner_local_empty_fe_repartition",
         )
