@@ -179,8 +179,15 @@ def lineage_association_rows(
     target: CellMesh,
     dimension: int,
     /,
+    *,
+    merge_coarsened_intervals: bool = False,
 ) -> AssociationLineageRows:
-    """Map lineage-supported target entities to one agreeing source association row."""
+    """Map lineage-supported target entities to one agreeing source association row.
+
+    ``merge_coarsened_intervals`` admits target entities whose parents are all
+    coarsened into them and agree up to their parameter intervals and points;
+    the caller owns the merged parameterization.
+    """
     if not isinstance(association, GeometryAssociation):
         raise TypeError("association must be GeometryAssociation.")
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
@@ -195,6 +202,7 @@ def lineage_association_rows(
     record = lineage.entity_lineage(dimension)
     source_ids = np.asarray(record.source_global_ids, dtype=np.int64)
     target_ids = np.asarray(record.target_global_ids, dtype=np.int64)
+    relation_kinds = np.asarray(record.relation_kinds, dtype=np.int32)
     source_table_ids = np.asarray(association.target_global_ids, dtype=np.int64)
     source_row_by_id = {
         int(identifier): row for row, identifier in enumerate(source_table_ids.tolist())
@@ -218,7 +226,18 @@ def lineage_association_rows(
             parents = np.asarray((target_id,), dtype=np.int64)
         if not parent_rows:
             continue
-        identities = {_row_identity(association, row) for row in parent_rows}
+        merged = (
+            merge_coarsened_intervals
+            and len(parent_rows) > 1
+            and bool(
+                np.all(
+                    relation_kinds[relation_rows] == int(EntityLineageKind.COARSENED_INTO)
+                )
+            )
+        )
+        # Interval and parameter point are the last two identity entries.
+        width = -2 if merged else None
+        identities = {_row_identity(association, row)[:width] for row in parent_rows}
         if len(identities) != 1:
             raise ValueError(
                 f"Association transfer cannot merge distinct source strata onto target entity {target_id}."
@@ -232,8 +251,8 @@ def lineage_association_rows(
                 strict=True,
             )
             if parent_row >= 0
-            and _row_identity(association, parent_row)
-            == _row_identity(association, first)
+            and _row_identity(association, parent_row)[:width]
+            == _row_identity(association, first)[:width]
         ]
         output_targets.append(int(target_id))
         output_parents.append(
