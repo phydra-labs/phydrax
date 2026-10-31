@@ -2259,16 +2259,10 @@ def _mapped_layer_surface_chart_witness(
             )
             covered_area = Fraction(0)
             for chart_id, relation_row, source_key in face_charts:
-                relation_cells = chart_root_cells[relation_row]
-                relation_side = np.flatnonzero(
-                    relation_cells == int(control.source_cell_id)
-                )
-                if relation_side.size != 1:
+                # The query keeps one selected root-cell side per polygon.
+                if int(chart_root_cells[relation_row]) != int(control.source_cell_id):
                     continue
-                if (
-                    int(chart_root_local_faces[relation_row, int(relation_side[0])])
-                    != root_face_local
-                ):
+                if int(chart_root_local_faces[relation_row]) != root_face_local:
                     raise ValueError(
                         "Mapped layer source chart changes its root local-face incidence."
                     )
