@@ -3657,6 +3657,72 @@ def _exact_affine_target_reference_preimage(
     return None
 
 
+def _tetrahedron_local_points(
+    points: Sequence[Point], vertices: Tet, /
+) -> tuple[Point, ...] | None:
+    """Exact local coordinates of points in the affine frame of one tetrahedron."""
+    origin = vertices[0]
+    matrix = tuple(
+        tuple(vertices[column + 1][row] - origin[row] for column in range(3))
+        for row in range(3)
+    )
+    local: list[Point] = []
+    for point in points:
+        right = tuple((point[axis] - origin[axis],) for axis in range(3))
+        try:
+            solved = solve_exact(matrix, right)
+        except ValueError:
+            return None
+        values = tuple(solved[axis][0] for axis in range(3))
+        if not all(isinstance(value, Fraction) for value in values):
+            return None
+        local.append(_as_point(values))
+    return tuple(local)
+
+
+def _shared_chart_reference_pieces(
+    source_chart: Sequence[Expression],
+    target_chart: Sequence[Expression],
+    source_vertices: Tet,
+    target_vertices: Tet,
+    /,
+) -> tuple[tuple[Tet, ...], tuple[Tet, ...]] | None:
+    """Exact overlap pieces of two cells whose charts differ by their corner frames.
+
+    When the target chart is the source chart composed with the exact affine
+    map between the two corner frames, both charts are one map over the root
+    reference and their overlap is the exact clip of the corner tetrahedra. The
+    pieces are returned in source- and target-local reference coordinates;
+    ``None`` means the charts are not so related.
+    """
+    target_local = _tetrahedron_local_points(target_vertices, source_vertices)
+    if target_local is None:
+        return None
+    target_in_source = _as_tetrahedron(target_local)
+    if _determinant3(target_in_source) <= 0:
+        return None
+    arguments = _affine_arguments_from_vertices(target_in_source)
+    if not all(
+        expression_equal(compose_expression(source, arguments), target)
+        for source, target in zip(source_chart, target_chart, strict=True)
+    ):
+        return None
+    source_pieces = tuple(
+        piece
+        for piece in _clip_exact_tetrahedra(
+            _canonical_reference_tetrahedron(), target_in_source
+        )
+        if _tetrahedron_measure(piece)
+    )
+    target_pieces = []
+    for piece in source_pieces:
+        local = _tetrahedron_local_points(piece, target_in_source)
+        if local is None:
+            return None
+        target_pieces.append(_as_tetrahedron(local))
+    return source_pieces, tuple(target_pieces)
+
+
 def _integrate_general_chart_overlap(
     source_chart: Sequence[Expression],
     target_chart: Sequence[Expression],
@@ -4379,6 +4445,18 @@ def prepare_material_reference_volume_overlap(
             and not (source_record.corner_image and target_record.corner_image)
             else None
         )
+        shared_pieces = (
+            _shared_chart_reference_pieces(
+                source_record.chart_arguments,
+                target_record.chart_arguments,
+                source_record.vertices,
+                target_record.vertices,
+            )
+            if curved_general
+            and affine_preimage is None
+            and not (source_record.corner_image and target_record.corner_image)
+            else None
+        )
         if curved_general and source_record.corner_image and target_record.corner_image:
             exact_pieces = _clip_exact_tetrahedra(
                 source_record.vertices, target_record.vertices
@@ -4473,6 +4551,52 @@ def prepare_material_reference_volume_overlap(
             ):
                 raise CommonRootOverlapError(
                     "An exact affine inverse-chart inclusion is not finitely representable.",
+                    supermesh_owner.CommonRefinementStatus.PREDICATE_UNCERTAIN,
+                    integration_error=max(root_error, source_error, target_error),
+                    unresolved_reference_tetrahedron=source_record.vertices,
+                )
+        elif shared_pieces is not None:
+            source_pieces, target_pieces = shared_pieces
+            if not source_pieces:
+                continue
+            root_integrand = multiply(
+                compose_expression(
+                    root_determinants[root_row(source_record.root_id)],
+                    source_record.chart_arguments,
+                ),
+                _coordinate_jacobian_determinant(source_record.chart_arguments),
+            )
+            values, errors, exact_count, enclosed_count = _integrate_piece_bank(
+                source_pieces,
+                (root_integrand, source_determinants[source_row]),
+                integration_policy,
+                rule_points,
+                rule_weights,
+            )
+            exact_integral_count += exact_count
+            enclosed_integral_count += enclosed_count
+            root_value, source_value = float(values[0]), float(values[1])
+            root_error, source_error = float(errors[0]), float(errors[1])
+            values, errors, exact_count, enclosed_count = _integrate_piece_bank(
+                target_pieces,
+                (target_determinants[target_row],),
+                integration_policy,
+                rule_points,
+                rule_weights,
+            )
+            exact_integral_count += exact_count
+            enclosed_integral_count += enclosed_count
+            target_value, target_error = float(values[0]), float(errors[0])
+            if any(
+                value <= error
+                for value, error in (
+                    (root_value, root_error),
+                    (source_value, source_error),
+                    (target_value, target_error),
+                )
+            ):
+                raise CommonRootOverlapError(
+                    "An exact shared-chart overlap is not finitely representable.",
                     supermesh_owner.CommonRefinementStatus.PREDICATE_UNCERTAIN,
                     integration_error=max(root_error, source_error, target_error),
                     unresolved_reference_tetrahedron=source_record.vertices,
