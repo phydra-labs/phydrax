@@ -373,6 +373,32 @@ def _surface_query_root(source: SourceBoundaryQuery, /) -> MeshingDomainBoundary
     raise TypeError("Surface fidelity requires a retained MeshingDomain source query.")
 
 
+def _surface_chart_witness_root(
+    source: SourceBoundaryQuery,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+) -> MeshingDomainBoundarySource | None:
+    """Return the current domain authority of a surface chart witness source."""
+    from ..meshing._surface_boundary_sources import SurfaceChartBoundarySource
+    from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
+
+    if isinstance(source, MeshingDomainBoundarySource):
+        source.require_current()
+        return source
+    if isinstance(source, SurfaceNativeRestrictionBoundarySource):
+        source.require_current()
+        return source.root
+    if isinstance(source, SurfaceChartBoundarySource) and isinstance(
+        source.root, MeshingDomainBoundarySource
+    ):
+        # A chart-deformation query answers boundary queries through its domain root,
+        # so that root is the authority; the query must still bind this target map.
+        source.require_target_binding(mesh, geometry)
+        return source.root
+    return None
+
+
 def _validate_surface_root_mesh_bindings(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1255,11 +1281,11 @@ def validate_source_fidelity_witness(
         _source_point_correspondences(mesh, geometry, source, witness)
         return
     if isinstance(witness, SurfaceChartWitness):
-        domain_source = _surface_query_root(source)
-        if isinstance(source, SurfaceNativeRestrictionBoundarySource):
-            source.require_current()
-        else:
-            domain_source.require_current()
+        domain_source = _surface_chart_witness_root(source, mesh, geometry)
+        if domain_source is None:
+            raise TypeError(
+                "Surface fidelity requires a retained MeshingDomain source query."
+            )
         _validate_surface_root_mesh_bindings(mesh, geometry, source, witness)
         renewed = SurfaceChartWitness(
             geometry_id=witness.geometry_id,
@@ -5784,11 +5810,8 @@ def certify_source_fidelity(
         raise TypeError(
             "witness must be a member of the exported SourceFidelityWitness union."
         )
-    from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
-
-    if not isinstance(
-        source, (MeshingDomainBoundarySource, SurfaceNativeRestrictionBoundarySource)
-    ):
+    domain_source = _surface_chart_witness_root(source, mesh, geometry)
+    if domain_source is None:
         return _unresolved_fidelity(
             mesh,
             geometry,
@@ -5806,11 +5829,6 @@ def certify_source_fidelity(
                 ),
             ),
         )
-    domain_source = _surface_query_root(source)
-    if isinstance(source, SurfaceNativeRestrictionBoundarySource):
-        source.require_current()
-    else:
-        domain_source.require_current()
     coverage = domain_source.boundary_chart_cover()
     findings = list(coverage.findings)
     if not coverage.complete or coverage.semantics != "certified" or findings:
