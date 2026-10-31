@@ -516,10 +516,12 @@ def test_revolution_one_vertex_conic_uses_rooted_turn_for_nonzero_start() -> Non
     )
     geometry = model.geometry
 
+    # Profile-turn uses close the one-vertex ring; the angular-turn wrapper is the
+    # forward seam use on the closing native-period sheet.
     periodic_indices = tuple(
         index
         for index, pcurve in enumerate(geometry.pcurves)
-        if isinstance(pcurve, PeriodicPCurve)
+        if isinstance(pcurve, PeriodicPCurve) and pcurve.period_shifts[1] != 0
     )
     assert periodic_indices
     for index in periodic_indices:
@@ -1210,7 +1212,13 @@ def test_authored_revolution_seam_coedges_have_exact_source_lifts(
     assert observed_families == support_families
     assert lifts == [True, True]
 
-    face, coedge = incident[0]
+    # A sphere ring uses its rooted profile turn; the negative controls below
+    # perturb the plain angular line chart of the other incident use.
+    face, coedge = next(
+        (face, coedge)
+        for face, coedge in incident
+        if isinstance(geometry.pcurves[coedge], LineCurve)
+    )
     patch = model.patches[face]
     assert isinstance(patch, RevolutionSurface)
     region = SurfaceRegion(
