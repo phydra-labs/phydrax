@@ -42,17 +42,27 @@
 // Passes and termination (no iteration caps):
 //  * quality: worst-first over triangles below the full score; an edit is
 //    admitted only if every created score strictly exceeds the replaced
-//    patch's worst score, so the multiset of quantized scores decreases in
-//    the well-founded multiset order;
+//    patch's worst score, and every surviving edge neighbor of the created
+//    patch (whose fold factor the edit changes) either keeps its score or
+//    also exceeds it, so the multiset of quantized scores decreases in the
+//    well-founded multiset order;
 //  * regularization: collapse of an edge shorter than 4/5 of the target
 //    length, or a flip that strictly lowers the squared valence deviation
-//    from six over its four vertices, admitted only if no created score falls
-//    below the replaced patch's worst. Collapses lower the vertex count and
-//    flips the integer valence energy, so (vertex count, valence energy)
-//    decreases lexicographically and the sweeps terminate;
+//    from six over its four vertices, admitted only if no created or changed
+//    neighbor score falls below the replaced patch's worst. Collapses lower
+//    the vertex count and flips the integer valence energy, so (vertex
+//    count, valence energy) decreases lexicographically and the sweeps
+//    terminate;
 //  * the passes run quality, regularization, quality.
 // The score of a triangle is floor(2^20 * min(1, angle_min / minimum_angle) *
-// min(1, (4/3) h / edge_max)); `unmet` counts surviving triangles below 2^20.
+// min(1, (4/3) h / edge_max) * fold), fold being the minimum over its edges of
+// min(1, (180 - turn) / (180 - maximum_normal_turn)) with turn the angle
+// between the unit normals of the triangle and its edge neighbor. Without the
+// fold factor a folded cluster of well-shaped triangles scores full; two
+// boundary triangles meeting at turn t bound every tetrahedron on their edge
+// to a dihedral angle of at most 180 - t, so the default 90 degree bound keeps
+// the surface free of the acute input angles volume refinement cannot fix.
+// `unmet` counts surviving triangles below 2^20.
 #pragma once
 
 #include <array>
@@ -86,6 +96,7 @@ class TriangleAdmission {
 struct RemeshTargets {
   double edge_length = 0;              // h
   double minimum_angle_degrees = 30;   // full-score minimum angle
+  double maximum_normal_turn_degrees = 90;  // full-score edge normal turn
 };
 
 struct RemeshCounters {
