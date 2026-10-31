@@ -2068,8 +2068,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         runtime_state: FiniteVolumeRuntimeState,
         /,
     ) -> None:
-        if not isinstance(runtime_state, FiniteVolumeRuntimeState):
-            raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
         content = runtime_state.content_state
         journal = runtime_state.topology_journal
         if content.precision.policy_id != self.precision.policy_id:
@@ -2173,7 +2171,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             )
         return cell_ids
 
-    @checked
     def owner_local_cell_ids(self) -> np.ndarray:
         """Return exact runtime row IDs for owner-local accepted state arrays."""
         return self._owner_local_runtime_cell_ids()
@@ -5763,8 +5760,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise ValueError(
                 "Repartition execution group differs from its source runtime."
             )
-        if not isinstance(accepted_source, FiniteVolumeValidatedRuntimeState):
-            raise TypeError("accepted_source must be FiniteVolumeValidatedRuntimeState.")
         if not isinstance(cell_state_banks, tuple) or any(
             not isinstance(spec, FiniteVolumeOwnerLocalCellStateBankSpec)
             for spec in cell_state_banks
