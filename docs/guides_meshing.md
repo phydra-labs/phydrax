@@ -2069,9 +2069,15 @@ trusted native refinement or optimization and returns a
 `MeshProposalTransaction`. Safety audit and compliance are separate evidence;
 rejection or rollback retains the accepted source.
 
-The native size/metric proposal route performs one triangle-refinement step.
-It does not claim anisotropic adaptation or that requested final sizes were
-achieved. Use an appropriate external metric provider for those requests.
+Native marking, size, and metric proposals require one simplex block: T3
+triangles (planar or embedded surfaces) or T4 tetrahedra (`tetrahedron` or the
+native PLC `simplex:3` block). Positive marks execute native triangle or
+tetrahedron bisection. Vertex sizes are clamped
+and graded over the mesh edges, then executed as the isotropic metric
+`I / h**2`; vertex metric tensors are symmetrized, projected SPD, bounded, and
+graded. Both execute through `NATIVE_METRIC_2D`, `NATIVE_METRIC_SURFACE`, or
+`NATIVE_METRIC_3D` toward the unit-mesh criterion; compliance reports any
+unmet target rather than claiming it.
 Mesh promotion does not implicitly transfer PDE fields: consume the exposed
 transition/transfer through the solver topology transaction.
 

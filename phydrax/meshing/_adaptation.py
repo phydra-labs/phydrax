@@ -1021,6 +1021,13 @@ def _check_route_request(
 ) -> None:
     mesh = source.mesh
     kinds = {block.cell_kind for block in mesh.blocks}
+    # Host routes treat native 3-simplex blocks as T4; device layouts are T4 only.
+    tetrahedra = (
+        {"tetrahedron"}
+        if policy.route
+        in (MeshAdaptationRoute.DEVICE_BISECTION, MeshAdaptationRoute.DEVICE_METRIC_3D)
+        else {"tetrahedron", "simplex:3"}
+    )
     match policy.route:
         case MeshAdaptationRoute.NATIVE_BISECTION | MeshAdaptationRoute.DEVICE_BISECTION:
             if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
@@ -1031,8 +1038,10 @@ def _check_route_request(
                 )
             if request.layer_columns is not None:
                 raise ValueError("layer_columns applies only to NATIVE_MIXED.")
-            if kinds != {"triangle"} and kinds != {"tetrahedron"}:
-                raise ValueError("Bisection requires triangle or tetrahedron blocks.")
+            if kinds != {"triangle"} and not kinds <= tetrahedra:
+                raise ValueError(
+                    f"{policy.route.name} requires triangle or tetrahedron blocks."
+                )
             _require_native_source(source, policy.association_transfer)
             _check_marked_source(source, request)
         case MeshAdaptationRoute.NATIVE_MIXED:
@@ -1089,7 +1098,7 @@ def _check_route_request(
             if not isinstance(request, MetricMeshAdaptation):
                 raise TypeError(f"{policy.route.name} requires a metric request.")
             if (
-                kinds != {"tetrahedron"}
+                not kinds <= tetrahedra
                 or mesh.ambient_dimension != 3
                 or mesh.topological_dimension != 3
             ):
@@ -2295,7 +2304,7 @@ def _bisection_coarsening_witness(
         if root is None or record_row is None:
             raise ValueError("Coarsening target is not a retained refinement parent.")
         root_block, root_row = root
-        if root_block.cell_kind not in ("triangle", "tetrahedron"):
+        if root_block.cell_kind not in ("triangle", "tetrahedron", "simplex:3"):
             raise ValueError("Exact bisection coarsening maps require simplex parents.")
         root_vertices = source_vertex_ids[
             np.asarray(root_block.vertices[root_row], dtype=np.int64)
