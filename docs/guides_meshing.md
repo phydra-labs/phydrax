@@ -229,6 +229,8 @@ bound-method pytrees, which flatten the whole domain on every call, and
 `resolve_entity_id` bisects a per-stratum key index instead of fingerprinting
 every slot. Per-entity loops over a domain with one patch per source face
 therefore stay linear. Scope-bank numeric IDs and the `domain_id` are unchanged.
+`ReconstructedGeometrySource` methods bind the same way, so per-row source-key
+lookups over a reconstructed surface do not flatten its domain.
 
 BRep material regions bind to their source solid occurrences, and each region's
 full oriented face/sign boundary must match the supplied topology. Missing
