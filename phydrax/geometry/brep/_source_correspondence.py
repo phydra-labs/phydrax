@@ -11,25 +11,25 @@ from fractions import Fraction
 import numpy as np
 
 from ...discretization._exact_algebraic_geometry import (
+    coefficient_interval,
     ExactScalar,
     RadicalElement,
-    coefficient_interval,
     rational_coefficient,
 )
 from .._rational import fraction_up, rational_cross, rational_vector
-from ._exact import fraction_norm_upper, square_root_interval, gram_deviation_bound
+from ._exact import fraction_norm_upper, gram_deviation_bound, square_root_interval
 from ._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
     BSplineCurve,
     CircleCurve,
-    EllipseCurve,
+    ConicRootLinePCurve,
     CylinderPatch,
+    EllipseCurve,
     ExactLineCurve,
     LineCurve,
     OffsetCurve,
     PlanePatch,
-    SurfaceIsoparametricCurve,
 )
 from ._placed import PlacedCurve, source_transform_bounds
 
@@ -141,6 +141,47 @@ def _affine_curve_coefficients(
         return tuple(curve.first_exact[i] - point[i] for i in range(len(point))), tuple(
             curve.last_exact[i] - curve.first_exact[i] for i in range(len(point))
         )
+    if isinstance(curve, BSplineCurve):
+        # A clamped degree-one span with equal weights is the exact segment
+        # P0 + (t - a) / (b - a) * (P1 - P0) on its knot interval [a, b].
+        if (
+            curve.degree != 1
+            or len(curve.exact_control_points) != 2
+            or len(curve.exact_knots) != 4
+            or curve.exact_weights[0] != curve.exact_weights[1]
+        ):
+            return None
+        first_point, last_point = curve.exact_control_points
+        lower, _, _, upper = curve.exact_knots
+        if (
+            len(first_point) != len(point)
+            or curve.exact_knots[1] != lower
+            or curve.exact_knots[2] != upper
+            or not upper > lower
+        ):
+            return None
+        span = upper - lower
+        direction = tuple(
+            (last_point[i] - first_point[i]) / span for i in range(len(point))
+        )
+        return tuple(
+            first_point[i] - lower * direction[i] - point[i] for i in range(len(point))
+        ), direction
+    if isinstance(curve, ConicRootLinePCurve):
+        # Only the principal root at angle zero has a rational chart coordinate;
+        # every other root angle is transcendental in the conic parameter.
+        root = curve.root
+        if (
+            len(point) != 2
+            or root.cosine_exact != 1
+            or root.sine_exact != 0
+            or root.turns != 0
+        ):
+            return None
+        return (
+            curve.phase_shift_exact - point[0],
+            curve.height_origin_exact - point[1],
+        ), (Fraction(0), curve.height_direction_exact)
     return None
 
 

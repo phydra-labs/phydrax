@@ -248,6 +248,7 @@ from phydrax.geometry.brep._intersection import (
 )
 from phydrax.geometry.brep._intersection_curve import CurveTrimSegment, SurfaceRegion
 from phydrax.geometry.brep._model import (
+    _certify_edge_face_gap_bounds,
     BRepEntityId,
     BRepGeometry,
     BRepImportReport,
@@ -562,7 +563,12 @@ def _offset_ruled_surface_model(contract: SpatialCoordinateContract, /) -> BRepM
             Fraction(1, 3),
             direction=(0.0, 0.0, 1.0),
         ),
-        LineCurve((0.0, 2.0 / 3.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve(
+            (0.0, 2.0 / 3.0, 0.0),
+            (1.0, 0.0, 0.0),
+            origin_exact=(Fraction(0), Fraction(2, 3), Fraction(0)),
+            direction_exact=(Fraction(1), Fraction(0), Fraction(0)),
+        ),
     )
     return BRepModel(
         geometry=geometry,
@@ -592,16 +598,6 @@ def _boolean_curve_carrier_model(contract: SpatialCoordinateContract, /) -> BRep
     )
     curve_carriers = (exact_curve, *geometry.curves[1:])
     patch = source.patches[0]
-    trim_domain = TrimDomain.from_curve_loops(
-        (
-            (
-                CurveTrimSegment(LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0),
-                CurveTrimSegment(LineCurve((1.0, 0.0), (0.0, 1.0)), 0.0, 1.0),
-                CurveTrimSegment(LineCurve((1.0, 1.0), (-1.0, 0.0)), 0.0, 1.0),
-                CurveTrimSegment(LineCurve((0.0, 1.0), (0.0, -1.0)), 0.0, 1.0),
-            ),
-        )
-    )
     identity = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
     conic_root = ConicParameterRoot(
         CircleCurve(
@@ -652,6 +648,16 @@ def _boolean_curve_carrier_model(contract: SpatialCoordinateContract, /) -> BRep
         (None, ConicParameterEndpoint(conic_root, pcurves[0], Fraction(1), conic_point)),
         (ConicParameterEndpoint(conic_root, pcurves[1], Fraction(0), conic_point), None),
         *geometry.coedge_endpoint_roots[2:],
+    )
+    trim_domain = TrimDomain.from_curve_loops(
+        (
+            tuple(
+                CurveTrimSegment(
+                    pcurve, 0.0, 1.0, first_root=roots[0], last_root=roots[1]
+                )
+                for pcurve, roots in zip(pcurves, coedge_endpoint_roots, strict=True)
+            ),
+        )
     )
     rebuilt_geometry = BRepGeometry(
         vertex_points=geometry.vertex_points,
@@ -824,9 +830,16 @@ def _refined_rational_patch(contract: SpatialCoordinateContract, /) -> BRepModel
         (Fraction(0), Fraction(1)), (Fraction(0), Fraction(1))
     )
     refinement = source_mesh.refine((source_mesh.cells[0].cell_id,))
-    tiny = Fraction(1, 10**40)
+    # Non-dyadic, yet inside the exact predicates' [2**-120, 2**120] coordinate range.
+    tiny = Fraction(1, 3 * 2**100)
+    # Greville control points reproduce the identity chart, so the square's z=0
+    # edges lift exactly except for the ``tiny`` lift of the first control point.
     exact_points = tuple(
-        (anchor.parameter[0], anchor.parameter[1], tiny if index == 0 else Fraction(0))
+        (
+            sum(anchor.local_knots.u[1:4], Fraction(0)) / 3,
+            sum(anchor.local_knots.v[1:4], Fraction(0)) / 3,
+            tiny if index == 0 else Fraction(0),
+        )
         for index, anchor in enumerate(source_mesh.anchors)
     )
     controls = np.asarray(
@@ -847,8 +860,40 @@ def _refined_rational_patch(contract: SpatialCoordinateContract, /) -> BRepModel
         transfer_plans=(refinement.transfer_plan,),
     )
     square = _square_model(contract)
+    geometry = square.geometry
+    # Declare the recomputed exact face-gap bound of every coedge.
+    face_gaps = _certify_edge_face_gap_bounds(
+        geometry,
+        (patch,),
+        parameter_bounds=square.parameter_bounds,
+        exact_unsupported=True,
+        certified_degenerate_coedges=True,
+    )
+    if face_gaps is None or max(face_gaps) > float(tiny) * 2.0:
+        raise ValueError("The lifted T-spline corner must keep a tiny face gap.")
+    declared = BRepGeometry(
+        vertex_points=geometry.vertex_points,
+        vertex_exact_points=geometry.vertex_exact_points,
+        vertex_roots=geometry.vertex_roots,
+        edge_endpoint_roots=geometry.edge_endpoint_roots,
+        coedge_endpoint_roots=geometry.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=geometry.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=face_gaps,
+        curves=geometry.curves,
+        edge_curves=geometry.edge_curves,
+        edge_ranges=geometry.edge_ranges,
+        edge_vertices=geometry.edge_vertices,
+        pcurves=geometry.pcurves,
+        coedge_edges=geometry.coedge_edges,
+        coedge_senses=geometry.coedge_senses,
+        face_loops=geometry.face_loops,
+        shell_faces=geometry.shell_faces,
+        shell_orientations=geometry.shell_orientations,
+        solid_shells=geometry.solid_shells,
+        assembly_graph=geometry.assembly_graph,
+    )
     return BRepModel(
-        geometry=square.geometry,
+        geometry=declared,
         patches=(patch,),
         parameter_bounds=square.parameter_bounds,
         orientation=square.orientation,
@@ -14023,7 +14068,7 @@ def _read(directory: Path, expected: dict[str, object], /) -> None:
     _read_surface_chart_witness(directory, expected, source_model=refined)
     patch = refined.patches[0]
     assert isinstance(patch, TSplineSurfacePatch)
-    tiny = Fraction(1, 10**40)
+    tiny = Fraction(1, 3 * 2**100)
     assert patch.exact_source_control_points[0][2] == tiny
     assert patch.exact_source_weights[0] == Fraction(1, 3)
     assert len(patch.transfer_plans) == 1
