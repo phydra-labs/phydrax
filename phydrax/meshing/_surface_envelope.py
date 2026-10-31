@@ -108,9 +108,14 @@ def _original_domain_query(source: _EnvelopeOriginal, /) -> MeshingDomainBoundar
 
 
 def _fresh_original(source: _EnvelopeOriginal, /) -> _EnvelopeOriginal:
+    # The retained meshing domain is reused only when it is exactly the
+    # construction of the recomputed inputs; the constructors rebuild otherwise.
     if isinstance(source, AuthoredTriangleSheet):
         fresh: _EnvelopeOriginal = AuthoredTriangleSheet(
-            source.vertices, source.triangles, feature_id=source.feature_id
+            source.vertices,
+            source.triangles,
+            feature_id=source.feature_id,
+            meshing_domain=source.meshing_domain,
         )
     else:
         fresh = ReconstructedGeometrySource(
@@ -122,6 +127,7 @@ def _fresh_original(source: _EnvelopeOriginal, /) -> _EnvelopeOriginal:
             persistent_edge_ids=np.asarray(source.persistent_edge_ids, dtype=np.int64),
             persistent_facet_ids=np.asarray(source.persistent_facet_ids, dtype=np.int64),
             persistent_region_id=source.persistent_region_id,
+            meshing_domain=source.meshing_domain,
         )
     if (
         fresh.source_id != source.source_id
