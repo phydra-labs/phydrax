@@ -2883,13 +2883,24 @@ def _apply_collapse_batch(
     if target_mesh is not None:
         state.target_mesh = target_mesh
     state.snapshot = state.native.arrays()
+    source_vertex_ids = {
+        int(identifier) for identifier in state.source_vertex_ids.tolist()
+    }
     for proposal in metadata["proposals"]:
         removed = int(proposal["removed"])
         kept = int(proposal["kept"])
+        removed_target = state.vertex_target_ids[removed]
         kept_target = state.vertex_target_ids[kept]
-        for source_id in state.vertex_stencils[removed]:
+        # Only a removed source vertex collapses; the stencil sources of a
+        # generated vertex survive it. Earlier collapses into the removed vertex
+        # now continue into the survivor.
+        state.history_vertex[:] = [
+            (source_id, kept_target if target_id == removed_target else target_id, kind)
+            for source_id, target_id, kind in state.history_vertex
+        ]
+        if removed_target in source_vertex_ids:
             state.history_vertex.append(
-                (source_id, kept_target, EntityLineageKind.COLLAPSED_INTO)
+                (removed_target, kept_target, EntityLineageKind.COLLAPSED_INTO)
             )
         state.vertex_target_ids.pop(removed)
         state.vertex_stencils.pop(removed)
@@ -3526,10 +3537,9 @@ def _relocation_proposals(
     protected_vertices = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
     cells = np.asarray(snapshot.tetrahedra, dtype=np.int64)
     regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
-    current_cells = vertex_ids[cells]
     current_cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
     current_records = _source_tetra_inverse(
-        points, current_cells, vertex_ids, current_cell_ids
+        points, cells, vertex_ids, current_cell_ids
     )
     current_vertex_rows = {
         int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())

@@ -271,6 +271,10 @@ def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
         volume_scope,
         phx.meshing.VolumeFillStrategy.SIMPLEX,
         size_controls=(phx.meshing.UniformSizeControl(size_scope, 0.25),),
+        # Equilateral tetrahedra do not tile space, so quotient-edge quantiles
+        # cannot all equal the target; the unit-metric band accepts lengths in
+        # [target / sqrt(2), target * sqrt(2)], i.e. relative deviation below 0.5.
+        size_compliance=phx.meshing.SizeCompliancePolicy(relative_tolerance=0.5),
     )
     result = phx.meshing.NativeMeshingProvider(
         phx.meshing.NativeMeshingOptions("periodic_delaunay")
@@ -289,5 +293,18 @@ def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
     )
     target_topology.require_coordinates(target.coordinates)
     assert result.compliance.issues == ()
+    for _, achieved in result.compliance.achieved:
+        assert 0.25 / np.sqrt(2.0) <= achieved <= 0.25 * np.sqrt(2.0)
+    # Surviving quotient vertices keep their IDs; new ones are fresh lineage IDs.
+    source_vertex_ids = set(map(int, np.asarray(quotient_vertices.entity_ids)))
+    target_vertex_ids = set(
+        map(int, np.asarray(target_topology.quotient.entity_sets[0].entity_ids))
+    )
+    assert source_vertex_ids < target_vertex_ids
+    assert min(target_vertex_ids - source_vertex_ids) > max(source_vertex_ids)
+    for degree, entities in enumerate(target_topology.quotient.entity_sets):
+        assert target_topology.allocator_next_ids[degree] > int(
+            np.max(np.asarray(entities.entity_ids))
+        )
 
 
