@@ -726,10 +726,6 @@ class _FaceEnclosure:
 # tangents for their chart Jacobian.
 _CONDITIONING_THRESHOLD = 8.0
 
-# Endpoint-sign failures double the root bracket at most this often before the
-# piece splits; each doubling costs one batched tube evaluation.
-_ROOT_BRACKET_DOUBLINGS = 4
-
 
 def _tangent_conditioner(
     tangents: tuple[
@@ -1855,11 +1851,12 @@ def _face_piece_steps(
             float(np.nextafter(gradient_norm[1] ** 2, np.inf)),
         )
     else:
-        # A bracket that misses a strict endpoint sign doubles on the failing
-        # side while its tube stays in the certified domain and phi' stays
-        # positive on it, so sign success never hinges on how the bracket
-        # estimate and the endpoint enclosures happen to scale with the piece.
-        attempt = 0
+        # A bracket that misses a strict endpoint sign widens on the failing
+        # side until it is signed, its tube leaves the certified domain, or
+        # phi' loses strict positivity on it; sign success then never hinges on
+        # how the bracket estimate and the endpoint enclosures scale with the
+        # piece. Each widening at least doubles the side, so the tube reaches
+        # the domain boundary (or binary64 overflow) after finitely many rounds.
         while True:
             tube = _lifted_box(base_box, root_parameters, gradient_p)
             tube_lower, tube_upper = _box_arrays(tube)
@@ -1966,19 +1963,21 @@ def _face_piece_steps(
             plus_signed = plus_value_lower > 0.0
             if minus_signed and plus_signed:
                 break
-            if attempt == _ROOT_BRACKET_DOUBLINGS:
-                return (
-                    None,
-                    "normal-line root chart lacks strict interval endpoint signs",
-                    True,
-                )
-            attempt += 1
             span = max(-root_parameters[0], root_parameters[1])
             lower, upper = root_parameters
+            # The monotone bounds above sign an endpoint once |T| D_lo exceeds
+            # the residual on its side; jump past that point when it beats
+            # doubling (the margin absorbs D_lo shrinking on the wider tube).
             if not minus_signed:
-                lower = 2.0 * lower if lower < 0.0 else -span
+                lower = min(
+                    2.0 * lower if lower < 0.0 else -span,
+                    -1.25 * value_high / directional_derivative[0],
+                )
             if not plus_signed:
-                upper = 2.0 * upper if upper > 0.0 else span
+                upper = max(
+                    2.0 * upper if upper > 0.0 else span,
+                    -1.25 * value_low / directional_derivative[0],
+                )
             root_parameters = (
                 float(np.nextafter(lower, -np.inf)),
                 float(np.nextafter(upper, np.inf)),
@@ -2258,6 +2257,106 @@ def _prove_face_triangles(
     return tuple(accepted), ""
 
 
+_IDENTITY_BASIS: FractionMatrix2 = (
+    (Fraction(1), Fraction(0)),
+    (Fraction(0), Fraction(1)),
+)
+# Vertices of the chord set of the standard triangle: the differences u1 - u2
+# fill the hexagon spanned by these directions and their negatives.
+_CHORD_DIRECTIONS = ((1, 0), (0, 1), (1, -1))
+
+
+def _chord_errors(
+    face: _FaceEnclosure, basis: FractionMatrix2, /
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+    """Bound the chord-mean error ``|D^3 P[d, d, B e_j]| / 24`` per coordinate.
+
+    For a map of degree at most three the chord mean of ``DP B`` differs from
+    its midpoint value by ``D^2(DP)[d, d] B / 24``, whose column ``j`` is
+    ``D^3 P[d, d, B e_j] / 24``. With ``d = B s`` this is
+    ``sum_ab D^3 P[B e_a, B e_b, B e_j] s_a s_b / 24``: the directional third
+    derivatives are formed exactly before their magnitudes are taken, and
+    ``|s_a|`` is bounded by ``B^-1`` over the chord hexagon. A needle face's
+    reference derivatives then cancel exactly along its conditioned basis
+    instead of being bounded term by term and amplified by ``B``.
+    """
+    (k00, k01), (k10, k11) = basis
+    determinant = k00 * k11 - k01 * k10
+    inverse = (
+        (k11 / determinant, -k01 / determinant),
+        (-k10 / determinant, k00 / determinant),
+    )
+    extents = tuple(
+        max(
+            abs(inverse[axis][0] * x + inverse[axis][1] * y) for x, y in _CHORD_DIRECTIONS
+        )
+        for axis in range(2)
+    )
+    columns = ((k00, k10), (k01, k11))
+    rows: list[tuple[float, float]] = []
+    for along_uu, along_uv, along_vv in face.curvatures:
+        # Third derivatives indexed by their number of v differentiations.
+        thirds = (
+            _enclosed_derivative(along_uu, 0),
+            _enclosed_derivative(along_uu, 1),
+            _enclosed_derivative(along_uv, 1),
+            _enclosed_derivative(along_vv, 1),
+        )
+        row: list[float] = []
+        for column in range(2):
+            total = Fraction(0)
+            for first in range(2):
+                for second in range(2):
+                    weights = [Fraction(0)] * 4
+                    for p in range(2):
+                        for q in range(2):
+                            for r in range(2):
+                                weights[p + q + r] += (
+                                    columns[first][p]
+                                    * columns[second][q]
+                                    * columns[column][r]
+                                )
+                    center: Polynomial = {}
+                    error = 0.0
+                    for weight, third in zip(weights, thirds, strict=True):
+                        if weight == 0:
+                            continue
+                        for exponent, coefficient in third.center.items():
+                            center[exponent] = (
+                                center.get(exponent, Fraction(0)) + weight * coefficient
+                            )
+                        if third.error:
+                            error = float(
+                                np.nextafter(
+                                    error
+                                    + float(
+                                        np.nextafter(
+                                            _exact_interval(abs(weight))[1] * third.error,
+                                            np.inf,
+                                        )
+                                    ),
+                                    np.inf,
+                                )
+                            )
+                    magnitude = (
+                        max(
+                            abs(value)
+                            for value in _widen(
+                                _poly_interval(center, _STANDARD_TRIANGLE), error
+                            )
+                        )
+                        if center or error
+                        else 0.0
+                    )
+                    if not math.isfinite(magnitude):
+                        unbounded = (math.inf, math.inf)
+                        return unbounded, unbounded, unbounded
+                    total += Fraction(magnitude) * extents[first] * extents[second]
+            row.append(_exact_interval(total / 24)[1])
+        rows.append((row[0], row[1]))
+    return rows[0], rows[1], rows[2]
+
+
 def _transversal_injectivity(
     face: _FaceEnclosure,
     orientation: int,
@@ -2290,51 +2389,10 @@ def _transversal_injectivity(
         sum(max(abs(entry[0]), abs(entry[1])) for entry in row) for row in hessian
     )
     gradient_bound = max(max(abs(entry[0]), abs(entry[1])) for entry in gradient)
-    # |D^2(DP)[d, d]| / 24 with |d_a d_b| <= 1 on the standard triangle; the
-    # third derivatives of a map of degree at most three are constants.
-    chord_errors = tuple(
-        tuple(
-            float(
-                np.nextafter(
-                    sum(
-                        max(
-                            abs(value)
-                            for value in _enclosed_interval(
-                                _enclosed_derivative(
-                                    _enclosed_derivative(tangent, first), second
-                                ),
-                                _STANDARD_TRIANGLE,
-                            )
-                        )
-                        for first in (0, 1)
-                        for second in (0, 1)
-                    )
-                    / 24.0,
-                    np.inf,
-                )
-            )
-            for tangent in row
-        )
-        for row in face.tangents
-    )
-
+    chord_errors = _chord_errors(face, _IDENTITY_BASIS)
     conditioner = face.conditioner
-    # For a conditioned face A K replaces A: det[A K, w] = det K det[A, w], and
-    # the chord error of column j is |K_0j| e_u + |K_1j| e_v per coordinate.
-    conditioned_errors = (
-        None
-        if conditioner is None
-        else tuple(
-            tuple(
-                _interval_add(
-                    _interval_scale((row[0], row[0]), abs(float(conditioner[0][column]))),
-                    _interval_scale((row[1], row[1]), abs(float(conditioner[1][column]))),
-                )[1]
-                for column in range(2)
-            )
-            for row in chord_errors
-        )
-    )
+    # For a conditioned face A K replaces A: det[A K, w] = det K det[A, w].
+    conditioned_errors = None if conditioner is None else _chord_errors(face, conditioner)
     inverse_determinant = (
         None
         if conditioner is None

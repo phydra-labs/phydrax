@@ -12,6 +12,7 @@ from phydrax.meshing._layer_core_regions import prepare_layer_region_identity
 from phydrax.meshing._layer_core_topology import cycle, faces, triangles
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
 from phydrax.meshing.providers._native_layer import _implicit_layer_surface_chart_witness
+from tests._support.implicit_layer_curving_fixtures import certified_implicit_layer_wall
 from tests._support.layer_curving_fixtures import _layer_mesh, _mixed_construction
 from tests.unit.geometry.test_implicit_source_charts import _adaptive_source
 
@@ -180,10 +181,15 @@ def test_mapped_layer_core_sizing_uses_physical_root_jacobian_bound() -> None:
     assert mapped_source_lipschitz_bound(domain) == pytest.approx(2.0)
 
 
-def test_implicit_layer_witness_projects_to_output_volume_facets() -> None:
-    if not meshcore_available():
-        pytest.skip("native boundary-layer generation requires meshcore")
-    _surface, query, contract, wall, _wall_geometry, root_witness = _adaptive_source()
+def _assert_remeshed_implicit_layer_witness(*, smooth: bool) -> tuple[str, ...]:
+    _surface, query, contract, _discovery_wall, _geometry, _ = _adaptive_source(
+        smooth=smooth
+    )
+    # The discovery scaffold has sliver triangles, so the layer wall is the
+    # certified zero-set remeshed carrier; its cells may share scaffold charts.
+    layer_wall, root_witness = certified_implicit_layer_wall(query)
+    assert dict(layer_wall.evidence)["carrier_remeshed"] == 1.0
+    wall = layer_wall.wall
     layers = _layer_mesh(wall, None)
     source, construction = _mixed_construction(
         layers,
@@ -198,20 +204,29 @@ def test_implicit_layer_witness_projects_to_output_volume_facets() -> None:
 
     assert witness.mesh_id == mesh.mesh_id
     assert witness.reference_dimension == 3
-    root_row_by_chart = {
-        chart_id: row for row, chart_id in enumerate(root_witness.source_chart_ids)
-    }
-    assert set(witness.source_chart_ids) == set(root_row_by_chart)
-    for row, chart_id in enumerate(witness.source_chart_ids):
-        root_row = root_row_by_chart[chart_id]
-        np.testing.assert_array_equal(
-            witness.implicit_cell_keys[row], root_witness.implicit_cell_keys[root_row]
-        )
-        np.testing.assert_array_equal(
-            witness.implicit_root_edge_keys[row],
-            root_witness.implicit_root_edge_keys[root_row],
-        )
-    assert np.unique(witness.entity_global_ids).size == len(root_witness.source_chart_ids)
+    assert witness.source_chart_ids == root_witness.source_chart_ids
+    np.testing.assert_array_equal(
+        witness.implicit_cell_keys, root_witness.implicit_cell_keys
+    )
+    np.testing.assert_array_equal(
+        witness.implicit_root_edge_keys, root_witness.implicit_root_edge_keys
+    )
+    assert np.unique(witness.entity_global_ids).size == wall.blocks[0].cell_count
+    return witness.source_chart_ids
+
+
+def test_implicit_layer_witness_projects_to_output_volume_facets() -> None:
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    _assert_remeshed_implicit_layer_witness(smooth=True)
+
+
+def test_remeshed_sphere_layer_witness_repeats_seeding_scaffold_charts() -> None:
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    chart_ids = _assert_remeshed_implicit_layer_witness(smooth=False)
+    # Remeshed cells name their nearest scaffold triangle, so charts repeat.
+    assert len(set(chart_ids)) < len(chart_ids)
 
 
 def test_mapped_scoped_chart_witness_allows_unrelated_target_exterior_facets() -> None:

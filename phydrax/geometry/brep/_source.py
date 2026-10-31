@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import partial
 from math import fsum
 
 import jax
@@ -12,6 +14,7 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.core import Tracer
+from jax.typing import DTypeLike
 
 from ..._physical import SpatialCoordinateContract
 from ...typing import checked
@@ -104,17 +107,94 @@ def _require_closed_solid(model: BRepModel, /) -> None:
             )
 
 
-def _host_points(points: Array, /) -> tuple[np.ndarray, tuple[int, ...]]:
-    if isinstance(points, Tracer):
-        raise TypeError(
-            "Native B-Rep source queries are host-evaluated and cannot trace through JAX."
-        )
+def _host_points(points: np.ndarray | Array, /) -> tuple[np.ndarray, tuple[int, ...]]:
     values = np.asarray(points, dtype=np.float64)
     if values.ndim == 0 or values.shape[-1] != 3 or not np.all(np.isfinite(values)):
         raise ValueError(
             "BRepSource queries must be finite points with trailing dimension three."
         )
     return values.reshape((-1, 3)), values.shape[:-1]
+
+
+def _width_limit(query: np.ndarray, /) -> np.ndarray:
+    """Admissible certified distance-enclosure width at each query point."""
+    return (
+        256.0 * np.finfo(np.float64).eps * np.maximum(1.0, np.max(np.abs(query), axis=1))
+    )
+
+
+class BRepSourceDerivativeError(TypeError):
+    """A native B-Rep source query output has no certified point derivative."""
+
+
+@partial(jax.custom_jvp, nondiff_argnums=(0,))
+def _refuse_derivative(query: str, points: Array, /) -> Array:
+    return points
+
+
+@_refuse_derivative.defjvp
+def _refuse_derivative_jvp(
+    query: str, primals: tuple[Array], tangents: tuple[Array], /
+) -> tuple[Array, Array]:
+    del primals, tangents
+    raise BRepSourceDerivativeError(
+        f"Native B-Rep source {query} has no certified point derivative; "
+        "differentiate boundary_field, or a planar-source boundary_normal."
+    )
+
+
+def _source_query(
+    points: Array,
+    host: Callable[[np.ndarray], tuple[np.ndarray, ...]],
+    outputs: tuple[tuple[tuple[int, ...], DTypeLike], ...],
+    /,
+    *,
+    underived: str | None,
+) -> tuple[Array, ...]:
+    """Evaluate a host source query at concrete or traced points.
+
+    The query is always evaluated on the host from exact source carriers. Traced
+    points reach it through a callback on their primal values. ``underived=None``
+    states that the outputs are discrete or locally constant data, or that the
+    caller supplies their derivative; otherwise differentiating the outputs raises
+    ``BRepSourceDerivativeError`` naming that query instead of yielding zeros.
+    """
+    if not isinstance(points, Tracer):
+        query, leading = _host_points(points)
+        return tuple(
+            jnp.asarray(np.asarray(value).reshape((*leading, *shape)), dtype=dtype)
+            for value, (shape, dtype) in zip(host(query), outputs, strict=True)
+        )
+    values = jnp.asarray(points, dtype=jnp.float64)
+    if values.ndim == 0 or values.shape[-1] != 3:
+        raise ValueError(
+            "BRepSource queries must be finite points with trailing dimension three."
+        )
+    leading = values.shape[:-1]
+
+    def callback(concrete: np.ndarray, /) -> tuple[np.ndarray, ...]:
+        query, batch = _host_points(concrete)
+        return tuple(
+            np.asarray(value, dtype=dtype).reshape((*batch, *shape))
+            for value, (shape, dtype) in zip(host(query), outputs, strict=True)
+        )
+
+    arguments = (
+        jax.lax.stop_gradient(values)
+        if underived is None
+        else jax.lax.stop_gradient(_refuse_derivative(underived, values))
+    )
+    return tuple(
+        jax.pure_callback(
+            callback,
+            tuple(
+                jax.ShapeDtypeStruct((*leading, *shape), dtype)
+                for shape, dtype in outputs
+            ),
+            arguments,
+            vmap_method="expand_dims",
+        )
+    )
 
 
 def _face_polygon_vertices(model: BRepModel, face: int, /) -> tuple[np.ndarray, ...]:
@@ -395,88 +475,109 @@ class _BRepKernel(GeometryKernel):
         status[tied] = BRepProjectionStatus.AMBIGUOUS
         return closest, normals, faces, best_lower, best_upper, status
 
+    def _certified_boundary(
+        self, query: np.ndarray, role: str, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        closest, normals, _, lower, upper, status = self._nearest_boundary(query)
+        if (
+            np.any(status == BRepProjectionStatus.AMBIGUOUS)
+            or not np.all(np.isfinite(normals))
+            or np.any(upper - lower > _width_limit(query))
+        ):
+            raise ValueError(
+                f"{role} is unresolved at an ambiguous or uncertified minimum."
+            )
+        return closest, normals
+
+    def _boundary_frame(self, query: np.ndarray, /) -> tuple[np.ndarray, ...]:
+        closest, normals = self._certified_boundary(query, "Signed B-Rep boundary field")
+        return closest, normals, self._inside(query)
+
+    def _boundary_normals(self, query: np.ndarray, /) -> tuple[np.ndarray, ...]:
+        return (self._certified_boundary(query, "B-Rep boundary normal")[1],)
+
+    def _closest_rows(self, query: np.ndarray, /) -> tuple[np.ndarray, ...]:
+        closest, normals, faces, lower, upper, status = self._nearest_boundary(query)
+        distances = np.linalg.norm(query - closest, axis=-1)
+        signed = np.where(self._inside(query), -distances, distances)
+        unique = np.isin(status, (BRepProjectionStatus.UNIQUE, BRepProjectionStatus.SEAM))
+        certified = upper - lower <= _width_limit(query)
+        valid_normal = unique & np.all(np.isfinite(normals), axis=1) & certified
+        return closest, signed, normals, faces, unique, valid_normal, certified
+
     def contains(self, state: DesignState, points: Array, /) -> Array:
         del state
-        query, leading = _host_points(points)
-        return jnp.asarray(self._inside(query).reshape(leading), dtype=jnp.bool_)
+        (inside,) = _source_query(
+            points,
+            lambda query: (self._inside(query),),
+            (((), jnp.bool_),),
+            underived=None,
+        )
+        return inside
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         del state
-        query, leading = _host_points(points)
-        closest, normals, _, lower, upper, status = self._nearest_boundary(query)
-        width_limit = (
-            256.0
-            * np.finfo(np.float64).eps
-            * np.maximum(1.0, np.max(np.abs(query), axis=1))
+        # The signed field's derivative is the oriented normal, supplied by the
+        # custom JVP of ``_oriented_boundary_field`` on the traced points.
+        closest, normals, inside = _source_query(
+            points,
+            self._boundary_frame,
+            (((3,), jnp.float64), ((3,), jnp.float64), ((), jnp.bool_)),
+            underived=None,
         )
-        if (
-            np.any(status == BRepProjectionStatus.AMBIGUOUS)
-            or not np.all(np.isfinite(normals))
-            or np.any(upper - lower > width_limit)
-        ):
-            raise ValueError(
-                "Signed B-Rep boundary field is unresolved at an ambiguous or uncertified minimum."
-            )
-        inside = self._inside(query)
         return _oriented_boundary_field(
-            jnp.asarray(query),
-            jnp.asarray(closest),
-            jnp.asarray(normals),
-            jnp.asarray(inside),
-        ).reshape(leading)
+            jnp.asarray(points, dtype=jnp.float64), closest, normals, inside
+        )
 
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         del state
-        query, leading = _host_points(points)
-        _, normals, _, lower, upper, status = self._nearest_boundary(query)
-        width_limit = (
-            256.0
-            * np.finfo(np.float64).eps
-            * np.maximum(1.0, np.max(np.abs(query), axis=1))
+        # Over affine planar faces the selected face normal is locally constant;
+        # curved faces would need their shape operator, which is not certified.
+        planar = all(
+            _affine_planar_face(self.model, face)
+            for face in range(len(self.model.patches))
         )
-        if (
-            np.any(status == BRepProjectionStatus.AMBIGUOUS)
-            or not np.all(np.isfinite(normals))
-            or np.any(upper - lower > width_limit)
-        ):
-            raise ValueError(
-                "B-Rep boundary normal is unresolved at an ambiguous or uncertified minimum."
-            )
-        return jnp.asarray(normals, dtype=jnp.float64).reshape((*leading, 3))
+        (normals,) = _source_query(
+            points,
+            self._boundary_normals,
+            (((3,), jnp.float64),),
+            underived=None if planar else "boundary_normal",
+        )
+        return normals
 
     def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         del state
-        query, leading = _host_points(points)
-        closest, normals, faces, lower, upper, status = self._nearest_boundary(query)
-        inside = self._inside(query)
-        displacement = query - closest
-        distances = np.linalg.norm(displacement, axis=-1)
-        signed = np.where(inside, -distances, distances)
-        unique = np.isin(status, (BRepProjectionStatus.UNIQUE, BRepProjectionStatus.SEAM))
-        width_limit = (
-            256.0
-            * np.finfo(np.float64).eps
-            * np.maximum(1.0, np.max(np.abs(query), axis=1))
-        )
-        valid_normal = (
-            unique & np.all(np.isfinite(normals), axis=1) & (upper - lower <= width_limit)
-        )
-        return ClosestPointResult(
-            closest_point=jnp.asarray(closest, dtype=jnp.float64).reshape((*leading, 3)),
-            normal_coordinate=jnp.asarray(signed, dtype=jnp.float64).reshape(leading),
-            oriented_normal=jnp.asarray(normals, dtype=jnp.float64).reshape(
-                (*leading, 3)
+        closest, signed, normals, faces, unique, valid_normal, certified = _source_query(
+            points,
+            self._closest_rows,
+            (
+                ((3,), jnp.float64),
+                ((), jnp.float64),
+                ((3,), jnp.float64),
+                ((), jnp.int32),
+                ((), jnp.bool_),
+                ((), jnp.bool_),
+                ((), jnp.bool_),
             ),
-            source_entity_id=jnp.asarray(faces, dtype=jnp.int32).reshape(leading),
-            unique=jnp.asarray(unique, dtype=jnp.bool_).reshape(leading),
+            underived="closest_point",
+        )
+        leading = unique.shape
+        return ClosestPointResult(
+            closest_point=closest,
+            normal_coordinate=signed,
+            oriented_normal=normals,
+            source_entity_id=faces,
+            unique=unique,
             regular=jnp.zeros(leading, dtype=jnp.bool_),
             margin=jnp.zeros(leading, dtype=jnp.float64),
-            normal_coordinate_valid=jnp.asarray(valid_normal, dtype=jnp.bool_).reshape(
-                leading
-            ),
+            normal_coordinate_valid=valid_normal,
             represented_geometry_id=self.model.source_revision,
             physical_geometry_id=self.model.source_revision,
-            exact_to_physical=bool(np.all(upper - lower <= width_limit)),
+            # Exactness is a static claim: traced queries cannot inspect their
+            # certificates, so they conservatively claim none.
+            exact_to_physical=(
+                not isinstance(certified, Tracer) and bool(np.all(np.asarray(certified)))
+            ),
         )
 
     def bounds(self, state: DesignState, /) -> Array:
@@ -588,4 +689,4 @@ class _BRepKernel(GeometryKernel):
         return self.model.boundary_atlas
 
 
-__all__ = ["BRepSource"]
+__all__ = ["BRepSource", "BRepSourceDerivativeError"]

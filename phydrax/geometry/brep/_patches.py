@@ -5125,9 +5125,17 @@ type _ExactSourceBank = ExactScalar | tuple[_ExactSourceBank, ...]
 
 
 def _exact_bspline_source_bank(
-    values: object | None, represented: NDArray[np.float64], name: str, /
-) -> object:
-    numeric = np.asarray(represented, dtype=np.float64)
+    values: object | None, represented: Array, name: str, /
+) -> object | None:
+    """Return the exact bank given or derivable from concrete numeric leaves.
+
+    Traced leaves are never converted on the host: without an authored bank they
+    carry none, and an authored bank is checked against their static shape only.
+    """
+    traced = isinstance(represented, Tracer)
+    if values is None and traced:
+        return None
+    numeric = None if traced else np.asarray(represented, dtype=np.float64)
 
     def freeze(value: object) -> object:
         if isinstance(value, np.ndarray):
@@ -5143,7 +5151,11 @@ def _exact_bspline_source_bank(
             return tuple(binary_bank(component) for component in value)
         return Fraction.from_float(float(value))
 
-    bank = binary_bank(numeric) if values is None else freeze(values)
+    bank = (
+        binary_bank(cast(NDArray[np.float64], numeric))
+        if values is None
+        else freeze(values)
+    )
 
     def shape(value: object) -> tuple[int, ...]:
         if not isinstance(value, tuple):
@@ -5155,7 +5167,7 @@ def _exact_bspline_source_bank(
             raise ValueError(f"{name} must have a rectangular exact source bank.")
         return (len(value), *child_shapes[0])
 
-    if shape(bank) != numeric.shape:
+    if shape(bank) != tuple(represented.shape):
         raise ValueError(f"{name} must match its numeric source-bank shape.")
 
     def leaves(value: object) -> tuple[ExactScalar, ...]:
@@ -5166,6 +5178,8 @@ def _exact_bspline_source_bank(
         return (value,)
 
     exact_values = leaves(bank)
+    if numeric is None:
+        return bank
     for value, shadow in zip(exact_values, numeric.reshape((-1,)), strict=True):
         try:
             rounded = float(value)
@@ -5178,6 +5192,52 @@ def _exact_bspline_source_bank(
     return bank
 
 
+def _stored_exact_bank(bank: object | None, represented: Array, name: str, /) -> object:
+    """Return a stored exact bank, deriving it from concrete leaves on demand."""
+    if bank is not None:
+        return bank
+    derived = _exact_bspline_source_bank(None, represented, name)
+    if derived is None:
+        raise TypeError(
+            f"{name} is unavailable for traced B-spline coefficients; exact source "
+            "operations are host-only."
+        )
+    return derived
+
+
+def _validated_spline_leaf(
+    value: Array,
+    invalid: Callable[[Array], Array],
+    message: str,
+    /,
+) -> Array:
+    """Refuse an invalid concrete leaf eagerly and a traced leaf at execution.
+
+    ``invalid`` uses array operators only, so it applies to host and traced leaves.
+    """
+    if isinstance(value, Tracer):
+        return eqx.error_if(value, invalid(value), message)
+    if bool(invalid(cast(Array, np.asarray(value)))):
+        raise ValueError(message)
+    return value
+
+
+def _nonfinite(value: Array, /) -> Array:
+    return (~(abs(value) < np.inf)).any()
+
+
+def _nonpositive(value: Array, /) -> Array:
+    return (value <= 0.0).any()
+
+
+def _decreasing(value: Array, /) -> Array:
+    return (value[1:] < value[:-1]).any()
+
+
+def _empty_domain(degree: int, count: int, /) -> Callable[[Array], Array]:
+    return lambda knots: knots[degree] >= knots[count]
+
+
 class BSplineSurfacePatch(AbstractSurfacePatch):
     """Tensor-product rational B-spline surface with expanded knot vectors."""
 
@@ -5187,12 +5247,14 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
     v_knots: Array
     u_degree: int = eqx.field(static=True)
     v_degree: int = eqx.field(static=True)
-    exact_control_points: tuple[tuple[tuple[ExactScalar, ...], ...], ...] = eqx.field(
-        static=True
+    # Exact source banks: authored or derived from concrete leaves; ``None`` only
+    # for traced leaves without an authored bank (see the ``exact_*`` properties).
+    exact_control_point_bank: tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None = (
+        eqx.field(static=True)
     )
-    exact_weights: tuple[tuple[ExactScalar, ...], ...] = eqx.field(static=True)
-    exact_u_knots: tuple[Fraction, ...] = eqx.field(static=True)
-    exact_v_knots: tuple[Fraction, ...] = eqx.field(static=True)
+    exact_weight_bank: tuple[tuple[ExactScalar, ...], ...] | None = eqx.field(static=True)
+    exact_u_knot_bank: tuple[Fraction, ...] | None = eqx.field(static=True)
+    exact_v_knot_bank: tuple[Fraction, ...] | None = eqx.field(static=True)
     control_point_ids: tuple[tuple[int, ...], ...] | None = eqx.field(static=True)
 
     def __init__(
@@ -5222,19 +5284,19 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
             or not isinstance(v_degree, int)
         ):
             raise TypeError("B-spline degrees must be integers.")
-        if (
-            not np.all(np.isfinite(np.asarray(control_points_)))
-            or not np.all(np.isfinite(np.asarray(weights_)))
-            or not np.all(np.isfinite(np.asarray(u_knots_)))
-            or not np.all(np.isfinite(np.asarray(v_knots_)))
-        ):
-            raise ValueError("B-spline surface coefficients must be finite.")
-        if np.any(np.asarray(weights_) <= 0.0):
-            raise ValueError("B-spline surface weights must be positive.")
-        if np.any(np.diff(np.asarray(u_knots_)) < 0.0) or np.any(
-            np.diff(np.asarray(v_knots_)) < 0.0
-        ):
-            raise ValueError("B-spline surface knots must be nondecreasing.")
+        message = "B-spline surface coefficients must be finite."
+        control_points_ = _validated_spline_leaf(control_points_, _nonfinite, message)
+        weights_ = _validated_spline_leaf(weights_, _nonfinite, message)
+        u_knots_ = _validated_spline_leaf(u_knots_, _nonfinite, message)
+        v_knots_ = _validated_spline_leaf(v_knots_, _nonfinite, message)
+        # Positive weights are the admissibility contract of rational CAD splines:
+        # convex-hull enclosure proofs depend on them.
+        weights_ = _validated_spline_leaf(
+            weights_, _nonpositive, "B-spline surface weights must be positive."
+        )
+        message = "B-spline surface knots must be nondecreasing."
+        u_knots_ = _validated_spline_leaf(u_knots_, _decreasing, message)
+        v_knots_ = _validated_spline_leaf(v_knots_, _decreasing, message)
         if control_points_.ndim != 3 or control_points_.shape[-1] != 3:
             raise ValueError("control_points must have shape (num_u, num_v, 3).")
         if weights_.shape != control_points_.shape[:2]:
@@ -5253,81 +5315,69 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
             raise ValueError(
                 "v_knots length is inconsistent with control points and degree."
             )
-        if (
-            u_knots_[u_degree] >= u_knots_[control_points_.shape[0]]
-            or v_knots_[v_degree] >= v_knots_[control_points_.shape[1]]
-        ):
-            raise ValueError("B-spline surface domains must be nonempty.")
+        message = "B-spline surface domains must be nonempty."
+        u_knots_ = _validated_spline_leaf(
+            u_knots_, _empty_domain(u_degree, control_points_.shape[0]), message
+        )
+        v_knots_ = _validated_spline_leaf(
+            v_knots_, _empty_domain(v_degree, control_points_.shape[1]), message
+        )
         exact_control_points_ = cast(
-            tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+            tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None,
             _exact_bspline_source_bank(
-                exact_control_points,
-                np.asarray(control_points_, dtype=np.float64),
-                "exact_control_points",
+                exact_control_points, control_points_, "exact_control_points"
             ),
         )
         exact_weights_ = cast(
-            tuple[tuple[ExactScalar, ...], ...],
-            _exact_bspline_source_bank(
-                exact_weights,
-                np.asarray(weights_, dtype=np.float64),
-                "exact_weights",
-            ),
+            tuple[tuple[ExactScalar, ...], ...] | None,
+            _exact_bspline_source_bank(exact_weights, weights_, "exact_weights"),
         )
         exact_u_knots_ = cast(
-            tuple[Fraction, ...],
-            _exact_bspline_source_bank(
-                exact_u_knots,
-                np.asarray(u_knots_, dtype=np.float64),
-                "exact_u_knots",
-            ),
+            tuple[Fraction, ...] | None,
+            _exact_bspline_source_bank(exact_u_knots, u_knots_, "exact_u_knots"),
         )
         exact_v_knots_ = cast(
-            tuple[Fraction, ...],
-            _exact_bspline_source_bank(
-                exact_v_knots,
-                np.asarray(v_knots_, dtype=np.float64),
-                "exact_v_knots",
-            ),
+            tuple[Fraction, ...] | None,
+            _exact_bspline_source_bank(exact_v_knots, v_knots_, "exact_v_knots"),
         )
         if any(
             not isinstance(value, Fraction)
-            for value in (*exact_u_knots_, *exact_v_knots_)
+            for knots in (exact_u_knots_, exact_v_knots_)
+            if knots is not None
+            for value in knots
         ):
             raise TypeError("Surface parameter knots must be exact Fractions.")
-        if any(value <= 0 for row in exact_weights_ for value in row):
+        if exact_weights_ is not None and any(
+            value <= 0 for row in exact_weights_ for value in row
+        ):
             raise ValueError("Exact B-spline surface weights must be positive.")
-        if any(
-            second < first for first, second in zip(exact_u_knots_, exact_u_knots_[1:])
+        for knots, name, degree, count in (
+            (exact_u_knots_, "u_knots", u_degree, control_points_.shape[0]),
+            (exact_v_knots_, "v_knots", v_degree, control_points_.shape[1]),
         ):
-            raise ValueError("Exact u_knots must be nondecreasing.")
-        if any(
-            second < first for first, second in zip(exact_v_knots_, exact_v_knots_[1:])
-        ):
-            raise ValueError("Exact v_knots must be nondecreasing.")
-        if any(
-            first < second and float(first) == float(second)
-            for knots in (exact_u_knots_, exact_v_knots_)
-            for first, second in zip(knots, knots[1:])
-        ):
-            raise ValueError(
-                "Exact surface knot intervals must remain distinct in binary64."
-            )
-        if (
-            exact_u_knots_[u_degree] >= exact_u_knots_[control_points_.shape[0]]
-            or exact_v_knots_[v_degree] >= exact_v_knots_[control_points_.shape[1]]
-        ):
-            raise ValueError("Exact B-spline surface domains must be nonempty.")
+            if knots is None:
+                continue
+            if any(second < first for first, second in zip(knots, knots[1:])):
+                raise ValueError(f"Exact {name} must be nondecreasing.")
+            if any(
+                first < second and float(first) == float(second)
+                for first, second in zip(knots, knots[1:])
+            ):
+                raise ValueError(
+                    "Exact surface knot intervals must remain distinct in binary64."
+                )
+            if knots[degree] >= knots[count]:
+                raise ValueError("Exact B-spline surface domains must be nonempty.")
         self.control_points = control_points_
         self.weights = weights_
         self.u_knots = u_knots_
         self.v_knots = v_knots_
         self.u_degree = int(u_degree)
         self.v_degree = int(v_degree)
-        self.exact_control_points = exact_control_points_
-        self.exact_weights = exact_weights_
-        self.exact_u_knots = exact_u_knots_
-        self.exact_v_knots = exact_v_knots_
+        self.exact_control_point_bank = exact_control_points_
+        self.exact_weight_bank = exact_weights_
+        self.exact_u_knot_bank = exact_u_knots_
+        self.exact_v_knot_bank = exact_v_knots_
         control_point_ids_ = None
         if control_point_ids is not None:
             raw_ids = np.asarray(control_point_ids)
@@ -5350,6 +5400,42 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
                 )
             control_point_ids_ = tuple(tuple(int(value) for value in row) for row in ids)
         self.control_point_ids = control_point_ids_
+
+    @property
+    def exact_control_points(self) -> tuple[tuple[tuple[ExactScalar, ...], ...], ...]:
+        """Exact control points; host-only for traced leaves without a bank."""
+        return cast(
+            tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+            _stored_exact_bank(
+                self.exact_control_point_bank,
+                self.control_points,
+                "exact_control_points",
+            ),
+        )
+
+    @property
+    def exact_weights(self) -> tuple[tuple[ExactScalar, ...], ...]:
+        """Exact positive weights; host-only for traced leaves without a bank."""
+        return cast(
+            tuple[tuple[ExactScalar, ...], ...],
+            _stored_exact_bank(self.exact_weight_bank, self.weights, "exact_weights"),
+        )
+
+    @property
+    def exact_u_knots(self) -> tuple[Fraction, ...]:
+        """Exact u knots; host-only for traced leaves without a bank."""
+        return cast(
+            tuple[Fraction, ...],
+            _stored_exact_bank(self.exact_u_knot_bank, self.u_knots, "exact_u_knots"),
+        )
+
+    @property
+    def exact_v_knots(self) -> tuple[Fraction, ...]:
+        """Exact v knots; host-only for traced leaves without a bank."""
+        return cast(
+            tuple[Fraction, ...],
+            _stored_exact_bank(self.exact_v_knot_bank, self.v_knots, "exact_v_knots"),
+        )
 
     def identity_payload(self, /) -> dict[str, object]:
 
@@ -5512,9 +5598,13 @@ class BSplineCurve(AbstractCurve):
     weights: Array
     knots: Array
     degree: int = eqx.field(static=True)
-    exact_control_points: tuple[tuple[ExactScalar, ...], ...] = eqx.field(static=True)
-    exact_weights: tuple[ExactScalar, ...] = eqx.field(static=True)
-    exact_knots: tuple[ExactScalar, ...] = eqx.field(static=True)
+    # Exact source banks: authored or derived from concrete leaves; ``None`` only
+    # for traced leaves without an authored bank (see the ``exact_*`` properties).
+    exact_control_point_bank: tuple[tuple[ExactScalar, ...], ...] | None = eqx.field(
+        static=True
+    )
+    exact_weight_bank: tuple[ExactScalar, ...] | None = eqx.field(static=True)
+    exact_knot_bank: tuple[ExactScalar, ...] | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -5538,16 +5628,18 @@ class BSplineCurve(AbstractCurve):
             raise ValueError(
                 "Curve control points must have shape (num_control_points, 2 or 3) and align with weights."
             )
-        if (
-            not np.all(np.isfinite(np.asarray(control_points_)))
-            or not np.all(np.isfinite(np.asarray(weights_)))
-            or not np.all(np.isfinite(np.asarray(knots_)))
-        ):
-            raise ValueError("B-spline curve coefficients must be finite.")
-        if np.any(np.asarray(weights_) <= 0.0):
-            raise ValueError("B-spline curve weights must be positive.")
-        if np.any(np.diff(np.asarray(knots_)) < 0.0):
-            raise ValueError("B-spline curve knots must be nondecreasing.")
+        message = "B-spline curve coefficients must be finite."
+        control_points_ = _validated_spline_leaf(control_points_, _nonfinite, message)
+        weights_ = _validated_spline_leaf(weights_, _nonfinite, message)
+        knots_ = _validated_spline_leaf(knots_, _nonfinite, message)
+        # Positive weights are the admissibility contract of rational CAD splines:
+        # convex-hull enclosure proofs depend on them.
+        weights_ = _validated_spline_leaf(
+            weights_, _nonpositive, "B-spline curve weights must be positive."
+        )
+        knots_ = _validated_spline_leaf(
+            knots_, _decreasing, "B-spline curve knots must be nondecreasing."
+        )
         if isinstance(degree, bool) or not isinstance(degree, int):
             raise TypeError("B-spline curve degree must be an integer.")
         if degree < 1:
@@ -5556,51 +5648,76 @@ class BSplineCurve(AbstractCurve):
             raise ValueError("B-spline curve control-point count must exceed its degree.")
         if knots_.shape[0] != control_points_.shape[0] + degree + 1:
             raise ValueError("Curve knot vector length is inconsistent.")
-        if knots_[degree] >= knots_[control_points_.shape[0]]:
-            raise ValueError("B-spline curve domain must be nonempty.")
+        knots_ = _validated_spline_leaf(
+            knots_,
+            _empty_domain(degree, control_points_.shape[0]),
+            "B-spline curve domain must be nonempty.",
+        )
         exact_control_points_ = cast(
-            tuple[tuple[ExactScalar, ...], ...],
+            tuple[tuple[ExactScalar, ...], ...] | None,
             _exact_bspline_source_bank(
-                exact_control_points,
-                np.asarray(control_points_, dtype=np.float64),
-                "exact_control_points",
+                exact_control_points, control_points_, "exact_control_points"
             ),
         )
         exact_weights_ = cast(
-            tuple[ExactScalar, ...],
-            _exact_bspline_source_bank(
-                exact_weights,
-                np.asarray(weights_, dtype=np.float64),
-                "exact_weights",
-            ),
+            tuple[ExactScalar, ...] | None,
+            _exact_bspline_source_bank(exact_weights, weights_, "exact_weights"),
         )
         exact_knots_ = cast(
-            tuple[ExactScalar, ...],
-            _exact_bspline_source_bank(
-                exact_knots, np.asarray(knots_, dtype=np.float64), "exact_knots"
-            ),
+            tuple[ExactScalar, ...] | None,
+            _exact_bspline_source_bank(exact_knots, knots_, "exact_knots"),
         )
-
-        if any(value <= 0 for value in exact_weights_):
+        if exact_weights_ is not None and any(value <= 0 for value in exact_weights_):
             raise ValueError("Exact B-spline curve weights must be positive.")
-        if any(second < first for first, second in zip(exact_knots_, exact_knots_[1:])):
-            raise ValueError("Exact B-spline curve knots must be nondecreasing.")
-        if any(
-            first < second and float(first) == float(second)
-            for first, second in zip(exact_knots_, exact_knots_[1:])
-        ):
-            raise ValueError(
-                "Exact B-spline knot intervals must remain distinct in binary64."
-            )
-        if exact_knots_[degree] >= exact_knots_[control_points_.shape[0]]:
-            raise ValueError("Exact B-spline curve domain must be nonempty.")
+        if exact_knots_ is not None:
+            if any(
+                second < first for first, second in zip(exact_knots_, exact_knots_[1:])
+            ):
+                raise ValueError("Exact B-spline curve knots must be nondecreasing.")
+            if any(
+                first < second and float(first) == float(second)
+                for first, second in zip(exact_knots_, exact_knots_[1:])
+            ):
+                raise ValueError(
+                    "Exact B-spline knot intervals must remain distinct in binary64."
+                )
+            if exact_knots_[degree] >= exact_knots_[control_points_.shape[0]]:
+                raise ValueError("Exact B-spline curve domain must be nonempty.")
         self.control_points = control_points_
         self.weights = weights_
         self.knots = knots_
         self.degree = int(degree)
-        self.exact_control_points = exact_control_points_
-        self.exact_weights = exact_weights_
-        self.exact_knots = exact_knots_
+        self.exact_control_point_bank = exact_control_points_
+        self.exact_weight_bank = exact_weights_
+        self.exact_knot_bank = exact_knots_
+
+    @property
+    def exact_control_points(self) -> tuple[tuple[ExactScalar, ...], ...]:
+        """Exact control points; host-only for traced leaves without a bank."""
+        return cast(
+            tuple[tuple[ExactScalar, ...], ...],
+            _stored_exact_bank(
+                self.exact_control_point_bank,
+                self.control_points,
+                "exact_control_points",
+            ),
+        )
+
+    @property
+    def exact_weights(self) -> tuple[ExactScalar, ...]:
+        """Exact positive weights; host-only for traced leaves without a bank."""
+        return cast(
+            tuple[ExactScalar, ...],
+            _stored_exact_bank(self.exact_weight_bank, self.weights, "exact_weights"),
+        )
+
+    @property
+    def exact_knots(self) -> tuple[ExactScalar, ...]:
+        """Exact knots; host-only for traced leaves without a bank."""
+        return cast(
+            tuple[ExactScalar, ...],
+            _stored_exact_bank(self.exact_knot_bank, self.knots, "exact_knots"),
+        )
 
     def identity_payload(self, /) -> dict[str, object]:
 
@@ -5903,13 +6020,14 @@ def _validate_source_shadows(
         for numeric, exact, role in (
             (
                 value.control_points,
-                value.exact_control_points,
+                value.exact_control_point_bank,
                 "BSplineCurve.control_points",
             ),
-            (value.weights, value.exact_weights, "BSplineCurve.weights"),
-            (value.knots, value.exact_knots, "BSplineCurve.knots"),
+            (value.weights, value.exact_weight_bank, "BSplineCurve.weights"),
+            (value.knots, value.exact_knot_bank, "BSplineCurve.knots"),
         ):
-            _require_exact_numeric_shadow(numeric, exact, role)
+            if exact is not None:
+                _require_exact_numeric_shadow(numeric, exact, role)
     elif isinstance(value, CylinderPatch):
         for numeric, exact, role in (
             (value.origin, value.origin_exact, "CylinderPatch.origin"),
@@ -5923,14 +6041,15 @@ def _validate_source_shadows(
         for numeric, exact, role in (
             (
                 value.control_points,
-                value.exact_control_points,
+                value.exact_control_point_bank,
                 "BSplineSurfacePatch.control_points",
             ),
-            (value.weights, value.exact_weights, "BSplineSurfacePatch.weights"),
-            (value.u_knots, value.exact_u_knots, "BSplineSurfacePatch.u_knots"),
-            (value.v_knots, value.exact_v_knots, "BSplineSurfacePatch.v_knots"),
+            (value.weights, value.exact_weight_bank, "BSplineSurfacePatch.weights"),
+            (value.u_knots, value.exact_u_knot_bank, "BSplineSurfacePatch.u_knots"),
+            (value.v_knots, value.exact_v_knot_bank, "BSplineSurfacePatch.v_knots"),
         ):
-            _require_exact_numeric_shadow(numeric, exact, role)
+            if exact is not None:
+                _require_exact_numeric_shadow(numeric, exact, role)
     elif isinstance(value, TSplineSurfacePatch):
         value.validate_source_bank()
         value.validate_exact_transfer_chain()

@@ -571,6 +571,24 @@ the columns of `a` and `b`. Strips without such a unique polygon form the
 boundary is reported as evidence; improvement that leaves unmet quality criteria
 fails compliance.
 
+An adaptive implicit layer wall comes from the implicit volume carrier path:
+`implicit_layer_wall(query, radius_edge_bound=..., edge_length=..., inward=True)`
+(`phydrax.meshing.providers._native_layer`) returns the discovery scaffold
+triangles when each is within the radius-edge bound of the core fill schedule
+(a layer column and its cap triangle inherit the wall triangle's shape), else
+the native zero-set band remesh toward `edge_length` with every created
+triangle certified within the scaffold distance bound and transversal to the
+field gradient. Layer thickness is never adjusted to accommodate sliver
+triangles. The zero set is oriented out of its solid, so the default `inward`
+wall is reversed and layers grow into the solid. Each remeshed wall cell names
+its nearest scaffold triangle as chart seed; repeated seeds are legitimate and
+the boundary degree comes from the covering proof, as for the volume carrier.
+A field without a native interval lowering of itself and its gradient is a
+typed `UNSUPPORTED_CAPABILITY` refusal when the scaffold needs the remesh.
+High-order implicit layer curving lifts only non-vertex boundary nodes to
+their root charts; layer/core mesh vertices stay fixed, and the final chart
+proofs bound every face point, corners included.
+
 `prepare_periodic_layer_core_source(source, core_vertex_representatives,
 core_vertex_shifts, core_seam_polygon_pairs)` binds source-authored PLC orbits
 and seam facets to the accepted layer mesh's periodic topology identity. The
@@ -797,7 +815,14 @@ contracts:
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores
   0 whatever its angles and ratio (a flat cell on a cocircular boundary quad
-  has a finite circumsphere and could otherwise score 1). Every face flip,
+  has a finite circumsphere and could otherwise score 1; a sliver has a small
+  radius-edge ratio and, with a dihedral target of 0, would also score 1).
+  The floor is the requested relative determinant (|det E| over the largest
+  product of a vertex's three edge lengths) or 2^-22, whichever is larger:
+  downstream consumers evaluate the metric determinant det(E^T E) = det(E)^2
+  in binary64, whose rounding error is a small multiple of u times the
+  squared edge-length product, so its sign is certain only above that floor
+  (2^-44 = 2^9 u once squared). Every face flip,
   edge-ring reconnection, interior vertex insertion, collapse, and relocation
   is accepted only if the cells it creates pass the hard gates (relative
   determinant above its floor, source constraints preserved) and the size

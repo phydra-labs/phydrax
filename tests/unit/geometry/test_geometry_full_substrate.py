@@ -194,7 +194,9 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> 
     selected = geometry.boundary_atlas.select(entity_ids=(0,))
     assert selected.source_id == model.source_id
     assert np.array_equal(np.asarray(selected.source_entity_ids), [0])
-    face_point = jnp.asarray([0.5, 0.0, 0.0])
+    # Interior point of the y=0 face: on the box edge y=z=0 two faces tie at
+    # distance zero and the exact source normal is ambiguous.
+    face_point = jnp.asarray([0.5, 0.0, 1.5])
     direct_gradient = jax.grad(geometry.boundary_field)(face_point)
     assert np.all(np.isfinite(np.asarray(direct_gradient)))
     assert float(jnp.linalg.norm(direct_gradient)) == pytest.approx(1.0)
@@ -210,6 +212,44 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> 
         np.asarray(geometry.contains(jnp.asarray([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]]))),
         [True, False],
     )
+
+
+def test_brep_source_query_derivatives_match_finite_differences_or_refuse() -> None:
+    from phydrax.geometry.brep import BRepSourceDerivativeError
+    from phydrax.geometry.brep._constructors import brep_box, brep_cylinder
+
+    box = phx.geometry.BRepSource(
+        brep_box((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), coordinate_contract=_SI_COORDINATES)
+    ).compile()
+    step = 1.0e-6
+    for point in ((0.2, 1.1, 1.4), (1.3, 0.9, 1.6)):
+        query = jnp.asarray(point)
+        gradient = np.asarray(jax.grad(box.boundary_field)(query))
+        finite_difference = np.asarray(
+            [
+                (
+                    float(box.boundary_field(query.at[axis].add(step)))
+                    - float(box.boundary_field(query.at[axis].add(-step)))
+                )
+                / (2.0 * step)
+                for axis in range(3)
+            ]
+        )
+        np.testing.assert_allclose(gradient, finite_difference, atol=1.0e-6)
+    # Planar faces: the selected face normal is locally constant.
+    assert np.allclose(
+        np.asarray(jax.jacrev(box.boundary_normal)(jnp.asarray((0.2, 1.1, 1.4)))), 0.0
+    )
+    with pytest.raises(BRepSourceDerivativeError, match="closest_point"):
+        jax.grad(lambda value: jnp.sum(box.closest_point(value).closest_point))(
+            jnp.asarray((0.2, 1.1, 1.4))
+        )
+
+    cylinder = phx.geometry.BRepSource(
+        brep_cylinder(1.0, 2.0, coordinate_contract=_SI_COORDINATES)
+    ).compile()
+    with pytest.raises(BRepSourceDerivativeError, match="boundary_normal"):
+        jax.jacrev(cylinder.boundary_normal)(jnp.asarray((0.5, 0.0, 1.0)))
 
 
 def test_brep_identity_separates_physical_source_from_query_representation() -> None:
@@ -633,14 +673,27 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative() -> None:
         atol=1e-9,
     )
 
-    singular = phx.geometry.BSplineCurve(
-        [[0.0, 0.0], [1.0, 0.0]],
-        [1.0, -1.0],
-        [0.0, 0.0, 1.0, 1.0],
-        1,
-    )
-    with pytest.raises(eqx.EquinoxRuntimeError, match="denominator"):
-        jax.block_until_ready(eqx.filter_jit(singular.evaluate)(jnp.asarray(0.5)))
+    # Positive weights are the rational CAD admissibility contract: concrete
+    # weights are refused at construction, traced weights at execution.
+    with pytest.raises(ValueError, match="weights must be positive"):
+        phx.geometry.BSplineCurve(
+            [[0.0, 0.0], [1.0, 0.0]],
+            [1.0, -1.0],
+            [0.0, 0.0, 1.0, 1.0],
+            1,
+        )
+
+    def traced_value(second_weight: Any) -> Any:
+        curve = phx.geometry.BSplineCurve(
+            [[0.0, 0.0], [1.0, 0.0]],
+            jnp.stack((jnp.asarray(1.0), second_weight)),
+            [0.0, 0.0, 1.0, 1.0],
+            1,
+        )
+        return curve.evaluate(jnp.asarray(0.5))
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="weights must be positive"):
+        jax.block_until_ready(eqx.filter_jit(traced_value)(jnp.asarray(-1.0)))
 
 
 def test_occt_bspline_import_matches_native_surface_differential() -> None:

@@ -8,7 +8,11 @@ import numpy as np
 
 import phydrax as phx
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.discretization import CellGeometrySpec, CellMesh
+from phydrax.discretization import CellGeometrySpec
+from phydrax.geometry._source_boundary_records import (
+    SourceBoundaryChartWitness,
+    SourceBoundaryQuery,
+)
 from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitSurfacePolicy,
     discover_adaptive_implicit_surface,
@@ -28,11 +32,27 @@ from phydrax.meshing._layer_curving import (
 from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
 from phydrax.meshing.providers._native_layer import (
     _implicit_layer_root_witness,
-    reversed_triangle_wall,
+    implicit_layer_wall,
+    ImplicitLayerWall,
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
 
 from .layer_curving_fixtures import _layer_mesh, _mixed_construction
+
+
+def certified_implicit_layer_wall(
+    query: SourceBoundaryQuery,
+) -> tuple[ImplicitLayerWall, SourceBoundaryChartWitness]:
+    """The inward layer wall from the certified implicit carrier and its root charts."""
+    layer_wall = implicit_layer_wall(query)
+    wall = layer_wall.wall
+    return layer_wall, _implicit_layer_root_witness(
+        query.source_id,
+        query.source_revision,
+        query,
+        wall,
+        CellGeometrySpec.affine(wall),
+    )
 
 
 def make_implicit_layer_curving_archive_case() -> LayerCurvingConstructionResult:
@@ -79,21 +99,8 @@ def make_implicit_layer_curving_archive_case() -> LayerCurvingConstructionResult
         authoring_profile=native_source.authoring_profile,
     )
     # The zero set is oriented out of the sphere; the layers and the core fill it.
-    wall = reversed_triangle_wall(
-        CellMesh.from_triangles(
-            discovery.mesh.vertices,
-            discovery.mesh.faces.astype(np.int32),
-            numeric_version=native_source.source_revision,
-        )
-    )
-    wall_geometry = CellGeometrySpec.affine(wall)
-    root_witness = _implicit_layer_root_witness(
-        native_source.source_id,
-        native_source.source_revision,
-        fidelity_source,
-        wall,
-        wall_geometry,
-    )
+    layer_wall, root_witness = certified_implicit_layer_wall(fidelity_source)
+    wall = layer_wall.wall
     surface_scope_id = int(native_source.scope_entity_ids(2)[0])
     surface_entity_id, occurrence = native_source.source_entity_key_for_scope(
         2, surface_scope_id
@@ -107,9 +114,13 @@ def make_implicit_layer_curving_archive_case() -> LayerCurvingConstructionResult
         target_vertices.entity_set_id,
         wall_vertex_ids,
         (surface_entity_id,) * wall_vertex_ids.size,
+        # Scaffold vertices are certified roots; remeshed ones are within the
+        # certified carrier distance.
         np.full(
             (wall_vertex_ids.size,),
-            discovery.policy.root_tolerance,
+            layer_wall.distance
+            if dict(layer_wall.evidence)["carrier_remeshed"]
+            else discovery.policy.root_tolerance,
             dtype=np.float64,
         ),
         source_dimensions=np.full((wall_vertex_ids.size,), 2, dtype=np.int8),

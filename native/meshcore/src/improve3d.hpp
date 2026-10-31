@@ -32,6 +32,18 @@ namespace phx::mc {
 // reported individually.
 inline constexpr double kTetScoreQuantum = 0x1p-20;
 
+// Smallest relative determinant (|det(E)| over the largest product of the
+// three edge lengths at a vertex) improvement accepts, whatever floor is
+// requested. Downstream consumers evaluate a cell's metric determinant
+// det(E^T E) = det(E)^2 in binary64; for edges of comparable length its
+// absolute error is a small multiple of u * prod |e_i|^2 (u = 2^-53), so
+// its sign is certain only when the squared relative determinant clears
+// that by a margin. At 2^-22 the square is 2^-44 = 2^9 u. Cells below it
+// are flat beyond any meaningful quality (dihedral angles of order 1e-5
+// degrees) and score 0, so improvement repairs them first; residuals are
+// reported as VALIDITY records.
+inline constexpr double kMetricDeterminantFloor = 0x1p-22;
+
 struct TetQualityRequest {
   double radius_edge_bound;
   double minimum_dihedral_degrees;

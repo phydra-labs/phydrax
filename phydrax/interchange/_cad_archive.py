@@ -1259,10 +1259,10 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
             fields["v_knots"],
             fields["u_degree"],
             fields["v_degree"],
-            exact_control_points=fields["exact_control_points"],
-            exact_weights=fields["exact_weights"],
-            exact_u_knots=fields["exact_u_knots"],
-            exact_v_knots=fields["exact_v_knots"],
+            exact_control_points=fields["exact_control_point_bank"],
+            exact_weights=fields["exact_weight_bank"],
+            exact_u_knots=fields["exact_u_knot_bank"],
+            exact_v_knots=fields["exact_v_knot_bank"],
             control_point_ids=fields["control_point_ids"],
         )
     if model_type is BSplineCurve:
@@ -1271,9 +1271,9 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
             fields["weights"],
             fields["knots"],
             fields["degree"],
-            exact_control_points=fields["exact_control_points"],
-            exact_weights=fields["exact_weights"],
-            exact_knots=fields["exact_knots"],
+            exact_control_points=fields["exact_control_point_bank"],
+            exact_weights=fields["exact_weight_bank"],
+            exact_knots=fields["exact_knot_bank"],
         )
     if model_type is ConicParameterRoot:
         return ConicParameterRoot(
