@@ -1405,6 +1405,43 @@ bool make_fixed_boundary_star_retriangulation(
   }
   return true;
 }
+
+// A cell on face F has circumradius at least F's circumradius r_F; the point
+// at height r_F above F's circumcenter, on the side of `inside`, is the apex
+// attaining that minimum. False for a floating-degenerate face.
+bool face_minimum_radius_apex(const TetMesh& mesh, const std::int32_t facet[3],
+                              const double* inside, std::array<double, 3>& apex) {
+  const auto cross = [](const std::array<double, 3>& u, const std::array<double, 3>& v) {
+    return std::array<double, 3>{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
+                                 u[0] * v[1] - u[1] * v[0]};
+  };
+  const auto dot = [](const std::array<double, 3>& u, const std::array<double, 3>& v) {
+    return u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  };
+  const double* a = mesh.point(facet[0]);
+  std::array<double, 3> ab{}, ac{}, toward{};
+  for (int axis = 0; axis < 3; ++axis) {
+    ab[axis] = mesh.point(facet[1])[axis] - a[axis];
+    ac[axis] = mesh.point(facet[2])[axis] - a[axis];
+    toward[axis] = inside[axis] - a[axis];
+  }
+  const std::array<double, 3> normal = cross(ab, ac);
+  const double normal_squared = dot(normal, normal);
+  if (!(normal_squared > 0.0) || !std::isfinite(normal_squared)) return false;
+  const std::array<double, 3> first = cross(normal, ab);
+  const std::array<double, 3> second = cross(ac, normal);
+  std::array<double, 3> offset{};
+  for (int axis = 0; axis < 3; ++axis) {
+    offset[axis] =
+        (dot(ac, ac) * first[axis] + dot(ab, ab) * second[axis]) / (2.0 * normal_squared);
+  }
+  const double side = dot(normal, toward) > 0.0 ? 1.0 : -1.0;
+  const double scale = side * std::sqrt(dot(offset, offset) / normal_squared);
+  for (int axis = 0; axis < 3; ++axis) {
+    apex[axis] = a[axis] + offset[axis] + scale * normal[axis];
+  }
+  return std::all_of(apex.begin(), apex.end(), [](double value) { return std::isfinite(value); });
+}
 }  // namespace
 
 std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
@@ -1807,9 +1844,10 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
     // No reconnection improves this cell: insert a new interior vertex at its
     // circumcenter, then at off-centers halfway and a quarter of the way from
     // its centroid toward the circumcenter (inside the domain when the
-    // circumcenter lies beyond a fixed face), then at the centroid of its
-    // face-neighborhood (which lies off the plane of a flat cell).
-    std::array<std::array<double, 3>, 4> candidates{};
+    // circumcenter lies beyond a fixed face), then above each of its
+    // constrained faces, then at the centroid of its face-neighborhood (which
+    // lies off the plane of a flat cell).
+    std::array<std::array<double, 3>, 8> candidates{};
     std::size_t candidate_count = 0;
     {
       std::array<const double*, 4> points{};
@@ -1827,6 +1865,14 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
             off_center[axis] = cell_centroid[axis] +
                                fraction * (shape.circumcenter[axis] - cell_centroid[axis]);
           }
+        }
+      }
+      for (int face = 0; face < 4; ++face) {
+        if (mesh.complex().constraint(slot, face) == kNoConstraint) continue;
+        std::int32_t facet[3];
+        oriented_facet(mesh.tet(slot).v, face, facet);
+        if (face_minimum_radius_apex(mesh, facet, points[face], candidates[candidate_count])) {
+          ++candidate_count;
         }
       }
       std::set<std::int32_t> neighborhood(current.begin(), current.end());
@@ -1914,54 +1960,67 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
       }
     }
 
-    std::vector<double> target(3, 0.0);
-    std::size_t target_count = 0;
+    // Relocation targets: the neighbor centroid, then the minimum-radius apex
+    // of every constrained face opposite this vertex in its star; each is
+    // searched by halving the step from the current position.
+    std::vector<std::array<double, 3>> targets(1, std::array<double, 3>{});
     for (std::int32_t neighbor : neighbors) {
       const double* point = mesh.point(neighbor);
-      for (int axis = 0; axis < 3; ++axis) target[axis] += point[axis];
-      ++target_count;
+      for (int axis = 0; axis < 3; ++axis) targets.front()[axis] += point[axis];
     }
-    if (target_count == 0) return PHX_MC_OK;
-    for (double& value : target) value /= static_cast<double>(target_count);
+    if (neighbors.empty()) return PHX_MC_OK;
+    for (double& value : targets.front()) value /= static_cast<double>(neighbors.size());
+    for (std::int32_t cell : star) {
+      const int corner = vertex_slot(mesh.tet(cell), removed);
+      if (corner < 0 || mesh.complex().constraint(cell, corner) == kNoConstraint) continue;
+      std::int32_t facet[3];
+      oriented_facet(mesh.tet(cell).v, corner, facet);
+      std::array<double, 3> apex{};
+      if (face_minimum_radius_apex(mesh, facet, mesh.point(removed), apex)) {
+        targets.push_back(apex);
+      }
+    }
     if (!prepare_relocation_plan(mesh, star.cells(), removed, relocation_plan)) {
       return PHX_MC_INTERNAL_ERROR;
     }
     const double* original = mesh.point(removed);
-    double fraction = 1.0;
-    while (fraction > 0.0) {
-      double candidate[3];
-      bool distinct = false;
-      for (int axis = 0; axis < 3; ++axis) {
-        candidate[axis] = original[axis] + fraction * (target[axis] - original[axis]);
-        distinct = distinct || candidate[axis] != original[axis];
-      }
-      if (!distinct) break;
-      if (relocated_quality(relocation_plan, candidate, request, after_quality) &&
-          improves_quality_vector(before_quality, after_quality)) {
-        TetEditVertex moved;
-        moved.id = vertex_id;
-        std::copy_n(candidate, 3, moved.carrier.begin());
-        moved.witness = mesh.witness(removed);
-        moved.protection_radius = mesh.protection_radius(removed);
-        moved.protected_vertex = mesh.protected_vertex(removed);
-        const TetEditStatus status =
-            incidence.relocate(mesh, std::span(&moved, 1), star);
-        const std::int32_t error = fatal_edit_error(status);
-        if (error != PHX_MC_OK) return error;
-        if (status == TetEditStatus::kApplied) {
-          for (std::int32_t slot : star) {
-            for (std::int32_t vertex : mesh.tet(slot).v) {
-              pending_vertices.insert(mesh.vertex_id(vertex));
-            }
-          }
-          if (!enqueue_vertex_edit(star.cells())) return PHX_MC_INTERNAL_ERROR;
-          ++relocated_vertices;
-          return PHX_MC_OK;
+    for (const std::array<double, 3>& target : targets) {
+      double fraction = 1.0;
+      while (fraction > 0.0) {
+        double candidate[3];
+        bool distinct = false;
+        for (int axis = 0; axis < 3; ++axis) {
+          candidate[axis] = original[axis] + fraction * (target[axis] - original[axis]);
+          distinct = distinct || candidate[axis] != original[axis];
         }
+        if (!distinct) break;
+        if (relocated_quality(relocation_plan, candidate, request, after_quality) &&
+            improves_quality_vector(before_quality, after_quality)) {
+          TetEditVertex moved;
+          moved.id = vertex_id;
+          std::copy_n(candidate, 3, moved.carrier.begin());
+          moved.witness = mesh.witness(removed);
+          moved.protection_radius = mesh.protection_radius(removed);
+          moved.protected_vertex = mesh.protected_vertex(removed);
+          const TetEditStatus status =
+              incidence.relocate(mesh, std::span(&moved, 1), star);
+          const std::int32_t error = fatal_edit_error(status);
+          if (error != PHX_MC_OK) return error;
+          if (status == TetEditStatus::kApplied) {
+            for (std::int32_t slot : star) {
+              for (std::int32_t vertex : mesh.tet(slot).v) {
+                pending_vertices.insert(mesh.vertex_id(vertex));
+              }
+            }
+            if (!enqueue_vertex_edit(star.cells())) return PHX_MC_INTERNAL_ERROR;
+            ++relocated_vertices;
+            return PHX_MC_OK;
+          }
+        }
+        const double next = fraction * 0.5;
+        if (next == fraction) break;
+        fraction = next;
       }
-      const double next = fraction * 0.5;
-      if (next == fraction) break;
-      fraction = next;
     }
     return PHX_MC_OK;
   };
