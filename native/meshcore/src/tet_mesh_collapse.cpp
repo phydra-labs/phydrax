@@ -24,7 +24,8 @@ TetEditStatus TetMesh::collapse_vertex(
   operation.replacement_facets.assign(replacement_facets.begin(), replacement_facets.end());
   operation.replacement_segments.assign(replacement_segments.begin(), replacement_segments.end());
   TetEditBatch batch{generation_, source_revision_, frame_id_, identity_bound_,
-                     {std::move(operation)}, source_id_, source_map_id_, periodic_identity_};
+                     {std::move(operation)}, source_id_, source_map_id_, periodic_identity_,
+                     std::nullopt};
   std::vector<TetEditResult> result;
   const TetEditStatus status = apply_edit_batch(batch, result);
   return status == TetEditStatus::kApplied ? result.front().status : status;

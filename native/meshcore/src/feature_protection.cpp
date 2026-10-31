@@ -29,52 +29,8 @@ double distance(const double* a, const double* b) {
 }
 
 using geometry::dot;
-
-double point_segment_distance(const double* p, const double* a, const double* b) {
-  const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-  const double ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
-  const double length = dot(ab, ab);
-  const double t = length > 0.0 ? std::clamp(dot(ap, ab) / length, 0.0, 1.0) : 0.0;
-  const double q[3] = {a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]};
-  return distance(p, q);
-}
-
-// Closest point on a triangle by Voronoi-region classification (Ericson).
-double point_triangle_distance(const double* p, const double* a, const double* b,
-                               const double* c) {
-  const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-  const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-  const double ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
-  const double d1 = dot(ab, ap);
-  const double d2 = dot(ac, ap);
-  if (d1 <= 0.0 && d2 <= 0.0) return distance(p, a);
-  const double bp[3] = {p[0] - b[0], p[1] - b[1], p[2] - b[2]};
-  const double d3 = dot(ab, bp);
-  const double d4 = dot(ac, bp);
-  if (d3 >= 0.0 && d4 <= d3) return distance(p, b);
-  const double vc = d1 * d4 - d3 * d2;
-  if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) return point_segment_distance(p, a, b);
-  const double cp[3] = {p[0] - c[0], p[1] - c[1], p[2] - c[2]};
-  const double d5 = dot(ab, cp);
-  const double d6 = dot(ac, cp);
-  if (d6 >= 0.0 && d5 <= d6) return distance(p, c);
-  const double vb = d5 * d2 - d1 * d6;
-  if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) return point_segment_distance(p, a, c);
-  const double va = d3 * d6 - d5 * d4;
-  if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
-    return point_segment_distance(p, b, c);
-  }
-  const double denominator = va + vb + vc;
-  if (!(denominator > 0.0)) {
-    return std::min({point_segment_distance(p, a, b), point_segment_distance(p, b, c),
-                     point_segment_distance(p, c, a)});
-  }
-  const double v = vb / denominator;
-  const double w = vc / denominator;
-  const double q[3] = {a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w,
-                       a[2] + ab[2] * v + ac[2] * w};
-  return distance(p, q);
-}
+using geometry::point_segment_distance;
+using geometry::point_triangle_distance;
 
 // This index encloses the computed closest-point kernels, not only ideal
 // segments: a + t*(b-a) may end at a rounded value distinct from b. Rows

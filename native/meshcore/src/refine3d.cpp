@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "cavity.hpp"
+#include "geometry3.hpp"
 #include "local_incidence.hpp"
 #include "predicates.hpp"
 #include "phydrax_meshcore.h"
@@ -122,6 +123,294 @@ void collect_unmet(const TetMesh& mesh, const TetMeshSnapshot& snapshot,
     if (cell_unmet) ++unmet_cells;
   }
 }
+
+struct GridKey {
+  std::array<std::int64_t, 3> cell{};
+  bool operator==(const GridKey&) const noexcept = default;
+};
+struct GridHash {
+  std::size_t operator()(const GridKey& key) const noexcept {
+    std::size_t seed = 0;
+    for (std::int64_t value : key.cell) {
+      seed ^= std::hash<std::int64_t>{}(value) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+    }
+    return seed;
+  }
+};
+using HashGrid = std::unordered_map<GridKey, std::vector<std::int32_t>, GridHash>;
+
+bool grid_cell(const double* point, double cell, GridKey& key) {
+  for (int axis = 0; axis < 3; ++axis) {
+    const double scaled = std::floor(point[axis] / cell);
+    if (!(std::abs(scaled) < 0x1p62)) return false;
+    key.cell[static_cast<std::size_t>(axis)] = static_cast<std::int64_t>(scaled);
+  }
+  return true;
+}
+
+// Calls `visit` on the items of every occupied cell meeting [lower, upper];
+// a box spanning more cells than are occupied reads every occupied cell.
+template <class Visit>
+bool visit_box(const HashGrid& grid, double cell, const double* lower, const double* upper,
+               Visit&& visit) {
+  GridKey first;
+  GridKey last;
+  if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
+  double span = 1.0;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    span *= static_cast<double>(last.cell[axis] - first.cell[axis]) + 1.0;
+  }
+  if (span > static_cast<double>(grid.size())) {
+    for (const auto& [key, items] : grid) {
+      (void)key;
+      for (std::int32_t item : items) visit(item);
+    }
+    return true;
+  }
+  for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
+    for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
+      for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
+        const auto found = grid.find(GridKey{{x, y, z}});
+        if (found == grid.end()) continue;
+        for (std::int32_t item : found->second) visit(item);
+      }
+    }
+  }
+  return true;
+}
+
+bool register_box(HashGrid& grid, double cell, const double* lower, const double* upper,
+                  std::int32_t item) {
+  GridKey first;
+  GridKey last;
+  if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
+  for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
+    for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
+      for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
+        grid[GridKey{{x, y, z}}].push_back(item);
+      }
+    }
+  }
+  return true;
+}
+
+// lambda(v) for every live vertex slot: the distance from v to the nearest
+// feature not incident to v. Point features are the live vertices, line
+// features the constrained segments and constrained-facet edges, plane
+// features the constrained facets. Dead slots keep +inf. lambda is floored at
+// the coordinate spacing at v. Fails only on non-finite geometry.
+bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
+                         std::span<const TetSnapshotFacet> facets,
+                         std::span<const TetSnapshotSegment> segments,
+                         std::vector<double>& sizes, double& smallest) {
+  const double infinity = std::numeric_limits<double>::infinity();
+  sizes.assign(slot_count, infinity);
+  // The shortest incident edge bounds lambda from above and sets the query radius.
+  std::vector<double> lengths;
+  const TetrahedralComplex& complex = mesh.complex();
+  for (std::size_t row = 0; row < complex.tets.size(); ++row) {
+    const std::int32_t cell = static_cast<std::int32_t>(row);
+    if (!complex.live(cell) || is_ghost(complex.tets[row])) continue;
+    const Tetrahedron& tetrahedron = complex.tets[row];
+    for (int first = 0; first < 4; ++first) {
+      for (int second = first + 1; second < 4; ++second) {
+        const std::int32_t a = tetrahedron.v[first];
+        const std::int32_t b = tetrahedron.v[second];
+        const double length = std::sqrt(geometry::squared_distance(mesh.point(a), mesh.point(b)));
+        sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], length);
+        sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], length);
+        lengths.push_back(length);
+      }
+    }
+  }
+  if (lengths.empty()) return false;
+
+  std::vector<std::array<std::int32_t, 2>> lines;
+  std::vector<std::array<std::int32_t, 3>> planes;
+  planes.reserve(facets.size());
+  lines.reserve(segments.size() + 3 * facets.size());
+  const auto ordered = [](std::int32_t a, std::int32_t b) {
+    return a < b ? std::array<std::int32_t, 2>{a, b} : std::array<std::int32_t, 2>{b, a};
+  };
+  for (const TetSnapshotSegment& segment : segments) {
+    const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
+    const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
+    if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
+    lines.push_back(ordered(a, b));
+  }
+  for (const TetSnapshotFacet& facet : facets) {
+    std::array<std::int32_t, 3> slots{};
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      slots[corner] = mesh.vertex_slot(facet.vertices[corner]);
+      if (!mesh.live_vertex(slots[corner])) return false;
+    }
+    planes.push_back(slots);
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      lines.push_back(ordered(slots[corner], slots[(corner + 1) % 3]));
+    }
+  }
+  std::sort(lines.begin(), lines.end());
+  lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+
+  // Cells of the median edge length, coarsened so that no feature box spans
+  // more than 17 cells per axis.
+  std::nth_element(lengths.begin(), lengths.begin() + static_cast<std::ptrdiff_t>(lengths.size() / 2),
+                   lengths.end());
+  double cell = lengths[lengths.size() / 2];
+  const auto feature_box = [&](std::span<const std::int32_t> corners, double* lower,
+                               double* upper) {
+    for (int axis = 0; axis < 3; ++axis) {
+      lower[axis] = upper[axis] = mesh.point(corners[0])[axis];
+      for (std::int32_t corner : corners.subspan(1)) {
+        lower[axis] = std::min(lower[axis], mesh.point(corner)[axis]);
+        upper[axis] = std::max(upper[axis], mesh.point(corner)[axis]);
+      }
+    }
+  };
+  double extent = 0.0;
+  for (const auto& plane : planes) {
+    double lower[3], upper[3];
+    feature_box(plane, lower, upper);
+    for (int axis = 0; axis < 3; ++axis) extent = std::max(extent, upper[axis] - lower[axis]);
+  }
+  cell = std::max(cell, extent / 16.0);
+  if (!(cell > 0.0) || !std::isfinite(cell)) return false;
+
+  HashGrid point_grid;
+  HashGrid line_grid;
+  HashGrid plane_grid;
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    const std::int32_t vertex = static_cast<std::int32_t>(slot);
+    if (!mesh.live_vertex(vertex)) continue;
+    if (!register_box(point_grid, cell, mesh.point(vertex), mesh.point(vertex), vertex)) {
+      return false;
+    }
+  }
+  for (std::size_t row = 0; row < lines.size(); ++row) {
+    double lower[3], upper[3];
+    feature_box(lines[row], lower, upper);
+    if (!register_box(line_grid, cell, lower, upper, static_cast<std::int32_t>(row))) return false;
+  }
+  for (std::size_t row = 0; row < planes.size(); ++row) {
+    double lower[3], upper[3];
+    feature_box(planes[row], lower, upper);
+    if (!register_box(plane_grid, cell, lower, upper, static_cast<std::int32_t>(row))) return false;
+  }
+
+  smallest = infinity;
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    const std::int32_t vertex = static_cast<std::int32_t>(slot);
+    if (!mesh.live_vertex(vertex)) continue;
+    const double* p = mesh.point(vertex);
+    double lambda = sizes[slot];
+    if (!std::isfinite(lambda)) return false;
+    const double lower[3]{p[0] - lambda, p[1] - lambda, p[2] - lambda};
+    const double upper[3]{p[0] + lambda, p[1] + lambda, p[2] + lambda};
+    const bool visited =
+        visit_box(point_grid, cell, lower, upper, [&](std::int32_t other) {
+          if (other != vertex) {
+            lambda = std::min(lambda, std::sqrt(geometry::squared_distance(p, mesh.point(other))));
+          }
+        }) &&
+        visit_box(line_grid, cell, lower, upper, [&](std::int32_t row) {
+          const auto& line = lines[static_cast<std::size_t>(row)];
+          if (line[0] != vertex && line[1] != vertex) {
+            lambda = std::min(lambda, geometry::point_segment_distance(
+                                          p, mesh.point(line[0]), mesh.point(line[1])));
+          }
+        }) &&
+        visit_box(plane_grid, cell, lower, upper, [&](std::int32_t row) {
+          const auto& plane = planes[static_cast<std::size_t>(row)];
+          if (plane[0] != vertex && plane[1] != vertex && plane[2] != vertex) {
+            lambda = std::min(lambda, geometry::point_triangle_distance(
+                                          p, mesh.point(plane[0]), mesh.point(plane[1]),
+                                          mesh.point(plane[2])));
+          }
+        });
+    if (!visited || !std::isfinite(lambda)) return false;
+    // Features nearer than the coordinate spacing at v cannot be separated by
+    // a representable point; lambda is floored there, which keeps it positive.
+    double resolution = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+      const double magnitude = std::abs(p[axis]);
+      resolution = std::max(resolution, std::nextafter(magnitude, infinity) - magnitude);
+    }
+    lambda = std::max(lambda, resolution);
+    sizes[slot] = lambda;
+    smallest = std::min(smallest, lambda);
+  }
+  return std::isfinite(smallest);
+}
+
+// Spacing queries over hash grids whose cells double per level. A query of
+// radius r reads the 27 cells around the point on the finest level whose
+// cells are at least r; a level is built on its first query.
+class SpacingIndex {
+ public:
+  SpacingIndex(const TetMesh& mesh, double base) : mesh_(mesh), base_(base) {}
+
+  bool insert(std::int32_t vertex) {
+    vertices_.push_back(vertex);
+    for (std::size_t level = 0; level < levels_.size(); ++level) {
+      if (built_[level] != 0 && !add(level, vertex)) return false;
+    }
+    return true;
+  }
+
+  // True when no indexed vertex lies closer than `radius` to `point`.
+  bool clear(const double* point, double radius) {
+    if (!(radius > 0.0) || !std::isfinite(radius)) return false;
+    std::size_t level = 0;
+    while (std::ldexp(base_, static_cast<int>(level)) < radius) ++level;
+    if (!build(level)) return false;
+    GridKey center;
+    if (!grid_cell(point, std::ldexp(base_, static_cast<int>(level)), center)) return false;
+    for (std::int64_t dx = -1; dx <= 1; ++dx) {
+      for (std::int64_t dy = -1; dy <= 1; ++dy) {
+        for (std::int64_t dz = -1; dz <= 1; ++dz) {
+          const auto found = levels_[level].find(
+              GridKey{{center.cell[0] + dx, center.cell[1] + dy, center.cell[2] + dz}});
+          if (found == levels_[level].end()) continue;
+          for (std::int32_t vertex : found->second) {
+            if (std::sqrt(geometry::squared_distance(point, mesh_.point(vertex))) < radius) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+ private:
+  bool build(std::size_t level) {
+    if (level >= levels_.size()) {
+      levels_.resize(level + 1);
+      built_.resize(level + 1, 0);
+    }
+    if (built_[level] != 0) return true;
+    for (std::int32_t vertex : vertices_) {
+      if (!add(level, vertex)) return false;
+    }
+    built_[level] = 1;
+    return true;
+  }
+
+  bool add(std::size_t level, std::int32_t vertex) {
+    GridKey key;
+    if (!grid_cell(mesh_.point(vertex), std::ldexp(base_, static_cast<int>(level)), key)) {
+      return false;
+    }
+    levels_[level][key].push_back(vertex);
+    return true;
+  }
+
+  const TetMesh& mesh_;
+  double base_;
+  std::vector<std::int32_t> vertices_;
+  std::vector<HashGrid> levels_;
+  std::vector<std::uint8_t> built_;
+};
 
 }  // namespace
 
@@ -491,119 +780,67 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // of at least 90 degrees; smaller input angles are not excluded but may
   // leave cells unmet.
   // Termination: a point x is inserted only at distance at least
-  // g(x) = min(e0, c * h(x)) from every vertex present, where e0 is the
-  // shortest edge entering this pass, h(x) the circumradius size target
-  // interpolated at x (the target of the cell or edge being split; g = e0
-  // where no target applies), and c = 1/2. Packing: refinement never removes
-  // a vertex, so any two vertices of which at least one was inserted are at
-  // least g_min = min(e0, c * h_min) > 0 apart, h_min the smallest positive
+  // g(x) = c * min(lfs(x), h(x)) from every vertex present, with c = 1/2 and
+  // h(x) the circumradius size target interpolated at x (the target of the
+  // cell or edge being split; g = c * lfs where no target applies). The local
+  // feature size is measured on the constrained complex entering this pass:
+  // lambda(v), for a vertex v present, is its distance to the nearest feature
+  // not incident to v (another vertex, a constrained segment or constrained
+  // facet edge not ending at v, or a constrained facet not containing v), and
+  // lfs(x) = min_u (lambda(u) + |x - u|) over the natural neighbors u of x
+  // (the vertices of x's insertion cavity, or the endpoints of a split edge).
+  // An inserted vertex keeps lfs(x) as its own lambda. Next to a thin fixed
+  // face lambda is that face's short edge or altitude, growing with the
+  // distance to it, rather than the shortest edge anywhere in the mesh.
+  // Packing: refinement never removes a vertex. By the triangle inequality
+  // every stored lambda is at least lambda_min, the smallest lambda entering
+  // the pass, which is positive: lambda(v) is floored at the coordinate
+  // spacing at v, below which no representable point separates two features.
+  // So any two vertices of which at least one was inserted are at least
+  // g_min = c * min(lambda_min, h_min) > 0 apart, h_min the smallest positive
   // target. Balls of radius g_min / 2 around them are disjoint and lie in the
   // g_min / 2-neighborhood of the bounded domain, so at most
-  // vol(domain + B(g_min / 2)) / vol(B(g_min / 2)) points are inserted. For a
-  // Delaunay cavity the circumcenter's nearest vertex lies at the
-  // circumradius, which exceeds h when the cell violates its size target and
-  // exceeds B times the cell's shortest edge when it violates the
-  // radius-edge bound, so the guard binds only near small input features;
-  // there a cell is reported unmet with reason REFUSED.
+  // vol(domain + B(g_min / 2)) / vol(B(g_min / 2)) points are inserted. The
+  // count is local as well: inserted points whose guards are at least g are
+  // pairwise g apart, so a thin feature confines dense insertion to the region
+  // where its lambda, grown by the distance to it, stays small. The fraction c
+  // leaves room below the feature scale for the grading Delaunay refinement
+  // needs next to a feature (its theory bounds insertion radii only by
+  // lfs / C for a constant C > 1).
+  // For a Delaunay cavity the circumcenter's nearest vertex lies at the
+  // circumradius, so the guard refuses a cell only when its circumradius is
+  // below g(x); in a cavity of a recovered, non-Delaunay neighborhood the
+  // nearest vertex can be much closer. Such a cell is reported unmet with
+  // reason REFUSED, never chased below the feature scale.
   std::unordered_map<std::uint64_t, std::int32_t> unmet_reasons;
-  double shortest_initial_edge = std::numeric_limits<double>::infinity();
-  for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
-    const std::int32_t cell = static_cast<std::int32_t>(row);
-    if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
-    const Tetrahedron& tetrahedron = mesh.tet(cell);
-    for (int first = 0; first < 4; ++first) {
-      for (int second = first + 1; second < 4; ++second) {
-        const double* a = mesh.point(tetrahedron.v[first]);
-        const double* b = mesh.point(tetrahedron.v[second]);
-        shortest_initial_edge = std::min(
-            shortest_initial_edge,
-            std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]));
-      }
-    }
-  }
-  if (!(shortest_initial_edge > 0.0) || !std::isfinite(shortest_initial_edge)) {
+  constexpr double kSizeGuardFraction = 0.5;
+  std::vector<double> feature_sizes;
+  double smallest_feature = 0.0;
+  if (!local_feature_sizes(mesh, mesh.vertex_ids_.size(), mesh.facets_, mesh.segments_,
+                           feature_sizes, smallest_feature)) {
     return PHX_MC_INVALID_INPUT;
   }
-  constexpr double kSizeGuardFraction = 0.5;
-  const auto spacing_guard = [&](double target_size) {
-    return target_size > 0.0
-               ? std::min(shortest_initial_edge, kSizeGuardFraction * target_size)
-               : shortest_initial_edge;
-  };
-  // Grid cells of the smallest guard; a query searches the cell rings that
-  // cover its own guard radius.
-  double separation = shortest_initial_edge;
-  for (const auto& [vertex_id, size] : sizes) {
-    (void)vertex_id;
-    separation = std::min(separation, spacing_guard(size));
-  }
-  if (!(separation > 0.0) || !std::isfinite(separation)) return PHX_MC_INVALID_INPUT;
-
-  struct GridKey {
-    std::array<std::int64_t, 3> cell{};
-    bool operator==(const GridKey&) const noexcept = default;
-  };
-  struct GridHash {
-    std::size_t operator()(const GridKey& key) const noexcept {
-      std::size_t seed = 0;
-      for (std::int64_t value : key.cell) {
-        seed ^= std::hash<std::int64_t>{}(value) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
-      }
-      return seed;
+  const auto feature_size_at = [&](const double* point, std::span<const std::int32_t> neighbors) {
+    double size = std::numeric_limits<double>::infinity();
+    for (std::int32_t vertex : neighbors) {
+      size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] +
+                                std::sqrt(geometry::squared_distance(point, mesh.point(vertex))));
     }
+    return size;
   };
-  std::unordered_map<GridKey, std::vector<std::int32_t>, GridHash> grid;
-  const auto grid_key = [&](const double* point, GridKey& key) {
-    for (int axis = 0; axis < 3; ++axis) {
-      const double scaled = std::floor(point[axis] / separation);
-      if (!(std::abs(scaled) < 0x1p62)) return false;
-      key.cell[static_cast<std::size_t>(axis)] = static_cast<std::int64_t>(scaled);
+  const auto spacing_guard = [&](double feature_size, double target_size) {
+    const double guard = kSizeGuardFraction * feature_size;
+    return target_size > 0.0 ? std::min(guard, kSizeGuardFraction * target_size) : guard;
+  };
+  const auto record_feature_size = [&](std::int32_t vertex, double size) {
+    if (feature_sizes.size() < mesh.vertex_ids_.size()) {
+      feature_sizes.resize(mesh.vertex_ids_.size(), std::numeric_limits<double>::infinity());
     }
-    return true;
+    feature_sizes[static_cast<std::size_t>(vertex)] = size;
   };
-  const auto grid_insert = [&](std::int32_t vertex) {
-    GridKey key;
-    if (!grid_key(mesh.point(vertex), key)) return false;
-    grid[key].push_back(vertex);
-    return true;
-  };
-  const auto separated = [&](const double* point, double target_size) {
-    const double guard = spacing_guard(target_size);
-    const auto clear_of = [&](const std::vector<std::int32_t>& vertices) {
-      for (std::int32_t vertex : vertices) {
-        const double* other = mesh.point(vertex);
-        const double distance = std::hypot(
-            std::hypot(point[0] - other[0], point[1] - other[1]), point[2] - other[2]);
-        if (distance < guard) return false;
-      }
-      return true;
-    };
-    GridKey center;
-    if (!grid_key(point, center)) return false;
-    const double ring = std::ceil(guard / separation);
-    const double span = 2.0 * ring + 1.0;
-    if (span * span * span > static_cast<double>(grid.size())) {
-      for (const auto& [key, vertices] : grid) {
-        (void)key;
-        if (!clear_of(vertices)) return false;
-      }
-      return true;
-    }
-    const std::int64_t cells = static_cast<std::int64_t>(ring);
-    for (std::int64_t dx = -cells; dx <= cells; ++dx) {
-      for (std::int64_t dy = -cells; dy <= cells; ++dy) {
-        for (std::int64_t dz = -cells; dz <= cells; ++dz) {
-          GridKey key{{center.cell[0] + dx, center.cell[1] + dy, center.cell[2] + dz}};
-          const auto found = grid.find(key);
-          if (found != grid.end() && !clear_of(found->second)) return false;
-        }
-      }
-    }
-    return true;
-  };
+  SpacingIndex spacing(mesh, smallest_feature);
   for (std::size_t vertex = 0; vertex < mesh.vertex_ids_.size(); ++vertex) {
-    if (mesh.vertex_live_[vertex] != 0 &&
-        !grid_insert(static_cast<std::int32_t>(vertex))) {
+    if (mesh.vertex_live_[vertex] != 0 && !spacing.insert(static_cast<std::int32_t>(vertex))) {
       return PHX_MC_UNRESOLVED;
     }
   }
@@ -650,6 +887,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     std::int32_t facet[3];
     oriented_facet(mesh.tet(cell).v, face, facet);
     EdgeKey longest{};
+    std::array<std::int32_t, 2> endpoints{};
     double longest_length = -1.0;
     std::array<double, 3> midpoint{};
     for (int corner = 0; corner < 3; ++corner) {
@@ -660,6 +898,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         longest_length = length;
         longest = sorted_edge(mesh.vertex_id(facet[corner]),
                               mesh.vertex_id(facet[(corner + 1) % 3]));
+        endpoints = {facet[corner], facet[(corner + 1) % 3]};
         for (int axis = 0; axis < 3; ++axis) {
           midpoint[static_cast<std::size_t>(axis)] = 0.5 * (a[axis] + b[axis]);
         }
@@ -668,14 +907,20 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     double mean_size = 0.0;
     double edge_target = 0.0;
     const bool has_size = boundary_target(longest, mean_size, edge_target);
-    if (!separated(midpoint.data(), has_size ? mean_size : 0.0)) return PHX_MC_OK;
+    if (!spacing.clear(midpoint.data(),
+                       spacing_guard(feature_size_at(midpoint.data(), endpoints),
+                                     has_size ? mean_size : 0.0))) {
+      return PHX_MC_OK;
+    }
     std::uint64_t inserted_id = 0;
     const TetEditStatus status = split_boundary_edge(longest, inserted_id);
     const std::int32_t error = edit_error(status);
     if (error != PHX_MC_OK) return error;
     if (status != TetEditStatus::kApplied) return PHX_MC_OK;
     if (has_size) sizes.emplace(inserted_id, mean_size);
-    if (!grid_insert(mesh.vertex_slot(inserted_id))) return PHX_MC_UNRESOLVED;
+    const std::int32_t inserted_slot = mesh.vertex_slot(inserted_id);
+    record_feature_size(inserted_slot, feature_size_at(mesh.point(inserted_slot), endpoints));
+    if (!spacing.insert(inserted_slot)) return PHX_MC_UNRESOLVED;
     for (std::uint64_t id : split_cells) enqueue(id);
     ++inserted_vertices;
     split = true;
@@ -713,6 +958,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
 
   TetInsertionCavity cavity;
   std::vector<std::uint64_t> created_cells;
+  std::vector<std::int32_t> cavity_vertices;
   while (!queue.empty()) {
     const std::uint64_t cell_id = queue.begin()->second;
     queue.erase(queue.begin());
@@ -756,7 +1002,15 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
     double center_size = 0.0;
     const bool has_center_size = mean_target_size(parent.vertices, sizes, center_size);
-    if (!separated(center, has_center_size ? center_size : 0.0)) {
+    cavity_vertices.clear();
+    for (std::int32_t cell : cavity.cells) {
+      for (std::int32_t vertex : mesh.tet(cell).v) {
+        if (vertex >= 0) cavity_vertices.push_back(vertex);
+      }
+    }
+    const double center_feature_size = feature_size_at(center, cavity_vertices);
+    if (!spacing.clear(center, spacing_guard(center_feature_size,
+                                             has_center_size ? center_size : 0.0))) {
       unmet_reasons[cell_id] = PHX_MC_TET_UNMET_REFUSED;
       continue;
     }
@@ -806,7 +1060,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       continue;
     }
     if (has_center_size) sizes.emplace(inserted.id, center_size);
-    if (!grid_insert(mesh.vertex_slot(inserted.id))) return PHX_MC_UNRESOLVED;
+    const std::int32_t inserted_slot = mesh.vertex_slot(inserted.id);
+    record_feature_size(inserted_slot, center_feature_size);
+    if (!spacing.insert(inserted_slot)) return PHX_MC_UNRESOLVED;
     ++inserted_vertices;
     for (std::uint64_t id : created_cells) enqueue(id);
   }
