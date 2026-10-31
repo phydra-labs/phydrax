@@ -5120,7 +5120,7 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
     pairing_corrupted.mkdir()
     pairing_arrays = {name: array.copy() for name, array in arrays.items()}
     pairing_arrays[pairing_leaf.name].flat[0] *= 2.0
-    write_array_archive(
+    write_model_archive(
         pairing_corrupted / "finite-element-transfer.phx",
         manifest=manifest,
         arrays=pairing_arrays,
