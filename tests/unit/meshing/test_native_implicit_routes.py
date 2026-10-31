@@ -477,7 +477,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
             domain_id=coverage_witness.domain_id,
             distance_witness_id=coverage_witness.distance_witness_id,
         )
-        with pytest.raises(ValueError, match="restricted witness"):
+        with pytest.raises(ValueError, match="Restricted witness does not authenticate"):
             validate_restricted_delaunay_boundary_witness(
                 construction.mesh,
                 construction.geometry,
