@@ -27,7 +27,8 @@ from ._domain_coverage import PiecewiseLinearDomain
 from ._global_embedding import GlobalEmbeddingCertificate
 from ._meshing_domain import MeshingDomain
 from ._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryQuery
-from ._source_fidelity import SourceFidelityCertificate, validate_source_fidelity_witness
+from ._source_fidelity import validate_source_fidelity_witness
+from ._source_fidelity_certificate import SourceFidelityCertificate
 from .implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
     AdaptiveImplicitScaffold,

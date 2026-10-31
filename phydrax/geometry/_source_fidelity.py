@@ -9,16 +9,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
-from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
 import jax
 import numpy as np
 from jax.typing import ArrayLike
 
 from .._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._fingerprint import canonical_fingerprint
 from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
@@ -54,9 +52,7 @@ from ._interval_enclosure import (
     PreparedIntervalFunction,
 )
 from ._mesh_certificates import (
-    certificate_status,
     MeshCertificateBinding,
-    MeshCertificateStatus,
 )
 from ._meshing_domain import MeshingDomain
 from ._planar_primitives import (
@@ -75,6 +71,10 @@ from ._source_boundary_records import (
     SourceBoundaryProjectionQuery,
     SourceBoundaryQuery,
     SurfaceEnvelopeDistanceWitness,
+)
+from ._source_fidelity_certificate import (
+    SourceFidelityCertificate,
+    SourceFidelityWitness,
 )
 from ._source_identity import source_entity_id
 from .brep._patches import (
@@ -170,15 +170,6 @@ def _exact_triangle3(points: tuple[tuple[Fraction, ...], ...], /) -> Triangle3:
         (Fraction(points[1][0]), Fraction(points[1][1]), Fraction(points[1][2])),
         (Fraction(points[2][0]), Fraction(points[2][1]), Fraction(points[2][2])),
     )
-
-
-type SourceFidelityWitness = (
-    SurfaceChartWitness
-    | SourceBoundaryChartWitness
-    | SourceBoundaryPointWitness
-    | SourceBoundaryDistanceWitness
-    | SurfaceEnvelopeDistanceWitness
-)
 
 
 def _integer_vector(values: ArrayLike, /) -> tuple[int, ...]:
@@ -919,232 +910,6 @@ def _normal_angle_upper(
     return min(upper, _asin_upper(sine_upper))
 
 
-def _source_domain_id(source: SourceBoundaryQuery, /) -> str:
-    if isinstance(source, MeshingDomainBoundarySource):
-        return source.domain.domain_id
-    from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
-
-    if isinstance(source, SurfaceNativeRestrictionBoundarySource):
-        return source.domain.domain_id
-    from ._curve_boundary import ParametricCurveBoundarySource
-
-    if isinstance(source, ParametricCurveBoundarySource):
-        return source.query_id
-    from ._mapped_reference_boundary import MappedReferenceBoundarySource
-
-    if isinstance(source, MappedReferenceBoundarySource):
-        return source.source_query_id
-    from .reconstruction._boundary import ReconstructedTriangleBoundarySource
-
-    if isinstance(source, ReconstructedTriangleBoundarySource):
-        domain = source.source.meshing_domain
-        return source.source_revision if domain is None else domain.domain_id
-    from .implicit._analytic_profile import AnalyticImplicitProfile
-
-    if isinstance(source, AnalyticImplicitProfile):
-        return source.profile_id
-    return source.source_revision
-
-
-@final
-class SourceFidelityCertificate(StrictModule, NonTrainableState):
-    """Continuous two-directed bounds and optional oriented-normal evidence."""
-
-    __strict_contract__ = True
-
-    binding: MeshCertificateBinding
-    source: SourceBoundaryQuery
-    source_id: str
-    source_revision: str
-    domain_id: str
-    mesh_id: str
-    topology_id: str
-    geometry_id: str
-    tolerance: float
-    maximum_normal_deviation: float | None
-    deviation_bounds: np.ndarray
-    mesh_to_source_lower: float
-    mesh_to_source_upper: float
-    source_to_mesh_lower: float
-    source_to_mesh_upper: float
-    normal_deviation_bounds: np.ndarray | None
-    maximum_normal_deviation_lower: float | None
-    maximum_normal_deviation_bound: float | None
-    source_cell_global_ids: tuple[int, ...]
-    source_patch_ids: tuple[int, ...]
-    source_occurrence_paths: tuple[tuple[str, ...], ...]
-    witness: SourceFidelityWitness | None
-    coverage: SourceBoundaryChartCover | None
-    status: MeshCertificateStatus
-    findings: tuple[MeshCertificateFinding, ...]
-    certificate_id: str
-
-    def __init__(
-        self,
-        binding: MeshCertificateBinding,
-        source: SourceBoundaryQuery,
-        tolerance: float,
-        maximum_normal_deviation: float | None,
-        deviation_bounds: ArrayLike,
-        mesh_to_source_lower: float,
-        mesh_to_source_upper: float,
-        source_to_mesh_lower: float,
-        source_to_mesh_upper: float,
-        normal_deviation_bounds: ArrayLike | None,
-        maximum_normal_deviation_lower: float | None,
-        source_cell_global_ids: tuple[int, ...],
-        source_patch_ids: tuple[int, ...],
-        source_occurrence_paths: tuple[tuple[str, ...], ...],
-        witness: SourceFidelityWitness | None,
-        coverage: SourceBoundaryChartCover | None,
-        findings: tuple[MeshCertificateFinding, ...],
-        /,
-    ) -> None:
-        bounds = np.asarray(deviation_bounds, dtype=np.float64)
-        if (
-            bounds.ndim != 2
-            or bounds.shape[1] != 2
-            or np.any(np.isnan(bounds))
-            or np.any(bounds < 0)
-        ):
-            raise ValueError(
-                "SourceFidelityCertificate.deviation_bounds must be nonnegative lower/upper pairs."
-            )
-        if np.any(bounds[:, 0] > bounds[:, 1]):
-            raise ValueError(
-                "SourceFidelityCertificate deviation lower bounds exceed upper bounds."
-            )
-        bounds = np.array(bounds, copy=True)
-        bounds.setflags(write=False)
-        normal_bounds = None
-        if normal_deviation_bounds is not None:
-            normal_bounds = np.asarray(normal_deviation_bounds, dtype=np.float64)
-            if (
-                normal_bounds.ndim != 1
-                or np.any(np.isnan(normal_bounds))
-                or np.any(normal_bounds < 0)
-            ):
-                raise ValueError(
-                    "SourceFidelityCertificate normal bounds must be nonnegative radians."
-                )
-            normal_bounds = np.array(normal_bounds, copy=True)
-            normal_bounds.setflags(write=False)
-        tolerance_ = float(tolerance)
-        maximum_normal_ = (
-            None if maximum_normal_deviation is None else float(maximum_normal_deviation)
-        )
-        if not math.isfinite(tolerance_) or tolerance_ < 0:
-            raise ValueError("Source fidelity tolerance must be finite and nonnegative.")
-        if maximum_normal_ is not None and (
-            not math.isfinite(maximum_normal_)
-            or maximum_normal_ < 0
-            or maximum_normal_ > math.pi
-        ):
-            raise ValueError(
-                "maximum_normal_deviation must be None or finite radians in [0, pi]."
-            )
-        values = tuple(
-            float(value)
-            for value in (
-                mesh_to_source_lower,
-                mesh_to_source_upper,
-                source_to_mesh_lower,
-                source_to_mesh_upper,
-            )
-        )
-        if any(math.isnan(value) or value < 0 for value in values):
-            raise ValueError(
-                "Source fidelity directed bounds must be nonnegative and non-NaN."
-            )
-        if values[0] > values[1] or values[2] > values[3]:
-            raise ValueError("Source fidelity directed lower bounds exceed upper bounds.")
-        if (
-            len(source_cell_global_ids) != bounds.shape[0]
-            or len(source_patch_ids) != bounds.shape[0]
-            or len(source_occurrence_paths) != bounds.shape[0]
-        ):
-            raise ValueError(
-                "Source fidelity cell identities must align with per-cell bounds."
-            )
-        status = certificate_status(findings)
-        self.binding = binding
-        self.source = source
-        self.source_id = binding.source_id or source.source_id
-        self.source_revision = binding.source_revision or source.source_revision
-        self.domain_id = _source_domain_id(source)
-        self.mesh_id = binding.mesh_id
-        self.topology_id = binding.topology_id
-        self.geometry_id = binding.geometry_id
-        self.tolerance = tolerance_
-        self.maximum_normal_deviation = maximum_normal_
-        self.deviation_bounds = bounds
-        self.mesh_to_source_lower, self.mesh_to_source_upper = values[0], values[1]
-        self.source_to_mesh_lower, self.source_to_mesh_upper = values[2], values[3]
-        self.normal_deviation_bounds = normal_bounds
-        self.maximum_normal_deviation_lower = maximum_normal_deviation_lower
-        self.maximum_normal_deviation_bound = (
-            None
-            if normal_bounds is None or normal_bounds.size == 0
-            else float(np.max(normal_bounds))
-        )
-        self.source_cell_global_ids = tuple(
-            int(value) for value in source_cell_global_ids
-        )
-        self.source_patch_ids = tuple(int(value) for value in source_patch_ids)
-        self.source_occurrence_paths = tuple(
-            tuple(path) for path in source_occurrence_paths
-        )
-        self.witness = witness
-        self.coverage = coverage
-        self.status = status
-        self.findings = tuple(findings)
-        self.certificate_id = canonical_fingerprint(
-            {
-                "kind": "source-fidelity-certificate",
-                "binding": binding.binding_id,
-                "source": (self.source_id, self.source_revision, self.domain_id),
-                "tolerance": tolerance_,
-                "maximum_normal_deviation": maximum_normal_,
-                "deviation_bounds": array_tree_fingerprint(bounds),
-                "directed_bounds": tuple(
-                    value if math.isfinite(value) else value.hex() for value in values
-                ),
-                "normal_bounds": None
-                if normal_bounds is None
-                else array_tree_fingerprint(normal_bounds),
-                "normal_lower": maximum_normal_deviation_lower,
-                "cells": self.source_cell_global_ids,
-                "patches": self.source_patch_ids,
-                "occurrences": self.source_occurrence_paths,
-                "witness": None if witness is None else witness.witness_id,
-                "coverage": None if coverage is None else coverage.cover_id,
-                "findings": tuple(finding.finding_id for finding in findings),
-                "status": status,
-            }
-        )
-
-    def require_current(
-        self,
-        mesh: CellMesh,
-        geometry: CellGeometrySpec,
-        source: SourceBoundaryQuery,
-        /,
-    ) -> None:
-        self.binding.require(mesh, geometry, source=source)
-        fresh = certify_source_fidelity(
-            mesh,
-            geometry,
-            source,
-            tolerance=self.tolerance,
-            maximum_normal_deviation=self.maximum_normal_deviation,
-            witness=self.witness,
-        )
-        if fresh.certificate_id != self.certificate_id:
-            raise ValueError(
-                "Source fidelity proof does not reproduce its current source and map inputs."
-            )
-
-
 def _validate_piecewise_linear_chart_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1550,8 +1315,6 @@ def validate_source_fidelity_witness(
 
 
 __all__ = [
-    "SourceFidelityCertificate",
-    "SourceFidelityWitness",
     "certify_source_fidelity",
     "polyhedral_face_triangle_vertex_ids",
     "validate_source_fidelity_witness",

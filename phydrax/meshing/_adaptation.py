@@ -95,7 +95,7 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryPointWitness,
     SurfaceEnvelopeDistanceWitness,
 )
-from ..geometry._source_fidelity import SourceFidelityWitness
+from ..geometry._source_fidelity_certificate import SourceFidelityWitness
 from ..geometry._volume_material_deformation import (
     MaterialReferenceDeclaration,
     VolumeMaterialDeformation,

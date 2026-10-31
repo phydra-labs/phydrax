@@ -207,8 +207,8 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundarySamples,
     SurfaceEnvelopeDistanceWitness,
 )
-from phydrax.geometry._source_fidelity import (
-    certify_source_fidelity,
+from phydrax.geometry._source_fidelity import certify_source_fidelity
+from phydrax.geometry._source_fidelity_certificate import (
     SourceFidelityCertificate,
     SourceFidelityWitness,
 )

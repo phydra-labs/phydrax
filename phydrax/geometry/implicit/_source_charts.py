@@ -74,7 +74,7 @@ from ._analytic_profile import AnalyticImplicitProfile
 
 
 if TYPE_CHECKING:
-    from ...geometry._source_fidelity import SourceFidelityCertificate
+    from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
 type Interval = tuple[float, float]
 type GridCorner = tuple[int, int, int]
 type GridEdge = tuple[GridCorner, GridCorner]
@@ -3611,9 +3611,9 @@ def certify_adaptive_implicit_charts(
     from ...geometry._source_fidelity import (
         _surface_target_chart_rows,
         _unresolved_fidelity,
-        SourceFidelityCertificate,
         validate_source_fidelity_witness,
     )
+    from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ...linalg._hermitian_spectral import fraction_sqrt_interval
 
     validate_source_fidelity_witness(mesh, geometry, source, witness)

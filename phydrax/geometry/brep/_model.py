@@ -26,6 +26,7 @@ from ...discretization._exact_algebraic_geometry import ExactScalar
 from ...discretization._surface_chart_records import SurfaceChartWitness
 from ...typing import checked, ConvertibleToArray
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas, TrimDomain
+from .._source_fidelity_certificate import SourceFidelityCertificate
 from ._assembly import (
     BRepAffinePlacement,
     BRepAssemblyGraph,
@@ -3456,7 +3457,16 @@ class BRepModel(StrictModule):
         report: BRepImportReport,
         trim_domains: tuple[TrimDomain | None, ...] | None = None,
         tessellation: BRepTessellation | None = None,
+        tessellation_certificate: SourceFidelityCertificate | None = None,
     ) -> None:
+        """Validate the source model and, when given, its derived tessellation.
+
+        ``tessellation_certificate`` is the source-fidelity proof that
+        ``tessellate_brep_model`` returned with ``tessellation``. It must bind
+        exactly the tessellation's mesh, coordinate map, source domain, witness
+        and deflection policy; the model then reuses it instead of recomputing
+        the proof. Without it the proof is recomputed.
+        """
         if not isinstance(geometry, BRepGeometry):
             raise TypeError("geometry must be a BRepGeometry.")
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
@@ -3551,7 +3561,11 @@ class BRepModel(StrictModule):
             self._validate_tessellation(
                 tessellation, source_revision, geometry, patches_, bounds_host, signs
             )
-            self._validate_tessellation_source_witness(tessellation)
+            self._validate_tessellation_source_witness(
+                tessellation, tessellation_certificate
+            )
+        elif tessellation_certificate is not None:
+            raise ValueError("A tessellation certificate requires its tessellation.")
 
     def require_current(self, /) -> None:
         self.geometry.require_current()
@@ -3810,7 +3824,10 @@ class BRepModel(StrictModule):
             raise ValueError("Tessellation bounds exceed their physical policy.")
 
     def _validate_tessellation_source_witness(
-        self, tessellation: BRepTessellation, /
+        self,
+        tessellation: BRepTessellation,
+        certificate: SourceFidelityCertificate | None,
+        /,
     ) -> None:
         from ...discretization._cell_geometry import CellGeometrySpec
         from ...discretization._cell_geometry_validity import cell_geometry_id
@@ -3912,17 +3929,29 @@ class BRepModel(StrictModule):
                     "its actual source mesh."
                 )
         boundary = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
-        certificate = certify_source_fidelity(
-            mesh,
-            coordinate_geometry,
-            boundary,
-            tolerance=tessellation.linear_deflection,
-            maximum_normal_deviation=tessellation.angular_deflection,
-            witness=witness,
-        )
-        # The proof was just derived from exactly these inputs; a full replay
-        # would recompute the same certificate. Only its identity binding is checked.
-        certificate.binding.require(mesh, coordinate_geometry, source=boundary)
+        if certificate is None:
+            certificate = certify_source_fidelity(
+                mesh,
+                coordinate_geometry,
+                boundary,
+                tolerance=tessellation.linear_deflection,
+                maximum_normal_deviation=tessellation.angular_deflection,
+                witness=witness,
+            )
+            # The proof was just derived from exactly these inputs; a full replay
+            # would recompute the same certificate. Only its identity binding is checked.
+            certificate.binding.require(mesh, coordinate_geometry, source=boundary)
+        else:
+            # The tessellation's own proof answers this exact question when it
+            # binds these inputs; it is reused, never recomputed.
+            certificate.require_inputs(
+                mesh,
+                coordinate_geometry,
+                boundary,
+                tolerance=tessellation.linear_deflection,
+                maximum_normal_deviation=tessellation.angular_deflection,
+                witness=witness,
+            )
         if certificate.status != "certified":
             details = "; ".join(finding.detail for finding in certificate.findings)
             raise ValueError(
