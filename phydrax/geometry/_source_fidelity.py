@@ -38,7 +38,7 @@ from ..discretization._surface_chart_records import (
     SurfaceChartWitness,
 )
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
-from ._domain_boundary import MeshingDomainBoundarySource
+from ._domain_boundary import CurvedTrimLens, MeshingDomainBoundarySource
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import (
     interval_cos,
@@ -440,7 +440,6 @@ def _partition_findings(
 ) -> tuple[MeshCertificateFinding, ...]:
 
     domain = source.domain
-    source_triangles = dict(source.boundary_parameter_triangles())
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
         charts = tuple(
@@ -464,9 +463,8 @@ def _partition_findings(
         )
         return tuple(findings)
     for patch in source.patches:
-        declared = source_triangles.get(patch)
         target = tuple(target_triangles.get(patch, ()))
-        if not declared or not target:
+        if not target:
             findings.append(
                 MeshCertificateFinding(
                     "source_chart_patch_coverage",
@@ -501,6 +499,7 @@ def _partition_findings(
                 *target,
                 *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
             )
+        declared, _ = source.trim_partition_reference(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -3663,20 +3662,10 @@ def _plane_normal_deviation(
     return _acos_lower(cosine[1]), _acos_upper(cosine[0])
 
 
-def _normal_deviation_for_cell(
-    domain: MeshingDomain,
-    patch: int,
-    uv_triangle: Triangle2,
-    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
-    /,
-) -> tuple[Fraction, Fraction] | None:
-    surface_patch = domain.patches[patch]
-    exact_plane = _plane_normal_deviation(
-        surface_patch.surface, surface_patch.orientation, uv_triangle, target_cross
-    )
-    if exact_plane is not None:
-        return exact_plane
-    surface = surface_patch.surface
+def _surface_jacobian_bounds(
+    surface: AbstractSurfacePatch, uv_triangle: Triangle2, /
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Enclose the physical Jacobian columns of a source surface on a chart triangle."""
     from ._source_interpolation import (
         _has_unexpanded_exact_surface_carrier,
         exact_surface_coordinate_expressions,
@@ -3697,11 +3686,7 @@ def _normal_deviation_for_cell(
                     return None
                 lower[physical_axis, parameter] = low
                 upper[physical_axis, parameter] = high
-        source_cross = _normal_cross_interval(lower, upper, surface_patch.orientation)
-        cosine = _normal_cosine_bounds(source_cross, target_cross)
-        if cosine is None:
-            return None
-        return _acos_lower(cosine[1]), _acos_upper(cosine[0])
+        return lower, upper
     if _has_unexpanded_exact_surface_carrier(surface):
         return None
     chart_lower = tuple(min(point[axis] for point in uv_triangle) for axis in range(2))
@@ -3720,11 +3705,86 @@ def _normal_deviation_for_cell(
     low, high = jacobian.evaluate(box_lower.reshape((1, 2)), box_upper.reshape((1, 2)))
     if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
         return None
-    source_cross = _normal_cross_interval(low[0], high[0], surface_patch.orientation)
+    return np.asarray(low[0], dtype=np.float64), np.asarray(high[0], dtype=np.float64)
+
+
+def _normal_deviation_for_cell(
+    domain: MeshingDomain,
+    patch: int,
+    uv_triangle: Triangle2,
+    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    surface_patch = domain.patches[patch]
+    exact_plane = _plane_normal_deviation(
+        surface_patch.surface, surface_patch.orientation, uv_triangle, target_cross
+    )
+    if exact_plane is not None:
+        return exact_plane
+    bounds = _surface_jacobian_bounds(surface_patch.surface, uv_triangle)
+    if bounds is None:
+        return None
+    source_cross = _normal_cross_interval(*bounds, surface_patch.orientation)
     cosine = _normal_cosine_bounds(source_cross, target_cross)
     if cosine is None:
         return None
     return _acos_lower(cosine[1]), _acos_upper(cosine[0])
+
+
+def _curved_trim_lens_caps(
+    surface: AbstractSurfacePatch,
+    chart_rows: list[tuple[int, Triangle2]],
+    lenses: tuple[CurvedTrimLens, ...],
+    /,
+) -> dict[int, Fraction]:
+    """Bound the physical distance a curved-trim lens adds to each target cell.
+
+    A lens point is within ``parameter_bound`` of its chord and its arc along a
+    chart segment inside the lens box, clipped to the convex source parameter
+    domain that holds both segment ends. The surface image of that segment is no
+    longer than the Jacobian norm bound on the box times the chart distance.
+    """
+    caps: dict[int, Fraction] = {}
+    domain = surface.parameter_domain
+    for lens in lenses:
+        lower = lens.lower
+        upper = lens.upper
+        if domain is not None:
+            lower = (
+                max(lower[0], Fraction.from_float(float(domain[0][0]))),
+                max(lower[1], Fraction.from_float(float(domain[0][1]))),
+            )
+            upper = (
+                min(upper[0], Fraction.from_float(float(domain[1][0]))),
+                min(upper[1], Fraction.from_float(float(domain[1][1]))),
+            )
+        if lower[0] >= upper[0] or lower[1] >= upper[1]:
+            raise ValueError("A curved trim lens leaves the source parameter domain.")
+        norm_squared = Fraction(0)
+        for triangle in (
+            (lower, (upper[0], lower[1]), upper),
+            (lower, upper, (lower[0], upper[1])),
+        ):
+            bounds = _surface_jacobian_bounds(surface, triangle)
+            if bounds is None:
+                raise ValueError("A curved trim lens has no surface Jacobian enclosure.")
+            magnitude = np.maximum(np.abs(bounds[0]), np.abs(bounds[1]))
+            norm_squared = max(
+                norm_squared,
+                sum(
+                    (Fraction.from_float(float(value)) ** 2 for value in magnitude.flat),
+                    Fraction(0),
+                ),
+            )
+        cap = fraction_sqrt_interval(norm_squared)[1] * lens.parameter_bound
+        for cell_id, chart in chart_rows:
+            if all(
+                min(point[axis] for point in chart) <= upper[axis]
+                and max(point[axis] for point in chart) >= lower[axis]
+                for axis in range(2)
+            ):
+                caps[cell_id] = max(caps.get(cell_id, Fraction(0)), cap)
+    return caps
 
 
 def _certify_source_point_fidelity(
@@ -4951,14 +5011,21 @@ def certify_source_fidelity(
             # A sliver's source image stays within its cap bound of the owner's
             # pole corner, whose target image is bounded by the endpoint error.
             sliver_caps: dict[int, Fraction] = {}
-            for owner_row, sliver in domain_source.collapsed_pole_slivers(
-                patch, tuple(chart for _, chart in chart_rows)
-            ):
+            target_charts = tuple(chart for _, chart in chart_rows)
+            slivers = domain_source.collapsed_pole_slivers(patch, target_charts)
+            for owner_row, sliver in slivers:
                 owner = chart_rows[owner_row][0]
                 sliver_caps[owner] = max(
                     sliver_caps.get(owner, Fraction(0)),
                     domain_source.pole_sliver_cap_bound(patch, sliver),
                 )
+            # Target charts follow a curved trim by chords. A chart point between a
+            # chord and its arc is within the lens bound of both, so the directed
+            # distances of every cell meeting the lens box grow by its surface image.
+            _, lenses = domain_source.trim_partition_reference(
+                patch, (*target_charts, *(sliver for _, sliver in slivers))
+            )
+            lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses)
         except (
             ArithmeticError,
             FloatingPointError,
@@ -5077,6 +5144,7 @@ def certify_source_fidelity(
             cap = sliver_caps.get(cell_id)
             if cap is not None:
                 deviation = max(deviation, cap + endpoint_error)
+            deviation += lens_caps.get(cell_id, Fraction(0))
             output_row = row_for_id[cell_id]
             deviation_upper = fraction_endpoint(deviation, upper=True, saturate=True)
             deviation_bounds[output_row] = (0.0, deviation_upper)
