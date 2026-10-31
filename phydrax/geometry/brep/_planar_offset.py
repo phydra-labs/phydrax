@@ -42,6 +42,7 @@ from ._patches import (
 )
 from ._planar_arrangement import inside_loop, on_segment
 
+
 type _Vector = tuple[Fraction, ...]
 type _Plane = tuple[_Vector, Fraction]
 type _Box = tuple[tuple[Fraction, Fraction], ...]

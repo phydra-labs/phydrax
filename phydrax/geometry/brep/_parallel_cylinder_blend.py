@@ -156,8 +156,6 @@ def _offset_exact_point(point: _ExactVector, offset: _Vector3, /) -> _ExactPoint
     )
 
 
-
-
 def _fraction_exact(value: ExactScalar, /) -> Fraction:
     if not isinstance(value, Fraction):
         raise BRepBlendUnsupported(
@@ -168,6 +166,8 @@ def _fraction_exact(value: ExactScalar, /) -> Fraction:
 
 def _rational_exact_vector(values: _ExactVector, /) -> _Vector:
     return tuple(_fraction_exact(value) for value in values)
+
+
 def _rational_exact_vector3(values: _ExactVector, /) -> _Vector3:
     return (
         _fraction_exact(values[0]),
@@ -179,8 +179,6 @@ def _rational_exact_vector3(values: _ExactVector, /) -> _Vector3:
 def _rational_vector3(values: np.ndarray, /) -> _Vector3:
     vector = rational_vector(values)
     return vector[0], vector[1], vector[2]
-
-
 
 
 def _rational_rows(values: np.ndarray, /) -> tuple[_Vector, ...]:
@@ -299,6 +297,7 @@ def _blend_center_exact(
             "parallel-cylinder fillet center lacks its exact quadratic branch"
         )
     square_root = RadicalElement.sqrt(radicand)
+
     def coordinate(index: int, /) -> ExactScalar:
         return (
             junction.origin_exact[index]
@@ -470,7 +469,7 @@ def _side(model: BRepModel, geometry: BRepGeometry, face: int, edge: int) -> _Si
         (caps[0][2], caps[1][2]),
         radial,
         pcurve.root,
-        pcurve.phase_shift_exact,
+        _fraction_exact(pcurve.phase_shift_exact),
     )
 
 
@@ -627,18 +626,18 @@ def _junction(model: BRepModel, edge: int, /) -> _Junction:
                 raise BRepBlendUnsupported(
                     "unsupported parallel-cylinder blend: cylinder generator p-curve lacks a conic endpoint witness"
                 )
+
     def exact_vertex(vertex: int, point: np.ndarray, /) -> _ExactPoint3:
         exact = geometry.vertex_exact_points[vertex]
         if exact is not None:
             return exact
         root = geometry.vertex_roots[vertex]
-        if isinstance(root, BRepVertexRoot) and isinstance(
-            root.primary, BRepConicVertex
-        ):
+        if isinstance(root, BRepVertexRoot) and isinstance(root.primary, BRepConicVertex):
             exact_point = root.primary.point_exact
             return exact_point[0], exact_point[1], exact_point[2]
         values = rational_vector(point)
         return values[0], values[1], values[2]
+
     endpoints = np.asarray(geometry.vertex_points)[list(endpoint_ids)]
     order = np.argsort(endpoints @ axis)
     vertices = (endpoint_ids[int(order[0])], endpoint_ids[int(order[1])])
@@ -775,11 +774,17 @@ def _sector_rays(
         )
         return (
             sum(
-                (radial[coordinate] * target_axes[0][coordinate] for coordinate in range(3)),
+                (
+                    radial[coordinate] * target_axes[0][coordinate]
+                    for coordinate in range(3)
+                ),
                 Fraction(),
             ),
             sum(
-                (radial[coordinate] * target_axes[1][coordinate] for coordinate in range(3)),
+                (
+                    radial[coordinate] * target_axes[1][coordinate]
+                    for coordinate in range(3)
+                ),
                 Fraction(),
             ),
         )
@@ -823,8 +828,6 @@ def _inside_sector(
     if first_sign == 0 or last_sign == 0:
         return False
     return first_sign > 0 or last_sign > 0 if major else first_sign > 0 and last_sign > 0
-
-
 
 
 def _contact_angle(
@@ -1017,9 +1020,7 @@ def _chamfer(junction: _Junction, setbacks: tuple[float, float]) -> _Blend:
                 "unsupported parallel-cylinder chamfer: setback vanishes or consumes a source face"
             )
         signed_distance = (
-            exact_distance
-            if side.retained_angle > side.angle
-            else -exact_distance
+            exact_distance if side.retained_angle > side.angle else -exact_distance
         )
         phase_shift = side.source_phase_shift + signed_distance
         angle = side.angle + float(signed_distance)
@@ -1203,15 +1204,15 @@ def _unique_trim_root(
                 and np.all(unresolved_upper >= endpoint_box[1])
                 and (
                     first_parameter is None
-                    or endpoint_box[0, 0]
-                    <= float(first_parameter)
-                    <= endpoint_box[1, 0]
+                    or endpoint_box[0, 0] <= float(first_parameter) <= endpoint_box[1, 0]
                 )
             ):
                 lower = np.minimum(unresolved_lower, endpoint_box[0])
                 upper = np.maximum(unresolved_upper, endpoint_box[1])
-                margin = 32.0 * np.finfo(np.float64).eps * np.maximum(
-                    1.0, np.maximum(np.abs(lower), np.abs(upper))
+                margin = (
+                    32.0
+                    * np.finfo(np.float64).eps
+                    * np.maximum(1.0, np.maximum(np.abs(lower), np.abs(upper)))
                 )
                 lower = np.nextafter(lower - margin, -np.inf)
                 upper = np.nextafter(upper + margin, np.inf)
@@ -1274,6 +1275,7 @@ def _unique_trim_root(
         )
     return selected[0]
 
+
 def _constructive_cap_root(
     curve: CircleCurve,
     region: SurfaceRegion,
@@ -1281,8 +1283,10 @@ def _constructive_cap_root(
     /,
 ) -> CurveSurfaceIntersectionRoot:
     point_box = witness.curve_surface_parameter_box(curve, region)
-    margin = 64.0 * np.finfo(np.float64).eps * np.maximum(
-        1.0, np.maximum(np.abs(point_box[0]), np.abs(point_box[1]))
+    margin = (
+        64.0
+        * np.finfo(np.float64).eps
+        * np.maximum(1.0, np.maximum(np.abs(point_box[0]), np.abs(point_box[1])))
     )
     domain = np.asarray(region.parameter_box, dtype=np.float64)
     lower = np.maximum(
@@ -1294,7 +1298,10 @@ def _constructive_cap_root(
         np.asarray((float(witness.trim_interval[1]), *domain[1]), dtype=np.float64),
     )
     return CurveSurfaceIntersectionRoot(
-        curve, region, parameter_lower=lower, parameter_upper=upper,
+        curve,
+        region,
+        parameter_lower=lower,
+        parameter_upper=upper,
         endpoint_witness=witness,
     )
 
@@ -1305,9 +1312,7 @@ def _surface_region(model: BRepModel, face: int, /) -> SurfaceRegion:
     )
 
 
-def _face_edge_pcurve(
-    geometry: BRepGeometry, face: int, edge: int, /
-) -> AbstractCurve:
+def _face_edge_pcurve(geometry: BRepGeometry, face: int, edge: int, /) -> AbstractCurve:
     coedges = tuple(
         coedge
         for loop in geometry.face_loops[face]
@@ -1366,8 +1371,7 @@ def _stage_chamfer_edges(
         blend_patch, np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)
     )
     blend_pcurves = tuple(
-        LineCurve((0.0, float(side_index)), (1.0, 0.0))
-        for side_index in range(2)
+        LineCurve((0.0, float(side_index)), (1.0, 0.0)) for side_index in range(2)
     )
     new_vertices: list[list[int]] = [[-1, -1], [-1, -1]]
     source_endpoint_roots: list[list[RootEndpoint | None]] = [
@@ -1420,9 +1424,7 @@ def _stage_chamfer_edges(
             same = _axis_scale(side) > 0
             cap_edge = side.cap_edges[end if same else 1 - end]
             curve_index = geometry.edge_curves[cap_edge]
-            cap_circle = (
-                None if curve_index < 0 else geometry.curves[curve_index]
-            )
+            cap_circle = None if curve_index < 0 else geometry.curves[curve_index]
             if not isinstance(cap_circle, CircleCurve):
                 raise BRepBlendUnsupported(
                     "unsupported parallel-cylinder chamfer: cap endpoint has no exact circular carrier"
@@ -1432,9 +1434,7 @@ def _stage_chamfer_edges(
             )
             side_cap_pcurve = _face_edge_pcurve(geometry, side.face, cap_edge)
             cap_circle_pcurve = _face_edge_pcurve(geometry, cap_face, cap_edge)
-            branch_parameter = (
-                0.0 if side_index == 0 else float(branch.num_charts)
-            )
+            branch_parameter = 0.0 if side_index == 0 else float(branch.num_charts)
             endpoint_witness = ConicRootLineEndpointWitness(
                 source_curves[side_index],
                 source_pcurves[side_index],
@@ -1517,12 +1517,12 @@ def _stage_chamfer_edges(
                     "unsupported parallel-cylinder chamfer: contact roots lack exact source lifts"
                 ) from error
             point = np.asarray(
-                cap_circle.evaluate(jnp.asarray(cap_root.parameters[0], dtype=jnp.float64)),
+                cap_circle.evaluate(
+                    jnp.asarray(cap_root.parameters[0], dtype=jnp.float64)
+                ),
                 dtype=np.float64,
             )
-            new_vertices[side_index][end] = builder.vertex(
-                point, root=vertex_root
-            )
+            new_vertices[side_index][end] = builder.vertex(point, root=vertex_root)
             cap_endpoint = TrimRootEndpoint(
                 cap_root,
                 "first",
@@ -1569,15 +1569,13 @@ def _stage_chamfer_edges(
             source_endpoint_index = geometry.edge_vertices[cap_edge].index(
                 junction.vertices[end]
             )
-            source_cap_endpoint_roots[(cap_edge, source_endpoint_index)] = (
+            source_cap_endpoint_roots[(cap_edge, source_endpoint_index)] = cap_endpoint
+            source_cap_endpoint_roots[(cap_edge, source_endpoint_index, cap_face)] = (
                 cap_endpoint
             )
-            source_cap_endpoint_roots[
-                (cap_edge, source_endpoint_index, cap_face)
-            ] = cap_endpoint
-            source_cap_endpoint_roots[
-                (cap_edge, source_endpoint_index, side.face)
-            ] = side_endpoint
+            source_cap_endpoint_roots[(cap_edge, source_endpoint_index, side.face)] = (
+                side_endpoint
+            )
             cap_parameter = float(cap_root.parameters[0])
             cap_changes[cap_edge] = (side_index, end, cap_parameter)
             face_roots[side_index] = cap_branch_endpoint
@@ -1679,6 +1677,7 @@ def _stage_chamfer_edges(
         (cap_face_roots[0], cap_face_roots[1]),
         (cap_blend_roots[0], cap_blend_roots[1]),
     )
+
 
 def _stage_edges(
     junction: _Junction, blend: _Blend, selected: int, model: BRepModel, /
@@ -1924,9 +1923,7 @@ def _stage_edges(
     )
 
 
-def _stage_caps(
-    junction: _Junction, blend: _Blend, edges: _StagedEdges
-) -> _StagedBlend:
+def _stage_caps(junction: _Junction, blend: _Blend, edges: _StagedEdges) -> _StagedBlend:
     builder, new_vertices = edges.builder, edges.new_vertices
     cap_edges: list[int] = []
     cap_curves: list[AbstractCurve] = []
@@ -2073,6 +2070,8 @@ def _stage_caps(
         edges.chamfer_cap_blend_pcurves,
         edges.chamfer_cap_blend_roots,
     )
+
+
 def _vertical_use(
     junction: _Junction,
     blend: _Blend,
@@ -2138,11 +2137,7 @@ def _stage_source_loop(
             for endpoint, vertex in enumerate(geometry.edge_vertices[edge]):
                 if vertex not in junction.vertices:
                     continue
-                key = (
-                    (edge, endpoint, face)
-                    if blend.radius == 0.0
-                    else (edge, endpoint)
-                )
+                key = (edge, endpoint, face) if blend.radius == 0.0 else (edge, endpoint)
                 root = edges.source_cap_endpoint_roots.get(key)
                 if blend.radius == 0.0:
                     if root is None:
@@ -2424,9 +2419,7 @@ def _stage_blend_face(
         orientation = blend.orientation
     else:
         side0 = junction.sides[0]
-        old_normal = side0.radial_orientation * (
-            blend.points[0] - junction.centers[0]
-        )
+        old_normal = side0.radial_orientation * (blend.points[0] - junction.centers[0])
         tangent = blend.points[1] - blend.points[0]
         normal = np.asarray((tangent[1], -tangent[0]))
         orientation = 1 if float(normal @ old_normal) > 0.0 else -1
@@ -2438,9 +2431,7 @@ def _stage_blend_face(
             for coedge in blend_loop
         ]
     )
-    face_bounds = np.stack(
-        (np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0))
-    )
+    face_bounds = np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
     builder.face(
         blend_patch,
         face_bounds,

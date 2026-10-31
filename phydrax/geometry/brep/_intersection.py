@@ -6684,7 +6684,9 @@ def _revolution_plane_conic_circles(
 def _exact_dot(
     first: Sequence[ExactScalar], second: Sequence[ExactScalar], /
 ) -> ExactScalar:
-    return sum((left * right for left, right in zip(first, second, strict=True)), Fraction(0))
+    return sum(
+        (left * right for left, right in zip(first, second, strict=True)), Fraction(0)
+    )
 
 
 def _exact_harmonic_range(
@@ -6731,7 +6733,9 @@ def _plane_chart_coordinates(
     determinant = g00 * g11 - g01 * g01
     if determinant == 0:
         return None
-    delta = tuple(vector[index] - origin[index] for index in range(3)) if point else vector
+    delta = (
+        tuple(vector[index] - origin[index] for index in range(3)) if point else vector
+    )
     rhs0, rhs1 = _exact_dot(first_axis, delta), _exact_dot(second_axis, delta)
     return (
         (g11 * rhs0 - g01 * rhs1) / determinant,
@@ -6819,11 +6823,15 @@ def _revolution_plane_isoline(
         )
         revolution_uv = (angle, parameter)
         return np.asarray(
-            (*plane_uv, *revolution_uv) if plane_is_first else (*revolution_uv, *plane_uv),
+            (*plane_uv, *revolution_uv)
+            if plane_is_first
+            else (*revolution_uv, *plane_uv),
             dtype=np.float64,
         )
 
-    def box_for(lower_angle: float, upper_angle: float, /) -> tuple[np.ndarray, np.ndarray]:
+    def box_for(
+        lower_angle: float, upper_angle: float, /
+    ) -> tuple[np.ndarray, np.ndarray]:
         plane_lower = np.asarray(plane_region.parameter_box[0], dtype=np.float64)
         plane_upper = np.asarray(plane_region.parameter_box[1], dtype=np.float64)
         if plane_is_first:
@@ -6995,6 +7003,90 @@ def _revolution_plane_line_circle(
     if branch is None or isinstance(branch, SurfaceIntersectionResult):
         return branch
     return SurfaceIntersectionResult(curves=(branch,))
+
+
+def _exact_cylinder_axis(
+    region: SurfaceRegion, /
+) -> (
+    tuple[
+        tuple[Fraction, Fraction, Fraction], tuple[Fraction, Fraction, Fraction], Fraction
+    ]
+    | None
+):
+    """Return the exact axis point, axis direction and radius of a circular cylinder."""
+    patch = region.patch
+    if not isinstance(patch, CylinderPatch):
+        view = _revolution_cylinder_view(region)
+        if view is None:
+            return None
+        patch = view[0].patch
+        if not isinstance(patch, CylinderPatch):
+            return None
+    vectors = (
+        patch.origin_exact,
+        patch.axis_exact,
+        patch.first_axis_exact,
+        patch.second_axis_exact,
+    )
+    if any(
+        vector is None
+        or len(vector) != 3
+        or not all(isinstance(value, Fraction) for value in vector)
+        for vector in vectors
+    ) or not isinstance(patch.radius_exact, Fraction):
+        return None
+    origin, axis, first_axis, second_axis = (
+        cast(tuple[Fraction, Fraction, Fraction], vector) for vector in vectors
+    )
+    radius = patch.radius_exact
+    # The section normal to the axis is a circle of the stated radius only for
+    # an orthonormal radial frame orthogonal to the axis.
+    if (
+        radius <= 0
+        or rational_dot(first_axis, first_axis) != 1
+        or rational_dot(second_axis, second_axis) != 1
+        or rational_dot(first_axis, second_axis) != 0
+        or rational_dot(first_axis, axis) != 0
+        or rational_dot(second_axis, axis) != 0
+        or rational_dot(axis, axis) == 0
+    ):
+        return None
+    return origin, axis, radius
+
+
+def _parallel_cylinder_separation(
+    first: SurfaceRegion,
+    second: SurfaceRegion,
+    policy: ParametricIntersectionPolicy,
+    /,
+) -> SurfaceIntersectionResult | None:
+    """Prove two parallel circular cylinders disjoint from their exact axes.
+
+    Parallel cylinders with axis distance ``d`` and radii ``r`` and ``s`` are
+    disjoint exactly when ``d > r + s`` (separated) or ``d < |r - s|``
+    (nested). Both comparisons are made on exact squared rationals, so the
+    empty result is a proof for every parameter box of either cylinder.
+    """
+    del policy
+    first_data = _exact_cylinder_axis(first)
+    if first_data is None:
+        return None
+    second_data = _exact_cylinder_axis(second)
+    if second_data is None:
+        return None
+    first_origin, axis, first_radius = first_data
+    second_origin, second_axis, second_radius = second_data
+    if any(rational_cross(axis, second_axis)):
+        return None
+    displacement = tuple(second_origin[index] - first_origin[index] for index in range(3))
+    axial = rational_dot(displacement, axis) / rational_dot(axis, axis)
+    radial = tuple(displacement[index] - axial * axis[index] for index in range(3))
+    distance_squared = rational_dot(radial, radial)
+    outer = (first_radius + second_radius) ** 2
+    inner = (first_radius - second_radius) ** 2
+    if distance_squared > outer or distance_squared < inner:
+        return SurfaceIntersectionResult()
+    return None
 
 
 def _revolution_cylinder_view(
@@ -7995,6 +8087,9 @@ def intersect_surface_regions(
     revolution_line_plane = _revolution_plane_line_circle(first, second, selected)
     if revolution_line_plane is not None:
         return revolution_line_plane
+    parallel_cylinders = _parallel_cylinder_separation(first, second, selected)
+    if parallel_cylinders is not None:
+        return parallel_cylinders
     revolution_cylinders = _revolution_cylinder_intersection(first, second, selected)
     if revolution_cylinders is not None:
         return revolution_cylinders
