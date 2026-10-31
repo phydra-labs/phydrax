@@ -7,7 +7,13 @@ import pytest
 
 import phydrax as phx
 from phydrax._geometry_predicates import PredicateMode
-from phydrax._meshcore import TetMesh3D, TetMeshEdit, TetMeshEditKind, TetMeshEditStatus
+from phydrax._meshcore import (
+    PlcBoundaryPolicy,
+    TetMesh3D,
+    TetMeshEdit,
+    TetMeshEditKind,
+    TetMeshEditStatus,
+)
 from phydrax.discretization._cell_complex import PolygonalConnectivity
 from phydrax.discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
@@ -1502,14 +1508,36 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
     )
 
     block = source.blocks[0]
+    # The native complex declares every carrier boundary facet; the lifted
+    # fundamental cover's open faces are its boundary (outward corner order).
+    cell_vertices = np.asarray(block.vertices, dtype=np.int32)
+    outward_corners = ((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2))
+    oriented_faces = [
+        cell_vertices[row, list(corners)]
+        for row in range(cell_vertices.shape[0])
+        for corners in outward_corners
+    ]
+    face_counts: dict[tuple[int, ...], int] = {}
+    for face in oriented_faces:
+        key = tuple(sorted(int(value) for value in face))
+        face_counts[key] = face_counts.get(key, 0) + 1
+    boundary_faces = np.asarray(
+        [
+            face
+            for face in oriented_faces
+            if face_counts[tuple(sorted(int(value) for value in face))] == 1
+        ],
+        dtype=np.int32,
+    )
     with TetMesh3D(
         source.coordinates,
         block.vertices,
         np.zeros((block.cell_count,), dtype=np.int32),
-        np.empty((0, 3), dtype=np.int32),
-        np.empty((0,), dtype=np.int32),
+        boundary_faces,
+        np.zeros((boundary_faces.shape[0],), dtype=np.int32),
         np.empty((0, 2), dtype=np.int32),
         np.empty((0,), dtype=np.int32),
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
         vertex_ids=source.vertex_global_ids,
         cell_ids=block.global_ids,
         source_id=source.mesh_id,
