@@ -230,6 +230,9 @@ PHX_MC_API void phx_mc_mesh_free(phx_mc_mesh* mesh);
 #define PHX_MC_SOURCE_STRATUM_NONE 0
 #define PHX_MC_SOURCE_STRATUM_SEGMENT 1
 #define PHX_MC_SOURCE_STRATUM_FACET 2
+/* A point origin + s * first_axis + t * second_axis of the declared exact
+ * plane of a source face row; parameters (s, t) are any binary64 pair. */
+#define PHX_MC_SOURCE_STRATUM_PLANE 3
 
 /* Persistent source-aware tetrahedral state. Creation borrows every input
  * synchronously; the returned handle owns all mesh and source banks. */
@@ -376,6 +379,20 @@ typedef struct phx_mc_tet_periodic_edit_view {
   const uint64_t* replacement_quotient_lifted_cell_ids;
   const phx_mc_tet_periodic_identity_map_view* target_identity_map;
 } phx_mc_tet_periodic_edit_view;
+/* Refusal of a declared facet plane by input vertex `vertex` of one of its
+ * constrained facets: the plane neither meets the closed rounding box of the
+ * vertex carrier nor lies within the declared tolerance of it. The record:
+ * the plane's (first) source face row, the correctly rounded parameters of
+ * the carrier's orthogonal projection onto the plane, and an outward bound
+ * of the carrier's distance to it. */
+typedef struct phx_mc_tet_plane_refusal {
+  int32_t refused;
+  int32_t face_row;
+  int64_t vertex;
+  double parameters[2];
+  double deviation;
+  double tolerance;
+} phx_mc_tet_plane_refusal;
 typedef struct phx_mc_tet_mesh_create_request {
   int64_t point_count;
   const double* points;
@@ -407,7 +424,14 @@ typedef struct phx_mc_tet_mesh_create_request {
   const int32_t* source_segment_groups;
   const int64_t* source_segment_ids;
   const double* source_segment_tolerances;
-  /* witness_entities indexes source_segments for stratum 1 and source_faces for stratum 2. */
+  /* Declared exact facet planes, one row of nine values per source face row
+   * (origin, first axis, second axis; an all-NaN row is undeclared), and
+   * their declared tolerances (null: zero). Null: no facet declares a plane.
+   * Every row of a face group declares the same plane or none. */
+  const double* source_face_planes;
+  const double* source_face_plane_tolerances;
+  /* witness_entities indexes source_segments for stratum 1 and source_faces
+   * for strata 2 and 3 (stratum 3: a face row that declares a plane). */
   const int8_t* witness_strata;
   const int32_t* witness_entities;
   const double* witness_parameters;
@@ -423,6 +447,8 @@ typedef struct phx_mc_tet_mesh_create_request {
   const char* frame_id;
   int64_t frame_id_length;
   const phx_mc_tet_periodic_state_view* periodic_state;
+  /* Optional: filled when creation refuses a declared plane. */
+  phx_mc_tet_plane_refusal* plane_refusal;
   phx_mc_tet_mesh** result;
 } phx_mc_tet_mesh_create_request;
 PHX_MC_API int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request);
@@ -522,10 +548,24 @@ typedef struct phx_mc_tet_mesh_snapshot_request {
   int32_t* source_segment_groups;
   double* source_segment_tolerances;
   int64_t* source_segment_ids;
+  /* Nine values per source face row (NaN rows undeclared) and one tolerance. */
+  double* source_face_planes;
+  double* source_face_plane_tolerances;
   uint64_t* generation;
 } phx_mc_tet_mesh_snapshot_request;
 PHX_MC_API int32_t phx_mc_tet_mesh_snapshot(
     const phx_mc_tet_mesh* mesh, const phx_mc_tet_mesh_snapshot_request* request);
+/* Plane records: one row per (live vertex, declared face group) incidence of
+ * the constrained facets, ordered by vertex ID then face row: the vertex ID,
+ * the group's first source face row, the correctly rounded parameters of the
+ * carrier's orthogonal projection onto the declared plane, and an outward
+ * bound of the carrier's distance to it. Every recorded carrier is admitted
+ * (rounding box or declared tolerance). */
+PHX_MC_API int32_t phx_mc_tet_mesh_plane_record_count(const phx_mc_tet_mesh* mesh,
+                                                      int64_t* count);
+PHX_MC_API int32_t phx_mc_tet_mesh_plane_records(
+    const phx_mc_tet_mesh* mesh, int64_t capacity, uint64_t* vertex_ids, int32_t* face_rows,
+    double* parameters, double* deviations);
 typedef struct phx_mc_tet_mesh_edit_request {
   uint64_t expected_generation;
   int32_t identity_bound;

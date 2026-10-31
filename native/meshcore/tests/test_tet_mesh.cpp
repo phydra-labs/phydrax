@@ -49,7 +49,8 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
   std::vector<double> witness_values(2 * vertices), witness_deviations(vertices),
       protection_radii(vertices), vertex_edge_parameters(vertices),
       vertex_ancestry_weights(vertex_ancestors), source_points(3 * source_points_count),
-      source_face_tolerances(source_faces_count), source_segment_tolerances(source_segments_count);
+      source_face_tolerances(source_faces_count), source_segment_tolerances(source_segments_count),
+      source_face_planes(9 * source_faces_count), source_face_plane_tolerances(source_faces_count);
   std::vector<uint64_t> cells_ids(cells), cell_vertices(4 * cells), facet_ids(facets),
       facet_vertices(3 * facets), segment_ids(segments), segment_vertices(2 * segments),
       vertex_ancestor_ids(vertex_ancestors), cell_ancestor_ids(cell_ancestors);
@@ -111,6 +112,8 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
   snapshot.source_face_groups = source_face_groups.data();
   snapshot.source_face_ids = source_face_ids.data();
   snapshot.source_face_tolerances = source_face_tolerances.data();
+  snapshot.source_face_planes = source_face_planes.data();
+  snapshot.source_face_plane_tolerances = source_face_plane_tolerances.data();
   snapshot.source_segments = source_segments.data();
   snapshot.source_segment_groups = source_segment_groups.data();
   snapshot.source_segment_ids = source_segment_ids.data();
@@ -217,6 +220,8 @@ void persistent_create_snapshot_and_rejection() {
   std::array<int32_t, 4> source_face_groups{};
   std::array<int64_t, 4> source_face_ids{};
   std::array<double, 4> source_face_tolerances{};
+  std::array<double, 36> source_face_planes{};
+  std::array<double, 4> source_face_plane_tolerances{};
   uint64_t generation = 99;
   phx_mc_tet_mesh_snapshot_request snapshot{};
   snapshot.vertex_capacity = 4;
@@ -252,6 +257,8 @@ void persistent_create_snapshot_and_rejection() {
   snapshot.source_face_groups = source_face_groups.data();
   snapshot.source_face_ids = source_face_ids.data();
   snapshot.source_face_tolerances = source_face_tolerances.data();
+  snapshot.source_face_planes = source_face_planes.data();
+  snapshot.source_face_plane_tolerances = source_face_plane_tolerances.data();
   snapshot.generation = &generation;
   PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &snapshot) == PHX_MC_OK);
   PHX_CHECK(generation == 0);
@@ -528,6 +535,8 @@ void persistent_create_snapshot_and_rejection() {
   refined_snapshot.source_face_groups = source_face_groups.data();
   refined_snapshot.source_face_ids = source_face_ids.data();
   refined_snapshot.source_face_tolerances = source_face_tolerances.data();
+  refined_snapshot.source_face_planes = source_face_planes.data();
+  refined_snapshot.source_face_plane_tolerances = source_face_plane_tolerances.data();
   refined_snapshot.generation = &refined_generation;
   PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &refined_snapshot) == PHX_MC_OK);
   PHX_CHECK(refined_generation == generation + static_cast<uint64_t>(inserted_vertices));
@@ -965,6 +974,8 @@ void persistent_periodic_state_and_atomic_relocation() {
   std::array<int32_t, 4> snapshot_source_face_groups{};
   std::array<int64_t, 4> snapshot_source_face_ids{};
   std::array<double, 4> snapshot_source_face_tolerances{};
+  std::array<double, 36> snapshot_source_face_planes{};
+  std::array<double, 4> snapshot_source_face_plane_tolerances{};
   std::array<phx_mc_tet_periodic_orbit, 5> snapshot_orbits{};
   std::array<phx_mc_tet_periodic_vertex_member, 5> snapshot_members{};
   std::array<phx_mc_tet_periodic_quotient_cell, 4> snapshot_quotient_cells{};
@@ -1036,6 +1047,8 @@ void persistent_periodic_state_and_atomic_relocation() {
   snapshot.source_face_groups = snapshot_source_face_groups.data();
   snapshot.source_face_ids = snapshot_source_face_ids.data();
   snapshot.source_face_tolerances = snapshot_source_face_tolerances.data();
+  snapshot.source_face_planes = snapshot_source_face_planes.data();
+  snapshot.source_face_plane_tolerances = snapshot_source_face_plane_tolerances.data();
   snapshot.generation = &snapshot_generation;
   PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &snapshot) == PHX_MC_OK);
   PHX_CHECK(snapshot_generation == 1 && snapshot_vertex_ids[4] == moved_vertex_id);
@@ -1455,6 +1468,8 @@ void persistent_collapse_replaces_vertex_star() {
   std::array<int32_t, 4> snapshot_source_face_groups{};
   std::array<int64_t, 4> snapshot_source_face_ids{};
   std::array<double, 4> snapshot_source_face_tolerances{};
+  std::array<double, 36> snapshot_source_face_planes{};
+  std::array<double, 4> snapshot_source_face_plane_tolerances{};
   uint64_t generation = 99;
   phx_mc_tet_mesh_snapshot_request snapshot{};
   snapshot.vertex_capacity = 4;
@@ -1492,6 +1507,8 @@ void persistent_collapse_replaces_vertex_star() {
   snapshot.source_face_groups = snapshot_source_face_groups.data();
   snapshot.source_face_ids = snapshot_source_face_ids.data();
   snapshot.source_face_tolerances = snapshot_source_face_tolerances.data();
+  snapshot.source_face_planes = snapshot_source_face_planes.data();
+  snapshot.source_face_plane_tolerances = snapshot_source_face_plane_tolerances.data();
   snapshot.generation = &generation;
   PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &snapshot) == PHX_MC_OK);
   constexpr std::array<int64_t, 2> expected_ancestry_offsets{0, 4};
