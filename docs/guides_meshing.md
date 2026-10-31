@@ -492,6 +492,24 @@ one-sided exterior patch. Source-solid volume must equal the sum of its slab
 volumes; an empty core is not inferred from an absent region alone. Mesh this
 case with a layer-only region control and no core fill.
 
+`NativeMeshingProvider` grows one `ADVANCING` `BoundaryLayerControl` straight
+from a BRep model (`cad_tetrahedral` route). The wall scope names source faces and
+the volume scope names the whole solid. The accepted boundary's exact
+per-cell charts resolve those faces to wall cells. Layers grow inward from them.
+The fixed core boundary is the cap plus every unselected surface cell; each rim
+vertex of an unselected cell moves to the top of its column, so the core
+conforms to the cap. The core is filled with tetrahedra. The target must allow
+mixed `prism`/`tetrahedron` cells (transition pyramids optional) and use the
+`SIMPLEX` fill. Rim columns slide along the adjacent surfaces. A schedule
+whose fronts meet those surfaces before the collision policy can resolve them is
+refused with the colliding wall vertices and their locations, so choose
+thicknesses that are small relative to the surface size. Source fidelity covers
+every exterior facet: the grown cells keep their charts, and fixed cells and
+layer side strips take the closest-point charts of their source face. A column
+shared by two faces lies exactly on their common trim. Refinement that cannot
+reach its targets because of the fixed boundary is reported as evidence;
+improvement that leaves unmet quality criteria fails compliance.
+
 `prepare_periodic_layer_core_source(source, core_vertex_representatives,
 core_vertex_shifts, core_seam_polygon_pairs)` binds source-authored PLC orbits
 and seam facets to the accepted layer mesh's periodic topology identity. The
