@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil, floor, pi, sqrt, tau
-from typing import final
+from typing import cast, final
 
 import equinox as eqx
 import jax
@@ -38,6 +38,7 @@ from ._patches import (
     BSplineSurfacePatch,
     CircleCurve,
     ConePatch,
+    ConicRootLinePCurve,
     CylinderPatch,
     ExactLineCurve,
     ExtrusionSurface,
@@ -314,7 +315,11 @@ def _trim_classification(model: BRepModel, face: int, uv: np.ndarray, /) -> int 
 
 
 def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
-    """Prove a single line-trim loop covers the entire parameter rectangle."""
+    """Prove a single line-trim loop covers the entire parameter rectangle.
+
+    Trim sides are chart lines: rational lines or exact conic-root angle
+    isolines, whose bounds are outward enclosures of the exact root.
+    """
     geometry = model.geometry
     loops = geometry.face_loops[face]
     if len(loops) != 1:
@@ -330,7 +335,7 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
         edge = geometry.coedge_edges[coedge]
         curve = geometry.pcurves[coedge]
         if (
-            not isinstance(curve, (LineCurve, ExactLineCurve))
+            not isinstance(curve, (LineCurve, ExactLineCurve, ConicRootLinePCurve))
             or curve.ambient_dimension != 2
         ):
             return False
@@ -1103,9 +1108,10 @@ def _project_face(
     uv: np.ndarray | None = None
     nonisolated = False
     affine_spline = False
-    # Revolution of an axial-plane line: the candidate is the closest point of
-    # the whole authored parameter rectangle, including its profile endpoints.
-    revolution_line = False
+    # Straight-ruled revolutions and cylinders: the candidate is the closest
+    # point of the whole authored parameter rectangle, including its profile
+    # endpoints, so it is the face-closest point of a natural-rectangle face.
+    rectangle_closest = False
     affine_distance_squared: ExactScalar | None = None
     if isinstance(patch, PlanePatch) or (
         isinstance(patch, TSplineSurfacePatch) and affine_frame is not None
@@ -1229,8 +1235,14 @@ def _project_face(
         first = np.asarray(patch.first_axis, dtype=np.float64)
         second = np.asarray(patch.second_axis, dtype=np.float64)
         axis = np.asarray(patch.axis, dtype=np.float64)
+        # The radial frame is orthonormal and normal to the axis; the axis
+        # length is the height scale of the second parameter.
+        axis_squared = float(axis @ axis)
+        if not axis_squared > 0.0:
+            return _unresolved(2, face, path)
+        frame = np.stack((first, second, axis / np.sqrt(axis_squared)))
         if not np.allclose(
-            np.stack((first, second, axis)) @ np.stack((first, second, axis)).T,
+            frame @ frame.T,
             np.eye(3),
             rtol=0.0,
             atol=256.0 * np.finfo(np.float64).eps,
@@ -1240,11 +1252,11 @@ def _project_face(
         if not radius > 0.0:
             return _unresolved(2, face, path)
         relative = point - origin
-        axial = float(relative @ axis)
+        axial = float(relative @ axis) / axis_squared
         x, y = float(relative @ first), float(relative @ second)
         radial = float(np.hypot(x, y))
+        bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
         if radial == 0.0:
-            bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
             if (
                 not _full_chart_rectangle(model, face)
                 or not _full_period(model, face, 0)
@@ -1267,11 +1279,15 @@ def _project_face(
                 path,
             )
         angle = float(np.arctan2(y, x))
-        uv = np.asarray((angle, axial), dtype=np.float64)
+        # Axial and angular distances separate on a cylinder, so clamping the
+        # height to the authored range keeps the rectangle-closest point.
+        clamped = float(np.clip(axial, bounds[0, 1], bounds[1, 1]))
+        rectangle_closest = clamped != axial
+        uv = np.asarray((angle, clamped), dtype=np.float64)
         candidate = (
             origin
             + radius * (np.cos(angle) * first + np.sin(angle) * second)
-            + axial * axis
+            + clamped * axis
         )
     elif isinstance(patch, SpherePatch):
         center = np.asarray(patch.center, dtype=np.float64)
@@ -1584,7 +1600,7 @@ def _project_face(
             rho_point == 0.0
             and float(np.linalg.norm(candidate_relative - candidate_height * axis)) > 0.0
         )
-        revolution_line = True
+        rectangle_closest = True
     else:
         return _unresolved(2, face, path)
     if uv is None or candidate is None:
@@ -1600,9 +1616,13 @@ def _project_face(
                 return _unresolved(2, face, path)
             uv[axis] = representative
     outside_bounds = np.any(uv < bounds[0]) or np.any(uv > bounds[1])
-    if revolution_line and not outside_bounds and _natural_rectangle_trim(model, face):
-        # The closed face is its full rectangle; the rectangle-closest point is
-        # the face-closest point even where it lies on a seam or rim edge.
+    if (
+        rectangle_closest
+        and not outside_bounds
+        and (_natural_rectangle_trim(model, face) or _full_chart_rectangle(model, face))
+    ):
+        # The face is its full rectangle; the rectangle-closest point is the
+        # face-closest point even where it lies on a seam or rim edge.
         trim = 1
     else:
         trim = 0 if outside_bounds else _trim_classification(model, face, uv)
@@ -1678,6 +1698,103 @@ def _project_face(
     if embedding is not None:
         candidate = embedding.to_planar(candidate)
     return _Hit(2, face, candidate, uv, lower, upper, status, normal, tangents, path)
+
+
+def _ray_cylinder_crossings(
+    model: BRepModel,
+    face: int,
+    ray_origin: tuple[Fraction, Fraction, Fraction],
+    ray_direction: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> int | None:
+    """Count transversal crossings of an exact ray with a trimmed cylinder face.
+
+    The ray meets the infinite cylinder where ``A t^2 + B t + C = 0`` with
+    exact rational coefficients; the discriminant and the signs of both roots
+    are decided exactly. Each positive root is then classified against the
+    face trim, and a tangent ray, a ray starting on the cylinder or a crossing
+    on a trim boundary refuses.
+    """
+    patch = model.patches[face]
+    if not isinstance(patch, CylinderPatch):
+        return None
+    vectors = (
+        patch.origin_exact,
+        patch.first_axis_exact,
+        patch.second_axis_exact,
+        patch.axis_exact,
+    )
+    if any(
+        not all(isinstance(value, Fraction) for value in vector) for vector in vectors
+    ) or not isinstance(patch.radius_exact, Fraction):
+        return None
+    origin, first, second, axis = (
+        cast(tuple[Fraction, ...], vector) for vector in vectors
+    )
+    radius = patch.radius_exact
+
+    def dot(left: tuple[Fraction, ...], right: tuple[Fraction, ...], /) -> Fraction:
+        return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
+
+    axis_squared = dot(axis, axis)
+    if (
+        radius <= 0
+        or axis_squared == 0
+        or dot(first, first) != 1
+        or dot(second, second) != 1
+        or dot(first, second) != 0
+        or dot(first, axis) != 0
+        or dot(second, axis) != 0
+    ):
+        return None
+    relative = tuple(ray_origin[index] - origin[index] for index in range(3))
+    position = (dot(relative, first), dot(relative, second))
+    rate = (dot(ray_direction, first), dot(ray_direction, second))
+    quadratic = rate[0] * rate[0] + rate[1] * rate[1]
+    linear = 2 * (position[0] * rate[0] + position[1] * rate[1])
+    constant = position[0] * position[0] + position[1] * position[1] - radius * radius
+    if quadratic == 0:
+        # A ray parallel to the axis never crosses unless it lies on the wall.
+        return None if constant == 0 else 0
+    if constant == 0:
+        return None
+    discriminant = linear * linear - 4 * quadratic * constant
+    if discriminant < 0:
+        return 0
+    if discriminant == 0:
+        return None
+    # With A > 0: t+ > 0 iff B < 0 or C < 0, and t- > 0 iff B < 0 and C > 0.
+    roots: list[int] = []
+    if linear < 0 or constant < 0:
+        roots.append(1)
+    if linear < 0 and constant > 0:
+        roots.append(-1)
+    if not roots:
+        return 0
+    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    period = patch.periods[0]
+    if period is None:
+        return None
+    root_discriminant = sqrt(float(discriminant))
+    crossings = 0
+    for sign in roots:
+        parameter = (-float(linear) + sign * root_discriminant) / (2.0 * float(quadratic))
+        x = float(position[0]) + parameter * float(rate[0])
+        y = float(position[1]) + parameter * float(rate[1])
+        height = (
+            float(dot(relative, axis)) + parameter * float(dot(ray_direction, axis))
+        ) / float(axis_squared)
+        angle = float(np.arctan2(y, x))
+        middle = 0.5 * (float(bounds[0, 0]) + float(bounds[1, 0]))
+        angle += round((middle - angle) / float(period)) * float(period)
+        uv = np.asarray((angle, height), dtype=np.float64)
+        if not np.all(np.isfinite(uv)):
+            return None
+        trim = _trim_classification(model, face, uv)
+        if trim is None or trim < 0:
+            return None
+        crossings += trim
+    return crossings
 
 
 def _closed_revolution_cylinder(
@@ -2864,6 +2981,14 @@ class NativeBRepProjection(AbstractBRepProjection):
         crossings = 0
         for face in self.model.topology.solid_faces[solid]:
             patch = self.model.patches[face]
+            if isinstance(patch, CylinderPatch):
+                cylinder_crossings = _ray_cylinder_crossings(
+                    self.model, face, ray_origin, ray_direction
+                )
+                if cylinder_crossings is None:
+                    return None
+                crossings += cylinder_crossings
+                continue
             if not (
                 isinstance(patch, PlanePatch)
                 or (
