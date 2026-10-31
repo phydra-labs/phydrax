@@ -662,12 +662,29 @@ def _periodic_p0_content_values(view: Any, discretization: Any, /) -> np.ndarray
         raise ValueError(
             "Periodic P0 cell rows differ from the compact triangle geometry."
         )
-    # Compact vertex rows are lifted images: each cell vertex is its fundamental
-    # representative displaced by the cell's vertex shift. Recover the
-    # representatives independently and require them in the fundamental cell.
+    # Compact vertex rows are lifted images: each cell vertex is its orbit root
+    # displaced by the cell's vertex shift. Recover the roots independently:
+    # authored-site roots lie in the fundamental cell, and every image of one
+    # orbit (an adapted vertex root may lie outside it) recovers the same root.
     fractional_vertices = (coordinates[vertices] - origin) @ np.linalg.inv(basis)
     representatives = fractional_vertices - shifts
-    if np.any(representatives < -1.0e-12) or np.any(representatives >= 1.0 + 1.0e-12):
+    vertex_roots = np.asarray(view.vertex_source_ids, dtype=np.int64)
+    if vertex_roots.shape != (coordinates.shape[0],):
+        raise ValueError("Periodic P0 vertex rows lost their orbit roots.")
+    cell_roots = vertex_roots[vertices].reshape(-1)
+    flat_representatives = representatives.reshape(-1, 2)
+    authored_roots = np.isin(cell_roots, _INPUT_POINT_IDS)
+    root_order = np.argsort(cell_roots, kind="stable")
+    sorted_roots = cell_roots[root_order]
+    sorted_representatives = flat_representatives[root_order]
+    first_rows = np.searchsorted(sorted_roots, sorted_roots, side="left")
+    if (
+        np.any(flat_representatives[authored_roots] < -1.0e-12)
+        or np.any(flat_representatives[authored_roots] >= 1.0 + 1.0e-12)
+        or np.any(
+            np.abs(sorted_representatives - sorted_representatives[first_rows]) > 1.0e-12
+        )
+    ):
         raise ValueError(
             "Periodic P0 lifted vertex rows disagree with their cell vertex shifts."
         )
@@ -872,13 +889,17 @@ def _view_winding_images(view: Any, /) -> tuple[int, float]:
         )
     windings_by_source: dict[int, set[tuple[int, ...]]] = {}
     lifted_x_by_source: dict[int, list[float]] = {}
-    # Adapted vertices are their own quotient keys; only authored-site keys carry
-    # lifted images of the authored registry.
-    resident_vertex_ids = set(np.asarray(view.vertex_ids, dtype=np.int64).tolist())
+    # Adapted vertices are keyed by themselves or by their orbit root, which may
+    # be resident on another owner only; only authored-site keys carry lifted
+    # images of the authored registry.
+    resident_vertex_keys = set(np.asarray(view.vertex_ids, dtype=np.int64).tolist())
+    resident_vertex_keys.update(
+        np.asarray(view.vertex_source_ids, dtype=np.int64).tolist()
+    )
     for source_id, winding in zip(key_source_ids, key_windings, strict=True):
         source_id = int(source_id)
         if source_id not in authored_row:
-            if source_id not in resident_vertex_ids:
+            if source_id not in resident_vertex_keys:
                 raise RuntimeError(
                     "Periodic winding row references an unknown source representative "
                     f"{source_id}."
