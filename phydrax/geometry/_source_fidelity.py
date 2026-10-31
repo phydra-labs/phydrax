@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
@@ -83,8 +83,6 @@ from .brep._patches import (
 
 
 if TYPE_CHECKING:
-    from scipy.spatial import cKDTree
-
     from .._interpolation._bspline_extraction import (
         RationalBSplineSurfaceHessianEnclosure,
         RationalBSplineSurfaceSpan,
@@ -3126,13 +3124,66 @@ def _triangle_centroid_balls(
     return centers, radii
 
 
+_CENTROID_QUERY_CHUNK = 256
+
+
+def _centroid_candidate_rows(
+    sample_points: np.ndarray,
+    center_values: np.ndarray,
+    center_scale: float,
+    radius_bound: float,
+    /,
+) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield each sample's centroid rows inside its ``_nearest_triangle_distance_upper`` ball.
+
+    A first box query, doubled from the triangle radius until it meets a
+    centroid, gives an offset ``U >= m``; the second box of half-width
+    ``reach(U) >= reach(m)`` then contains every centroid of the ball. Samples
+    are queried in bounded chunks, so the pair working set stays bounded.
+    """
+    from .._bvh import bvh_overlap_pairs_host, prepare_bvh
+
+    center_bvh = prepare_bvh(center_values, center_values, dtype=np.float64)
+
+    def pairs(points: np.ndarray, widths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+        query = prepare_bvh(
+            points - widths[:, None], points + widths[:, None], dtype=np.float64
+        )
+        return bvh_overlap_pairs_host(query, center_bvh, include_touching=True)
+
+    for start in range(0, sample_points.shape[0], _CENTROID_QUERY_CHUNK):
+        points = sample_points[start : start + _CENTROID_QUERY_CHUNK]
+        upper = np.full((points.shape[0],), np.inf, dtype=np.float64)
+        widths = np.full(
+            (points.shape[0],),
+            max(radius_bound, float(np.spacing(center_scale))),
+            dtype=np.float64,
+        )
+        pending = np.arange(points.shape[0], dtype=np.int64)
+        while pending.size:
+            local, rows = pairs(points[pending], widths[pending])
+            offsets = np.linalg.norm(center_values[rows] - points[pending][local], axis=1)
+            found = pending[local]
+            np.minimum.at(upper, found, offsets)
+            pending = pending[~np.isfinite(upper[pending])]
+            widths[pending] *= 2.0
+        scale = center_scale + np.max(np.abs(points), axis=1)
+        reach = (upper + 1.0e-9 * (upper + radius_bound + scale) + radius_bound) * (
+            1.0 + 1.0e-6
+        )
+        local, rows = pairs(points, reach)
+        bounds = np.searchsorted(local, np.arange(points.shape[0] + 1, dtype=np.int64))
+        for row in range(points.shape[0]):
+            yield start + row, rows[bounds[row] : bounds[row + 1]]
+
+
 def _nearest_triangle_distance_upper(
     point: Point3,
     point_value: np.ndarray,
     triangles: tuple[Triangle3, ...],
     center_values: np.ndarray,
     radius_values: np.ndarray,
-    center_tree: cKDTree,
+    rows: np.ndarray,
     center_scale: float,
     radius_bound: float,
     box_lower: np.ndarray,
@@ -3152,23 +3203,16 @@ def _nearest_triangle_distance_upper(
     exact minimum. A pruned triangle's ``sqrt_up`` therefore exceeds the
     survivors' minimum, which is the minimum over all triangles exactly.
 
-    Only centroids within ``m + slack + max_T r_T`` can survive; the centroid
-    tree returns that ball, widened by a relative ``1e-6`` that covers the few
-    ulps between its distances and the offsets. The same argument then prunes
-    with sharper bounds: the distance to a triangle's outward-rounded bounding
-    box bounds ``d_T`` below, and the nearest triangle vertex bounds the minimum
-    above, so far points keep only the triangles facing them.
+    Only centroids within ``m + slack + max_T r_T`` can survive; ``rows`` (from
+    ``_centroid_candidate_rows``) contains every centroid of that ball widened
+    by a relative ``1e-6``. The same argument then prunes with sharper bounds:
+    the distance to a triangle's outward-rounded bounding box bounds ``d_T``
+    below, and the nearest triangle vertex bounds the minimum above, so far
+    points keep only the triangles facing them.
     """
     from ..geometry._domain_boundary import _point_triangle_squared
 
-    tree_nearest = float(center_tree.query(point_value)[0])
     scale = center_scale + float(np.max(np.abs(point_value)))
-    reach = (
-        tree_nearest + 1.0e-9 * (tree_nearest + radius_bound + scale) + radius_bound
-    ) * (1.0 + 1.0e-6)
-    rows = np.sort(
-        np.asarray(center_tree.query_ball_point(point_value, reach), dtype=np.int64)
-    )
     offsets = np.linalg.norm(center_values[rows] - point_value, axis=1)
     nearest = float(np.min(offsets))
     slack = 1.0e-9 * (nearest + radius_bound + scale)
@@ -3297,9 +3341,6 @@ def _analytic_profile_distance_evidence(
             "Analytic profile source samples do not reproduce a complete certified boundary cover."
         )
     radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
-    from scipy.spatial import cKDTree
-
-    center_tree = cKDTree(center_values)
     center_scale = float(np.max(np.abs(center_values)))
     radius_bound = float(np.max(radius_values))
     vertex_values = np.asarray(
@@ -3312,7 +3353,9 @@ def _analytic_profile_distance_evidence(
     box_lower = np.nextafter(np.min(vertex_values, axis=1), -np.inf)
     box_upper = np.nextafter(np.max(vertex_values, axis=1), np.inf)
     reverse_upper = Fraction(0)
-    for sample_row in range(sample_points.shape[0]):
+    for sample_row, rows in _centroid_candidate_rows(
+        sample_points, center_values, center_scale, radius_bound
+    ):
         point = (
             Fraction.from_float(float(sample_points[sample_row, 0])),
             Fraction.from_float(float(sample_points[sample_row, 1])),
@@ -3326,7 +3369,7 @@ def _analytic_profile_distance_evidence(
             target_triangles,
             center_values,
             radius_values,
-            center_tree,
+            rows,
             center_scale,
             radius_bound,
             box_lower,
