@@ -743,17 +743,6 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
 def test_tet_mesh_relocation_distinguishes_omitted_and_cleared_edge_witness() -> None:
     root = Path(__file__).resolve().parents[3]
     environment = os.environ.copy()
-    if "PHYDRAX_MESHCORE_LIBRARY" not in environment:
-        candidate_libraries = (
-            root / ".tmp/native-recovery-build/libphydrax_meshcore.dylib",
-            root / ".tmp/native-candidate-build/libphydrax_meshcore.dylib",
-            root / ".tmp/native-candidate-build/libphydrax_meshcore.so",
-        )
-        candidate_library = next(
-            (library for library in candidate_libraries if library.is_file()), None
-        )
-        if candidate_library is not None:
-            environment["PHYDRAX_MESHCORE_LIBRARY"] = str(candidate_library)
 
     script = """\
 import numpy as np
@@ -971,15 +960,6 @@ print("edge-witness-relocation:ok")
 def test_tet_mesh_refine_binding_runs_in_isolated_process() -> None:
     root = Path(__file__).resolve().parents[3]
     environment = os.environ.copy()
-    candidate_libraries = (
-        root / ".tmp/native-candidate-build/libphydrax_meshcore.dylib",
-        root / ".tmp/native-candidate-build/libphydrax_meshcore.so",
-    )
-    candidate_library = next(
-        (library for library in candidate_libraries if library.is_file()), None
-    )
-    if candidate_library is not None:
-        environment["PHYDRAX_MESHCORE_LIBRARY"] = str(candidate_library)
 
     script = """\
 import numpy as np
