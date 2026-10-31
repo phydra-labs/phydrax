@@ -311,6 +311,8 @@ def _owner_local_fv_overset_map(
     receptor_cell_index = {
         int(identifier): row for row, identifier in enumerate(receptor_ids)
     }
+    # Native receptor evidence is keyed by receptor vertex; a fringe cell is
+    # routed when one of its vertices has a native winner in the donor part.
     receptor_evidence = connectivity.receptors_of(receptor_name)
     native_donors = {
         int(receptor): int(donor)
@@ -323,11 +325,30 @@ def _owner_local_fv_overset_map(
         )
         if found and int(donor_part) == connectivity.part_index(donor_name)
     }
+    receptor_local_mesh, _ = receptor_view.reconstruct_local_geometry()
+    cell_winners: dict[int, set[int]] = {}
+    if receptor_local_mesh is not None:
+        mesh_vertex_ids = np.asarray(
+            receptor_local_mesh.vertex_global_ids, dtype=np.int64
+        )
+        for block in receptor_local_mesh.blocks:
+            for cell_id, vertices in zip(
+                np.asarray(block.global_ids, dtype=np.int64).tolist(),
+                np.asarray(block.vertices, dtype=np.int64),
+                strict=True,
+            ):
+                winners = {
+                    native_donors[int(vertex_id)]
+                    for vertex_id in mesh_vertex_ids[vertices]
+                    if int(vertex_id) in native_donors
+                }
+                if winners:
+                    cell_winners[int(cell_id)] = winners
     routed_ids = tuple(
         int(identifier)
         for identifier in receptor_ids
         if receptor_fringe[receptor_cell_index[int(identifier)]]
-        and int(identifier) in native_donors
+        and int(identifier) in cell_winners
     )
     if routed_ids and not donor_ids.size:
         raise ValueError("Owner-local receptor routes lack actual donor carrier cells.")
@@ -360,9 +381,8 @@ def _owner_local_fv_overset_map(
             target = target_row[receptor_id]
             start, stop = (int(value) for value in offsets[target : target + 2])
             overlap_source_ids = source_ids[source_routes[start:stop]]
-            if (
-                not overlap_source_ids.size
-                or native_donors[receptor_id] not in overlap_source_ids
+            if not overlap_source_ids.size or cell_winners[receptor_id].isdisjoint(
+                int(identifier) for identifier in overlap_source_ids
             ):
                 raise ValueError(
                     "Native donor evidence is outside its physical local overlap."
@@ -1738,7 +1758,7 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     )
     mapped_route_counts = np.asarray(
         multihost_utils.process_allgather(
-            np.asarray((receptor_overset.receptor_cell_ids.size,), dtype=np.int32)
+            np.asarray((receptor_overset.receptor_cells.size,), dtype=np.int32)
         )
     ).reshape((-1,))
     assert np.sum(mapped_route_counts) > 0
