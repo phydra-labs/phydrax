@@ -1069,6 +1069,7 @@ class PreparedPolyhedralCellLocator(AbstractCellLocator, NonTrainableState):
             jnp.asarray(candidate_cells),
             jnp.asarray(candidate_reference),
             jnp.asarray(complete),
+            (),
             self.locator_id,
         )
 

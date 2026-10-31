@@ -588,6 +588,43 @@ class Remesher {
     return weight > 0 ? mul(sum, 1 / weight) : points[static_cast<size_t>(v)];
   }
 
+  // The equilateral position of t's corner k over the opposite edge, in t's
+  // plane on the corner's side; nullopt for a degenerate t.
+  std::optional<V> ideal_apex(const F& t, int k) const {
+    const V& p = points[static_cast<size_t>(t[k])];
+    const V& a = points[static_cast<size_t>(t[(k + 1) % 3])];
+    const V& b = points[static_cast<size_t>(t[(k + 2) % 3])];
+    const V edge = difference(b, a);
+    const V middle = mul(add(a, b), 0.5);
+    V up = cross(cross(edge, difference(p, a)), edge);
+    const double norm = length(up);
+    if (!(norm > 0) || !std::isfinite(norm)) return std::nullopt;
+    if (dot(up.data(), difference(p, middle).data()) < 0) up = mul(up, -1);
+    return add(middle, mul(up, 0.5 * std::sqrt(3.0) * length(edge) / norm));
+  }
+
+  // Relocations of t's corners part of the way toward the star centroid
+  // (fractions 1/2, ..., 2^-10) and toward the corner's ideal apex (1, ...,
+  // 2^-10), projected and as is. A full move that lifts t can push another
+  // star triangle below t's score where a shorter one does not. The list is
+  // finite and every admitted relocation is an ordinary improving edit.
+  bool relocate_partially(const F& t) {
+    for (int k = 0; k < 3; ++k) {
+      const int64_t v = t[k];
+      const V origin = points[static_cast<size_t>(v)];
+      std::vector<std::pair<V, double>> goals{{star_centroid(v), 0.5}};
+      if (const auto apex = ideal_apex(t, k)) goals.emplace_back(*apex, 1.0);
+      for (const auto& [goal, first] : goals) {
+        const V step = difference(goal, origin);
+        for (double fraction = first; fraction >= 0x1p-10; fraction *= 0.5) {
+          const V position = add(origin, mul(step, fraction));
+          if (relocate(v, project(position)) || relocate(v, position)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   bool improve(int64_t id) {
     const F t = triangles[static_cast<size_t>(id)];
     std::array<std::pair<double, int>, 3> edges;  // (length, local edge opposite corner k)
@@ -623,6 +660,7 @@ class Remesher {
           relocate(v, project(points[static_cast<size_t>(v)])))
         return true;
     }
+    if (relocate_partially(t)) return true;
     const V middle = midpoint(la, lb);
     return split(la, lb, project(middle)) || split(la, lb, middle);
   }

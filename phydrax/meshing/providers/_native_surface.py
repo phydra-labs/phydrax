@@ -2341,20 +2341,40 @@ def _mapped_curve_is_c1(
     return pcurve.is_c1_on(first, last) and source.is_c1_on(chart_box)
 
 
+_MAPPED_CURVE_HESSIAN_CAPACITY = 256
+_MAPPED_CURVE_HESSIANS: dict[
+    tuple[int, int],
+    tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
+] = {}
+
+
 def _mapped_curve_hessian(
     surface: AbstractSurfacePatch, pcurve: AbstractCurve, /
 ) -> PreparedIntervalFunction | None:
-    """Interval program of ``d^2/ds^2 surface(pcurve(s))``, if the maps trace."""
+    """Interval program of ``d^2/ds^2 surface(pcurve(s))``, if the maps trace.
+
+    One program is prepared per surface and p-curve source pair and reused by
+    every tessellation attempt; each entry holds both sources, so its identity
+    key cannot be reused by other sources while cached.
+    """
+    key = (id(surface), id(pcurve))
+    cached = _MAPPED_CURVE_HESSIANS.get(key)
+    if cached is not None and cached[0] is surface and cached[1] is pcurve:
+        return cached[2]
 
     def mapped(parameter: jax.Array) -> jax.Array:
         return surface.evaluate(pcurve.evaluate(parameter[0]))
 
     try:
-        return prepare_interval_function(
+        program = prepare_interval_function(
             jax.jacfwd(jax.jacfwd(mapped)), 1, batch_capacity=1
         )
     except (IntervalExtensionError, NotImplementedError):
-        return None
+        program = None
+    if len(_MAPPED_CURVE_HESSIANS) >= _MAPPED_CURVE_HESSIAN_CAPACITY:
+        del _MAPPED_CURVE_HESSIANS[next(iter(_MAPPED_CURVE_HESSIANS))]
+    _MAPPED_CURVE_HESSIANS[key] = (surface, pcurve, program)
+    return program
 
 
 def _second_order_chord_bound(
@@ -2402,14 +2422,12 @@ class _CurveChordBounds:
     box enclosure of the mapped curve (first order in the interval width) and
     the second-order interpolation bound of `_second_order_chord_bound`, so
     sampling converges at the curvature rate instead of to the tolerance
-    itself. Interval bounds and second-derivative programs are cached.
+    itself. Interval bounds are cached here; second-derivative programs are
+    shared per source pair by `_mapped_curve_hessian`.
     """
 
     domain: domain_owner.MeshingDomain
     intervals: dict[tuple[int, Fraction, Fraction], tuple[float, float]] = field(
-        default_factory=dict
-    )
-    hessians: dict[tuple[int, int], PreparedIntervalFunction | None] = field(
         default_factory=dict
     )
 
@@ -2463,16 +2481,13 @@ class _CurveChordBounds:
                     entity_ids=(int(curve),),
                 )
             use_deviation = _box_chord_bound(bounds, first, last)
-            if _mapped_curve_is_c1(
-                surface, use.pcurve, chart_box, interval_first, interval_last
-            ):
-                if (curve, row) not in self.hessians:
-                    self.hessians[(curve, row)] = _mapped_curve_hessian(
-                        surface, use.pcurve
-                    )
-                program = self.hessians[(curve, row)]
-            else:
-                program = None
+            program = (
+                _mapped_curve_hessian(surface, use.pcurve)
+                if _mapped_curve_is_c1(
+                    surface, use.pcurve, chart_box, interval_first, interval_last
+                )
+                else None
+            )
             if program is not None:
                 endpoints = tuple(
                     domain.evaluate(

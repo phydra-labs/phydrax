@@ -895,7 +895,9 @@ def _prepare_native_state(
         mesh.topological_dimension != 3
         or mesh.ambient_dimension != 3
         or not mesh.blocks
-        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+        or any(
+            block.cell_kind not in ("tetrahedron", "simplex:3") for block in mesh.blocks
+        )
     ):
         raise ValueError("Native tetra metric adaptation requires 3D tetrahedron blocks.")
     from ._adaptation import _piecewise_linear_geometry
@@ -3538,9 +3540,8 @@ def _relocation_proposals(
     cells = np.asarray(snapshot.tetrahedra, dtype=np.int64)
     regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
     current_cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
-    current_records = _source_tetra_inverse(
-        points, cells, vertex_ids, current_cell_ids
-    )
+    # Cells hold snapshot rows; the inverse reads points and vertex IDs by row.
+    current_records = _source_tetra_inverse(points, cells, vertex_ids, current_cell_ids)
     current_vertex_rows = {
         int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
     }

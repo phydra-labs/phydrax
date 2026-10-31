@@ -306,6 +306,53 @@ def test_default_location_finds_generic_interior_points_of_small_meshes() -> Non
     )
 
 
+def test_location_and_reconstruction_do_not_depend_on_their_row_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Locator Newton rows and reconstruction basis rows are processed in bounded
+    # chunks; ragged chunks of a few rows must reproduce the single-batch result.
+    import phydrax.discretization._simplicial_locator as locator_module
+    import phydrax.discretization.fem._form_reconstruction as reconstruction_module
+
+    count = 3
+    grid = np.linspace(0.0, 1.0, count + 1)
+    vertices = np.stack(np.meshgrid(grid, grid, indexing="xy"), axis=-1).reshape(-1, 2)
+    corner = np.arange((count + 1) ** 2).reshape(count + 1, count + 1)[:-1, :-1].ravel()
+    a, b, c, d = corner, corner + 1, corner + count + 2, corner + count + 1
+    cells = np.concatenate((np.stack((a, b, c), -1), np.stack((a, c, d), -1)))
+    mesh = phx.discretization.CellMesh(
+        jnp.asarray(vertices),
+        (phx.discretization.CellBlock("cells", "triangle", jnp.asarray(cells)),),
+    )
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+    points = jnp.asarray(np.random.default_rng(11).uniform(0.02, 0.98, size=(37, 2)))
+    coefficients = _nodal(discretization, lambda x, y: 1.0 + 2.0 * x - 3.0 * y)
+
+    def run() -> tuple[Any, Any]:
+        reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
+        kernel = reconstruction.kernel
+        assert isinstance(kernel, FiniteElementFieldReconstructionKernel)
+        return (
+            kernel.locator.locate(points),
+            reconstruction.evaluate(coefficients, points).values,
+        )
+
+    whole_location, whole_values = run()
+    monkeypatch.setattr(locator_module, "_RESOLVE_ROW_BUDGET", 5)
+    monkeypatch.setattr(reconstruction_module, "_BASIS_ROW_BUDGET", 7)
+    chunked_location, chunked_values = run()
+    for whole, chunked in zip(
+        jax.tree.leaves(whole_location), jax.tree.leaves(chunked_location), strict=True
+    ):
+        np.testing.assert_array_equal(np.asarray(chunked), np.asarray(whole))
+    np.testing.assert_array_equal(np.asarray(chunked_values), np.asarray(whole_values))
+
+
 def test_location_finds_points_where_curved_cells_bulge_past_their_nodes() -> None:
     # P2 cell 0 is the image of (xi, eta) -> (xi, eta + xi^2 - 0.4 xi): its
     # bottom edge dips to y = -0.04 below every coordinate node (all y >= 0).

@@ -169,8 +169,9 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
     evaluated on the lifted topology faces and reduced to the joined FV faces.
     The prescribed motion must be translation equivariant: every seam twin
     vertex stays its partner's lattice translate with the same velocity, or the
-    stage geometry is invalid. Routed interior motion is not seam-coupled and is
-    refused there.
+    stage geometry is invalid. Routed interior motion is solved on the periodic
+    quotient: seam twins share one displacement unknown, so the extension keeps
+    them exact lattice copies.
     """
 
     base_plan: UnstructuredFiniteVolumePlan
@@ -262,6 +263,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         # topology face, then reduced to the joined FV faces (the owner sides).
         face_topology_ids = prepared.face_topology_ids
         seam_vertex_pairs = None
+        periodic_vertex_pairs = None
         if base_plan.periodic_face_joins is None or face_topology_ids is None:
             face_topology_ids = None
             face_vertices = topology_face_vertices
@@ -270,11 +272,6 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 prepared.owner_signs, dtype=base_plan.vertices.dtype
             )
         else:
-            if routed:
-                raise ValueError(
-                    "Routed interior motion is not coupled across owner-local periodic "
-                    "seams; prescribe a translation-equivariant vertex motion."
-                )
             face_vertices = topology_face_vertices[face_topology_ids]
             topology_owner, _, topology_signs = _owner_neighbor(
                 connectivity, prepared.cell_count
@@ -288,6 +285,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 np.asarray(base_plan.periodic_face_joins, dtype=np.int32),
                 np.asarray(base_plan.periodic_face_translations, dtype=np.float64),
             )
+            periodic_vertex_pairs = (kept_rows, twin_rows, pair_translations)
             seam_vertex_pairs = (
                 jnp.asarray(kept_rows, dtype=jnp.int32),
                 jnp.asarray(twin_rows, dtype=jnp.int32),
@@ -307,7 +305,11 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             neighbors = np.asarray(prepared.neighbor_cells)
             boundary = np.unique(np.asarray(face_vertices)[neighbors < 0].reshape(-1))
             interior_motion = FiniteElementMotionExtension(
-                base_plan.vertices, cell_blocks, boundary, policy=motion_policy
+                base_plan.vertices,
+                cell_blocks,
+                boundary,
+                policy=motion_policy,
+                periodic_vertex_pairs=periodic_vertex_pairs,
             )
         route_id = (
             FiniteElementMeshMotionRoute.PRESCRIBED.value

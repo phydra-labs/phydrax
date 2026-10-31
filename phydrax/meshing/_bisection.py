@@ -842,8 +842,14 @@ def _prepared_source(mesh: CellMesh, /) -> _Source:
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
     dimension = mesh.topological_dimension
-    kind = {2: "triangle", 3: "tetrahedron"}.get(dimension)
-    if kind is None or any(block.cell_kind != kind for block in mesh.blocks):
+    match dimension:
+        case 2:
+            kinds = ("triangle",)
+        case 3:
+            kinds = ("tetrahedron", "simplex:3")
+        case _:
+            raise ValueError("Bisection requires a triangle mesh or a tetrahedral mesh.")
+    if any(block.cell_kind not in kinds for block in mesh.blocks):
         raise ValueError("Bisection requires a triangle mesh or a tetrahedral mesh.")
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     if vertex_ids.size >= _VERTEX_LIMIT:

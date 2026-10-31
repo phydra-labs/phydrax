@@ -38,16 +38,16 @@ the native BRep-text decoder and no external tessellation is used as source geom
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
 from phydrax.geometry.brep import BRepTessellationPolicy
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 
-model = model_from_occt_shape(
+model = import_occt_shape(
     BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
     coordinate_contract=phx.SpatialCoordinateContract.si(),
     tessellation=BRepTessellationPolicy(
         linear_deflection=0.1,
         angular_deflection=0.1,
     ),
-)
+).model
 solid = phx.domain.GeometryDomain(phx.geometry.BRepSource(model).compile())
 print(solid.geometry.field_certificate)
 print(solid.boundary_atlas.source_entity_ids)

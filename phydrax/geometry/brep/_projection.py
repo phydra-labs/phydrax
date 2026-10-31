@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil, floor, pi, sqrt, tau
@@ -128,6 +129,18 @@ def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, f
     return max(0.0, float(np.nextafter(distance - error, -np.inf))), float(
         np.nextafter(distance + error, np.inf)
     )
+
+
+def _map_frame(frame: np.ndarray, matrix: np.ndarray, /) -> np.ndarray:
+    """Map each defined frame vector by ``matrix``; undefined vectors stay NaN.
+
+    Frames are partially defined by contract: an edge hit carries its curve
+    tangent and an undefined second slot, so definedness is per vector.
+    """
+    mapped = np.full((*frame.shape[:-1], matrix.shape[1]), np.nan, dtype=np.float64)
+    defined = np.all(np.isfinite(frame), axis=-1)
+    mapped[defined] = frame[defined] @ matrix
+    return mapped
 
 
 def _unresolved(dimension: int, index: int, path: tuple[str, ...] = ()) -> _Hit:
@@ -1940,6 +1953,21 @@ def _project_face(
     return _Hit(2, face, candidate, uv, lower, upper, status, normal, tangents, path)
 
 
+def _unit(vector: tuple[float, float, float], /) -> np.ndarray:
+    values = np.asarray(vector, dtype=np.float64)
+    return values / np.linalg.norm(values)
+
+
+# Fixed irrational-ratio ray directions for containment parity; a ray meeting a
+# trim edge or a face tangentially is replaced by the next one.
+_CONTAINMENT_RAY_DIRECTIONS = (
+    _unit((1.0, sqrt(2.0), sqrt(3.0))),
+    _unit((-sqrt(3.0), 1.0, sqrt(2.0))),
+    _unit((sqrt(2.0), -sqrt(3.0), 1.0)),
+    _unit((1.0, sqrt(5.0), -sqrt(7.0))),
+)
+
+
 def _ray_cylinder_crossings(
     model: BRepModel,
     face: int,
@@ -2900,11 +2928,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     if np.all(np.isfinite(hit.normal))
                     else hit.normal
                 )
-                tangents = (
-                    hit.tangents @ rotation.T
-                    if np.all(np.isfinite(hit.tangents))
-                    else hit.tangents
-                )
+                tangents = _map_frame(hit.tangents, rotation.T)
                 hit = _Hit(
                     hit.dimension,
                     hit.index,
@@ -2992,11 +3016,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             if np.any(finite_points):
                 points[finite_points] = self.embedding.to_planar(points_3d[finite_points])
             normals = np.full((len(hits), 2), np.nan, dtype=np.float64)
-            tangents = np.full((len(hits), 2, 2), np.nan, dtype=np.float64)
-            finite_tangents = np.all(np.isfinite(tangents_3d), axis=(1, 2))
-            if np.any(finite_tangents):
-                basis = np.stack((self.embedding.x_axis, self.embedding.y_axis), axis=1)
-                tangents[finite_tangents] = tangents_3d[finite_tangents] @ basis
+            tangents = _map_frame(
+                tangents_3d,
+                np.stack((self.embedding.x_axis, self.embedding.y_axis), axis=1),
+            )
         occurrence_paths = tuple(hit.path for hit in hits)
         return BRepProjectionResult(
             self.source_id,
@@ -3436,31 +3459,22 @@ class NativeBRepProjection(AbstractBRepProjection):
         return self._result(queries, hits)
 
     def _contains_solid(self, point: np.ndarray, solid: int, /) -> bool | None:
+        """Exact ray-parity containment; ``None`` on the boundary or unsupported faces.
+
+        A ray is decisive only when it crosses every face transversally away from
+        trim boundaries. A non-generic ray (tangent, through a trim edge, along a
+        plane) is retried along the next fixed direction; a point on the solid
+        boundary is undecided along every direction.
+        """
         profile = _closed_revolution_profile(self.model, solid)
         if profile is not None:
             return _revolution_profile_contains(profile, point)
-        direction = np.asarray((1.0, sqrt(2.0), sqrt(3.0)), dtype=np.float64)
-        direction /= np.linalg.norm(direction)
-        from .._rational import rational_cross, rational_vector
+        from .._rational import rational_vector
 
-        origin_values = rational_vector(np.asarray(point, dtype=np.float64))
-        ray_origin = (origin_values[0], origin_values[1], origin_values[2])
-        direction_values = rational_vector(direction)
-        ray_direction = (
-            direction_values[0],
-            direction_values[1],
-            direction_values[2],
-        )
-        crossings = 0
-        for face in self.model.topology.solid_faces[solid]:
+        faces = self.model.topology.solid_faces[solid]
+        for face in faces:
             patch = self.model.patches[face]
             if isinstance(patch, CylinderPatch):
-                cylinder_crossings = _ray_cylinder_crossings(
-                    self.model, face, ray_origin, ray_direction
-                )
-                if cylinder_crossings is None:
-                    return None
-                crossings += cylinder_crossings
                 continue
             if not (
                 isinstance(patch, PlanePatch)
@@ -3473,6 +3487,43 @@ class NativeBRepProjection(AbstractBRepProjection):
             frame = self.affine_projection_frames[face]
             if frame is None or frame.factorization is None:
                 return None
+        origin_values = rational_vector(np.asarray(point, dtype=np.float64))
+        ray_origin = (origin_values[0], origin_values[1], origin_values[2])
+        for direction in _CONTAINMENT_RAY_DIRECTIONS:
+            direction_values = rational_vector(direction)
+            parity = self._ray_parity(
+                faces,
+                ray_origin,
+                (direction_values[0], direction_values[1], direction_values[2]),
+            )
+            if parity is not None:
+                return bool(parity)
+        return None
+
+    def _ray_parity(
+        self,
+        faces: Sequence[int],
+        ray_origin: tuple[Fraction, Fraction, Fraction],
+        ray_direction: tuple[Fraction, Fraction, Fraction],
+        /,
+    ) -> int | None:
+        """Crossing parity of one exact ray, or ``None`` when it is not generic."""
+        from .._rational import rational_cross
+
+        crossings = 0
+        for face in faces:
+            patch = self.model.patches[face]
+            if isinstance(patch, CylinderPatch):
+                cylinder_crossings = _ray_cylinder_crossings(
+                    self.model, face, ray_origin, ray_direction
+                )
+                if cylinder_crossings is None:
+                    return None
+                crossings += cylinder_crossings
+                continue
+            frame = self.affine_projection_frames[face]
+            if frame is None or frame.factorization is None:
+                return None
             normal = rational_cross(frame.first, frame.second)
             denominator = sum(
                 (
@@ -3481,8 +3532,6 @@ class NativeBRepProjection(AbstractBRepProjection):
                 ),
                 Fraction(0),
             )
-            if denominator == 0:
-                continue
             numerator = sum(
                 (
                     value * (origin - query)
@@ -3492,8 +3541,13 @@ class NativeBRepProjection(AbstractBRepProjection):
                 ),
                 Fraction(0),
             )
+            if denominator == 0:
+                if numerator == 0:
+                    # The ray runs inside the face plane.
+                    return None
+                continue
             ray_parameter = numerator / denominator
-            if ray_parameter <= 0:
+            if ray_parameter < 0:
                 continue
             intersection = (
                 ray_origin[0] + ray_parameter * ray_direction[0],
@@ -3509,8 +3563,14 @@ class NativeBRepProjection(AbstractBRepProjection):
             trim = _trim_classification(self.model, face, uv)
             if trim is None or trim < 0:
                 return None
+            if ray_parameter == 0:
+                # The origin lies in the face plane: on the face it is a boundary
+                # point; outside the trim the ray leaves the plane at once.
+                if trim:
+                    return None
+                continue
             crossings += trim
-        return bool(crossings % 2)
+        return crossings % 2
 
     @checked
     def locate_solids(

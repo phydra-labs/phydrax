@@ -31,6 +31,8 @@ from .fem._cell_map import PreparedFiniteElementCellMap
 
 # (reference points, converged, first converged iteration, ever-valid geometry)
 _NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
+# Rows (point x candidate x seed) Newton-resolved at once by a locator.
+_RESOLVE_ROW_BUDGET = 1 << 16
 
 
 @final
@@ -268,6 +270,49 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             candidate_valid = (
                 candidate_valid & mask[jnp.where(candidate_valid, candidates, 0)]
             )
+        if not isinstance(values, Tracer):
+            # The search pads every point to the full capacity; only as many
+            # columns as the most candidates any point has carry work, so the
+            # valid candidates are moved first (keeping their order) and the
+            # padding beyond them is dropped before Newton resolution.
+            valid_counts = np.sum(np.asarray(candidate_valid), axis=1)
+            width = max(1, int(np.max(valid_counts, initial=0)))
+            if width < candidate_capacity:
+                order = jnp.argsort(~candidate_valid, axis=1, stable=True)[:, :width]
+                candidates = jnp.take_along_axis(candidates, order, axis=1)
+                candidate_valid = jnp.take_along_axis(candidate_valid, order, axis=1)
+                candidate_capacity = width
+        # Newton resolution works on point x candidate x seed rows, so points
+        # are resolved in chunks of at most _RESOLVE_ROW_BUDGET rows: the
+        # working set stays bounded whatever the number of query points.
+        seed_count = min(
+            self.policy.maximum_seeds,
+            1 + self.cell_map.coordinate_element.reference_nodes.shape[0],
+        )
+        chunk = max(1, _RESOLVE_ROW_BUDGET // (candidate_capacity * seed_count))
+        parts = [
+            self._resolve_candidates(
+                values[start : start + chunk],
+                candidates[start : start + chunk],
+                candidate_valid[start : start + chunk],
+                search_complete[start : start + chunk],
+            )
+            for start in range(0, point_count, chunk)
+        ]
+        if len(parts) == 1:
+            return parts[0]
+        return jax.tree.map(lambda *rows: jnp.concatenate(rows, axis=0), *parts)
+
+    def _resolve_candidates(
+        self,
+        values: Array,
+        candidates: Array,
+        candidate_valid: Array,
+        search_complete: Array,
+        /,
+    ) -> CellLocationResult:
+        """Newton-resolve every (point, candidate, seed) row and pick the cells."""
+        point_count, candidate_capacity = candidates.shape
         reference_dimension = self.dimension
         centroid_seed = jnp.full(
             (reference_dimension,), 1.0 / (reference_dimension + 1), dtype=values.dtype
@@ -472,6 +517,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             candidate_cells,
             jnp.where(candidate_accepted[:, :, None], candidate_reference, 0.0),
             candidates_complete,
+            (),
             self.locator_id,
         )
 
