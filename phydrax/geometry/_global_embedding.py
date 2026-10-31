@@ -7,12 +7,12 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cache
 from itertools import chain, combinations, product
-from math import isfinite, lcm
+from math import gcd, isfinite, lcm
 from typing import cast, Literal
 
 import numpy as np
@@ -130,6 +130,11 @@ from ._separating_normals import (
     shadow_bound,
     strict_separation_planes,
     unique_projective_normals,
+)
+from ._stratum_subdivision import (
+    glued_face_monotone,
+    StratumSubdivisionCache,
+    subdivided_stratum_separation,
 )
 
 
@@ -3067,6 +3072,164 @@ def _vertex_residual_side_sign(
     return directions[0] * denominator_sign, all(result[1] for result in verified)
 
 
+# A Mersenne prime: full column rank of the reduced matrix proves full rank
+# over the rationals, since a nonzero maximal minor modulo p is nonzero.
+_RANK_PRIME = (1 << 61) - 1
+
+
+def _full_column_rank_modulo_prime(
+    rows: Sequence[Mapping[int, ExactScalar]], columns: int, /
+) -> bool:
+    """Whether the rational sparse matrix provably has full column rank.
+
+    `False` only means the modular test did not prove it (radical entries,
+    denominators divisible by the prime, or rank lost modulo the prime).
+    """
+    if len(rows) < columns:
+        return False
+    reduced: list[dict[int, int]] = []
+    for row in rows:
+        entries: dict[int, int] = {}
+        for column, value in row.items():
+            if not isinstance(value, Fraction) or value.denominator % _RANK_PRIME == 0:
+                return False
+            residue = (
+                value.numerator * pow(value.denominator, -1, _RANK_PRIME)
+            ) % _RANK_PRIME
+            if residue:
+                entries[column] = residue
+        if entries:
+            reduced.append(entries)
+    for column in range(columns):
+        pivot = next((index for index, row in enumerate(reduced) if column in row), None)
+        if pivot is None:
+            return False
+        pivot_row = reduced.pop(pivot)
+        inverse = pow(pivot_row[column], -1, _RANK_PRIME)
+        for index, row in enumerate(reduced):
+            factor = row.get(column)
+            if factor is None:
+                continue
+            scale_ = factor * inverse % _RANK_PRIME
+            updated = dict(row)
+            for key, value in pivot_row.items():
+                residue = (updated.get(key, 0) - scale_ * value) % _RANK_PRIME
+                if residue:
+                    updated[key] = residue
+                else:
+                    updated.pop(key, None)
+            reduced[index] = updated
+    return True
+
+
+def _rational_markowitz_nullspace(
+    rows: Sequence[Mapping[int, ExactScalar]], columns: int, /
+) -> tuple[Fraction, ...] | Literal[False] | None:
+    """The canonical nullspace vector of `factor_exact_sparse` for nullity one.
+
+    Replays its deterministic Markowitz pivot selection on content-reduced
+    integer rows. Each integer row is a nonzero multiple of the rational row it
+    replaces, so every exact zero pattern, pivot and therefore the free column
+    agree; the nullspace vector with that free entry one is unique. `False`
+    when the rank is not `columns - 1`, `None` for non-rational entries.
+    """
+    integer_rows: list[dict[int, int]] = []
+    for row in rows:
+        rationals = {
+            column: value for column, value in row.items() if isinstance(value, Fraction)
+        }
+        if len(rationals) != len(row):
+            return None
+        common = lcm(*(value.denominator for value in rationals.values()))
+        integer_rows.append(
+            {
+                column: value.numerator * (common // value.denominator)
+                for column, value in rationals.items()
+                if value
+            }
+        )
+    row_count = len(integer_rows)
+    row_ids = list(range(row_count))
+    remaining = set(range(columns))
+    pivot_columns: list[int] = []
+    pivot_row = 0
+    while pivot_row < row_count:
+        row_degrees: dict[int, int] = {}
+        incidence: dict[int, list[int]] = defaultdict(list)
+        for index in range(pivot_row, row_count):
+            degree = 0
+            for key in integer_rows[index]:
+                if key in remaining:
+                    degree += 1
+                    incidence[key].append(index)
+            row_degrees[index] = degree
+        best: tuple[tuple[int, int, int, int, int], int, int] | None = None
+        for column, incident in incidence.items():
+            column_degree = len(incident)
+            for index in incident:
+                row_degree = row_degrees[index]
+                candidate = (
+                    (
+                        (row_degree - 1) * (column_degree - 1),
+                        row_degree,
+                        column_degree,
+                        column,
+                        row_ids[index],
+                    ),
+                    column,
+                    index,
+                )
+                if best is None or candidate < best:
+                    best = candidate
+        if best is None:
+            break
+        _, column, selected = best
+        remaining.remove(column)
+        integer_rows[pivot_row], integer_rows[selected] = (
+            integer_rows[selected],
+            integer_rows[pivot_row],
+        )
+        row_ids[pivot_row], row_ids[selected] = row_ids[selected], row_ids[pivot_row]
+        pivot = integer_rows[pivot_row]
+        divisor = pivot[column]
+        for index in range(pivot_row + 1, row_count):
+            other = integer_rows[index]
+            factor = other.get(column)
+            if factor is None:
+                continue
+            reduced = {}
+            for key in set(other) | set(pivot):
+                value = divisor * other.get(key, 0) - factor * pivot.get(key, 0)
+                if value:
+                    reduced[key] = value
+            content = gcd(*reduced.values()) if reduced else 1
+            integer_rows[index] = (
+                {key: value // content for key, value in reduced.items()}
+                if content > 1
+                else reduced
+            )
+        pivot_columns.append(column)
+        pivot_row += 1
+    if len(pivot_columns) != columns - 1:
+        return False
+    free_column = next(column for column in range(columns) if column in remaining)
+    vector = [Fraction(0) for _ in range(columns)]
+    vector[free_column] = Fraction(1)
+    for index in range(len(pivot_columns) - 1, -1, -1):
+        column = pivot_columns[index]
+        row = integer_rows[index]
+        vector[column] = (
+            Fraction(
+                -sum(
+                    (value * vector[key] for key, value in row.items() if key != column),
+                    Fraction(0),
+                )
+            )
+            / row[column]
+        )
+    return tuple(vector)
+
+
 def _implicit_facet_relation(
     trace: tuple[Expression, ...], /
 ) -> dict[tuple[int, ...], ExactScalar] | None:
@@ -3094,21 +3257,29 @@ def _implicit_facet_relation(
     relation_degree_bound = degree * degree
     if degree_u and degree_v:
         relation_degree_bound = min(relation_degree_bound, 2 * degree_u * degree_v)
+    # Each monomial image is the image of a lower monomial times one coordinate,
+    # formed once across every relation degree.
+    images: dict[tuple[int, int, int], dict[tuple[int, ...], ExactScalar]] = {
+        (0, 0, 0): {(0, 0): Fraction(1)}
+    }
+
+    def image(exponent: tuple[int, int, int], /) -> dict[tuple[int, ...], ExactScalar]:
+        value = images.get(exponent)
+        if value is None:
+            axis = next(index for index, power_ in enumerate(exponent) if power_)
+            lower = list(exponent)
+            lower[axis] -= 1
+            value = multiply(image((lower[0], lower[1], lower[2])), coordinates[axis])
+            images[exponent] = value
+        return value
+
     for relation_degree in range(1, relation_degree_bound + 1):
         monomials = tuple(
-            exponent
-            for exponent in product(range(relation_degree + 1), repeat=3)
-            if sum(exponent) <= relation_degree
+            (first, second, third)
+            for first, second, third in product(range(relation_degree + 1), repeat=3)
+            if first + second + third <= relation_degree
         )
-        compositions = tuple(
-            compose_expression({exponent: Fraction(1)}, coordinates)
-            for exponent in monomials
-        )
-        parameter_polynomials = tuple(
-            expression for expression in compositions if isinstance(expression, dict)
-        )
-        if len(parameter_polynomials) != len(monomials):
-            return None
+        parameter_polynomials = tuple(image(exponent) for exponent in monomials)
         parameter_exponents = tuple(
             sorted(
                 {
@@ -3128,20 +3299,36 @@ def _implicit_facet_relation(
             }
             for parameter_exponent in parameter_exponents
         )
-        factorization = factor_exact_sparse(rows, len(monomials))
-        if factorization.evidence.rank != len(monomials) - 1:
+        if _full_column_rank_modulo_prime(rows, len(monomials)):
             continue
-        nullspace = factorization.nullspace_basis()
-        if len(nullspace) != 1:
+        integer_nullspace = _rational_markowitz_nullspace(rows, len(monomials))
+        if integer_nullspace is None:
+            factorization = factor_exact_sparse(rows, len(monomials))
+            if factorization.evidence.rank != len(monomials) - 1:
+                continue
+            nullspace = factorization.nullspace_basis()
+            if len(nullspace) != 1:
+                continue
+            vector = nullspace[0]
+        elif integer_nullspace is False:
             continue
-        relation = {
+        else:
+            vector = integer_nullspace
+        # The composed relation's coefficient at each parameter exponent is that
+        # row's product with the relation coefficients.
+        if any(
+            sum(
+                (coefficient * vector[column] for column, coefficient in row.items()),
+                Fraction(0),
+            )
+            for row in rows
+        ):
+            continue
+        return {
             exponent: coefficient
-            for exponent, coefficient in zip(monomials, nullspace[0], strict=True)
+            for exponent, coefficient in zip(monomials, vector, strict=True)
             if coefficient
         }
-        composed_relation = compose_expression(relation, coordinates)
-        if isinstance(composed_relation, dict) and not composed_relation:
-            return relation
     return None
 
 
@@ -3179,6 +3366,45 @@ def _facet_residual_side_sign(
             return sign * denominator_sign, True
         numerator = quotient
     return None
+
+
+def _interior_residual_signs(
+    cell: EmbeddingCell, relation: Mapping[tuple[int, ...], ExactScalar], /
+) -> frozenset[int] | None:
+    """Exact signs of ``relation(cell map)`` at fixed interior reference points.
+
+    The facet factor is positive inside the reference cell, so a strict residual
+    side sign proven by `_facet_residual_side_sign` equals the residual's sign at
+    every interior point. `None` when a point evaluation is undefined or the
+    proof polynomial is not the reference map itself.
+    """
+    if cell.pyramid_normalizations is not None or cell.kind == "pyramid":
+        return None
+    references = cell.reference_vertices
+    count = len(references)
+    center = tuple(
+        sum((reference[axis] for reference in references), Fraction(0)) / count
+        for axis in range(cell.dimension)
+    )
+    points = (
+        center,
+        *(
+            tuple(
+                (center[axis] + 3 * reference[axis]) / 4 for axis in range(cell.dimension)
+            )
+            for reference in references
+        ),
+    )
+    signs: set[int] = set()
+    try:
+        for point in points:
+            image = tuple(
+                evaluate_expression(expression, point) for expression in cell.coordinates
+            )
+            signs.add(_sign(evaluate_expression(relation, image)))
+    except (ValueError, ZeroDivisionError):
+        return None
+    return frozenset(signs)
 
 
 def _shared_curved_facet_separation(
@@ -3234,6 +3460,23 @@ def _shared_curved_facet_separation(
         return None
     relation = _implicit_facet_relation(first_trace)
     if relation is None:
+        return None
+    # Opposite strict sides require each residual to keep one nonzero sign inside
+    # its cell and the two signs to differ; exact interior samples refute that
+    # without composing the relation through either cell map.
+    first_samples = _interior_residual_signs(first, relation)
+    second_samples = _interior_residual_signs(second, relation)
+    if (
+        first_samples is not None
+        and second_samples is not None
+        and (
+            len(first_samples) != 1
+            or len(second_samples) != 1
+            or 0 in first_samples
+            or 0 in second_samples
+            or first_samples == second_samples
+        )
+    ):
         return None
     try:
         first_sign = _facet_residual_side_sign(
@@ -4101,6 +4344,100 @@ def _shared_vertex_findings(
     return findings
 
 
+def _stratum_residuals(
+    cell: EmbeddingCell, shared_ids: tuple[int, ...], /
+) -> tuple[Expression, ...] | None:
+    """Physical polynomials vanishing on the exact image of a shared stratum.
+
+    A vertex uses its three coordinate offsets, a straight edge two planes
+    through it, and a quadratic edge its plane and in-plane conic residual. Each
+    zero set contains the stratum image; ``None`` when no exact residual is
+    available (faces are proved by `glued_face_monotone`).
+    """
+    if not shared_ids:
+        return ()
+    if len(cell.coordinates) != 3 or not cell.corner_images:
+        return None
+    if len(shared_ids) == 1:
+        point = cell.corner_images[cell.vertex_ids.index(shared_ids[0])]
+        if len(point) != 3:
+            return None
+        return tuple(
+            subtract(
+                _physical_linear_form(
+                    cast(
+                        tuple[
+                            CoordinateExactScalar,
+                            CoordinateExactScalar,
+                            CoordinateExactScalar,
+                        ],
+                        tuple(Fraction(int(index == axis)) for index in range(3)),
+                    )
+                ),
+                constant(point[axis], 3),
+            )
+            for axis in range(3)
+        )
+    if len(shared_ids) == 2:
+        arguments = _trace_arguments(cell, shared_ids)
+        if arguments is None:
+            return None
+        trace = tuple(
+            compose_expression(expression, arguments) for expression in cell.coordinates
+        )
+        if any(not isinstance(expression, dict) for expression in trace):
+            return None
+        degree = max(
+            (
+                exponent[0]
+                for expression in trace
+                if isinstance(expression, dict)
+                for exponent in expression
+            ),
+            default=0,
+        )
+        if degree == 2:
+            return _quadratic_edge_residuals(trace)
+        if degree != 1:
+            return None
+        origin = tuple(
+            cast(dict, expression).get((0,), Fraction(0)) for expression in trace
+        )
+        direction = tuple(
+            cast(dict, expression).get((1,), Fraction(0)) for expression in trace
+        )
+        axis = min(range(3), key=lambda index: abs(float(direction[index])))
+        unit = tuple(Fraction(int(index == axis)) for index in range(3))
+        first_normal = (
+            direction[1] * unit[2] - direction[2] * unit[1],
+            direction[2] * unit[0] - direction[0] * unit[2],
+            direction[0] * unit[1] - direction[1] * unit[0],
+        )
+        second_normal = (
+            direction[1] * first_normal[2] - direction[2] * first_normal[1],
+            direction[2] * first_normal[0] - direction[0] * first_normal[2],
+            direction[0] * first_normal[1] - direction[1] * first_normal[0],
+        )
+        residuals: list[Expression] = []
+        for normal in (first_normal, second_normal):
+            if not any(_sign(value) for value in normal):
+                return None
+            residuals.append(
+                subtract(
+                    _physical_linear_form(normal),
+                    constant(
+                        sum(
+                            (normal[index] * origin[index] for index in range(3)),
+                            Fraction(0),
+                        ),
+                        3,
+                    ),
+                )
+            )
+        return tuple(residuals)
+    return None
+
+
 def _straight_planar_polygon(
     cell: EmbeddingCell,
     pieces: tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None,
@@ -4286,6 +4623,8 @@ def _nonperiodic_contacts(
     findings: list[MeshCertificateFinding] = []
     vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
     shadows: dict[int, CellShadow | None] = {}
+    stratum_residuals: dict[tuple[int, ...], tuple[Expression, ...] | None] = {}
+    subdivision_cache = StratumSubdivisionCache()
     for cell in cells:
         if not cell.affine and cell.coordinates:
             simplices.append(None)
@@ -4442,6 +4781,43 @@ def _nonperiodic_contacts(
                         )
                     )
                     continue
+                if (
+                    trace is True
+                    and len(shared) == 3
+                    and glued_face_monotone(first_cell, second_cell, shared)
+                ):
+                    if proof_values is not None:
+                        proof_values.append(
+                            f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                            "glued-face-monotone-map"
+                        )
+                    continue
+                if trace is True and len(shared) <= 2:
+                    stratum_key = tuple(sorted(shared))
+                    if stratum_key not in stratum_residuals:
+                        stratum_residuals[stratum_key] = _stratum_residuals(
+                            first_cell, stratum_key
+                        )
+                    residuals = stratum_residuals[stratum_key]
+                    subdivided = (
+                        None
+                        if residuals is None
+                        else subdivided_stratum_separation(
+                            first_cell,
+                            second_cell,
+                            stratum_key,
+                            residuals,
+                            subdivision_cache,
+                        )
+                    )
+                    if subdivided is not None:
+                        if proof_values is not None:
+                            proof_values.append(
+                                f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                                f"bernstein-subdivided-shared-stratum:{len(stratum_key)}:"
+                                f"cone-pieces:{subdivided[0]}:hull-pieces:{subdivided[1]}"
+                            )
+                        continue
                 if trace is True and _shared_facet_separation(
                     first_cell, second_cell, shared, shadows
                 ):

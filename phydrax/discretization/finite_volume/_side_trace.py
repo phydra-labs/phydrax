@@ -187,13 +187,19 @@ class _FacetTable:
 @final
 @dataclass(frozen=True)
 class _FacetFrame:
-    """Host sites, measures, and outward normals of one side of selected facets."""
+    """Host sites, measures, and outward normals of one side of selected facets.
+
+    `sites` are the facet's shared physical points (the owner's frame);
+    `evaluation_sites` are the same points in the side cell's own frame, which
+    differ only on the neighbor side of an owner-local periodic seam.
+    """
 
     shape: FacetShape
     side: FieldTraceSide
     cells: np.ndarray
     local: np.ndarray
     sites: np.ndarray
+    evaluation_sites: np.ndarray
     weights: np.ndarray
     normals: np.ndarray
     revision_id: str
@@ -291,26 +297,35 @@ def _local_positions(
     return np.argmax(match, axis=1).astype(np.int32)
 
 
+def _seam_translations(discretization: object, /) -> np.ndarray | None:
+    """Owner-to-neighbor frame translation of every owner-local FV face, if any."""
+    if (
+        isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+        and discretization.periodic_face_translations is not None
+    ):
+        return np.asarray(discretization.periodic_face_translations, dtype=np.float64)
+    return None
+
+
 def _mesh_table(discretization: _MeshOwner, /) -> _FacetTable:
     facets, _, valid = _cell_facets(discretization)
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
     neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
     faces = np.arange(owner.size, dtype=np.int32)
+    twins = faces
     periodic = np.zeros(owner.shape, dtype=np.bool_)
-    if (
-        isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
-        and discretization.periodic_face_translations is not None
-    ):
+    translations = _seam_translations(discretization)
+    if translations is not None:
         # Owner-local periodic seams: FV faces name lifted topology faces, and a
-        # seam neighbor holds the face's twin at another lattice image.
+        # seam neighbor holds the face's unwelded twin at another lattice image.
+        assert isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
         faces = np.asarray(discretization.face_topology_ids, dtype=np.int32)
-        periodic = np.any(
-            np.asarray(discretization.periodic_face_translations) != 0.0, axis=1
-        )
-    interior = (neighbor >= 0) & ~periodic
+        twins = np.asarray(discretization.neighbor_face_topology_ids, dtype=np.int32)
+        periodic = np.any(translations != 0.0, axis=1)
+    interior = neighbor >= 0
     neighbor_local = np.full(owner.shape, -1, dtype=np.int32)
     neighbor_local[interior] = _local_positions(
-        facets, valid, neighbor[interior], faces[interior]
+        facets, valid, neighbor[interior], twins[interior]
     )
     dimension = mesh_cell_dimension(discretization)
     return _FacetTable(
@@ -468,7 +483,7 @@ def _checked_facets(
         raise ValueError(
             "The facet domain routes do not match this discretization's face table."
         )
-    if np.any(table.periodic[facets]):
+    if np.any(table.periodic[facets]) and _seam_translations(discretization) is None:
         raise ValueError(
             "Periodic faces join two physically distinct images; side traces need "
             "one shared facet embedding."
@@ -593,10 +608,49 @@ def _structured_frame(
         cells=cells,
         local=local,
         sites=owner_sites,
+        evaluation_sites=owner_sites,
         weights=measure[:, None] * reference[None, :],
         normals=np.broadcast_to(normals[:, None, :], sites.shape).copy(),
         revision_id=_revision(discretization.prepared_id, edges),
     )
+
+
+def _twin_alignment(
+    owner_vertices: np.ndarray,
+    twin_vertices: np.ndarray,
+    points: np.ndarray,
+    translations: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Orientation sign of each neighbor-side facet relative to its owner facet.
+
+    The neighbor of an owner-local periodic seam holds the facet's unwelded twin,
+    whose vertices are the owner facet's vertices translated by the seam's
+    lattice image in some order; the sign is the parity of that order (+1 off
+    seams, where the twin is the facet itself).
+    """
+    scale = max(1.0, float(np.max(np.abs(points)))) if points.size else 1.0
+    owner_points = points[owner_vertices]
+    twin_points = points[twin_vertices] - translations[:, None, :]
+    distance = np.linalg.norm(
+        twin_points[:, :, None, :] - owner_points[:, None, :, :], axis=-1
+    )
+    order = np.argmin(distance, axis=-1)
+    matched = np.take_along_axis(distance, order[..., None], axis=-1)[..., 0]
+    if np.any(matched > _EMBEDDING_TOLERANCE * scale) or np.any(
+        np.sort(order, axis=-1) != np.arange(order.shape[1])[None, :]
+    ):
+        raise ValueError(
+            "The owner and neighbor embeddings of an interior facet disagree; the "
+            "side sites are not shared physical points."
+        )
+    count = order.shape[1]
+    inversions = sum(
+        (order[:, first] > order[:, second]).astype(np.int32)
+        for first in range(count)
+        for second in range(first + 1, count)
+    )
+    return np.where(inversions % 2 == 0, 1.0, -1.0)
 
 
 def _mesh_frame(
@@ -610,9 +664,40 @@ def _mesh_frame(
 ) -> _FacetFrame:
     _, signs, _ = _cell_facets(discretization)
     points = np.asarray(discretization.vertices, dtype=np.float64)
+    connectivity = discretization.connectivity
+    match connectivity:
+        case TriangleConnectivity() | PolygonalConnectivity():
+            face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
+        case TetrahedralConnectivity():
+            face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
+        case _:
+            raise ValueError(
+                "Finite-volume side traces cover edge and triangular faces; general "
+                "polyhedral faces have no facet trace rule."
+            )
+    translations = _seam_translations(discretization)
+    topology_facets = facets
+    twin_facets = facets
+    seam_translations = np.zeros((facets.size, points.shape[1]), dtype=np.float64)
+    if translations is not None:
+        assert isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+        topology_facets = np.asarray(discretization.face_topology_ids, dtype=np.int32)[
+            facets
+        ]
+        twin_facets = np.asarray(
+            discretization.neighbor_face_topology_ids, dtype=np.int32
+        )[facets]
+        seam_translations = translations[facets]
     owner_sign = signs[table.owner[facets], table.owner_local[facets]]
     if domain.kind == "interior_facet":
         neighbor_sign = signs[table.neighbor[facets], table.neighbor_local[facets]]
+        if translations is not None:
+            neighbor_sign = neighbor_sign * _twin_alignment(
+                face_vertices[topology_facets],
+                face_vertices[twin_facets],
+                points,
+                seam_translations,
+            )
         if np.any(owner_sign * neighbor_sign >= 0.0):
             raise ValueError(
                 "The owner and neighbor embeddings of an interior facet disagree; the "
@@ -621,56 +706,43 @@ def _mesh_frame(
     cells, local = _side_route(table, facets, domain, side)
     forward = owner_sign > 0.0
     shape: FacetShape
-    connectivity = discretization.connectivity
-    topology_facets = facets
-    if (
-        isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
-        and discretization.face_topology_ids is not None
-    ):
-        topology_facets = np.asarray(discretization.face_topology_ids, dtype=np.int32)[
-            facets
-        ]
-    match connectivity:
-        case TriangleConnectivity() | PolygonalConnectivity():
-            shape = "edge"
-            vertices = np.asarray(connectivity.edges, dtype=np.int32)[topology_facets]
-            ordered = np.where(forward[:, None], vertices, vertices[:, ::-1])
-            start, stop = points[ordered[:, 0]], points[ordered[:, 1]]
-            parameters, reference = rule.reference(shape)
-            t = parameters[:, 0]
-            sites = start[:, None, :] + t[None, :, None] * (stop - start)[:, None, :]
-            tangent = stop - start
-            length = np.linalg.norm(tangent, axis=-1)
-            outward = np.stack((tangent[:, 1], -tangent[:, 0]), axis=-1) / length[:, None]
-            jacobian = length
-        case TetrahedralConnectivity():
-            shape = "triangle"
-            vertices = np.asarray(connectivity.faces, dtype=np.int32)[topology_facets]
-            ordered = np.where(forward[:, None], vertices, vertices[:, (0, 2, 1)])
-            first, second, third = (points[ordered[:, column]] for column in range(3))
-            parameters, reference = rule.reference(shape)
-            sites = (
-                first[:, None, :]
-                + parameters[None, :, 0, None] * (second - first)[:, None, :]
-                + parameters[None, :, 1, None] * (third - first)[:, None, :]
-            )
-            area = np.cross(second - first, third - first)
-            jacobian = np.linalg.norm(area, axis=-1)
-            outward = area / jacobian[:, None]
-        case _:
-            raise ValueError(
-                "Finite-volume side traces cover edge and triangular faces; general "
-                "polyhedral faces have no facet trace rule."
-            )
+    vertices = face_vertices[topology_facets]
+    if vertices.shape[1] == 2:
+        shape = "edge"
+        ordered = np.where(forward[:, None], vertices, vertices[:, ::-1])
+        start, stop = points[ordered[:, 0]], points[ordered[:, 1]]
+        parameters, reference = rule.reference(shape)
+        t = parameters[:, 0]
+        sites = start[:, None, :] + t[None, :, None] * (stop - start)[:, None, :]
+        tangent = stop - start
+        length = np.linalg.norm(tangent, axis=-1)
+        outward = np.stack((tangent[:, 1], -tangent[:, 0]), axis=-1) / length[:, None]
+        jacobian = length
+    else:
+        shape = "triangle"
+        ordered = np.where(forward[:, None], vertices, vertices[:, (0, 2, 1)])
+        first, second, third = (points[ordered[:, column]] for column in range(3))
+        parameters, reference = rule.reference(shape)
+        sites = (
+            first[:, None, :]
+            + parameters[None, :, 0, None] * (second - first)[:, None, :]
+            + parameters[None, :, 1, None] * (third - first)[:, None, :]
+        )
+        area = np.cross(second - first, third - first)
+        jacobian = np.linalg.norm(area, axis=-1)
+        outward = area / jacobian[:, None]
     if np.any(jacobian <= 0.0):
         raise ValueError("Finite-volume side traces require faces of positive measure.")
     orientation = 1.0 if side == "owner" else -1.0
+    # The neighbor of a periodic seam sees the facet at its own lattice image.
+    evaluation_sites = sites if side == "owner" else sites + seam_translations[:, None, :]
     return _FacetFrame(
         shape=shape,
         side=side,
         cells=cells,
         local=local,
         sites=sites,
+        evaluation_sites=evaluation_sites,
         weights=jacobian[:, None] * reference[None, :],
         normals=np.broadcast_to(orientation * outward[:, None, :], sites.shape).copy(),
         revision_id=_revision(discretization.prepared_id, points),
@@ -861,7 +933,7 @@ def _linear_route(
             return cells[:, None], np.ones((cells.size, count, 1), dtype=np.float64)
         case PreparedCellPolynomialReconstruction():
             basis = reconstruction.basis_values(
-                jnp.asarray(cells), jnp.asarray(frame.sites)
+                jnp.asarray(cells), jnp.asarray(frame.evaluation_sites)
             )
             return _stencil_weights(
                 cells,
@@ -873,7 +945,7 @@ def _linear_route(
         case TriangleKExactReconstructionPlan():
             prepared = reconstruction.prepared
             basis = prepared.basis_derivative(
-                jnp.asarray(cells), jnp.asarray(frame.sites), (0, 0)
+                jnp.asarray(cells), jnp.asarray(frame.evaluation_sites), (0, 0)
             )
             return _stencil_weights(
                 cells,
@@ -887,7 +959,7 @@ def _linear_route(
             centers = np.asarray(gradient.discretization.cell_centers, dtype=np.float64)
             return _stencil_weights(
                 cells,
-                frame.sites - centers[cells][:, None, :],
+                frame.evaluation_sites - centers[cells][:, None, :],
                 np.asarray(gradient.factors, dtype=np.float64)[cells],
                 np.asarray(gradient.neighbor_cells, dtype=np.int32)[cells],
                 np.asarray(gradient.valid, dtype=np.bool_)[cells],
@@ -1373,7 +1445,9 @@ def prepare_finite_volume_nonlinear_face_trace(
     evaluator: _AbstractFaceStateEvaluator
     match reconstruction:
         case PreparedUnstructuredWENOZReconstruction():
-            evaluator = _MeshFaceStateEvaluator(reconstruction, frame.cells, frame.sites)
+            evaluator = _MeshFaceStateEvaluator(
+                reconstruction, frame.cells, frame.evaluation_sites
+            )
             optimal = reconstruction.optimal
             rows = np.concatenate(
                 [frame.cells]
@@ -1385,7 +1459,9 @@ def prepare_finite_volume_nonlinear_face_trace(
                 ]
             )
         case TriangleMUSCLReconstructionPlan():
-            evaluator = _MeshFaceStateEvaluator(reconstruction, frame.cells, frame.sites)
+            evaluator = _MeshFaceStateEvaluator(
+                reconstruction, frame.cells, frame.evaluation_sites
+            )
             gradient = reconstruction.gradient
             rows = np.concatenate(
                 (

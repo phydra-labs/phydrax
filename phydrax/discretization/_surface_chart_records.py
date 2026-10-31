@@ -41,7 +41,7 @@ class _CertificateBinding(Protocol):
 if TYPE_CHECKING:
     from ..geometry._domain_boundary import MeshingDomainBoundarySource
     from ..geometry._global_embedding import GlobalEmbeddingCertificate
-    from ..geometry._source_fidelity import SourceFidelityCertificate
+    from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 else:
 
     @runtime_checkable
@@ -808,7 +808,7 @@ class PreparedSurfaceChartDeformation(StrictModule, NonTrainableState):
         from ..geometry._global_embedding import (
             GlobalEmbeddingCertificate as EmbeddingCertificate,
         )
-        from ..geometry._source_fidelity import (
+        from ..geometry._source_fidelity_certificate import (
             SourceFidelityCertificate as FidelityCertificate,
         )
 

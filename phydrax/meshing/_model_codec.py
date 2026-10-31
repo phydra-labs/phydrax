@@ -232,7 +232,7 @@ def _register_model_archive_types() -> None:
         SourceBoundarySamples,
         SurfaceEnvelopeDistanceWitness,
     )
-    from ..geometry._source_fidelity import SourceFidelityCertificate
+    from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ..geometry._sphere_material_atlas import (
         _SphereMaterialFidelityBinding,
         SphereMaterialCellAtlas,

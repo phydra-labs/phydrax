@@ -27,6 +27,9 @@ constexpr int64_t kReduceSum = 7;
 constexpr int64_t kSqrt = 10;
 constexpr int64_t kReciprocal = 11;
 constexpr int64_t kSquare = 12;
+constexpr int64_t kCompare = 13;
+constexpr int64_t kSelect = 14;
+constexpr int64_t kMaximum = 15;
 constexpr double kGamma = 1.0e-15;  // >= 3u / (1 - 3u) for the short reductions
 constexpr double kPi = 3.141592653589793;
 
@@ -357,11 +360,152 @@ void remesh_sphere_carrier() {
   PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_zero_set_remesh(nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
+
+// Lens: intersection of the unit balls centered at (0, 0, -+kLensShift),
+// f = max(f1, f2) with f1 = |x - c1|^2 - 1, f2 = |x - c2|^2 - 1. The caps meet on
+// the circle z = 0 of radius 0.6 with a 106 degree normal turn (a CSG crease).
+constexpr double kLensShift = 0.8;
+Program lens_value() {
+  Program p = seeded({kLensShift, 1.0}, 17);
+  p.row(kAdd, 5, 1, 2, -1, 3, -1, 0);       // z + shift
+  p.row(kSubtract, 6, 1, 2, -1, 3, -1, 0);  // z - shift
+  p.row(kSquare, 7, 2, 0, -1, -1, -1, 0);
+  p.row(kReduceSum, 9, 1, 7, -1, -1, 0, 2);
+  p.row(kSquare, 10, 1, 5, -1, -1, -1, 0);
+  p.row(kSquare, 11, 1, 6, -1, -1, -1, 0);
+  p.row(kAdd, 12, 1, 9, -1, 10, -1, 0);
+  p.row(kAdd, 13, 1, 9, -1, 11, -1, 0);
+  p.row(kSubtract, 14, 1, 12, -1, 4, -1, 0);  // f1
+  p.row(kSubtract, 15, 1, 13, -1, 4, -1, 0);  // f2
+  p.row(kMaximum, 16, 1, 14, -1, 15, -1, 0);
+  p.outputs = {16};
+  return p;
+}
+// grad f = grad f1 where f1 > f2 (z > 0), else grad f2; the hull of both on an
+// undecided box.
+Program lens_gradient() {
+  Program p = seeded({kLensShift, 2.0, 0.0}, 20);
+  p.indices = {0, 0, 0};
+  p.row(kAdd, 6, 1, 2, -1, 3, -1, 0);
+  p.row(kSubtract, 7, 1, 2, -1, 3, -1, 0);
+  p.row(kMultiply, 8, 2, 0, -1, 4, 0, 0);    // case 0: grad f2
+  p.row(kMultiply, 10, 1, 7, -1, 4, -1, 0);
+  p.row(kMultiply, 11, 2, 0, -1, 4, 0, 0);   // case 1: grad f1
+  p.row(kMultiply, 13, 1, 6, -1, 4, -1, 0);
+  p.row(kCompare, 14, 3, 2, 0, 5, 0, 0);     // z > 0
+  p.row(kSelect, 17, 3, 14, -1, 8, -1, 3);
+  p.outputs = {17, 18, 19};
+  return p;
+}
+Point lens_point(int ring, int rings, double phi) {
+  // Rings 1..rings run down the upper cap to the crease, then up the lower cap.
+  const double crease = std::acos(kLensShift);
+  const bool upper = ring <= rings;
+  const double theta = crease * (upper ? ring : 2 * rings - ring) / rings;
+  const double z = std::cos(theta) - kLensShift;
+  return {std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), upper ? z : -z};
+}
+Surface lens_surface(int rings, int segments) {
+  Surface s;
+  auto add = [&](const Point& p) {
+    s.vertices.insert(s.vertices.end(), p.begin(), p.end());
+    return static_cast<int64_t>(s.vertices.size() / 3 - 1);
+  };
+  const int64_t north = add({0, 0, 1 - kLensShift});
+  std::vector<std::vector<int64_t>> ring(static_cast<size_t>(2 * rings - 1));
+  for (int k = 1; k < 2 * rings; ++k)
+    for (int j = 0; j < segments; ++j)
+      ring[static_cast<size_t>(k - 1)].push_back(add(lens_point(k, rings, 2 * kPi * j / segments)));
+  const int64_t south = add({0, 0, kLensShift - 1});
+  auto tri = [&](int64_t a, int64_t b, int64_t c) { s.triangles.insert(s.triangles.end(), {a, b, c}); };
+  for (int j = 0; j < segments; ++j) {
+    const size_t n = static_cast<size_t>((j + 1) % segments), m = static_cast<size_t>(j);
+    tri(north, ring.front()[m], ring.front()[n]);
+    for (size_t k = 0; k + 1 < ring.size(); ++k) {
+      tri(ring[k][m], ring[k + 1][m], ring[k + 1][n]);
+      tri(ring[k][m], ring[k + 1][n], ring[k][n]);
+    }
+    tri(south, ring.back()[n], ring.back()[m]);
+  }
+  return s;
+}
+
+// Largest angle (degrees) between the normals of two triangles sharing an edge.
+double maximum_turn(const std::vector<double>& v, const std::vector<int64_t>& t) {
+  auto normal = [&](size_t f) {
+    const double* a = &v[3 * static_cast<size_t>(t[f])];
+    const double* b = &v[3 * static_cast<size_t>(t[f + 1])];
+    const double* c = &v[3 * static_cast<size_t>(t[f + 2])];
+    const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const double w[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    Point n{u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]};
+    const double length = std::hypot(n[0], n[1], n[2]);
+    for (double& x : n) x /= length;
+    return n;
+  };
+  std::map<std::pair<int64_t, int64_t>, std::vector<size_t>> edges;
+  for (size_t f = 0; f < t.size(); f += 3)
+    for (size_t k = 0; k < 3; ++k) {
+      const int64_t a = t[f + k], b = t[f + (k + 1) % 3];
+      edges[{std::min(a, b), std::max(a, b)}].push_back(f);
+    }
+  double turn = 0;
+  for (const auto& [edge, faces] : edges) {
+    if (faces.size() != 2) continue;
+    const Point n = normal(faces[0]), m = normal(faces[1]);
+    const double cosine = std::clamp(n[0] * m[0] + n[1] * m[1] + n[2] * m[2], -1.0, 1.0);
+    turn = std::max(turn, std::acos(cosine) * 180 / kPi);
+  }
+  return turn;
+}
+
+// The crease of a CSG lens is a turn its source admits: the fold factor leaves
+// it at full score, so remeshing keeps the crease and leaves nothing unmet
+// there (a fixed 90 degree turn limit scored every crease triangle unmet).
+void remesh_lens_crease() {
+  const Surface input = lens_surface(4, 24);
+  PHX_CHECK(signed_volume(input.vertices, input.triangles) > 0);
+  PHX_CHECK(maximum_turn(input.vertices, input.triangles) > 100);
+  const Program value = lens_value(), gradient = lens_gradient();
+  void* handle = nullptr;
+  std::array<int64_t, 8> counters{};
+  double distance = -1;
+  constexpr double tolerance = 0.02;
+  phx_mc_zero_set_remesh_request request{
+      input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
+      input.triangles.data(), static_cast<int64_t>(input.triangles.size() / 3),
+      value.view(),          gradient.view(),
+      tolerance,             tolerance,
+      0.2,                   30.0,
+      &handle,               counters.data(),
+      &distance};
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
+  PHX_CHECK(handle != nullptr);
+  if (handle == nullptr) return;
+  std::array<int64_t, 2> sizes{};
+  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
+  std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
+  std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
+  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
+                                          triangles.data()) == PHX_MC_OK);
+  phx_mc_zero_set_remesh_free(handle);
+  const double turn = maximum_turn(vertices, triangles);
+  std::printf("lens crease: %lld -> %lld triangles, max turn %.1f deg, unmet %lld, "
+              "distance %.3g, counters %lld %lld %lld %lld\n",
+              static_cast<long long>(input.triangles.size() / 3),
+              static_cast<long long>(sizes[1]), turn, static_cast<long long>(counters[4]),
+              distance, static_cast<long long>(counters[0]), static_cast<long long>(counters[1]),
+              static_cast<long long>(counters[2]), static_cast<long long>(counters[3]));
+  PHX_CHECK(distance >= 0 && distance <= tolerance);
+  PHX_CHECK(turn > 100);
+  PHX_CHECK(counters[4] == 0);
+}
 }  // namespace
 
 int main() {
   sphere_cases();
   torus_cases();
   remesh_sphere_carrier();
+  remesh_lens_crease();
   return phx::mc::test::finish("test_zero_set_admission");
 }

@@ -186,8 +186,9 @@ def cell_jacobian_inverse_and_measure(
     entry and cofactor of ``Jn``, and of the unit-diagonal ``Jn^T Jn``, is at
     most one in magnitude, hence ``cond_inf(Jn) <= d^2 / r`` and
     ``cond_inf(Jn^T Jn) <= d^2 / r^2`` for reference dimension ``d``. The
-    evidence therefore holds for every cell whose relative determinant exceeds
-    ``CELL_VALIDITY_DETERMINANT_FLOOR`` (below).
+    evidence therefore holds for every full-dimensional cell whose relative
+    determinant, and every embedded cell whose Gram-relative determinant
+    ``r^2``, exceeds ``CELL_VALIDITY_DETERMINANT_FLOOR`` (below).
     """
     ambient = jacobian.shape[-2]
     dimension = jacobian.shape[-1]
@@ -231,40 +232,56 @@ def cell_jacobian_inverse_and_measure(
 
 
 # CellValidityPolicy's default relative determinant floor, derived from the
-# consumers' binary64 evaluation above so that a certified cell (pointwise
-# relative determinant r above the floor) is never refused by them. The
-# normalized solve refuses only a condition number above the small-solve
-# limit M (1e12) or a max-entry-scaled determinant at or below its singular
-# tolerance (1e-12). Full-dimensional cells (d <= 4): cond <= d^2 / r and the
-# scaled determinant is at least r, so r > 16 / M suffices. Embedded cells
-# (reference dimension d <= 3): the scaled Gram determinant is r^2 and
-# cond <= d^2 / r^2, so r > max(3 / sqrt(M), sqrt(1e-12)) = 3e-6 suffices.
-# The floor is the next power of two, 2^-18 (3.8e-6); its square, 2^-36, also
-# clears the binary64 sign bound of the Gram determinant (a small multiple of
-# u = 2^-53) by more than four orders of magnitude.
+# consumers' binary64 evaluation above so that a certified cell is never
+# refused by them. The policy measures a full-dimensional map by its relative
+# determinant r = |det J| / prod |c_j| and an embedded map by its Gram-relative
+# determinant r^2 = det(J^T J) / prod |c_j|^2. The normalized solve refuses
+# only a condition number above the small-solve limit M (1e12) or a
+# max-entry-scaled determinant at or below its singular tolerance (1e-12).
+# Full-dimensional cells (d <= 4): cond <= d^2 / r and the scaled determinant
+# is at least r, so r > 16 / M = 1.6e-11 suffices. Embedded cells (reference
+# dimension d <= 3): the scaled Gram determinant is r^2 and cond <= d^2 / r^2,
+# so r^2 > max(9 / M, 1e-12) = 9e-12 suffices. The floor is the next power of
+# two above both, 2^-35 (2.9e-11), far above the binary64 sign bound of det(J)
+# (a few tens of u = 2^-53). Both measures are angle measures, independent of
+# a cell's aspect ratio, so the floor does not limit thin cells.
 _JACOBIAN_SOLVE_PLAN = SmallLinearSolvePlan(4)
 CELL_VALIDITY_DETERMINANT_FLOOR = 2.0 ** math.ceil(
     math.log2(
         max(
             4**2 / _JACOBIAN_SOLVE_PLAN.maximum_condition,
-            3 / math.sqrt(_JACOBIAN_SOLVE_PLAN.maximum_condition),
-            math.sqrt(_JACOBIAN_SOLVE_PLAN.singular_tolerance),
+            3**2 / _JACOBIAN_SOLVE_PLAN.maximum_condition,
+            _JACOBIAN_SOLVE_PLAN.singular_tolerance,
         )
     )
 )
+# A polygon edge is degenerate when binary64 cannot resolve its direction:
+# the computed edge vector carries an absolute error of at most
+# 8 u * diameter (two rounded coordinate differences about the vertex
+# centroid), so its direction and outward normal, which polygon consumers
+# evaluate, have a relative error of 8 u * diameter / length. Requiring that
+# to be at most 2^-20 gives length >= 2^23 u * diameter = 2^-30 * diameter
+# (k = 2^23). The threshold is aspect-ratio independent of the polygon's
+# thickness: a 1e-6-thick layer quad keeps every edge far above it.
+POLYGON_EDGE_RESOLUTION = 2.0**-30
 
 
 class CellValidityPolicy(StrictModule, NonTrainableState):
     """Degeneracy thresholds for Bernstein validity certification.
 
     ``relative_determinant_floor`` scales each cell's Hadamard bound of the
-    evaluated determinant. A determinant must be strictly above this floor to
-    be certified. The default, ``CELL_VALIDITY_DETERMINANT_FLOOR`` (2^-18), is
-    derived from the binary64 Jacobian evaluation of finite-element geometry
-    preparation (``cell_jacobian_inverse_and_measure``), so that no cell this
-    policy certifies is refused there. ``relative_planarity_tolerance`` bounds
-    embedded polygon vertices' distance from their Newell plane relative to the
-    polygon diameter.
+    evaluated determinant (the Gram determinant of embedded maps) and polygon
+    areas and polyhedral star simplices. A determinant must be strictly above
+    ``determinant_floor()``: the requested floor, but at least
+    ``CELL_VALIDITY_DETERMINANT_FLOOR`` (2^-35, also the default), the bound
+    below which finite-element geometry preparation
+    (``cell_jacobian_inverse_and_measure``) may refuse a Jacobian, so that no
+    certified cell is refused there. The measure is an angle measure,
+    independent of a cell's aspect ratio. Polygon edges shorter than
+    ``POLYGON_EDGE_RESOLUTION`` times the polygon diameter are degenerate
+    whatever the floor. ``relative_planarity_tolerance`` bounds embedded
+    polygon vertices' distance from their Newell plane relative to the polygon
+    diameter.
     """
 
     relative_determinant_floor: float = eqx.field(static=True)
@@ -292,6 +309,10 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
                 "relative_planarity_tolerance": planarity,
             }
         )
+
+    def determinant_floor(self) -> float:
+        """The floor a Jacobian determinant must clear to be certified."""
+        return max(self.relative_determinant_floor, CELL_VALIDITY_DETERMINANT_FLOOR)
 
 
 class CellValidityCertificate(StrictModule, NonTrainableState):
@@ -1095,7 +1116,7 @@ def _affine_quality(
         squared_scale *= sum(
             (values[column] * values[column] for values in jacobian), Fraction(0)
         )
-    floor = Fraction(policy.relative_determinant_floor)
+    floor = Fraction(policy.determinant_floor())
     margin = (
         determinant - floor * squared_scale
         if len(jacobian) != dimension
@@ -1606,9 +1627,7 @@ def _certify_polynomial_block(
         raise ValueError(f"Embedded {cell_kind} cells have no validity contract.")
     domain, degrees = _determinant_route(cell_kind, element.degree, embedded)
     plan = _bernstein_plan(domain, degrees)
-    threshold = policy.relative_determinant_floor * _root_scale(
-        element, cell_kind, plan, local
-    )
+    threshold = policy.determinant_floor() * _root_scale(element, cell_kind, plan, local)
     exact_basis: tuple[Expression, ...] | None = None
     if cell_kind != "pyramid":
         try:
@@ -1776,9 +1795,7 @@ def _certify_nonlinear_source_map(
     depth = max(depth, denominator_depth)
     if status is not CellValidityStatus.CERTIFIED_VALID:
         return status, lower, upper, depth
-    floor = Fraction(policy.relative_determinant_floor)
-    if floor == 0:
-        return status, lower, upper, depth
+    floor = Fraction(policy.determinant_floor())
     if _hadamard_margin_from_bounds(jacobian, domain, dimension, lower, floor):
         return status, lower, upper, depth
     scale_squared = _exact_hadamard_squared(jacobian, dimension)
@@ -2157,7 +2174,7 @@ def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /) ->
         4.0 * _EPSILON * np.linalg.norm(np.abs(centered) + np.abs(following), axis=-1)
     )
     diameter = np.linalg.norm(np.max(safe, axis=1) - np.min(safe, axis=1), axis=-1)
-    edge_floor = policy.relative_determinant_floor * diameter[:, None]
+    edge_floor = POLYGON_EDGE_RESOLUTION * diameter[:, None]
     short_edge = np.any(edge_lengths + edge_roundoff < edge_floor, axis=1)
     uncertain_edge = np.any(edge_lengths - edge_roundoff <= edge_floor, axis=1)
     determinant, margin, threshold, nonplanar, ambiguous, planar = _polygon_measure(
@@ -2237,7 +2254,7 @@ def _certify_polyhedral_cells(
     scale = np.prod(np.linalg.norm(columns, axis=-2), axis=-1)
     local = np.searchsorted(cells, star_cell)
     thresholds = np.zeros((cells.size,))
-    np.maximum.at(thresholds, local, policy.relative_determinant_floor * scale)
+    np.maximum.at(thresholds, local, policy.determinant_floor() * scale)
     total = np.zeros((cells.size,))
     np.add.at(total, local, determinants)
     return _star_status(determinants, 32.0 * _EPSILON * scale, local, thresholds, total)
