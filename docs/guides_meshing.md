@@ -699,21 +699,23 @@ contracts:
   Without a declaration a rotated facet keeps its authored triangles, as above.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
-  `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
-  interior vertex insertion, collapse, and relocation is accepted only if the
-  cells it creates pass the hard gates (relative determinant above its floor,
-  source constraints preserved) and the size gate, and the affected cells'
-  worst-first sorted scores strictly improve. An interior insertion either
-  cones a circumsphere cavity to a candidate point or, for a cell whose edits
-  are otherwise exhausted, cones the closed ring of one of its unconstrained
-  edges to a point in the ring's kernel. The latter removes a flat cell whose
-  four vertices lie on a fixed boundary (two constrained faces splitting a
-  planar quad) without moving the boundary: no flip can remove such a cell and
-  no circumsphere cavity contains it. A relocation must also make sufficient
-  progress: at the first position where its star's sorted scores change, the
-  new score meets the target or closes at least an eighth of that score's gap
-  to the target (at least one quantum). A cell's gap therefore shrinks
-  geometrically rather than one quantum per move.
+  `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores
+  0 whatever its angles and ratio (a flat cell on a cocircular boundary quad
+  has a finite circumsphere and could otherwise score 1). Every face flip,
+  edge-ring reconnection, interior vertex insertion, collapse, and relocation
+  is accepted only if the cells it creates pass the hard gates (relative
+  determinant above its floor, source constraints preserved) and the size
+  gate, and the affected cells' worst-first sorted scores strictly improve. An
+  interior insertion either cones a circumsphere cavity to a candidate point
+  or, for a cell whose edits are otherwise exhausted, cones the closed ring of
+  one of its unconstrained edges to a point in the ring's kernel. The latter
+  removes a flat cell whose four vertices lie on a fixed boundary (two
+  constrained faces splitting a planar quad) without moving the boundary: no
+  flip can remove such a cell and no circumsphere cavity contains it. A
+  relocation must also make sufficient progress: at the first position where
+  its star's sorted scores change, the new score meets the target or closes at
+  least an eighth of that score's gap to the target (at least one quantum). A
+  cell's gap therefore shrinks geometrically rather than one quantum per move.
 - **Precedence.** The determinant floor binds every edit. The size gate is
   relative to the cells an edit removes: no created cell may exceed its target
   by more than the largest excess (circumradius over target) among them, or at
