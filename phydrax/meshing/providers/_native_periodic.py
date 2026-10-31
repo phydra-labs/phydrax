@@ -5468,12 +5468,20 @@ def _owner_local_periodic_delaunay_neighbor_halo(
     def referenced_source_points(
         cell: _PeriodicGraphCellPayload, /
     ) -> list[_PeriodicGraphSourcePointPayload]:
-        identifiers = set(int(value) for value in cell["key_source_ids"])
+        # Adapted vertices are their own quotient keys; their exact source-site
+        # roots are the active rows of the cumulative coordinate ancestry. Only
+        # ancestry-free (initial) vertices and their cell keys are source sites.
+        identifiers: set[int] = set()
+        ancestry_free = True
         for vertex in cell["vertices"]:
-            identifiers.add(int(vertex["source_id"]))
             ancestry = vertex["coordinate_ancestry"]
-            if ancestry is not None:
+            if ancestry is None:
+                identifiers.add(int(vertex["source_id"]))
+            else:
+                ancestry_free = False
                 identifiers.update(int(value) for value in ancestry["source_ids"])
+        if ancestry_free:
+            identifiers.update(int(value) for value in cell["key_source_ids"])
         absent = sorted(identifiers.difference(source_point_bank))
         if absent:
             raise ValueError(
@@ -8390,6 +8398,9 @@ def _owner_local_periodic_candidate_from_accepted_view(
         np.asarray(view.cell_ids, dtype=np.int64),
     ):
         raise ValueError("Accepted Delaunay mesh data changed the local carrier.")
+    # Adapted views key midpoint vertices by themselves; their exact roots are
+    # the cumulative coordinate ancestry carried with the accepted mesh data.
+    adapted = view.adaptive_result is not None
     return OwnerLocalPeriodicCandidate(
         rank,
         part_count,
@@ -8435,6 +8446,12 @@ def _owner_local_periodic_candidate_from_accepted_view(
         cell_neighbor_ids=mesh_data["graph_neighbor_ids"],
         cell_neighbor_owner_ranks=mesh_data["graph_neighbor_owner_ranks"],
         cell_neighbor_weights=mesh_data["graph_neighbor_weights"],
+        vertex_coordinate_stencil=(
+            mesh_data["source_coordinate_stencil"] if adapted else None
+        ),
+        exact_vertex_coordinate_offsets=(
+            tuple(mesh_data["exact_vertex_coordinate_offsets"]) if adapted else None
+        ),
     )
 
 

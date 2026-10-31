@@ -2604,6 +2604,100 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
 
 
 @final
+class OwnerLocalRemoteGhostCells(StrictModule, NonTrainableState):
+    """Remote cells of one composite part placed in this rank's lifted frame.
+
+    Each row is a cell owned by ``owner_ranks[row]`` and resident there; its
+    ``vertex_coordinates`` are the owner's lifted corners translated into the
+    lattice image this rank needs. Ghost vertices get explicit synthesized IDs
+    qualified by part, cell, corner, and image shift, so the composite keeps
+    unique stable vertex identity without inventing shared topology.
+    """
+
+    part_name: str = eqx.field(static=True)
+    cell_kind: str = eqx.field(static=True)
+    cell_ids: Array
+    owner_ranks: Array
+    image_shifts: Array
+    vertex_coordinates: Array
+    vertex_ids: Array
+    ghost_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        part_name: str,
+        cell_kind: str,
+        cell_ids: ConvertibleToArray,
+        owner_ranks: ConvertibleToArray,
+        image_shifts: ConvertibleToArray,
+        vertex_coordinates: ConvertibleToArray,
+        /,
+    ) -> None:
+        ids = np.asarray(cell_ids, dtype=np.int64)
+        owners = np.asarray(owner_ranks, dtype=np.int32)
+        shifts = np.asarray(image_shifts, dtype=np.int64)
+        corners = np.asarray(vertex_coordinates, dtype=np.float64)
+        if (
+            not isinstance(part_name, str)
+            or not part_name
+            or not isinstance(cell_kind, str)
+            or not cell_kind
+            or ids.ndim != 1
+            or np.unique(ids).size != ids.size
+            or owners.shape != ids.shape
+            or np.any(owners < 0)
+            or shifts.ndim != 2
+            or shifts.shape[0] != ids.size
+            or corners.ndim != 3
+            or corners.shape[0] != ids.size
+            or not np.all(np.isfinite(corners))
+        ):
+            raise ValueError(
+                "Remote ghost cells require unique IDs, owners, image shifts, and "
+                "finite corner coordinates per cell."
+            )
+        vertex_ids = np.asarray(
+            [
+                [
+                    int(
+                        canonical_fingerprint(
+                            {
+                                "kind": "owner-local-remote-ghost-vertex",
+                                "part": part_name,
+                                "cell": int(cell_id),
+                                "corner": corner,
+                                "shift": tuple(shift),
+                            }
+                        )[:15],
+                        16,
+                    )
+                    for corner in range(corners.shape[1])
+                ]
+                for cell_id, shift in zip(ids.tolist(), shifts.tolist(), strict=True)
+            ],
+            dtype=np.int64,
+        ).reshape(corners.shape[:2])
+        self.part_name = part_name
+        self.cell_kind = cell_kind
+        self.cell_ids = jnp.asarray(ids)
+        self.owner_ranks = jnp.asarray(owners)
+        self.image_shifts = jnp.asarray(shifts)
+        self.vertex_coordinates = jnp.asarray(corners)
+        self.vertex_ids = jnp.asarray(vertex_ids)
+        self.ghost_id = canonical_fingerprint(
+            {
+                "kind": "owner-local-remote-ghost-cells",
+                "part": part_name,
+                "cell_kind": cell_kind,
+                "cells": ids,
+                "owners": owners,
+                "shifts": shifts,
+                "corners": corners,
+            }
+        )
+
+
+@final
 class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
     """Several current owner-local part views compiled as one disjoint local layout.
 
@@ -2611,10 +2705,13 @@ class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
     contiguous block of the composite cell axis (``cell_offsets``). Cell and
     vertex identities must be disjoint across parts, so every composite row keeps
     an explicit, part-unique stable ID. The face-neighbor CSR is the per-part
-    owned-cell CSR concatenated in part order; parts never share faces.
+    owned-cell CSR concatenated in part order; parts never share faces. Optional
+    remote ghost cells (one part's cells fetched from their owners into this
+    rank's frame) follow the part blocks as non-owned rows.
     """
 
     parts: tuple[OwnerLocalCellGeometry, ...]
+    remote_ghosts: OwnerLocalRemoteGhostCells | None
     part_names: tuple[str, ...] = eqx.field(static=True)
     cell_offsets: tuple[int, ...] = eqx.field(static=True)
     owner_rank: int = eqx.field(static=True)
@@ -2634,7 +2731,13 @@ class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
     cell_neighbor_ids: Array
     cell_neighbor_owner_ranks: Array
 
-    def __init__(self, parts: tuple[OwnerLocalCellGeometry, ...], /) -> None:
+    def __init__(
+        self,
+        parts: tuple[OwnerLocalCellGeometry, ...],
+        /,
+        *,
+        remote_ghosts: OwnerLocalRemoteGhostCells | None = None,
+    ) -> None:
         if (
             not isinstance(parts, tuple)
             or len(parts) < 2
@@ -2655,10 +2758,33 @@ class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
             raise ValueError(
                 "Composite owner-local parts must share one owner rank and dimension."
             )
+        if remote_ghosts is not None and (
+            not isinstance(remote_ghosts, OwnerLocalRemoteGhostCells)
+            or remote_ghosts.part_name not in names
+            or np.any(np.asarray(remote_ghosts.owner_ranks) == ordered[0].owner_rank)
+        ):
+            raise ValueError(
+                "Remote ghost cells must belong to a composite part and another owner."
+            )
+        ghost_cells = (
+            np.zeros((0,), dtype=np.int64)
+            if remote_ghosts is None
+            else np.asarray(remote_ghosts.cell_ids, dtype=np.int64)
+        )
+        ghost_owners = (
+            np.zeros((0,), dtype=np.int32)
+            if remote_ghosts is None
+            else np.asarray(remote_ghosts.owner_ranks, dtype=np.int32)
+        )
+        ghost_vertices = (
+            np.zeros((0,), dtype=np.int64)
+            if remote_ghosts is None
+            else np.asarray(remote_ghosts.vertex_ids, dtype=np.int64).reshape(-1)
+        )
         cell_banks = [np.asarray(part.cell_ids, dtype=np.int64) for part in ordered]
         vertex_banks = [np.asarray(part.vertex_ids, dtype=np.int64) for part in ordered]
-        cell_ids = np.concatenate(cell_banks)
-        vertex_ids = np.concatenate(vertex_banks)
+        cell_ids = np.concatenate((*cell_banks, ghost_cells))
+        vertex_ids = np.concatenate((*vertex_banks, ghost_vertices))
         if (
             np.unique(cell_ids).size != cell_ids.size
             or np.unique(vertex_ids).size != vertex_ids.size
@@ -2676,17 +2802,29 @@ class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
             neighbor_offsets.append(part_offsets[1:] + neighbor_base)
             neighbor_base += int(part_offsets[-1])
         self.parts = ordered
+        self.remote_ghosts = remote_ghosts
         self.part_names = names
         self.cell_offsets = tuple(offsets)
         self.owner_rank = ordered[0].owner_rank
         self.topological_dimension = ordered[0].topological_dimension
         self.cell_ids = jnp.asarray(cell_ids)
         self.owned = jnp.asarray(
-            np.concatenate([np.asarray(part.owned, dtype=np.bool_) for part in ordered])
+            np.concatenate(
+                (
+                    *[np.asarray(part.owned, dtype=np.bool_) for part in ordered],
+                    np.zeros(ghost_cells.shape, dtype=np.bool_),
+                )
+            )
         )
         self.cell_owner_ranks = jnp.asarray(
             np.concatenate(
-                [np.asarray(part.cell_owner_ranks, dtype=np.int32) for part in ordered]
+                (
+                    *[
+                        np.asarray(part.cell_owner_ranks, dtype=np.int32)
+                        for part in ordered
+                    ],
+                    ghost_owners,
+                )
             )
         )
         self.vertex_ids = jnp.asarray(vertex_ids)
@@ -2718,8 +2856,20 @@ class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
                 }
             )
 
-        self.local_view_id = joined(
-            "local-view", tuple(part.local_view_id for part in ordered)
+        self.local_view_id = canonical_fingerprint(
+            {
+                "kind": "owner-local-composite-local-view",
+                "parts": tuple(
+                    zip(
+                        names,
+                        tuple(part.local_view_id for part in ordered),
+                        strict=True,
+                    )
+                ),
+                "remote_ghosts": (
+                    None if remote_ghosts is None else remote_ghosts.ghost_id
+                ),
+            }
         )
         self.distribution_id = joined(
             "distribution", tuple(part.distribution_id for part in ordered)
@@ -2755,41 +2905,68 @@ class OwnerLocalCompositeCellGeometry(StrictModule, NonTrainableState):
 
     def union_local_mesh(self) -> CellMesh | None:
         """Disjoint union of the parts' local carrier meshes in part order."""
-        meshes = [part.reconstruct_local_geometry()[0] for part in self.parts]
-        present = [
-            (name, mesh)
-            for name, mesh in zip(self.part_names, meshes, strict=True)
-            if mesh is not None
-        ]
-        if not present:
-            return None
-        coordinates: list[np.ndarray] = []
-        vertex_ids: list[np.ndarray] = []
-        blocks: list[CellBlock] = []
-        base = 0
-        for name, mesh in present:
-            coordinates.append(np.asarray(mesh.coordinates, dtype=np.float64))
-            vertex_ids.append(np.asarray(mesh.vertex_global_ids, dtype=np.int64))
-            for block in mesh.blocks:
-                if not isinstance(block, CellBlock):
-                    raise TypeError(
-                        "Composite owner-local meshes require homogeneous cell blocks."
-                    )
-                blocks.append(
-                    CellBlock(
-                        f"{name}/{block.name}",
-                        block.cell_kind,
-                        np.asarray(block.vertices, dtype=np.int64) + base,
-                        vertex_valid=block.vertex_valid,
-                        global_ids=block.global_ids,
-                    )
-                )
-            base += coordinates[-1].shape[0]
-        return CellMesh(
-            np.concatenate(coordinates, axis=0),
-            tuple(blocks),
-            vertex_global_ids=np.concatenate(vertex_ids),
+        return owner_local_union_mesh(
+            tuple(zip(self.part_names, self.parts, strict=True)), self.remote_ghosts
         )
+
+
+def owner_local_union_mesh(
+    parts: tuple[tuple[str, OwnerLocalCellGeometry], ...],
+    remote_ghosts: OwnerLocalRemoteGhostCells | None,
+    /,
+) -> CellMesh | None:
+    """Disjoint union of named owner-local carriers and optional remote ghost cells.
+
+    Blocks are qualified by part name; vertex rows are offset per carrier so no
+    topology is shared between parts or with the remote ghost block.
+    """
+    coordinates: list[np.ndarray] = []
+    vertex_ids: list[np.ndarray] = []
+    blocks: list[CellBlock] = []
+    base = 0
+    for name, view in parts:
+        mesh = view.reconstruct_local_geometry()[0]
+        if mesh is None:
+            continue
+        coordinates.append(np.asarray(mesh.coordinates, dtype=np.float64))
+        vertex_ids.append(np.asarray(mesh.vertex_global_ids, dtype=np.int64))
+        for block in mesh.blocks:
+            if not isinstance(block, CellBlock):
+                raise TypeError(
+                    "Composite owner-local meshes require homogeneous cell blocks."
+                )
+            blocks.append(
+                CellBlock(
+                    f"{name}/{block.name}",
+                    block.cell_kind,
+                    np.asarray(block.vertices, dtype=np.int64) + base,
+                    vertex_valid=block.vertex_valid,
+                    global_ids=block.global_ids,
+                )
+            )
+        base += coordinates[-1].shape[0]
+    if remote_ghosts is not None and np.asarray(remote_ghosts.cell_ids).size:
+        corners = np.asarray(remote_ghosts.vertex_coordinates, dtype=np.float64)
+        count, arity = corners.shape[:2]
+        coordinates.append(corners.reshape((count * arity, corners.shape[2])))
+        vertex_ids.append(
+            np.asarray(remote_ghosts.vertex_ids, dtype=np.int64).reshape(-1)
+        )
+        blocks.append(
+            CellBlock(
+                f"{remote_ghosts.part_name}/remote-ghosts",
+                remote_ghosts.cell_kind,
+                base + np.arange(count * arity, dtype=np.int64).reshape((count, arity)),
+                global_ids=np.asarray(remote_ghosts.cell_ids, dtype=np.int64),
+            )
+        )
+    if not blocks:
+        return None
+    return CellMesh(
+        np.concatenate(coordinates, axis=0),
+        tuple(blocks),
+        vertex_global_ids=np.concatenate(vertex_ids),
+    )
 
 
 @final
@@ -3321,11 +3498,17 @@ def _materialize_owner_local_periodic_target(
     current_roots = np.asarray(view.vertex_source_ids, dtype=np.int64)
     target_roots = np.asarray(target_vertex_source_ids, dtype=np.int64)
     target_windings = np.asarray(target_vertex_absolute_windings, dtype=np.int64)
+    # Power vertices are keyed by their source sites. Delaunay vertices may be
+    # adapted midpoints keyed by themselves; their exact roots are the active
+    # rows of the cumulative coordinate ancestry, checked below.
     if (
         not np.array_equal(target_roots, current_roots)
         or target_roots.shape != vertex_ids.shape
         or target_windings.shape != (vertex_ids.size, periodic_rank)
-        or any(int(identifier) not in root_points for identifier in target_roots)
+        or (
+            source_map is not None
+            and any(int(identifier) not in root_points for identifier in target_roots)
+        )
     ):
         raise ValueError(
             "Owner-local motion changed source-root identity or omitted a lifted root."
@@ -4309,6 +4492,7 @@ __all__ = [
     "OwnerLocalCellBlock",
     "OwnerLocalCellGeometry",
     "OwnerLocalCompositeCellGeometry",
+    "OwnerLocalRemoteGhostCells",
     "MappedMeshSupportQueryResult",
     "cell_location_status",
     "mapped_mesh_support_query",

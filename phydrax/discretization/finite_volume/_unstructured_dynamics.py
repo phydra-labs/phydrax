@@ -378,19 +378,18 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 template_owner_cells = donor_indices
                 template_neighbor_cells = receptor_cells[receptor_routes]
                 if overset.receptor_face_cells is not None:
-                    certified_face_cells = np.asarray(
-                        overset.receptor_face_cells,
-                        dtype=np.int32,
-                    )
-                    if (
-                        certified_face_cells.shape != template_neighbor_cells.shape
-                        or not np.array_equal(
-                            certified_face_cells,
-                            template_neighbor_cells,
-                        )
-                    ):
+                    if overset.receptor_route_faces is None:
                         raise ValueError(
-                            "Non-sliding overset receptor faces must match mapped receptor routes in order."
+                            "Non-sliding overset correction requires an explicit "
+                            "route-to-face map."
+                        )
+                    certified_face_cells = np.asarray(
+                        overset.receptor_face_cells, dtype=np.int32
+                    )[np.asarray(overset.receptor_route_faces, dtype=np.int32)]
+                    if not np.array_equal(certified_face_cells, template_neighbor_cells):
+                        raise ValueError(
+                            "Non-sliding overset route faces must belong to their "
+                            "mapped receptor cells."
                         )
                 sliding_coupling_id = None
             else:
@@ -1064,14 +1063,20 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         reconstructed = self.precision.reconstruction(state)
         donor_indices = jnp.asarray(overset.donor_indices, dtype=jnp.int32)
         sliding = self.coupling.sliding_coupling
+        # Every route supplies its donor trace to one certified receptor face;
+        # a face's exterior trace is the overlap-weighted mean of its routes
+        # and each route carries its weight's share of that face's flux.
         if sliding is None:
-            route_left = jnp.arange(donor_indices.size, dtype=jnp.int32)
-            route_right = jnp.arange(cells.size, dtype=jnp.int32)
-            route_fraction = jnp.ones((cells.size,), dtype=reduction_dtype)
-            if donor_indices.shape[0] != cells.shape[0]:
+            route_faces = overset.receptor_route_faces
+            route_face_fractions = overset.receptor_route_face_fractions
+            if route_faces is None or route_face_fractions is None:
                 raise ValueError(
-                    "Non-sliding overset face routes must pair donors and receptors."
+                    "Non-sliding overset correction requires an explicit "
+                    "route-to-face map."
                 )
+            route_left = jnp.arange(donor_indices.size, dtype=jnp.int32)
+            route_right = jnp.asarray(route_faces, dtype=jnp.int32)
+            route_fraction = self.precision.reduction(route_face_fractions)
         else:
             route_left = jnp.asarray(sliding.left_routes, dtype=jnp.int32)
             route_right = jnp.asarray(sliding.right_routes, dtype=jnp.int32)
@@ -1180,26 +1185,19 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
         else:
             raise TypeError("Unsupported prepared unstructured reconstruction.")
-        if sliding is None:
-            donor_trace = route_donor_trace
-        else:
-            weighted_donor_trace = (
-                route_donor_trace
-                * self.precision.reconstruction(sliding.overlap_measures)[:, None, None]
-            )
-            donor_trace = jnp.zeros(
-                (
-                    cells.shape[0],
-                    points_array.shape[1],
-                    reconstructed.shape[-1],
-                ),
-                dtype=weighted_donor_trace.dtype,
-            )
-            donor_trace = donor_trace.at[route_right].add(weighted_donor_trace)
-            donor_trace = (
-                donor_trace
-                / self.precision.reconstruction(sliding.right_measures)[:, None, None]
-            )
+        weighted_donor_trace = (
+            route_donor_trace
+            * self.precision.reconstruction(route_fraction)[:, None, None]
+        )
+        donor_trace = jnp.zeros(
+            (
+                cells.shape[0],
+                points_array.shape[1],
+                reconstructed.shape[-1],
+            ),
+            dtype=weighted_donor_trace.dtype,
+        )
+        donor_trace = donor_trace.at[route_right].add(weighted_donor_trace)
 
         site_shape = points_array.shape[:-1]
         normal_flux = self._stage_normal_flux(
@@ -1397,9 +1395,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         average = self._validated_stage_average(content_state, metrics)
         if self.discretization.cell_count == 0:
             ledger = self.zero_stage_ledger(metrics, redistribution=redistribution)
-            zero_rate = jnp.empty(
-                (0,), dtype=jnp.dtype(self.precision.reduction_dtype)
-            )
+            zero_rate = jnp.empty((0,), dtype=jnp.dtype(self.precision.reduction_dtype))
             return UnstructuredFiniteVolumeStageEvaluation(
                 ledger=ledger,
                 relative_signal_speeds=(),
@@ -1844,9 +1840,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         ledger = self._append_overset_block(ledger, overset_block)
         ledger = self._append_redistribution_block(ledger, redistribution)
         cfl_active = (
-            metrics.active_cell_mask
-            if owner_local_view is None
-            else owned_active
+            metrics.active_cell_mask if owner_local_view is None else owned_active
         )
 
         cfl_volumes = self.precision.reduction(metrics.effective_cell_volumes)
@@ -2139,7 +2133,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     f"Unstructured FV state must have shape {self.discretization.state_shape}."
                 )
             self.precision.validate_state(value)
-            return self.precision.storage(jnp.zeros_like(value)), UnstructuredFiniteVolumeDiagnostics(
+            return self.precision.storage(
+                jnp.zeros_like(value)
+            ), UnstructuredFiniteVolumeDiagnostics(
                 normal_flux=jnp.empty(
                     (0, self.discretization.component_count),
                     dtype=jnp.dtype(self.precision.flux_dtype),
@@ -2217,9 +2213,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             output_ndim=1,
         )
         cell_relative_rate = self._cell_rate(speed)
-        maximum_rate = jnp.max(
-            jnp.where(diagnostic_active, cell_relative_rate, 0.0)
-        )
+        maximum_rate = jnp.max(jnp.where(diagnostic_active, cell_relative_rate, 0.0))
         return self.precision.storage(residual), UnstructuredFiniteVolumeDiagnostics(
             normal_flux=flux,
             signal_speed=speed,

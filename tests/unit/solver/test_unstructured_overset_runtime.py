@@ -28,6 +28,9 @@ from phydrax.meshing._overset import (
     OversetPolicy,
     prepare_overset_connectivity,
 )
+from phydrax.meshing._overset_finite_volume import (
+    prepare_owner_local_finite_volume_overset,
+)
 
 
 if TYPE_CHECKING:
@@ -84,6 +87,7 @@ def _compiled(
         receptor_face_normals=face_normals,
         receptor_face_measures=face_measures,
         receptor_face_cells=np.asarray((receptor_cell,), dtype=np.int32),
+        receptor_route_faces=np.asarray((0,), dtype=np.int32),
     )
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         discretization.boundary_patch_names,
@@ -407,6 +411,9 @@ def _owner_local_fv_overset_map(
         receptor_face_normals=face_normals,
         receptor_face_measures=face_measures,
         receptor_face_cells=face_cells,
+        receptor_route_faces=(
+            None if face_cells is None else np.arange(face_cells.size, dtype=np.int32)
+        ),
     )
 
 
@@ -553,6 +560,7 @@ def _moving_overset_case(
             receptor_face_normals=face_normals,
             receptor_face_measures=face_measures,
             receptor_face_cells=route_receptor_cells,
+            receptor_route_faces=np.arange(route_receptor_cells.size, dtype=np.int32),
         )
 
         def wall_velocity(time: Any, points: Any, normals: Any, args: Any) -> Any:
@@ -742,6 +750,128 @@ def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl() -> No
     np.testing.assert_allclose(route_measures[1], route_measures[0], rtol=1e-12)
 
 
+def _three_cell_overset_dynamics(
+    donor_cells: tuple[int, ...], overlap_measures: tuple[float, ...], /
+) -> tuple[Any, Any, Any, Any]:
+    """Receptor cell 1 routed to ``donor_cells`` through its one face with cell 0."""
+    system = phx.equations.EulerSystem(2)
+    vertices = np.asarray([(float(i), float(j)) for j in range(2) for i in range(4)])
+    discretization = phx.discretization.UnstructuredFiniteVolumePlan(
+        vertices,
+        quadrilaterals=np.asarray(
+            ((0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6)), dtype=np.int32
+        ),
+        vertex_global_ids=np.arange(20, 28),
+        cell_global_ids=np.asarray((201, 202, 203)),
+        component_names=system.component_names,
+    ).prepare()
+    owners = np.asarray(discretization.owner_cells)
+    neighbors = np.asarray(discretization.neighbor_cells)
+    face_id = int(
+        np.flatnonzero(
+            ((owners == 0) & (neighbors == 1)) | ((owners == 1) & (neighbors == 0))
+        )[0]
+    )
+    unit_normal = np.asarray(discretization.area_vectors)[face_id] / float(
+        np.asarray(discretization.face_measures)[face_id]
+    )
+    if int(owners[face_id]) != 1:
+        unit_normal = -unit_normal
+    face_points = np.asarray(discretization.face_quadrature_points)[face_id : face_id + 1]
+    overset = phx.discretization.UnstructuredOversetPlan(
+        discretization,
+        discretization,
+        np.asarray((1,), dtype=np.int32),
+        np.asarray((0, len(donor_cells)), dtype=np.int32),
+        np.asarray(donor_cells, dtype=np.int32),
+        np.asarray(overlap_measures),
+        epoch_id="shared-face-epoch",
+        receptor_face_ids=np.asarray((face_id,), dtype=np.int32),
+        receptor_face_points=face_points,
+        receptor_face_normals=np.broadcast_to(unit_normal, face_points.shape),
+        receptor_face_measures=np.asarray(discretization.face_quadrature_weights)[
+            face_id : face_id + 1
+        ],
+        receptor_face_cells=np.asarray((1,), dtype=np.int32),
+        receptor_route_faces=np.zeros((len(donor_cells),), dtype=np.int32),
+    )
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        discretization.boundary_patch_names,
+        {
+            name: phx.discretization.ExtrapolationBoundary()
+            for name in discretization.boundary_patch_names
+        },
+    )
+    method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+        phx.discretization.PiecewiseConstantReconstruction(),
+        phx.discretization.RusanovFluxPlan(),
+    )
+    dynamics = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR(
+            "shared-face-overset", "state", system, boundaries
+        ),
+        discretization,
+        method,
+        coupling=phx.discretization.UnstructuredFiniteVolumeCouplingPlan(overset=overset),
+    ).dynamics
+    return system, discretization, overset, dynamics
+
+
+def test_overset_face_shared_by_several_donor_pieces_balances_its_face_flux() -> None:
+    system, discretization, overset, dynamics = _three_cell_overset_dynamics(
+        (0, 2), (0.25, 0.75)
+    )
+    np.testing.assert_array_equal(np.asarray(overset.receptor_route_faces), (0, 0))
+    np.testing.assert_allclose(
+        np.asarray(overset.receptor_route_face_fractions), (0.25, 0.75), rtol=0.0
+    )
+    primitive = np.asarray(
+        ((1.0, 0.3, 0.0, 1.0), (2.0, 0.0, 0.1, 1.5), (0.5, -0.2, 0.0, 0.8))
+    )
+    state = system.primitive_to_conserved(jnp.asarray(primitive))
+    metrics = phx.discretization.lower_static_unstructured_stage_metrics(discretization)
+    block, _, measures = dynamics._overset_correction(state, metrics, None)
+    assert block is not None
+    np.testing.assert_array_equal(np.asarray(block.owner_cells), (0, 2))
+    np.testing.assert_array_equal(np.asarray(block.neighbor_cells), (1, 1))
+    route_flux = np.asarray(block.flux_rate)
+
+    # Oracle: one route whose donor carries the overlap-weighted conserved mean.
+    _, _, _, single = _three_cell_overset_dynamics((0,), (1.0,))
+    mean_state = state.at[0].set(0.25 * state[0] + 0.75 * state[2])
+    single_block, _, single_measures = single._overset_correction(
+        mean_state, metrics, None
+    )
+    assert single_block is not None
+    face_flux = np.asarray(single_block.flux_rate)[0]
+    np.testing.assert_allclose(route_flux.sum(axis=0), face_flux, rtol=1e-13)
+    np.testing.assert_allclose(route_flux[0], 0.25 * face_flux, rtol=1e-13)
+    np.testing.assert_allclose(route_flux[1], 0.75 * face_flux, rtol=1e-13)
+    np.testing.assert_allclose(
+        np.sum(np.asarray(measures)), np.asarray(single_measures)[0], rtol=1e-14
+    )
+    scattered = np.zeros(discretization.state_shape, dtype=route_flux.dtype)
+    np.add.at(scattered, np.asarray(block.owner_cells), -route_flux)
+    np.add.at(scattered, np.asarray(block.neighbor_cells), route_flux)
+    np.testing.assert_allclose(scattered.sum(axis=0), 0.0, atol=1e-13)
+
+    with pytest.raises(ValueError, match="index certified receptor faces"):
+        phx.discretization.UnstructuredOversetPlan(
+            discretization,
+            discretization,
+            np.asarray((1,), dtype=np.int32),
+            np.asarray((0, 2), dtype=np.int32),
+            np.asarray((0, 2), dtype=np.int32),
+            np.asarray((0.25, 0.75)),
+            receptor_face_ids=overset.receptor_face_ids,
+            receptor_face_points=overset.receptor_face_points,
+            receptor_face_normals=overset.receptor_face_normals,
+            receptor_face_measures=overset.receptor_face_measures,
+            receptor_face_cells=np.asarray((1,), dtype=np.int32),
+            receptor_route_faces=np.asarray((0, 1), dtype=np.int32),
+        )
+
+
 def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes() -> None:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.IdealGasMaterial(1.4),
@@ -785,6 +915,7 @@ def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes()
         receptor_face_normals=normals,
         receptor_face_measures=measures,
         receptor_face_cells=np.asarray((receptor_cell,), dtype=np.int32),
+        receptor_route_faces=np.asarray((0,), dtype=np.int32),
     )
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
         discretization
@@ -2834,9 +2965,6 @@ def _finite_volume_archive_build_context(
     from phydrax.discretization.finite_volume._coupling import (
         UnstructuredFiniteVolumeCouplingPlan,
     )
-    from phydrax.discretization.finite_volume._unstructured import (
-        UnstructuredFiniteVolumePlan,
-    )
     from phydrax.discretization.finite_volume._unstructured_dynamics import (
         UnstructuredFiniteVolumeBoundarySet,
         UnstructuredFiniteVolumeMethodPlan,
@@ -3063,14 +3191,6 @@ def _finite_volume_archive_build_context(
 
     require_neighbor_carriers(donor_view, donor_name)
     require_neighbor_carriers(receptor_view, receptor_name)
-    donor_geometry = UnstructuredFiniteVolumePlan.from_owner_local_geometry(
-        donor_view,
-        component_names=system.component_names,
-    ).prepare()
-    receptor_geometry = UnstructuredFiniteVolumePlan.from_owner_local_geometry(
-        receptor_view,
-        component_names=system.component_names,
-    ).prepare()
     donor_blocks = tuple(
         block for block in donor_view.blocks if np.asarray(block.cell_ids).size
     )
@@ -3098,15 +3218,18 @@ def _finite_volume_archive_build_context(
     ).connectivity
     if not source_connectivity.owner_local or not source_connectivity.complete:
         raise ValueError("FV archive source connectivity did not replay completely.")
-    source_overset = _owner_local_fv_overset_map(
-        donor_view,
-        receptor_view,
-        donor_geometry,
-        receptor_geometry,
+    source_coupling = prepare_owner_local_finite_volume_overset(
         source_connectivity,
+        {donor_name: donor_view, receptor_name: receptor_view},
         donor_name,
         receptor_name,
+        execution_group,
+        component_names=system.component_names,
+        field_name=context.field_name,
+        axis_name=f"{context.owner_local_axis_name}_source_overset",
     )
+    receptor_geometry = source_coupling.geometry
+    source_overset = source_coupling.overset
 
     precision = _rebuild_finite_volume_precision_policy(context.precision_policy)
     if validate_expected and (
@@ -3189,7 +3312,7 @@ def _finite_volume_archive_build_context(
         positivity,
         step_policy,
         execution_group=execution_group,
-        owner_local_geometry=receptor_view,
+        owner_local_geometry=source_coupling.composite,
         owner_local_axis_name=context.owner_local_axis_name,
     )
     if validate_expected:
@@ -3297,18 +3420,18 @@ def _finite_volume_archive_build_context(
         or target_connectivity.connectivity_id != context.expected_target_connectivity_id
     ):
         raise ValueError("FV target view, plan, or connectivity identity changed.")
-    target_geometry = UnstructuredFiniteVolumePlan.from_owner_local_geometry(
-        target_view, component_names=system.component_names
-    ).prepare()
-    target_overset = _owner_local_fv_overset_map(
-        donor_view,
-        target_view,
-        donor_geometry,
-        target_geometry,
+    target_coupling = prepare_owner_local_finite_volume_overset(
         target_connectivity,
+        {donor_name: donor_view, receptor_name: target_view},
         donor_name,
         receptor_name,
+        execution_group,
+        component_names=system.component_names,
+        field_name=context.field_name,
+        axis_name=f"{context.owner_local_axis_name}_target_overset",
     )
+    target_geometry = target_coupling.geometry
+    target_overset = target_coupling.overset
     target_dynamics, target_boundaries, _ = build_dynamics(
         target_geometry,
         target_overset,
@@ -3605,7 +3728,7 @@ def _write_native_owner_local_fv_repartition_archive(
     primitive[:, 1] = 0.2 + (cell_ids % 5) * 0.01
     primitive[:, 2] = -0.1 + (cell_ids % 3) * 0.01
     input_primitive = primitive.copy()
-    owned = np.asarray(receptor_view.owned, dtype=np.bool_)
+    owned = np.asarray(source_runtime.owner_local_owned_cell_mask, dtype=np.bool_)
     input_primitive[~owned, 0] = 3.0
     input_primitive[~owned, 3] = 3.0
     initial = source_runtime.initialize_state(
@@ -3973,6 +4096,16 @@ def _read_native_owner_local_fv_repartition_archive(
     target_owner_mask = repartitioned.runtime_state.content_state.owned_cell_mask
     if target_owner_mask is None:
         raise ValueError("Cold FV repartition lost explicit target ownership.")
+    # The composite layout keeps the donor part; ownership checks below are on
+    # the migrated receptor rows.
+    receptor_rows = np.isin(
+        np.asarray(
+            repartitioned.successor_runtime.dynamics.discretization.cell_global_ids,
+            dtype=np.int64,
+        ),
+        np.asarray(restored_context["target_view"].cell_ids, dtype=np.int64),
+    )
+    receptor_owner_mask = np.asarray(target_owner_mask, dtype=np.bool_) & receptor_rows
     target_counts = np.asarray(
         multihost_utils.process_allgather(np.asarray((target_ids.size,), dtype=np.int32))
     ).reshape((-1,))
@@ -3983,7 +4116,7 @@ def _read_native_owner_local_fv_repartition_archive(
         or target_counts[2] <= 0
     ):
         raise ValueError("Cold FV graph plan did not replay its declared target owners.")
-    if target_ids.size == 0 and np.any(np.asarray(target_owner_mask, dtype=np.bool_)):
+    if target_ids.size == 0 and np.any(receptor_owner_mask):
         raise ValueError("Cold FV empty target owner retained owned state rows.")
     next_step = repartitioned.successor_runtime.advance(repartitioned.runtime_state)
     next_step_flags = np.asarray(
@@ -3998,7 +4131,7 @@ def _read_native_owner_local_fv_repartition_archive(
         repartitioned.runtime_state.content_state.conservative_content
     )
     next_content = np.asarray(next_state.content_state.conservative_content)
-    owner_mask = np.asarray(target_owner_mask, dtype=np.bool_)
+    owner_mask = receptor_owner_mask
     if (
         prior_content.shape != next_content.shape
         or owner_mask.shape != prior_content.shape[:1]

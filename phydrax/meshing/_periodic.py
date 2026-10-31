@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from itertools import combinations, pairwise, product
-from typing import NamedTuple, TYPE_CHECKING
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -45,10 +45,10 @@ from ..discretization._periodic_topology import (
     PeriodicMeshTopology,
 )
 from ..typing import checked
+from ._lineage import VertexInterpolationStencil
 
 
 if TYPE_CHECKING:
-    from ._lineage import VertexInterpolationStencil
     from ._topology_edit import CellTopologyEdit
 
 
@@ -175,7 +175,14 @@ class PeriodicMeshConstruction(StrictModule, NonTrainableState):
 
 
 class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
-    """One rank's exact local periodic candidate and collective closure receipts."""
+    """One rank's exact local periodic candidate and collective closure receipts.
+
+    Generated candidates key every vertex and cell key by a resident source
+    site. Adapted candidates additionally carry the cumulative exact vertex
+    ancestry: midpoint vertices are keyed by themselves, and their exact
+    coordinates are the ancestry-weighted resident source sites plus exact
+    lattice offsets.
+    """
 
     local_mesh: CellMesh | None
     periodic_cell: PeriodicCell
@@ -196,6 +203,8 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
     vertex_absolute_windings: Array
     exact_vertex_coordinates: tuple[tuple[Fraction, ...], ...]
     exact_cell_measures: tuple[Fraction, ...]
+    vertex_coordinate_stencil: VertexInterpolationStencil | None
+    exact_vertex_coordinate_offsets: tuple[tuple[Fraction, ...], ...] | None
     owned_cell_ids: Array
     owned_cell_owner_ranks: Array
     owned_cell_weights: Array
@@ -275,6 +284,8 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
         cell_neighbor_ids: ArrayLike,
         cell_neighbor_owner_ranks: ArrayLike,
         cell_neighbor_weights: ArrayLike,
+        vertex_coordinate_stencil: VertexInterpolationStencil | None = None,
+        exact_vertex_coordinate_offsets: tuple[tuple[Fraction, ...], ...] | None = None,
     ) -> None:
         if (
             isinstance(rank, bool)
@@ -443,7 +454,6 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError("Owner-local periodic source-point banks are inconsistent.")
-        point_id_set = set(map(int, point_ids))
         if (
             cell_owners.shape != cell_ids_value.shape
             or np.unique(cell_ids_value).size != cell_ids_value.size
@@ -477,19 +487,16 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
             raise ValueError(
                 "Owner-local periodic exact cell measures are absent or nonpositive."
             )
-        absent_sources = sorted(
-            {
-                int(identifier)
-                for identifier in (*key_sources, *vertex_sources)
-                if int(identifier) not in point_id_set
-            }
+        ancestry_payload = _candidate_vertex_ancestry(
+            point_ids,
+            source_point_exact_coordinates,
+            vertex_ids_value,
+            vertex_sources,
+            key_sources,
+            exact_vertex_coordinates,
+            vertex_coordinate_stencil,
+            exact_vertex_coordinate_offsets,
         )
-        if absent_sources:
-            raise ValueError(
-                "Owner-local periodic cell keys or vertices reference "
-                f"{len(absent_sources)} source points outside the resident point "
-                f"bank (first {absent_sources[:8]})."
-            )
         expected_owned_ids = np.sort(cell_ids_value[cell_owners == rank], kind="stable")
         if (
             not np.array_equal(owned_cell_ids_value, expected_owned_ids)
@@ -577,6 +584,8 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
         self.vertex_absolute_windings = jnp.asarray(vertex_windings)
         self.exact_vertex_coordinates = exact_vertex_coordinates
         self.exact_cell_measures = exact_cell_measures
+        self.vertex_coordinate_stencil = vertex_coordinate_stencil
+        self.exact_vertex_coordinate_offsets = exact_vertex_coordinate_offsets
         self.owned_cell_ids = jnp.asarray(owned_cell_ids_value)
         self.owned_cell_owner_ranks = jnp.asarray(owned_cell_owner_ranks, dtype=jnp.int32)
         self.owned_cell_weights = jnp.asarray(owned_weights, dtype=jnp.int64)
@@ -671,8 +680,95 @@ class OwnerLocalPeriodicCandidate(StrictModule, NonTrainableState):
                         neighbor_weights,
                     )
                 ),
+                "vertex_ancestry": ancestry_payload,
             }
         )
+
+
+def _candidate_vertex_ancestry(
+    point_ids: np.ndarray,
+    source_point_exact_coordinates: tuple[tuple[Fraction, ...], ...],
+    vertex_ids: np.ndarray,
+    vertex_sources: np.ndarray,
+    key_sources: np.ndarray,
+    exact_vertex_coordinates: tuple[tuple[Fraction, ...], ...],
+    stencil: VertexInterpolationStencil | None,
+    offsets: tuple[tuple[Fraction, ...], ...] | None,
+    /,
+) -> Any:
+    """Validate vertex and cell-key roots; return the ancestry identity payload."""
+    from ..discretization._exact_algebraic_geometry import coefficient_payload
+    from ._lineage import VertexInterpolationStencil
+
+    point_by_id = {
+        int(identifier): source_point_exact_coordinates[row]
+        for row, identifier in enumerate(point_ids.tolist())
+    }
+    referenced = {int(identifier) for identifier in (*key_sources, *vertex_sources)}
+    if stencil is None:
+        if offsets is not None:
+            raise ValueError("Exact vertex offsets require their ancestry stencil.")
+        absent = sorted(referenced.difference(point_by_id))
+        if absent:
+            raise ValueError(
+                "Owner-local periodic cell keys or vertices reference "
+                f"{len(absent)} source points outside the resident point "
+                f"bank (first {absent[:8]})."
+            )
+        return None
+    if (
+        not isinstance(stencil, VertexInterpolationStencil)
+        or offsets is None
+        or len(offsets) != vertex_ids.size
+        or not np.array_equal(
+            np.asarray(stencil.target_global_ids, dtype=np.int64), vertex_ids
+        )
+        or stencil.exact_weights is None
+    ):
+        raise ValueError(
+            "Adapted periodic candidate ancestry does not bind its resident vertices."
+        )
+    source_ids = np.asarray(stencil.source_global_ids, dtype=np.int64)
+    valid = np.asarray(stencil.valid, dtype=np.bool_)
+    for row, weights in enumerate(stencil.exact_weights):
+        coordinate = list(offsets[row])
+        weight_sum = Fraction(0)
+        for identifier, weight, active in zip(
+            source_ids[row].tolist(), weights, valid[row].tolist(), strict=True
+        ):
+            if not active:
+                continue
+            root = point_by_id.get(int(identifier))
+            if root is None:
+                raise ValueError(
+                    "Adapted periodic vertex ancestry references a source site "
+                    "outside the resident point bank."
+                )
+            weight_sum += weight
+            for axis, value in enumerate(root):
+                coordinate[axis] += weight * value
+        if weight_sum != 1 or tuple(coordinate) != tuple(exact_vertex_coordinates[row]):
+            raise ValueError(
+                "Adapted periodic vertex ancestry does not reproduce its exact vertex."
+            )
+    # Self-keyed adapted vertices are the only non-site keys a cell may cite.
+    absent = sorted(referenced.difference(point_by_id).difference(map(int, vertex_ids)))
+    if absent:
+        raise ValueError(
+            "Owner-local periodic cell keys or vertices reference "
+            f"{len(absent)} keys that are neither resident source sites nor "
+            f"adapted resident vertices (first {absent[:8]})."
+        )
+    return {
+        "sources": array_tree_fingerprint((source_ids, valid)),
+        "weights": tuple(
+            tuple(coefficient_payload(value) for value in row)
+            for row in stencil.exact_weights
+        ),
+        "offsets": tuple(
+            tuple(coefficient_payload(value) for value in row) for row in offsets
+        ),
+    }
 
 
 class _PeriodicEntityLayout(NamedTuple):

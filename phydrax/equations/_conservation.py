@@ -295,6 +295,19 @@ class CompiledConservationProblem(StrictModule):
                     "Finite-element conservation requires exactly one conserved field."
                 )
             state_space_name = discretization.field_spaces[0].name
+        elif discretization.cell_space is None:
+            # An owner-local FV rank with no resident cells has no state space;
+            # its layout is still bound through the prepared plan identity.
+            if (
+                not isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+                or discretization.owner_local_view is None
+                or discretization.cell_global_ids.size
+            ):
+                raise ValueError(
+                    "Only an empty owner-local unstructured FV rank may omit its "
+                    "cell state space."
+                )
+            state_space_name = problem.field_name
         else:
             state_space_name = discretization.cell_space.name
         if problem.field_name != state_space_name:
