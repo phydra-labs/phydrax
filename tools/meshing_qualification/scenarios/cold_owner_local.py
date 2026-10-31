@@ -814,7 +814,80 @@ def _solve_physical_problem(
     }
 
 
-def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
+def _view_winding_images(view: Any, /) -> tuple[int, float]:
+    """Authored sites with distinct resident lifted images and their x separation."""
+    authored_fractional = np.asarray(_INPUT_FRACTIONAL_POINTS, dtype=np.float64)
+    authored_row = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(_INPUT_POINT_IDS, dtype=np.int64).tolist()
+        )
+    }
+    key_source_ids = np.asarray(view.cell_key_source_ids, dtype=np.int64)
+    key_windings = np.asarray(view.cell_key_relative_windings, dtype=np.int64)
+    if key_windings.ndim != 2 or key_windings.shape[0] != key_source_ids.size:
+        raise RuntimeError(
+            "Periodic winding-key rows differ from their stable source representatives."
+        )
+    windings_by_source: dict[int, set[tuple[int, ...]]] = {}
+    lifted_x_by_source: dict[int, list[float]] = {}
+    # Adapted vertices are their own quotient keys; only authored-site keys carry
+    # lifted images of the authored registry.
+    resident_vertex_ids = set(np.asarray(view.vertex_ids, dtype=np.int64).tolist())
+    for source_id, winding in zip(key_source_ids, key_windings, strict=True):
+        source_id = int(source_id)
+        if source_id not in authored_row:
+            if source_id not in resident_vertex_ids:
+                raise RuntimeError(
+                    "Periodic winding row references an unknown source representative "
+                    f"{source_id}."
+                )
+            continue
+        winding_tuple = tuple(int(value) for value in winding.tolist())
+        windings_by_source.setdefault(source_id, set()).add(winding_tuple)
+        lifted_x_by_source.setdefault(source_id, []).append(
+            float(authored_fractional[authored_row[source_id]][0] + winding[0])
+        )
+    # Resident lifted vertices of an authored site are images at their absolute
+    # windings; a migrated view keys cells touching adapted vertices by
+    # themselves, so its shared images are visible on the vertex lifts.
+    vertex_windings_by_source: dict[int, set[tuple[int, ...]]] = {}
+    vertex_lifted_x_by_source: dict[int, list[float]] = {}
+    for site, winding in zip(
+        np.asarray(view.vertex_source_ids, dtype=np.int64).tolist(),
+        np.asarray(view.vertex_absolute_windings, dtype=np.int64).tolist(),
+        strict=True,
+    ):
+        if int(site) not in authored_row:
+            continue
+        vertex_windings_by_source.setdefault(int(site), set()).add(tuple(winding))
+        vertex_lifted_x_by_source.setdefault(int(site), []).append(
+            float(authored_fractional[authored_row[int(site)]][0] + winding[0])
+        )
+    separations = [
+        max(lifted[site]) - min(lifted[site])
+        for windings, lifted in (
+            (windings_by_source, lifted_x_by_source),
+            (vertex_windings_by_source, vertex_lifted_x_by_source),
+        )
+        for site, site_windings in windings.items()
+        if len(site_windings) > 1
+    ]
+    shared_winding_count = len(
+        {
+            site
+            for windings in (windings_by_source, vertex_windings_by_source)
+            for site, site_windings in windings.items()
+            if len(site_windings) > 1
+        }
+    )
+    winding_sensitive_separation = max(separations, default=0.0)
+    return shared_winding_count, winding_sensitive_separation
+
+
+def _periodic_adaptation_transfer_oracle(
+    view: Any, source_view: Any, /
+) -> dict[str, Any]:
     adaptation = view.adaptive_result
     if adaptation is None:
         if np.asarray(view.cell_ids).size or np.asarray(view.vertex_ids).size:
@@ -829,6 +902,9 @@ def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
             "topology_changed": False,
             "shared_representative_winding_count": 0,
             "constant_field_transfer_max_error": 0.0,
+            "nonconstant_interpolation_error": 0.0,
+            "nonconstant_interpolation_bound": 0.0,
+            "winding_sensitive_lifted_field_image_separation": 0.0,
             "transition_id": None,
         }
     if adaptation.refusal is not None or not bool(
@@ -840,22 +916,79 @@ def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
     source_cell_ids = np.asarray(adaptation.source_cell_ids, dtype=np.int64)
     target_cell_ids = np.asarray(adaptation.target_cell_ids, dtype=np.int64)
     target_vertex_ids = np.asarray(adaptation.target_vertex_ids, dtype=np.int64)
+    migration = view.graph_migration_evidence
+    rebound = migration is not None and not (
+        migration.target_part_id == adaptation.source_part_id
+        and migration.target_directory_id == adaptation.source_distribution_id
+        and np.array_equal(
+            np.asarray(migration.target_cell_ids, dtype=np.int64), source_cell_ids
+        )
+    )
+    # An owner with no adapted rows has no transfer action; after a rebinding
+    # repartition its view may own migrated cells of other owners' adaptation.
     if (
-        not np.asarray(view.cell_ids).size
-        and not np.asarray(view.vertex_ids).size
-        and adaptation.vertex_stencil is None
+        adaptation.vertex_stencil is None
+        and not target_cell_ids.size
+        and (
+            rebound
+            or (
+                not np.asarray(view.cell_ids).size
+                and not np.asarray(view.vertex_ids).size
+            )
+        )
     ):
+        # A rebinding repartition may move other owners' adapted cells here; their
+        # lifted images are still checked on this owner's resident rows.
+        shared_images, image_separation = _view_winding_images(view)
         return {
             "accepted": True,
             "empty_owner": True,
             "source_cell_count": int(source_cell_ids.size),
             "target_cell_count": int(target_cell_ids.size),
             "topology_changed": False,
-            "shared_representative_winding_count": 0,
+            "shared_representative_winding_count": shared_images,
             "constant_field_transfer_max_error": 0.0,
+            "nonconstant_interpolation_error": 0.0,
+            "nonconstant_interpolation_bound": 0.0,
+            "winding_sensitive_lifted_field_image_separation": image_separation,
             "transition_id": adaptation.transition_id,
         }
     stencil = adaptation.vertex_stencil
+    # Owner-local views carry halo cells; an adaptation's local target rows are
+    # the owned cells of its accepted view and the vertices of those cells. A
+    # later geometry-preserving repartition rebinds the result to a view whose
+    # owned cells are the migration's target rows; only the identities resident
+    # in both are comparable there (the writer checks group-wide conservation).
+    view_cells = np.asarray(view.cell_ids, dtype=np.int64)
+    view_vertex_ids = np.asarray(view.vertex_ids, dtype=np.int64)
+    owned_cells = view_cells[
+        np.asarray(view.cell_owner_ranks, dtype=np.int64) == int(view.owner_rank)
+    ]
+    owned_cell_set = set(owned_cells.tolist())
+    owned_vertex_ids: set[int] = set()
+    for block in view.blocks:
+        for cell_id, row, valid in zip(
+            np.asarray(block.cell_ids).tolist(),
+            np.asarray(block.vertices).tolist(),
+            np.asarray(block.vertex_valid).tolist(),
+            strict=True,
+        ):
+            if cell_id in owned_cell_set:
+                owned_vertex_ids.update(
+                    int(view_vertex_ids[vertex])
+                    for vertex, present in zip(row, valid, strict=True)
+                    if present
+                )
+    if rebound:
+        resident_rows = np.array_equal(
+            np.sort(owned_cells),
+            np.sort(np.asarray(migration.target_cell_ids, dtype=np.int64)),
+        )
+    else:
+        resident_rows = (
+            np.array_equal(np.sort(target_cell_ids), np.sort(owned_cells))
+            and set(target_vertex_ids.tolist()) == owned_vertex_ids
+        )
     if (
         adaptation.transition_id is None
         or stencil is None
@@ -863,19 +996,18 @@ def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
         or adaptation.target_topology_id != view.source_topology_id
         or adaptation.target_geometry_id != view.source_geometry_id
         or adaptation.target_periodic_topology_id != view.periodic_topology_id
-        or not np.array_equal(
-            np.sort(target_cell_ids), np.sort(np.asarray(view.cell_ids, dtype=np.int64))
-        )
-        or not np.array_equal(
-            np.sort(target_vertex_ids),
-            np.sort(np.asarray(view.vertex_ids, dtype=np.int64)),
-        )
+        or not resident_rows
     ):
         raise RuntimeError(
             "Periodic adaptation target differs from its compact owner-local view."
         )
-    if not stencil.preserves_constants or not np.all(
-        np.asarray(stencil.valid, dtype=np.bool_)
+    # Fixed-width stencils pad short rows with invalid entries; every target row
+    # needs at least one valid source entry.
+    stencil_valid = np.asarray(stencil.valid, dtype=np.bool_)
+    if (
+        not stencil.preserves_constants
+        or stencil_valid.ndim != 2
+        or not np.all(np.any(stencil_valid, axis=1))
     ):
         raise RuntimeError(
             "Periodic FE transfer stencil is incomplete or not constant preserving."
@@ -884,44 +1016,91 @@ def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
     def keyed_rows(ids: Any, values: Any, /) -> dict[int, tuple[int, ...]]:
         identifiers = np.asarray(ids, dtype=np.int64)
         rows = np.asarray(values, dtype=np.int64)
-        if rows.shape[0] != identifiers.size:
+        if rows.ndim == 0 or rows.shape[0] != identifiers.size:
             raise RuntimeError(
                 "Periodic orbit identity rows do not align with their global IDs."
             )
+        if not identifiers.size:
+            return {}
+        rows = rows.reshape((identifiers.size, -1))
         return {
             int(identifier): tuple(int(component) for component in row)
             for identifier, row in zip(identifiers, rows, strict=True)
         }
 
-    if (
-        keyed_rows(adaptation.target_vertex_ids, adaptation.vertex_source_ids)
-        != keyed_rows(view.vertex_ids, view.vertex_source_ids)
-        or keyed_rows(adaptation.target_vertex_ids, adaptation.vertex_absolute_windings)
-        != keyed_rows(view.vertex_ids, view.vertex_absolute_windings)
-        or keyed_rows(adaptation.target_cell_ids, adaptation.cell_metadata.cell_windings)
-        != keyed_rows(view.cell_ids, view.cell_windings)
-        or keyed_rows(
-            adaptation.target_cell_ids,
-            np.asarray(adaptation.target_cell_owner_ranks, dtype=np.int64).reshape(
-                (-1, 1)
-            ),
+    def rows_agree(
+        produced: dict[int, tuple[int, ...]], resident: dict[int, tuple[int, ...]], /
+    ) -> bool:
+        if not rebound and not set(produced) <= set(resident):
+            return False
+        return all(
+            resident[key] == value for key, value in produced.items() if key in resident
         )
-        != keyed_rows(
-            view.cell_ids,
-            np.asarray(view.cell_owner_ranks, dtype=np.int64).reshape((-1, 1)),
+
+    if not (
+        rows_agree(
+            keyed_rows(adaptation.target_vertex_ids, adaptation.vertex_source_ids),
+            keyed_rows(view.vertex_ids, view.vertex_source_ids),
+        )
+        and rows_agree(
+            keyed_rows(adaptation.target_vertex_ids, adaptation.vertex_absolute_windings),
+            keyed_rows(view.vertex_ids, view.vertex_absolute_windings),
+        )
+        and rows_agree(
+            keyed_rows(
+                adaptation.target_cell_ids, adaptation.cell_metadata.cell_windings
+            ),
+            keyed_rows(view.cell_ids, view.cell_windings),
+        )
+        and (
+            rebound
+            or rows_agree(
+                keyed_rows(
+                    adaptation.target_cell_ids,
+                    np.asarray(
+                        adaptation.target_cell_owner_ranks, dtype=np.int64
+                    ).reshape((-1, 1)),
+                ),
+                keyed_rows(
+                    view.cell_ids,
+                    np.asarray(view.cell_owner_ranks, dtype=np.int64).reshape((-1, 1)),
+                ),
+            )
         )
     ):
         raise RuntimeError(
             "Periodic adaptation changed shared representative or winding identities."
         )
-    source_ids = np.asarray(_INPUT_POINT_IDS, dtype=np.int64)
-    source_fractional = np.asarray(_INPUT_FRACTIONAL_POINTS, dtype=np.float64)
+    # Stencil sources are vertices of the adaptation's source local mesh (the
+    # source view's resident vertices); each is a lift of one authored site.
+    authored_ids = np.asarray(_INPUT_POINT_IDS, dtype=np.int64)
+    authored_fractional = np.asarray(_INPUT_FRACTIONAL_POINTS, dtype=np.float64)
+    authored_row = {
+        int(identifier): row for row, identifier in enumerate(authored_ids.tolist())
+    }
+    source_vertex_ids = np.asarray(source_view.vertex_ids, dtype=np.int64)
+    source_vertex_sites = np.asarray(source_view.vertex_source_ids, dtype=np.int64)
+    source_windings = np.asarray(source_view.vertex_absolute_windings, dtype=np.int64)
     stencil_source_ids = np.asarray(stencil.source_global_ids, dtype=np.int64)
     active_source_ids = stencil_source_ids[np.asarray(stencil.valid, dtype=np.bool_)]
-    if not np.all(np.isin(active_source_ids, source_ids)):
+    if source_vertex_sites.shape != source_vertex_ids.shape or not (
+        np.all(np.isin(active_source_ids, source_vertex_ids))
+        and all(int(site) in authored_row for site in source_vertex_sites.tolist())
+    ):
         raise RuntimeError(
-            "Periodic transfer stencil references a source orbit outside the authored point registry."
+            "Periodic transfer stencil references a source vertex outside the authored "
+            "point registry."
         )
+    source_ids = source_vertex_ids
+    source_fractional = (
+        authored_fractional[
+            np.asarray(
+                [authored_row[int(site)] for site in source_vertex_sites.tolist()],
+                dtype=np.int64,
+            ).reshape(-1)
+        ]
+        + source_windings
+    )
     wave = np.asarray((1.0, 2.0), dtype=np.float64)
     source_field = np.sin(2.0 * np.pi * (source_fractional @ wave))
     transferred_constant = np.asarray(
@@ -940,11 +1119,19 @@ def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
             np.asarray(view.vertex_ids, dtype=np.int64).tolist()
         )
     }
+    stencil_target_ids = np.asarray(stencil.target_global_ids, dtype=np.int64)
+    resident_stencil = np.asarray(
+        [int(identifier) in target_vertex_rows for identifier in stencil_target_ids],
+        dtype=np.bool_,
+    )
+    if not rebound and not np.all(resident_stencil):
+        raise RuntimeError("Periodic transfer stencil targets a nonresident vertex.")
+    transferred_periodic = transferred_periodic[resident_stencil]
     target_coordinates = np.asarray(view.vertex_coordinates, dtype=np.float64)[
         np.asarray(
             [
                 target_vertex_rows[int(identifier)]
-                for identifier in stencil.target_global_ids
+                for identifier in stencil_target_ids[resident_stencil]
             ],
             dtype=np.int64,
         )
@@ -963,9 +1150,9 @@ def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
         for row, identifier in enumerate(source_ids.tolist())
     }
     interpolation_bound = 0.0
-    weights = np.asarray(stencil.weights, dtype=np.float64)
-    validity = np.asarray(stencil.valid, dtype=np.bool_)
-    source_rows = np.asarray(stencil.source_global_ids, dtype=np.int64)
+    weights = np.asarray(stencil.weights, dtype=np.float64)[resident_stencil]
+    validity = np.asarray(stencil.valid, dtype=np.bool_)[resident_stencil]
+    source_rows = np.asarray(stencil.source_global_ids, dtype=np.int64)[resident_stencil]
     for target_row, target_point in enumerate(target_fractional):
         row_mask = validity[target_row]
         source_points = np.asarray(
@@ -993,38 +1180,7 @@ def _periodic_adaptation_transfer_oracle(view: Any, /) -> dict[str, Any]:
         raise RuntimeError(
             "Periodic sinusoidal FE transfer exceeded its independent Hessian interpolation bound."
         )
-    key_source_ids = np.asarray(view.cell_key_source_ids, dtype=np.int64)
-    key_windings = np.asarray(view.cell_key_relative_windings, dtype=np.int64)
-    if key_windings.ndim != 2 or key_windings.shape[0] != key_source_ids.size:
-        raise RuntimeError(
-            "Periodic winding-key rows differ from their stable source representatives."
-        )
-    windings_by_source: dict[int, set[tuple[int, ...]]] = {}
-    lifted_x_by_source: dict[int, list[float]] = {}
-    for source_id, winding in zip(key_source_ids, key_windings, strict=True):
-        source_id = int(source_id)
-        if source_id not in source_fractional_by_id:
-            raise RuntimeError(
-                "Periodic winding row references an unknown authored source representative."
-            )
-        winding_tuple = tuple(int(value) for value in winding.tolist())
-        windings_by_source.setdefault(source_id, set()).add(winding_tuple)
-        lifted_x_by_source.setdefault(source_id, []).append(
-            float(source_fractional_by_id[source_id][0] + winding[0])
-        )
-    shared_winding_ids = [
-        source_id
-        for source_id, windings in windings_by_source.items()
-        if len(windings) > 1
-    ]
-    shared_winding_count = len(shared_winding_ids)
-    winding_sensitive_separation = max(
-        (
-            max(lifted_x_by_source[source_id]) - min(lifted_x_by_source[source_id])
-            for source_id in shared_winding_ids
-        ),
-        default=0.0,
-    )
+    shared_winding_count, winding_sensitive_separation = _view_winding_images(view)
     return {
         "accepted": True,
         "empty_owner": False,
@@ -1436,6 +1592,38 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
             (3, local.size)
         )
 
+    def gather_ragged(values: Any) -> np.ndarray:
+        local = np.asarray(values, dtype=np.int64).reshape(-1)
+        counts = gather_scalar(local.size, dtype=np.int64)
+        width = max(int(np.max(counts)), 1)
+        padded = np.full((width,), -1, dtype=np.int64)
+        padded[: local.size] = local
+        rows = gather_rows(padded)
+        return np.concatenate(
+            [rows[index, : int(count)] for index, count in enumerate(counts)]
+        )
+
+    def owned_cells(view: Any) -> np.ndarray:
+        cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
+        owners = np.asarray(view.cell_owner_ranks, dtype=np.int64)
+        return cell_ids[owners == int(view.owner_rank)]
+
+    def cell_owner_rows(view: Any, identifiers: Any) -> np.ndarray:
+        owner_by_id = dict(
+            zip(
+                np.asarray(view.cell_ids, dtype=np.int64).tolist(),
+                np.asarray(view.cell_owner_ranks, dtype=np.int64).tolist(),
+                strict=True,
+            )
+        )
+        return np.asarray(
+            [
+                owner_by_id.get(int(identifier), -1)
+                for identifier in np.asarray(identifiers, dtype=np.int64).tolist()
+            ],
+            dtype=np.int64,
+        )
+
     def require_global_flag(local_success: bool, /, contract: str) -> None:
         flags = gather_scalar(int(local_success), dtype=np.int32)
         if not np.all(flags == 1):
@@ -1449,11 +1637,13 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         )
         return _solve_physical_problem(compiled, local_dof_counts)
 
-    def verify_periodic_adaptation(view: Any, stage: str, /) -> dict[str, Any]:
+    def verify_periodic_adaptation(
+        view: Any, source_view: Any, stage: str, /
+    ) -> dict[str, Any]:
         local_error = None
         record: dict[str, Any]
         try:
-            record = _periodic_adaptation_transfer_oracle(view)
+            record = _periodic_adaptation_transfer_oracle(view, source_view)
         except Exception as error:
             local_error = f"{type(error).__name__}: {error}"
             record = {
@@ -1467,6 +1657,8 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
                 "nonconstant_interpolation_bound": 0.0,
                 "winding_sensitive_lifted_field_image_separation": 0.0,
             }
+        if local_error is not None:
+            print(f"{stage} rank {rank}: {local_error}", file=sys.stderr)
         require_global_flag(
             local_error is None and bool(record["accepted"]),
             f"{stage} orbit-synchronized FE adaptation and transfer",
@@ -1577,69 +1769,80 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         target_view.require_owner_directory_current(
             group, axis_name=f"{_AXIS_NAME}_{profile}_writer_target_directory"
         )
-        if (
-            adaptive_result is not target_view.adaptive_result
-            or pre_graph_adaptive_result is not adaptation_view.adaptive_result
-            or adaptive_result.source_topology_id
-            != pre_graph_adaptive_result.source_topology_id
-            or adaptive_result.target_topology_id
-            != pre_graph_adaptive_result.target_topology_id
-            or adaptive_result.specification_id
-            != pre_graph_adaptive_result.specification_id
-            or adaptive_result.transition_id != pre_graph_adaptive_result.transition_id
-            or (
-                None
-                if adaptive_result.lineage is None
-                else adaptive_result.lineage.lineage_id
+
+        def _optional_id(value: Any, attribute: str, /) -> Any:
+            return None if value is None else getattr(value, attribute)
+
+        group_adapted_cells = gather_ragged(adaptive_result.target_cell_ids)
+        group_target_owned_cells = gather_ragged(owned_cells(target_view))
+        ancestry_checks = {
+            "target_view_result": adaptive_result is target_view.adaptive_result,
+            "adaptation_view_result": pre_graph_adaptive_result
+            is adaptation_view.adaptive_result,
+            "source_topology": adaptive_result.source_topology_id
+            == pre_graph_adaptive_result.source_topology_id,
+            "target_topology": adaptive_result.target_topology_id
+            == pre_graph_adaptive_result.target_topology_id,
+            "specification": adaptive_result.specification_id
+            == pre_graph_adaptive_result.specification_id,
+            "transition": adaptive_result.transition_id
+            == pre_graph_adaptive_result.transition_id,
+            "lineage": _optional_id(adaptive_result.lineage, "lineage_id")
+            == _optional_id(pre_graph_adaptive_result.lineage, "lineage_id"),
+            "vertex_transfer": _optional_id(
+                adaptive_result.vertex_transfer, "transfer_id"
             )
-            != (
-                None
-                if pre_graph_adaptive_result.lineage is None
-                else pre_graph_adaptive_result.lineage.lineage_id
-            )
-            or (
-                None
-                if adaptive_result.vertex_transfer is None
-                else adaptive_result.vertex_transfer.transfer_id
-            )
-            != (
-                None
-                if pre_graph_adaptive_result.vertex_transfer is None
-                else pre_graph_adaptive_result.vertex_transfer.transfer_id
-            )
-            or (
-                None
-                if adaptive_result.vertex_stencil is None
-                else adaptive_result.vertex_stencil.stencil_id
-            )
-            != (
-                None
-                if pre_graph_adaptive_result.vertex_stencil is None
-                else pre_graph_adaptive_result.vertex_stencil.stencil_id
-            )
-            or adaptive_result.target_topology_id != target_view.source_topology_id
-            or adaptive_result.target_local_view_id != target_view.local_view_id
-            or adaptive_result.target_distribution_id != target_view.distribution_id
-            or adaptive_result.target_owner_directory_id != target_view.distribution_id
-            or not np.array_equal(
+            == _optional_id(pre_graph_adaptive_result.vertex_transfer, "transfer_id"),
+            "vertex_stencil": _optional_id(adaptive_result.vertex_stencil, "stencil_id")
+            == _optional_id(pre_graph_adaptive_result.vertex_stencil, "stencil_id"),
+            "view_topology": adaptive_result.target_topology_id
+            == target_view.source_topology_id,
+            "view_local_view": adaptive_result.target_local_view_id
+            == target_view.local_view_id,
+            "view_distribution": adaptive_result.target_distribution_id
+            == target_view.distribution_id,
+            "view_owner_directory": adaptive_result.target_owner_directory_id
+            == target_view.distribution_id,
+            # The rebound result keeps this rank's accepted adaptation rows (its
+            # pre-graph owned cells); the repartitioned view owns the migration's
+            # target rows and carries halo cells besides. Across the group the
+            # owned adapted cells are conserved exactly once.
+            "adaptation_cells": np.array_equal(
                 np.sort(np.asarray(adaptive_result.target_cell_ids, dtype=np.int64)),
-                np.sort(np.asarray(target_view.cell_ids, dtype=np.int64)),
-            )
-            or not np.array_equal(
+                np.sort(owned_cells(adaptation_view)),
+            ),
+            "adaptation_cell_owners": np.array_equal(
+                np.asarray(adaptive_result.target_cell_owner_ranks, dtype=np.int64),
+                cell_owner_rows(adaptation_view, adaptive_result.target_cell_ids),
+            ),
+            "migrated_cells": target_view.graph_migration_evidence is not None
+            and np.array_equal(
+                np.sort(owned_cells(target_view)),
                 np.sort(
-                    np.asarray(adaptive_result.target_cell_owner_ranks, dtype=np.int64)
+                    np.asarray(
+                        target_view.graph_migration_evidence.target_cell_ids,
+                        dtype=np.int64,
+                    )
                 ),
-                np.sort(np.asarray(target_view.cell_owner_ranks, dtype=np.int64)),
+            ),
+            "conserved_cells": np.array_equal(
+                np.sort(group_adapted_cells), np.unique(group_target_owned_cells)
             )
-        ):
+            and group_target_owned_cells.size == np.unique(group_target_owned_cells).size,
+        }
+        failed_ancestry = sorted(
+            name for name, passed in ancestry_checks.items() if not passed
+        )
+        if failed_ancestry:
             raise RuntimeError(
-                "Rebound writer adaptation lost its pre-graph ancestry or target-view authority."
+                "Rebound writer adaptation lost its pre-graph ancestry or target-view "
+                f"authority: {', '.join(failed_ancestry)}."
             )
         writer_pre_graph_adaptation = verify_periodic_adaptation(
-            adaptation_view, "fresh-writer-pre-graph-orbit-adaptation"
+            adaptation_view, source_view, "fresh-writer-pre-graph-orbit-adaptation"
         )
         writer_adaptation = verify_periodic_adaptation(
-            target_view, "fresh-writer-rebound-orbit-adaptation"
+            target_view, source_view, "fresh-writer-rebound-orbit-adaptation"
         )
         if source_view.source_value is None:
             raise ValueError("Owner-local FE source lacks its exact authored point root.")
@@ -1656,7 +1859,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
             float(
                 np.linalg.det(
                     np.asarray(
-                        source_view.source_value.domain.cell.basis, dtype=np.float64
+                        source_view.source_value.domain.cell.vectors, dtype=np.float64
                     )
                 )
             )
@@ -2102,13 +2305,25 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         or adaptive_result.target_local_view_id != target_view.local_view_id
         or adaptive_result.target_distribution_id != target_view.distribution_id
         or adaptive_result.target_owner_directory_id != target_view.distribution_id
+        # The rebound result keeps the adaptation's owned rows; the repartitioned
+        # view owns the migration target rows (views also carry halo cells).
         or not np.array_equal(
             np.sort(np.asarray(adaptive_result.target_cell_ids, dtype=np.int64)),
-            np.sort(np.asarray(target_view.cell_ids, dtype=np.int64)),
+            np.sort(owned_cells(adaptation_view)),
         )
         or not np.array_equal(
-            np.sort(np.asarray(adaptive_result.target_cell_owner_ranks, dtype=np.int64)),
-            np.sort(np.asarray(target_view.cell_owner_ranks, dtype=np.int64)),
+            np.asarray(adaptive_result.target_cell_owner_ranks, dtype=np.int64),
+            cell_owner_rows(adaptation_view, adaptive_result.target_cell_ids),
+        )
+        or target_view.graph_migration_evidence is None
+        or not np.array_equal(
+            np.sort(owned_cells(target_view)),
+            np.sort(
+                np.asarray(
+                    target_view.graph_migration_evidence.target_cell_ids,
+                    dtype=np.int64,
+                )
+            ),
         )
     ):
         raise RuntimeError(
@@ -2124,10 +2339,12 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         group, axis_name=f"{_AXIS_NAME}_{profile}_reader_target_directory"
     )
     reader_pre_graph_adaptation = verify_periodic_adaptation(
-        adaptation_view, "fresh-reader-pre-graph-orbit-adaptation-after-restore"
+        adaptation_view,
+        source_view,
+        "fresh-reader-pre-graph-orbit-adaptation-after-restore",
     )
     reader_adaptation = verify_periodic_adaptation(
-        target_view, "fresh-reader-rebound-orbit-adaptation-after-restore"
+        target_view, source_view, "fresh-reader-rebound-orbit-adaptation-after-restore"
     )
     source_manifest = MeshPartManifest.from_part(source_part)
     adaptation_manifest = MeshPartManifest.from_part(adaptation_part)
@@ -2190,7 +2407,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     domain_measure = abs(
         float(
             np.linalg.det(
-                np.asarray(source_view.source_value.domain.cell.basis, dtype=np.float64)
+                np.asarray(source_view.source_value.domain.cell.vectors, dtype=np.float64)
             )
         )
     )
