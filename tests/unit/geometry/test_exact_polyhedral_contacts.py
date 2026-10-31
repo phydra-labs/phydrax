@@ -1,9 +1,18 @@
 from fractions import Fraction
+from itertools import product
 
+import numpy as np
 import pytest
 
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
-from phydrax.geometry._exact_polyhedral_geometry import Point3, tetrahedron_contact_points
+from phydrax.geometry._exact_polyhedral_geometry import (
+    determinant3,
+    outward_tetrahedron_enclosures,
+    Point3,
+    point_in_triangle3,
+    point_on_segment3,
+    tetrahedron_contact_points,
+)
 
 
 def _point(x: int | Fraction, y: int | Fraction, z: int | Fraction) -> Point3:
@@ -142,3 +151,65 @@ def test_identical_degenerate_tetrahedra_do_not_bypass_admission() -> None:
     flat = (_ORIGIN, _X, _Y, _point(1, 1, 0))
     with pytest.raises(ValueError, match="nondegenerate"):
         tetrahedron_contact_points(flat, flat)
+
+
+def _in_common_hull(point: Point3, common: tuple[Point3, ...], /) -> bool:
+    match len(common):
+        case 1:
+            return point == common[0]
+        case 2:
+            return point_on_segment3(point, common[0], common[1])
+        case 3:
+            return point_in_triangle3(point, (common[0], common[1], common[2]))
+        case _:
+            return False
+
+
+def _assert_certified_contacts_in_common_hull(
+    tetrahedra: tuple[tuple[Point3, ...], ...], pairs: tuple[tuple[int, int], ...], /
+) -> np.ndarray:
+    enclosures = outward_tetrahedron_enclosures(tetrahedra)
+    first = np.asarray([pair[0] for pair in pairs], dtype=np.intp)
+    second = np.asarray([pair[1] for pair in pairs], dtype=np.intp)
+    certified = enclosures.common_hull_contacts(first, second)
+    for (left, right), proven in zip(pairs, certified.tolist(), strict=True):
+        if not proven:
+            continue
+        common = tuple(point for point in tetrahedra[left] if point in tetrahedra[right])
+        contacts = tetrahedron_contact_points(tetrahedra[left], tetrahedra[right])
+        assert all(_in_common_hull(point, common) for point in contacts)
+    return certified
+
+
+def test_binary64_filter_certifies_neighbors_only_inside_their_common_hull() -> None:
+    apex = _point(_QUARTER, _QUARTER, -1)
+    tetrahedra = (
+        _BASE,
+        (_ORIGIN, _X, _Y, apex),  # shares the bottom face, opposite side
+        (_X, _point(2, 0, 0), _point(1, 1, 0), _point(1, 0, 1)),  # shares a corner
+        (_point(3, 3, 3), _point(4, 3, 3), _point(3, 4, 3), _point(3, 3, 4)),
+        (*_SMALL_FACE, _point(_QUARTER, _QUARTER, _QUARTER)),  # overlaps the base
+        (_ORIGIN, _X, _Y, _point(1, 1, 0)),  # degenerate
+    )
+    certified = _assert_certified_contacts_in_common_hull(
+        tetrahedra, ((0, 1), (0, 2), (0, 3), (0, 4), (0, 5))
+    )
+    assert certified.tolist() == [True, True, True, False, False]
+
+
+def test_binary64_filter_is_sound_on_touching_lattice_tetrahedra() -> None:
+    # Small lattice corners make coplanar, collinear and touching pairs common.
+    lattice = tuple(_point(*corner) for corner in product(range(3), repeat=3))
+    generator = np.random.default_rng(7)
+    tetrahedra: list[tuple[Point3, ...]] = []
+    while len(tetrahedra) < 120:
+        corners = tuple(lattice[index] for index in generator.choice(27, 4, False))
+        if determinant3(*corners):
+            tetrahedra.append(corners)
+    pairs = tuple(
+        (int(left), int(right))
+        for left, right in generator.integers(0, len(tetrahedra), (1500, 2))
+        if left != right
+    )
+    certified = _assert_certified_contacts_in_common_hull(tuple(tetrahedra), pairs)
+    assert certified.any() and not certified.all()

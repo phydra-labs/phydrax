@@ -7,8 +7,13 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, product
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
 
 from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
 
@@ -16,6 +21,7 @@ from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalEleme
 type Point2 = tuple[ExactScalar, ExactScalar]
 type Point3 = tuple[ExactScalar, ExactScalar, ExactScalar]
 type Point = Point2 | Point3
+type _Interval = tuple[NDArray[np.float64], NDArray[np.float64]]
 
 
 def _sign(value: ExactScalar, /) -> int:
@@ -497,6 +503,425 @@ def segment_contact_points3(
         if point_on_segment3(point, first, second)
         and point_on_segment3(point, third, fourth)
     )
+
+
+def _rational_point_enclosures(
+    points: Sequence[Point3], /
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Binary64 outward enclosures of exact spatial points.
+
+    `float` rounds integers and fractions correctly, so one unit in the last place
+    on each side encloses each coordinate, and exactly representable values keep
+    a point interval.  Points with a radical or non-finite coordinate stay
+    unbounded.
+    """
+    rounded = np.full((len(points), 3), np.nan, dtype=np.float64)
+    exact = np.zeros((len(points), 3), dtype=np.bool_)
+    for row, point in enumerate(points):
+        if not all(isinstance(value, (int, Fraction)) for value in point):
+            continue
+        try:
+            approximation = tuple(float(value) for value in point)
+        except OverflowError:
+            continue
+        rounded[row] = approximation
+        exact[row] = tuple(
+            value == estimate
+            for value, estimate in zip(point, approximation, strict=True)
+        )
+    finite = np.all(np.isfinite(rounded), axis=1, keepdims=True)
+    lower = np.where(exact, rounded, np.nextafter(rounded, -np.inf))
+    upper = np.where(exact, rounded, np.nextafter(rounded, np.inf))
+    return np.where(finite, lower, -np.inf), np.where(finite, upper, np.inf)
+
+
+def _interval_take(value: _Interval, index: Any, /) -> _Interval:
+    return value[0][index], value[1][index]
+
+
+# Each binary64 operation below is rounded to nearest, so stepping its result
+# one unit in the last place outward encloses the exact real operation.
+def _interval_sub(first: _Interval, second: _Interval, /) -> _Interval:
+    return (
+        np.nextafter(first[0] - second[1], -np.inf),
+        np.nextafter(first[1] - second[0], np.inf),
+    )
+
+
+def _interval_add(first: _Interval, second: _Interval, /) -> _Interval:
+    return (
+        np.nextafter(first[0] + second[0], -np.inf),
+        np.nextafter(first[1] + second[1], np.inf),
+    )
+
+
+def _interval_mul(first: _Interval, second: _Interval, /) -> _Interval:
+    products = (
+        first[0] * second[0],
+        first[0] * second[1],
+        first[1] * second[0],
+        first[1] * second[1],
+    )
+    return (
+        np.nextafter(np.minimum.reduce(products), -np.inf),
+        np.nextafter(np.maximum.reduce(products), np.inf),
+    )
+
+
+def _interval_cross(first: _Interval, second: _Interval, /) -> _Interval:
+    components = tuple(
+        _interval_sub(
+            _interval_mul(
+                _interval_take(first, (..., (axis + 1) % 3)),
+                _interval_take(second, (..., (axis + 2) % 3)),
+            ),
+            _interval_mul(
+                _interval_take(first, (..., (axis + 2) % 3)),
+                _interval_take(second, (..., (axis + 1) % 3)),
+            ),
+        )
+        for axis in range(3)
+    )
+    return (
+        np.stack([component[0] for component in components], axis=-1),
+        np.stack([component[1] for component in components], axis=-1),
+    )
+
+
+def _interval_dot(first: _Interval, second: _Interval, /) -> _Interval:
+    total = _interval_mul(
+        _interval_take(first, (..., 0)), _interval_take(second, (..., 0))
+    )
+    for axis in (1, 2):
+        total = _interval_add(
+            total,
+            _interval_mul(
+                _interval_take(first, (..., axis)), _interval_take(second, (..., axis))
+            ),
+        )
+    return total
+
+
+def _certified_sign(value: _Interval, /) -> NDArray[np.int8]:
+    """+1 or -1 where the enclosure excludes zero, 0 where the sign is undecided."""
+    return np.where(value[0] > 0, 1, np.where(value[1] < 0, -1, 0)).astype(np.int8)
+
+
+# Face `m` of a tetrahedron omits corner `m`; its plane passes through the
+# remaining corners in this order.
+_FACE_CORNERS = np.asarray(((1, 2, 3), (2, 3, 0), (3, 0, 1), (0, 1, 2)), dtype=np.intp)
+_EDGE_CORNERS = np.asarray(tuple(combinations(range(4), 2)), dtype=np.intp)
+# The two corners outside edge `(i, j)`, for `i != j`.
+_EDGE_COMPLEMENT = np.asarray(
+    [
+        [
+            [corner for corner in range(4) if corner not in (first, second)][:2]
+            for second in range(4)
+        ]
+        for first in range(4)
+    ],
+    dtype=np.intp,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TetrahedronEnclosures:
+    """Binary64 corner enclosures and certified face planes of exact tetrahedra.
+
+    `point_ids` name exact corner points: equal identities denote equal exact
+    points and distinct identities distinct points.  `apex_signs[t, m]` is the
+    certified sign of corner `m` relative to the plane of face `m` (zero when
+    undecided); `nondegenerate[t]` holds when one of them is certified, so the
+    exact orientation determinant of tetrahedron `t` is nonzero.
+    """
+
+    lower: NDArray[np.float64]
+    upper: NDArray[np.float64]
+    point_ids: NDArray[np.int64]
+    normals: _Interval
+    apex_signs: NDArray[np.int8]
+    nondegenerate: NDArray[np.bool_]
+    centers: NDArray[np.float64]
+    face_directions: NDArray[np.float64]
+    face_offsets: NDArray[np.float64]
+
+    @classmethod
+    def prepare(
+        cls,
+        lower: NDArray[np.float64],
+        upper: NDArray[np.float64],
+        point_ids: NDArray[np.int64],
+        /,
+    ) -> TetrahedronEnclosures:
+        """Prepare `(T, 4, 3)` corner enclosures with `(T, 4)` exact point identities.
+
+        `centers`, `face_directions` (unit normals pointing away from each apex)
+        and `face_offsets` are midpoint estimates that only rank candidate planes.
+        """
+        corners = (lower, upper)
+        origin = _interval_take(corners, (slice(None), _FACE_CORNERS[:, 0]))
+        normals = _interval_cross(
+            _interval_sub(
+                _interval_take(corners, (slice(None), _FACE_CORNERS[:, 1])), origin
+            ),
+            _interval_sub(
+                _interval_take(corners, (slice(None), _FACE_CORNERS[:, 2])), origin
+            ),
+        )
+        apex_signs = _certified_sign(
+            _interval_dot(normals, _interval_sub(corners, origin))
+        )
+        finite = np.all(np.isfinite(lower), axis=(1, 2)) & np.all(
+            np.isfinite(upper), axis=(1, 2)
+        )
+        apex_signs = np.where(finite[:, None], apex_signs, 0).astype(np.int8)
+        centers = (lower + upper) / 2
+        with np.errstate(divide="ignore", invalid="ignore"):
+            directions = (normals[0] + normals[1]) / 2
+            directions = np.where(
+                (apex_signs != 0)[:, :, None],
+                -apex_signs[:, :, None]
+                * directions
+                / np.linalg.norm(directions, axis=2, keepdims=True),
+                np.nan,
+            )
+        return cls(
+            lower,
+            upper,
+            point_ids,
+            normals,
+            apex_signs,
+            np.any(apex_signs != 0, axis=1),
+            centers,
+            directions,
+            np.einsum("tmk,tmk->tm", directions, centers[:, _FACE_CORNERS[:, 0]]),
+        )
+
+    def common_hull_contacts(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Certify pairs whose closed intersection lies in the hull of common corners.
+
+        Common corners are those with equal point identities.  A pair is certified
+        only when both tetrahedra are certified nondegenerate and one of these
+        outward-rounded tests holds:
+
+        - their boxes, or an axis across a pair of their edges, strictly separate
+          them (no common corner; the intersection is empty);
+        - a face plane of one has every corner of the other strictly opposite its
+          apex or equal to a corner of that face, so the plane meets the other
+          tetrahedron only in the hull of those equal corners;
+        - for one common corner `a`, the plane through `a` and edges `ab`, `ad`
+          of the two tetrahedra has their remaining corners strictly on opposite
+          sides, so the intersection lies in `ab ∩ ad = {a}`.
+        """
+        certified = np.zeros(first.shape, dtype=np.bool_)
+        admitted = self.nondegenerate[first] & self.nondegenerate[second]
+        equal = self.point_ids[first][:, :, None] == self.point_ids[second][:, None, :]
+        common = np.any(equal, axis=(1, 2))
+        disjoint_boxes = np.any(
+            (self.upper[first].max(axis=1) < self.lower[second].min(axis=1))
+            | (self.upper[second].max(axis=1) < self.lower[first].min(axis=1)),
+            axis=1,
+        )
+        certified[admitted & ~common & disjoint_boxes] = True
+        rows = np.flatnonzero(admitted & ~certified)
+        if rows.size:
+            side, face = self._widest_face(first[rows], second[rows], equal[rows])
+            certified[rows] = self._face_plane_supports(
+                np.where(side == 0, first[rows], second[rows]),
+                np.where(side == 0, second[rows], first[rows]),
+                face,
+            )
+        rows = np.flatnonzero(admitted & ~certified & (np.sum(equal, axis=(1, 2)) == 1))
+        if rows.size:
+            certified[rows] = self._shared_corner_planes_separate(
+                first[rows],
+                second[rows],
+                np.argmax(np.any(equal[rows], axis=2), axis=1),
+                np.argmax(np.any(equal[rows], axis=1), axis=1),
+            )
+        rows = np.flatnonzero(admitted & ~certified & ~common)
+        if rows.size:
+            certified[rows] = self._edge_axis_separates(first[rows], second[rows])
+        return certified
+
+    def _widest_face(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], equal: NDArray, /
+    ) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
+        """Midpoint estimate of the face plane with the widest clearance.
+
+        Only selects which plane the outward-rounded test examines; it certifies
+        nothing.
+        """
+        scores = []
+        for plane, other, on_plane in (
+            (first, second, equal),
+            (second, first, np.swapaxes(equal, 1, 2)),
+        ):
+            clearance = (
+                np.einsum(
+                    "rmk,rvk->rmv", self.face_directions[plane], self.centers[other]
+                )
+                - self.face_offsets[plane][:, :, None]
+            )
+            clearance[np.any(on_plane[:, _FACE_CORNERS, :], axis=2)] = np.inf
+            scores.append(clearance.min(axis=2))
+        score = np.concatenate(scores, axis=1)
+        choice = np.argmax(np.where(np.isnan(score), -np.inf, score), axis=1)
+        return choice // 4, choice % 4
+
+    def _face_plane_supports(
+        self, plane: NDArray[np.intp], other: NDArray[np.intp], face: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        corners = (self.lower, self.upper)
+        apex = self.apex_signs[plane, face]
+        origin = _interval_take(corners, (plane, _FACE_CORNERS[face, 0]))
+        normal = _interval_take(self.normals, (plane, face))
+        face_ids = self.point_ids[plane[:, None], _FACE_CORNERS[face]]
+        signs = _certified_sign(
+            _interval_dot(
+                (normal[0][:, None], normal[1][:, None]),
+                _interval_sub(
+                    _interval_take(corners, other),
+                    (origin[0][:, None], origin[1][:, None]),
+                ),
+            )
+        )
+        on_face = np.any(
+            self.point_ids[other][:, :, None] == face_ids[:, None, :], axis=2
+        )
+        return (apex != 0) & np.all(on_face | (signs == -apex[:, None]), axis=1)
+
+    def _shared_corner_planes_separate(
+        self,
+        first: NDArray[np.intp],
+        second: NDArray[np.intp],
+        first_corner: NDArray[np.intp],
+        second_corner: NDArray[np.intp],
+        /,
+    ) -> NDArray[np.bool_]:
+        corners = (self.lower, self.upper)
+        apex = _interval_take(corners, (first, first_corner))
+        separated = np.zeros(first.shape, dtype=np.bool_)
+        for first_shift, second_shift in product(range(1, 4), repeat=2):
+            first_edge = (first_corner + first_shift) % 4
+            second_edge = (second_corner + second_shift) % 4
+            normal = _interval_cross(
+                _interval_sub(_interval_take(corners, (first, first_edge)), apex),
+                _interval_sub(_interval_take(corners, (second, second_edge)), apex),
+            )
+            sides = []
+            for cell, rest in (
+                (first, _EDGE_COMPLEMENT[first_corner, first_edge]),
+                (second, _EDGE_COMPLEMENT[second_corner, second_edge]),
+            ):
+                sides.append(
+                    _certified_sign(
+                        _interval_dot(
+                            (normal[0][:, None], normal[1][:, None]),
+                            _interval_sub(
+                                _interval_take(corners, (cell[:, None], rest)),
+                                (apex[0][:, None], apex[1][:, None]),
+                            ),
+                        )
+                    )
+                )
+            first_sides, second_sides = sides
+            separated |= (
+                (first_sides[:, 0] != 0)
+                & (first_sides[:, 1] == first_sides[:, 0])
+                & (second_sides[:, 0] == -first_sides[:, 0])
+                & (second_sides[:, 1] == -first_sides[:, 0])
+            )
+        return separated
+
+    def _edge_axis_separates(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Test the edge-pair axis with the widest midpoint gap, outward-rounded."""
+        first_centers, second_centers = self.centers[first], self.centers[second]
+        first_edges = (
+            first_centers[:, _EDGE_CORNERS[:, 1]] - first_centers[:, _EDGE_CORNERS[:, 0]]
+        )
+        second_edges = (
+            second_centers[:, _EDGE_CORNERS[:, 1]]
+            - second_centers[:, _EDGE_CORNERS[:, 0]]
+        )
+        axes = np.cross(first_edges[:, :, None], second_edges[:, None, :]).reshape(
+            (first.size, -1, 3)
+        )
+        first_projection = np.einsum("rak,rvk->rav", axes, first_centers)
+        second_projection = np.einsum("rak,rvk->rav", axes, second_centers)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            gap = np.maximum(
+                second_projection.min(axis=2) - first_projection.max(axis=2),
+                first_projection.min(axis=2) - second_projection.max(axis=2),
+            ) / np.linalg.norm(axes, axis=2)
+        left, right = np.divmod(
+            np.argmax(np.where(np.isnan(gap), -np.inf, gap), axis=1), len(_EDGE_CORNERS)
+        )
+        corners = (self.lower, self.upper)
+        first_corners = _interval_take(corners, first)
+        second_corners = _interval_take(corners, second)
+        rows = np.arange(first.size)
+        axis = _interval_cross(
+            _interval_sub(
+                _interval_take(first_corners, (rows, _EDGE_CORNERS[left, 1])),
+                _interval_take(first_corners, (rows, _EDGE_CORNERS[left, 0])),
+            ),
+            _interval_sub(
+                _interval_take(second_corners, (rows, _EDGE_CORNERS[right, 1])),
+                _interval_take(second_corners, (rows, _EDGE_CORNERS[right, 0])),
+            ),
+        )
+        axis = (axis[0][:, None], axis[1][:, None])
+        reference = (first_corners[0][:, :1], first_corners[1][:, :1])
+        first_projection_bounds = _interval_dot(
+            axis, _interval_sub(first_corners, reference)
+        )
+        second_projection_bounds = _interval_dot(
+            axis, _interval_sub(second_corners, reference)
+        )
+        return (
+            first_projection_bounds[1].max(axis=1)
+            < second_projection_bounds[0].min(axis=1)
+        ) | (
+            second_projection_bounds[1].max(axis=1)
+            < first_projection_bounds[0].min(axis=1)
+        )
+
+
+def _point_key(point: Point3, /) -> Hashable:
+    """Exact identity key; rational coordinates key by their reduced integer pairs."""
+    rationals = tuple(value for value in point if isinstance(value, (int, Fraction)))
+    if len(rationals) == len(point):
+        return tuple((value.numerator, value.denominator) for value in rationals)
+    return point
+
+
+def outward_tetrahedron_enclosures(
+    tetrahedra: Sequence[tuple[Point3, ...]], /
+) -> TetrahedronEnclosures:
+    """Prepare binary64 enclosures with exact point identities for exact tetrahedra.
+
+    Only rational points receive finite enclosures, and their keys are canonical,
+    so on every admitted tetrahedron equal identities are exactly equal points.
+    """
+    identities: dict[Hashable, int] = {}
+    points: list[Point3] = []
+    rows: list[int] = []
+    for tetrahedron in tetrahedra:
+        for point in tetrahedron:
+            key = _point_key(point)
+            identifier = identities.get(key)
+            if identifier is None:
+                identifier = identities[key] = len(points)
+                points.append(point)
+            rows.append(identifier)
+    point_ids = np.asarray(rows, dtype=np.int64).reshape((len(tetrahedra), 4))
+    lower, upper = _rational_point_enclosures(points)
+    return TetrahedronEnclosures.prepare(lower[point_ids], upper[point_ids], point_ids)
 
 
 def contact_is_declared[Key: Hashable](
