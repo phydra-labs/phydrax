@@ -334,18 +334,27 @@ def _periodic_donor_images(
     point: np.ndarray,
     /,
 ) -> np.ndarray:
-    """Every lattice image of ``point`` that can lie in the framed donor cells."""
+    """Every lattice image of ``point`` that can lie in the framed donor cells.
+
+    The query is first translated by the integer lattice shift that brings it
+    nearest the donor window, so the enumerated set is bounded by the donor
+    support width rather than by the query's distance from the origin cell.
+    """
     if frame is None:
         return point
     cell, lower, upper, diameter = frame
+    vectors = np.asarray(cell.vectors, dtype=np.float64)
     query = np.asarray(cell.fractional(point), dtype=np.float64)[0]
+    base = np.round(0.5 * (lower + upper) - query)
+    centered = query + base
     excursion = tuple(
-        float(value) for value in np.maximum(np.abs(query - lower), np.abs(upper - query))
+        float(value)
+        for value in np.maximum(np.abs(centered - lower), np.abs(upper - centered))
     )
     stencil = cell.image_stencil(diameter, fractional_excursion=excursion)
-    translations = np.asarray(stencil.shifts, dtype=np.float64) @ np.asarray(
-        cell.vectors, dtype=np.float64
-    )
+    translations = (
+        np.asarray(stencil.shifts, dtype=np.float64) + base[None, :]
+    ) @ vectors
     return point + translations
 
 
@@ -494,91 +503,109 @@ def _local_donor_candidates(
     best: dict[int, tuple[Any, ...]] = {}
     candidate_parts: dict[int, set[str]] = {}
     blocked: set[int] = set()
-    for query_index, (receptor_name, _) in enumerate(queries):
-        if query_index not in query_points:
-            continue
-        target_spec = spec_by_name[receptor_name]
-        target_point = np.asarray(query_points[query_index], dtype=np.float64)
+    local_queries = [index for index in range(len(queries)) if index in query_points]
+    for query_index in local_queries:
         candidate_parts[query_index] = set()
-        for donor_name, view in geometries.items():
-            if donor_name == receptor_name:
-                continue
-            donor_spec = spec_by_name[donor_name]
-            donor_point = _to_source(target_point[None, :], target_spec, donor_spec)
-            for (
-                locator,
-                search_mask,
-                active,
-                supported,
-                block_name,
-                image_frame,
-            ) in locators_by_part[donor_name]:
-                images = _periodic_donor_images(image_frame, donor_point)
-                location = locator.locate(images, cell_mask=search_mask)
-                complete = np.asarray(location.candidates_complete, dtype=np.bool_)
-                status = np.asarray(location.status, dtype=np.int32)
-                if not np.all(complete) or not np.all(
-                    np.isin(
-                        status,
-                        (
-                            int(CellLocationStatus.LOCATED),
-                            int(CellLocationStatus.OUTSIDE),
-                        ),
-                    )
-                ):
+    for donor_name in geometries:
+        donor_spec = spec_by_name[donor_name]
+        priority = priority_order[donor_spec.priority]
+        donor_queries = [
+            index for index in local_queries if queries[index][0] != donor_name
+        ]
+        if not donor_queries:
+            continue
+        donor_points = {
+            index: _to_source(
+                np.asarray(query_points[index], dtype=np.float64)[None, :],
+                spec_by_name[queries[index][0]],
+                donor_spec,
+            )
+            for index in donor_queries
+        }
+        for (
+            locator,
+            search_mask,
+            active,
+            supported,
+            block_name,
+            image_frame,
+        ) in locators_by_part[donor_name]:
+            # One bounded location batch per donor block: every query's donor
+            # point with its complete lattice image set, grouped by query.
+            image_rows = [
+                _periodic_donor_images(image_frame, donor_points[index])
+                for index in donor_queries
+            ]
+            image_queries = np.repeat(
+                np.asarray(donor_queries, dtype=np.int64),
+                [rows.shape[0] for rows in image_rows],
+            )
+            images = np.concatenate(image_rows, axis=0)
+            location = locator.locate(images, cell_mask=search_mask)
+            complete = np.asarray(location.candidates_complete, dtype=np.bool_)
+            status = np.asarray(location.status, dtype=np.int32)
+            if not np.all(complete) or not np.all(
+                np.isin(
+                    status,
+                    (
+                        int(CellLocationStatus.LOCATED),
+                        int(CellLocationStatus.OUTSIDE),
+                    ),
+                )
+            ):
+                raise ValueError(
+                    "Owner-local donor search has incomplete source-bound candidates."
+                )
+            candidates = np.asarray(location.candidate_cells, dtype=np.int64)
+            references = np.asarray(location.candidate_reference, dtype=np.float64)
+            residuals = np.asarray(location.geometry_residual, dtype=np.float64)
+            if (
+                candidates.ndim != 2
+                or candidates.shape[0] != images.shape[0]
+                or references.ndim != 3
+                or references.shape[:2] != candidates.shape
+                or residuals.shape != (images.shape[0],)
+            ):
+                raise ValueError(
+                    "Owner-local candidate rows do not match receptor points."
+                )
+            global_ids = np.asarray(locator.cell_map.cell_global_ids, dtype=np.int64)
+            for image, slot in zip(*np.nonzero(candidates >= 0), strict=True):
+                query_index = int(image_queries[image])
+                local_cell_ = int(candidates[image, slot])
+                cell_id = int(global_ids[local_cell_])
+                if not active[local_cell_]:
+                    blocked.add(query_index)
+                    continue
+                if not supported[local_cell_]:
                     raise ValueError(
-                        "Owner-local donor search has incomplete source-bound candidates."
+                        "Owner-local donor candidate lacks completed source support "
+                        f"for receptor {queries[query_index]!r} in cell {cell_id}."
                     )
-                candidates = np.asarray(location.candidate_cells, dtype=np.int64)
-                references = np.asarray(location.candidate_reference, dtype=np.float64)
-                residuals = np.asarray(location.geometry_residual, dtype=np.float64)
-                if (
-                    candidates.ndim != 2
-                    or candidates.shape[0] != images.shape[0]
-                    or references.ndim != 3
-                    or references.shape[:2] != candidates.shape
-                    or residuals.shape != (images.shape[0],)
-                ):
+                candidate_parts[query_index].add(donor_name)
+                measure = measure_by_part[donor_name].get(cell_id)
+                if measure is None:
                     raise ValueError(
-                        "Owner-local candidate rows do not match receptor points."
+                        "Owner-local candidate lacks its source cell measure."
                     )
-                global_ids = np.asarray(locator.cell_map.cell_global_ids, dtype=np.int64)
-                for image, slot in zip(*np.nonzero(candidates >= 0), strict=True):
-                    local_cell_ = int(candidates[image, slot])
-                    cell_id = int(global_ids[local_cell_])
-                    if not active[local_cell_]:
-                        blocked.add(query_index)
-                        continue
-                    if not supported[local_cell_]:
-                        raise ValueError(
-                            "Owner-local donor candidate lacks completed source support "
-                            f"for receptor {queries[query_index]!r} in cell {cell_id}."
-                        )
-                    candidate_parts[query_index].add(donor_name)
-                    measure = measure_by_part[donor_name].get(cell_id)
-                    if measure is None:
-                        raise ValueError(
-                            "Owner-local candidate lacks its source cell measure."
-                        )
-                    priority = priority_order[donor_spec.priority]
-                    key = (
-                        (measure, priority, part_order[donor_name], cell_id)
-                        if connectivity.policy.donor_priority == "finest-donor"
-                        else (priority, measure, part_order[donor_name], cell_id)
+                key = (
+                    (measure, priority, part_order[donor_name], cell_id)
+                    if connectivity.policy.donor_priority == "finest-donor"
+                    else (priority, measure, part_order[donor_name], cell_id)
+                )
+                previous = best.get(query_index)
+                if previous is None or key < previous[0]:
+                    best[query_index] = (
+                        key,
+                        donor_name,
+                        cell_id,
+                        block_name,
+                        local_cell_,
+                        references[image, slot],
+                        float(residuals[image]),
+                        # The donor-frame lattice image the cell was found in.
+                        images[image],
                     )
-                    previous = best.get(query_index)
-                    if previous is None or key < previous[0]:
-                        best[query_index] = (
-                            key,
-                            donor_name,
-                            cell_id,
-                            block_name,
-                            local_cell_,
-                            references[image, slot],
-                            float(residuals[image]),
-                            # The donor-frame lattice image the cell was found in.
-                            images[image],
-                        )
     return best, candidate_parts, blocked
 
 

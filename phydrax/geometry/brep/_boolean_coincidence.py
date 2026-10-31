@@ -35,7 +35,6 @@ from .._cad_revision import (
 from .._rational import exact_float, rational_vector
 from ._assembly import BRepAffinePlacement
 from ._boolean_core import (
-    line_chart_coefficients,
     AffinePCurve,
     boolean_face_chart_box,
     BRepBooleanFailure,
@@ -43,6 +42,7 @@ from ._boolean_core import (
     BRepBooleanPolicy,
     BRepBooleanResult,
     entity_occurrence_index,
+    line_chart_coefficients,
     pcurve_periodic_source,
     PeriodicPCurve,
     selected,
@@ -51,19 +51,21 @@ from ._boolean_core import (
     target_assembly_occurrence_id,
 )
 from ._carrier_pieces import carrier_payload
-from ._constructors import assemble_brep_model, brep_trim_domain, _Builder
-from ._exact import rational_determinant
-from ._intersection import NativePeriodEndpoint, RootEndpoint, endpoint_root_payload
-from ._intersection_curve import SurfaceRegion
+from ._constructors import _Builder, assemble_brep_model, brep_trim_domain
 from ._correspondence import exact_source_lift
+from ._exact import rational_determinant
+from ._intersection import endpoint_root_payload, NativePeriodEndpoint, RootEndpoint
+from ._intersection_curve import SurfaceRegion
 from ._model import BRepCurve, BRepEntityId, BRepGeometry, BRepModel
 from ._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
     CircleCurve,
     CylinderPatch,
+    ExactLineCurve,
     LineCurve,
     PlanePatch,
+    RevolutionSurface,
     SpherePatch,
 )
 from ._placed import PlacedSurface, same_source_pose
@@ -254,6 +256,71 @@ class CoincidentSurfaceCorrespondence(StrictModule):
         return 1 if determinant > 0 else -1
 
 
+def _exact_line(curve: AbstractCurve, /) -> tuple[_Vector, _Vector] | None:
+    """Return a line profile's exact rational point and parameter rate."""
+    if isinstance(curve, LineCurve):
+        origin, direction = curve.origin_exact, curve.direction_exact
+    elif isinstance(curve, ExactLineCurve):
+        origin = curve.first_exact
+        direction = tuple(
+            last - first
+            for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
+        )
+    else:
+        return None
+    rational: list[Fraction] = []
+    for value in (*origin, *direction):
+        if not isinstance(value, Fraction):
+            return None
+        rational.append(value)
+    return tuple(rational[:3]), tuple(rational[3:])
+
+
+def _parallel_scale(vector: _Vector, direction: _Vector, /) -> Fraction | None:
+    """Return ``s`` with ``vector == s * direction`` exactly, if it exists."""
+    pivot = next((index for index, value in enumerate(direction) if value != 0), None)
+    if pivot is None:
+        return None
+    scale = vector[pivot] / direction[pivot]
+    if any(a != scale * b for a, b in zip(vector, direction, strict=True)):
+        return None
+    return scale
+
+
+def _revolution_map(
+    first: RevolutionSurface, second: RevolutionSurface, /
+) -> tuple[_Matrix, _UVVector] | None:
+    """Prove an exact chart map between coaxial revolution surfaces.
+
+    ``S(u, v)`` rotates the profile point ``c(v)`` by ``u`` about the oriented
+    axis line. Equal oriented axis lines and an exact profile reparametrization
+    ``c_first(v) == c_second(alpha * v + beta)`` give
+    ``S_first(u, v) == S_second(u, alpha * v + beta)``.
+    """
+    first_axis = rational_vector(np.asarray(first.axis_direction).reshape(-1))
+    second_axis = rational_vector(np.asarray(second.axis_direction).reshape(-1))
+    if first_axis != second_axis:
+        return None
+    first_origin = rational_vector(np.asarray(first.axis_origin).reshape(-1))
+    second_origin = rational_vector(np.asarray(second.axis_origin).reshape(-1))
+    delta = tuple(b - a for a, b in zip(first_origin, second_origin, strict=True))
+    if any(delta) and _parallel_scale(delta, first_axis) is None:
+        return None
+    if canonical_fingerprint(carrier_payload(first.curve)) == canonical_fingerprint(
+        carrier_payload(second.curve)
+    ):
+        return _IDENTITY, _ZERO
+    first_line, second_line = _exact_line(first.curve), _exact_line(second.curve)
+    if first_line is None or second_line is None:
+        return None
+    alpha = _parallel_scale(first_line[1], second_line[1])
+    offset = tuple(a - b for a, b in zip(first_line[0], second_line[0], strict=True))
+    beta = Fraction(0) if not any(offset) else _parallel_scale(offset, second_line[1])
+    if alpha is None or alpha == 0 or beta is None:
+        return None
+    return ((Fraction(1), Fraction(0)), (Fraction(0), alpha)), (Fraction(0), beta)
+
+
 def _surface_map(
     first: AbstractSurfacePatch,
     second: AbstractSurfacePatch,
@@ -263,6 +330,8 @@ def _surface_map(
         carrier_payload(second)
     ):
         return _IDENTITY, _ZERO
+    if isinstance(first, RevolutionSurface) and isinstance(second, RevolutionSurface):
+        return _revolution_map(first, second)
     if (
         isinstance(first, PlacedSurface)
         and isinstance(second, PlacedSurface)
@@ -712,6 +781,49 @@ def _native_cylinder_ring_chart(model: BRepModel, face: int) -> bool:
     return False
 
 
+def _ring_support(patch: AbstractSurfacePatch, /) -> _AnalyticSupport | None:
+    """Return the exact support geometry used by native ring coverage.
+
+    A revolution of an axis-parallel line is a cylinder whose third axis is the
+    profile rate; a revolution of an axis-perpendicular line lies in one plane.
+    These supports describe point sets only and are not chart maps.
+    """
+    support = _analytic_support(patch)
+    if support is not None or not isinstance(patch, RevolutionSurface):
+        return support
+    line = _exact_line(patch.curve)
+    if line is None:
+        return None
+    point, rate = line
+    axis = rational_vector(np.asarray(patch.axis_direction).reshape(-1))
+    origin = rational_vector(np.asarray(patch.axis_origin).reshape(-1))
+    if sum(value * value for value in axis) != 1:
+        return None
+
+    def dot(first: _Vector, second: _Vector, /) -> Fraction:
+        return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+    def cross(first: _Vector, second: _Vector, /) -> _Vector:
+        return (
+            first[1] * second[2] - first[2] * second[1],
+            first[2] * second[0] - first[0] * second[2],
+            first[0] * second[1] - first[1] * second[0],
+        )
+
+    relative = tuple(a - b for a, b in zip(point, origin, strict=True))
+    height = dot(relative, axis)
+    radial = tuple(a - height * b for a, b in zip(relative, axis, strict=True))
+    if any(cross(rate, axis)) and dot(rate, axis) == 0:
+        if any(cross(radial, rate)):
+            return None
+        center = tuple(a + height * b for a, b in zip(origin, axis, strict=True))
+        return _AnalyticSupport("plane", center, (rate, cross(axis, rate)))
+    if not any(cross(rate, axis)) and any(radial):
+        center = tuple(a + height * b for a, b in zip(origin, axis, strict=True))
+        return _AnalyticSupport("cylinder", center, (radial, cross(axis, radial), rate))
+    return None
+
+
 def prove_source_ring_pair_coverage(
     models: tuple[BRepModel, ...],
     pair: tuple[_Parent, _Parent],
@@ -726,7 +838,7 @@ def prove_source_ring_pair_coverage(
     Parent graph coverage must also retain this edge on both source faces.
     """
     supports = tuple(
-        _analytic_support(models[operand].patches[face]) for operand, face in pair
+        _ring_support(models[operand].patches[face]) for operand, face in pair
     )
     cylinder = next(
         (

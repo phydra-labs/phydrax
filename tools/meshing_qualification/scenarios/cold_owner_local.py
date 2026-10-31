@@ -99,7 +99,7 @@ def _target_graph_partition_plan() -> Any:
         target_shares=np.asarray((0.0, 0.0, 1.0), dtype=np.float64),
         maximum_imbalance=1.0,
         require_nonempty=False,
-        refinement_passes=0,
+        refinement_passes=1,
     )
 
 

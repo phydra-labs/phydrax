@@ -179,6 +179,7 @@ class _Scanner:
         self.data = data
         self.position = 0
         self.label = "header"
+
     def _fail(self, message: str) -> Exception:
         return refuse(
             "malformed",
@@ -194,7 +195,6 @@ class _Scanner:
             )
         self.position = found.end()
         return found.group(1)
-
 
     def integer(self) -> int:
         return int(self._match(_INTEGER, "an integer"))
@@ -223,7 +223,6 @@ class _Scanner:
         for index in range(count):
             values[index] = self.real()
         return values
-
 
     def word(self) -> str:
         return self._match(_WORD, "a token").decode("ascii", "replace")
@@ -430,9 +429,7 @@ class _GeometryReader:
                 case 1:
                     result = _Carrier(
                         label,
-                        LineCurve(
-                            self._point(dimension), self._direction(dimension)
-                        ),
+                        LineCurve(self._point(dimension), self._direction(dimension)),
                         parameter_factor=self.factor,
                     )
                 case 2 | 3 | 4 | 5:
@@ -480,15 +477,9 @@ class _GeometryReader:
                         raise scanner._fail(
                             f"{label}.degree must be between 1 and 25; got {degree}"
                         )
-                    points, weights = self._spline_poles(
-                        degree + 1, dimension, rational
-                    )
-                    knots = np.concatenate(
-                        (np.zeros(degree + 1), np.ones(degree + 1))
-                    )
-                    result = _Carrier(
-                        label, BSplineCurve(points, weights, knots, degree)
-                    )
+                    points, weights = self._spline_poles(degree + 1, dimension, rational)
+                    knots = np.concatenate((np.zeros(degree + 1), np.ones(degree + 1)))
+                    result = _Carrier(label, BSplineCurve(points, weights, knots, degree))
                 case 7:
                     rational, periodic = scanner.boolean(), scanner.boolean()
                     degree, poles, knots = (
@@ -496,9 +487,7 @@ class _GeometryReader:
                         scanner.integer(),
                         scanner.integer(),
                     )
-                    if not (
-                        1 <= degree <= 25 and poles > degree and knots >= 2
-                    ):
+                    if not (1 <= degree <= 25 and poles > degree and knots >= 2):
                         raise scanner._fail(
                             f"{label}.spline_header must have degree in [1, 25], poles greater than degree and at least two distinct knots; got degree={degree}, poles={poles}, knots={knots}"
                         )
@@ -520,9 +509,7 @@ class _GeometryReader:
                     )
                     result = _Carrier(
                         label,
-                        BSplineCurve(
-                            points[indices], weights[indices], expanded, degree
-                        ),
+                        BSplineCurve(points[indices], weights[indices], expanded, degree),
                     )
                 case _:
                     raise scanner._fail(
@@ -850,7 +837,6 @@ class _GeometryReader:
                 )
 
 
-
 # ---------------------------------------------------------------- topology
 
 
@@ -1131,9 +1117,7 @@ def _read_reference(scanner: _Scanner, count: int, owner: int | None) -> _Refere
     return _Reference(orientation, number, location)
 
 
-def _decode(
-    data: bytes | mmap.mmap, factor: float
-) -> _Decoded:
+def _decode(data: bytes | mmap.mmap, factor: float) -> _Decoded:
     scanner = _Scanner(data)
     header = scanner.line()
     while not header and scanner.position < len(data):
@@ -1228,8 +1212,7 @@ class _Resolver:
                 continue
             seen.add(number)
             pending.extend(
-                child.number
-                for child in reversed(self.decoded.shapes[number].children)
+                child.number for child in reversed(self.decoded.shapes[number].children)
             )
         return tuple(sorted(seen))
 
@@ -1838,10 +1821,9 @@ class _Resolver:
     @staticmethod
     def _assembly_placement(placement: RigidPlacement, /) -> BRepAffinePlacement:
         matrix = placement.matrix()
-        rows = tuple(
-            tuple(Fraction(float(value)) for value in row)
-            for row in matrix
-        ) + ((Fraction(0), Fraction(0), Fraction(0), Fraction(1)),)
+        rows = tuple(tuple(Fraction(float(value)) for value in row) for row in matrix) + (
+            (Fraction(0), Fraction(0), Fraction(0), Fraction(1)),
+        )
         return BRepAffinePlacement(rows)
 
     def assembly_graph(self) -> BRepAssemblyGraph:
@@ -1929,9 +1911,7 @@ class _Resolver:
                             "A source solid referenced by an assembly use was not staged.",
                         )
                     uses.append(
-                        BRepAssemblyUse(
-                            use_id, placement, solid_index=solid_index
-                        )
+                        BRepAssemblyUse(use_id, placement, solid_index=solid_index)
                     )
                 else:
                     if _sign(reference.orientation, target.label) < 0:
@@ -1951,9 +1931,7 @@ class _Resolver:
                     self._reference_label(target, (reference.location,))
                 )
             definitions.append(BRepAssemblyDefinition(definition_id, tuple(uses)))
-            self.assembly_provenance[f"assembly-definition:{definition_id}"] = (
-                shape.label
-            )
+            self.assembly_provenance[f"assembly-definition:{definition_id}"] = shape.label
 
         root = self.decoded.root
         root_shape = self.decoded.shapes[root.number]
@@ -2024,14 +2002,9 @@ class _Resolver:
                                 "A source solid referenced by an assembly root was not staged.",
                             )
                         roots.append(
-                            BRepAssemblyUse(
-                                use_id, placement, solid_index=solid_index
-                            )
+                            BRepAssemblyUse(use_id, placement, solid_index=solid_index)
                         )
-                    elif (
-                        target.kind in ("Co", "CS")
-                        and assembly_nodes[target.number]
-                    ):
+                    elif target.kind in ("Co", "CS") and assembly_nodes[target.number]:
                         if _sign(reference.orientation, target.label) < 0:
                             raise refuse(
                                 "unsupported-entity",
@@ -2059,9 +2032,7 @@ class _Resolver:
                             )
                         continue
                     self.assembly_provenance[f"assembly-use:{use_id}"] = (
-                        self._reference_label(
-                            target, (root.location, reference.location)
-                        )
+                        self._reference_label(target, (root.location, reference.location))
                     )
         self.assembly_provenance["assembly-use:root"] = (
             f"{root.orientation}{root.number} {root.location}"
@@ -2347,7 +2318,12 @@ def _import(
                 == _NATIVE_TSHAPE_KINDS.get(label.split(":", 1)[0])
             )
             + tuple(sorted(resolver.assembly_provenance.items()))
-            + (("root", f"{decoded.root.orientation}{decoded.root.number} {decoded.root.location}"),)
+            + (
+                (
+                    "root",
+                    f"{decoded.root.orientation}{decoded.root.number} {decoded.root.location}",
+                ),
+            )
         ),
     )
 
@@ -2588,20 +2564,12 @@ def _surface_record(patch: AbstractSurfacePatch, label: str, /) -> tuple[str, np
             basis = _curve_record(curve, label)
             return f"6 {_numbers(direction / speed)}\n{basis}", np.diag((1.0, speed))
         case RevolutionSurface():
-            curve = explicit_carrier(patch.curve)
-            match curve:
-                case LineCurve() if _unit_speed(np.asarray(curve.direction)) != 1.0:
-                    raise refuse(
-                        "inexact-export",
-                        label,
-                        f"{label}.revolution_basis.direction must have unit speed for a line carrier; got speed={_unit_speed(np.asarray(curve.direction))!r}",
-                    )
-                case _:
-                    pass
+            # OCCT line carriers have unit speed; scale the profile parameter.
+            curve, speed = _normalized_line(patch.curve, label)
             basis = _curve_record(curve, label)
             return (
                 f"7 {_numbers(patch.axis_origin)} {_numbers(patch.axis_direction)}\n{basis}",
-                np.eye(2),
+                np.diag((1.0, speed)),
             )
         case BSplineSurfacePatch():
             weights = np.asarray(patch.weights)
@@ -2714,6 +2682,7 @@ def _pcurve_record(curve: AbstractCurve, first: float, last: float, label: str, 
 class _AssemblyRoot(StrictModule):
     reference: tuple[str, int, int] = eqx.field(static=True)
 
+
 class _PreparedCarriers(StrictModule):
     geometry: BRepGeometry
     normalized: tuple[tuple[AbstractCurve, float], ...]
@@ -2770,7 +2739,9 @@ class _Writer:
         if placement == identity:
             return 0
         matrix = placement.matrix
-        rotation = tuple(tuple(matrix[row][column] for column in range(3)) for row in range(3))
+        rotation = tuple(
+            tuple(matrix[row][column] for column in range(3)) for row in range(3)
+        )
         for first in range(3):
             for second in range(3):
                 product = sum(
@@ -2796,7 +2767,9 @@ class _Writer:
         rows: list[tuple[float, ...]] = []
         for row in matrix[:3]:
             values = tuple(float(value) for value in row)
-            if any(Fraction(value) != exact for value, exact in zip(values, row, strict=True)):
+            if any(
+                Fraction(value) != exact for value, exact in zip(values, row, strict=True)
+            ):
                 raise refuse(
                     "inexact-export",
                     label,
@@ -2825,7 +2798,9 @@ class _Writer:
         }
         reachable: set[str] = set()
         pending = [
-            use.definition_id for use in reversed(graph.roots) if use.definition_id is not None
+            use.definition_id
+            for use in reversed(graph.roots)
+            if use.definition_id is not None
         ]
         while pending:
             definition_id = pending.pop()
@@ -2925,7 +2900,9 @@ class _Writer:
                 if use.definition_id is None:
                     raise RuntimeError("Validated assembly root lost its target.")
                 target = records[use.definition_id]
-            location = self._assembly_location(use.placement, f"assembly-use:{use.use_id}")
+            location = self._assembly_location(
+                use.placement, f"assembly-use:{use.use_id}"
+            )
             root_references.append(("+", target, location))
             self.reference_records.append(
                 (f"assembly-use:{use.use_id}", "+", target, location)
@@ -2939,7 +2916,11 @@ class _Writer:
             )
         if len(root_references) > 1:
             self.path_normalizations.append(
-                ("assembly-root", tuple(use.use_id for use in graph.roots), ("single-root-compound",))
+                (
+                    "assembly-root",
+                    tuple(use.use_id for use in graph.roots),
+                    ("single-root-compound",),
+                )
             )
         children = [*root_references, *topology.loose]
         if len(children) == 1:
@@ -3250,15 +3231,11 @@ def _has_rational_radical_carrier_value(value: object, /) -> bool:
         elif isinstance(current, dict):
             pending.extend(current.values())
         elif is_dataclass(current) and not isinstance(current, type):
-            pending.extend(
-                getattr(current, item.name) for item in fields(current)
-            )
+            pending.extend(getattr(current, item.name) for item in fields(current))
     return False
 
 
-def _brep_text_scalar_identity_losses(
-    model: BRepModel, /
-) -> tuple[AdapterLoss, ...]:
+def _brep_text_scalar_identity_losses(model: BRepModel, /) -> tuple[AdapterLoss, ...]:
     geometry = model.geometry
     if geometry is None or not any(
         _has_rational_radical_carrier_value(carrier)
@@ -3285,7 +3262,6 @@ def write_brep_text(
     policy: CadExportPolicy | None = None,
     version: BRepTextVersion = "V3",
     mode: PublicationMode = "exclusive",
-
 ) -> CadExportResult:
     """Atomically publish native carriers as an OCCT BRep text file.
 

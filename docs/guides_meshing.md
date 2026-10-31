@@ -568,6 +568,21 @@ of one facet. Edges introduced only by recovery triangulation are not source cur
 they retain their incident source-facet and region-side ancestry and are associated
 to the facet rather than assigned a new curve identity.
 
+Native PLC boundary recovery splits a missing segment or subface only at exactly
+witnessed source points (`S = A + t(B - A)` or `A + l1(B - A) + l2(C - A)` with
+dyadic parameters); every predicate evaluates `S` itself, so split points stay
+exactly collinear/coplanar with their sources even when `S` is not a binary64
+point. After recovery such points are suppressed again: under `FIXED` every
+boundary split point, under `CONFORMING` every split point that is not a binary64
+point. Suppression retriangulates the subfaces through the point within their own
+planes and refills its star by contraction onto a neighbour, an exact Steiner-free
+gift-wrapped fill, or cones from interior volume points, each accepted only after
+exact positivity and cavity-boundary checks. Published boundary vertices
+therefore lie exactly on their sources. A point that cannot be removed is a typed
+refusal naming its source entity: `STEINER_SUPPRESSION` under `CONFORMING`,
+`FIXED_SEGMENT`/`FIXED_FACET` under `FIXED`. A requested curve feature on an
+internal diagonal of a coplanar facet group is recovered like any other segment.
+
 An analytic implicit profile with established reach uses restricted Delaunay
 for volume meshing by default. Adaptive implicit volume discovery is distinct
 and must be selected explicitly as `implicit_adaptive_tetrahedral`; it is not a
@@ -1065,9 +1080,10 @@ identity are checked before the target is certified.
 
 Surface-material charts coarsen only when exact ancestry preserves their source
 root and piece. Source-boundary chart pieces compose through exact fine-to-parent
-reference maps and remain multiple witness rows partitioning the target edge or
-face; missing or ambiguous lineage refuses rather than merging source chart,
-entity, or occurrence identities.
+reference maps. When a restored parent entity is covered by its children's
+pieces of one source chart, the pieces must agree on one exact affine parent
+chart and are published as that single row; missing or ambiguous lineage refuses
+rather than merging source chart, entity, or occurrence identities.
 
 Source-boundary chart witnesses retain exact rational reference/source-parameter
 tokens; their float arrays are checked realizations, not ancestry authority.
@@ -1471,7 +1487,12 @@ restricted map is still checked.
 Simplex coarsening of a piecewise-linear mesh keeps the restored parents affine
 on their exact corners; refine/coarsen round trips through the bisection
 hierarchy restore the original topology, coordinates, and global IDs exactly.
-Non-P1 coarsening requires one exact root chart per restored parent.
+Adapting an already restricted (non-P1) map composes every target chart through
+the source's retained root restriction, so restriction ancestry always names the
+original root cells rather than an intermediate mesh. Non-P1 coarsening rebuilds
+each restored parent's exact root chart from its children's root charts and the
+inverse bisection maps; it refuses when the children name different root cells,
+coordinate dofs, or charts.
 
 `NATIVE_POLYHEDRAL` selects one explicit operation: `PLANE_SPLIT`,
 `AGGLOMERATE`, or `REGENERATE`. Plane splits and agglomerations retain exact

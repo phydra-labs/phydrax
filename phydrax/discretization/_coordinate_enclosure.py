@@ -537,15 +537,19 @@ def compose(
     if dimension_ < 0:
         raise ValueError("compose.dimension must be nonnegative.")
     result: Expression = constant(0, dimension_)
+    # Each argument power is formed once per call, not once per monomial.
+    powers: dict[tuple[int, int], Expression] = {}
     for exponent, coefficient in expression.items():
         if len(exponent) != len(arguments):
             raise ValueError("composition arguments must match the polynomial dimension.")
         term: Expression = constant(coefficient, dimension_)
         for axis, degree in enumerate(exponent):
             if degree:
-                term = multiply(
-                    term, power(arguments[axis], degree, dimension=dimension_)
-                )
+                factor = powers.get((axis, degree))
+                if factor is None:
+                    factor = power(arguments[axis], degree, dimension=dimension_)
+                    powers[axis, degree] = factor
+                term = multiply(term, factor)
         result = add(result, term)
     return result
 
@@ -624,45 +628,128 @@ def _box_weight(
     return weight
 
 
-def bernstein_coefficients(
+type _WeightColumn = tuple[tuple[Fraction, ...], tuple[tuple[int, Fraction], ...]]
+
+
+def _weight_column(weights: tuple[Fraction, ...], /) -> _WeightColumn:
+    return weights, tuple((row, weight) for row, weight in enumerate(weights) if weight)
+
+
+@cache
+def _simplex_weight_column(
+    alpha: tuple[int, ...], degree: int, parts: int, /
+) -> _WeightColumn:
+    """Exact simplex Bernstein weights of one monomial, formed once per degree."""
+    return _weight_column(
+        tuple(
+            _simplex_weight(beta, alpha, degree) for beta in _compositions(degree, parts)
+        )
+    )
+
+
+@cache
+def _box_weight_column(
+    alpha: tuple[int, ...], degrees: tuple[int, ...], /
+) -> _WeightColumn:
+    """Exact tensor Bernstein weights of one monomial, formed once per degree."""
+    return _weight_column(
+        tuple(
+            _box_weight(beta, alpha, degrees)
+            for beta in product(*(range(degree + 1) for degree in degrees))
+        )
+    )
+
+
+def _accumulate_controls(
+    controls: list[ExactScalar], coefficient: ExactScalar, column: _WeightColumn, /
+) -> None:
+    weights, nonzero = column
+    if isinstance(coefficient, Fraction):
+        # A rational zero product leaves a rational control unchanged.
+        for row, weight in nonzero:
+            controls[row] += coefficient * weight
+        return
+    for row, weight in enumerate(weights):
+        controls[row] += coefficient * weight
+
+
+def bernstein_degree(
     polynomial: Mapping[tuple[int, ...], ExactScalar],
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[ExactScalar, ...]:
-    """Return exact Bernstein controls on a simplex, prism, or unit box."""
-    value = _canonical_polynomial(polynomial)
-    if dimension < 1 or any(len(index) != dimension for index in value):
-        raise ValueError("Bernstein dimension must match polynomial monomial dimensions.")
-    controls: list[ExactScalar]
+) -> tuple[int, ...]:
+    """Return the least Bernstein degree of a polynomial on its domain.
+
+    The degree is ``(total,)`` on a simplex, one degree per axis on a box, and
+    ``(triangle, line)`` on a prism.
+    """
     match domain:
         case "simplex":
-            degree = max((sum(index) for index in value), default=0)
-            betas = _compositions(degree, dimension + 1)
-            controls = [Fraction(0) for _ in betas]
-            for index, coefficient in value.items():
-                alpha = (0, *index)
-                for row, beta in enumerate(betas):
-                    controls[row] += coefficient * _simplex_weight(beta, alpha, degree)
-            return tuple(controls)
+            return (max((sum(index) for index in polynomial), default=0),)
         case "box":
-            degrees = tuple(
-                max((index[axis] for index in value), default=0)
+            return tuple(
+                max((index[axis] for index in polynomial), default=0)
                 for axis in range(dimension)
             )
-            betas = tuple(product(*(range(degree + 1) for degree in degrees)))
-            controls = [Fraction(0) for _ in betas]
-            for index, coefficient in value.items():
-                for row, beta in enumerate(betas):
-                    controls[row] += coefficient * _box_weight(beta, index, degrees)
-            return tuple(controls)
         case "prism":
             if dimension != 3:
                 raise ValueError(
                     "prism Bernstein controls require three reference dimensions."
                 )
-            triangle_degree = max((sum(index[:2]) for index in value), default=0)
-            line_degree = max((index[2] for index in value), default=0)
+            return (
+                max((sum(index[:2]) for index in polynomial), default=0),
+                max((index[2] for index in polynomial), default=0),
+            )
+        case _:
+            raise ValueError(f"Unsupported Bernstein domain {domain!r}.")
+
+
+def bernstein_coefficients(
+    polynomial: Mapping[tuple[int, ...], ExactScalar],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+    *,
+    degree: tuple[int, ...] | None = None,
+) -> tuple[ExactScalar, ...]:
+    """Return exact Bernstein controls on a simplex, prism, or unit box.
+
+    ``degree`` (shaped as `bernstein_degree`) elevates the controls; each
+    elevated control is a convex combination of the least-degree controls.
+    """
+    value = _canonical_polynomial(polynomial)
+    if dimension < 1 or any(len(index) != dimension for index in value):
+        raise ValueError("Bernstein dimension must match polynomial monomial dimensions.")
+    least = bernstein_degree(value, domain, dimension)
+    if degree is None:
+        degree = least
+    elif len(degree) != len(least) or any(
+        int(chosen) < int(minimum) for chosen, minimum in zip(degree, least, strict=True)
+    ):
+        raise ValueError("Bernstein elevation degree is below the polynomial degree.")
+    controls: list[ExactScalar]
+    match domain:
+        case "simplex":
+            (total,) = degree
+            betas = _compositions(total, dimension + 1)
+            controls = [Fraction(0) for _ in betas]
+            for index, coefficient in value.items():
+                _accumulate_controls(
+                    controls,
+                    coefficient,
+                    _simplex_weight_column((0, *index), total, dimension + 1),
+                )
+            return tuple(controls)
+        case "box":
+            controls = [Fraction(0) for _ in range(prod(axis + 1 for axis in degree))]
+            for index, coefficient in value.items():
+                _accumulate_controls(
+                    controls, coefficient, _box_weight_column(index, degree)
+                )
+            return tuple(controls)
+        case "prism":
+            triangle_degree, line_degree = degree
             triangle_indices = _compositions(triangle_degree, 3)
             controls = [
                 Fraction(0) for _ in range(len(triangle_indices) * (line_degree + 1))
@@ -678,8 +765,7 @@ def bernstein_coefficients(
                         row = triangle_row * (line_degree + 1) + line_control
                         controls[row] += coefficient * triangle_weight * line_weight
             return tuple(controls)
-        case _:
-            raise ValueError(f"Unsupported Bernstein domain {domain!r}.")
+    raise ValueError(f"Unsupported Bernstein domain {domain!r}.")
 
 
 def polynomial_bounds(
@@ -1182,6 +1268,7 @@ __all__ = [
     "affine_map",
     "axes",
     "bernstein_coefficients",
+    "bernstein_degree",
     "compose",
     "compose_expression",
     "constant",

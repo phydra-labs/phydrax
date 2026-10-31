@@ -10,7 +10,9 @@
 #include <map>
 #include <limits>
 #include <span>
+#include <unordered_map>
 #include <vector>
+#include <set>
 #include <utility>
 
 #include "check.hpp"
@@ -286,14 +288,15 @@ ImprovementFixture make_bipyramid_fixture(std::span<const double> radii,
   return make_improvement_fixture(std::move(points), std::move(cells));
 }
 
-ImprovementFixture make_interior_collapse_fixture() {
-  constexpr std::int32_t side = 5;
-  constexpr std::int32_t grid_vertices = side * side * side;
+// Kuhn triangulation of the unit-spaced grid of side^3 points: six
+// tetrahedra per cube, all sharing its main diagonal.
+void kuhn_grid(std::int32_t side, std::vector<double>& raw_points,
+               std::vector<std::array<std::int32_t, 4>>& raw_cells) {
   const auto vertex_id = [side](std::int32_t x, std::int32_t y,
                                 std::int32_t z) {
     return (x * side + y) * side + z;
   };
-  std::vector<double> raw_points(3 * grid_vertices);
+  raw_points.assign(3 * static_cast<std::size_t>(side * side * side), 0.0);
   for (std::int32_t x = 0; x < side; ++x) {
     for (std::int32_t y = 0; y < side; ++y) {
       for (std::int32_t z = 0; z < side; ++z) {
@@ -307,7 +310,7 @@ ImprovementFixture make_interior_collapse_fixture() {
   constexpr std::array<std::array<std::int32_t, 3>, 6> axis_orders{{
       {0, 1, 2}, {0, 2, 1}, {1, 0, 2},
       {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}};
-  std::vector<std::array<std::int32_t, 4>> raw_cells;
+  raw_cells.clear();
   for (std::int32_t x = 0; x + 1 < side; ++x) {
     for (std::int32_t y = 0; y + 1 < side; ++y) {
       for (std::int32_t z = 0; z + 1 < side; ++z) {
@@ -325,6 +328,21 @@ ImprovementFixture make_interior_collapse_fixture() {
       }
     }
   }
+}
+
+ImprovementFixture make_kuhn_grid_fixture(std::int32_t side) {
+  std::vector<double> points;
+  std::vector<std::array<std::int32_t, 4>> cells;
+  kuhn_grid(side, points, cells);
+  return make_improvement_fixture(std::move(points), std::move(cells));
+}
+
+ImprovementFixture make_interior_collapse_fixture() {
+  constexpr std::int32_t side = 5;
+  constexpr std::int32_t grid_vertices = side * side * side;
+  std::vector<double> raw_points;
+  std::vector<std::array<std::int32_t, 4>> raw_cells;
+  kuhn_grid(side, raw_points, raw_cells);
 
   std::map<std::array<std::int32_t, 3>, std::vector<std::size_t>> face_owners;
   for (std::size_t row = 0; row < raw_cells.size(); ++row) {
@@ -646,12 +664,13 @@ void convex_bipyramid_reports_unresolved_radius_edge() {
                             before_radius));
   PHX_CHECK(before_radius > 2.0);
 
+  std::int64_t inserted = 0;
   std::int64_t collapsed = 0;
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t improve_status =
-      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12},
-                   collapsed, relocated, unmet);
+      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {},
+                   inserted, collapsed, relocated, unmet);
   if (improve_status != PHX_MC_UNRESOLVED || unmet != 1 ||
       mesh.unmet_records().size() != 1 ||
       mesh.unmet_records().front().criterion != PHX_MC_TET_UNMET_RADIUS_EDGE) {
@@ -808,13 +827,14 @@ void unresolved_radius_target_reports_residuals_without_losing_constraints() {
   PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
   if (before.cells.size() != 1) return;
 
+  std::int64_t inserted = 0;
   std::int64_t collapsed = 0;
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t status = improve_mesh(
-      mesh, TetQualityRequest{0.5, 10.0, 0.0}, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{0.5, 10.0, 0.0}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(status == PHX_MC_UNRESOLVED);
-  PHX_CHECK(collapsed >= 0 && relocated >= 0 && unmet > 0);
+  PHX_CHECK(inserted >= 0 && collapsed >= 0 && relocated >= 0 && unmet > 0);
   PHX_CHECK(!mesh.unmet_records().empty());
   PHX_CHECK(std::any_of(mesh.unmet_records().begin(), mesh.unmet_records().end(),
                         [](const TetUnmetRecord& record) {
@@ -822,7 +842,7 @@ void unresolved_radius_target_reports_residuals_without_losing_constraints() {
                                  record.value > 0.5;
                         }));
   const std::int32_t angle_status = improve_mesh(
-      mesh, TetQualityRequest{2.0, 70.49, 0.0}, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{2.0, 70.49, 0.0}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(angle_status == PHX_MC_UNRESOLVED);
   PHX_CHECK(std::any_of(mesh.unmet_records().begin(), mesh.unmet_records().end(),
                         [](const TetUnmetRecord& record) {
@@ -839,8 +859,63 @@ void unresolved_radius_target_reports_residuals_without_losing_constraints() {
   }
 }
 
+// A rounded cocircular torus-grid sliver: exactly positive, but the floating
+// circumcenter solve meets a zero pivot. Improvement measures it with an
+// unbounded radius-edge ratio instead of refusing its input.
+void unrepresentable_positive_sliver_is_measured_not_refused() {
+  const std::array<double, 12> points{
+      -0x1.c70b87954e637p-3, -0x1.c5ed025972287p-1, -0x1.32dd9dbad3c19p-2,
+      -0x1.d04e9d763be24p-3, -0x1.cf2a434460531p-1, -0x1.31619e74336d0p-2,
+      -0x1.aaaea448179fdp-3, -0x1.c7a4ec59e9057p-1, -0x1.32dd9dbad3c19p-2,
+      -0x1.b35df02262e1bp-3, -0x1.d0eb21831421bp-1, -0x1.31619e74336d0p-2};
+  const double* corners[4]{points.data(), points.data() + 3, points.data() + 6,
+                           points.data() + 9};
+  PHX_CHECK(orient3d(corners[0], corners[1], corners[2], corners[3]) > 0);
+  geometry::TetrahedronShape shape;
+  PHX_CHECK(!geometry::tetrahedron_shape(corners, shape));
+  constexpr std::array<std::int32_t, 4> tetrahedron{0, 1, 2, 3};
+  constexpr std::array<std::int32_t, 1> regions{0};
+  constexpr std::array<std::int32_t, 4> face_sources{0, 1, 2, 3};
+  constexpr std::array<std::int32_t, 0> no_indices{};
+  std::array<std::int32_t, 12> faces{};
+  for (int opposite = 0; opposite < 4; ++opposite) {
+    std::int32_t face[3];
+    oriented_facet(tetrahedron.data(), opposite, face);
+    std::copy_n(face, 3, faces.begin() + 3 * opposite);
+  }
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  PHX_CHECK(mesh.build(points, tetrahedron, regions, faces, face_sources, {}, no_indices,
+                       no_indices, {}, nullptr) == PHX_MC_OK);
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  if (before.cells.size() != 1) return;
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status = improve_mesh(
+      mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {}, inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  const std::uint64_t sliver = before.cells.front().id;
+  const bool survives = std::any_of(after.cells.begin(), after.cells.end(),
+                                    [&](const TetSnapshotCell& cell) { return cell.id == sliver; });
+  PHX_CHECK(survives == std::any_of(
+                            mesh.unmet_records().begin(), mesh.unmet_records().end(),
+                            [&](const TetUnmetRecord& record) {
+                              return record.cell_id == sliver &&
+                                     record.criterion == PHX_MC_TET_UNMET_RADIUS_EDGE &&
+                                     record.reason == PHX_MC_TET_UNMET_NONREPRESENTABLE &&
+                                     std::isinf(record.value);
+                            }));
+  PHX_CHECK(same_source_banks(before, after));
+}
 
-void fixed_mapped_cube_slivers_are_improved_transactionally() {
+
+// Recovers the near-unit mapped-cube PLC under `policy` (which `mesh` must
+// share) and builds its mesh with every recovered vertex protected.
+bool build_mapped_cube(TetMesh& mesh, BoundaryPolicy policy, PlcRecovery& recovered) {
   constexpr std::array<double, 24> points{
       0.020000000035049353, 0.019999999999999997, 0.019999999999999997,
       0.9799999997734662, 0.02, 0.02,
@@ -875,26 +950,30 @@ void fixed_mapped_cube_slivers_are_improved_transactionally() {
   input.facet_regions = facet_regions.data();
   input.segment_count = 12;
   input.segments = segments.data();
-  input.policy = BoundaryPolicy::kFixed;
+  input.policy = policy;
 
-  PlcRecovery recovered;
   const std::int32_t recovery_status = recover_plc(input, recovered);
   PHX_CHECK(recovery_status == PHX_MC_OK);
-  if (recovery_status != PHX_MC_OK) return;
+  if (recovery_status != PHX_MC_OK) return false;
   PHX_CHECK(recovered.points.size() == points.size());
   PHX_CHECK(!recovered.tets.empty() && recovered.tets.size() % 4 == 0);
   PHX_CHECK(recovered.segment_sources.size() >= segments.size() / 2);
   if (recovered.points.size() != points.size() || recovered.tets.empty() ||
-      recovered.tets.size() % 4 != 0) return;
+      recovered.tets.size() % 4 != 0) return false;
 
   std::vector<std::int8_t> protected_vertices(recovered.points.size() / 3, 1);
-  TetMesh mesh(BoundaryPolicy::kFixed);
   const std::int32_t build_status = mesh.build(
       recovered.points, recovered.tets, recovered.tet_regions, recovered.faces,
       recovered.face_sources, recovered.face_orientations, recovered.segments,
       recovered.segment_sources, recovered.protection, nullptr, protected_vertices);
   PHX_CHECK(build_status == PHX_MC_OK);
-  if (build_status != PHX_MC_OK) return;
+  return build_status == PHX_MC_OK;
+}
+
+void fixed_mapped_cube_slivers_are_improved_transactionally() {
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  PlcRecovery recovered;
+  if (!build_mapped_cube(mesh, BoundaryPolicy::kFixed, recovered)) return;
 
   TetMeshSnapshot recovered_state;
   PHX_CHECK(mesh.snapshot(recovered_state) == TetEditStatus::kApplied);
@@ -925,9 +1004,31 @@ void fixed_mapped_cube_slivers_are_improved_transactionally() {
   if (before.vertices.size() < recovered_state.vertices.size() ||
       before.cells.size() < recovered_state.cells.size()) return;
   const std::size_t added_vertices = before.vertices.size() - recovered_state.vertices.size();
-  const std::size_t added_cells = before.cells.size() - recovered_state.cells.size();
   PHX_CHECK(added_vertices == static_cast<std::size_t>(inserted));
-  PHX_CHECK(added_cells == 3 * added_vertices);
+  // The refined cube stays a triangulated 3-ball: V - E + F - T = 1.
+  {
+    std::set<std::pair<std::uint64_t, std::uint64_t>> edges;
+    std::set<std::array<std::uint64_t, 3>> faces;
+    for (const TetSnapshotCell& cell : before.cells) {
+      for (int first = 0; first < 4; ++first) {
+        for (int second = first + 1; second < 4; ++second) {
+          edges.insert(std::minmax(cell.vertices[first], cell.vertices[second]));
+        }
+        std::array<std::uint64_t, 3> face{};
+        int offset = 0;
+        for (int corner = 0; corner < 4; ++corner) {
+          if (corner != first) face[offset++] = cell.vertices[corner];
+        }
+        std::sort(face.begin(), face.end());
+        faces.insert(face);
+      }
+    }
+    PHX_CHECK(static_cast<std::int64_t>(before.vertices.size()) -
+                  static_cast<std::int64_t>(edges.size()) +
+                  static_cast<std::int64_t>(faces.size()) -
+                  static_cast<std::int64_t>(before.cells.size()) ==
+              1);
+  }
   double before_angle = 0.0;
   double before_determinant = 0.0;
   double before_radius = 0.0;
@@ -935,14 +1036,15 @@ void fixed_mapped_cube_slivers_are_improved_transactionally() {
                             before_radius));
   PHX_CHECK(before_determinant < 1.0e-12);
 
+  std::int64_t improvement_inserted = 0;
   std::int64_t collapsed = 0;
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t improve_status =
-      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12},
-                   collapsed, relocated, unmet);
+      improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {},
+                   improvement_inserted, collapsed, relocated, unmet);
   PHX_CHECK(improve_status == PHX_MC_OK);
-  PHX_CHECK(collapsed >= 0 && relocated >= 0 && unmet == 0);
+  PHX_CHECK(improvement_inserted >= 0 && collapsed >= 0 && relocated >= 0 && unmet == 0);
   TetMeshSnapshot after;
   PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
   PHX_CHECK(!after.cells.empty() && !after.vertices.empty());
@@ -1171,12 +1273,14 @@ void relocation_metric_cache_is_bitwise_exact() {
         geometry::TetrahedronShape reference_shape;
         const bool reference_shape_valid =
             geometry::tetrahedron_shape(points.data(), reference_shape);
-        double cached_ratio = 0.0;
-        const bool cached_shape_valid = geometry::relocation_radius_edge_ratio(
-            points.data(), cache, cached_ratio);
+        geometry::TetrahedronShape cached_shape;
+        const bool cached_shape_valid = geometry::relocation_tetrahedron_shape(
+            points.data(), cache, cached_shape);
         PHX_CHECK(cached_shape_valid == reference_shape_valid);
         if (cached_shape_valid && reference_shape_valid) {
-          PHX_CHECK(same_bits(cached_ratio, reference_shape.radius_edge_ratio));
+          PHX_CHECK(same_bits(cached_shape.radius_edge_ratio,
+                              reference_shape.radius_edge_ratio));
+          PHX_CHECK(same_bits(cached_shape.circumradius, reference_shape.circumradius));
         }
         PHX_CHECK(same_bits(
             geometry::relocation_minimum_dihedral_degrees(points.data(), cache),
@@ -1219,19 +1323,21 @@ void hexagonal_ring_reconnects_and_is_slot_invariant() {
   PHX_CHECK(second_mesh.snapshot(second_before) == TetEditStatus::kApplied);
   PHX_CHECK(same_logical_snapshot(first_before, second_before));
 
+  std::int64_t first_inserted = 0;
   std::int64_t first_collapsed = 0;
   std::int64_t first_relocated = 0;
   std::int64_t first_unmet = 0;
+  std::int64_t second_inserted = 0;
   std::int64_t second_collapsed = 0;
   std::int64_t second_relocated = 0;
   std::int64_t second_unmet = 0;
   const TetQualityRequest request{1.5, 10.0, 1.0e-12};
   const std::int32_t first_status =
-      improve_mesh(first_mesh, request, first_collapsed, first_relocated,
-                   first_unmet);
+      improve_mesh(first_mesh, request, {}, first_inserted, first_collapsed,
+                   first_relocated, first_unmet);
   const std::int32_t second_status =
-      improve_mesh(second_mesh, request, second_collapsed, second_relocated,
-                   second_unmet);
+      improve_mesh(second_mesh, request, {}, second_inserted, second_collapsed,
+                   second_relocated, second_unmet);
   PHX_CHECK(first_status == PHX_MC_OK && second_status == PHX_MC_OK);
   PHX_CHECK(first_unmet == 0 && second_unmet == 0);
   PHX_CHECK(first_collapsed == 0 && second_collapsed == 0);
@@ -1284,13 +1390,14 @@ void concave_ring_uses_only_oriented_dp_cavities() {
   TetMeshSnapshot before;
   PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
 
+  std::int64_t inserted = 0;
   std::int64_t collapsed = 0;
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t status = improve_mesh(
-      mesh, TetQualityRequest{5.0, 10.0, 1.0e-12}, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{5.0, 10.0, 1.0e-12}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(status == PHX_MC_OK);
-  PHX_CHECK(collapsed == 0 && relocated == 0 && unmet == 0);
+  PHX_CHECK(inserted == 0 && collapsed == 0 && relocated == 0 && unmet == 0);
   TetMeshSnapshot after;
   PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
   PHX_CHECK(after.generation > before.generation);
@@ -1329,13 +1436,14 @@ void mixed_region_high_ring_refuses_transaction() {
   TetMeshSnapshot before;
   PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
 
+  std::int64_t inserted = 0;
   std::int64_t collapsed = 0;
   std::int64_t relocated = 0;
   std::int64_t unmet = 0;
   const std::int32_t status = improve_mesh(
-      mesh, TetQualityRequest{1.5, 10.0, 1.0e-12}, collapsed, relocated, unmet);
+      mesh, TetQualityRequest{1.5, 10.0, 1.0e-12}, {}, inserted, collapsed, relocated, unmet);
   PHX_CHECK(status == PHX_MC_UNRESOLVED && unmet > 0);
-  PHX_CHECK(collapsed == 0 && relocated == 0);
+  PHX_CHECK(inserted == 0 && collapsed == 0 && relocated == 0);
   TetMeshSnapshot after;
   PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
   PHX_CHECK(same_mesh_state(before, after));
@@ -1372,19 +1480,21 @@ void interior_collapse_is_slot_order_invariant() {
   PHX_CHECK(second_mesh.snapshot(second_before) == TetEditStatus::kApplied);
   PHX_CHECK(same_logical_snapshot(first_before, second_before));
 
+  std::int64_t first_inserted = 0;
   std::int64_t first_collapsed = 0;
   std::int64_t first_relocated = 0;
   std::int64_t first_unmet = 0;
+  std::int64_t second_inserted = 0;
   std::int64_t second_collapsed = 0;
   std::int64_t second_relocated = 0;
   std::int64_t second_unmet = 0;
   const TetQualityRequest request{2.0, 10.0, 1.0e-12};
   const std::int32_t first_status =
-      improve_mesh(first_mesh, request, first_collapsed, first_relocated,
-                   first_unmet);
+      improve_mesh(first_mesh, request, {}, first_inserted, first_collapsed,
+                   first_relocated, first_unmet);
   const std::int32_t second_status =
-      improve_mesh(second_mesh, request, second_collapsed, second_relocated,
-                   second_unmet);
+      improve_mesh(second_mesh, request, {}, second_inserted, second_collapsed,
+                   second_relocated, second_unmet);
   PHX_CHECK(first_status == second_status);
   PHX_CHECK(first_collapsed > 0 && second_collapsed > 0);
   PHX_CHECK(first_unmet == second_unmet);
@@ -1394,8 +1504,132 @@ void interior_collapse_is_slot_order_invariant() {
   PHX_CHECK(second_mesh.snapshot(second_after) == TetEditStatus::kApplied);
   PHX_CHECK(same_logical_snapshot(first_after, second_after));
   PHX_CHECK(first_after.generation > first_before.generation);
-  PHX_CHECK(first_after.vertices.size() < first_before.vertices.size());
+  PHX_CHECK(first_inserted == second_inserted);
+  PHX_CHECK(first_after.vertices.size() + static_cast<std::size_t>(first_collapsed) ==
+            first_before.vertices.size() + static_cast<std::size_t>(first_inserted));
   PHX_CHECK(same_source_banks(first_before, first_after));
+}
+
+double cell_circumradius(const TetMesh& mesh, const TetSnapshotCell& cell) {
+  std::array<const double*, 4> points{};
+  for (std::size_t corner = 0; corner < 4; ++corner) {
+    points[corner] = mesh.point(mesh.vertex_slot(cell.vertices[corner]));
+  }
+  geometry::TetrahedronShape shape;
+  return geometry::tetrahedron_shape(points.data(), shape)
+             ? shape.circumradius
+             : std::numeric_limits<double>::infinity();
+}
+
+// IDs of the cells whose circumradius exceeds the mean of their corners'
+// targets (vertices without a target leave a cell unconstrained).
+std::set<std::uint64_t> size_violations(
+    const TetMesh& mesh, const TetMeshSnapshot& snapshot,
+    const std::unordered_map<std::uint64_t, double>& sizes) {
+  std::set<std::uint64_t> violating;
+  for (const TetSnapshotCell& cell : snapshot.cells) {
+    std::array<double, 4> corner_sizes{};
+    for (std::size_t corner = 0; corner < 4; ++corner) {
+      const auto found = sizes.find(cell.vertices[corner]);
+      corner_sizes[corner] = found == sizes.end() ? 0.0 : found->second;
+    }
+    if (cell_circumradius(mesh, cell) > cell_size_target(corner_sizes)) {
+      violating.insert(cell.id);
+    }
+  }
+  return violating;
+}
+
+std::set<std::uint64_t> cell_ids_of(const TetMeshSnapshot& snapshot) {
+  std::set<std::uint64_t> ids;
+  for (const TetSnapshotCell& cell : snapshot.cells) ids.insert(cell.id);
+  return ids;
+}
+
+// Uniform-size refinement of a Kuhn grid, then improvement toward a 30-degree
+// dihedral target. Without the size field, improvement's edits create cells
+// beyond the refinement's targets. With refinement's retained field as a hard
+// gate, every cell an accepted edit (each collapse included) creates is within
+// its target: a violating cell can only be an unchanged refinement cell,
+// reported with a SIZE record, and the field holds exactly the live vertices
+// (collapsed ones erased, inserted ones interpolated).
+void improvement_respects_refinement_size_field() {
+  constexpr double kSize = 0.5;
+  const TetQualityRequest request{2.0, 30.0, 1.0e-12};
+  const ImprovementFixture fixture = make_kuhn_grid_fixture(3);
+  const std::vector<std::int32_t> regions(fixture.cells.size(), 1);
+  const std::vector<std::int8_t> protected_vertices(fixture.points.size() / 3, 1);
+  const auto refine_grid = [&](TetMesh& mesh, TetMeshSnapshot& state) {
+    if (build_improvement_mesh(mesh, fixture, regions,
+                               sequential_ids(fixture.points.size() / 3),
+                               sequential_ids(fixture.cells.size()),
+                               sequential_ids(fixture.faces.size()),
+                               protected_vertices) != PHX_MC_OK) {
+      return false;
+    }
+    const std::vector<double> sizes(fixture.points.size() / 3, kSize);
+    std::int64_t inserted = 0;
+    std::int64_t unmet = 0;
+    const std::int32_t status = refine_mesh(mesh, 2.0, sizes, inserted, unmet);
+    PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(inserted > 0);
+    PHX_CHECK(mesh.snapshot(state) == TetEditStatus::kApplied);
+    return status == PHX_MC_OK || status == PHX_MC_UNRESOLVED;
+  };
+  TetMesh unconstrained(BoundaryPolicy::kConforming);
+  TetMesh sized(BoundaryPolicy::kConforming);
+  TetMeshSnapshot unconstrained_before;
+  TetMeshSnapshot before;
+  if (!refine_grid(unconstrained, unconstrained_before) || !refine_grid(sized, before)) return;
+  const std::unordered_map<std::uint64_t, double> field = sized.vertex_sizes();
+  PHX_CHECK(field.size() == before.vertices.size());
+  const std::size_t violating_before = size_violations(sized, before, field).size();
+
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  // Zero targets replace the retained field by none.
+  const std::vector<double> no_sizes(unconstrained_before.vertices.size(), 0.0);
+  improve_mesh(unconstrained, request, no_sizes, inserted, collapsed, relocated, unmet);
+  PHX_CHECK(unconstrained.vertex_sizes().empty());
+  TetMeshSnapshot unconstrained_after;
+  PHX_CHECK(unconstrained.snapshot(unconstrained_after) == TetEditStatus::kApplied);
+  const std::set<std::uint64_t> unconstrained_original = cell_ids_of(unconstrained_before);
+  const std::set<std::uint64_t> unconstrained_violating =
+      size_violations(unconstrained, unconstrained_after, field);
+  PHX_CHECK(std::any_of(unconstrained_violating.begin(), unconstrained_violating.end(),
+                        [&](std::uint64_t id) {
+                          return !unconstrained_original.contains(id);
+                        }));
+
+  const std::int32_t status =
+      improve_mesh(sized, request, {}, inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+  TetMeshSnapshot after;
+  PHX_CHECK(sized.snapshot(after) == TetEditStatus::kApplied);
+  PHX_CHECK(collapsed > 0);
+  PHX_CHECK(after.vertices.size() + static_cast<std::size_t>(collapsed) ==
+            before.vertices.size() + static_cast<std::size_t>(inserted));
+  PHX_CHECK(sized.vertex_sizes().size() == after.vertices.size());
+  for (const TetSnapshotVertex& vertex : after.vertices) {
+    const auto found = sized.vertex_sizes().find(vertex.id);
+    PHX_CHECK(found != sized.vertex_sizes().end() && found->second > 0.0);
+  }
+  const std::set<std::uint64_t> original = cell_ids_of(before);
+  const std::set<std::uint64_t> violating = size_violations(sized, after, sized.vertex_sizes());
+  std::set<std::uint64_t> recorded;
+  for (const TetUnmetRecord& record : sized.unmet_records()) {
+    if (record.criterion == PHX_MC_TET_UNMET_SIZE) recorded.insert(record.cell_id);
+  }
+  PHX_CHECK(recorded == violating);
+  for (std::uint64_t id : violating) PHX_CHECK(original.contains(id));
+  PHX_CHECK(violating.size() <= violating_before);
+
+  // A size count other than the vertex count is refused before any edit.
+  const std::vector<double> wrong_count(after.vertices.size() + 1, kSize);
+  PHX_CHECK(improve_mesh(sized, request, wrong_count, inserted, collapsed, relocated,
+                         unmet) == PHX_MC_INVALID_ARGUMENT);
 }
 
 // Positively oriented replacement cell whose cavity-boundary faces carry the
@@ -1697,6 +1931,7 @@ int main() {
   convex_bipyramid_reports_unresolved_radius_edge();
   relocation_clears_stale_carrier_ancestry();
   unresolved_radius_target_reports_residuals_without_losing_constraints();
+  unrepresentable_positive_sliver_is_measured_not_refused();
   fixed_mapped_cube_slivers_are_improved_transactionally();
   dihedral_extremum_matches_pairwise_reference();
   relocation_metric_cache_is_bitwise_exact();
@@ -1704,6 +1939,7 @@ int main() {
   concave_ring_uses_only_oriented_dp_cavities();
   mixed_region_high_ring_refuses_transaction();
   interior_collapse_is_slot_order_invariant();
+  improvement_respects_refinement_size_field();
   incidence_route_matches_public_scan_after_collapse();
   cavity_local_reconnection_matches_public_batch();
   return phx::mc::test::finish("test_improve3d");

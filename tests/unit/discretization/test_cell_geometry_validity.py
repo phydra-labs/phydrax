@@ -3,6 +3,7 @@
 #
 
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
@@ -11,6 +12,8 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+import phydrax.discretization._cell_geometry as cell_geometry_module
+import phydrax.discretization._cell_geometry_validity as validity_module
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization._cell_geometry import (
     CellGeometrySpec,
@@ -166,6 +169,57 @@ def test_exact_positive_interval_rejects_collapsed_execution_map() -> None:
     )
     assert float(certificate.maximum_element_coefficient_rounding_error) == 0.0
     certificate.require_current(geometry, mesh=mesh)
+
+
+def test_validity_require_current_reuses_a_proof_derived_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh, geometry = _p3_triangle(0.5)
+    monkeypatch.setattr(validity_module, "_REPRODUCED", OrderedDict())
+    certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    original = validity_module.certify_cell_geometry_validity
+    calls: list[str] = []
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append("certify")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(validity_module, "certify_cell_geometry_validity", counted)
+    certificate.require_current(geometry, mesh=mesh)
+    assert calls == []
+
+    validity_module._REPRODUCED.clear()
+    certificate.require_current(geometry, mesh=mesh)
+    assert calls == ["certify"]
+    certificate.require_current(geometry, mesh=mesh)
+    assert calls == ["certify"]
+
+    _, other_geometry = _p3_triangle(0.25)
+    with pytest.raises(ValueError, match="bound to these exact scientific inputs"):
+        certificate.require_current(other_geometry, mesh=mesh)
+
+
+def test_coordinate_source_basis_is_formed_once_per_element(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cell_geometry_module, "_SOURCE_BASES", {})
+    original = cell_geometry_module._root_source_basis
+    calls: list[str] = []
+
+    def counted(element: Any, /) -> Any:
+        calls.append(element.element_id)
+        return original(element)
+
+    monkeypatch.setattr(cell_geometry_module, "_root_source_basis", counted)
+    element = D.fem.lagrange_element("triangle", 2)
+    first = cell_geometry_module.coordinate_source_basis(element)
+    second = cell_geometry_module.coordinate_source_basis(element)
+
+    assert calls == [element.element_id]
+    assert first == second
+    assert all(left is not right for left, right in zip(first, second, strict=True))
+    first[0].clear()
+    assert cell_geometry_module.coordinate_source_basis(element) == second
 
 
 def test_spline_execution_certificate_uses_binary64_extraction_shadow() -> None:

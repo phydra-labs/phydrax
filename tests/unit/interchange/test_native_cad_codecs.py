@@ -23,15 +23,20 @@ from phydrax.geometry.brep._assembly import BRepAssemblyGraph
 from phydrax.geometry.brep._carrier_pieces import (
     carrier_payload as _carrier_payload,
 )
-from phydrax.geometry.brep._intersection_curve import CurveTrimSegment
+from phydrax.geometry.brep._correspondence import exact_source_lift
+from phydrax.geometry.brep._intersection_curve import CurveTrimSegment, SurfaceRegion
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import (
     BSplineCurve,
     BSplineSurfacePatch,
+    CircleCurve,
+    CylinderPatch,
     LineCurve,
     OffsetCurve,
     OffsetSurface,
+    PlanePatch,
 )
+from phydrax.geometry.brep._source_correspondence import circle_correspondence
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
 from phydrax.interchange._cad import (
     CadCurveFitPolicy,
@@ -39,6 +44,7 @@ from phydrax.interchange._cad import (
     CadImportPolicy,
     CadInterchangeError,
     CadStage,
+    recover_pcurve,
     StagedCoedge,
     validate_export_trims,
 )
@@ -141,25 +147,19 @@ def _nested_step_carrier_fixture(kind: str, depth: int, /) -> bytes:
         case "curve":
             target = b"#38=LINE('',#20,#34);"
             base = "#1000=LINE('',#20,#34);"
-            template = (
-                "#{identifier}=OFFSET_CURVE_3D('',#{basis},0.,.U.,#6);"
-            )
+            template = "#{identifier}=OFFSET_CURVE_3D('',#{basis},0.,.U.,#6);"
             root = 38
         case "surface":
             target = b"#9=PLANE('',#8);"
             base = "#1000=PLANE('',#8);"
-            template = (
-                "#{identifier}=OFFSET_SURFACE('',#{basis},0.,.U.);"
-            )
+            template = "#{identifier}=OFFSET_SURFACE('',#{basis},0.,.U.);"
             root = 9
         case _:
             raise ValueError(f"Unsupported test carrier kind: {kind!r}")
     declarations = [base]
     previous = 1000
     for identifier in range(1001, 1001 + depth):
-        declarations.append(
-            template.format(identifier=identifier, basis=previous)
-        )
+        declarations.append(template.format(identifier=identifier, basis=previous))
         previous = identifier
     root_record = template.format(identifier=root, basis=previous).encode("ascii")
     replacement = ("\n".join(declarations) + "\n").encode("ascii") + root_record
@@ -187,10 +187,7 @@ def _global_records(values: tuple[str, ...]) -> list[str]:
             current = ""
         current += token
     records.append(current.ljust(72))
-    return [
-        line + f"G{sequence:7d}"
-        for sequence, line in enumerate(records, start=1)
-    ]
+    return [line + f"G{sequence:7d}" for sequence, line in enumerate(records, start=1)]
 
 
 def _parameter_chunks(entity_type: int, parameters: tuple[str, ...]) -> list[str]:
@@ -252,15 +249,11 @@ def _iges_bytes(
         pointer = len(parameter_records) + 1
         for chunk in chunks:
             sequence = len(parameter_records) + 1
-            parameter_records.append(
-                f"{chunk.ljust(64)} {number:7d}P{sequence:7d}"
-            )
+            parameter_records.append(f"{chunk.ljust(64)} {number:7d}P{sequence:7d}")
         first = [entity_type, pointer, 0, 0, 0, 0, 0, 0]
         second = [entity_type, 0, 0, len(chunks), form]
         directory_records.append(
-            "".join(f"{value:8d}" for value in first)
-            + "00000000"
-            + f"D{number:7d}"
+            "".join(f"{value:8d}" for value in first) + "00000000" + f"D{number:7d}"
         )
         directory_records.append(
             "".join(f"{value:8d}" for value in second)
@@ -293,10 +286,18 @@ def _iges_square(
     zero = "0."
     vertices = (
         "4",
-        zero, zero, zero,
-        side, zero, zero,
-        side, side, zero,
-        zero, side, zero,
+        zero,
+        zero,
+        zero,
+        side,
+        zero,
+        zero,
+        side,
+        side,
+        zero,
+        zero,
+        side,
+        zero,
     )
     line_rows = (
         (zero, zero, zero, side, zero, zero),
@@ -330,10 +331,18 @@ def _iges_square_with_nested_composite(depth: int, /) -> bytes:
     zero = "0."
     vertices = (
         "4",
-        zero, zero, zero,
-        "1.", zero, zero,
-        "1.", "1.", zero,
-        zero, "1.", zero,
+        zero,
+        zero,
+        zero,
+        "1.",
+        zero,
+        zero,
+        "1.",
+        "1.",
+        zero,
+        zero,
+        "1.",
+        zero,
     )
     line_rows = (
         (zero, zero, zero, "1.", zero, zero),
@@ -427,10 +436,7 @@ def _sorted_vertices(model: BRepModel) -> tuple[tuple[float, ...], ...]:
     geometry = model.geometry
     assert geometry is not None
     return tuple(
-        sorted(
-            tuple(float(value) for value in point)
-            for point in geometry.vertex_points
-        )
+        sorted(tuple(float(value) for value in point) for point in geometry.vertex_points)
     )
 
 
@@ -456,7 +462,10 @@ def _native_bspline_model() -> BRepModel:
     knots = (Fraction(0), Fraction(0), Fraction(0), Fraction(1), Fraction(1), Fraction(1))
     patch = BSplineSurfacePatch(
         np.asarray(
-            [[[float(value) for value in point] for point in row] for row in exact_controls],
+            [
+                [[float(value) for value in point] for point in row]
+                for row in exact_controls
+            ],
             dtype=np.float64,
         ),
         np.ones((3, 3), dtype=np.float64),
@@ -547,9 +556,7 @@ def _tspline_exact_bezier_data(
         )
         for u in range(4)
     )
-    weights_2d = tuple(
-        tuple(weights[4 * u + v] for v in range(4)) for u in range(4)
-    )
+    weights_2d = tuple(tuple(weights[4 * u + v] for v in range(4)) for u in range(4))
     u0, u1, v0, v1 = extraction.parameter_bounds
     return (
         points,
@@ -557,6 +564,8 @@ def _tspline_exact_bezier_data(
         (u0,) * 4 + (u1,) * 4,
         (v0,) * 4 + (v1,) * 4,
     )
+
+
 def _assert_geometry_topology_equal(expected: BRepModel, actual: BRepModel) -> None:
     first, second = expected.geometry, actual.geometry
     assert first is not None and second is not None
@@ -576,6 +585,8 @@ def _assert_geometry_topology_equal(expected: BRepModel, actual: BRepModel) -> N
         "solid_shells",
     ):
         assert getattr(first, name) == getattr(second, name)
+
+
 def _assert_geometry_preserved(
     expected: BRepModel,
     actual: BRepModel,
@@ -636,24 +647,23 @@ def _assert_geometry_preserved(
             ) == tuple(array_tree_fingerprint(value) for value in actual_carriers)
     assert tuple(
         canonical_fingerprint(_carrier_payload(value)) for value in expected.patches
-    ) == tuple(
-        canonical_fingerprint(_carrier_payload(value)) for value in actual.patches
-    )
+    ) == tuple(canonical_fingerprint(_carrier_payload(value)) for value in actual.patches)
     assert tuple(array_tree_fingerprint(value) for value in expected.patches) == tuple(
         array_tree_fingerprint(value) for value in actual.patches
     )
     assert np.array_equal(
         np.asarray(expected.parameter_bounds), np.asarray(actual.parameter_bounds)
     )
-    assert np.array_equal(np.asarray(expected.orientation), np.asarray(actual.orientation))
+    assert np.array_equal(
+        np.asarray(expected.orientation), np.asarray(actual.orientation)
+    )
     if not allow_physical_tag_loss:
         assert expected.physical_tags == actual.physical_tags
 
 
 def _assert_source_identifier_loss(report: AdapterReport) -> None:
     assert any(
-        loss.changes_interpretation
-        and "source identifiers" in loss.rationale.lower()
+        loss.changes_interpretation and "source identifiers" in loss.rationale.lower()
         for loss in report.losses
     )
 
@@ -671,6 +681,7 @@ def _assert_shared_empty_definitions(graph: BRepAssemblyGraph) -> None:
     assert len({use.use_id for use in root_definition.uses}) == 2
     assert definitions[children[0]].uses == ()
     assert tuple(graph.iter_occurrences()) == ()
+
 
 def _assert_shared_empty_definition_dag(graph: BRepAssemblyGraph) -> None:
     definitions = {value.definition_id: value for value in graph.definitions}
@@ -788,9 +799,7 @@ def test_source_curve_trim_domains_validate_native_coedge_carriers() -> None:
                 )
             curve_loops.append(tuple(segments))
         domains.append(TrimDomain.from_curve_loops(tuple(curve_loops)))
-    validate_export_trims(
-        model, geometry, "native-test", trim_domains=tuple(domains)
-    )
+    validate_export_trims(model, geometry, "native-test", trim_domains=tuple(domains))
 
 
 def test_step_offset_curves_use_native_signed_distance_and_round_trip(
@@ -807,11 +816,7 @@ def test_step_offset_curves_use_native_signed_distance_and_round_trip(
         curve for curve in geometry.pcurves if isinstance(curve, OffsetCurve)
     )
     assert len(edge_offsets) == len(pcurve_offsets) == 1
-    assert (
-        edge_offsets[0].distance_exact
-        == pcurve_offsets[0].distance_exact
-        == -1
-    )
+    assert edge_offsets[0].distance_exact == pcurve_offsets[0].distance_exact == -1
     expected = _shape_counts(imported.model)
     assert expected == (4, 4, 1, 1)
 
@@ -857,9 +862,7 @@ def test_step_offset_curves_use_native_signed_distance_and_round_trip(
     assert brep_export.report.valid and brep_restored.report.valid
     assert len(brep_edge_offsets) == len(brep_pcurve_offsets) == 1
     assert (
-        brep_edge_offsets[0].distance_exact
-        == brep_pcurve_offsets[0].distance_exact
-        == -1
+        brep_edge_offsets[0].distance_exact == brep_pcurve_offsets[0].distance_exact == -1
     )
     assert _shape_counts(brep_restored.model) == expected
     assert _sorted_vertices(brep_restored.model) == _sorted_vertices(imported.model)
@@ -958,9 +961,7 @@ def test_native_writers_round_trip_exact_planar_topology(tmp_path: Path) -> None
     iges_restored = read_iges(iges_path, _POLICY, trusted_root=tmp_path)
     assert iges_result.path == iges_path
     assert iges_result.report.valid
-    _assert_geometry_preserved(
-        model, iges_restored.model, iges_line_pcurves=True
-    )
+    _assert_geometry_preserved(model, iges_restored.model, iges_line_pcurves=True)
     assert _shape_counts(iges_restored.model) == expected
     assert _sorted_vertices(iges_restored.model) == _sorted_vertices(model)
 
@@ -977,6 +978,157 @@ def test_native_writers_round_trip_exact_planar_topology(tmp_path: Path) -> None
     _assert_geometry_preserved(model, brep_restored.model)
     assert _shape_counts(brep_restored.model) == expected
     assert _sorted_vertices(brep_restored.model) == _sorted_vertices(model)
+
+
+def _solid_cylinder_residuals(
+    points: np.ndarray,
+    radius: float,
+    height: float,
+    base: tuple[float, float, float],
+    axis: tuple[float, float, float],
+    /,
+) -> np.ndarray:
+    """Distance of each point from the authored solid cylinder boundary."""
+    relative = points - np.asarray(base)
+    axial = relative @ np.asarray(axis)
+    radial = np.linalg.norm(relative - axial[:, None] * np.asarray(axis), axis=1)
+    lateral = (
+        np.abs(radial - radius)
+        + np.maximum(0.0, -axial)
+        + np.maximum(0.0, axial - height)
+    )
+    caps = np.minimum(np.abs(axial), np.abs(axial - height)) + np.maximum(
+        0.0, radial - radius
+    )
+    return np.minimum(lateral, caps)
+
+
+@pytest.mark.parametrize(
+    ("radius", "height", "base", "axis"),
+    (
+        (1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
+        (0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ),
+    ids=("vertical", "transverse"),
+)
+@pytest.mark.parametrize("format_name", ("step", "iges", "brep"))
+def test_native_cylinder_round_trips_with_exact_seams_and_poles(
+    tmp_path: Path,
+    radius: float,
+    height: float,
+    base: tuple[float, float, float],
+    axis: tuple[float, float, float],
+    format_name: str,
+) -> None:
+    # Whole-turn rings, the seam used on both chart sheets and the collapsed
+    # cap poles must import from their exact period evidence, with every
+    # coedge lift proved exact (no published face-gap bound).
+    model = phx.geometry.brep.brep_cylinder(
+        radius,
+        height,
+        base_center=base,
+        axis=axis,
+        coordinate_contract=_COORDINATES,
+        source_id=f"cylinder-round-trip:{format_name}",
+    )
+    path = tmp_path / f"cylinder.{format_name}"
+    match format_name:
+        case "step":
+            exported = write_step(model, path)
+            restored = read_step(path, _POLICY, trusted_root=tmp_path)
+        case "iges":
+            exported = write_iges(model, path)
+            restored = read_iges(path, _POLICY, trusted_root=tmp_path)
+        case _:
+            exported = write_brep_text(model, path)
+            restored = read_brep_text(
+                path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
+            )
+
+    assert exported.report.valid
+    assert restored.report.status.name == "LOSSLESS"
+    imported = restored.model
+    source, geometry = model.geometry, imported.geometry
+    assert source is not None and geometry is not None
+    assert geometry.edge_face_gap_bounds is None
+    before, after = model.topology, imported.topology
+    assert (after.num_solids, after.num_faces, after.num_edges, after.num_vertices) == (
+        before.num_solids,
+        before.num_faces,
+        before.num_edges,
+        before.num_vertices,
+    )
+    assert _sorted_vertices(imported) == _sorted_vertices(model)
+    assert sorted(
+        type(geometry.curves[index]).__name__
+        for index in geometry.edge_curves
+        if index >= 0
+    ) == sorted(
+        type(source.curves[index]).__name__ for index in source.edge_curves if index >= 0
+    )
+    sample = np.linspace(0.0, 1.0, 7)
+    for patch, box in zip(imported.patches, np.asarray(imported.parameter_bounds)):
+        grid = np.stack(np.meshgrid(sample, sample, indexing="ij"), axis=-1).reshape(
+            -1, 2
+        )
+        uv = box[0] + grid * (box[1] - box[0])
+        points = np.asarray(patch.evaluate(jnp.asarray(uv)), dtype=np.float64)
+        assert np.max(
+            _solid_cylinder_residuals(points, radius, height, base, axis)
+        ) <= 8.0 * np.finfo(np.float64).eps * (radius + height)
+    for index, (first, last) in zip(
+        geometry.edge_curves, np.asarray(geometry.edge_ranges), strict=True
+    ):
+        if index < 0:
+            continue
+        points = np.asarray(
+            geometry.curves[index].evaluate(jnp.asarray(first + sample * (last - first))),
+            dtype=np.float64,
+        )
+        assert np.max(
+            _solid_cylinder_residuals(points, radius, height, base, axis)
+        ) <= 8.0 * np.finfo(np.float64).eps * (radius + height)
+
+
+def test_nist_washer_circles_recover_exact_cylinder_and_certified_plane_pcurves() -> None:
+    # Carriers from NIST FTC-11 (#72/#79 and #100/#107). The bore circle is an
+    # exact height section of its cylinder; the outer circle sits in a plane
+    # parallel to its face, decimal-offset by ~1e-15, which is a certified gap.
+    cylinder = CylinderPatch(
+        (0.0, 0.0, -0.75), (0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), 16.0
+    )
+    bore = CircleCurve(
+        (0.0, 0.0, -1.499999999999999), (0.0, -1.0, 0.0), (1.0, 0.0, 0.0), 16.0
+    )
+    pcurve = recover_pcurve(cylinder, bore, None)
+    assert isinstance(pcurve, LineCurve)
+    height = Fraction(-1.499999999999999) - Fraction(-0.75)
+    assert pcurve.origin_exact == (Fraction(0), height)
+    assert pcurve.direction_exact == (Fraction(1), Fraction(0))
+    region = SurfaceRegion(cylinder, np.asarray(((0.0, -1.0), (2.0 * np.pi, 0.0))))
+    assert exact_source_lift(bore, pcurve, region, 0.0, 2.0 * np.pi)
+    rotated = CircleCurve((0.0, 0.0, -1.5), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), 16.0)
+    with pytest.raises(ValueError, match="No exact p-curve source map"):
+        recover_pcurve(cylinder, rotated, None)
+
+    plane = PlanePatch((0.0, -23.75, -1.5), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    outer = CircleCurve(
+        (0.0, 0.0, -1.500000000000001), (0.0, -1.0, 0.0), (1.0, 0.0, 0.0), 31.5
+    )
+    chart = recover_pcurve(plane, outer, None)
+    assert isinstance(chart, CircleCurve)
+    assert chart.center_exact == (Fraction(0), Fraction(23.75))
+    assert chart.first_axis_exact == (Fraction(0), Fraction(-1))
+    assert chart.second_axis_exact == (Fraction(-1), Fraction(0))
+    assert chart.radius_exact == Fraction(31.5)
+    gap = circle_correspondence(outer, chart, plane)
+    assert gap is not None
+    assert Fraction(gap) >= abs(Fraction(-1.500000000000001) - Fraction(-1.5))
+    assert gap <= 2.0 * float(abs(Fraction(-1.500000000000001) - Fraction(-1.5)))
+    tilted = CircleCurve((0.0, 0.0, -1.5), (0.0, -0.6, 0.8), (1.0, 0.0, 0.0), 31.5)
+    with pytest.raises(ValueError, match="No exact p-curve source map"):
+        recover_pcurve(plane, tilted, None)
+
 
 def test_exact_bspline_surface_round_trips_through_native_codecs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -998,9 +1150,7 @@ def test_exact_bspline_surface_round_trips_through_native_codecs(
         loss.path.endswith(".pcurve-carrier") and "degree-one B-spline" in loss.rationale
         for loss in iges_export.report.losses
     )
-    _assert_geometry_preserved(
-        model, iges_restored.model, iges_line_pcurves=True
-    )
+    _assert_geometry_preserved(model, iges_restored.model, iges_line_pcurves=True)
 
     brep_path = tmp_path / "exact-spline.brep"
     brep_export = write_brep_text(model, brep_path)
@@ -1008,12 +1158,9 @@ def test_exact_bspline_surface_round_trips_through_native_codecs(
         brep_path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
     assert brep_export.report.valid
-    _assert_geometry_preserved(
-        model, brep_restored.model, allow_physical_tag_loss=True
-    )
-    assert any(
-        loss.path == "face:0.physical-tag" for loss in brep_export.report.losses
-    )
+    _assert_geometry_preserved(model, brep_restored.model, allow_physical_tag_loss=True)
+    assert any(loss.path == "face:0.physical-tag" for loss in brep_export.report.losses)
+
 
 def test_physical_tags_use_standard_fields_or_declare_loss(
     tmp_path: Path,
@@ -1047,9 +1194,7 @@ def test_physical_tags_use_standard_fields_or_declare_loss(
     assert iges_export.report.valid and iges_restored.report.valid
     _assert_geometry_topology_equal(model, iges_restored.model)
     assert iges_restored.model.physical_tags == ("plane",)
-    assert any(
-        loss.path == "face:0.physical-tag" for loss in iges_export.report.losses
-    )
+    assert any(loss.path == "face:0.physical-tag" for loss in iges_export.report.losses)
 
     brep_path = tmp_path / "physical-tag.brep"
     brep_export = write_brep_text(model, brep_path)
@@ -1059,9 +1204,7 @@ def test_physical_tags_use_standard_fields_or_declare_loss(
     assert brep_export.report.valid and brep_restored.report.valid
     _assert_geometry_topology_equal(model, brep_restored.model)
     assert brep_restored.model.physical_tags == ("plane",)
-    assert any(
-        loss.path == "face:0.physical-tag" for loss in brep_export.report.losses
-    )
+    assert any(loss.path == "face:0.physical-tag" for loss in brep_export.report.losses)
 
 
 def test_exact_single_piece_tspline_export_and_multi_piece_refusal(
@@ -1093,7 +1236,9 @@ def test_exact_single_piece_tspline_export_and_multi_piece_refusal(
         assert restored.physical_tags == physical_tags
         restored_patch = restored.patches[0]
         assert isinstance(restored_patch, BSplineSurfacePatch)
-        assert np.array_equal(np.asarray(restored_patch.control_points), expected_point_array)
+        assert np.array_equal(
+            np.asarray(restored_patch.control_points), expected_point_array
+        )
         assert np.array_equal(np.asarray(restored_patch.weights), expected_weight_array)
         assert np.array_equal(
             np.asarray(restored_patch.u_knots),
@@ -1113,23 +1258,17 @@ def test_exact_single_piece_tspline_export_and_multi_piece_refusal(
             for loss in report.losses
         )
         if physical_tags != model.physical_tags:
-            assert any(
-                loss.path == "face:0.physical-tag" for loss in report.losses
-            )
+            assert any(loss.path == "face:0.physical-tag" for loss in report.losses)
 
     step_path = tmp_path / "tspline-exact.step"
     step_export = write_step(model, step_path)
     step_restored = read_step(step_path, _POLICY, trusted_root=tmp_path)
-    assert_exact_restoration(
-        step_restored.model, step_export.report, model.physical_tags
-    )
+    assert_exact_restoration(step_restored.model, step_export.report, model.physical_tags)
 
     iges_path = tmp_path / "tspline-exact.iges"
     iges_export = write_iges(model, iges_path)
     iges_restored = read_iges(iges_path, _POLICY, trusted_root=tmp_path)
-    assert_exact_restoration(
-        iges_restored.model, iges_export.report, model.physical_tags
-    )
+    assert_exact_restoration(iges_restored.model, iges_export.report, model.physical_tags)
 
     brep_path = tmp_path / "tspline-exact.brep"
     brep_export = write_brep_text(model, brep_path)
@@ -1139,10 +1278,12 @@ def test_exact_single_piece_tspline_export_and_multi_piece_refusal(
     assert_exact_restoration(brep_restored.model, brep_export.report, ("bspline",))
 
     unsupported = _native_tspline_model(refined=True)
-    fit_policy = CadExportPolicy(
-        intersection_approximation=CadCurveFitPolicy(1.0e-8)
-    )
-    for format_name, extension in (("step", ".step"), ("iges", ".iges"), ("brep", ".brep")):
+    fit_policy = CadExportPolicy(intersection_approximation=CadCurveFitPolicy(1.0e-8))
+    for format_name, extension in (
+        ("step", ".step"),
+        ("iges", ".iges"),
+        ("brep", ".brep"),
+    ):
         destination = tmp_path / f"tspline-refined{extension}"
         with pytest.raises(CadInterchangeError) as error:
             if format_name == "step":
@@ -1178,9 +1319,7 @@ def test_brep_text_fixture_checks_shape_cycles_and_payload_extent() -> None:
 
     oversized_shapes = fixture.replace(b"TShapes 1", b"TShapes 2")
     with pytest.raises(CadInterchangeError) as error:
-        decode_brep_text_bytes(
-            oversized_shapes, _POLICY, source_length_unit=METER
-        )
+        decode_brep_text_bytes(oversized_shapes, _POLICY, source_length_unit=METER)
     assert error.value.refusal.reason == "malformed"
 
 
@@ -1193,9 +1332,7 @@ def test_step_nested_offset_carriers_decode_iteratively(
     source_geometry = result.model.geometry
     assert source_geometry is not None
     if kind == "curve":
-        edge_curve = next(
-            index for index in source_geometry.edge_curves if index >= 0
-        )
+        edge_curve = next(index for index in source_geometry.edge_curves if index >= 0)
         source_carrier = source_geometry.curves[edge_curve]
         carrier = source_carrier
         depth = 0
@@ -1230,9 +1367,7 @@ def test_step_nested_offset_carriers_decode_iteratively(
     restored_geometry = restored.model.geometry
     assert restored_geometry is not None
     if kind == "curve":
-        edge_curve = next(
-            index for index in restored_geometry.edge_curves if index >= 0
-        )
+        edge_curve = next(index for index in restored_geometry.edge_curves if index >= 0)
         restored_carrier = restored_geometry.curves[edge_curve]
         carrier = restored_carrier
         restored_depth = 0
@@ -1258,10 +1393,7 @@ def test_step_nested_offset_carriers_decode_iteratively(
     assert source_geometry.coedge_senses == restored_geometry.coedge_senses
     assert source_geometry.face_loops == restored_geometry.face_loops
     assert source_geometry.shell_faces == restored_geometry.shell_faces
-    assert (
-        source_geometry.shell_orientations
-        == restored_geometry.shell_orientations
-    )
+    assert source_geometry.shell_orientations == restored_geometry.shell_orientations
     assert source_geometry.solid_shells == restored_geometry.solid_shells
     assert np.array_equal(
         np.asarray(source_geometry.vertex_points),
@@ -1276,19 +1408,14 @@ def test_step_nested_offset_carriers_decode_iteratively(
     )
     assert tuple(
         array_tree_fingerprint(value) for value in source_geometry.curves
-    ) == tuple(
-        array_tree_fingerprint(value) for value in restored_geometry.curves
-    )
+    ) == tuple(array_tree_fingerprint(value) for value in restored_geometry.curves)
     assert tuple(
         array_tree_fingerprint(value) for value in source_geometry.pcurves
-    ) == tuple(
-        array_tree_fingerprint(value) for value in restored_geometry.pcurves
-    )
+    ) == tuple(array_tree_fingerprint(value) for value in restored_geometry.pcurves)
     assert tuple(
         _carrier_payload(value)["definition"] for value in source_geometry.pcurves
     ) == tuple(
-        _carrier_payload(value)["definition"]
-        for value in restored_geometry.pcurves
+        _carrier_payload(value)["definition"] for value in restored_geometry.pcurves
     )
     assert tuple(carrier_digest(value) for value in result.model.patches) == tuple(
         carrier_digest(value) for value in restored.model.patches
@@ -1316,7 +1443,6 @@ def test_step_nested_offset_carriers_decode_iteratively(
         _assert_geometry_preserved(result.model, step_restored.model)
 
 
-
 def test_brep_text_allocation_failure_propagates_before_result_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1329,9 +1455,7 @@ def test_brep_text_allocation_failure_propagates_before_result_publication(
         raise MemoryError("injected CAD carrier allocation failure")
 
     monkeypatch.setattr(_brep_text_module.np, "empty", fail_allocation)
-    with pytest.raises(
-        MemoryError, match="injected CAD carrier allocation failure"
-    ):
+    with pytest.raises(MemoryError, match="injected CAD carrier allocation failure"):
         decode_brep_text_bytes(payload, _POLICY, source_length_unit=METER)
     assert path.read_bytes() == payload
 
@@ -1357,9 +1481,7 @@ def test_step_iges_reference_cycles_and_declared_counts_refuse() -> None:
 
 
 def test_iges_deep_composite_curve_uses_an_explicit_stack() -> None:
-    imported = decode_iges_bytes(
-        _iges_square_with_nested_composite(1100), _POLICY
-    )
+    imported = decode_iges_bytes(_iges_square_with_nested_composite(1100), _POLICY)
     assert imported.report.valid
     assert _shape_counts(imported.model) == (4, 4, 1, 1)
 
