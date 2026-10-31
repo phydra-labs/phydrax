@@ -18,11 +18,13 @@ namespace phx::mc {
 // Each cell scores the worse of its dihedral and radius-edge target fractions,
 // floored to multiples of kTetScoreQuantum. Every edit (reconnection,
 // collapse, relocation, interior vertex insertion) is accepted only if its
-// affected cells' worst-first sorted scores strictly improve, with
-// determinant validity, the circumradius size target, and source constraints
-// as hard gates; that one order makes the run terminate. Final per-criterion
-// checks, not the score, set status, and unmet cells are reported
-// individually.
+// affected cells' worst-first sorted scores strictly improve, with the
+// determinant floor and source constraints as hard gates; the circumradius
+// size target is a hard gate too, except for an edit that removes a
+// degenerate cell (below the determinant floor or scoring 0), whose repair
+// takes precedence. That one order makes the run terminate. Final checks of
+// the radius-edge, dihedral, and determinant targets, not the score, set
+// status, and unmet cells are reported individually.
 inline constexpr double kTetScoreQuantum = 0x1p-20;
 
 struct TetQualityRequest {
