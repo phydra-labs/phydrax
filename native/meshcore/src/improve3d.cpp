@@ -215,6 +215,13 @@ std::size_t LocalIncidence::edge_valence(std::int32_t first,
   return found == edge_cells_.end() ? 0 : found->second.size();
 }
 
+std::span<const std::int32_t> LocalIncidence::edge_star(std::int32_t first,
+                                                        std::int32_t second) const {
+  const auto found = edge_cells_.find(sorted_local_edge(first, second));
+  if (found == edge_cells_.end()) return {};
+  return found->second;
+}
+
 std::int32_t LocalIncidence::edge_cell_outside(
     const TetMesh& mesh, std::int32_t first, std::int32_t second,
     std::span<const std::int32_t> removed_slots) const {
@@ -391,6 +398,54 @@ TetEditStatus LocalIncidence::insert_cone(TetMesh& mesh, const TetEditVertex& ve
     if (status != TetEditStatus::kApplied) return status;
     for (std::size_t index = 0; index < cavity.size(); ++index) {
       if (!erase(cavity[index], removed_cells[index])) return TetEditStatus::kStaleGeneration;
+    }
+    for (std::uint64_t id : created_cells) {
+      const std::int32_t slot = mesh.cell_slot(id);
+      if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) {
+        return TetEditStatus::kStaleGeneration;
+      }
+      LocalCell vertices{};
+      std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
+      if (!insert_logical(mesh, slot, vertices)) return TetEditStatus::kStaleGeneration;
+    }
+    if (!insert_vertex_position(mesh.vertex_slot(vertex.id), vertex.carrier.data())) {
+      return TetEditStatus::kStaleGeneration;
+    }
+    return TetEditStatus::kApplied;
+  } catch (const std::bad_alloc&) {
+    return TetEditStatus::kAllocationFailure;
+  }
+}
+
+TetEditStatus LocalIncidence::split_edge(TetMesh& mesh, std::int32_t first,
+                                         std::int32_t second, const TetEditVertex& vertex,
+                                         std::span<const std::size_t> facet_rows,
+                                         std::span<const std::size_t> segment_rows,
+                                         std::vector<std::uint64_t>& created_cells) {
+  try {
+    const std::span<const std::int32_t> star = edge_star(first, second);
+    if (star.empty()) return TetEditStatus::kRejectedTopology;
+    const std::vector<std::int32_t> removed_slots(star.begin(), star.end());
+    std::vector<LocalCell> removed_cells;
+    removed_cells.reserve(removed_slots.size());
+    for (std::int32_t slot : removed_slots) {
+      if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      LocalCell vertices{};
+      std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
+      removed_cells.push_back(vertices);
+    }
+    if (vertex_positions_.contains(local_position_key(vertex.carrier.data()))) {
+      return TetEditStatus::kInvalidGeometry;
+    }
+    const TetEditStatus status = mesh.split_local_edge(
+        first, second, vertex, removed_slots, facet_rows, segment_rows, created_cells);
+    if (status != TetEditStatus::kApplied) return status;
+    for (std::size_t index = 0; index < removed_slots.size(); ++index) {
+      if (!erase(removed_slots[index], removed_cells[index])) {
+        return TetEditStatus::kStaleGeneration;
+      }
     }
     for (std::uint64_t id : created_cells) {
       const std::int32_t slot = mesh.cell_slot(id);
