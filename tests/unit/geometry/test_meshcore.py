@@ -1053,3 +1053,18 @@ def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
     assert np.all(result.surface_triangles < result.surface_vertices.shape[0])
     assert np.all(result.tetrahedra < result.volume_vertices.shape[0])
     assert not result.bounds.flags.writeable
+
+
+def test_surface_envelope_names_the_offset_domination_contract() -> None:
+    triangles = np.asarray(
+        ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
+        dtype=np.int64,
+    )
+    # sqrt(3) * 0.1 + 0.1 exceeds the offset 0.2: the kernel refuses with
+    # RANGE_ERROR, and the message names the certified-error contract rather
+    # than the coordinate domain.
+    with pytest.raises(
+        ValueError, match="does not dominate the certified envelope"
+    ) as error:
+        surface_envelope(UNIT_TET, triangles, 0.2, 0.1, 0.1)
+    assert "2**-120" not in str(error.value)
