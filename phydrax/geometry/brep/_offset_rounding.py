@@ -153,33 +153,40 @@ def offset_rounding_evidence(
             points = []
             for coedge in loop:
                 edge = builder.coedge_edges[coedge]
-                endpoint = 0 if builder.coedge_senses[coedge] == 1 else 1
-                vertex = builder.edge_vertices[edge][endpoint]
                 pcurve = builder.pcurves[coedge]
                 if not isinstance(pcurve, LineCurve):
                     raise ValueError(
                         "brep_offset.trim_rounding must use affine lines; got another trim family"
                     )
-                t = Fraction(builder.edge_ranges[edge][endpoint])
                 uv_origin, uv_direction = (
                     rational_vector(np.asarray(pcurve.origin)),
                     rational_vector(np.asarray(pcurve.direction)),
                 )
-                u, v = tuple(
-                    a + t * b for a, b in zip(uv_origin, uv_direction, strict=True)
-                )
-                represented = tuple(
-                    a + u * b + v * c
-                    for a, b, c in zip(origin, first_axis, second_axis, strict=True)
-                )
-                gap = rounding_norm(
-                    tuple(
-                        a - b
-                        for a, b in zip(represented, vertices[vertex], strict=True)
+                represented_points = []
+                # Both affine images agree up to an affine error along the edge, so
+                # its supremum is attained at one of the two endpoints.
+                for endpoint in (0, 1):
+                    vertex = builder.edge_vertices[edge][endpoint]
+                    t = Fraction(builder.edge_ranges[edge][endpoint])
+                    u, v = tuple(
+                        a + t * b for a, b in zip(uv_origin, uv_direction, strict=True)
                     )
-                )
-                edge_face_bounds[coedge] = max(edge_face_bounds[coedge], gap)
-                rounding_margin = max(rounding_margin, gap)
+                    represented = tuple(
+                        a + u * b + v * c
+                        for a, b, c in zip(origin, first_axis, second_axis, strict=True)
+                    )
+                    gap = rounding_norm(
+                        tuple(
+                            a - b
+                            for a, b in zip(represented, vertices[vertex], strict=True)
+                        )
+                    )
+                    edge_face_bounds[coedge] = max(edge_face_bounds[coedge], gap)
+                    rounding_margin = max(rounding_margin, gap)
+                    represented_points.append((vertex, represented))
+                vertex, represented = represented_points[
+                    0 if builder.coedge_senses[coedge] == 1 else 1
+                ]
                 points.append(
                     tuple(
                         (min(a, b), max(a, b))

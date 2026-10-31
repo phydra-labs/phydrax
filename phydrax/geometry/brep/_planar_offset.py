@@ -167,12 +167,27 @@ def planar_offset(
             first,
             last,
         )
+    staged_faces = []
+    pcurves: dict[int, LineCurve] = {}
     for face, patch in enumerate(carriers):
         if patch is None:
             raise RuntimeError(
                 "brep_offset.face must retain its plane carrier; got another patch family"
             )
-        _stage_planar_face(builder, model, face, patch, vertices)
+        translated, box, face_pcurves = _stage_planar_face(model, face, patch, vertices)
+        staged_faces.append((translated, box))
+        pcurves.update(face_pcurves)
+    # Coedges keep their source indices so every face loop images identically.
+    for coedge, edge in enumerate(geometry.coedge_edges):
+        builder.coedge(edge, geometry.coedge_senses[coedge], pcurves[coedge])
+    for face, (translated, box) in enumerate(staged_faces):
+        builder.face(
+            translated,
+            box,
+            int(np.asarray(model.orientation)[face]),
+            "planar-offset",
+            [list(loop) for loop in geometry.face_loops[face]],
+        )
 
     edge_vertex_gap_bounds = publish_endpoint_rounding(builder)
     evidence, rounding_margin, edge_face_gap_bounds = offset_rounding_evidence(
@@ -943,13 +958,12 @@ def _first_contacts(
 
 
 def _stage_planar_face(
-    builder: Builder,
     model: BRepModel,
     face: int,
     patch: PlanePatch,
     vertices: tuple[tuple[Fraction, ...], ...],
     /,
-) -> None:
+) -> tuple[PlanePatch, np.ndarray, dict[int, LineCurve]]:
     geometry = model.geometry
     anchor = geometry.edge_vertices[
         geometry.coedge_edges[geometry.face_loops[face][0][0]]
@@ -981,32 +995,21 @@ def _stage_planar_face(
                         gram,
                         (_dot(first_axis, displacement), _dot(second_axis, displacement)),
                     )
-    loops = []
+    pcurves: dict[int, LineCurve] = {}
     for source_loop in geometry.face_loops[face]:
-        loop = []
         for coedge in source_loop:
-            edge = geometry.coedge_edges[coedge]
-            start, end = geometry.edge_vertices[edge]
+            start, end = geometry.edge_vertices[geometry.coedge_edges[coedge]]
             uv = coordinates[start]
             direction = tuple((b - a for a, b in zip(uv, coordinates[end], strict=True)))
-            loop.append(
-                builder.coedge(
-                    edge,
-                    geometry.coedge_senses[coedge],
-                    LineCurve(
-                        tuple((float(value) for value in uv)),
-                        tuple((float(value) for value in direction)),
-                    ),
-                )
+            pcurves[coedge] = LineCurve(
+                tuple((float(value) for value in uv)),
+                tuple((float(value) for value in direction)),
             )
-        loops.append(loop)
     points = np.asarray(
         [[float(value) for value in uv] for uv in coordinates.values()], dtype=np.float64
     )
     box = np.stack((points.min(axis=0), points.max(axis=0)))
-    builder.face(
-        translated, box, int(np.asarray(model.orientation)[face]), "planar-offset", loops
-    )
+    return translated, box, pcurves
 
 
 def _affine_edge(curve: BRepCurve, /) -> bool:
