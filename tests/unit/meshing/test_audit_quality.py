@@ -870,3 +870,67 @@ def test_result_boundary_must_cover_the_actual_mesh_faces_and_coordinates(
         )
     with pytest.raises(ValueError, match="boundary_coverage"):
         _rebuild_result(result, boundary=boundary(mesh.coordinates, faces[:-1]))
+
+
+def test_owned_star_manifold_scope_certifies_declared_complete_stars() -> None:
+    from phydrax.meshing._audit import CellMeshManifoldScope
+
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 0.0), (-1.0, -1.0)))
+    mesh = phx.discretization.CellMesh(
+        points,
+        (
+            phx.discretization.CellBlock(
+                "cells",
+                "triangle",
+                np.asarray(((0, 1, 2), (0, 3, 4))),
+                global_ids=np.asarray((10, 11)),
+            ),
+        ),
+    )
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    unscoped = phx.meshing.audit_cell_mesh(mesh, geometry)
+    assert unscoped.issues == ("nonmanifold_vertices",)
+    assert unscoped.manifold_scope is None
+
+    # The pinched vertex lies outside this patch's declared owned stars.
+    halo = CellMeshManifoldScope("owned-star", np.asarray((1, 2, 3, 4)))
+    certified = phx.meshing.audit_cell_mesh(mesh, geometry, manifold_scope=halo)
+    assert certified.passed
+    assert dict(certified.check_counts)["nonmanifold_vertices"] == 0
+    assert certified.manifold_scope is halo
+    assert certified.report_id != unscoped.report_id
+
+    # An owned vertex whose resident star is pinched is still refused.
+    pinched = CellMeshManifoldScope("owned-star", np.asarray((0,)))
+    refused = phx.meshing.audit_cell_mesh(mesh, geometry, manifold_scope=pinched)
+    assert refused.issues == ("nonmanifold_vertices",)
+
+    # Non-resident star cells sent by their owners complete the star, also
+    # through a vertex that is not resident here.
+    completed = CellMeshManifoldScope(
+        "owned-star",
+        np.asarray((0,)),
+        star_cells=(
+            ("triangle", np.asarray((20, 21)), np.asarray(((0, 2, 7), (0, 7, 3)))),
+        ),
+    )
+    closed = phx.meshing.audit_cell_mesh(mesh, geometry, manifold_scope=completed)
+    assert closed.passed
+    assert dict(closed.check_counts)["nonmanifold_vertices"] == 0
+
+    with pytest.raises(ValueError, match="absent from the mesh"):
+        phx.meshing.audit_cell_mesh(
+            mesh,
+            geometry,
+            manifold_scope=CellMeshManifoldScope(
+                "owned-star",
+                np.asarray((0,)),
+                star_cells=(("triangle", np.asarray((11,)), np.asarray(((0, 2, 3),))),),
+            ),
+        )
+    with pytest.raises(ValueError, match="absent from the audited mesh"):
+        phx.meshing.audit_cell_mesh(
+            mesh,
+            geometry,
+            manifold_scope=CellMeshManifoldScope("owned-star", np.asarray((9,))),
+        )

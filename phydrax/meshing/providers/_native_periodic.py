@@ -8572,11 +8572,15 @@ def _owner_local_periodic_candidate_from_accepted_view(
     ):
         raise ValueError("Accepted Delaunay mesh data changed the local carrier.")
     # Adapted views key midpoint vertices by themselves; their exact roots are
-    # the cumulative coordinate ancestry carried with the accepted mesh data.
-    # An owner without resident vertices has no ancestry to carry.
+    # the cumulative coordinate ancestry carried with the accepted mesh data. A
+    # fixed-topology motion of an adapted view keeps that ancestry without being
+    # the adaptation's target. An owner without resident vertices has none.
     stencil = (
         mesh_data["source_coordinate_stencil"]
-        if view.adaptive_result is not None and np.asarray(view.vertex_ids).size
+        if (
+            view.adaptive_result is not None or view.source_coordinate_stencil is not None
+        )
+        and np.asarray(view.vertex_ids).size
         else None
     )
     return OwnerLocalPeriodicCandidate(

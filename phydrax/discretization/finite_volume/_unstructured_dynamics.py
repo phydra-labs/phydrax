@@ -1478,6 +1478,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         traces = self._stage_face_states(average, metrics, args)
         templates = self._stage_rate_templates(metrics)
         blocks: list[ConservationStageFluxRateBlock] = []
+        halo_view = (
+            self.discretization.owner_local_view
+            if isinstance(self.discretization, UnstructuredFiniteVolumeDiscretization)
+            else None
+        )
+        halo_owned = (
+            None if halo_view is None else jnp.asarray(halo_view.owned, dtype=jnp.bool_)
+        )
         speeds: list[Array] = []
         cell_rate = jnp.zeros(
             (metrics.cell_count,),
@@ -1659,6 +1667,18 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 weights,
                 signal_speed,
             )
+            if halo_owned is not None:
+                # A ghost cell's face to a non-resident cell is an artificial halo
+                # cut, not a physical boundary: it carries no content, so the
+                # ledger balance stays the owned content change.
+                artificial = (~halo_owned[layout.owner_cells]) & (
+                    layout.neighbor_cells < 0
+                )
+                flux_rate = jnp.where(
+                    artificial.reshape((-1,) + (1,) * (flux_rate.ndim - 1)),
+                    jnp.zeros((), dtype=flux_rate.dtype),
+                    flux_rate,
+                )
             blocks.append(template.with_flux_rate(flux_rate))
             speeds.append(self.precision.decision(signal_speed))
             owner = layout.owner_cells

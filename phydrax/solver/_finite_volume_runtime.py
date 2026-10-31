@@ -74,6 +74,7 @@ from ..typing import checked
 from ._finite_volume import (
     collective_branch,
     FiniteVolumeStageDecisionProvider,
+    FiniteVolumeStageRouteProvider,
     FiniteVolumeStageStateProvider,
     unstructured_ale_ssprk33_candidate,
     unstructured_ssprk33_content_candidate,
@@ -450,6 +451,243 @@ def _prepare_owner_local_fv_stage_state_provider(
         provider_id=provider_id,
     )
     return provider, jnp.asarray(local_owned[plan_to_view]), plan_to_view
+
+
+def _prepare_owner_local_fv_stage_route_provider(
+    owner_local_view: Any,
+    execution_group: Any,
+    dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+    /,
+    *,
+    axis_name: str,
+) -> FiniteVolumeStageRouteProvider | None:
+    """Route overset donor debits evaluated on ghost donor rows to their owners.
+
+    An overset route lives on the owner of its fringe receptor. When its donor
+    row there is a ghost (a halo or remote donor cell), the receptor's credit
+    is applied locally while the donor's debit must reach the donor's owner.
+    Returns ``None`` collectively when no owner holds such a route.
+    """
+    import jax
+
+    from ..discretization._distributed_field import DistributedHaloPlan
+    from ..meshing._distribution import (
+        _owner_exchange_message_banks,
+        _owner_group_allgather,
+        _owner_pair_channel_plan,
+    )
+
+    if dynamics.coupling.overset is None:
+        # Every owner compiles the same coupling, so this exit is collective.
+        return None
+    template = dynamics.overset_rate_block_template
+    members = execution_group.spec.process_indices
+    local_rank = owner_local_view.owner_rank
+    discretization = dynamics.discretization
+    if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+        raise TypeError("Owner-local overset routes require unstructured cell IDs.")
+    plan_ids = np.asarray(discretization.cell_global_ids, dtype=np.int64)
+    view_ids = np.asarray(owner_local_view.cell_ids, dtype=np.int64)
+    view_owners = np.asarray(owner_local_view.cell_owner_ranks, dtype=np.int32)
+    owner_by_id = dict(zip(view_ids.tolist(), view_owners.tolist(), strict=True))
+    plan_owner = np.asarray(
+        [owner_by_id[int(identifier)] for identifier in plan_ids], dtype=np.int32
+    )
+    plan_row_by_id = {int(identifier): row for row, identifier in enumerate(plan_ids)}
+    # An owner without overset routes (for example an empty owner) still joins
+    # every collective below, so the group agrees on one provider.
+    route_owners = (
+        np.empty((0,), dtype=np.int64)
+        if template is None
+        else np.asarray(template.owner_cells, dtype=np.int64)
+    )
+    route_active = (
+        np.empty((0,), dtype=np.bool_)
+        if template is None
+        else np.asarray(template.active_mask, dtype=np.bool_)
+    )
+    ghost_routes = np.flatnonzero(
+        route_active & (plan_owner[route_owners] != local_rank)
+    ).astype(np.int32)
+    ghost_rows = np.unique(route_owners[ghost_routes])
+    outgoing: list[np.ndarray] = [np.empty((0, 2), dtype=np.int64) for _ in members]
+    for owner in np.unique(plan_owner[ghost_rows]).tolist():
+        rows = ghost_rows[plan_owner[ghost_rows] == owner]
+        order = np.argsort(plan_ids[rows], kind="stable")
+        outgoing[int(owner)] = np.stack(
+            (plan_ids[rows][order], rows[order].astype(np.int64)), axis=1
+        )
+    incoming = _owner_exchange_message_banks(
+        tuple(outgoing),
+        local_rank,
+        execution_group,
+        f"{axis_name}_overset_route_requests",
+    )
+    local_counts = np.asarray([values.shape[0] for values in outgoing], dtype=np.int64)
+    count_matrix = _owner_group_allgather(
+        local_counts, execution_group, f"{axis_name}_overset_route_counts"
+    )
+    if count_matrix.shape != (len(members), len(members)) or np.any(count_matrix < 0):
+        raise ValueError("Owner-local overset route counts are malformed.")
+    if not np.any(count_matrix):
+        return None
+    routes = []
+    # count_matrix[sender, receiver]: ghost debits the sender returns to owners.
+    for sender in range(len(members)):
+        for receiver in range(len(members)):
+            count = int(count_matrix[sender, receiver])
+            if not count:
+                continue
+            pair = _owner_pair_channel_plan(sender, receiver, len(members))
+            if not isinstance(pair, DistributedHaloPlan):
+                raise TypeError("Owner channel builder returned an invalid halo plan.")
+            send_rows = np.zeros((count,), dtype=np.int32)
+            receive_rows = np.zeros((count,), dtype=np.int32)
+            if local_rank == sender:
+                send_rows = np.asarray(outgoing[receiver][:, 1], dtype=np.int32)
+            if local_rank == receiver:
+                requests = incoming.get(sender)
+                if requests is None or requests.shape != (count, 2):
+                    raise ValueError("Overset debit routes do not match their owner.")
+                try:
+                    receive_rows = np.asarray(
+                        [
+                            plan_row_by_id[int(identifier)]
+                            for identifier in requests[:, 0]
+                        ],
+                        dtype=np.int32,
+                    )
+                except KeyError as error:
+                    raise ValueError(
+                        "An overset donor cell is absent from its accepted owner."
+                    ) from error
+                if np.any(plan_owner[receive_rows] != local_rank):
+                    raise ValueError("An overset donor debit targets a non-owned cell.")
+            pair_ids = np.asarray(pair.local_global_ids, dtype=np.int64)
+            pair_owned = np.asarray(pair.local_owned, dtype=np.bool_)
+            send_slots = np.flatnonzero((pair_ids[sender] == 0) & pair_owned[sender])
+            receive_slots = np.flatnonzero(
+                (pair_ids[receiver] == 0) & ~pair_owned[receiver]
+            )
+            if send_slots.size != 1 or receive_slots.size != 1:
+                raise ValueError(
+                    "Overset owner-pair channel does not expose one exact payload slot."
+                )
+            routes.append(
+                (
+                    pair,
+                    sender,
+                    receiver,
+                    send_rows,
+                    receive_rows,
+                    int(send_slots[0]),
+                    int(receive_slots[0]),
+                    count,
+                )
+            )
+    capacity = max(
+        1,
+        int(
+            np.max(
+                _owner_group_allgather(
+                    np.asarray((plan_ids.size,), dtype=np.int32),
+                    execution_group,
+                    f"{axis_name}_overset_route_capacity",
+                ),
+                initial=0,
+            )
+        ),
+    )
+    cell_count = int(plan_ids.size)
+    block_route_id = None if template is None else template.route_id
+    block_kind = None if template is None else template.block_kind
+    devices = execution_group.devices
+    stage_axis = f"{axis_name}_stage"
+
+    def route_overset_debits(ledger: Any, /) -> Array:
+        components = int(np.prod(ledger.component_shape))
+        debits = jnp.zeros((capacity, components), dtype=ledger.source_rate.dtype)
+        if block_kind is not None:
+            blocks = [
+                block
+                for block in ledger.blocks
+                if block.block_kind == block_kind and block.route_id == block_route_id
+            ]
+            if len(blocks) != 1:
+                raise ValueError("Stage ledger lacks its exact overset correction block.")
+            rates = blocks[0].flux_rate
+            flat = rates.reshape((rates.shape[0], components)).astype(debits.dtype)
+            # The route debits its owner (donor) row; see the ledger scatter.
+            debits = debits.at[
+                jnp.asarray(route_owners[ghost_routes], dtype=jnp.int32)
+            ].add(-flat[jnp.asarray(ghost_routes, dtype=jnp.int32)])
+
+        def exchange(local_debits: Array, /) -> Array:
+            rank = jax.lax.axis_index(stage_axis)
+            received = jnp.zeros_like(local_debits)
+            for (
+                pair,
+                sender,
+                receiver,
+                send_rows,
+                receive_rows,
+                send_slot,
+                receive_slot,
+                count,
+            ) in routes:
+                width = count * components
+                packed = jnp.where(
+                    rank == sender,
+                    local_debits[jnp.asarray(send_rows, dtype=jnp.int32)].reshape(
+                        (width,)
+                    ),
+                    jnp.zeros((width,), dtype=local_debits.dtype),
+                )
+                payload = (
+                    jnp.zeros((pair.local_capacity, width), dtype=local_debits.dtype)
+                    .at[send_slot]
+                    .set(packed)
+                )
+                arrived = pair.exchange(payload, rank, axis_name=stage_axis)
+                values = arrived[receive_slot].reshape((count, components))
+                received = jax.lax.cond(
+                    rank == receiver,
+                    lambda current: current.at[
+                        jnp.asarray(receive_rows, dtype=jnp.int32)
+                    ].add(values),
+                    lambda current: current,
+                    received,
+                )
+                # Every owner must issue the pair permutes in one order; the
+                # barrier makes the next payload depend on this delivery.
+                local_debits, received = jax.lax.optimization_barrier(
+                    (local_debits, received)
+                )
+            return received
+
+        mapped = jax.pmap(exchange, axis_name=stage_axis, devices=devices)
+        received = mapped(debits[None, ...])[0, :cell_count]
+        return received.reshape((cell_count, *ledger.component_shape))
+
+    provider_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-fv-overset-debit-routes",
+            "group": execution_group.spec.group_id,
+            "view": owner_local_view.local_view_id,
+            "overset_routes": block_route_id,
+            "routes": tuple(
+                (
+                    sender,
+                    receiver,
+                    count,
+                    array_tree_fingerprint(send_rows),
+                    array_tree_fingerprint(receive_rows),
+                )
+                for (_, sender, receiver, send_rows, receive_rows, _, _, count) in routes
+            ),
+        }
+    )
+    return FiniteVolumeStageRouteProvider(route_overset_debits, provider_id=provider_id)
 
 
 def _owner_local_global_decision_provider(
@@ -1014,6 +1252,41 @@ class FiniteVolumeEmbeddedAdvanceEvidence(StrictModule):
     relative_cfl_step: Array
 
 
+class FiniteVolumeTopologyEventRefusal(StrictModule):
+    """Typed reason a step-boundary topology event published no successor runtime.
+
+    The accepted PDE step stays accepted and its state is rolled back to the
+    accepted source epoch; this record names why the event itself was refused.
+    """
+
+    status: TopologyEventStatus = eqx.field(static=True)
+    reason: str = eqx.field(static=True)
+    request_id: str = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        status: TopologyEventStatus,
+        reason: str,
+        request_id: str,
+        evidence_id: str,
+    ) -> None:
+        if not isinstance(status, TopologyEventStatus) or status in (
+            TopologyEventStatus.PENDING,
+            TopologyEventStatus.SUCCESS,
+        ):
+            raise ValueError("Topology event refusals require a failed event status.")
+        if any(
+            not isinstance(value, str) or not value
+            for value in (reason, request_id, evidence_id)
+        ):
+            raise ValueError("Topology event refusal identities must be non-empty.")
+        self.status = status
+        self.reason = reason
+        self.request_id = request_id
+        self.evidence_id = evidence_id
+
+
 class FiniteVolumeAdvanceResult(StrictModule):
     runtime_state: FiniteVolumeRuntimeState = fixed_field()
     accepted: Array = fixed_field()
@@ -1031,6 +1304,7 @@ class FiniteVolumeAdvanceResult(StrictModule):
     )
     stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
     overset_motion_receipt: CompositionRebindReceipt | None = fixed_field(default=None)
+    topology_event_refusal: FiniteVolumeTopologyEventRefusal | None = None
 
 
 class FiniteVolumeOwnerLocalRepartitionResult(StrictModule):
@@ -1079,6 +1353,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
     owner_local_owned_cell_mask: Array | None = fixed_field()
     owner_local_decision_provider: Any = eqx.field(static=True)
     owner_local_scalar_min_provider: Any = eqx.field(static=True)
+    owner_local_route_provider: Any = eqx.field(static=True)
     owner_local_axis_name: str = eqx.field(static=True)
     precision: FiniteVolumePrecisionPolicy
     static_flux_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...] = (
@@ -1146,6 +1421,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         owner_local_owned_mask = None
         owner_local_decision_provider = None
         owner_local_scalar_min_provider = None
+        owner_local_route_provider = None
         owner_axis = str(owner_local_axis_name).strip()
         if owner_local_view is None:
             if execution_group is not None:
@@ -1202,6 +1478,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             owner_local_scalar_min_provider = _owner_local_global_scalar_min_provider(
                 owner_local_group,
                 axis_name=f"{owner_axis}_stage",
+            )
+            owner_local_route_provider = _prepare_owner_local_fv_stage_route_provider(
+                owner_local_view,
+                owner_local_group,
+                dynamics,
+                axis_name=owner_axis,
             )
         if stage_state_provider is not None:
             if not isinstance(stage_state_provider, FiniteVolumeStageStateProvider):
@@ -1568,6 +1850,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         self.owner_local_owned_cell_mask = owner_local_owned_mask
         self.owner_local_decision_provider = owner_local_decision_provider
         self.owner_local_scalar_min_provider = owner_local_scalar_min_provider
+        self.owner_local_route_provider = owner_local_route_provider
         self.owner_local_axis_name = owner_axis
 
         self.policy = policy_
@@ -1601,6 +1884,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 "decision_provider": owner_local_decision_provider.provider_id,
                 "axis": owner_axis,
             }
+            if owner_local_route_provider is not None:
+                owner_local_identity["route_provider"] = (
+                    owner_local_route_provider.provider_id
+                )
         self.runtime_id = canonical_fingerprint(
             {
                 "kind": "prepared-finite-volume-runtime",
@@ -3078,6 +3365,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         owner_local_coefficient_ids: Any = None,
         owner_local_field_name: str = "state",
         owner_local_part_name: str | None = None,
+        retained_state_entry_ids: tuple[str, ...] = (),
+        reprepare_entries: tuple[Any, ...] = (),
+        invalidate_entry_ids: tuple[str, ...] = (),
     ) -> FiniteVolumeAdvanceResult:
         """Commit one accepted native overset motion/rezone at the step boundary.
 
@@ -3087,6 +3377,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         that geometry, and a successor ALE plan must continue from it. Both
         routes transfer the actual accepted post-step content and publish only
         after the finite-volume event and native lifecycle rebind commit.
+
+        Accepted Composition entries other than the overset registration and the
+        FV state take the caller's explicit dispositions
+        (`retained_state_entry_ids`, `reprepare_entries`, `invalidate_entry_ids`).
+        A refused event keeps the accepted state and returns its typed reason in
+        `topology_event_refusal`.
         """
         from collections.abc import Mapping
 
@@ -3119,6 +3415,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             accepted_composition, Composition
         ):
             raise TypeError("accepted_composition must be Composition or None.")
+        if (
+            not isinstance(retained_state_entry_ids, tuple)
+            or not isinstance(reprepare_entries, tuple)
+            or not isinstance(invalidate_entry_ids, tuple)
+        ):
+            raise TypeError("Motion Composition dispositions must be tuples.")
         if not isinstance(previous_connectivity, OversetConnectivity):
             raise TypeError("previous_connectivity must be OversetConnectivity.")
         if candidate_connectivity is not None and not isinstance(
@@ -3353,10 +3655,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 status=status,
             )
             rolled_back = with_journal(transaction.journal, transaction.content_state)
-            return eqx.tree_at(
+            answer = eqx.tree_at(
                 lambda result: result.runtime_state,
                 accepted_result,
                 rolled_back,
+            )
+            return eqx.tree_at(
+                lambda result: result.topology_event_refusal,
+                answer,
+                FiniteVolumeTopologyEventRefusal(
+                    status, reason, request.request_id, evidence.evidence_id
+                ),
+                is_leaf=lambda node: node is None,
             )
 
         def commit_owner_local(
@@ -3368,7 +3678,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 PolyhedralConnectivity,
                 TetrahedralConnectivity,
             )
-            from ..discretization._view_support import OwnerLocalCellGeometry
+            from ..discretization._view_support import (
+                OwnerLocalCellGeometry,
+                OwnerLocalCompositeCellGeometry,
+            )
             from ..discretization.finite_volume._owner_local_remap import (
                 prepare_owner_local_conservative_remap,
             )
@@ -3403,10 +3716,21 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     TopologyEventStatus.FAILED_MISSING_ARTIFACT,
                     "Owner-local accepted-state rebind lacks its accepted composition or geometry views.",
                 )
+            source_layout_value = self.owner_local_geometry
+            composite_layout = isinstance(
+                source_layout_value, OwnerLocalCompositeCellGeometry
+            )
+            if composite_layout and owner_local_part_name is None:
+                # A composite layout moves one named part; the others keep their
+                # geometry and are carried by stable cell ID.
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Composite owner-local motion must name its moved part.",
+                )
             part_name = (
-                self.owner_local_geometry.part_name
-                if owner_local_part_name is None
-                else str(owner_local_part_name)
+                str(owner_local_part_name)
+                if owner_local_part_name is not None
+                else source_layout_value.part_name
             )
             local_error: Exception | None = None
             try:
@@ -3427,13 +3751,27 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     )
                 source_geometry_view = source_geometry.owner_local_view
                 target_geometry_view = target_geometry.owner_local_view
-                if not isinstance(
-                    source_geometry_view, OwnerLocalCellGeometry
-                ) or not isinstance(target_geometry_view, OwnerLocalCellGeometry):
+                layout_type = (
+                    OwnerLocalCompositeCellGeometry
+                    if composite_layout
+                    else OwnerLocalCellGeometry
+                )
+                if not isinstance(source_geometry_view, layout_type) or not isinstance(
+                    target_geometry_view, layout_type
+                ):
                     raise ValueError("Prepared FV geometry lost its owner-local view.")
+                source_layout = source_geometry_view
+                target_layout = target_geometry_view
+                runtime_part = (
+                    source_layout_value.part(part_name)
+                    if isinstance(source_layout_value, OwnerLocalCompositeCellGeometry)
+                    and part_name in source_layout_value.part_names
+                    else source_layout_value
+                )
                 if (
                     not part_name
-                    or part_name != self.owner_local_geometry.part_name
+                    or not isinstance(runtime_part, OwnerLocalCellGeometry)
+                    or part_name != runtime_part.part_name
                     or owner_local_source_views is None
                     or owner_local_successor_assembly is None
                 ):
@@ -3457,77 +3795,106 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 target_view = target_view_value
                 candidate_view = candidate_view_value
                 local_advance = motion_advances.get(part_name)
+                if isinstance(source_layout, OwnerLocalCompositeCellGeometry):
+                    if (
+                        not isinstance(target_layout, OwnerLocalCompositeCellGeometry)
+                        or source_layout.part_names != target_layout.part_names
+                        or source_layout.part(part_name).local_view_id
+                        != source_view.local_view_id
+                        or target_layout.part(part_name).local_view_id
+                        != target_view.local_view_id
+                        or any(
+                            target_layout.part(name).local_view_id
+                            != source_layout.part(name).local_view_id
+                            for name in source_layout.part_names
+                            if name != part_name
+                        )
+                    ):
+                        raise ValueError(
+                            "Successor composite layout must move only the named part."
+                        )
                 if (
-                    source_view.local_view_id != self.owner_local_geometry.local_view_id
+                    source_view.local_view_id != runtime_part.local_view_id
                     or target_view.local_view_id != candidate_view.local_view_id
-                    or source_geometry_view.local_view_id != source_view.local_view_id
-                    or target_geometry_view.local_view_id != target_view.local_view_id
+                    or source_layout.local_view_id != source_layout_value.local_view_id
+                    or (
+                        not composite_layout
+                        and target_layout.local_view_id != target_view.local_view_id
+                    )
                 ):
                     raise ValueError(
                         "Owner-local FV geometry does not bind the accepted source/successor views."
                     )
                 if (
-                    source_view.source_topology_id != current_epoch.topology_id
-                    or source_view.source_geometry_id != current_epoch.geometry_id
+                    source_layout.source_topology_id != current_epoch.topology_id
+                    or source_layout.source_geometry_id != current_epoch.geometry_id
                 ):
                     raise ValueError(
                         "Owner-local source view differs from the current global target authority."
                     )
+
+                def layout_parts(layout: Any, /) -> tuple[OwnerLocalCellGeometry, ...]:
+                    return (
+                        layout.parts
+                        if isinstance(layout, OwnerLocalCompositeCellGeometry)
+                        else (layout,)
+                    )
+
+                def remote_ghost_ids(layout: Any, /) -> set[int]:
+                    ghosts = (
+                        layout.remote_ghosts
+                        if isinstance(layout, OwnerLocalCompositeCellGeometry)
+                        else None
+                    )
+                    if ghosts is None:
+                        return set()
+                    return set(np.asarray(ghosts.cell_ids, dtype=np.int64).tolist())
+
                 source_ids = np.asarray(source_geometry.cell_global_ids, dtype=np.int64)
                 target_ids = np.asarray(target_geometry.cell_global_ids, dtype=np.int64)
                 source_view_ids = np.asarray(source_view.cell_ids, dtype=np.int64)
                 target_view_ids = np.asarray(target_view.cell_ids, dtype=np.int64)
-                if set(int(value) for value in source_ids) != set(
-                    int(value) for value in source_view_ids
-                ) or set(int(value) for value in target_ids) != set(
-                    int(value) for value in target_view_ids
+                if set(source_ids.tolist()) != set(
+                    np.asarray(source_layout.cell_ids, dtype=np.int64).tolist()
+                ) or set(target_ids.tolist()) != set(
+                    np.asarray(target_layout.cell_ids, dtype=np.int64).tolist()
                 ):
                     raise ValueError(
                         "Owner-local FV plan cells differ from their local views."
                     )
-                source_view_row = {
-                    int(identifier): row for row, identifier in enumerate(source_view_ids)
-                }
-                target_view_row = {
-                    int(identifier): row for row, identifier in enumerate(target_view_ids)
-                }
-                source_plan_to_view = np.asarray(
-                    [source_view_row[int(identifier)] for identifier in source_ids],
-                    dtype=np.int32,
-                )
-                target_plan_to_view = np.asarray(
-                    [target_view_row[int(identifier)] for identifier in target_ids],
-                    dtype=np.int32,
-                )
-                source_view_measures = np.asarray(source_view.cell_measures)[
-                    source_plan_to_view
-                ]
-                target_view_measures = np.asarray(target_view.cell_measures)[
-                    target_plan_to_view
-                ]
-                for measures, geometry, label in (
-                    (
-                        source_view_measures,
-                        np.asarray(source_geometry.cell_volumes),
-                        "source",
-                    ),
-                    (
-                        target_view_measures,
-                        np.asarray(target_geometry.cell_volumes),
-                        "target",
-                    ),
+                for layout, geometry, label in (
+                    (source_layout, source_geometry, "source"),
+                    (target_layout, target_geometry, "target"),
                 ):
+                    plan_row = {
+                        int(identifier): row
+                        for row, identifier in enumerate(
+                            np.asarray(geometry.cell_global_ids, dtype=np.int64).tolist()
+                        )
+                    }
+                    plan_volumes = np.asarray(geometry.cell_volumes)
                     tolerance = (
                         64.0
                         * np.finfo(np.float64).eps
-                        * max(1.0, float(np.max(np.abs(geometry), initial=0.0)))
+                        * max(1.0, float(np.max(np.abs(plan_volumes), initial=0.0)))
                     )
-                    if measures.shape != geometry.shape or not np.allclose(
-                        measures, geometry, rtol=0.0, atol=tolerance
-                    ):
-                        raise ValueError(
-                            f"Owner-local {label} FV volumes differ from the accepted local geometry."
+                    for part_view in layout_parts(layout):
+                        rows = np.asarray(
+                            [
+                                plan_row[int(identifier)]
+                                for identifier in np.asarray(
+                                    part_view.cell_ids, dtype=np.int64
+                                ).tolist()
+                            ],
+                            dtype=np.int64,
                         )
+                        measures = np.asarray(part_view.cell_measures)
+                        if measures.shape != rows.shape or not np.allclose(
+                            measures, plan_volumes[rows], rtol=0.0, atol=tolerance
+                        ):
+                            raise ValueError(
+                                f"Owner-local {label} FV volumes differ from the accepted local geometry."
+                            )
                 source_content = accepted_state.content_state
                 if source_content.owned_cell_mask is None or not np.array_equal(
                     np.asarray(source_content.owned_cell_mask),
@@ -3546,7 +3913,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     )
                     for row, identifier in enumerate(target_ids)
                 }
-                if source_active_by_id != target_active_by_id:
+                # Remote donor ghosts follow the moved receptors' overlap; every
+                # part row keeps its identity and physical activity.
+                if set(source_active_by_id).difference(
+                    remote_ghost_ids(source_layout)
+                ) != set(target_active_by_id).difference(
+                    remote_ghost_ids(target_layout)
+                ) or any(
+                    source_active_by_id[identifier] != target_active_by_id[identifier]
+                    for identifier in set(source_active_by_id).intersection(
+                        target_active_by_id
+                    )
+                ):
                     raise ValueError(
                         "Owner-local motion cannot change physical active-cell ownership."
                     )
@@ -3601,7 +3979,13 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     )
                     if fixed_ids.ndim != 1 or np.unique(fixed_ids).size != fixed_ids.size:
                         raise ValueError("Owner-local fixed vertex IDs are malformed.")
-                    if source_geometry.cell_count:
+                    # A native periodic part closes its periodic cell and has no
+                    # physical boundary; the unwelded seam faces of its resident
+                    # lifted patch are not one.
+                    if (
+                        source_geometry.cell_count
+                        and source_view.periodic_topology_id is None
+                    ):
                         patch_names = source_geometry.boundary_patch_names
                         if "__physical_boundary__" not in patch_names:
                             raise ValueError(
@@ -3633,6 +4017,32 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                         else:
                             raise TypeError(
                                 "Owner-local physical-boundary validation requires canonical cell faces."
+                            )
+                        if composite_layout:
+                            # Union-mesh vertex rows are disjoint per part in part
+                            # order; global vertex IDs may repeat across parts, so
+                            # only the moved part's rows constrain the request.
+                            row_start = 0
+                            row_count = 0
+                            for name in source_layout.part_names:
+                                part_mesh = source_layout.part(
+                                    name
+                                ).reconstruct_local_geometry()[0]
+                                row_count = (
+                                    0
+                                    if part_mesh is None
+                                    else int(np.asarray(part_mesh.coordinates).shape[0])
+                                )
+                                if name == part_name:
+                                    break
+                                row_start += row_count
+                            physical_rows = tuple(
+                                row
+                                for row in physical_rows
+                                if np.all(
+                                    (np.asarray(row) >= row_start)
+                                    & (np.asarray(row) < row_start + row_count)
+                                )
                             )
                         physical_ids = np.unique(
                             np.concatenate(
@@ -3724,10 +4134,19 @@ class PreparedFiniteVolumeRuntime(StrictModule):
 
             advance = motion_advances.get(part_name)
             transition = None if advance is None else advance.geometry_transition
-            transition_advance_id = (
+            # Local advance IDs bind rank-local meshes; the remap binds the
+            # group-wide motion between the accepted source and target parts.
+            group_advance_id = (
                 None
-                if transition is None or np.asarray(source_view.cell_ids).size == 0
-                else advance.advance_id
+                if advance is None
+                else canonical_fingerprint(
+                    {
+                        "kind": "owner-local-finite-volume-motion",
+                        "source": source_view.part_id,
+                        "target": target_view.part_id,
+                        "driver": advance.motion_driver_id,
+                    }
+                )
             )
             source_average_plan = self._dynamics_cell_average(
                 accepted_state.content_state
@@ -3741,36 +4160,66 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     dtype=jnp.int32,
                 )
             ]
-            local_remap = prepare_owner_local_conservative_remap(
-                source_view,
-                target_view,
-                execution_group,
-                transition=transition,
-                advance_id=transition_advance_id,
-                axis_name="finite_volume_owner_local_rezone",
-                require_complete=True,
-            )
-            remap_result = local_remap.apply_averages(
-                source_average_view,
-                source_view,
-                target_view,
-                execution_group,
-                axis_name="finite_volume_owner_local_rezone",
-            )
-            target_average_view = remap_result.local_values
-            target_average_plan = target_average_view[
-                jnp.asarray(
-                    [
-                        np.flatnonzero(target_view_ids == int(identifier))[0]
-                        for identifier in target_ids
-                    ],
-                    dtype=jnp.int32,
+            try:
+                # The remap synchronizes its own validation, so a refusal is
+                # raised on every owner at the same collective step.
+                local_remap = prepare_owner_local_conservative_remap(
+                    source_view,
+                    target_view,
+                    execution_group,
+                    transition=transition,
+                    advance_id=group_advance_id,
+                    axis_name="finite_volume_owner_local_rezone",
+                    require_complete=True,
                 )
-            ]
+                remap_result = local_remap.apply_averages(
+                    source_average_view,
+                    source_view,
+                    target_view,
+                    execution_group,
+                    axis_name="finite_volume_owner_local_rezone",
+                )
+            except (TypeError, ValueError, RuntimeError) as error:
+                return fail(
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    "Owner-local remap preparation failed collectively: " + str(error),
+                )
+            target_average_view = remap_result.local_values
+            # Moved-part rows take the conservative remap; rows of unmoved parts
+            # are carried by stable cell ID. Remote donor ghost rows are refreshed
+            # from their owners once the successor layout exists.
+            target_view_row = {
+                int(identifier): row for row, identifier in enumerate(target_view_ids)
+            }
+            source_plan_row = {
+                int(identifier): row for row, identifier in enumerate(source_ids)
+            }
+            remapped_rows = np.asarray(
+                [target_view_row.get(int(identifier), -1) for identifier in target_ids],
+                dtype=np.int32,
+            )
+            carried_rows = np.asarray(
+                [
+                    -1
+                    if int(identifier) in target_view_row
+                    else source_plan_row.get(int(identifier), -1)
+                    for identifier in target_ids
+                ],
+                dtype=np.int32,
+            )
+            target_average_plan = jnp.where(
+                jnp.asarray(remapped_rows >= 0)[:, None],
+                target_average_view[jnp.asarray(np.maximum(remapped_rows, 0))],
+                jnp.where(
+                    jnp.asarray(carried_rows >= 0)[:, None],
+                    source_average_plan[jnp.asarray(np.maximum(carried_rows, 0))],
+                    jnp.zeros((), dtype=source_average_plan.dtype),
+                ),
+            )
 
-            target_topology_id = target_view.source_topology_id
-            target_geometry_id = target_view.source_geometry_id
-            target_partition_id = target_view.distribution_id
+            target_topology_id = target_layout.source_topology_id
+            target_geometry_id = target_layout.source_geometry_id
+            target_partition_id = target_layout.distribution_id
             same_epoch = (
                 target_topology_id == current_epoch.topology_id
                 and target_geometry_id == current_epoch.geometry_id
@@ -3873,7 +4322,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     topology_epoch=candidate_epoch,
                     topology_artifacts=candidate_artifacts,
                     execution_group=execution_group,
-                    owner_local_geometry=target_view,
+                    owner_local_geometry=target_layout,
                     owner_local_axis_name=self.owner_local_axis_name,
                 )
                 successor_owned_cell_mask = successor_runtime.owner_local_owned_cell_mask
@@ -3937,6 +4386,32 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 return fail(
                     TopologyEventStatus.FAILED_MISSING_ARTIFACT,
                     "Owner-local target runtime admission produced no accepted state.",
+                    coverage_error=coverage_error,
+                    conservation_defect=conservation_defect,
+                )
+            refresh_error = None
+            try:
+                if successor_runtime.owner_local_decision_provider is not None:
+                    refreshed_average = successor_runtime._provide_stage_state(
+                        accepted_state.time, target_content.cell_average()
+                    )
+                    target_content = target_content.with_content(
+                        refreshed_average
+                        * target_content.effective_cell_volumes.reshape(
+                            (-1,) + (1,) * (refreshed_average.ndim - 1)
+                        )
+                    )
+            except Exception as error:
+                refresh_error = error
+            refresh_error_text = collective_error(
+                refresh_error,
+                "finite_volume_owner_local_target_ghost_refresh",
+            )
+            if refresh_error_text is not None:
+                return fail(
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    "Owner-local target ghost refresh failed collective admission: "
+                    + refresh_error_text,
                     coverage_error=coverage_error,
                     conservation_defect=conservation_defect,
                 )
@@ -4187,6 +4662,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     previous_connectivity,
                     candidate_connectivity_for_commit,
                     transports=(transport,),
+                    reprepare=reprepare_entries,
+                    retain=retained_state_entry_ids,
+                    invalidate=invalidate_entry_ids,
                 )
                 receipt = prepared_motion.commit(accepted_boundary=True)
             except Exception as error:
@@ -4309,13 +4787,25 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     admission_error = admission_error or (
                         "owner-local physical rezone requires unstructured cell geometry"
                     )
+            # A refused motion is a failed event of the current epoch (journaled),
+            # not a stale request; motion acceptance is itself collective.
+            motion_refused = _synchronize_owner_search_failure(
+                any(
+                    isinstance(advance, MeshMotionAdvance) and not advance.accepted
+                    for advance in motion_advances.values()
+                ),
+                execution_group.devices,
+                "finite_volume_owner_local_motion_acceptance",
+            )
             if _synchronize_owner_search_failure(
                 admission_error is not None,
                 execution_group.devices,
                 "finite_volume_owner_local_candidate_admission",
             ):
                 return fail(
-                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    TopologyEventStatus.FAILED
+                    if motion_refused
+                    else TopologyEventStatus.FAILED_STALE_EPOCH,
                     "Owner-local motion candidate failed collective admission: "
                     + (
                         admission_error
@@ -4904,6 +5394,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 previous_connectivity,
                 candidate_connectivity,
                 transports=(transport,),
+                reprepare=reprepare_entries,
+                retain=retained_state_entry_ids,
+                invalidate=invalidate_entry_ids,
             )
             receipt = prepared_motion.commit(accepted_boundary=True)
         except (KeyError, TypeError, ValueError, FloatingPointError):
@@ -5075,10 +5568,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 evidence=evidence,
                 status=status,
             )
-            return eqx.tree_at(
+            answer = eqx.tree_at(
                 lambda result: result.runtime_state,
                 accepted_result,
                 with_state(rejected.content_state, rejected.journal),
+            )
+            return eqx.tree_at(
+                lambda result: result.topology_event_refusal,
+                answer,
+                FiniteVolumeTopologyEventRefusal(
+                    status, reason, request.request_id, evidence.evidence_id
+                ),
+                is_leaf=lambda node: node is None,
             )
 
         candidate_epoch = TopologyEpoch(
@@ -7202,6 +7703,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     args,
                     stage_state_provider=self.stage_state_provider,
                     stage_decision_provider=self.owner_local_decision_provider,
+                    stage_route_provider=self.owner_local_route_provider,
                     cfl=self.policy.cfl,
                 ),
                 lambda _: zero_candidate,
@@ -7484,6 +7986,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     redistribution=redistribution,
                     stage_state_provider=self.stage_state_provider,
                     stage_decision_provider=self.owner_local_decision_provider,
+                    stage_route_provider=self.owner_local_route_provider,
                 ),
                 lambda _: zero_candidate,
             )
@@ -7738,6 +8241,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     cfl=self.policy.cfl,
                     stage_state_provider=self.stage_state_provider,
                     stage_decision_provider=self.owner_local_decision_provider,
+                    stage_route_provider=self.owner_local_route_provider,
                 ),
                 lambda _: zero_candidate,
                 operand=None,
@@ -8147,6 +8651,7 @@ __all__ = [
     "FiniteVolumeOwnerLocalCellStateBankSpec",
     "FiniteVolumeAdvanceResult",
     "FiniteVolumeOwnerLocalRepartitionResult",
+    "FiniteVolumeTopologyEventRefusal",
     "FiniteVolumeScheduledAdvanceResult",
     "FiniteVolumeStageFlux",
     "FiniteVolumeStageFluxProvider",

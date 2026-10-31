@@ -1103,6 +1103,7 @@ _DEFERRED_EXPORTS = {
     "FiniteVolumeOwnerLocalCellStateBankSpec": "._finite_volume_runtime",
     "FiniteVolumeAdvanceResult": "._finite_volume_runtime",
     "FiniteVolumeOwnerLocalRepartitionResult": "._finite_volume_runtime",
+    "FiniteVolumeTopologyEventRefusal": "._finite_volume_runtime",
     "FiniteVolumeValidatedRuntimeState": "._finite_volume_runtime",
     "FiniteVolumeScheduledAdvanceResult": "._finite_volume_runtime",
     "FiniteVolumeStageFlux": "._finite_volume_runtime",
@@ -3462,6 +3463,7 @@ __all__ = [
     "FiniteVolumeOwnerLocalCellStateBankSpec",
     "FiniteVolumeAdvanceResult",
     "FiniteVolumeOwnerLocalRepartitionResult",
+    "FiniteVolumeTopologyEventRefusal",
     "FiniteVolumeValidatedRuntimeState",
     "FiniteVolumeScheduledAdvanceResult",
     "FiniteVolumeStageFlux",
@@ -5625,6 +5627,7 @@ if TYPE_CHECKING:
         FiniteVolumeStageFluxProvider,
         FiniteVolumeStageFluxTrace,
         FiniteVolumeStepPolicy,
+        FiniteVolumeTopologyEventRefusal,
         FiniteVolumeValidatedRuntimeState,
         PreparedFiniteVolumeRuntime,
     )
