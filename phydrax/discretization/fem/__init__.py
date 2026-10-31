@@ -48,6 +48,7 @@ from ._distributed import (
     DistributedFiniteElementConstraint,
     DistributedFiniteElementMortarPlan,
     DistributedFiniteElementOperator,
+    finite_element_dof_identity_plan,
     finite_element_partition_workset_plan,
     FiniteElementDistributedPhasePlan,
     FiniteElementDofIdentityPlan,
