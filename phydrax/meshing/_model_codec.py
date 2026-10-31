@@ -57,6 +57,18 @@ from .._typing_plan import validate_tree
 _MODEL_KIND = "phydrax-native-model-artifact"
 _MODEL_ARRAYS = "model/leaves"
 
+# Admission limits for untrusted model-recipe archives. Every recipe node costs at
+# most two manifest JSON levels (the node object and its ``fields``/``items``
+# container), so this admits 31 nested native objects. The deepest exact CAD chain
+# in the schema (model, trim domain, curve loop, segment, root endpoint, carrier,
+# surface patch, profile curve, exact rational coordinate, with their tuple
+# containers) uses 12 recipe nodes and 25 manifest levels; placements and offsets
+# add one node each. Model recipes store one archive member per dynamic array leaf,
+# so composite models admit 4,096 leaves (plus the manifest); the central-directory,
+# member, and aggregate byte limits still bound every allocation. Every other
+# admission bound keeps its conservative default.
+MODEL_ARCHIVE_LIMITS = ArrayArchiveLimits(max_manifest_nesting=64, max_members=4097)
+
 
 def _register_model_archive_types() -> None:
     """Register built-in scientific models supported by the generic recipe codec."""

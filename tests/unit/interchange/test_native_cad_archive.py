@@ -32,7 +32,10 @@ from phydrax.interchange._cad_archive import (
     load_brep_archive,
     save_brep_archive,
 )
-from phydrax.meshing._model_codec import _register_model_archive_types
+from phydrax.meshing._model_codec import (
+    _register_model_archive_types,
+    MODEL_ARCHIVE_LIMITS,
+)
 
 
 _WORKER = Path(__file__).with_name("_native_cad_archive_worker.py")
@@ -196,7 +199,9 @@ def test_brep_projection_result_archive_rejects_tampered_frame_binding(
         text=True,
     )
     expected = json.loads(written.stdout)
-    manifest, arrays = read_array_archive(tmp_path / "brep-projection.phx")
+    manifest, arrays = read_array_archive(
+        tmp_path / "brep-projection.phx", limits=MODEL_ARCHIVE_LIMITS
+    )
     manifest.pop("arrays")
 
     def find_projection(node: object) -> dict[str, Any] | None:
@@ -225,7 +230,10 @@ def test_brep_projection_result_archive_rejects_tampered_frame_binding(
     corrupt_directory = tmp_path / "changed-projection-frame"
     corrupt_directory.mkdir()
     write_array_archive(
-        corrupt_directory / "brep-projection.phx", manifest=manifest, arrays=arrays
+        corrupt_directory / "brep-projection.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -256,7 +264,7 @@ def test_brep_archive_rejects_tampered_tessellation_chart_tokens(
     )
     source = tmp_path / "tessellated-box.phx"
     corrupted = tmp_path / "tampered-tessellation-chart-tokens.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_surface_witness(node: object) -> dict[str, Any] | None:
@@ -291,7 +299,9 @@ def test_brep_archive_rejects_tampered_tessellation_chart_tokens(
         return False
 
     assert tamper_first_integer(token_bank)
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(corrupted)],
         cwd=_REPOSITORY_ROOT,
@@ -309,14 +319,16 @@ def test_brep_archive_recomputes_serialized_identity(tmp_path: Path) -> None:
     corrupted = tmp_path / "changed-identity.phx"
     save_brep_archive(model, source)
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     root_recipe = manifest["model_recipe"]
     identity = root_recipe["fields"]["model_id"]["value"]
     root_recipe["fields"]["model_id"]["value"] = (
         "0" * 64 if identity != "0" * 64 else "1" * 64
     )
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
 
     with pytest.raises(ArrayArchiveCorruptionError):
         load_brep_archive(corrupted)
@@ -334,14 +346,16 @@ def test_composition_archive_recomputes_identity_in_a_cold_process(
     )
     source = tmp_path / "continuation.phx"
     corrupted = tmp_path / "changed-composition-identity.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     recipe = manifest["model_recipe"]
     identity = recipe["fields"]["composition_id"]["value"]
     recipe["fields"]["composition_id"]["value"] = (
         "0" * 64 if identity != "0" * 64 else "1" * 64
     )
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
 
     refused = subprocess.run(
         [
@@ -392,7 +406,7 @@ def test_polyhedral_periodic_archive_cold_restores_ragged_connectivity(
     )
     assert restored.stdout.strip() == "polyhedral-periodic-cold-restored"
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_periodic_topology(node: object) -> dict[str, Any] | None:
@@ -417,7 +431,9 @@ def test_polyhedral_periodic_archive_cold_restores_ragged_connectivity(
     assert periodic is not None
     periodic["fields"]["periodic_topology_id"]["value"] = "0" * 64
     corrupted = tmp_path / "changed-periodic-polyhedral-topology.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -462,7 +478,7 @@ def test_composition_archive_refuses_tampered_fe_layout_identity(
     assert restored.returncode == 0, restored.stderr
     source = tmp_path / "continuation.phx"
     corrupted = tmp_path / "changed-fe-layout-identity.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     original_manifest = copy.deepcopy(manifest)
 
@@ -488,7 +504,9 @@ def test_composition_archive_refuses_tampered_fe_layout_identity(
     layout = find_layout(manifest["model_recipe"])
     assert layout is not None
     layout["fields"]["layout_id"]["value"] = "0" * 64
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -598,7 +616,12 @@ def test_composition_archive_refuses_tampered_fe_layout_identity(
     semantic_directory = tmp_path / "changed-fe-layout-transfer-semantics"
     semantic_directory.mkdir()
     semantic_archive = semantic_directory / "continuation.phx"
-    write_array_archive(semantic_archive, manifest=semantic_manifest, arrays=arrays)
+    write_array_archive(
+        semantic_archive,
+        manifest=semantic_manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
     refused_semantics = subprocess.run(
         [
             sys.executable,
@@ -629,7 +652,7 @@ def test_composition_archive_rejects_tampered_material_deformation_identity(
     expected = json.loads(written.stdout)["continuation"]
     source = tmp_path / "continuation.phx"
     corrupted = tmp_path / "changed-material-deformation-identity.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_deformation(node: object) -> dict[str, Any] | None:
@@ -654,7 +677,9 @@ def test_composition_archive_rejects_tampered_material_deformation_identity(
     deformation = find_deformation(manifest["model_recipe"])
     assert deformation is not None
     deformation["fields"]["deformation_id"]["value"] = "0" * 64
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -670,7 +695,7 @@ def test_composition_archive_rejects_tampered_material_deformation_identity(
     )
     assert refused.returncode != 0
     for field_name in ("source_chart_witnesses", "target_chart_witnesses"):
-        manifest, arrays = read_array_archive(source)
+        manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
         manifest.pop("arrays")
 
         def find_material_witness(node: object) -> dict[str, Any] | None:
@@ -708,7 +733,12 @@ def test_composition_archive_rejects_tampered_material_deformation_identity(
         assert isinstance(fields, dict)
         assert tamper_first_chart_string(fields[field_name])
         chart_corruption = tmp_path / f"changed-material-{field_name}.phx"
-        write_array_archive(chart_corruption, manifest=manifest, arrays=arrays)
+        write_array_archive(
+            chart_corruption,
+            manifest=manifest,
+            arrays=arrays,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
         refused_chart = subprocess.run(
             [
                 sys.executable,
@@ -757,7 +787,7 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
     )
     assert restored.stdout.strip() == "layer-curving-evidence-cold-restored"
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_source_chart_witness(node: object) -> dict[str, Any] | None:
@@ -783,7 +813,9 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
     assert witness is not None
     witness["fields"]["witness_id"]["value"] = "0" * 64
     corrupted = tmp_path / "changed-layer-curving-trace.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -798,7 +830,7 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
         text=True,
     )
     assert refused.returncode != 0
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     _register_model_archive_types()
     row_leaves = tuple(
@@ -813,7 +845,9 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
     assert row_payload.size
     row_payload[0] += 1
     changed_rows = tmp_path / "changed-layer-source-root-cell-ids.phx"
-    write_array_archive(changed_rows, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        changed_rows, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused_rows = subprocess.run(
         [
             sys.executable,
@@ -829,7 +863,7 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
     )
     assert refused_rows.returncode != 0
     assert "incompatible with its registered recipe" in refused_rows.stderr
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     witness = find_source_chart_witness(manifest["model_recipe"])
     assert witness is not None
@@ -847,7 +881,9 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
 
     assert tamper_first_integer(fields["source_parameter_rational_tokens"])
     changed_reference = tmp_path / "changed-layer-source-rational-tokens.phx"
-    write_array_archive(changed_reference, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        changed_reference, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused_reference = subprocess.run(
         [
             sys.executable,
@@ -902,7 +938,7 @@ def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
     )
     assert restored.stdout.strip() == "layer-curving-evidence-cold-restored"
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_mapped_trace(node: object) -> dict[object, object] | None:
@@ -943,7 +979,9 @@ def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
     assert isinstance(fields, dict)
     assert tamper_first_fraction(fields["source_parameters"])
     corrupted = tmp_path / "changed-mapped-layer-source-parameters.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -1031,7 +1069,7 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
     )
     assert restored.stdout.strip() == "layer-curving-evidence-cold-restored"
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_implicit_trace(node: object) -> dict[str, Any] | None:
@@ -1062,7 +1100,9 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
     assert lower_bound["kind"] == "literal"
     lower_bound["value"] += 0.125
     corrupted = tmp_path / "changed-implicit-layer-chart-evidence.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -1112,7 +1152,7 @@ def test_seed_transition_preserves_material_reference_without_maps(
     )
     assert restored.stdout.strip() == "material-reference-seed-transition-cold-restored"
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_reference(node: object) -> dict[str, Any] | None:
@@ -1138,7 +1178,9 @@ def test_seed_transition_preserves_material_reference_without_maps(
     assert reference is not None
     reference["fields"]["declaration_id"]["value"] = "0" * 64
     corrupted = tmp_path / "changed-material-reference-seed-transition.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -1190,7 +1232,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
     source = tmp_path / "mapped-reference-domain.phx"
     corrupted_directory = tmp_path / "changed-reference-root-vertex-relation"
     corrupted_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_mapped_domain(node: object) -> dict[str, Any] | None:
@@ -1219,6 +1261,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
         corrupted_directory / "mapped-reference-domain.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -1236,7 +1279,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     mapped_domain = find_mapped_domain(manifest["model_recipe"])
     assert mapped_domain is not None
@@ -1256,6 +1299,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
         spatial_directory / "mapped-reference-domain.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused_spatial = subprocess.run(
         [
@@ -1272,7 +1316,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
     )
     assert refused_spatial.returncode != 0
     assert "incompatible with its registered recipe" in refused_spatial.stderr
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_piecewise_domain(node: object) -> dict[str, Any] | None:
@@ -1304,6 +1348,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
         path_directory / "mapped-reference-domain.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused_path = subprocess.run(
         [
@@ -1358,7 +1403,7 @@ def test_piecewise_linear_domain_archives_duplicate_region_occurrences_cold(
     assert restored.stdout.strip() == "piecewise-region-occurrences-cold-restored"
 
     source = tmp_path / "piecewise-region-occurrences.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_piecewise_domain(node: object) -> dict[str, Any] | None:
@@ -1389,6 +1434,7 @@ def test_piecewise_linear_domain_archives_duplicate_region_occurrences_cold(
         corrupt_directory / "piecewise-region-occurrences.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -1438,7 +1484,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
     )
     assert restored.stdout.strip() == "mapped-reference-boundary-query-cold-restored"
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_query_recipe(node: object) -> dict[str, Any] | None:
@@ -1465,7 +1511,9 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
     stored_query_id = recipe["items"][3]["value"]
     recipe["items"][3]["value"] = "0" * 64 if stored_query_id != "0" * 64 else "1" * 64
     corrupted = tmp_path / "changed-mapped-reference-boundary-query.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -1481,7 +1529,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
     )
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_authority_recipe(node: object) -> dict[str, Any] | None:
@@ -1510,7 +1558,9 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
         "0" * 64 if stored_relation_id != "0" * 64 else "1" * 64
     )
     changed_relation = tmp_path / "changed-mapped-reference-root-relation.phx"
-    write_array_archive(changed_relation, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        changed_relation, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused_relation = subprocess.run(
         [
             sys.executable,
@@ -1557,7 +1607,7 @@ def test_brep_archive_revalidates_occurrence_entity_membership_cold(
     source = tmp_path / "qualified-brep-entity.phx"
     corrupted_directory = tmp_path / "changed-solid-face-membership"
     corrupted_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_entity(node: object) -> dict[str, Any] | None:
@@ -1585,6 +1635,7 @@ def test_brep_archive_revalidates_occurrence_entity_membership_cold(
         corrupted_directory / "qualified-brep-entity.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -2444,12 +2495,14 @@ def test_adaptive_implicit_domain_archive_recomputes_proof_in_a_cold_process(
     source = tmp_path / "implicit-domain.phx"
     corrupt_directory = tmp_path / "changed-implicit-domain"
     corrupt_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     recipe = manifest["model_recipe"]["fields"]["entries"]["items"][0]["fields"]["value"]
     recipe["fields"]["source_id"]["value"] = "tampered-implicit-source"
     corrupted = corrupt_directory / "implicit-domain.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -2496,7 +2549,7 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
     source = tmp_path / "reconstructed-source.phx"
     corrupt_directory = tmp_path / "changed-reconstructed-source"
     corrupt_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     recipe = manifest["model_recipe"]["fields"]["entries"]["items"][0]["fields"]["value"]
     revision = recipe["fields"]["expected_source_revision"]["value"]
@@ -2504,7 +2557,9 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
         "0" * 64 if revision != "0" * 64 else "1" * 64
     )
     corrupted = corrupt_directory / "reconstructed-source.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -2600,7 +2655,7 @@ def test_parametric_curve_query_archive_rebuilds_source_in_a_cold_process(
     source = tmp_path / "parametric-curve-query.phx"
     corrupt_directory = tmp_path / "changed-parametric-curve-query"
     corrupt_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     query_entry = next(
         entry
@@ -2613,7 +2668,9 @@ def test_parametric_curve_query_archive_rebuilds_source_in_a_cold_process(
         "0" * 64 if revision != "0" * 64 else "1" * 64
     )
     corrupted = corrupt_directory / "parametric-curve-query.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -2643,12 +2700,14 @@ def test_brep_archive_recomputes_exact_curve_trim_identity(
     )
     source = tmp_path / "boolean-carriers.phx"
     corrupted = tmp_path / "changed-curve-trim-domain.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     trim = manifest["model_recipe"]["fields"]["trim_domains"]["items"][0]
     segment = trim["fields"]["curve_loops"]["items"][0]["items"][0]
     segment["fields"]["first"]["value"] = 0.125
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
 
     refused = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(corrupted)],
@@ -2673,7 +2732,7 @@ def test_brep_archive_recomputes_conic_root_source_identity(
     )
     source = tmp_path / "boolean-carriers.phx"
     corrupted = tmp_path / "changed-conic-root.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     original_manifest = copy.deepcopy(manifest)
     pcurve = manifest["model_recipe"]["fields"]["geometry"]["fields"]["pcurves"]["items"][
@@ -2681,7 +2740,9 @@ def test_brep_archive_recomputes_conic_root_source_identity(
     ]
     root = pcurve["fields"]["root"]
     root["fields"]["cosine_exact"]["numerator"] = 2
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
 
     refused = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(corrupted)],
@@ -2697,7 +2758,12 @@ def test_brep_archive_recomputes_conic_root_source_identity(
     endpoint = geometry_fields["edge_endpoint_roots"]["items"][0]["items"][1]
     endpoint["fields"]["point_exact"]["items"][0]["numerator"] = 2
     endpoint_corrupted = tmp_path / "changed-conic-endpoint-point.phx"
-    write_array_archive(endpoint_corrupted, manifest=endpoint_manifest, arrays=arrays)
+    write_array_archive(
+        endpoint_corrupted,
+        manifest=endpoint_manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
     refused_endpoint = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(endpoint_corrupted)],
         cwd=_REPOSITORY_ROOT,
@@ -2716,7 +2782,12 @@ def test_brep_archive_recomputes_conic_root_source_identity(
     assert phase_shift["numerator"] == 0
     phase_shift["numerator"] = 1
     phase_corrupted = tmp_path / "changed-conic-phase-shift.phx"
-    write_array_archive(phase_corrupted, manifest=phase_manifest, arrays=arrays)
+    write_array_archive(
+        phase_corrupted,
+        manifest=phase_manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
     refused_phase = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(phase_corrupted)],
         cwd=_REPOSITORY_ROOT,
@@ -2750,7 +2821,12 @@ def test_brep_archive_recomputes_conic_root_source_identity(
     assert spline is not None
     spline["fields"]["exact_control_points"]["items"][1]["items"][0]["numerator"] = 2
     spline_corrupted = tmp_path / "changed-exact-spline-controls.phx"
-    write_array_archive(spline_corrupted, manifest=spline_manifest, arrays=arrays)
+    write_array_archive(
+        spline_corrupted,
+        manifest=spline_manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
     refused_spline = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(spline_corrupted)],
         cwd=_REPOSITORY_ROOT,
@@ -2774,7 +2850,7 @@ def test_brep_archive_refuses_tampered_exact_bspline_surface_bank(
     )
     source = tmp_path / "bspline-surface.phx"
     corrupted = tmp_path / "changed-exact-bspline-surface.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_surface(node: object) -> dict[str, Any] | None:
@@ -2800,7 +2876,9 @@ def test_brep_archive_refuses_tampered_exact_bspline_surface_bank(
     surface["fields"]["exact_control_points"]["items"][0]["items"][0]["items"][0][
         "numerator"
     ] = 1
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(corrupted)],
         cwd=_REPOSITORY_ROOT,
@@ -2824,7 +2902,7 @@ def test_brep_archive_rejects_tampered_exact_offset_carrier_distance(
     )
     source = tmp_path / "offset-ruled.phx"
     corrupted = tmp_path / "changed-exact-offset-distance.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_offset(node: object) -> dict[str, Any] | None:
@@ -2848,7 +2926,9 @@ def test_brep_archive_rejects_tampered_exact_offset_carrier_distance(
     offset = find_offset(manifest["model_recipe"])
     assert offset is not None
     offset["fields"]["distance_exact"]["numerator"] = 2
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [sys.executable, str(_WORKER), "read-brep", str(corrupted)],
         cwd=_REPOSITORY_ROOT,
@@ -2969,7 +3049,7 @@ def test_brep_archive_recomputes_revolution_offset_witness_cold(
     source = tmp_path / "revolution-offset.phx"
     corrupted_directory = tmp_path / "changed-revolution-offset-witness"
     corrupted_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_offset(node: object) -> dict[str, Any] | None:
@@ -3001,6 +3081,7 @@ def test_brep_archive_recomputes_revolution_offset_witness_cold(
         corrupted_directory / "revolution-offset.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -3048,12 +3129,15 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
     source = tmp_path / "certification.phx"
     corrupt_directory = tmp_path / "changed-certification-report"
     corrupt_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     report = manifest["model_recipe"]["fields"]["certification"]
     report["fields"]["report_id"]["value"] = "0" * 64
     write_array_archive(
-        corrupt_directory / "certification.phx", manifest=manifest, arrays=arrays
+        corrupt_directory / "certification.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -3073,7 +3157,9 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
 
     evidence_directory = tmp_path / "changed-certification-embedding"
     evidence_directory.mkdir()
-    evidence_manifest, evidence_arrays = read_array_archive(source)
+    evidence_manifest, evidence_arrays = read_array_archive(
+        source, limits=MODEL_ARCHIVE_LIMITS
+    )
     evidence_manifest.pop("arrays")
     evidence_report = evidence_manifest["model_recipe"]["fields"]["certification"]
     evidence_report["fields"]["embedding"]["fields"]["certificate_id"]["value"] = "0" * 64
@@ -3081,6 +3167,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
         evidence_directory / "certification.phx",
         manifest=evidence_manifest,
         arrays=evidence_arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused_evidence = subprocess.run(
         [
@@ -3113,7 +3200,9 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
                 pending.extend(current)
         return tuple(found)
 
-    quality_manifest, quality_arrays = read_array_archive(source)
+    quality_manifest, quality_arrays = read_array_archive(
+        source, limits=MODEL_ARCHIVE_LIMITS
+    )
     quality_manifest.pop("arrays")
     stored_quality_recipes = quality_recipes(quality_manifest["model_recipe"])
     assert stored_quality_recipes
@@ -3160,7 +3249,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
         "maximum_coefficient_rounding_error",
         "maximum_element_coefficient_rounding_error",
     )
-    proof_manifest, proof_arrays = read_array_archive(source)
+    proof_manifest, proof_arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     proof_manifest.pop("arrays")
     _register_model_archive_types()
     validity_inventory = model_recipe_array_inventory(
@@ -3236,7 +3325,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
     source = tmp_path / "source-coverage.phx"
     corrupted_directory = tmp_path / "changed-source-coverage-witness"
     corrupted_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_witness(node: object) -> dict[str, Any] | None:
@@ -3273,7 +3362,10 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
     }
     witness["fields"]["witness_id"]["value"] = "0" * 64
     write_array_archive(
-        corrupted_directory / "source-coverage.phx", manifest=manifest, arrays=arrays
+        corrupted_directory / "source-coverage.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -3291,7 +3383,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
     assert expected["coverage_region_occurrence_paths"] == [[]]
-    path_manifest, path_arrays = read_array_archive(source)
+    path_manifest, path_arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     path_manifest.pop("arrays")
 
     def find_coverage_certificate(node: object) -> dict[str, Any] | None:
@@ -3324,6 +3416,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
         path_directory / "source-coverage.phx",
         manifest=path_manifest,
         arrays=path_arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused_paths = subprocess.run(
         [
@@ -3375,7 +3468,7 @@ def test_region_boundary_archive_preserves_source_occurrence_identity_cold(
     assert restored.stdout.strip() == "region-boundary-evidence-cold-restored"
 
     source = tmp_path / "region-boundary-evidence.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_region_evidence(node: object) -> dict[str, Any] | None:
@@ -3429,6 +3522,7 @@ def test_region_boundary_archive_preserves_source_occurrence_identity_cold(
         corrupt_directory / "region-boundary-evidence.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -3475,7 +3569,7 @@ def test_source_chart_rational_banks_restore_exactly_in_a_cold_process(
     source = tmp_path / "source-chart-rational-witness.phx"
     corrupted_directory = tmp_path / "changed-source-chart-rational-bank"
     corrupted_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     witness = manifest["model_recipe"]
     tokens = witness["fields"]["source_parameter_rational_tokens"]["items"][0]
@@ -3484,6 +3578,7 @@ def test_source_chart_rational_banks_restore_exactly_in_a_cold_process(
         corrupted_directory / "source-chart-rational-witness.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -4450,7 +4545,7 @@ def test_analytic_implicit_profile_archive_rebuilds_query_cold(
     source = tmp_path / "analytic-profile.phx"
     corrupt_directory = tmp_path / "changed-analytic-profile-identity"
     corrupt_directory.mkdir()
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def replace_profile_identity(value: object) -> bool:
@@ -4470,7 +4565,10 @@ def test_analytic_implicit_profile_archive_rebuilds_query_cold(
 
     assert replace_profile_identity(manifest["model_recipe"])
     write_array_archive(
-        corrupt_directory / "analytic-profile.phx", manifest=manifest, arrays=arrays
+        corrupt_directory / "analytic-profile.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -4527,7 +4625,9 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
     assert expected["source_query_id"]
     assert expected["deformation_id"]
 
-    manifest, arrays = read_array_archive(tmp_path / "surface-chart-boundary-query.phx")
+    manifest, arrays = read_array_archive(
+        tmp_path / "surface-chart-boundary-query.phx", limits=MODEL_ARCHIVE_LIMITS
+    )
     manifest.pop("arrays")
 
     def find_query_recipe(node: object) -> dict[str, Any] | None:
@@ -4558,6 +4658,7 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
         corrupt_directory / "surface-chart-boundary-query.phx",
         manifest=manifest,
         arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -4589,12 +4690,17 @@ def test_brep_archive_rejects_tampered_source_piece_witness(
     corrupt_directory = tmp_path / "changed-source-piece-witness"
     corrupt_directory.mkdir()
     shutil.copyfile(tmp_path / "refined.phx", corrupt_directory / "refined.phx")
-    manifest, arrays = read_array_archive(tmp_path / "surface-chart-witness.phx")
+    manifest, arrays = read_array_archive(
+        tmp_path / "surface-chart-witness.phx", limits=MODEL_ARCHIVE_LIMITS
+    )
     manifest.pop("arrays")
     pieces = manifest["model_recipe"]["fields"]["source_piece_ids"]["items"]
     pieces[0]["items"][-1]["value"] += 1
     write_array_archive(
-        corrupt_directory / "surface-chart-witness.phx", manifest=manifest, arrays=arrays
+        corrupt_directory / "surface-chart-witness.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -4627,7 +4733,9 @@ def test_brep_archive_rejects_tampered_exact_surface_chart_bank(
     corrupt_directory = tmp_path / "changed-surface-chart-rational-bank"
     corrupt_directory.mkdir()
     shutil.copyfile(tmp_path / "refined.phx", corrupt_directory / "refined.phx")
-    manifest, arrays = read_array_archive(tmp_path / "surface-chart-witness.phx")
+    manifest, arrays = read_array_archive(
+        tmp_path / "surface-chart-witness.phx", limits=MODEL_ARCHIVE_LIMITS
+    )
     manifest.pop("arrays")
     token_bank = manifest["model_recipe"]["fields"]["chart_rational_tokens"]
 
@@ -4643,7 +4751,10 @@ def test_brep_archive_rejects_tampered_exact_surface_chart_bank(
 
     assert tamper_first_integer(token_bank)
     write_array_archive(
-        corrupt_directory / "surface-chart-witness.phx", manifest=manifest, arrays=arrays
+        corrupt_directory / "surface-chart-witness.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -4676,7 +4787,9 @@ def test_brep_archive_rejects_tampered_surface_root_mesh_binding(
     corrupt_directory = tmp_path / "changed-surface-root-mesh-binding"
     corrupt_directory.mkdir()
     shutil.copyfile(tmp_path / "refined.phx", corrupt_directory / "refined.phx")
-    manifest, arrays = read_array_archive(tmp_path / "surface-chart-witness.phx")
+    manifest, arrays = read_array_archive(
+        tmp_path / "surface-chart-witness.phx", limits=MODEL_ARCHIVE_LIMITS
+    )
     manifest.pop("arrays")
 
     def find_surface_witness(node: object) -> dict[str, Any] | None:
@@ -4720,7 +4833,10 @@ def test_brep_archive_rejects_tampered_surface_root_mesh_binding(
     assert tamper_binding(bindings)
 
     write_array_archive(
-        corrupt_directory / "surface-chart-witness.phx", manifest=manifest, arrays=arrays
+        corrupt_directory / "surface-chart-witness.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -4793,7 +4909,7 @@ def test_piecewise_boundary_query_archive_rejects_tampered_chart_ancestry(
     expected = json.loads(written.stdout)
     source = tmp_path / "pwl-boundary-query.phx"
     corrupted = tmp_path / f"changed-pwl-boundary-{field_index}.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_query(node: object) -> dict[str, Any] | None:
@@ -4834,7 +4950,9 @@ def test_piecewise_boundary_query_archive_rejects_tampered_chart_ancestry(
         return False
 
     assert tamper_first_string(field)
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -4902,7 +5020,7 @@ def test_reference_chart_rational_archive_rejects_tampered_expression(
     expected = json.loads(written.stdout)
     source = tmp_path / "reference-chart-arguments.phx"
     corrupted = tmp_path / "changed-reference-chart-arguments.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
     def find_rational(node: object) -> dict[str, Any] | None:
@@ -4925,7 +5043,9 @@ def test_reference_chart_rational_archive_rejects_tampered_expression(
     coefficient = polynomial["numerator"]["items"][0][1]
     assert coefficient["kind"] == "fraction"
     coefficient["numerator"] += 1
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -4973,7 +5093,7 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
 
     source = tmp_path / "finite-element-transfer.phx"
     corrupted = tmp_path / "changed-finite-element-transfer-coefficient.phx"
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     _register_model_archive_types()
     coefficient_leaf = next(
@@ -4989,7 +5109,9 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
     assert coefficient_leaf is not None
     coefficients = arrays[coefficient_leaf.name]
     coefficients.flat[0] += 1.0
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
@@ -5108,7 +5230,7 @@ def test_periodic_distributed_fe_transfer_rebuilds_from_mesh_and_rejects_corrupt
     assert restored.returncode == 0, restored.stderr
     assert restored.stdout.strip() == "periodic-distributed-fe-transfer-cold-restored"
 
-    manifest, arrays = read_array_archive(source)
+    manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     _register_model_archive_types()
     coefficient_leaf = next(
@@ -5125,7 +5247,9 @@ def test_periodic_distributed_fe_transfer_rebuilds_from_mesh_and_rejects_corrupt
     coefficients = arrays[coefficient_leaf.name]
     coefficients.flat[0] += 1.0
     corrupted = tmp_path / "changed-periodic-distributed-fe-transfer.phx"
-    write_array_archive(corrupted, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+    )
     refused = subprocess.run(
         [
             sys.executable,
