@@ -605,16 +605,50 @@ target is compared with measured arc lengths at the `SizeCompliancePolicy`
 tolerances, which default to zero; a target such as 0.2 m that floating-point
 placement cannot reproduce exactly needs an explicit tolerance in the request.
 
-Native tetrahedral quality improvement follows fixed-boundary refinement. Each
-cell scores the worse of its dihedral-angle and radius-edge target fractions,
-1 when both targets hold. Every face flip, edge-ring reconnection, interior
-vertex collapse, and interior relocation is accepted only if the affected cells'
-worst-first sorted scores strictly improve, with relative-determinant validity
-and source constraints as hard requirements. That single order makes
-improvement terminate without pass, candidate, or time limits. Targets the
-edits cannot reach end valid but unmet: the run status is unresolved,
-`TetMesh3D.unmet()` reports each remaining cell and criterion, and volume routes
-refuse such a mesh rather than publish it.
+Native tetrahedral refinement and quality improvement (`TetMesh3D.refine` and
+`TetMesh3D.improve`, run in that order by the native volume routes) have these
+contracts:
+
+- **Size field.** `sizes` holds one circumradius target per current vertex (0:
+  unconstrained). A cell's target is the mean of its corners' targets, and is
+  unconstrained if any corner is. The field is retained on the mesh: refinement
+  installs it, every vertex either pass inserts receives the target interpolated
+  at its position, and a removed vertex's entry is erased. `improve()` without
+  `sizes` uses the retained field, so a route's refinement size field (for
+  example a `UniformSizeControl`) constrains improvement too.
+- **Refinement.** Circumcenters of cells violating the radius-edge bound or
+  their size target are inserted through a checked cavity; an encroached
+  splittable boundary face is split instead. No point is inserted closer than
+  min(shortest initial edge, h(x)/2) to an existing vertex, h(x) the target
+  interpolated at the point. Since refinement removes no vertex, the inserted
+  points are packed at a positive spacing in a bounded domain, so finitely
+  many are inserted. A cell the guard blocks is reported as `REFUSED`; one
+  whose circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
+- **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
+  and radius-edge target fractions (1 when both hold), floored to multiples of
+  `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
+  interior vertex insertion, collapse, and relocation is accepted only if the
+  cells it creates pass the hard gates (relative determinant above its floor,
+  source constraints preserved) and the size gate, and the affected cells'
+  worst-first sorted scores strictly improve.
+- **Precedence.** The size gate (circumradius within the size target) binds
+  every edit except one that removes a degenerate cell: a cell below the
+  determinant floor or scoring 0 (a ratio beyond 2^20 times its target).
+  Repairing degeneracy takes precedence over size; any other edit, collapses
+  included, can never grow a cell beyond its size target. The whole-mesh
+  fixed-boundary retessellation never takes this exemption.
+- **Termination.** Every accepted edit strictly improves the whole mesh's
+  sorted score vector, and over the finite score alphabet that order admits no
+  infinite improving sequence. Improvement therefore ends without pass,
+  candidate, or time limits, although insertion and collapse change the vertex
+  set; no complexity bound is claimed.
+- **Unmet evidence.** Targets the edits cannot reach end valid but unmet: the
+  run status is unresolved and `TetMesh3D.unmet()` reports each remaining cell
+  per criterion with its reason. Refinement reports the radius-edge ratio and
+  size (circumradius over target); improvement reports the radius-edge ratio,
+  minimum dihedral, and determinant validity, since the size field constrains
+  improvement but is not one of its targets. Volume routes refuse a mesh with
+  improvement residuals rather than publish it.
 
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`

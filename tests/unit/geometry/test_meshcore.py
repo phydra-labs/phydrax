@@ -709,7 +709,7 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
                 min_dihedral_degrees=0.0,
                 sizes=np.full((state.arrays().points.shape[0] + 1,), 0.1),
             )
-        # No `sizes`: refinement's retained size field gates every edit.
+        # No `sizes`: refinement's retained size field constrains every edit.
         improvement = state.improve(radius_edge_bound=10.0, min_dihedral_degrees=0.0)
         assert improvement.edit_status is TetMeshEditStatus.APPLIED
         # The acceptance grid of the improvement scores is reported as evidence.
@@ -727,11 +727,10 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
             == unmet.values.shape
         )
         assert (unmet.cell_ids.size == 0) == (improvement.unmet_cells == 0)
-        radius_edge = unmet.criteria == 0  # PHX_MC_TET_UNMET_RADIUS_EDGE
-        size = unmet.criteria == 1  # PHX_MC_TET_UNMET_SIZE: circumradius / target
-        assert np.all(radius_edge | size)
-        assert np.all(unmet.values[radius_edge] > 10.0)
-        assert np.all(unmet.values[size] > 1.0)
+        # Improvement records its own targets only; the size field constrains its
+        # edits and its residuals are refinement's records.
+        assert np.all(unmet.criteria == 0)  # PHX_MC_TET_UNMET_RADIUS_EDGE
+        assert np.all(unmet.values > 10.0)
         assert np.all(np.isfinite(unmet.values))
 
     finally:
@@ -743,17 +742,6 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
 def test_tet_mesh_relocation_distinguishes_omitted_and_cleared_edge_witness() -> None:
     root = Path(__file__).resolve().parents[3]
     environment = os.environ.copy()
-    if "PHYDRAX_MESHCORE_LIBRARY" not in environment:
-        candidate_libraries = (
-            root / ".tmp/native-recovery-build/libphydrax_meshcore.dylib",
-            root / ".tmp/native-candidate-build/libphydrax_meshcore.dylib",
-            root / ".tmp/native-candidate-build/libphydrax_meshcore.so",
-        )
-        candidate_library = next(
-            (library for library in candidate_libraries if library.is_file()), None
-        )
-        if candidate_library is not None:
-            environment["PHYDRAX_MESHCORE_LIBRARY"] = str(candidate_library)
 
     script = """\
 import numpy as np
@@ -971,15 +959,6 @@ print("edge-witness-relocation:ok")
 def test_tet_mesh_refine_binding_runs_in_isolated_process() -> None:
     root = Path(__file__).resolve().parents[3]
     environment = os.environ.copy()
-    candidate_libraries = (
-        root / ".tmp/native-candidate-build/libphydrax_meshcore.dylib",
-        root / ".tmp/native-candidate-build/libphydrax_meshcore.so",
-    )
-    candidate_library = next(
-        (library for library in candidate_libraries if library.is_file()), None
-    )
-    if candidate_library is not None:
-        environment["PHYDRAX_MESHCORE_LIBRARY"] = str(candidate_library)
 
     script = """\
 import numpy as np

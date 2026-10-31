@@ -1546,13 +1546,14 @@ std::set<std::uint64_t> cell_ids_of(const TetMeshSnapshot& snapshot) {
   return ids;
 }
 
-// Uniform-size refinement of a Kuhn grid, then improvement toward a 30-degree
-// dihedral target. Without the size field, improvement's edits create cells
-// beyond the refinement's targets. With refinement's retained field as a hard
-// gate, every cell an accepted edit (each collapse included) creates is within
-// its target: a violating cell can only be an unchanged refinement cell,
-// reported with a SIZE record, and the field holds exactly the live vertices
-// (collapsed ones erased, inserted ones interpolated).
+// Uniform-size refinement of a Kuhn grid (no degenerate cells), then
+// improvement toward a 30-degree dihedral target. Without the size field,
+// improvement's edits create cells beyond the refinement's targets. With
+// refinement's retained field as a gate, every cell an accepted edit (each
+// collapse included) creates is within its target: a violating cell can only
+// be an unchanged refinement cell, the size field is not one of improvement's
+// unmet criteria, and the field holds exactly the live vertices (collapsed
+// ones erased, inserted ones interpolated).
 void improvement_respects_refinement_size_field() {
   constexpr double kSize = 0.5;
   const TetQualityRequest request{2.0, 30.0, 1.0e-12};
@@ -1618,11 +1619,10 @@ void improvement_respects_refinement_size_field() {
   }
   const std::set<std::uint64_t> original = cell_ids_of(before);
   const std::set<std::uint64_t> violating = size_violations(sized, after, sized.vertex_sizes());
-  std::set<std::uint64_t> recorded;
-  for (const TetUnmetRecord& record : sized.unmet_records()) {
-    if (record.criterion == PHX_MC_TET_UNMET_SIZE) recorded.insert(record.cell_id);
-  }
-  PHX_CHECK(recorded == violating);
+  PHX_CHECK(std::none_of(sized.unmet_records().begin(), sized.unmet_records().end(),
+                         [](const TetUnmetRecord& record) {
+                           return record.criterion == PHX_MC_TET_UNMET_SIZE;
+                         }));
   for (std::uint64_t id : violating) PHX_CHECK(original.contains(id));
   PHX_CHECK(violating.size() <= violating_before);
 
