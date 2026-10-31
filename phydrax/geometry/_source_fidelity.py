@@ -3932,51 +3932,60 @@ def _normal_deviation_for_cell(
     )
 
     exact_surface = exact_surface_coordinate_expressions(surface)
+    source: _PatchDerivativeSource | None = None
+    enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...] | None = None
     if exact_surface is not None:
         arguments = _affine_triangle_arguments(uv_triangle)
-        lower = np.empty((3, 2), dtype=np.float64)
-        upper = np.empty_like(lower)
+        low = np.empty((3, 2), dtype=np.float64)
+        high = np.empty_like(low)
         for physical_axis, expression in enumerate(exact_surface):
             for parameter in range(2):
                 restricted = compose_expression(
                     derivative(expression, parameter), arguments
                 )
-                low, high = polynomial_bounds(restricted, "simplex", 2)
-                if not math.isfinite(low) or not math.isfinite(high) or low > high:
+                lower, upper = polynomial_bounds(restricted, "simplex", 2)
+                if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
                     return None
-                lower[physical_axis, parameter] = low
-                upper[physical_axis, parameter] = high
-        return lower, upper
-    if _has_unexpanded_exact_surface_carrier(surface):
-        return None
-    chart_lower = tuple(min(point[axis] for point in uv_triangle) for axis in range(2))
-    chart_upper = tuple(max(point[axis] for point in uv_triangle) for axis in range(2))
-    box_lower = np.asarray(
-        tuple(fraction_endpoint(value, upper=False) for value in chart_lower),
-        dtype=np.float64,
-    )
-    box_upper = np.asarray(
-        tuple(fraction_endpoint(value, upper=True) for value in chart_upper),
-        dtype=np.float64,
-    )
-    if np.any(~np.isfinite(box_lower)) or np.any(~np.isfinite(box_upper)):
-        return None
-    source = derivatives.source(patch, surface)
-    enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...] | None = None
-    if isinstance(source, PreparedIntervalFunction):
-        bounds = source.evaluate(box_lower.reshape((1, 2)), box_upper.reshape((1, 2)))
-        low, high = bounds[0][0], bounds[1][0]
+                low[physical_axis, parameter] = lower
+                high[physical_axis, parameter] = upper
     else:
-        enclosures = derivatives.span_enclosures(patch, source, uv_triangle)
-        jacobian = _span_jacobian_bounds(enclosures)
-        if jacobian is None:
+        if _has_unexpanded_exact_surface_carrier(surface):
             return None
-        low, high = jacobian
+        chart_lower = tuple(
+            min(point[axis] for point in uv_triangle) for axis in range(2)
+        )
+        chart_upper = tuple(
+            max(point[axis] for point in uv_triangle) for axis in range(2)
+        )
+        box_lower = np.asarray(
+            tuple(fraction_endpoint(value, upper=False) for value in chart_lower),
+            dtype=np.float64,
+        )
+        box_upper = np.asarray(
+            tuple(fraction_endpoint(value, upper=True) for value in chart_upper),
+            dtype=np.float64,
+        )
+        if np.any(~np.isfinite(box_lower)) or np.any(~np.isfinite(box_upper)):
+            return None
+        source = derivatives.source(patch, surface)
+        if isinstance(source, PreparedIntervalFunction):
+            bounds = source.evaluate(box_lower.reshape((1, 2)), box_upper.reshape((1, 2)))
+            low, high = bounds[0][0], bounds[1][0]
+        else:
+            enclosures = derivatives.span_enclosures(patch, source, uv_triangle)
+            jacobian = _span_jacobian_bounds(enclosures)
+            if jacobian is None:
+                return None
+            low, high = jacobian
     if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
         return None
     source_cross = _normal_cross_interval(low, high, surface_patch.orientation)
     cosine = _normal_cosine_bounds(source_cross, target_cross)
-    if enclosures is None or isinstance(source, PreparedIntervalFunction):
+    if (
+        enclosures is None
+        or source is None
+        or isinstance(source, PreparedIntervalFunction)
+    ):
         if cosine is None:
             return None
         return _acos_lower(cosine[1]), _acos_upper(cosine[0])
