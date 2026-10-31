@@ -38,7 +38,7 @@ def _source(path: Any, shape: Any = None) -> Any:
             linear_deflection=0.05,
             angular_deflection=0.2,
         ),
-    )
+    ).model
     return phx.geometry.BRepSource(model) if shape is None else model
 
 
@@ -472,7 +472,7 @@ def _semantic_source(path: Any, *, conformal: Any = True) -> Any:
             linear_deflection=0.05,
             angular_deflection=0.2,
         ),
-    )
+    ).model
     assert model.report.num_solids == 2
     return model
 

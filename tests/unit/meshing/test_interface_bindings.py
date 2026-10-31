@@ -21,7 +21,7 @@ from phydrax.geometry.multiregion_surface import (
     seed_double_bubble,
 )
 from phydrax.geometry.surface import InterfaceSide
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 from phydrax.meshing import MeshInterfaceAttachment, MeshPart
 from phydrax.meshing._association import GeometryAssociationArchiveRecipe
 from phydrax.solver.coupling import (
@@ -50,14 +50,14 @@ def _rectangle(x0: float, x1: float) -> TopoDS_Face:
 def _plate_projection(width: float) -> phx.geometry.AbstractBRepProjection:
     """Two rectangles sharing the B-Rep edge x = 0; ``width`` sets the right one."""
     shape = BRepAlgoAPI_Fuse(_rectangle(-1.0, 0.0), _rectangle(0.0, width)).Shape()
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.05,
             angular_deflection=0.2,
         ),
-    )
+    ).model
     return phx.geometry.prepare_brep_projection(model, embedding=_EMBEDDING)
 
 

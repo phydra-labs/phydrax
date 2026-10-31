@@ -20,7 +20,7 @@ from phydrax.discretization._cell_geometry_validity import (
 )
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry.brep._constructors import BRepTessellationPolicy
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 from phydrax.meshing._curving import _straight_geometry
 from phydrax.meshing._lineage import EntityLineage, EntityLineageKind, MeshLineage
 
@@ -31,14 +31,14 @@ _STATUS = phx.meshing.HighOrderCurvingStatus
 
 
 def _bound(shape: Any, embedding: Any = None) -> Any:
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.05,
             angular_deflection=0.2,
         ),
-    )
+    ).model
     return phx.geometry.prepare_brep_projection(model, embedding=embedding)
 
 
@@ -594,8 +594,7 @@ def test_p3_straight_geometry_reuses_reversed_shared_edge_nodes() -> None:
         edge_index = next(
             index
             for index, edge in enumerate(topology.entities[1])
-            if {int(vertex_ids[cell_vertices[int(local)]]) for local in edge}
-            == {0, 1}
+            if {int(vertex_ids[cell_vertices[int(local)]]) for local in edge} == {0, 1}
         )
         edge = topology.entities[1][edge_index]
         edge_orientation = tuple(
@@ -646,8 +645,7 @@ def test_p3_straight_geometry_reuses_reversed_shared_face_nodes() -> None:
         face_index = next(
             index
             for index, face in enumerate(topology.entities[2])
-            if {int(vertex_ids[cell_vertices[int(local)]]) for local in face}
-            == {0, 1, 2}
+            if {int(vertex_ids[cell_vertices[int(local)]]) for local in face} == {0, 1, 2}
         )
         face_vertices = set(topology.entities[2][face_index])
         local_dofs = set(element.entity_dofs[2][face_index])
@@ -656,14 +654,10 @@ def test_p3_straight_geometry_reuses_reversed_shared_face_nodes() -> None:
         for edge_index, edge in enumerate(topology.entities[1]):
             if set(edge) <= face_vertices:
                 local_dofs.update(element.entity_dofs[1][edge_index])
-        shared_face_rows.append(
-            set(routes[cell_row, sorted(local_dofs)].tolist())
-        )
+        shared_face_rows.append(set(routes[cell_row, sorted(local_dofs)].tolist()))
 
     assert len(shared_face_rows[0]) == 10
     assert shared_face_rows[0] == shared_face_rows[1]
     exact_coordinates = geometry.exact_coordinate_bank
     assert exact_coordinates is not None
-    assert all(
-        exact_coordinates[row][2] == 0 for row in shared_face_rows[0]
-    )
+    assert all(exact_coordinates[row][2] == 0 for row in shared_face_rows[0])

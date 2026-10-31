@@ -3408,6 +3408,32 @@ def _validate_model_source_bindings(
         )
 
 
+_BOUND_SOURCE_REVISION_CAPACITY = 256
+_BOUND_SOURCE_REVISIONS: dict[str, None] = {}
+
+
+def _require_source_bindings(
+    source_revision: str,
+    geometry: BRepGeometry,
+    patches: tuple[AbstractSurfacePatch, ...],
+    parameter_bounds: np.ndarray,
+    trim_domains: tuple[TrimDomain | None, ...],
+    /,
+) -> None:
+    """Replay the source binding proof once per source revision.
+
+    The revision fingerprints every binding input (geometry with its declared
+    face gaps, patch definitions, parameter bounds and trims), so equal content
+    rebuilt as new model values, and later currency checks, reuse one proof.
+    """
+    if source_revision in _BOUND_SOURCE_REVISIONS:
+        return
+    _validate_model_source_bindings(geometry, patches, parameter_bounds, trim_domains)
+    if len(_BOUND_SOURCE_REVISIONS) >= _BOUND_SOURCE_REVISION_CAPACITY:
+        del _BOUND_SOURCE_REVISIONS[next(iter(_BOUND_SOURCE_REVISIONS))]
+    _BOUND_SOURCE_REVISIONS[source_revision] = None
+
+
 def _brep_model_id(source_revision: str, tessellation: BRepTessellation | None, /) -> str:
     """Identify a model as its physical source plus its query representation.
 
@@ -3539,7 +3565,6 @@ class BRepModel(StrictModule):
             not isinstance(tag, str) or not tag for tag in tags
         ):
             raise ValueError("physical_tags must contain one non-empty string per face.")
-        _validate_model_source_bindings(geometry, patches_, bounds_host, trims)
         topology = geometry.topology
         source_counts = (
             topology.num_solids,
@@ -3567,6 +3592,7 @@ class BRepModel(StrictModule):
             coordinate_contract,
             report,
         )
+        _require_source_bindings(source_revision, geometry, patches_, bounds_host, trims)
         if tessellation is not None and not isinstance(tessellation, BRepTessellation):
             raise TypeError("tessellation must be a BRepTessellation or None.")
         self.geometry = geometry
@@ -3596,16 +3622,11 @@ class BRepModel(StrictModule):
 
         for patch in self.patches:
             _validate_surface_source_shadows(patch)
-        _validate_model_source_bindings(
-            self.geometry,
-            self.patches,
-            np.asarray(self.parameter_bounds, dtype=np.float64),
-            self.trim_domains,
-        )
+        bounds = np.asarray(self.parameter_bounds, dtype=np.float64)
         current_revision = _brep_model_source_revision(
             self.geometry,
             self.patches,
-            np.asarray(self.parameter_bounds, dtype=np.float64),
+            bounds,
             np.asarray(self.orientation, dtype=np.float64),
             self.trim_domains,
             self.physical_tags,
@@ -3618,6 +3639,9 @@ class BRepModel(StrictModule):
             raise ValueError(
                 "BRepModel content has changed since its source revision was recorded."
             )
+        _require_source_bindings(
+            current_revision, self.geometry, self.patches, bounds, self.trim_domains
+        )
 
     @staticmethod
     def _validate_tessellation(
