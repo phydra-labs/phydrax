@@ -966,7 +966,7 @@ def test_owner_local_curved_root_remap_routes_exact_remote_maps() -> None:
         atol=2.0e-12,
     )
     replayed = phx.discretization.finite_volume.PreparedOwnerLocalConservativeRemap.from_stored_fields(
-        plan, source_view, target_view, group
+        plan, source_view, target_view, group, transition=transition
     )
     assert replayed.remap_id == plan.remap_id
 
@@ -1231,25 +1231,9 @@ def test_owner_local_physical_remap_has_independent_periodic_mass_oracle(
     }
     assert np.array_equal(np.sum(gathered_valid, axis=1), owner_counts)
     assert len(values_by_id) == int(np.sum(owner_counts))
-    ghost_rows = np.flatnonzero(~np.asarray(target_view.owned, dtype=np.bool_))
-    target_local_ids = np.asarray(target_view.cell_ids, dtype=np.int64)
-    ghost_expected = np.asarray(
-        [values_by_id[int(target_local_ids[row])] for row in ghost_rows],
-        dtype=np.float64,
-    )
-    np.testing.assert_allclose(
-        np.asarray(jax.device_get(probe_result.local_values), dtype=np.float64)[
-            ghost_rows
-        ],
-        ghost_expected,
-        rtol=2.0e-10,
-        atol=2.0e-12,
-    )
-    ghost_counts = np.asarray(
-        multihost_utils.process_allgather(np.asarray(ghost_rows.size, dtype=np.int32))
-    ).reshape((-1,))
-    if owner_count > 1:
-        assert np.sum(ghost_counts) > 0
+    # Laguerre cells are resident only on their site owner: power views carry no
+    # ghost rows, so the owned target cells above partition the group exactly.
+    assert np.all(np.asarray(target_view.owned, dtype=np.bool_))
 
     def group_sum(value: float, /) -> float:
         gathered = multihost_utils.process_allgather(np.asarray(value, dtype=np.float64))

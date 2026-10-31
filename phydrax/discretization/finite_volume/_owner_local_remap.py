@@ -3186,7 +3186,7 @@ def _root_projected_endpoint(
         PerCellRestrictedCellGeometryElement,
     )
     from .._cell_mesh import CellBlock, CellMesh
-    from .._coordinate_enclosure import evaluate_expression
+    from .._coordinate_enclosure import compose_expression, evaluate_expression
     from .._nested_reference_types import (
         exact_reference_cell_vertices,
         freeze_reference_chart_arguments,
@@ -3301,6 +3301,22 @@ def _root_projected_endpoint(
         dtype=np.int64,
     )
     source_cell_ids = np.full(target_cell_ids.shape, root_id, dtype=np.int64)
+    endpoint_base = root_element
+    element_source_cell_ids = source_cell_ids
+    endpoint_charts = tuple(chart_rows)
+    if isinstance(root_element, PerCellRestrictedCellGeometryElement):
+        # A restricted root carrier composes into one restriction of its base element.
+        root_chart = root_element.chart_arguments(root_cell_row)
+        endpoint_base = root_element.source_element
+        element_source_cell_ids = np.full(
+            target_cell_ids.shape,
+            int(np.asarray(root_element.source_cell_ids, dtype=np.int64)[root_cell_row]),
+            dtype=np.int64,
+        )
+        endpoint_charts = tuple(
+            tuple(compose_expression(argument, chart) for argument in root_chart)
+            for chart in chart_rows
+        )
     map_target_ids = np.arange(target_cell_ids.size, dtype=np.int64)
     endpoint_mesh = CellMesh(
         coordinates,
@@ -3316,11 +3332,11 @@ def _root_projected_endpoint(
         numeric_version=root_mesh.numeric_version,
     )
     endpoint_element = PerCellRestrictedCellGeometryElement(
-        root_element,
+        endpoint_base,
         "tetrahedron",
         target_cell_ids,
-        source_cell_ids,
-        tuple(chart_rows),
+        element_source_cell_ids,
+        endpoint_charts,
     )
     source_map = root_geometry.source_map
     if source_map is not None:
@@ -4627,9 +4643,11 @@ def prepare_owner_local_conservative_remap(
             raise ValueError("Source and target local cell dimensions differ.")
         source_binding = _view_binding(source_view)
         target_binding = _view_binding(target_view)
-        # Exact coordinate maps are bound to each rank's resident mesh, so their
-        # IDs are rank-local evidence (checked against the rank's own geometry
-        # authority); the group compares the published geometry/context IDs.
+        # Exact coordinate maps and their source contexts are bound to each rank's
+        # resident mesh and support set (an empty owner binds its source value), so
+        # their IDs are rank-local evidence checked against the rank's own geometry
+        # authority; the group compares the published source, manifest, and
+        # directory identities.
         rank_local_binding_fields = (
             "local_mesh_id",
             "local_topology_id",
@@ -4637,6 +4655,7 @@ def prepare_owner_local_conservative_remap(
             "local_view_id",
             "owner_rank",
             "source_map_id",
+            "source_context_id",
         )
         source_signature = {
             key: value
