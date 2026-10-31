@@ -549,7 +549,7 @@ def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ance
     root_by_cell = {
         int(cell_id): (
             chart_id,
-            tuple(int(implicit_cell_keys[row, axis]) for axis in range(3)),
+            tuple(int(value) for value in implicit_cell_keys[row]),
         )
         for row, (chart_id, cell_id) in enumerate(
             zip(
