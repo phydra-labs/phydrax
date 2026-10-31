@@ -4665,7 +4665,6 @@ def _tspline_surface_carrier(
     return carrier, loss
 
 
-@checked
 def prepare_cad_export_surfaces(
     patches: Sequence[AbstractSurfacePatch], format_name: str, /
 ) -> tuple[tuple[AbstractSurfacePatch, ...], tuple[AdapterLoss, ...]]:
