@@ -36,6 +36,7 @@ from ._planar_coverage import (
     CellCorners,
     OrientedFacet,
     PlcSourcePoints,
+    SourceFacetIndex,
     SourcePointRefusal,
 )
 from ._planar_primitives import cross, plane_key, projection_axes, signed_area2
@@ -184,7 +185,7 @@ def _face_image_is_corner_polygon(
 
 
 def _matching_source_pairs(
-    source_chain: tuple[OrientedFacet, ...],
+    source_index: SourceFacetIndex,
     points: tuple[tuple[Fraction, ...], ...],
     dimension: int,
     allowed_pairs: tuple[tuple[int, int], ...],
@@ -197,24 +198,23 @@ def _matching_source_pairs(
         if dimension == 3 and len(points) == 4
         else (tuple(range(len(points))),)
     )
-    return {
-        source.region_pair
-        for source in source_chain
-        if source.region_pair in allowed_pairs
-        and any(
-            _overlap(
-                source,
-                OrientedFacet(
-                    -1,
-                    source.region_pair,
-                    tuple(points[index] for index in piece),
-                ),
-                dimension,
-            )
-            > 0
-            for piece in pieces
-        )
-    }
+    pairs: set[tuple[int, int]] = set()
+    for piece in pieces:
+        piece_points = tuple(points[index] for index in piece)
+        for row in source_index.candidates(piece_points, dimension):
+            source = source_index.facets[row]
+            if (
+                source.region_pair in allowed_pairs
+                and source.region_pair not in pairs
+                and _overlap(
+                    source,
+                    OrientedFacet(-1, source.region_pair, piece_points),
+                    dimension,
+                )
+                > 0
+            ):
+                pairs.add(source.region_pair)
+    return pairs
 
 
 def _segments_intersect(
@@ -355,7 +355,7 @@ def _triangulate_planar_loop(
 def _polyhedral_target_facets(
     mesh: CellMesh,
     cell_regions: np.ndarray,
-    source_chain: tuple[OrientedFacet, ...],
+    source_index: SourceFacetIndex | None,
     /,
     *,
     geometry: CellGeometrySpec | None,
@@ -462,11 +462,11 @@ def _polyhedral_target_facets(
             )
             continue
         source_pairs: set[tuple[int, int]] = set()
-        if source_chain:
+        if source_index is not None:
             allowed = (pair, pair[::-1])
             for triangle in triangles:
                 source_pairs.update(
-                    _matching_source_pairs(source_chain, triangle, 3, allowed)
+                    _matching_source_pairs(source_index, triangle, 3, allowed)
                 )
         if len(source_pairs) > 1:
             issues.append(
@@ -517,18 +517,18 @@ def oriented_target_facets(
     if source_points is not None:
         if source_domain is None:
             raise ValueError("Exact source points require their source domain.")
-        source_chain: tuple[OrientedFacet, ...] = source_points.sources
+        source_index = SourceFacetIndex(source_points.sources)
     elif source_domain is None:
-        source_chain = ()
+        source_index = None
     else:
         from ._planar_coverage import source_facets
 
-        source_chain = source_facets(source_domain)
+        source_index = SourceFacetIndex(source_facets(source_domain))
     if any(expressions is None for expressions in coordinate_maps):
         if source_points is not None:
             raise ValueError("Exact source points substitute only affine cell corners.")
         return _polyhedral_target_facets(
-            mesh, cell_regions, source_chain, geometry=geometry
+            mesh, cell_regions, source_index, geometry=geometry
         )
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     cells: list[tuple[int, int, tuple[Expression, ...], str, np.ndarray]] = []
@@ -679,9 +679,9 @@ def oriented_target_facets(
             first = owners[0]
         if len(owners) == 1:
             pair = (first[1], -1)
-            if source_chain:
+            if source_index is not None:
                 source_pairs = _matching_source_pairs(
-                    source_chain,
+                    source_index,
                     first[3],
                     mesh.topological_dimension,
                     (pair, (-1, first[1])),
@@ -714,9 +714,9 @@ def oriented_target_facets(
                 )
                 continue
             pair = (first[1], second[1])
-            if source_chain:
+            if source_index is not None:
                 source_pairs = _matching_source_pairs(
-                    source_chain,
+                    source_index,
                     first[3],
                     mesh.topological_dimension,
                     (pair, pair[::-1]),
