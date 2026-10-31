@@ -441,17 +441,28 @@ def test_material_reference_refuses_foreign_frame_inverted_and_singular_maps() -
                 {"root": _identity_target_map()},
             )
 
+    # Endpoint maps are independent deformations of the root, so a translated
+    # root is a legitimate reference by itself; a witness bound to its root
+    # refuses a foreign one.
     foreign_root, foreign_geometry = _move_endpoint(
         root_mesh, root_geometry, lambda points: points + np.asarray((4.0, 0.0, 0.0))
     )
-    with pytest.raises(ValueError):
-        MaterialReferenceVolumeWitness(
+    witness = MaterialReferenceVolumeWitness(
+        root_mesh,
+        root_geometry,
+        root_mesh,
+        root_geometry,
+        root_mesh,
+        root_geometry,
+        identity_maps,
+        identity_maps,
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        witness.revalidate(
             foreign_root,
             foreign_geometry,
             root_mesh,
             root_geometry,
             root_mesh,
             root_geometry,
-            identity_maps,
-            identity_maps,
         )

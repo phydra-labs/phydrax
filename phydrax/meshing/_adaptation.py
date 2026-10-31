@@ -1363,13 +1363,16 @@ def prepare_mesh_adaptation(
                 "prior_transition target must be the exact accepted mesh/geometry result."
             )
         chain = prior_transition.volume_material_chain
-        if chain is not None and (
-            chain.target_mesh_id != source.mesh.mesh_id
-            or chain.target_geometry_id != cell_geometry_id(source.geometry)
-        ):
-            raise ValueError(
-                "prior_transition material chain is stale for the source result."
-            )
+        if chain is not None:
+            # A chain carries its reference; the seed check applies only to
+            # transitions that retain a reference without a chain.
+            if (
+                chain.target_mesh_id != source.mesh.mesh_id
+                or chain.target_geometry_id != cell_geometry_id(source.geometry)
+            ):
+                raise ValueError(
+                    "prior_transition material chain is stale for the source result."
+                )
         elif prior_transition.material_reference is not None:
             reference = MaterialReferenceDeclaration.revalidate(
                 prior_transition.material_reference,
@@ -4545,6 +4548,8 @@ def _compose_material_reference_maps(
     source_reference_maps: dict[str, ReferenceCellMapWitnesses],
     target_to_source_maps: tuple[ReferenceCellMapWitnesses, ...],
     /,
+    *,
+    coarsening: NestedReferenceWitnesses | None = None,
 ) -> dict[str, ReferenceCellMapWitnesses]:
     source_blocks = {block.name: block for block in source.mesh.blocks}
     if set(source_reference_maps) != set(source_blocks):
@@ -4652,6 +4657,29 @@ def _compose_material_reference_maps(
             if previous is not None and previous != value:
                 raise ValueError("Target cell has conflicting material-reference charts.")
             rows_by_block[block_name][block_row] = value
+    if coarsening is not None:
+        # Restored parents have no chart into one source cell; their exact
+        # reference chart is rebuilt from the charts of all their children.
+        for block_name, witness in coarsen_reference_cell_maps(
+            coarsening, source_reference_maps, source.mesh, target.mesh
+        ).items():
+            arguments = witness.source_reference_chart_arguments
+            if arguments is None:
+                raise ValueError(
+                    "Coarsened material charts lost their exact chart expressions."
+                )
+            exact = exact_reference_cell_vertices(witness)
+            reference_ids = np.asarray(witness.source_cell_ids, dtype=np.int64)
+            for row, block_row in enumerate(
+                np.asarray(witness.target_cell_ids, dtype=np.int64).tolist()
+            ):
+                value = (int(reference_ids[row]), exact[row], arguments[row])
+                previous = rows_by_block[block_name].get(int(block_row))
+                if previous is not None and previous != value:
+                    raise ValueError(
+                        "Target cell has conflicting material-reference charts."
+                    )
+                rows_by_block[block_name][int(block_row)] = value
     result: dict[str, ReferenceCellMapWitnesses] = {}
     for block in target.mesh.blocks:
         rows = rows_by_block[block.name]
@@ -4687,6 +4715,7 @@ def _extend_prior_volume_material_chain(
     *,
     material_reference: MaterialReferenceDeclaration | None = None,
     reference_maps: tuple[ReferenceCellMapWitnesses, ...] = (),
+    coarsening: NestedReferenceWitnesses | None = None,
     coordinate_transition: CellGeometryTransition | None = None,
 ) -> VolumeMaterialChain | None:
     if prior_transition is None and material_reference is None:
@@ -4850,7 +4879,7 @@ def _extend_prior_volume_material_chain(
     if material_rows.target_cell_global_ids != tuple(target_cell_ids.tolist()):
         raise ValueError("Target material rows differ from canonical target cell order.")
     target_reference_maps = _compose_material_reference_maps(
-        source, target, source_reference_maps, reference_maps
+        source, target, source_reference_maps, reference_maps, coarsening=coarsening
     )
     deformation = VolumeMaterialDeformation(
         reference,
@@ -5368,6 +5397,7 @@ def _finalize_native(
         lineage,
         material_reference=prepared.material_reference,
         reference_maps=reference_maps,
+        coarsening=coarsening,
         coordinate_transition=transition_geometry,
     )
     transition = CellMeshTransition(
