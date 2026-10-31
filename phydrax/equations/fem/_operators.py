@@ -16,6 +16,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...discretization._cell_geometry_validity import cell_jacobian_inverse_and_measure
 from ...exterior import (
     exterior_derivative_from_jacobian,
     form_to_vector,
@@ -25,42 +26,7 @@ from ...exterior import (
     interior,
     vector_to_form,
 )
-from ...linalg import (
-    ArraySpace,
-    DenseLinearOperator,
-    FactorizationPolicy,
-    factorize,
-    inverse_small_linear,
-    SmallLinearSolvePlan,
-)
 from ...typing import checked
-
-
-def _cell_inverse_and_determinant(jacobian: Array, /) -> tuple[Array, Array, Array]:
-    dimension = jacobian.shape[-1]
-    if dimension <= 4:
-        result = inverse_small_linear(SmallLinearSolvePlan(dimension), jacobian)
-        return result.value, result.determinant, result.successful
-    reference = ArraySpace(
-        (dimension,),
-        dtype=jacobian.dtype,
-        space_id=f"finite-element-reference-tangent:{dimension}",
-    )
-    physical = ArraySpace(
-        (dimension,),
-        dtype=jacobian.dtype,
-        space_id=f"finite-element-physical-tangent:{dimension}",
-    )
-    operator = DenseLinearOperator(
-        jacobian,
-        source=reference,
-        target=physical,
-        operator_id="finite-element-metric-jacobian",
-    )
-    prepared = factorize(operator, FactorizationPolicy("lu"))
-    result = prepared.materialize_inverse()
-    determinant = prepared.determinant_sign() * jnp.exp(prepared.log_abs_determinant())
-    return result.value, determinant, result.successful
 
 
 @final
@@ -101,19 +67,15 @@ class FiniteElementMetricData(StrictModule):
             raise ValueError("Cell metrics require nonempty square geometry.")
         physical_points = ein.contract("qi,cid->cqd", basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", gradients, coordinates)
-        inverse_jacobian, determinant, successful = _cell_inverse_and_determinant(
-            jacobian
+        inverse_jacobian, inverse_metric, measure, _, successful = (
+            cell_jacobian_inverse_and_measure(jacobian)
         )
-        measure = jnp.abs(determinant)
         measure = eqx.error_if(
             measure,
             jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),
             "Finite-element metric determinant must be positive and finite.",
         )
         cofactor = measure[..., None, None] * inverse_jacobian
-        inverse_metric = ein.contract(
-            "cqrd,cqsd->cqrs", inverse_jacobian, inverse_jacobian
-        )
         self.physical_points = physical_points
         self.jacobian = jacobian
         self.inverse_jacobian = inverse_jacobian

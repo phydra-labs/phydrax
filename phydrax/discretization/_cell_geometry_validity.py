@@ -57,6 +57,14 @@ from .._geometry_predicates import (
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..geometry._interval_enclosure import interval_divide
+from ..linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    FactorizationPolicy,
+    factorize,
+    inverse_small_linear,
+    SmallLinearSolvePlan,
+)
 from ..linalg._exact import determinant_exact, determinant_small_algebra
 from ..typing import ConvertibleToArray
 from ._cell_complex import PolyhedralConnectivity
@@ -132,13 +140,131 @@ def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
     )
 
 
+def _small_or_factored_inverse(
+    matrix: Array, source_id: str, target_id: str, operator_id: str, /
+) -> tuple[Array, Array, Array]:
+    """Inverse, signed determinant and solve evidence of square batches."""
+    dimension = matrix.shape[-1]
+    if dimension <= 4:
+        result = inverse_small_linear(SmallLinearSolvePlan(dimension), matrix)
+        return result.value, result.determinant, result.successful
+    prepared = factorize(
+        DenseLinearOperator(
+            matrix,
+            source=ArraySpace((dimension,), dtype=matrix.dtype, space_id=source_id),
+            target=ArraySpace((dimension,), dtype=matrix.dtype, space_id=target_id),
+            operator_id=operator_id,
+        ),
+        FactorizationPolicy("lu"),
+    )
+    inverse = prepared.materialize_inverse()
+    determinant = prepared.determinant_sign() * jnp.exp(prepared.log_abs_determinant())
+    return inverse.value, determinant, inverse.successful
+
+
+def cell_jacobian_inverse_and_measure(
+    jacobian: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
+    """Invert cell Jacobians ``(..., ambient, reference)`` for consumers.
+
+    Returns the (pseudo-)inverse Jacobian ``(..., reference, ambient)``, the
+    inverse metric ``(J^T J)^-1``, the measure ``sqrt(det(J^T J))``, the
+    determinant (signed ``det(J)`` for full-dimensional cells, the measure for
+    embedded ones) and the solve evidence.
+
+    A full-dimensional cell evaluates ``det(J)`` itself, never the metric
+    (Gram) determinant ``det(J^T J) = det(J)^2``: in binary64 the Gram
+    determinant's rounding error is a small multiple of ``u prod |c_j|^2``
+    (``c_j`` the columns of ``J``), so its sign is lost once the relative
+    determinant ``r = |det(J)| / prod |c_j|`` falls below about ``sqrt(u)``,
+    while ``det(J)`` keeps its sign down to a small multiple of ``u``. Embedded
+    (manifold) cells keep the Gram determinant, whose square root is their
+    measure.
+
+    Each column is first scaled to unit length (``J = Jn D``), so the solve's
+    conditioning depends only on ``r``, not on the cell's aspect ratio: every
+    entry and cofactor of ``Jn``, and of the unit-diagonal ``Jn^T Jn``, is at
+    most one in magnitude, hence ``cond_inf(Jn) <= d^2 / r`` and
+    ``cond_inf(Jn^T Jn) <= d^2 / r^2`` for reference dimension ``d``. The
+    evidence therefore holds for every cell whose relative determinant exceeds
+    ``CELL_VALIDITY_DETERMINANT_FLOOR`` (below).
+    """
+    ambient = jacobian.shape[-2]
+    dimension = jacobian.shape[-1]
+    column_norms = jnp.sqrt(jnp.sum(jacobian * jacobian, axis=-2))
+    nonzero = jnp.all(column_norms > 0.0, axis=-1)
+    safe_norms = jnp.where(column_norms > 0.0, column_norms, 1.0)
+    scale = jnp.prod(safe_norms, axis=-1)
+    normalized = jacobian / safe_norms[..., None, :]
+    if ambient == dimension:
+        normalized_inverse, normalized_determinant, successful = (
+            _small_or_factored_inverse(
+                normalized,
+                f"finite-element-reference-tangent:{dimension}",
+                f"finite-element-physical-tangent:{dimension}",
+                "finite-element-metric-jacobian",
+            )
+        )
+        inverse_jacobian = normalized_inverse / safe_norms[..., :, None]
+        determinant = normalized_determinant * scale
+        inverse_metric = ein.contract(
+            "...id,...jd->...ij", inverse_jacobian, inverse_jacobian
+        )
+        measure = jnp.abs(determinant)
+    else:
+        normalized_metric = ein.contract("...di,...dj->...ij", normalized, normalized)
+        normalized_inverse_metric, normalized_gram, successful = (
+            _small_or_factored_inverse(
+                normalized_metric,
+                f"finite-element-reference-tangent:{dimension}",
+                f"finite-element-reference-tangent:{dimension}",
+                f"finite-element-geometry-gram:{dimension}",
+            )
+        )
+        inverse_metric = normalized_inverse_metric / (
+            safe_norms[..., :, None] * safe_norms[..., None, :]
+        )
+        inverse_jacobian = ein.contract("...ij,...dj->...id", inverse_metric, jacobian)
+        measure = jnp.sqrt(jnp.maximum(normalized_gram, 0.0)) * scale
+        determinant = measure
+    return inverse_jacobian, inverse_metric, measure, determinant, successful & nonzero
+
+
+# CellValidityPolicy's default relative determinant floor, derived from the
+# consumers' binary64 evaluation above so that a certified cell (pointwise
+# relative determinant r above the floor) is never refused by them. The
+# normalized solve refuses only a condition number above the small-solve
+# limit M (1e12) or a max-entry-scaled determinant at or below its singular
+# tolerance (1e-12). Full-dimensional cells (d <= 4): cond <= d^2 / r and the
+# scaled determinant is at least r, so r > 16 / M suffices. Embedded cells
+# (reference dimension d <= 3): the scaled Gram determinant is r^2 and
+# cond <= d^2 / r^2, so r > max(3 / sqrt(M), sqrt(1e-12)) = 3e-6 suffices.
+# The floor is the next power of two, 2^-18 (3.8e-6); its square, 2^-36, also
+# clears the binary64 sign bound of the Gram determinant (a small multiple of
+# u = 2^-53) by more than four orders of magnitude.
+_JACOBIAN_SOLVE_PLAN = SmallLinearSolvePlan(4)
+CELL_VALIDITY_DETERMINANT_FLOOR = 2.0 ** math.ceil(
+    math.log2(
+        max(
+            4**2 / _JACOBIAN_SOLVE_PLAN.maximum_condition,
+            3 / math.sqrt(_JACOBIAN_SOLVE_PLAN.maximum_condition),
+            math.sqrt(_JACOBIAN_SOLVE_PLAN.singular_tolerance),
+        )
+    )
+)
+
+
 class CellValidityPolicy(StrictModule, NonTrainableState):
     """Degeneracy thresholds for Bernstein validity certification.
 
     ``relative_determinant_floor`` scales each cell's Hadamard bound of the
     evaluated determinant. A determinant must be strictly above this floor to
-    be certified. ``relative_planarity_tolerance`` bounds embedded polygon
-    vertices' distance from their Newell plane relative to the polygon diameter.
+    be certified. The default, ``CELL_VALIDITY_DETERMINANT_FLOOR`` (2^-18), is
+    derived from the binary64 Jacobian evaluation of finite-element geometry
+    preparation (``cell_jacobian_inverse_and_measure``), so that no cell this
+    policy certifies is refused there. ``relative_planarity_tolerance`` bounds
+    embedded polygon vertices' distance from their Newell plane relative to the
+    polygon diameter.
     """
 
     relative_determinant_floor: float = eqx.field(static=True)
@@ -148,7 +274,7 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        relative_determinant_floor: float = 1.0e-12,
+        relative_determinant_floor: float = CELL_VALIDITY_DETERMINANT_FLOOR,
         relative_planarity_tolerance: float = 1.0e-10,
     ) -> None:
         floor = float(relative_determinant_floor)

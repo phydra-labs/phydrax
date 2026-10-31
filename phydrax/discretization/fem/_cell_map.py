@@ -152,7 +152,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         (
             physical_points,
             jacobian,
-            metric,
+            _,
             _,
             inverse_jacobian,
             _,
@@ -166,7 +166,12 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
             precision_policy=self.precision_policy,
             paired=True,
         )
-        minimum_metric_eigenvalue = jnp.linalg.eigvalsh(metric)[..., 0]
+        # The smallest metric eigenvalue is sigma_min(J)^2, taken from the
+        # Jacobian's singular values: eigenvalues of the formed metric J^T J
+        # lose their sign once sigma_min(J)^2 falls below u * |J|^2.
+        minimum_metric_eigenvalue = (
+            jnp.linalg.svd(jacobian, compute_uv=False)[..., -1] ** 2
+        )
         if self.reference_dimension == self.ambient_dimension:
             validity_margin = jnp.minimum(minimum_metric_eigenvalue, determinant)
         else:
