@@ -1,5 +1,6 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// Source-agnostic surface remesher: the fold factor of the quality score.
+// Source-agnostic surface remesher: the source-relative fold factor of the
+// quality score.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -14,6 +15,7 @@
 
 namespace {
 using phx::mc::remesh::AdmissionKind;
+using phx::mc::remesh::NormalCone;
 using phx::mc::remesh::Point;
 using phx::mc::remesh::RemeshCounters;
 using phx::mc::remesh::RemeshTargets;
@@ -21,9 +23,11 @@ using phx::mc::remesh::Triangle;
 using phx::mc::remesh::TriangleAdmission;
 using phx::mc::remesh::VertexEvidence;
 
-// Admits every triangle: isolates the score and topology rules.
-class AnyTriangle final : public TriangleAdmission {
+// Admits every triangle and reports one fixed source normal cone: isolates
+// the score and topology rules.
+class SourceCone final : public TriangleAdmission {
  public:
+  explicit SourceCone(const NormalCone& source) : cone(source) {}
   AdmissionKind kind() const override { return AdmissionKind::kOffsetBand; }
   VertexEvidence evaluate(const Point&) const override { return {}; }
   bool admits(const Point&, const Point&, const Point&,
@@ -31,6 +35,15 @@ class AnyTriangle final : public TriangleAdmission {
     return true;
   }
   Point project(const Point& position) const override { return position; }
+  NormalCone normal_cone(const Point&, const Point&, const Point&,
+                         const std::array<VertexEvidence, 3>&) const override {
+    return cone;
+  }
+  double normal_cone_floor(const Point&, const Point&, const Point&,
+                           const std::array<VertexEvidence, 3>&) const override {
+    return cone.half_angle;
+  }
+  NormalCone cone;
 };
 
 Point normal(const std::vector<Point>& points, const Triangle& t) {
@@ -126,31 +139,40 @@ void folded_cluster() {
       {20, 12, 11},
   };
   PHX_CHECK(maximum_turn(input, triangles) > 170);
-  const AnyTriangle admission;
-  // A bound near 180 degrees leaves the fold factor at one: the fold stays.
+  // A source that admits any normal (open cones) explains every turn: the
+  // fold stays, as a genuine crease would.
   {
+    const SourceCone admission(NormalCone{});
     std::vector<Point> points = input;
     std::vector<Triangle> remeshed = triangles;
     RemeshCounters counters;
-    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30, 179.9},
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30},
                                              counters) == PHX_MC_OK);
     PHX_CHECK(maximum_turn(points, remeshed) > 170);
   }
-  // The default 90 degree bound scores the fold as unmet and removes it.
+  // A smooth source (normals within 30 degrees of the patch's mean normal)
+  // admits turns up to 60 degrees: the 174 degree fold is unmet and removed.
+  Point mean{0, 0, 0};
+  for (const Triangle& t : triangles) {
+    const Point& a = input[static_cast<size_t>(t[0])];
+    const Point& b = input[static_cast<size_t>(t[1])];
+    const Point& c = input[static_cast<size_t>(t[2])];
+    const Point u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const Point v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    mean[0] += u[1] * v[2] - u[2] * v[1];
+    mean[1] += u[2] * v[0] - u[0] * v[2];
+    mean[2] += u[0] * v[1] - u[1] * v[0];
+  }
+  const double norm = std::hypot(mean[0], mean[1], mean[2]);
+  const double half = 30 * std::acos(-1.0) / 180;
+  const SourceCone admission(NormalCone{{mean[0] / norm, mean[1] / norm, mean[2] / norm}, half});
+  PHX_CHECK(phx::mc::remesh::cone_separation(admission.cone, admission.cone) == 2 * half);
   std::vector<Point> points = input;
   std::vector<Triangle> remeshed = triangles;
   RemeshCounters counters;
   PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30}, counters) ==
             PHX_MC_OK);
-  PHX_CHECK(maximum_turn(points, remeshed) <= 90);
-  // The bound is a full-score target strictly between 0 and 180 degrees.
-  for (double bound : {0.0, 180.0, std::nan("")}) {
-    std::vector<Point> rejected_points = input;
-    std::vector<Triangle> rejected = triangles;
-    PHX_CHECK(phx::mc::remesh::remesh_surface(rejected_points, rejected, admission,
-                                             {0.04, 30, bound}, counters) ==
-              PHX_MC_INVALID_ARGUMENT);
-  }
+  PHX_CHECK(maximum_turn(points, remeshed) <= 60);
 }
 
 }  // namespace

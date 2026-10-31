@@ -19,18 +19,29 @@
 //    sound (never admit a triangle violating the predicate); incompleteness
 //    only leaves edits refused;
 //  * project(position): a candidate placement on the represented surface for
-//    split points and relocations (only a proposal; admission decides).
+//    split points and relocations (only a proposal; admission decides);
+//  * normal_cone(a, b, c, evidence): a cone (unit axis, half-angle in
+//    radians, pi when nothing is known) holding every unit normal of the
+//    represented source over the triangle's band piece, oriented like the
+//    surface and widened by how far an admitted triangle's own normal may
+//    legitimately depart from them. It only grades quality (never admission),
+//    so it may be generous; a tighter cone exposes more folds.
 // Declared kinds:
 //  * kOffsetBand (surface envelope): every point of the triangle lies in the
 //    certified band lower <= d_source <= upper. d_source is 1-Lipschitz, so on
 //    a triangle with vertex enclosures [L_i, U_i] and every point within R of
 //    a corner (R = certified_free_radius), d_source lies in
-//    [min L_i - R, max U_i + R]; evidence = (L_i, U_i).
+//    [min L_i - R, max U_i + R]; evidence = (L_i, U_i). Its normal cone holds
+//    the directions from every source point that can be nearest to a point of
+//    the triangle (the gradients of d_source there).
 //  * kZeroSetBand (implicit surface): the triangle's certified distance to the
 //    zero set of f is at most the declared surface tolerance, from an interval
 //    enclosure of |f| and a lower bound on |grad f| over the triangle's
 //    neighborhood (native interval program), plus a certified transversal
-//    normal; evidence = point enclosure of f. See zero_set_admission.hpp.
+//    normal; evidence = point enclosure of f. Its normal cone holds the
+//    gradient enclosure over the triangle's box, widened by the tilt a
+//    triangle within the tolerance of the zero set may have. See
+//    zero_set_admission.hpp.
 //
 // Every admitted edit also keeps the surface an embedded, consistently
 // oriented closed 2-manifold: link condition for collapses, no duplicate edge
@@ -55,13 +66,16 @@
 //    terminate;
 //  * the passes run quality, regularization, quality.
 // The score of a triangle is floor(2^20 * min(1, angle_min / minimum_angle) *
-// min(1, (4/3) h / edge_max) * fold), fold being the minimum over its edges of
-// min(1, (180 - turn) / (180 - maximum_normal_turn)) with turn the angle
-// between the unit normals of the triangle and its edge neighbor. Without the
-// fold factor a folded cluster of well-shaped triangles scores full; two
-// boundary triangles meeting at turn t bound every tetrahedron on their edge
-// to a dihedral angle of at most 180 - t, so the default 90 degree bound keeps
-// the surface free of the acute input angles volume refinement cannot fix.
+// min(1, (4/3) h / edge_max) * fold). Fold is the minimum over the triangle's
+// edges of min(1, (pi - turn) / (pi - allowed)), turn being the angle between
+// the unit normals of the triangle and its edge neighbor and allowed the
+// largest angle between normals of the two triangles' source cones (the angle
+// between their axes plus both half-angles, at most pi). A turn the source
+// admits scores full: genuine creases (an implicit CSG edge, an offset's
+// concave ridge) are kept. A turn beyond it is a fold the source does not
+// have; without this factor a folded cluster of well-shaped triangles scores
+// full, and two boundary triangles meeting at turn t bound every tetrahedron
+// on their edge to a dihedral angle of at most pi - t.
 // `unmet` counts surviving triangles below 2^20.
 #pragma once
 
@@ -83,6 +97,17 @@ struct VertexEvidence {
   double upper = 0;
 };
 
+// Half-angle of a cone that constrains nothing (pi).
+inline constexpr double kOpenCone = 3.141592653589793;
+
+// Source normal cone of a triangle's band piece: every unit source normal
+// there lies within `half_angle` radians of the unit `axis`; the default open
+// cone constrains nothing.
+struct NormalCone {
+  Point axis{0, 0, 0};
+  double half_angle = kOpenCone;
+};
+
 class TriangleAdmission {
  public:
   virtual ~TriangleAdmission() = default;
@@ -91,12 +116,20 @@ class TriangleAdmission {
   virtual bool admits(const Point& a, const Point& b, const Point& c,
                       const std::array<VertexEvidence, 3>& evidence) const = 0;
   virtual Point project(const Point& position) const = 0;
+  virtual NormalCone normal_cone(const Point& a, const Point& b, const Point& c,
+                                 const std::array<VertexEvidence, 3>& evidence) const = 0;
+  // A cheap lower bound on normal_cone's half-angle (pi when it is open):
+  // edges turning within the two floors need no cones.
+  virtual double normal_cone_floor(const Point& a, const Point& b, const Point& c,
+                                   const std::array<VertexEvidence, 3>& evidence) const = 0;
 };
+
+// Largest angle between a unit vector of `first` and one of `second`, in [0, pi].
+double cone_separation(const NormalCone& first, const NormalCone& second);
 
 struct RemeshTargets {
   double edge_length = 0;              // h
   double minimum_angle_degrees = 30;   // full-score minimum angle
-  double maximum_normal_turn_degrees = 90;  // full-score edge normal turn
 };
 
 struct RemeshCounters {
