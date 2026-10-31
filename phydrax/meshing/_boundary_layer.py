@@ -22,8 +22,6 @@ wall vertices and locations.
 
 from __future__ import annotations
 
-import functools
-import itertools
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +32,7 @@ from jax import Array
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-from .._bvh import bvh_nearest_items, bvh_overlap_pairs_host, prepare_bvh
+from .._bvh import bvh_nearest_items, bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import load_meshcore
 from .._strict import StrictModule
@@ -973,103 +971,93 @@ def _newell_normals(points: np.ndarray, faces: np.ndarray, arity: np.ndarray, /)
 
 # Duality-gap tolerance of the certified visibility optimum (unit normals).
 _VISIBILITY_GAP = 1.0e-9
-# Candidate rows evaluated per chunk (bounds host memory for wide sectors).
-_VISIBILITY_CHUNK = 1 << 21
 
 
-@functools.cache
-def _hull_face_subsets(width: int, /) -> tuple[np.ndarray, ...]:
-    """Index subsets of one, two, and three padded normal slots."""
-    return tuple(
-        np.asarray(
-            tuple(itertools.combinations(range(width), size)), dtype=np.int64
-        ).reshape(-1, size)
-        for size in (1, 2, 3)
-    )
+def _minimum_norm_point(points: np.ndarray, /) -> tuple[list[int], np.ndarray]:
+    """Wolfe's minimum-norm point of ``conv(points)``: support rows and weights.
 
-
-def _affine_minimum_norm(points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    """Barycentric weights of the minimum-norm point of each subset's affine hull.
-
-    ``points`` has shape ``(..., k, 3)`` with ``k`` in 1..3. Affinely dependent
-    subsets are invalid; a smaller subset spans the same affine hull.
+    Each major cycle adds the point most opposed to the current iterate; each
+    minor cycle moves to the affine minimum-norm point of the corral, or to the
+    last convex point on the way and drops the points whose weight vanishes.
+    Corrals stay affinely independent, so at most four points are active in
+    R^3 and every cycle is a small dense solve. Termination is finite; the
+    iteration bound only guards rounding, and the caller certifies the result.
     """
-    size = points.shape[-2]
-    if size == 1:
-        return np.ones(points.shape[:-1]), np.ones(points.shape[:-2], dtype=np.bool_)
-    base = points[..., 0, :]
-    edges = points[..., 1:, :] - base[..., None, :]
-    gram = np.einsum("...id,...jd->...ij", edges, edges)
-    rhs = -np.einsum("...id,...d->...i", edges, base)
-    if size == 2:
-        scale = gram[..., 0, 0]
-        valid = scale > 1.0e-24
-        step = rhs[..., 0] / np.where(valid, scale, 1.0)
-        return np.stack((1.0 - step, step), axis=-1), valid
-    determinant = gram[..., 0, 0] * gram[..., 1, 1] - gram[..., 0, 1] * gram[..., 1, 0]
-    valid = determinant > 1.0e-12 * gram[..., 0, 0] * gram[..., 1, 1]
-    safe = np.where(valid, determinant, 1.0)
-    first = (gram[..., 1, 1] * rhs[..., 0] - gram[..., 0, 1] * rhs[..., 1]) / safe
-    second = (gram[..., 0, 0] * rhs[..., 1] - gram[..., 1, 0] * rhs[..., 0]) / safe
-    return np.stack((1.0 - first - second, first, second), axis=-1), valid
+    support = [0]
+    weights = np.ones((1,))
+    for _ in range(8 * points.shape[0] + 8):
+        current = weights @ points[support]
+        squared = float(current @ current)
+        if squared <= 1.0e-24:
+            break
+        products = points @ current
+        candidate = int(np.argmin(products))
+        if products[candidate] >= squared - 1.0e-15 or candidate in support:
+            break
+        support.append(candidate)
+        weights = np.append(weights, 0.0)
+        while True:
+            corral = points[support]
+            size = len(support)
+            # Affine minimum-norm point corral[0] + edges^T c by least squares on
+            # the edges themselves (not their Gram), which keeps clustered
+            # normals well conditioned.
+            edges = corral[1:] - corral[0]
+            offsets = np.linalg.lstsq(edges.T, -corral[0], rcond=None)[0]
+            affine = np.concatenate(((1.0 - np.sum(offsets),), offsets))
+            if np.all(affine > 0.0):
+                weights = affine
+                break
+            blocked = (affine <= 0.0) & (weights > affine)
+            ratios = np.full((size,), np.inf)
+            ratios[blocked] = weights[blocked] / (weights[blocked] - affine[blocked])
+            # A non-positive affine weight at a zero convex weight blocks at once.
+            ratios[(affine <= 0.0) & ~blocked] = 0.0
+            exit_row = int(np.argmin(ratios))
+            weights = weights + min(float(ratios[exit_row]), 1.0) * (affine - weights)
+            keep = weights > 0.0
+            keep[exit_row] = False
+            if not np.any(keep):
+                keep[int(np.argmax(weights))] = True
+            support = [row for row, kept in zip(support, keep, strict=True) if kept]
+            weights = weights[keep] / np.sum(weights[keep])
+            if len(support) <= 1:
+                break
+    return support, weights
 
 
 def _visibility_optimum(
     normals: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Exact visibility-optimal direction of each column's padded unit normals.
+    """Certified visibility-optimal direction of each column's padded unit normals.
 
     ``max_{|d|=1} min_i n_i.d`` equals the norm of the minimum-norm point ``p``
     of ``conv{n_i}`` and is attained at ``d = p / |p|`` whenever the origin lies
-    outside the hull. ``p`` lies in the relative interior of a hull face spanned
-    by at most three normals (Caratheodory in R^3), so enumerating the affine
-    minimum-norm points of every one-, two-, and three-normal subset finds it
-    exactly. Every convex candidate ``q`` bounds the optimum from above by
-    ``|q|``; every candidate direction bounds it from below by its own
-    ``min_i n_i.(q / |q|)``. A column is certified when the best direction
-    closes this duality gap to ``_VISIBILITY_GAP``. An open gap with a
-    non-positive lower bound proves the origin lies in the hull: no visible
-    direction exists.
+    outside the hull. Wolfe's algorithm finds ``p`` over each column's distinct
+    normals, at a cost linear in their number per cycle. ``|p|`` bounds the
+    optimum from above, and every tried direction ``d`` (``p / |p|`` and the
+    normals themselves) bounds it from below by ``min_i n_i.d``. A column is
+    certified when this duality gap closes to ``_VISIBILITY_GAP``. A
+    non-positive lower bound with a vanishing ``p`` proves the origin lies in
+    the hull: no visible direction exists.
 
     Returns per-slot convex weights, the best direction's visibility, and the
     duality gap of each column.
     """
     count, width, _ = normals.shape
-    best_lower = np.full((count,), -np.inf)
-    best_upper = np.full((count,), np.inf)
     weights = np.zeros((count, width))
-    rows = np.arange(count)
-    for subsets in _hull_face_subsets(width):
-        if not subsets.size:
-            continue
-        chunk = max(1, _VISIBILITY_CHUNK // (subsets.shape[0] * width))
-        for start in range(0, count, chunk):
-            block = normals[start : start + chunk]
-            local = rows[: block.shape[0]]
-            points = block[:, subsets]
-            barycentric, valid = _affine_minimum_norm(points)
-            convex = valid & np.all(barycentric >= -1.0e-12, axis=-1)
-            candidate = np.einsum("csk,cskd->csd", barycentric, points)
-            upper = np.linalg.norm(candidate, axis=-1)
-            convex &= upper > 0.0
-            direction = candidate / np.where(upper > 0.0, upper, 1.0)[..., None]
-            lower = np.min(np.einsum("csd,cwd->csw", direction, block), axis=-1)
-            lower = np.where(convex, lower, -np.inf)
-            upper = np.where(convex, upper, np.inf)
-            pick = np.argmax(lower, axis=1)
-            chosen = lower[local, pick]
-            target = slice(start, start + block.shape[0])
-            improve = chosen > best_lower[target]
-            best_upper[target] = np.minimum(best_upper[target], np.min(upper, axis=1))
-            best_lower[target] = np.where(improve, chosen, best_lower[target])
-            slot = np.zeros((block.shape[0], width))
-            np.add.at(
-                slot,
-                (np.repeat(local, subsets.shape[1]), subsets[pick].reshape(-1)),
-                np.maximum(barycentric[local, pick], 0.0).reshape(-1),
-            )
-            weights[target] = np.where(improve[:, None], slot, weights[target])
-    return weights, best_lower, best_upper - best_lower
+    lower = np.empty((count,))
+    upper = np.empty((count,))
+    for column in range(count):
+        distinct, slots = np.unique(normals[column], axis=0, return_index=True)
+        support, convex = _minimum_norm_point(distinct)
+        point = convex @ distinct[support]
+        norm = float(np.linalg.norm(point))
+        directions = distinct if norm == 0.0 else np.vstack((point / norm, distinct))
+        lower[column] = float(np.max(np.min(directions @ distinct.T, axis=1)))
+        upper[column] = norm
+        weights[column, slots[support]] = convex
+    return weights, lower, np.maximum(upper - lower, 0.0)
 
 
 def _padded_groups(groups: np.ndarray, members: np.ndarray, count: int, /) -> Any:
@@ -2164,14 +2152,35 @@ def _front_source_ancestry(
     )
 
 
+def _incident_grown_triangles(
+    wall: _Wall, vertices: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Grown wall triangles and their ``(row, triangle)`` incidence on ``vertices``.
+
+    Pairs are flat rather than padded to the widest vertex fan, so pole and
+    cap-center fans cost their own size instead of widening every column.
+    """
+    grow_triangles, _ = _split_polygons(wall.faces[wall.grow], wall.arity[wall.grow])
+    incidence = np.unique(
+        np.stack(
+            (
+                grow_triangles.reshape(-1),
+                np.repeat(np.arange(grow_triangles.shape[0]), 3),
+            ),
+            axis=1,
+        ),
+        axis=0,
+    )
+    starts = np.searchsorted(incidence[:, 0], vertices, side="left")
+    counts = np.searchsorted(incidence[:, 0], vertices, side="right") - starts
+    rows = np.repeat(np.arange(vertices.size), counts)
+    within = np.arange(rows.size) - np.repeat(np.cumsum(counts) - counts, counts)
+    return grow_triangles, rows, incidence[np.repeat(starts, counts) + within, 1]
+
+
 def _probe_stretch(wall: _Wall, front: _Front, /) -> np.ndarray:
     """Height factor that makes each column's local wall distance equal its level."""
-    grow_triangles, _ = _split_polygons(wall.faces[wall.grow], wall.arity[wall.grow])
-    incident_vertex = grow_triangles.reshape(-1)
-    incident_triangle = np.repeat(np.arange(grow_triangles.shape[0]), 3)
-    pairs = np.unique(np.stack((incident_vertex, incident_triangle), axis=1), axis=0)
-    padded, _ = _padded_groups(pairs[:, 0], pairs[:, 1], wall.points.shape[0])
-    local = padded[front.column_vertex]
+    grow_triangles, rows, items = _incident_grown_triangles(wall, front.column_vertex)
     lengths = np.linalg.norm(
         wall.points[wall.edges[:, 0]] - wall.points[wall.edges[:, 1]], axis=1
     )
@@ -2179,14 +2188,16 @@ def _probe_stretch(wall: _Wall, front: _Front, /) -> np.ndarray:
     np.minimum.at(shortest, wall.edges.reshape(-1), np.repeat(lengths, 2))
     epsilon = 1.0e-3 * shortest[front.column_vertex]
     probe = wall.points[front.column_vertex] + epsilon[:, None] * front.column_direction
-    corners = wall.points[grow_triangles[local]]
+    corners = wall.points[grow_triangles[items]]
     distance = point_triangle_distance(
-        jnp.broadcast_to(jnp.asarray(probe)[:, None, :], corners.shape[:2] + (3,)),
-        jnp.asarray(corners[:, :, 0]),
-        jnp.asarray(corners[:, :, 1]),
-        jnp.asarray(corners[:, :, 2]),
+        jnp.asarray(probe[rows]),
+        jnp.asarray(corners[:, 0]),
+        jnp.asarray(corners[:, 1]),
+        jnp.asarray(corners[:, 2]),
     )
-    nearest = np.sqrt(np.min(np.asarray(distance.squared_distance), axis=1))
+    squared = np.full((front.column_vertex.size,), np.inf)
+    np.minimum.at(squared, rows, np.asarray(distance.squared_distance))
+    nearest = np.sqrt(squared)
     return epsilon / np.maximum(nearest, np.finfo(np.float64).tiny)
 
 
@@ -2256,18 +2267,9 @@ def _proximity_limits(
         return limits
     all_triangles, _ = _split_polygons(wall.faces, wall.arity)
     triangles = np.concatenate((wall.points[all_triangles], obstacle_triangles))
-    grow_triangles, _ = _split_polygons(wall.faces[wall.grow], wall.arity[wall.grow])
-    incident = np.unique(
-        np.stack(
-            (
-                grow_triangles.reshape(-1),
-                np.repeat(np.arange(grow_triangles.shape[0]), 3),
-            ),
-            1,
-        ),
-        axis=0,
+    grow_triangles, rows, items = _incident_grown_triangles(
+        wall, front.column_vertex[columns]
     )
-    padded, _ = _padded_groups(incident[:, 0], incident[:, 1], wall.points.shape[0])
     samples = policy.proximity_samples
     reach = stretch[columns] * total / policy.proximity_fraction
     fractions = np.arange(1, samples + 1, dtype=np.float64) / samples
@@ -2280,16 +2282,18 @@ def _proximity_limits(
     nearest = _nearest_distances(triangles, probes.reshape(-1, 3)).reshape(
         columns.size, samples
     )
-    own_corners = wall.points[grow_triangles[padded[front.column_vertex[columns]]]]
-    shape = probes.shape[:2] + own_corners.shape[1:2] + (3,)
+    own_corners = wall.points[grow_triangles[items]]
+    shape = (rows.size, samples, 3)
     own = point_triangle_distance(
-        jnp.asarray(np.broadcast_to(probes[:, :, None, :], shape)),
+        jnp.asarray(probes[rows]),
         *(
-            jnp.asarray(np.broadcast_to(own_corners[:, None, :, corner], shape))
+            jnp.asarray(np.broadcast_to(own_corners[:, None, corner], shape))
             for corner in range(3)
         ),
     )
-    own_distance = np.sqrt(np.min(np.asarray(own.squared_distance), axis=2))
+    own_squared = np.full((columns.size, samples), np.inf)
+    np.minimum.at(own_squared, rows, np.asarray(own.squared_distance))
+    own_distance = np.sqrt(own_squared)
     crossed = nearest < (1.0 - policy.medial_tolerance) * own_distance
     first = np.where(np.any(crossed, axis=1), np.argmax(crossed, axis=1), samples)
     safe = np.where(
@@ -2648,44 +2652,53 @@ def _certify_cells(
     new_count = new_triangles.shape[0]
     fixed_start = triangles.shape[0] - fixed.shape[0]
     corners = combined_points[triangles]
-    bvh = prepare_bvh(np.min(corners, axis=1), np.max(corners, axis=1), dtype=jnp.float64)
-    first, second = bvh_overlap_pairs_host(bvh, bvh, include_touching=True)
-    keep = (first < second) & (first < new_count)
-    first, second = first[keep], second[keep]
-    if not first.size:
-        return bad, 0
-    hit, certain = _triangle_pairs_intersect(
-        combined_points, triangles[first], triangles[second]
-    )
+    lower, upper = np.min(corners, axis=1), np.max(corners, axis=1)
     side = np.zeros((triangles.shape[0],), dtype=np.bool_)
     side[fixed_start : fixed_start + environment.side.size] = environment.side
-    sheet = side[second]
-    if np.any(sheet & hit):
-        rows = np.flatnonzero(sheet & hit)
-        plane = triangles[second[rows]]
-        above = np.zeros((rows.size,), dtype=np.bool_)
-        below = np.zeros((rows.size,), dtype=np.bool_)
-        known_all = np.ones((rows.size,), dtype=np.bool_)
-        for corner in range(3):
-            sign, known = _orient3d(
-                combined_points[plane[:, 0]],
-                combined_points[plane[:, 1]],
-                combined_points[plane[:, 2]],
-                combined_points[triangles[first[rows], corner]],
-            )
-            above |= sign > 0
-            below |= sign < 0
-            known_all &= known
-        # Rim sheets slide on the adjacent surface: an intersection that does not
-        # strictly straddle the surface plane is contact on it, not penetration.
-        hit[rows[known_all & ~(above & below)]] = False
-    colliding = hit | ~certain
-    count = int(np.count_nonzero(hit & certain))
-    for index in (first[colliding], second[colliding]):
-        index = index[index < new_count]
-        for kind_index, name in enumerate(_VOLUME_KINDS):
-            selected = new_owners[index[new_kinds[index] == kind_index]]
-            bad[name][selected] = True
+    count = 0
+    # Only pairs with a new triangle are tested, so fixed and accepted fans
+    # (e.g. pole fans) never pair among themselves; pairs stream in bounded
+    # blocks instead of being materialized at once.
+    for first, second in bvh_overlap_pair_blocks(
+        prepare_bvh(lower[:new_count], upper[:new_count], dtype=jnp.float64),
+        prepare_bvh(lower, upper, dtype=jnp.float64),
+        include_touching=True,
+    ):
+        keep = first < second
+        first, second = first[keep], second[keep]
+        if not first.size:
+            continue
+        hit, certain = _triangle_pairs_intersect(
+            combined_points, triangles[first], triangles[second]
+        )
+        sheet = side[second]
+        if np.any(sheet & hit):
+            rows = np.flatnonzero(sheet & hit)
+            plane = triangles[second[rows]]
+            above = np.zeros((rows.size,), dtype=np.bool_)
+            below = np.zeros((rows.size,), dtype=np.bool_)
+            known_all = np.ones((rows.size,), dtype=np.bool_)
+            for corner in range(3):
+                sign, known = _orient3d(
+                    combined_points[plane[:, 0]],
+                    combined_points[plane[:, 1]],
+                    combined_points[plane[:, 2]],
+                    combined_points[triangles[first[rows], corner]],
+                )
+                above |= sign > 0
+                below |= sign < 0
+                known_all &= known
+            # Rim sheets slide on the adjacent surface: an intersection that does
+            # not strictly straddle the surface plane is contact on it, not
+            # penetration.
+            hit[rows[known_all & ~(above & below)]] = False
+        colliding = hit | ~certain
+        count += int(np.count_nonzero(hit & certain))
+        for index in (first[colliding], second[colliding]):
+            index = index[index < new_count]
+            for kind_index, name in enumerate(_VOLUME_KINDS):
+                selected = new_owners[index[new_kinds[index] == kind_index]]
+                bad[name][selected] = True
     return bad, count
 
 

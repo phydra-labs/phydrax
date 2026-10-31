@@ -490,6 +490,24 @@ def test_visibility_optimum_is_exact_and_certified_at_sharp_ridges() -> None:
     sampled = np.max(np.min(np.einsum("cwd,pd->cwp", normals, probes), axis=1), axis=1)
     assert np.all(sampled[visible] <= visibility[visible] + 1.0e-12)
     assert np.all(sampled[~visible] <= 1.0e-12)
+    # A collapsed pole fan: hundreds of distinct normals on one cone. The
+    # optimum is the cone axis, and the cost stays linear in the fan width.
+    tilt = 0.3
+    angles = np.linspace(0.0, 2.0 * np.pi, 400, endpoint=False)
+    fan = np.stack(
+        (
+            np.sin(tilt) * np.cos(angles),
+            np.sin(tilt) * np.sin(angles),
+            np.full_like(angles, np.cos(tilt)),
+        ),
+        axis=-1,
+    )[None]
+    weights, visibility, gap = _visibility_optimum(fan)
+    assert visibility[0] == pytest.approx(np.cos(tilt), abs=1.0e-12)
+    assert gap[0] <= 1.0e-9
+    np.testing.assert_allclose(
+        np.einsum("cw,cwd->cd", weights, fan)[0], (0.0, 0.0, np.cos(tilt)), atol=1e-12
+    )
 
 
 def test_boundary_layer_scenario_3() -> None:
