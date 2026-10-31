@@ -997,7 +997,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _P),
     ),
     "phx_mc_tet_mesh_unmet_count": (_I32, (_P, _P)),
-    "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P)),
+    "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_snapshot": (
         _I32,
         (_P, ctypes.POINTER(_TetMeshSnapshotRequest)),
@@ -2727,11 +2727,32 @@ class TetMeshSourceEvidence(NamedTuple):
     witness_deviations: np.ndarray
 
 
+class TetMeshUnmetReason(IntEnum):
+    FIXED_BOUNDARY = 0
+    PROTECTED = 1
+    NONREPRESENTABLE = 2
+    REFUSED = 3
+    NO_IMPROVEMENT = 4
+    # Conforming refinement left the cell: the boundary split it required lies
+    # in the protected region of an acute input feature (segments, or a segment
+    # and a facet, meeting below 90 degrees, or facets meeting at a dihedral
+    # angle below 90 degrees through the domain).
+    INPUT_ANGLE = 5
+
+
+# Apex vertex ID of an unmet row without INPUT_ANGLE evidence.
+TET_MESH_UNMET_NO_APEX = np.iinfo(np.uint64).max
+
+
 class TetMeshUnmet(NamedTuple):
     cell_ids: np.ndarray
     criteria: np.ndarray
     reasons: np.ndarray
     values: np.ndarray
+    # INPUT_ANGLE rows: the acute feature's apex vertex ID (a ridge's first
+    # endpoint) and angle in degrees; TET_MESH_UNMET_NO_APEX and NaN otherwise.
+    apex_vertex_ids: np.ndarray
+    apex_angles: np.ndarray
 
 
 class TetMeshRun(NamedTuple):
@@ -7111,6 +7132,8 @@ class TetMesh3D:
             criteria = np.empty((row_count,), dtype=np.int32)
             reasons = np.empty((row_count,), dtype=np.int32)
             values = np.empty((row_count,), dtype=np.float64)
+            apex_vertex_ids = np.empty((row_count,), dtype=np.uint64)
+            apex_angles = np.empty((row_count,), dtype=np.float64)
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_unmet"](
                     self._live(),
@@ -7119,10 +7142,14 @@ class TetMesh3D:
                     _tet_mesh_pointer(criteria),
                     _tet_mesh_pointer(reasons),
                     _tet_mesh_pointer(values),
+                    _tet_mesh_pointer(apex_vertex_ids),
+                    _tet_mesh_pointer(apex_angles),
                 ),
                 "tet_mesh_unmet",
             )
-            return TetMeshUnmet(tetrahedra, criteria, reasons, values)
+            return TetMeshUnmet(
+                tetrahedra, criteria, reasons, values, apex_vertex_ids, apex_angles
+            )
 
     def apply_edit(self, edit: TetMeshEdit) -> TetMeshEditStatus:
         if not isinstance(edit, TetMeshEdit):
@@ -7847,6 +7874,8 @@ __all__ = [
     "TetMeshSourceComplex",
     "TetMeshSourceEvidence",
     "TetMeshUnmet",
+    "TetMeshUnmetReason",
+    "TET_MESH_UNMET_NO_APEX",
     "QuadraticValidityDecision",
     "RestrictedPowerCells",
     "RestrictedDual3D",
