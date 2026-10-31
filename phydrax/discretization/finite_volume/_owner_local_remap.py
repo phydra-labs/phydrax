@@ -4592,12 +4592,16 @@ def prepare_owner_local_conservative_remap(
             raise ValueError("Source and target local cell dimensions differ.")
         source_binding = _view_binding(source_view)
         target_binding = _view_binding(target_view)
+        # Exact coordinate maps are bound to each rank's resident mesh, so their
+        # IDs are rank-local evidence (checked against the rank's own geometry
+        # authority); the group compares the published geometry/context IDs.
         rank_local_binding_fields = (
             "local_mesh_id",
             "local_topology_id",
             "local_geometry_id",
             "local_view_id",
             "owner_rank",
+            "source_map_id",
         )
         source_signature = {
             key: value
