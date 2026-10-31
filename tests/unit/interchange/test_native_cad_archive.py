@@ -5099,7 +5099,8 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
     assert restored.stdout.strip() == "finite-element-transfer-cold-restored"
 
     source = tmp_path / "finite-element-transfer.phx"
-    corrupted = tmp_path / "changed-finite-element-transfer-coefficient.phx"
+    corrupted = tmp_path / "changed-finite-element-transfer-coefficient"
+    corrupted.mkdir()
     manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     _register_model_archive_types()
@@ -5114,10 +5115,13 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
         None,
     )
     assert coefficient_leaf is not None
-    coefficients = arrays[coefficient_leaf.name]
-    coefficients.flat[0] += 1.0
+    damaged_arrays = {name: array.copy() for name, array in arrays.items()}
+    damaged_arrays[coefficient_leaf.name].flat[0] += 1.0
     write_array_archive(
-        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+        corrupted / "finite-element-transfer.phx",
+        manifest=manifest,
+        arrays=damaged_arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -5251,11 +5255,14 @@ def test_periodic_distributed_fe_transfer_rebuilds_from_mesh_and_rejects_corrupt
         None,
     )
     assert coefficient_leaf is not None
-    coefficients = arrays[coefficient_leaf.name]
-    coefficients.flat[0] += 1.0
+    damaged_arrays = {name: array.copy() for name, array in arrays.items()}
+    damaged_arrays[coefficient_leaf.name].flat[0] += 1.0
     corrupted = tmp_path / "changed-periodic-distributed-fe-transfer.phx"
     write_array_archive(
-        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+        corrupted,
+        manifest=manifest,
+        arrays=damaged_arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
