@@ -568,6 +568,81 @@ def test_declared_facet_planes_are_validated_rows() -> None:
     np.testing.assert_array_equal(accepted.complex.facet_plane_tolerances, np.zeros((6,)))
 
 
+@pytest.mark.parametrize("floor_plane", ("implicit", "declared", "undeclared"))
+def test_curved_facet_keeps_authored_diagonal_of_exactly_coplanar_trapezoid(
+    floor_plane: str,
+) -> None:
+    # A hip roof: the front and back trapezoids are exactly coplanar triangle
+    # pairs inside one non-planar "roof" facet, as symmetric trapezoids are on
+    # a discrete surface of revolution. Both trapezoids are cyclic, so either
+    # diagonal is a valid recovery; the authored one must be kept. The planar
+    # floor merges its two triangles without plane declarations or when its
+    # plane is declared; a complex declaring planes keeps the diagonal of an
+    # undeclared floor.
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (4.0, 0.0, 0.0),
+            (4.0, 2.0, 0.0),
+            (0.0, 2.0, 0.0),
+            (1.0, 1.0, 1.0),
+            (3.0, 1.0, 1.0),
+        ),
+        dtype=np.float64,
+    )
+    roof = ((0, 1, 5), (0, 5, 4), (2, 3, 4), (2, 4, 5), (1, 2, 5), (3, 0, 4))
+    floor = ((0, 3, 2), (0, 2, 1))
+    facet_planes = None
+    if floor_plane != "implicit":
+        facet_planes = np.full((2, 3, 3), np.nan, dtype=np.float64)
+        if floor_plane == "declared":
+            facet_planes[1] = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    complex_ = PiecewiseLinearComplex(
+        points,
+        np.asarray(roof + floor, dtype=np.int64),
+        np.asarray((0,) * len(roof) + (1,) * len(floor), dtype=np.int64),
+        np.asarray(((-1, 0), (-1, 0)), dtype=np.int64),
+        ("solid",),
+        segments=np.empty((0, 2), dtype=np.int64),
+        vertex_ids=tuple(f"roof-vertex-{row}" for row in range(points.shape[0])),
+        vertex_occurrence_paths=((),) * points.shape[0],
+        facet_ids=("roof", "floor"),
+        facet_occurrence_paths=((), ()),
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((),),
+        boundary="fixed",
+        facet_planes=facet_planes,
+    )
+    source = NativePlcSource(complex_, "hip-roof", "revision-1")
+    seed = RegionSeed(
+        np.asarray((2.0, 1.0, 0.3), dtype=np.float64),
+        "solid",
+        "solid-material",
+        RegionRole.SOLID,
+    )
+    construction = _construct(source, _request(source, region_seeds=(seed,)))
+
+    faces = np.asarray(construction.input_vertices)[
+        np.asarray(construction.boundary_faces)
+    ]
+    roof_faces = {tuple(sorted(face)) for face in faces.tolist() if {4, 5} & set(face)}
+    assert roof_faces == {tuple(sorted(face)) for face in roof}
+    edge_ids = {
+        tuple(sorted(edge)): identifier
+        for edge, identifier in zip(
+            complex_.plc_edge_vertices, complex_.plc_edge_ids, strict=True
+        )
+    }
+    segment_ids = set(construction.segment_source_ids)
+    assert {edge_ids[(0, 5)], edge_ids[(2, 4)]} <= segment_ids
+    floor_diagonal = edge_ids.get((0, 2))
+    if floor_plane == "undeclared":
+        assert floor_diagonal in segment_ids
+    else:
+        assert floor_diagonal not in segment_ids
+
+
 def test_raw_recovery_witnesses_map_to_canonical_source_identity_rows() -> None:
     base = _source("conforming")
     complex_ = PiecewiseLinearComplex(

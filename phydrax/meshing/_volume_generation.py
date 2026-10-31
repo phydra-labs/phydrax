@@ -14,6 +14,7 @@ import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._meshcore import (
+    exact_orient3d,
     MeshcoreError,
     MeshcoreStatus,
     PlcBoundaryPolicy as NativePlcBoundaryPolicy,
@@ -246,6 +247,81 @@ def _source_rows(
     if any(int(identifier) not in rows for identifier in values):
         raise ValueError(f"{name} scope contains an undeclared stable PLC entity ID.")
     return np.asarray([rows[int(identifier)] for identifier in values], dtype=np.int64)
+
+
+def _authored_coplanar_edge_rows(complex_: PiecewiseLinearComplex, /) -> np.ndarray:
+    """Canonical rows of shared edges between coplanar polygons of authored facets.
+
+    Native source preparation merges exactly coplanar adjacent polygons of one
+    facet and drops their shared edge. The polygon edges of a discrete curved
+    surface are authored, so a coplanar pair inside it (a symmetric trapezoid
+    on a surface of revolution) must keep its diagonal instead of letting
+    recovery choose the other one. A complex declaring ``facet_planes`` lets
+    only its declared-plane facets merge; without declarations a facet may
+    merge iff all its adjacent polygon pairs are exactly coplanar.
+    """
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    loops = np.asarray(complex_.polygon_vertices, dtype=np.int64)
+    polygon_facets = np.asarray(complex_.polygon_facets, dtype=np.int64)
+    sizes = np.diff(offsets)
+    positions = np.arange(loops.size, dtype=np.int64)
+    polygons = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
+    following = positions + 1
+    wrapped = following == offsets[polygons + 1]
+    following[wrapped] = offsets[polygons[wrapped]]
+    first, second = loops[positions], loops[following]
+    keys = np.minimum(first, second) * loops.size + np.maximum(first, second)
+    order = np.argsort(keys, kind="stable")
+    _, starts, counts = np.unique(keys[order], return_index=True, return_counts=True)
+    shared = starts[counts == 2]
+    use, other = order[shared], order[shared + 1]
+    adjacent = (
+        (first[use] == second[other])
+        & (second[use] == first[other])
+        & (polygon_facets[polygons[use]] == polygon_facets[polygons[other]])
+    )
+    use, other = use[adjacent], other[adjacent]
+    if use.size == 0:
+        return np.zeros((0,), dtype=np.int64)
+    left, right = polygons[use], polygons[other]
+    # Two polygons sharing edge ab are coplanar iff every vertex pair (c, d)
+    # of them satisfies orient3d(a, b, c, d) == 0: a nondegenerate polygon
+    # owns a vertex off line ab, which fixes the common plane.
+    combinations = sizes[left] * sizes[right]
+    pair_rows = np.repeat(np.arange(use.size, dtype=np.int64), combinations)
+    local = np.arange(pair_rows.size, dtype=np.int64) - np.repeat(
+        np.cumsum(combinations) - combinations, combinations
+    )
+    right_sizes = sizes[right][pair_rows]
+    vertices = np.asarray(complex_.vertices, dtype=np.float64)
+    signs = exact_orient3d(
+        vertices[first[use][pair_rows]],
+        vertices[second[use][pair_rows]],
+        vertices[loops[offsets[left][pair_rows] + local // right_sizes]],
+        vertices[loops[offsets[right][pair_rows] + local % right_sizes]],
+    )
+    coplanar = np.bincount(pair_rows, weights=signs != 0, minlength=use.size) == 0
+    pair_facets = polygon_facets[left]
+    if complex_.facet_planes is None:
+        mergeable = ~np.isin(pair_facets, pair_facets[~coplanar])
+    else:
+        declared = ~np.all(np.isnan(complex_.facet_planes), axis=(1, 2))
+        mergeable = declared[pair_facets]
+    locked = coplanar & ~mergeable
+    if not np.any(locked):
+        return np.zeros((0,), dtype=np.int64)
+    row_by_key = {
+        (min(edge), max(edge)): row for row, edge in enumerate(complex_.plc_edge_vertices)
+    }
+    return np.asarray(
+        sorted(
+            row_by_key[(min(edge), max(edge))]
+            for edge in zip(
+                first[use][locked].tolist(), second[use][locked].tolist(), strict=True
+            )
+        ),
+        dtype=np.int64,
+    )
 
 
 def _source_tables(
@@ -1179,6 +1255,7 @@ def generate_plc_volume(
         (canonical_source_edges.shape[0],), np.inf, dtype=np.float64
     )
     active_segment_rows = {int(row) for row in explicit_segment_rows.tolist()}
+    active_segment_rows.update(_authored_coplanar_edge_rows(complex_).tolist())
     for feature in specification.protected_features:
         identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
         match feature.scope.entity_dimension, feature.feature_kind.value:
@@ -1207,8 +1284,9 @@ def generate_plc_volume(
     )
     # Native source preparation owns polygon loops and omits grouped coplanar
     # internal diagonals, and those of declared-plane facets whatever their
-    # rounding. Only authored segments and requested curve features are
-    # passed as explicit 1D constraints.
+    # rounding. Authored segments, requested curve features and the
+    # coplanar-pair edges of undeclared facets are passed as explicit 1D
+    # constraints.
     recovery = recover_plc_3d(
         complex_.vertices,
         complex_.polygon_offsets,

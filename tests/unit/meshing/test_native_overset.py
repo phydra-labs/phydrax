@@ -80,7 +80,9 @@ def _boundary_facets(part: Any, dimension: int = 1) -> Any:
         boundary = np.asarray(mesh.connectivity.boundary_faces, dtype=np.bool_)
         return part.scope(2, identifiers[boundary])
     identifiers = np.asarray(mesh.entity_set(dimension).entity_ids, dtype=np.int64)
-    boundary = np.asarray(mesh.connectivity.boundary_facets, dtype=np.bool_)
+    boundary = np.asarray(
+        mesh.entity_set(dimension).subset("boundary").mask, dtype=np.bool_
+    )
     return part.scope(dimension, identifiers[boundary])
 
 

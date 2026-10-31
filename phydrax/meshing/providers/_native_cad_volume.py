@@ -273,8 +273,15 @@ def _cad_plc_data(
     surface: CellMeshingResult,
     surface_source: SurfaceSourceCharts,
     boundary: PlcBoundaryPolicy,
+    deviation: float | None,
     /,
 ) -> _CadPlcData:
+    """PLC of an accepted CAD surface mesh; facet rows are source patch rows.
+
+    Exact planar patches declare their facet plane. A vertex of an accepted
+    surface lies within the source ``deviation`` bound of its patch, which is
+    the declared plane tolerance (zero without a bound: rounding only).
+    """
     domain.require_current(domain.source_id, domain.source_revision)
     if domain.brep_authority is None or domain.source_kinds != ("vertex", "edge", "face"):
         raise ValueError(
@@ -609,6 +616,11 @@ def _cad_plc_data(
     )
     if len(set(source_triangle_ids)) != len(source_triangle_ids):
         raise ValueError("CAD source surface triangles have ambiguous PLC ancestry.")
+    facet_planes = np.full((len(domain.patches), 3, 3), np.nan, dtype=np.float64)
+    for patch in range(len(domain.patches)):
+        plane = _exact_patch_plane(domain, patch)
+        if plane is not None:
+            facet_planes[patch] = plane
     complex_ = PiecewiseLinearComplex(
         np.asarray(
             [[float(value) for value in point] for point in plc_points], dtype=np.float64
@@ -626,6 +638,10 @@ def _cad_plc_data(
         segment_occurrence_paths=tuple(segment_paths),
         region_occurrence_paths=region_paths,
         boundary=boundary,
+        facet_planes=facet_planes,
+        facet_plane_tolerances=np.full(
+            (len(domain.patches),), 0.0 if deviation is None else deviation
+        ),
     )
     return _CadPlcData(
         complex_,
@@ -862,7 +878,7 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
             deviation = finite_real_scalar(float(maximum_deviation), "maximum_deviation")
             if deviation < 0.0:
                 raise ValueError("maximum_deviation must be non-negative.")
-        data = _cad_plc_data(domain, surface, surface_source, boundary)
+        data = _cad_plc_data(domain, surface, surface_source, boundary, deviation)
         plc_source = NativePlcSource(
             data.complex, domain.source_id, domain.source_revision
         )
@@ -1359,6 +1375,60 @@ def _cad_uv_triangle_orientation(
     return 1 if area > 0 else -1
 
 
+type _ExactPlaneChart = tuple[
+    tuple[Fraction, Fraction, Fraction],
+    tuple[Fraction, Fraction, Fraction],
+    tuple[Fraction, Fraction, Fraction],
+]
+
+
+def _exact_patch_chart(domain: MeshingDomain, patch: int, /) -> _ExactPlaneChart | None:
+    """Exact placed ``(origin, first_axis, second_axis)`` of a planar patch chart.
+
+    Only a (placed) ``PlanePatch`` has one; the exact affine placement maps
+    its binary64 origin and axes without rounding.
+    """
+    surface = domain.patches[patch].surface
+    placement = None
+    if isinstance(surface, _PlacedSurfacePatch):
+        surface, placement = surface.source, surface.placement
+    if not isinstance(surface, PlanePatch):
+        return None
+    rows = [
+        tuple(Fraction.from_float(float(value)) for value in np.asarray(vector))
+        for vector in (surface.origin, surface.first_axis, surface.second_axis)
+    ]
+    if placement is not None:
+        matrix = placement.matrix
+        rows = [
+            tuple(
+                sum(
+                    (matrix[axis][column] * row[column] for column in range(3)),
+                    Fraction(0),
+                )
+                + (matrix[axis][3] if index == 0 else Fraction(0))
+                for axis in range(3)
+            )
+            for index, row in enumerate(rows)
+        ]
+    origin, first, second = rows
+    return (
+        (origin[0], origin[1], origin[2]),
+        (first[0], first[1], first[2]),
+        (second[0], second[1], second[2]),
+    )
+
+
+def _exact_patch_plane(domain: MeshingDomain, patch: int, /) -> np.ndarray | None:
+    """Binary64 rows of `_exact_patch_chart`, each component rounded once."""
+    chart = _exact_patch_chart(domain, patch)
+    if chart is None:
+        return None
+    return np.asarray(
+        [[float(value) for value in row] for row in chart], dtype=np.float64
+    )
+
+
 def _cad_volume_chart_witness(
     source: NativeCadVolumeSource,
     construction: VolumeConstruction,
@@ -1723,10 +1793,7 @@ def _cad_volume_chart_witness(
                 int(value) for value in source_faces[source_face_row]
             )
         else:
-            planar_source = domain.patches[patch].surface
-            if isinstance(planar_source, _PlacedSurfacePatch):
-                planar_source = planar_source.source
-            if not isinstance(planar_source, PlanePatch):
+            if _exact_patch_plane(domain, patch) is None:
                 raise ValueError(
                     "CAD output face spans source triangles without an exact planar patch chart."
                 )
@@ -2713,8 +2780,9 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     "CAD curve identity and PLC edge have different oriented endpoint rows."
                 )
         # The full canonical bank supports raw identity translation, not blanket
-        # 1D promotion. Native preparation retains polygon loops and omits grouped
-        # coplanar diagonals; only authored/requested curves become explicit segments.
+        # 1D promotion. PLC facet rows are patch rows: exact planar patches are
+        # declared facet planes and group natively; every other patch keeps its
+        # authored triangle edges.
         construction = generate_plc_volume(
             plc_complex,
             translated,

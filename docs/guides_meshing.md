@@ -1787,12 +1787,15 @@ staging. `PreparedMovingOversetPoissonUpdate.commit(accepted_boundary=...)`
 publishes all candidate connectivity, FE operators, and field states in one
 `CompositionRebind`; a rejected boundary returns the original composition.
 For owner-local assemblies, also pass `execution_group` and the accepted
-`successor_assembly`. Each process must retain the complete source and successor
-cell view for every part; this lets overlap and flux checks cover each global
-part while donor coefficients and receptor values still use the sparse
-owner-local exchange. Commit synchronizes acceptance, so any local rejection
-rolls the complete composition back. For topology-changing local FE state,
-transfer the accepted state through
+`successor_assembly`. Each process holds only its owned cells plus their exact
+face-neighbor halo for every part, and this completeness is checked
+collectively. Each owner assembles P1 terms on its owned cells only. Owner-pair
+routes refresh ghost rows and add contributions back into owner rows, and a
+distributed PCG solves the owned free rows. Donor coefficients and receptor
+values use the sparse owner-local exchange. Overlap evidence comes from
+`prepare_owner_local_conservative_remap`. Commit synchronizes acceptance, so any
+local rejection rolls the complete composition back. For topology-changing
+local FE state, transfer the accepted state through
 `FiniteElementTopologyTransaction.adapt_owner_local` before reanalysis; this
 Poisson route requires unchanged P1 topology and DOF identity.
 
@@ -2389,6 +2392,27 @@ rather than published without incident-owner agreement. These exchanges carry
 seam data and ownership metadata, not a global
 mesh or candidate table. Source and request identities must agree on every
 group member.
+
+`phydrax.meshing._distribution.prepare_owner_local_cell_shard(part_name,
+source_id, source_revision, contract, block_name, cell_kind, rows, group)`
+publishes a sharded owner-local view of an ordinary triangle or tetrahedron mesh.
+Each rank passes only its owned rows as `OwnerLocalCellShardRows`: owned cell
+IDs, their global vertex IDs and exact coordinates, and the global IDs of
+intermediate entities in the owned closure.
+
+- Face neighbors are paired through hash-sharded facet records, and their rows
+  are requested from their owners.
+- Vertex owners are elected as the minimum incident-cell owner.
+- The returned rank-local `MeshAssembly` carries a non-serial
+  `OwnerLocalCellGeometry`. It holds the owned cells plus their exact face halo,
+  the owned face-neighbor graph, a bound owner directory, and a coordinate-map
+  authority.
+- Empty owners participate collectively and publish empty views.
+
+`MeshDistribution.owner_local_cell_shard_rows(rank)` selects one rank's rows
+from an authored serial distribution, for example in test preparation. The
+serial adapter `owner_local_geometry_record` remains for single-process
+consumers; multi-rank overset exchange refuses its serial views.
 
 `phydrax.meshing._device_generation` prepares an oriented simplex seed,
 evaluates a complete device candidate batch, resolves uncertain source
