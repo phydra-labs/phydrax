@@ -8398,6 +8398,9 @@ def _owner_local_periodic_candidate_from_accepted_view(
         np.asarray(view.cell_ids, dtype=np.int64),
     ):
         raise ValueError("Accepted Delaunay mesh data changed the local carrier.")
+    # Adapted views key midpoint vertices by themselves; their exact roots are
+    # the cumulative coordinate ancestry carried with the accepted mesh data.
+    adapted = view.adaptive_result is not None
     return OwnerLocalPeriodicCandidate(
         rank,
         part_count,
@@ -8443,6 +8446,12 @@ def _owner_local_periodic_candidate_from_accepted_view(
         cell_neighbor_ids=mesh_data["graph_neighbor_ids"],
         cell_neighbor_owner_ranks=mesh_data["graph_neighbor_owner_ranks"],
         cell_neighbor_weights=mesh_data["graph_neighbor_weights"],
+        vertex_coordinate_stencil=(
+            mesh_data["source_coordinate_stencil"] if adapted else None
+        ),
+        exact_vertex_coordinate_offsets=(
+            tuple(mesh_data["exact_vertex_coordinate_offsets"]) if adapted else None
+        ),
     )
 
 

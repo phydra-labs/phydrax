@@ -3498,11 +3498,17 @@ def _materialize_owner_local_periodic_target(
     current_roots = np.asarray(view.vertex_source_ids, dtype=np.int64)
     target_roots = np.asarray(target_vertex_source_ids, dtype=np.int64)
     target_windings = np.asarray(target_vertex_absolute_windings, dtype=np.int64)
+    # Power vertices are keyed by their source sites. Delaunay vertices may be
+    # adapted midpoints keyed by themselves; their exact roots are the active
+    # rows of the cumulative coordinate ancestry, checked below.
     if (
         not np.array_equal(target_roots, current_roots)
         or target_roots.shape != vertex_ids.shape
         or target_windings.shape != (vertex_ids.size, periodic_rank)
-        or any(int(identifier) not in root_points for identifier in target_roots)
+        or (
+            source_map is not None
+            and any(int(identifier) not in root_points for identifier in target_roots)
+        )
     ):
         raise ValueError(
             "Owner-local motion changed source-root identity or omitted a lifted root."
