@@ -40,6 +40,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._archive_columns import StaticColumnArchiveRecipe
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -494,6 +495,118 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         if not np.array_equal(targets[rows], requested):
             raise ValueError("Geometry association does not classify every requested ID.")
         return rows
+
+
+class GeometryAssociationArchiveRecipe(NamedTuple):
+    """Archive form of a geometry association with per-row static banks as columns.
+
+    Source IDs, roles, occurrence paths, region sides and exact parameters are
+    one static value per target entity; the archive stores each as a value table
+    plus an int64 row-index array member instead of one manifest node per row.
+    :meth:`restore` rebuilds through the owning constructor and requires the
+    recomputed association identity to equal the stored one.
+    """
+
+    association_kind: GeometryAssociationKind
+    source_id: str
+    source_revision: str
+    target_entity_set_id: str
+    target_global_ids: Array
+    source_entity_ids: StaticColumnArchiveRecipe
+    source_roles: StaticColumnArchiveRecipe
+    source_occurrence_paths: StaticColumnArchiveRecipe
+    source_region_sides: StaticColumnArchiveRecipe
+    source_parameter_intervals: StaticColumnArchiveRecipe
+    source_parameter_points: StaticColumnArchiveRecipe
+    residuals: Array
+    resolved: Array
+    ambiguous: Array
+    source_dimensions: Array
+    source_indices: Array
+    parameters: Array
+    orientations: Array
+    parent_dimensions: Array
+    parent_ids: Array
+    exact: bool
+    provenance: GeometryAssociationProvenance
+    parent_association_id: str | None
+    association_id: str
+
+    @classmethod
+    def from_association(
+        cls, value: GeometryAssociation, /
+    ) -> GeometryAssociationArchiveRecipe:
+        if type(value) is not GeometryAssociation:
+            raise TypeError("value must be GeometryAssociation.")
+        return cls(
+            value.association_kind,
+            value.source_id,
+            value.source_revision,
+            value.target_entity_set_id,
+            value.target_global_ids,
+            StaticColumnArchiveRecipe.encode(value.source_entity_ids),
+            StaticColumnArchiveRecipe.encode(value.source_roles),
+            StaticColumnArchiveRecipe.encode(value.source_occurrence_paths),
+            StaticColumnArchiveRecipe.encode(value.source_region_sides),
+            StaticColumnArchiveRecipe.encode(value.source_parameter_intervals),
+            StaticColumnArchiveRecipe.encode(value.source_parameter_points),
+            value.residuals,
+            value.resolved,
+            value.ambiguous,
+            value.source_dimensions,
+            value.source_indices,
+            value.parameters,
+            value.orientations,
+            value.parent_dimensions,
+            value.parent_ids,
+            value.exact,
+            value.provenance,
+            value.parent_association_id,
+            value.association_id,
+        )
+
+    def restore(self) -> GeometryAssociation:
+        if type(self.association_kind) is not GeometryAssociationKind:
+            raise TypeError("Stored association kind is not registered.")
+        dimensions = np.asarray(self.source_dimensions)
+        indices = np.asarray(self.source_indices)
+        # Rows without a source stratum are stored as -1; when no row names one
+        # the constructor's absent-strata form reproduces exactly those banks.
+        strata_absent = (
+            self.association_kind is not GeometryAssociationKind.BREP
+            and bool(np.all(dimensions == -1))
+            and bool(np.all(indices == -1))
+        )
+        restored = GeometryAssociation(
+            self.association_kind,
+            self.source_id,
+            self.source_revision,
+            self.target_entity_set_id,
+            self.target_global_ids,
+            self.source_entity_ids.decode(),
+            self.residuals,
+            resolved=self.resolved,
+            ambiguous=self.ambiguous,
+            exact=self.exact,
+            source_dimensions=None if strata_absent else dimensions,
+            source_indices=None if strata_absent else indices,
+            source_roles=self.source_roles.decode(),
+            source_occurrence_paths=self.source_occurrence_paths.decode(),
+            source_region_sides=self.source_region_sides.decode(),
+            source_parameter_intervals=self.source_parameter_intervals.decode(),
+            source_parameter_points=self.source_parameter_points.decode(),
+            parameters=self.parameters,
+            orientations=self.orientations,
+            parent_dimensions=self.parent_dimensions,
+            parent_ids=self.parent_ids,
+            parent_association_id=self.parent_association_id,
+            provenance=self.provenance,
+        )
+        if restored.association_id != self.association_id:
+            raise ValueError(
+                "Stored geometry association differs from its recomputed identity."
+            )
+        return restored
 
 
 def inherit_association_rows(
@@ -2093,6 +2206,7 @@ __all__ = [
     "AssociationTransfer",
     "BRepAssociationTransfer",
     "GeometryAssociation",
+    "GeometryAssociationArchiveRecipe",
     "GeometryAssociationKind",
     "GeometryAssociationProvenance",
     "GeometrySourceEntityRole",

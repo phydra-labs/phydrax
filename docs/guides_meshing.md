@@ -189,6 +189,19 @@ accepts an in-hand certificate. Each consumer, including restricted-Delaunay
 coverage replay, reuses it only after checking that it binds the same mesh,
 coordinate map, local-validity proof and junction set; there is no process
 cache.
+A restore of a stored report first calls `report.require_premises(inputs,
+audit_policy=..., organization=...)` with the rebuilt premises. It compares only
+claims fixed by content identity (request, mesh and coordinate-map bindings,
+junctions, source revisions, coverage region IDs and occurrence paths, material
+assignment, organization IDs, report identity), so a tampered archive is refused
+before any proof replay. It accepts nothing: the embedding, coverage, fidelity
+and audit proofs are then recomputed once from the same premises, because a
+stored claim is not determined by the identities it binds.
+Native model archives store per-entity static rows of geometry associations,
+embedding witnesses and surface cell tags as array columns (a value table with
+int64 row indices, or UTF-8 text with offsets), so manifests stay within the
+canonical `MODEL_ARCHIVE_LIMITS`; the decoder rebuilds each record through its
+constructor and requires its stored identity.
 Missing continuous fidelity witnesses produce an unresolved certificate with
 unbounded directed deviation evidence. Those bounds remain infinity; they are
 not replaced with finite estimates or accepted merely because mesh samples agree.

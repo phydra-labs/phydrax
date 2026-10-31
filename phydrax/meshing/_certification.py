@@ -14,15 +14,20 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
-from ..discretization._cell_geometry_validity import certify_cell_geometry_validity
+from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    certify_cell_geometry_validity,
+)
 from ..discretization._surface_chart_records import SurfaceChartWitness
 from ..geometry._domain_certification import (
     certify_domain_coverage,
+    coverage_region_occurrence_paths,
     DomainCoverageCertificate,
 )
 from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..geometry._embedding_state import MeshCertificateFinding
 from ..geometry._global_embedding import (
+    _junction_ids,
     certify_global_embedding,
     GlobalEmbeddingCertificate,
 )
@@ -35,6 +40,7 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistanceWitness,
     SourceBoundaryPointWitness,
+    SourceBoundaryQuery,
     SurfaceEnvelopeDistanceWitness,
 )
 from ..geometry._source_fidelity import (
@@ -164,6 +170,25 @@ def _audit_findings(
     for name in audit.unresolved:
         findings.append(MeshCertificateFinding(name, "unresolved", "mesh"))
     return tuple(findings)
+
+
+def _coverage_operands(
+    inputs: MeshCertificationInputs,
+    fidelity: SourceFidelityCertificate | None,
+    /,
+) -> tuple[SourceBoundaryQuery | None, SourceFidelityCertificate | None]:
+    """Return the source query and fidelity proof that material coverage consumes."""
+    if (
+        isinstance(inputs.domain, PiecewiseLinearDomain)
+        and inputs.source is not None
+        and (inputs.source.source_id, inputs.source.source_revision)
+        != (inputs.domain.source_id, inputs.domain.source_revision)
+    ):
+        # A derived affine domain carries its own content revision. Its
+        # coverage is an exact chain comparison that needs no continuous
+        # source query; fidelity is certified separately.
+        return None, None
+    return inputs.source, fidelity
 
 
 def _feature_witness_scope(
@@ -378,17 +403,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             if inputs.cell_regions is None:
                 raise ValueError("Domain coverage requires its material assignments.")
             if embedding.status == "certified":
-                coverage_source, coverage_fidelity = inputs.source, fidelity
-                if (
-                    isinstance(inputs.domain, PiecewiseLinearDomain)
-                    and inputs.source is not None
-                    and (inputs.source.source_id, inputs.source.source_revision)
-                    != (inputs.domain.source_id, inputs.domain.source_revision)
-                ):
-                    # A derived affine domain carries its own content revision.
-                    # Its coverage is an exact chain comparison that needs no
-                    # continuous source query; fidelity is certified separately.
-                    coverage_source, coverage_fidelity = None, None
+                coverage_source, coverage_fidelity = _coverage_operands(inputs, fidelity)
                 coverage = certify_domain_coverage(
                     inputs.mesh,
                     inputs.geometry,
@@ -486,6 +501,131 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                         }
                     )
                 ),
+            )
+
+    def require_premises(
+        self,
+        inputs: MeshCertificationInputs,
+        /,
+        *,
+        audit_policy: CellMeshAuditPolicy,
+        organization: NativeMeshOrganization,
+    ) -> None:
+        """Refuse a stored report whose identity-bound claims differ from its premises.
+
+        A restore calls this before replaying any proof: every compared value is
+        a content identity determined by ``inputs`` and ``organization`` alone
+        (request, mesh and map bindings, junctions, source revisions, coverage
+        region IDs and occurrence paths, material assignment, organization IDs,
+        report identity). Passing accepts nothing; acceptance is recomputed
+        afterwards from the same premises.
+        """
+        if not isinstance(inputs, MeshCertificationInputs):
+            raise TypeError("inputs must be MeshCertificationInputs.")
+        if not isinstance(audit_policy, CellMeshAuditPolicy):
+            raise TypeError("audit_policy must be CellMeshAuditPolicy.")
+        if not isinstance(organization, NativeMeshOrganization):
+            raise TypeError("organization must be NativeMeshOrganization.")
+        if (
+            self.status != certificate_status(self.findings)
+            or self.report_id != self._identity()
+        ):
+            raise ValueError(
+                "Stored mesh acceptance status and identity differ from its retained evidence."
+            )
+        if self.inputs.request_id != inputs.request_id or not _same_tree_content(
+            self.audit_policy, audit_policy
+        ):
+            raise ValueError(
+                "Stored mesh acceptance differs from its rebuilt request or audit policy."
+            )
+        stored = (
+            None if self.boundary is None else self.boundary.model_id,
+            tuple(value.patch_id for value in self.patches),
+            tuple(value.zone_id for value in self.zones),
+            tuple(value.label_id for value in self.labels),
+            tuple(value.attribute_id for value in self.attributes),
+            tuple(value.association_id for value in self.associations),
+        )
+        rebuilt = (
+            None if organization.boundary is None else organization.boundary.model_id,
+            tuple(value.patch_id for value in organization.patches),
+            tuple(value.zone_id for value in organization.zones),
+            tuple(value.label_id for value in organization.labels),
+            tuple(value.attribute_id for value in organization.attributes),
+            tuple(value.association_id for value in organization.associations),
+        )
+        if stored != rebuilt:
+            raise ValueError(
+                "Stored mesh acceptance differs from its rebuilt organization."
+            )
+        mesh, geometry = inputs.mesh, inputs.geometry
+        binding = self.embedding.binding
+        if (
+            binding.mesh_id != mesh.mesh_id
+            or binding.topology_id != mesh.topology_id
+            or binding.geometry_layout_id != geometry.geometry_layout_id
+            or binding.geometry_id != cell_geometry_id(geometry)
+            or binding.junction_vertices != _junction_ids(mesh, inputs.junction_vertices)
+        ):
+            raise ValueError(
+                "Stored global embedding binds another mesh, coordinate map, or junction set."
+            )
+        if (inputs.source is None) != (self.fidelity is None) or len(
+            inputs.scoped_fidelity
+        ) != len(self.scoped_fidelity):
+            raise ValueError("Stored source fidelity differs from its rebuilt premises.")
+        if (
+            self.fidelity is not None
+            and inputs.source is not None
+            and (
+                self.fidelity.binding.source_id,
+                self.fidelity.binding.source_revision,
+            )
+            != (inputs.source.source_id, inputs.source.source_revision)
+        ):
+            raise ValueError("Stored source fidelity binds another source revision.")
+        self._require_coverage_premises(inputs)
+
+    def _require_coverage_premises(self, inputs: MeshCertificationInputs, /) -> None:
+        coverage = self.coverage
+        domain = inputs.domain
+        if domain is None or self.embedding.status != "certified":
+            if coverage is not None:
+                raise ValueError(
+                    "Stored material coverage has no admissible domain or embedding premise."
+                )
+            return
+        if coverage is None or inputs.cell_regions is None:
+            raise ValueError(
+                "Stored mesh acceptance omitted its material coverage proof."
+            )
+        coverage_source, _ = _coverage_operands(inputs, self.fidelity)
+        witness = inputs.source_coverage_witness
+        stored_witness = coverage.source_coverage_witness
+        if (
+            coverage.domain_id != domain.domain_id
+            or coverage.source_id != domain.source_id
+            or coverage.region_ids != tuple(domain.region_ids)
+            or coverage.region_occurrence_paths
+            != coverage_region_occurrence_paths(domain)
+            or coverage.embedding_certificate_id != self.embedding.certificate_id
+            or (None if coverage.source is None else coverage.source.source_id)
+            != (None if coverage_source is None else coverage_source.source_id)
+            or (None if coverage.source is None else coverage.source.source_revision)
+            != (None if coverage_source is None else coverage_source.source_revision)
+            or (None if stored_witness is None else stored_witness.witness_id)
+            != (None if witness is None else witness.witness_id)
+        ):
+            raise ValueError(
+                "Stored material coverage differs from its rebuilt domain, regions, source, or witness."
+            )
+        regions = np.asarray(inputs.cell_regions)
+        if regions.dtype.kind not in "iu" or not np.array_equal(
+            regions, np.asarray(coverage.cell_regions)
+        ):
+            raise ValueError(
+                "Stored material coverage binds another dense region assignment."
             )
 
     def revalidate(
