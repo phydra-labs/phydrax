@@ -459,6 +459,55 @@ def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks(
     ) == tuple(None if root is None else root.root_id for root in geometry.vertex_roots)
 
 
+def _notch_branches(
+    lower: tuple[float, float, float], upper: tuple[float, float, float]
+) -> tuple[BRepBooleanResult, tuple[IntersectionCurve, ...]]:
+    cylinder = brep_cylinder(1.0, 2.0, coordinate_contract=_COORDINATES)
+    notch = brep_box(lower, upper, coordinate_contract=_COORDINATES)
+    original = _source_identity(cylinder), _source_identity(notch)
+    result = boolean_brep(cylinder, notch, "difference")
+    assert (_source_identity(cylinder), _source_identity(notch)) == original
+    assert result.model.topology.num_solids == 1
+    geometry = result.model.geometry
+    assert geometry is not None
+    branches = {
+        curve.branch_id: curve
+        for curve in geometry.curves
+        if isinstance(curve, IntersectionCurve)
+    }
+    for branch in branches.values():
+        assert branch.fully_certified
+        assert not branch.closed
+        assert (branch.start_kind, branch.end_kind) == ("boundary", "boundary")
+    _assert_exhaustive_oriented_lineage(result)
+    return result, tuple(branches.values())
+
+
+def test_notch_arc_across_the_cylinder_seam_splits_under_an_exact_deck() -> None:
+    # The notch sits on the cylinder's seam generator, so each cap-plane arc
+    # runs from the end of the angle window into its start.
+    _, branches = _notch_branches((-0.25, 0.75, 0.5), (0.25, 1.25, 1.5))
+    arcs = tuple(
+        branch for branch in branches if np.any(np.asarray(branch.node_axes)[1:-1] == 0)
+    )
+    assert len(arcs) == 2
+    for arc in arcs:
+        interior = np.asarray(arc.node_axes)[1:-1]
+        values = np.asarray(arc.node_values)[1:-1]
+        shifts = np.asarray(arc.node_period_shifts)[1:-1]
+        seam = [
+            index
+            for index in range(len(interior))
+            if interior[index] == 0 and values[index] == 0.0
+        ]
+        assert len(seam) == 1
+        incoming, outgoing = shifts[seam[0]]
+        np.testing.assert_array_equal(incoming - outgoing, (1, 0, 0, 0))
+        # Both ends fix the exact plane edge coordinate they lie on.
+        assert {int(arc.node_axes[0]), int(arc.node_axes[-1])} == {2}
+        assert {float(arc.node_values[0]), float(arc.node_values[-1])} == {0.0, 0.5}
+
+
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:
     first = brep_cylinder(1.0, 2.0, coordinate_contract=_COORDINATES)
     second = brep_cylinder(

@@ -5316,6 +5316,7 @@ def _angular_surface_branch(
     start_kind: IntersectionEndpointKind = "closed",
     end_kind: IntersectionEndpointKind = "closed",
     end_nodes: tuple[tuple[int, float], tuple[int, float]] | None = None,
+    seam: tuple[float, float] | None = None,
 ) -> IntersectionCurve | None:
     """Build an angular source branch with certified chart and node roots.
 
@@ -5323,82 +5324,111 @@ def _angular_surface_branch(
     (the trim edge a boundary branch ends on) instead of the angle. Chart boxes
     of such a branch may then reach past the trimmed region near its ends: the
     branch itself stays inside, and each box only isolates the branch graph.
+
+    ``seam`` is the angle window ``(lower, upper)`` of a branch that runs from
+    ``theta_lower`` up to the window's upper end and on from its lower end to
+    ``theta_upper``. The crossing is one node fixing the angle at the exact
+    lower window value; the charts before it see it through one exact deck.
     """
     from ._intersection_curve import _PreparedPair
 
     pair = SurfacePairSystem(first.patch, second.patch)
     prepared = _PreparedPair(pair)
-    breakpoints = [
-        theta_lower + (theta_upper - theta_lower) * index / 4.0 for index in range(5)
-    ]
-    pending = [(breakpoints[index], breakpoints[index + 1]) for index in range(4)]
+    region_lower = np.concatenate(
+        (np.asarray(first.parameter_box[0]), np.asarray(second.parameter_box[0]))
+    )
+    region_upper = np.concatenate(
+        (np.asarray(first.parameter_box[1]), np.asarray(second.parameter_box[1]))
+    )
+    free = np.asarray([axis for axis in range(4) if axis != chart_axis], dtype=np.int64)
+    pieces = (
+        ((theta_lower, theta_upper),)
+        if seam is None
+        else ((theta_lower, seam[1]), (seam[0], theta_upper))
+    )
+    resolution = policy.relative_resolution * max(
+        1.0, sum(upper - lower for lower, upper in pieces)
+    )
+    trimmed = end_nodes is not None
+
+    def subdivide(
+        piece_lower: float, piece_upper: float, /
+    ) -> list[tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] | None:
+        breakpoints = [
+            piece_lower + (piece_upper - piece_lower) * index / 4.0 for index in range(5)
+        ]
+        pending = [(breakpoints[index], breakpoints[index + 1]) for index in range(4)]
+        found = []
+        while pending:
+            lower_angle, upper_angle = pending.pop()
+            lower, upper = box_for(lower_angle, upper_angle)
+            if (
+                lower[chart_axis] < region_lower[chart_axis]
+                or upper[chart_axis] > region_upper[chart_axis]
+            ):
+                return None
+            if not trimmed and (
+                np.any(lower[free] < region_lower[free])
+                or np.any(upper[free] > region_upper[free])
+            ):
+                return None
+            desired = np.maximum(
+                0.25 * (upper[free] - lower[free]),
+                128.0
+                * np.finfo(np.float64).eps
+                * (1.0 + np.maximum(np.abs(lower[free]), np.abs(upper[free]))),
+            )
+            room = np.minimum(
+                lower[free] - region_lower[free],
+                region_upper[free] - upper[free],
+            )
+            padding = desired if trimmed else np.minimum(desired, 0.5 * room)
+            lower[free] -= padding
+            upper[free] += padding
+            witness = krawczyk(
+                prepared,
+                lower[None],
+                upper[None],
+                parameter_axis=chart_axis,
+            )
+            if bool(witness.certified[0]):
+                found.append(
+                    (
+                        lower_angle,
+                        upper_angle,
+                        point_at(lower_angle),
+                        point_at(upper_angle),
+                        lower,
+                        upper,
+                    )
+                )
+                continue
+            middle = lower_angle + 0.5 * (upper_angle - lower_angle)
+            if (
+                upper_angle - lower_angle <= resolution
+                or not lower_angle < middle < upper_angle
+            ):
+                return None
+            pending.append((middle, upper_angle))
+            pending.append((lower_angle, middle))
+        found.sort(key=lambda segment: segment[0])
+        return found
+
     segments: list[
         tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
     ] = []
-    resolution = policy.relative_resolution * max(1.0, theta_upper - theta_lower)
-    while pending:
-        lower_angle, upper_angle = pending.pop()
-        lower, upper = box_for(lower_angle, upper_angle)
-        region_lower = np.concatenate(
-            (np.asarray(first.parameter_box[0]), np.asarray(second.parameter_box[0]))
-        )
-        region_upper = np.concatenate(
-            (np.asarray(first.parameter_box[1]), np.asarray(second.parameter_box[1]))
-        )
-        if (
-            lower[chart_axis] < region_lower[chart_axis]
-            or upper[chart_axis] > region_upper[chart_axis]
-        ):
+    for piece_lower, piece_upper in pieces:
+        piece_segments = subdivide(piece_lower, piece_upper)
+        if piece_segments is None:
             return None
-        free = np.asarray(
-            [axis for axis in range(4) if axis != chart_axis], dtype=np.int64
-        )
-        if end_nodes is None and (
-            np.any(lower[free] < region_lower[free])
-            or np.any(upper[free] > region_upper[free])
-        ):
-            return None
-        desired = np.maximum(
-            0.25 * (upper[free] - lower[free]),
-            128.0
-            * np.finfo(np.float64).eps
-            * (1.0 + np.maximum(np.abs(lower[free]), np.abs(upper[free]))),
-        )
-        room = np.minimum(
-            lower[free] - region_lower[free],
-            region_upper[free] - upper[free],
-        )
-        padding = desired if end_nodes is not None else np.minimum(desired, 0.5 * room)
-        lower[free] -= padding
-        upper[free] += padding
-        witness = krawczyk(
-            prepared,
-            lower[None],
-            upper[None],
-            parameter_axis=chart_axis,
-        )
-        if bool(witness.certified[0]):
-            segments.append(
-                (
-                    lower_angle,
-                    upper_angle,
-                    point_at(lower_angle),
-                    point_at(upper_angle),
-                    lower,
-                    upper,
-                )
-            )
-            continue
-        middle = lower_angle + 0.5 * (upper_angle - lower_angle)
-        if (
-            upper_angle - lower_angle <= resolution
-            or not lower_angle < middle < upper_angle
-        ):
-            return None
-        pending.append((middle, upper_angle))
-        pending.append((lower_angle, middle))
-    segments.sort(key=lambda segment: segment[0])
+        segments.extend(piece_segments)
+    # One node per chart boundary; the seam crossing's two chart ends share it.
     node_angles = [segments[0][0]] + [segment[1] for segment in segments]
+    if seam is not None:
+        seam_node = next(
+            index for index, angle in enumerate(node_angles) if angle == seam[1]
+        )
+        node_angles[seam_node] = seam[0]
     node_boxes = []
     for index, angle in enumerate(node_angles):
         node_axis, node_value = chart_axis, angle
@@ -5410,6 +5440,20 @@ def _angular_surface_branch(
         if isolated is None:
             return None
         node_boxes.append(isolated)
+    node_shifts = np.zeros((len(node_angles), 2, 4), dtype=np.int32)
+    if seam is not None:
+        patches = first.patch, second.patch
+        for index, (lower, upper) in enumerate(node_boxes):
+            for direction, point in (
+                (0, segments[index - 1][3] if index > 0 else None),
+                (1, segments[index][2] if index < len(segments) else None),
+            ):
+                if point is None:
+                    continue
+                shifts = _periodic_endpoint_deck_shift(point, lower, upper, patches)
+                if shifts is None:
+                    return None
+                node_shifts[index, direction] = shifts
     node_axes = np.full((len(node_angles),), chart_axis, dtype=np.int32)
     node_values = np.asarray(node_angles, dtype=np.float64)
     if end_nodes is not None:
@@ -5427,7 +5471,7 @@ def _angular_surface_branch(
             node_values=node_values,
             node_lower=np.stack([bounds[0] for bounds in node_boxes]),
             node_upper=np.stack([bounds[1] for bounds in node_boxes]),
-            node_period_shifts=np.zeros((len(node_angles), 2, 4), dtype=np.int32),
+            node_period_shifts=node_shifts,
             closed=closed,
             start_kind=start_kind,
             end_kind=end_kind,
@@ -6782,6 +6826,7 @@ class _IsolineArc:
     end_upper: float
     end_axis: int
     end_value: float
+    across_seam: bool = False
 
 
 def _isoline_rectangle_arcs(
@@ -6797,9 +6842,9 @@ def _isoline_rectangle_arcs(
     Edge crossings solve ``c + a cos t + b sin t = e`` in closed form and are
     enclosed at 80 digits; between consecutive crossings the circle stays on
     one side of every edge line, so one interior sample decides each arc.
-    Returns ``"full"`` for a circle inside the rectangle, the inside arcs, or
-    ``None`` for a tangency, a corner crossing, or an inside arc across the
-    angle window's seam.
+    Returns ``"full"`` for a circle inside the rectangle, the inside arcs (an
+    arc that passes the angle window's seam is marked), or ``None`` for a
+    tangency or a corner crossing.
     """
     context = interval_context(80)
 
@@ -6865,16 +6910,13 @@ def _isoline_rectangle_arcs(
         return None
     arcs = []
     for index, (start, start_axis, start_value) in enumerate(events):
+        across_seam = index == len(events) - 1
         end, end_axis, end_value = events[(index + 1) % len(events)]
-        if index == len(events) - 1:
-            end = end + two_pi
-        state = side(0.5 * (start + end))
+        state = side(0.5 * (start + end + (two_pi if across_seam else 0)))
         if state is None:
             return None
         if state < 0:
             continue
-        if index == len(events) - 1:
-            return None
         arcs.append(
             _IsolineArc(
                 float(np.nextafter(float(start.a), -np.inf)),
@@ -6885,6 +6927,7 @@ def _isoline_rectangle_arcs(
                 float(np.nextafter(float(end.b), np.inf)),
                 end_axis,
                 end_value,
+                across_seam,
             )
         )
     return tuple(arcs)
@@ -7071,7 +7114,12 @@ def _revolution_plane_isoline(
         else:
             start = inner_angle(arc.start_upper, np.inf)
             end = inner_angle(arc.end_lower, -np.inf)
-            if start is None or end is None or not start < end:
+            if (
+                start is None
+                or end is None
+                or not (arc.across_seam or start < end)
+                or (arc.across_seam and not (end < angle_upper and angle_lower < start))
+            ):
                 return _unresolved_surface(first, second, "continuation")
             theta_lower, theta_upper = start, end
             end_nodes = (
@@ -7095,6 +7143,11 @@ def _revolution_plane_isoline(
                 start_kind="closed" if arc is None else "boundary",
                 end_kind="closed" if arc is None else "boundary",
                 end_nodes=end_nodes,
+                seam=(
+                    (angle_lower, angle_upper)
+                    if arc is not None and arc.across_seam
+                    else None
+                ),
             )
             if curve is not None:
                 return curve
@@ -7423,9 +7476,10 @@ def _revolution_plane_generator_lines(
             return _unresolved_surface(first, second, "continuation")
         angle_value = 0.5 * float(angle.a) + 0.5 * float(angle.b)
         # Chart boxes only need to contain the line and certify one root per
-        # profile slice; a half-precision margin absorbs interval evaluation
+        # profile slice. The angle margin absorbs the Krawczyk coupling of the
+        # constant angle to the chart's wide plane coordinates and the interval
         # spread of the source surfaces around the transcendental angle.
-        margin = 2.0**-26 * max(1.0, abs(angle_value))
+        margin = 2.0**-24 * max(1.0, abs(angle_value))
         angle_bounds = (
             float(np.nextafter(float(angle.a), -np.inf)) - margin,
             float(np.nextafter(float(angle.b), np.inf)) + margin,
@@ -7464,7 +7518,13 @@ def _revolution_plane_generator_lines(
                     for side in range(2)
                     for parameter in (lower_parameter, upper_parameter)
                 ]
-                plane_margin = 2.0**-26 * max(1.0, abs(min(ends)), abs(max(ends)))
+                # Plane coordinates move with the angle, and those that advance
+                # with the profile parameter get the chart's own advance again
+                # as slack: the Krawczyk image of a parameter chart overshoots
+                # the exact image range by about that much.
+                plane_margin = 2.0**-20 * max(1.0, abs(min(ends)), abs(max(ends))) + abs(
+                    rates[index]
+                ) * (upper_parameter - lower_parameter)
                 plane_lower.append(float(np.nextafter(min(ends) - plane_margin, -np.inf)))
                 plane_upper.append(float(np.nextafter(max(ends) + plane_margin, np.inf)))
             revolution_lower = (angle_bounds[0], lower_parameter)
