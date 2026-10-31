@@ -1011,3 +1011,43 @@ def test_parametric_surface_route_meshes_collapsed_poles(shape: str) -> None:
             base = float(np.hypot(point[2], max(radial - 1.0, 0.0)))
             source_distances[row] = min(side, base)
     assert float(np.max(source_distances, initial=0.0)) <= 0.061
+
+
+def test_parametric_surface_route_samples_seams_at_the_curvature_rate() -> None:
+    # A first-order chord bound samples a curved seam down to edges near the
+    # deviation tolerance itself and leaves needle cells along the seam. The
+    # chord deviation of a C2 seam decays quadratically with its interval, so
+    # seam edges stay near sqrt(8 R tolerance) and the cells stay well shaped.
+    contract = SpatialCoordinateContract.si()
+    domain = MeshingDomain.from_brep(brep_sphere(0.5, coordinate_contract=contract))
+    construction = prepare_native_surface(
+        domain,
+        _surface_specification(domain, maximum_deviation=0.005),
+        NativeMeshingOptions("parametric_surface"),
+        contract,
+    ).execute()
+
+    assert construction.compliance.passed
+    coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    triangles = coordinates[
+        np.concatenate(
+            tuple(
+                np.asarray(block.vertices, dtype=np.int64)
+                for block in construction.mesh.blocks
+            )
+        )
+    ]
+    lengths = np.stack(
+        tuple(
+            np.linalg.norm(triangles[:, (side + 1) % 3] - triangles[:, side], axis=1)
+            for side in range(3)
+        ),
+        axis=1,
+    )
+    areas = np.linalg.norm(
+        np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
+        axis=1,
+    )
+    quality = 2.0 * np.sqrt(3.0) * areas / np.sum(lengths**2, axis=1)
+    assert float(np.min(quality)) >= 0.2
+    assert float(np.max(np.max(lengths, axis=1) / np.min(lengths, axis=1))) <= 5.0

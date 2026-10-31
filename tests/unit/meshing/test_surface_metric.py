@@ -190,8 +190,10 @@ def _closed_brep_surface(
 @pytest.mark.parametrize("family", ("sphere", "torus"), ids=("brep-sphere", "brep-torus"))
 def test_closed_brep_source_chart_metric_adaptation(family: str) -> None:
     domain, mesh, source_charts = _closed_brep_surface(family)
+    # Curvature-rate trim sampling leaves no source edge longer than sqrt(2) in
+    # the base metric; doubling it requests refinement on every family.
     prepared = prepare_surface_metric_source(
-        mesh, source_charts, _anisotropic_metric(mesh)
+        mesh, source_charts, 2.0 * _anisotropic_metric(mesh)
     )
     outcome = execute_surface_metric_adaptation(
         prepared,
