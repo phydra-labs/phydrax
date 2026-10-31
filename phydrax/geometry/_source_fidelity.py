@@ -478,10 +478,6 @@ def _partition_findings(
     # Currentness fingerprints the whole domain: check once, not per patch.
     source.require_current()
     domain = source.domain
-    # Binding a method of the Equinox source builds a pytree that flattens the
-    # whole domain; bind the per-patch queries once, not once per patch.
-    collapsed_pole_slivers = source.collapsed_pole_slivers
-    trim_partition_reference = source._trim_partition_reference_unchecked
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
         charts = tuple(
@@ -539,9 +535,9 @@ def _partition_findings(
             # Collapsed pole slivers are part of their owner cells' chart preimages.
             target = (
                 *target,
-                *(sliver for _, sliver in collapsed_pole_slivers(patch, target)),
+                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
             )
-        declared, _ = trim_partition_reference(patch, target)
+        declared, _ = source._trim_partition_reference_unchecked(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -2201,6 +2197,14 @@ def _target_vertex_exact_coordinates(
     mesh_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     from ..discretization._cell_geometry import CellVertexGeometryElement
 
+    # One sorted incidence index per block: each requested vertex visits only
+    # its incident (cell, position) slots instead of scanning every cell.
+    block_incidences: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for block in mesh.blocks:
+        connectivity = np.asarray(block.vertices, dtype=np.int64)
+        flat = connectivity.reshape(-1)
+        order = np.argsort(flat, kind="stable")
+        block_incidences.append((connectivity, flat[order], order))
     target_points: list[tuple[ExactScalar, ...]] = []
     for request_row in range(requested_vertex_ids.size):
         vertex_id = requested_vertex_ids[request_row]
@@ -2209,9 +2213,14 @@ def _target_vertex_exact_coordinates(
             raise ValueError("Source witness names an absent target mesh vertex.")
         incident: list[tuple[ExactScalar, ...]] = []
         for block_index, block in enumerate(mesh.blocks):
-            connectivity = np.asarray(block.vertices, dtype=np.int64)
-            if not np.any(connectivity == local_vertex):
+            connectivity, sorted_vertices, order = block_incidences[block_index]
+            first = int(np.searchsorted(sorted_vertices, local_vertex, side="left"))
+            last = int(np.searchsorted(sorted_vertices, local_vertex, side="right"))
+            if first == last:
                 continue
+            slots = tuple(
+                divmod(int(slot), connectivity.shape[1]) for slot in order[first:last]
+            )
             if isinstance(block, PolyhedralBlock):
                 element = elements[block_index]
                 if not isinstance(element, CellVertexGeometryElement):
@@ -2223,34 +2232,29 @@ def _target_vertex_exact_coordinates(
                     raise ValueError(
                         "Polyhedral target vertex routes must align with block vertices."
                     )
-                for cell_row in range(connectivity.shape[0]):
-                    cell_vertices = connectivity[cell_row]
-                    for position in range(cell_vertices.shape[0]):
-                        vertex_row = int(cell_vertices[position])
-                        if vertex_row != local_vertex:
-                            continue
-                        coefficient_row = int(route[cell_row, position])
-                        if coefficient_row < 0 or coefficient_row >= len(coefficients):
-                            raise ValueError(
-                                "Polyhedral target vertex route names no source coordinate."
-                            )
-                        exact_point = tuple(coefficients[coefficient_row])
-                        if len(exact_point) != mesh.ambient_dimension:
-                            raise ValueError(
-                                "Polyhedral target vertex map has the wrong ambient dimension."
-                            )
-                        if any(
-                            not (
-                                coefficient_endpoint(value, upper=False)
-                                <= float(mesh_coordinates[vertex_row, axis])
-                                <= coefficient_endpoint(value, upper=True)
-                            )
-                            for axis, value in enumerate(exact_point)
-                        ):
-                            raise ValueError(
-                                "Polyhedral target vertex differs from its exact coordinate route."
-                            )
-                        incident.append(exact_point)
+                for cell_row, position in slots:
+                    coefficient_row = int(route[cell_row, position])
+                    if coefficient_row < 0 or coefficient_row >= len(coefficients):
+                        raise ValueError(
+                            "Polyhedral target vertex route names no source coordinate."
+                        )
+                    exact_point = tuple(coefficients[coefficient_row])
+                    if len(exact_point) != mesh.ambient_dimension:
+                        raise ValueError(
+                            "Polyhedral target vertex map has the wrong ambient dimension."
+                        )
+                    if any(
+                        not (
+                            coefficient_endpoint(value, upper=False)
+                            <= float(mesh_coordinates[local_vertex, axis])
+                            <= coefficient_endpoint(value, upper=True)
+                        )
+                        for axis, value in enumerate(exact_point)
+                    ):
+                        raise ValueError(
+                            "Polyhedral target vertex differs from its exact coordinate route."
+                        )
+                    incident.append(exact_point)
                 continue
             if not isinstance(block, CellBlock):
                 raise TypeError(
@@ -2259,37 +2263,33 @@ def _target_vertex_exact_coordinates(
             topology = reference_cell_topology(block.cell_kind)
             route = np.asarray(routes[block_index], dtype=np.int64)
             reference_vertices = np.asarray(topology.vertices, dtype=np.float64)
-            for cell_row in range(connectivity.shape[0]):
-                cell_vertices = connectivity[cell_row]
-                matching_positions = np.flatnonzero(cell_vertices == local_vertex)
-                for position_row in range(matching_positions.size):
-                    position = int(matching_positions[position_row])
-                    reference_vertex = tuple(
-                        Fraction(float(reference_vertices[position, axis]))
-                        for axis in range(reference_vertices.shape[1])
+            for cell_row, position in slots:
+                reference_vertex = tuple(
+                    Fraction(float(reference_vertices[position, axis]))
+                    for axis in range(reference_vertices.shape[1])
+                )
+                local_coordinates = tuple(
+                    coefficients[int(route[cell_row, route_index])]
+                    for route_index in range(route.shape[1])
+                )
+                element = elements[block_index]
+                if not isinstance(element, ScalarCoordinateElement):
+                    raise TypeError(
+                        "Target vertex maps require a scalar coordinate element."
                     )
-                    local_coordinates = tuple(
-                        coefficients[int(route[cell_row, route_index])]
-                        for route_index in range(route.shape[1])
+                expressions = coordinate_map_expressions(
+                    element, local_coordinates, cell_row=cell_row
+                )
+                if len(expressions) != mesh.ambient_dimension:
+                    raise ValueError(
+                        "Target coordinate map dimension differs from its witness source."
                     )
-                    element = elements[block_index]
-                    if not isinstance(element, ScalarCoordinateElement):
-                        raise TypeError(
-                            "Target vertex maps require a scalar coordinate element."
-                        )
-                    expressions = coordinate_map_expressions(
-                        element, local_coordinates, cell_row=cell_row
+                incident.append(
+                    tuple(
+                        evaluate_expression(expression, reference_vertex)
+                        for expression in expressions
                     )
-                    if len(expressions) != mesh.ambient_dimension:
-                        raise ValueError(
-                            "Target coordinate map dimension differs from its witness source."
-                        )
-                    incident.append(
-                        tuple(
-                            evaluate_expression(expression, reference_vertex)
-                            for expression in expressions
-                        )
-                    )
+                )
         if not incident:
             raise ValueError(
                 "Source witness target vertex has no incident mapped mesh cell."
@@ -5660,11 +5660,6 @@ def certify_source_fidelity(
         witness_ids, witness_patches, witness_charts, strict=True
     ):
         by_patch.setdefault(patch, []).append((cell_id, chart))
-    # Binding a method of the Equinox source builds a pytree that flattens the
-    # whole domain; bind the per-patch queries once, not once per patch.
-    collapsed_pole_slivers = domain_source.collapsed_pole_slivers
-    pole_sliver_cap_bound = domain_source.pole_sliver_cap_bound
-    trim_partition_reference = domain_source._trim_partition_reference_unchecked
     for patch, chart_rows in by_patch.items():
         charts_float = np.asarray(
             [
@@ -5775,18 +5770,18 @@ def certify_source_fidelity(
             # pole corner, whose target image is bounded by the endpoint error.
             sliver_caps: dict[int, Fraction] = {}
             target_charts = tuple(chart for _, chart in chart_rows)
-            slivers = collapsed_pole_slivers(patch, target_charts)
+            slivers = domain_source.collapsed_pole_slivers(patch, target_charts)
             for owner_row, sliver in slivers:
                 owner = chart_rows[owner_row][0]
                 sliver_caps[owner] = max(
                     sliver_caps.get(owner, Fraction(0)),
-                    pole_sliver_cap_bound(patch, sliver),
+                    domain_source.pole_sliver_cap_bound(patch, sliver),
                 )
             # Target charts follow a curved trim by chords. A chart point between a
             # chord and its arc is within the lens bound of both, so the directed
             # distances of every cell meeting the lens box grow by its surface image.
             # Currentness was validated once above, before the per-patch loop.
-            _, lenses = trim_partition_reference(
+            _, lenses = domain_source._trim_partition_reference_unchecked(
                 patch, (*target_charts, *(sliver for _, sliver in slivers))
             )
             lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses)
