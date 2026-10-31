@@ -731,8 +731,12 @@ contracts:
   or, for a cell whose edits are otherwise exhausted, cones the closed ring of
   one of its unconstrained edges to a point in the ring's kernel. The latter
   removes a flat cell whose four vertices lie on a fixed boundary (two
-  constrained faces splitting a planar quad) without moving the boundary: no
-  flip can remove such a cell and no circumsphere cavity contains it. A
+  constrained faces splitting a planar or slightly folded quad) without
+  moving the boundary: no flip can remove such a cell and no circumsphere
+  cavity contains it. The ring point is searched over the kernel in the
+  edit's own order (a cone passing the gates beats one that does not, then
+  the larger sorted score vector wins), since a point merely clear of the
+  ring faces can cone a nearly flat ring into worse or oversized cells. A
   relocation must also make sufficient progress: at the first position where
   its star's sorted scores change, the new score meets the target or closes at
   least an eighth of that score's gap to the target (at least one quantum). A

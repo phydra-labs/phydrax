@@ -2653,6 +2653,129 @@ void refused_boundary_insertion_restores_disk_constraints() {
   PHX_CHECK(incidence_matches_mesh(mesh, incidence));
 }
 
+// Closed rings around the free chord of a flat cell whose four vertices lie on
+// a fixed, slightly folded boundary (two constrained faces at a few degrees),
+// taken from a CAD cylinder's lateral surface: every ring face is constrained,
+// so only edge-ring insertion can remove the flat cell. The point that merely
+// keeps clear of the ring faces cones the ring into cells worse than the flat
+// one (first ring), or beyond the size excess the removed cells admit (second
+// ring, with uniform circumradius targets), so the edit was rejected. The
+// ring point is now searched in the edit's own order (gates, then sorted
+// scores), and the flat cell is replaced by a better, admissible cone.
+void flat_fixed_boundary_ring_point_is_searched_by_quality_and_size() {
+  struct FlatRing {
+    const char* label;
+    std::vector<double> points;
+    std::vector<std::array<std::int32_t, 4>> cells;
+    double size;          // uniform circumradius target (0: none)
+    double worst_before;  // radius-edge ratio of the flat cell (reference)
+  };
+  const std::array<FlatRing, 2> rings{{
+      {"lateral-fold",
+       {0x1.d906bcf328d44p-2, -0x1.87de2a6aea96dp-3, 0x0.0p+0,
+        0x1.7839c86b3f361p-2, -0x1.2b5802a0760fcp-4, 0x0.0p+0,
+        0x1.19ef2175f18b8p-2, -0x1.1611abd1406edp-3, 0x0.0p+0,
+        0x1.e9f4156c62ddap-2, -0x1.294062ed59f07p-3, 0x1.fffffffffffffp-3,
+        0x1.c38b2f180bdb0p-2, -0x1.e2b5d3806f640p-3, 0x1.fffffffffffffp-3,
+        0x1.fa7557f08a517p-2, -0x1.2c8106e8e612fp-4, 0x1.fffffffffffffp-4,
+        0x1.b728345196e3dp-2, -0x1.073879922ffeep-2, 0x1.fffffffffffffp-4,
+        0x1.2dad4d02e781bp-2, -0x1.29e9a293c6a0ap-4, 0x1.8000000000000p-3},
+       {{5, 6, 3, 1}, {5, 0, 3, 6}, {2, 1, 3, 6}, {6, 0, 3, 4}, {7, 3, 6, 2}, {7, 3, 4, 6}},
+       0.0,
+       13.917},
+      {"sized-lateral-fold",
+       {-0x1.c38b2f180bdb1p-2, 0x1.e2b5d3806f63ap-3, 0x1.0000000000000p-1,
+        -0x1.ced7af43cc773p-2, 0x1.b5d1009e15cbep-3, 0x1.8000000000000p-1,
+        -0x1.b728345196e3ep-2, 0x1.073879922ffedp-2, 0x1.8000000000000p-1,
+        -0x1.ddb13b6ccc23dp-2, 0x1.7088530fa459dp-3, 0x1.4000000000000p-1,
+        -0x1.8bc806b151741p-2, 0x1.44cf325091dd6p-2, 0x1.3712c558a0a22p-1,
+        -0x1.4b3338f39422bp-2, 0x1.86f4617be79c6p-3, 0x1.c000000000000p-1,
+        -0x1.cdfb5588cfe50p-4, 0x1.03554b08456f8p-4, 0x1.9de3bf2360c61p-1},
+       {{3, 0, 2, 4}, {3, 0, 1, 2}, {1, 3, 2, 5}, {4, 2, 3, 6}, {2, 5, 3, 6}},
+       0.3,
+       35.937},
+  }};
+  for (const FlatRing& ring : rings) {
+    std::map<std::array<std::int32_t, 3>, std::pair<int, std::array<std::int32_t, 3>>> face_uses;
+    for (const std::array<std::int32_t, 4>& cell : ring.cells) {
+      for (int opposite = 0; opposite < 4; ++opposite) {
+        std::int32_t face[3];
+        oriented_facet(cell.data(), opposite, face);
+        std::array<std::int32_t, 3> key{face[0], face[1], face[2]};
+        std::sort(key.begin(), key.end());
+        auto& use = face_uses[key];
+        ++use.first;
+        use.second = {face[0], face[1], face[2]};
+      }
+    }
+    std::vector<std::int32_t> faces;
+    std::set<std::array<std::int32_t, 2>> edges;
+    for (const auto& [key, use] : face_uses) {
+      if (use.first != 1) continue;
+      faces.insert(faces.end(), use.second.begin(), use.second.end());
+      edges.insert({key[0], key[1]});
+      edges.insert({key[0], key[2]});
+      edges.insert({key[1], key[2]});
+    }
+    std::vector<std::int32_t> face_sources(faces.size() / 3);
+    for (std::size_t row = 0; row < face_sources.size(); ++row) {
+      face_sources[row] = static_cast<std::int32_t>(row);
+    }
+    std::vector<std::int32_t> segments;
+    for (const std::array<std::int32_t, 2>& edge : edges) {
+      segments.insert(segments.end(), edge.begin(), edge.end());
+    }
+    std::vector<std::int32_t> segment_sources(segments.size() / 2);
+    for (std::size_t row = 0; row < segment_sources.size(); ++row) {
+      segment_sources[row] = static_cast<std::int32_t>(row);
+    }
+    std::vector<std::int32_t> tetrahedra;
+    for (const std::array<std::int32_t, 4>& cell : ring.cells) {
+      tetrahedra.insert(tetrahedra.end(), cell.begin(), cell.end());
+    }
+    const std::vector<std::int32_t> regions(ring.cells.size(), 0);
+    TetMesh mesh(BoundaryPolicy::kFixed);
+    const std::int32_t build_status =
+        mesh.build(ring.points, tetrahedra, regions, faces, face_sources, {}, segments,
+                   segment_sources, {}, nullptr);
+    PHX_CHECK(build_status == PHX_MC_OK);
+    if (build_status != PHX_MC_OK) return;
+    TetMeshSnapshot before;
+    PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+    double before_angle = 0.0;
+    double before_determinant = 0.0;
+    double before_radius = 0.0;
+    PHX_CHECK(minimum_quality(mesh, before, before_angle, before_determinant, before_radius));
+    PHX_CHECK(std::abs(before_radius - ring.worst_before) < 1.0e-3);
+    const std::vector<double> sizes(ring.points.size() / 3, ring.size);
+    std::int64_t inserted = 0;
+    std::int64_t collapsed = 0;
+    std::int64_t relocated = 0;
+    std::int64_t unmet = 0;
+    const std::int32_t status = improve_mesh(mesh, TetQualityRequest{8.0, 0.0, 1.0e-12},
+                                             sizes, inserted, collapsed, relocated, unmet);
+    TetMeshSnapshot after;
+    PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+    double after_angle = 0.0;
+    double after_determinant = 0.0;
+    double after_radius = 0.0;
+    PHX_CHECK(minimum_quality(mesh, after, after_angle, after_determinant, after_radius));
+    if (inserted != 1 || !(after_radius < 0.75 * before_radius)) {
+      std::fprintf(stderr, "%s: status=%d inserted=%lld worst %.17g -> %.17g\n", ring.label,
+                   status, static_cast<long long>(inserted), before_radius, after_radius);
+    }
+    PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(inserted == 1);
+    PHX_CHECK(after_radius < 0.75 * before_radius);
+    PHX_CHECK(same_source_banks(before, after));
+    if (ring.size > 0.0) {
+      const std::unordered_map<std::uint64_t, double> field = mesh.vertex_sizes();
+      PHX_CHECK(maximum_size_excess(mesh, after, field) <=
+                maximum_size_excess(mesh, before, field));
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -2676,5 +2799,6 @@ int main() {
   cavity_local_reconnection_matches_public_batch();
   boundary_point_insertion_splits_segment_and_fans();
   refused_boundary_insertion_restores_disk_constraints();
+  flat_fixed_boundary_ring_point_is_searched_by_quality_and_size();
   return phx::mc::test::finish("test_improve3d");
 }
