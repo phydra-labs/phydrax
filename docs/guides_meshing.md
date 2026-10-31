@@ -631,6 +631,26 @@ tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
 import accuracy. Initial topology decisions are nondifferentiable.
 
+The adaptive implicit carrier is the cell-band extraction of the discovery
+scaffold, whose triangles can be slivers. Because a tetrahedron on a `FIXED`
+face has a radius-edge ratio at least the face's, a carrier with any face above
+`NativeVolumeSchedule.radius_edge_bound` is first remeshed natively toward the
+requested uniform target size (else its mean edge length) and a 30° minimum
+angle. Every created triangle is admitted by the zero-set band predicate: from
+native interval enclosures of the field and its gradient, its distance to the
+zero set is certified at most the scaffold's own bound (residual over a
+certified gradient-norm lower bound on a widened box) and its normal is
+certified transversal to the gradient with the carrier's orientation. Vertex
+proposals come from interval Newton along the gradient line. The published
+fidelity bound is the certified maximum over the remeshed triangles; each face's
+chart witness names the nearest scaffold triangle, and coverage proves degree
+one without a one-to-one scaffold correspondence: the certified charts make the
+lift a covering, and one lifted point per boundary component has exactly one
+preimage, so folded or duplicated sheets are refused. A remeshed face still
+above the bound is a typed `QUALITY_REJECTED` refusal; carriers already within
+the bound keep the scaffold triangles and their one-to-one certificate. The
+compliance report records the carrier ratio and minimum angle before and after.
+
 Native curve meshing binds each `SegmentMesh` edge to a `SegmentChartCurve`: the
 exact affine map of the edge onto its declared chart parameter range. Its rational
 coefficients make chart fidelity an exact polynomial bound per target edge, and its

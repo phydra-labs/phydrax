@@ -8,21 +8,32 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import final
+from typing import final, NamedTuple
 
 import equinox as eqx
+import jax
 import numpy as np
+from jax import Array
 from jax.typing import ArrayLike
 
 import phydrax.discretization._cell_mesh as cell_mesh_owner
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._meshcore import MeshcoreStatus
+from ..._meshcore import (
+    IntervalBoxProgram,
+    MeshcoreError,
+    MeshcoreStatus,
+    zero_set_remesh,
+)
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
+from ...geometry._interval_enclosure import (
+    IntervalExtensionError,
+    prepare_interval_function,
+)
 from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
@@ -88,6 +99,11 @@ from ._native_volume import (
     _boundary_face_entities,
     _faces_connected,
 )
+
+
+# Full-score minimum angle of the carrier zero-set remesh; a face at this angle
+# has radius-edge ratio 1, the floor of every FIXED-fill schedule bound.
+_CARRIER_MINIMUM_ANGLE_DEGREES = 30.0
 
 
 def _failure(
@@ -1351,51 +1367,201 @@ def _validated_implicit_region_seeds(
     return seeds
 
 
-def _implicit_plc_carrier(
+class _ImplicitCarrier(NamedTuple):
+    """The FIXED-fill PLC carrier and the ancestry its chart witness needs."""
+
+    carrier: NativePlcSource
+    specification: VolumeMeshingSpec
+    triangles: np.ndarray
+    face_scaffold_rows: np.ndarray
+    """Scaffold triangle row bound by each carrier triangle's chart."""
+    distance: float
+    """Certified carrier-to-zero-set distance bound."""
+    evidence: tuple[tuple[str, float], ...]
+    """Carrier quality before/after the zero-set remesh, and whether it ran."""
+
+
+def _face_radius_edge_ratios(vertices: np.ndarray, faces: np.ndarray, /) -> np.ndarray:
+    """Circumradius over shortest edge per triangle (+inf when degenerate).
+
+    A tetrahedron on a FIXED boundary face has a radius-edge ratio at least the
+    face's, so a face above the schedule bound makes the fill unmeetable.
+    """
+    triangles = vertices[faces]
+    sides = np.stack(
+        (
+            np.linalg.norm(triangles[:, 2] - triangles[:, 1], axis=1),
+            np.linalg.norm(triangles[:, 0] - triangles[:, 2], axis=1),
+            np.linalg.norm(triangles[:, 1] - triangles[:, 0], axis=1),
+        ),
+        axis=1,
+    )
+    twice_area = np.linalg.norm(
+        np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
+        axis=1,
+    )
+    shortest = np.min(sides, axis=1)
+    valid = (twice_area > 0.0) & (shortest > 0.0)
+    ratios = np.full((faces.shape[0],), np.inf, dtype=np.float64)
+    ratios[valid] = np.prod(sides[valid], axis=1) / (
+        2.0 * twice_area[valid] * shortest[valid]
+    )
+    return ratios
+
+
+def _carrier_quality(
+    vertices: np.ndarray, faces: np.ndarray, suffix: str, /
+) -> tuple[tuple[str, float], ...]:
+    return (
+        (
+            f"carrier_maximum_radius_edge_ratio_{suffix}",
+            float(np.max(_face_radius_edge_ratios(vertices, faces))),
+        ),
+        (
+            f"carrier_minimum_angle_degrees_{suffix}",
+            float(np.rad2deg(_minimum_angle(vertices, faces))),
+        ),
+    )
+
+
+def _implicit_field_box_programs(
+    source: NativeImplicitSource, /
+) -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
+    """Lower f and grad f of the implicit source to one-box native interval programs."""
+    kernel, state = source.geometry.kernel, source.geometry.state
+
+    def value(point: Array) -> Array:
+        return kernel.boundary_field(state, point[None, :])[0]
+
+    try:
+        programs = tuple(
+            prepare_interval_function(function, 3, batch_capacity=1, execution="native")
+            for function in (value, jax.grad(value))
+        )
+    except IntervalExtensionError as error:
+        raise _failure(
+            MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+            "The implicit carrier zero-set remesh requires a native interval lowering "
+            f"of the field and its gradient: {error}",
+            provider_code="native_implicit_carrier_remesh",
+            stage="source_inspection",
+        ) from error
+    value_program, gradient_program = (program.native_program for program in programs)
+    if value_program is None or gradient_program is None:
+        raise RuntimeError("Native interval preparation returned no native program.")
+    return value_program.box_program(), gradient_program.box_program()
+
+
+def _carrier_edge_length(
+    vertices: np.ndarray, faces: np.ndarray, specification: VolumeMeshingSpec, /
+) -> float:
+    """Requested uniform target size, else the carrier's mean edge length."""
+    targets = [
+        control.target_size
+        for control in specification.size_controls
+        if isinstance(control, UniformSizeControl)
+    ]
+    if targets:
+        return float(min(targets))
+    edges = np.unique(
+        np.sort(
+            np.concatenate((faces[:, (0, 1)], faces[:, (1, 2)], faces[:, (2, 0)])), axis=1
+        ),
+        axis=0,
+    )
+    return float(
+        np.mean(np.linalg.norm(vertices[edges[:, 1]] - vertices[edges[:, 0]], axis=1))
+    )
+
+
+def _nearest_scaffold_rows(
+    scaffold_vertices: np.ndarray,
+    scaffold_faces: np.ndarray,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Scaffold triangle with the nearest centroid for every carrier triangle."""
+    scaffold_centroids = np.mean(scaffold_vertices[scaffold_faces], axis=1)
+    centroids = np.mean(vertices[faces], axis=1)
+    rows = np.empty((faces.shape[0],), dtype=np.int64)
+    for start in range(0, faces.shape[0], 512):
+        block = centroids[start : start + 512]
+        squared = np.sum(
+            (block[:, None, :] - scaffold_centroids[None, :, :]) ** 2, axis=2
+        )
+        rows[start : start + block.shape[0]] = np.argmin(squared, axis=1)
+    return rows
+
+
+def _remesh_implicit_carrier(
+    source: NativeImplicitSource,
+    specification: VolumeMeshingSpec,
+    schedule: NativeVolumeSchedule,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    carrier_distance: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, float]:
+    """Remesh the scaffold carrier under the native zero-set band admission.
+
+    Every created triangle is certified within ``carrier_distance`` (the
+    scaffold's declared bound) of the zero set and transversal to the field
+    gradient; untouched scaffold triangles keep the scaffold certificate. The
+    result must meet the FIXED-fill radius-edge bound or the route refuses.
+    """
+    value, gradient = _implicit_field_box_programs(source)
+    edge_length = _carrier_edge_length(vertices, faces, specification)
+    try:
+        remeshed = zero_set_remesh(
+            vertices,
+            faces,
+            value,
+            gradient,
+            carrier_distance,
+            carrier_distance,
+            edge_length,
+            _CARRIER_MINIMUM_ANGLE_DEGREES,
+        )
+    except (MeshcoreError, ValueError, OverflowError) as error:
+        raise _failure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            f"The implicit carrier zero-set remesh could not be certified: {error}",
+            provider_code="native_implicit_carrier_remesh",
+            stage="surface_meshing",
+        ) from error
+    worst = float(np.max(_face_radius_edge_ratios(remeshed.vertices, remeshed.triangles)))
+    if not worst <= schedule.radius_edge_bound:
+        raise _failure(
+            MeshingFailureCategory.QUALITY_REJECTED,
+            "The certified zero-set remesh of the implicit carrier leaves a boundary "
+            f"triangle with radius-edge ratio {worst:.6g} above the FIXED-fill bound "
+            f"{schedule.radius_edge_bound:.6g}; no tetrahedron on it can meet the bound.",
+            provider_code="native_implicit_carrier_remesh",
+            stage="surface_meshing",
+        )
+    return (
+        np.array(remeshed.vertices, dtype=np.float64, copy=True),
+        np.array(remeshed.triangles, dtype=np.int64, copy=True),
+        remeshed.distance,
+        np.array(remeshed.counters, dtype=np.int64, copy=True),
+        edge_length,
+    )
+
+
+def _scaffold_carrier_identities(
     source: NativeImplicitSource,
     discovery: AdaptiveImplicitSurface,
-    specification: VolumeMeshingSpec,
+    vertices: np.ndarray,
+    triangles: np.ndarray,
     /,
-) -> tuple[NativePlcSource, VolumeMeshingSpec, np.ndarray]:
-    _domain_id, region_ids, _region_key = _implicit_region_authority(source, discovery)
-    region_name = region_ids[0]
-    carrier_region_seeds = _validated_implicit_region_seeds(
-        discovery, specification, region_name
-    )
-    extracted = discovery.mesh
-    if extracted is None:
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Implicit volume construction requires the complete adaptive triangle extraction.",
-            provider_code="native_implicit_discovery_incomplete",
-            stage="source_inspection",
-        )
-    vertices = np.asarray(extracted.vertices, dtype=np.float64)
-    triangles = np.asarray(extracted.faces, dtype=np.int64)
-    if (
-        vertices.ndim != 2
-        or vertices.shape[1] != 3
-        or triangles.ndim != 2
-        or triangles.shape[1] != 3
-    ):
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Implicit volume carrier coordinates and triangles must be three-dimensional.",
-            provider_code="native_implicit_carrier",
-            stage="source_inspection",
-        )
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Carrier, vertex, and facet identities of the unmodified scaffold carrier."""
     carrier_id = canonical_fingerprint(
         {
             "kind": "adaptive-implicit-volume-carrier",
             "source": source.binding_id,
             "discovery": discovery.evidence.evidence_id,
-        }
-    )
-    carrier_revision = canonical_fingerprint(
-        {
-            "kind": "adaptive-implicit-volume-carrier-revision",
-            "carrier": carrier_id,
-            "source_revision": source.source_revision,
         }
     )
     scaffold = discovery.scaffold
@@ -1479,6 +1645,114 @@ def _implicit_plc_carrier(
             provider_code="native_implicit_carrier_ancestry",
             stage="source_inspection",
         )
+    return carrier_id, vertex_ids, source_triangle_ids
+
+
+def _implicit_plc_carrier(
+    source: NativeImplicitSource,
+    discovery: AdaptiveImplicitSurface,
+    specification: VolumeMeshingSpec,
+    schedule: NativeVolumeSchedule,
+    /,
+) -> _ImplicitCarrier:
+    _domain_id, region_ids, _region_key = _implicit_region_authority(source, discovery)
+    region_name = region_ids[0]
+    carrier_region_seeds = _validated_implicit_region_seeds(
+        discovery, specification, region_name
+    )
+    extracted = discovery.mesh
+    if extracted is None:
+        raise _failure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            "Implicit volume construction requires the complete adaptive triangle extraction.",
+            provider_code="native_implicit_discovery_incomplete",
+            stage="source_inspection",
+        )
+    vertices = np.asarray(extracted.vertices, dtype=np.float64)
+    triangles = np.asarray(extracted.faces, dtype=np.int64)
+    if (
+        vertices.ndim != 2
+        or vertices.shape[1] != 3
+        or triangles.ndim != 2
+        or triangles.shape[1] != 3
+    ):
+        raise _failure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            "Implicit volume carrier coordinates and triangles must be three-dimensional.",
+            provider_code="native_implicit_carrier",
+            stage="source_inspection",
+        )
+    scaffold_distance = (
+        discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance
+    )
+    before = _carrier_quality(vertices, triangles, "before")
+    if float(np.max(_face_radius_edge_ratios(vertices, triangles))) <= (
+        schedule.radius_edge_bound
+    ):
+        carrier_id, vertex_ids, source_triangle_ids = _scaffold_carrier_identities(
+            source, discovery, vertices, triangles
+        )
+        face_scaffold_rows = np.arange(triangles.shape[0], dtype=np.int64)
+        carrier_distance = scaffold_distance
+        evidence = (("carrier_remeshed", 0.0), *before)
+    else:
+        # The scaffold carrier provably cannot meet the FIXED-fill bound.
+        scaffold_vertices, scaffold_triangles = vertices, triangles
+        vertices, triangles, carrier_distance, counters, edge_length = (
+            _remesh_implicit_carrier(
+                source, specification, schedule, vertices, triangles, scaffold_distance
+            )
+        )
+        face_scaffold_rows = _nearest_scaffold_rows(
+            scaffold_vertices, scaffold_triangles, vertices, triangles
+        )
+        carrier_id = canonical_fingerprint(
+            {
+                "kind": "adaptive-implicit-volume-carrier",
+                "source": source.binding_id,
+                "discovery": discovery.evidence.evidence_id,
+                "zero_set_remesh": (
+                    edge_length,
+                    _CARRIER_MINIMUM_ANGLE_DEGREES,
+                    scaffold_distance,
+                ),
+            }
+        )
+        vertex_ids = tuple(
+            canonical_fingerprint(
+                {
+                    "kind": "implicit-volume-remeshed-carrier-vertex",
+                    "carrier": carrier_id,
+                    "row": row,
+                }
+            )
+            for row in range(vertices.shape[0])
+        )
+        source_triangle_ids = tuple(
+            canonical_fingerprint(
+                {
+                    "kind": "adaptive-implicit-remeshed-carrier-facet",
+                    "source": (source.source_id, source.source_revision),
+                    "carrier": carrier_id,
+                    "row": row,
+                }
+            )
+            for row in range(triangles.shape[0])
+        )
+        evidence = (
+            ("carrier_remeshed", 1.0),
+            *before,
+            *_carrier_quality(vertices, triangles, "after"),
+            ("carrier_remesh_edge_length", edge_length),
+            ("carrier_remesh_unmet_count", float(counters[4])),
+        )
+    carrier_revision = canonical_fingerprint(
+        {
+            "kind": "adaptive-implicit-volume-carrier-revision",
+            "carrier": carrier_id,
+            "source_revision": source.source_revision,
+        }
+    )
     complex_ = PiecewiseLinearComplex(
         vertices,
         triangles,
@@ -1562,10 +1836,14 @@ def _implicit_plc_carrier(
         maximum_deviation=specification.maximum_deviation,
         deterministic=specification.deterministic,
     )
-    return (
+    face_scaffold_rows.setflags(write=False)
+    return _ImplicitCarrier(
         carrier,
         carrier_specification,
-        np.array(vertex_root_rows, dtype=np.int64, copy=True),
+        triangles,
+        face_scaffold_rows,
+        carrier_distance,
+        evidence,
     )
 
 
@@ -1749,10 +2027,16 @@ def _implicit_volume_chart_witness(
     geometry: CellGeometrySpec,
     query: AdaptiveImplicitBoundarySource,
     construction: VolumeConstruction,
-    carrier_vertex_root_edge_rows: np.ndarray,
+    carrier_triangles: np.ndarray,
+    face_scaffold_rows: np.ndarray,
     /,
 ) -> SourceBoundaryChartWitness:
-    """Bind every filled-volume exterior face to its implicit leaf/root edges."""
+    """Bind every filled-volume exterior face to its implicit leaf/root edges.
+
+    Carrier triangle ``k`` charts through scaffold triangle
+    ``face_scaffold_rows[k]`` (itself for the scaffold carrier, the nearest one
+    for a zero-set remeshed carrier).
+    """
     from ...discretization._reference_cell import reference_cell_topology
 
     scaffold = discovery.scaffold
@@ -1761,16 +2045,23 @@ def _implicit_volume_chart_witness(
         raise ValueError(
             "Implicit volume witness requires the retained source triangle carrier."
         )
-    source_triangles = np.asarray(original.faces, dtype=np.int64)
-    source_cell_rows = np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
-    source_root_rows = np.asarray(scaffold.triangle_root_edge_rows, dtype=np.int64)
+    source_triangles = np.asarray(carrier_triangles, dtype=np.int64)
+    scaffold_rows = np.asarray(face_scaffold_rows, dtype=np.int64)
+    scaffold_cell_rows = np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
+    scaffold_root_rows = np.asarray(scaffold.triangle_root_edge_rows, dtype=np.int64)
+    scaffold_count = np.asarray(original.faces).shape[0]
     if (
-        source_cell_rows.shape != (source_triangles.shape[0],)
-        or source_root_rows.shape != source_triangles.shape
-        or np.asarray(carrier_vertex_root_edge_rows).shape
-        != (original.vertices.shape[0],)
+        scaffold_cell_rows.shape != (scaffold_count,)
+        or scaffold_root_rows.shape != (scaffold_count, 3)
+        or source_triangles.ndim != 2
+        or source_triangles.shape[1] != 3
+        or scaffold_rows.shape != (source_triangles.shape[0],)
+        or np.any(scaffold_rows < 0)
+        or np.any(scaffold_rows >= scaffold_count)
     ):
         raise ValueError("Implicit volume carrier lost triangle-to-root ancestry.")
+    source_cell_rows = scaffold_cell_rows[scaffold_rows]
+    source_root_rows = scaffold_root_rows[scaffold_rows]
     boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
     face_sources = np.asarray(construction.face_source_facets, dtype=np.int64)
     if (
@@ -2084,7 +2375,7 @@ class _PreparedImplicitRoute(StrictModule, NonTrainableState):
 
 
 def _implicit_volume_fidelity_bound(
-    discovery: AdaptiveImplicitSurface,
+    carrier_distance: float,
     construction: VolumeConstruction,
     /,
 ) -> float:
@@ -2114,10 +2405,7 @@ def _implicit_volume_fidelity_bound(
             stage="geometry_association",
         )
     carrier_bound = float(np.max(deviations[boundary_vertices], initial=0.0))
-    source_bound = (
-        discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance
-    )
-    return float(np.nextafter(source_bound + carrier_bound, math.inf))
+    return float(np.nextafter(carrier_distance + carrier_bound, math.inf))
 
 
 def _implicit_tetrahedron_quality(
@@ -2211,6 +2499,7 @@ def _implicit_volume_compliance(
     schedule: NativeVolumeSchedule,
     construction: VolumeConstruction,
     fidelity_bound: float,
+    carrier_evidence: tuple[tuple[str, float], ...],
     /,
 ) -> MeshingComplianceReport:
     coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
@@ -2272,6 +2561,7 @@ def _implicit_volume_compliance(
         ("refinement_unmet_count", float(len(construction.refinement_unmet))),
         ("improvement_unmet_count", float(len(construction.improvement_unmet))),
         ("source_fidelity_bound", fidelity_bound),
+        *carrier_evidence,
     ]
     issues: list[str] = []
     if maximum_radius_edge > schedule.radius_edge_bound:
@@ -2545,7 +2835,10 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
     carrier: NativePlcSource
     carrier_specification: VolumeMeshingSpec
     schedule: NativeVolumeSchedule
-    carrier_vertex_root_edge_rows: np.ndarray
+    carrier_triangles: np.ndarray
+    face_scaffold_rows: np.ndarray
+    carrier_distance: float = eqx.field(static=True)
+    carrier_evidence: tuple[tuple[str, float], ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2553,27 +2846,33 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
         specification: VolumeMeshingSpec,
         coordinate_contract: SpatialCoordinateContract,
         discovery: AdaptiveImplicitSurface,
-        carrier: NativePlcSource,
-        carrier_specification: VolumeMeshingSpec,
         schedule: NativeVolumeSchedule,
-        carrier_vertex_root_edge_rows: np.ndarray,
+        carrier: _ImplicitCarrier,
         /,
     ) -> None:
         self.source = source
         self.specification = specification
         self.coordinate_contract = coordinate_contract
         self.discovery = discovery
-        self.carrier = carrier
-        self.carrier_specification = carrier_specification
+        self.carrier = carrier.carrier
+        self.carrier_specification = carrier.specification
         self.schedule = schedule
-        root_edges = np.asarray(carrier_vertex_root_edge_rows, dtype=np.int64)
-        if root_edges.shape != (np.asarray(carrier.complex.vertices).shape[0],):
+        triangles = np.array(carrier.triangles, dtype=np.int64, copy=True)
+        rows = np.array(carrier.face_scaffold_rows, dtype=np.int64, copy=True)
+        if (
+            triangles.ndim != 2
+            or triangles.shape[1] != 3
+            or rows.shape != (triangles.shape[0],)
+        ):
             raise ValueError(
-                "Implicit carrier root-edge rows must align with carrier vertices."
+                "Implicit carrier scaffold rows must align with carrier triangles."
             )
-        root_edges = np.array(root_edges, copy=True)
-        root_edges.setflags(write=False)
-        self.carrier_vertex_root_edge_rows = root_edges
+        triangles.setflags(write=False)
+        rows.setflags(write=False)
+        self.carrier_triangles = triangles
+        self.face_scaffold_rows = rows
+        self.carrier_distance = carrier.distance
+        self.carrier_evidence = carrier.evidence
 
     def execute(self, /) -> NativeMeshConstruction:
         mapped_geometry = (
@@ -2626,7 +2925,7 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
                 stage="domain_coverage",
             )
         fidelity_bound = _implicit_volume_fidelity_bound(
-            self.discovery,
+            self.carrier_distance,
             construction,
         )
         compliance = _implicit_volume_compliance(
@@ -2634,6 +2933,7 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
             self.schedule,
             construction,
             fidelity_bound,
+            self.carrier_evidence,
         )
         if not compliance.passed:
             raise _failure(
@@ -2667,7 +2967,8 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
             geometry,
             adaptive_source,
             construction,
-            self.carrier_vertex_root_edge_rows,
+            self.carrier_triangles,
+            self.face_scaffold_rows,
         )
         scoped_fidelity = tuple(
             (fidelity_source, fidelity_witness, feature.maximum_deviation)
@@ -2816,13 +3117,6 @@ def prepare_native_implicit(
                 stage="source_inspection",
             )
         discovery = _resolve_discovery(source, specification, policy)
-        carrier, carrier_specification, carrier_vertex_root_edge_rows = (
-            _implicit_plc_carrier(
-                source,
-                discovery,
-                specification,
-            )
-        )
         schedule = (
             NativeVolumeSchedule()
             if options.volume_schedule is None
@@ -2840,10 +3134,8 @@ def prepare_native_implicit(
             specification,
             coordinate_contract,
             discovery,
-            carrier,
-            carrier_specification,
             schedule,
-            carrier_vertex_root_edge_rows,
+            _implicit_plc_carrier(source, discovery, specification, schedule),
         )
     raise TypeError("specification must be SurfaceMeshingSpec or VolumeMeshingSpec.")
 

@@ -15,7 +15,10 @@ from jax import Array
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import TensorGridPlan, UniformAxisSpec
-from phydrax.discretization._cell_mesh import TetrahedralConnectivity
+from phydrax.discretization._cell_mesh import (
+    SimplicialConnectivity,
+    TetrahedralConnectivity,
+)
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization._tensor_support import PreparedTensorGrid
 from phydrax.geometry import Sphere, Torus
@@ -445,10 +448,13 @@ def test_native_implicit_volume_route_builds_region_mesh(
     assert all(tag == "implicit-zero-set" for tag in boundary.metadata.cell_tags)
     # Acceptance audits the boundary model against the volume by vertex identity.
     connectivity = construction.mesh.connectivity
-    assert isinstance(connectivity, TetrahedralConnectivity)
-    boundary_rows = np.unique(
-        np.asarray(connectivity.faces)[np.asarray(connectivity.boundary_faces)]
-    )
+    if isinstance(connectivity, TetrahedralConnectivity):
+        face_rows = np.asarray(connectivity.faces)
+    elif isinstance(connectivity, SimplicialConnectivity):
+        face_rows = np.asarray(connectivity.entities[2])
+    else:
+        raise AssertionError("Implicit volume meshes must carry simplex connectivity.")
+    boundary_rows = np.unique(face_rows[np.asarray(connectivity.boundary_faces)])
     volume_ids = np.asarray(construction.mesh.vertex_global_ids, dtype=np.int64)
     np.testing.assert_array_equal(
         np.sort(np.asarray(boundary.mesh.vertex_global_ids, dtype=np.int64)),
