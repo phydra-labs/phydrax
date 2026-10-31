@@ -15,6 +15,7 @@ from jax import Array
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import TensorGridPlan, UniformAxisSpec
+from phydrax.discretization._cell_mesh import TetrahedralConnectivity
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization._tensor_support import PreparedTensorGrid
 from phydrax.geometry import Sphere, Torus
@@ -38,6 +39,7 @@ from phydrax.geometry.implicit._restricted_delaunay_coverage import (
     validate_restricted_delaunay_boundary_witness,
 )
 from phydrax.meshing._association import GeometryAssociationKind
+from phydrax.meshing._audit import _boundary_issues
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -441,6 +443,18 @@ def test_native_implicit_volume_route_builds_region_mesh(
     assert boundary.metadata.source_id == source.source_id
     assert boundary.metadata.source_revision == source.source_revision
     assert all(tag == "implicit-zero-set" for tag in boundary.metadata.cell_tags)
+    # Acceptance audits the boundary model against the volume by vertex identity.
+    connectivity = construction.mesh.connectivity
+    assert isinstance(connectivity, TetrahedralConnectivity)
+    boundary_rows = np.unique(
+        np.asarray(connectivity.faces)[np.asarray(connectivity.boundary_faces)]
+    )
+    volume_ids = np.asarray(construction.mesh.vertex_global_ids, dtype=np.int64)
+    np.testing.assert_array_equal(
+        np.sort(np.asarray(boundary.mesh.vertex_global_ids, dtype=np.int64)),
+        np.sort(volume_ids[boundary_rows]),
+    )
+    assert _boundary_issues(construction.mesh, boundary) == ()
     assert len(construction.organization.zones) == 1
     if route == "implicit_restricted_delaunay":
         assert isinstance(source, AnalyticImplicitProfile)
@@ -477,7 +491,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
             domain_id=coverage_witness.domain_id,
             distance_witness_id=coverage_witness.distance_witness_id,
         )
-        with pytest.raises(ValueError, match="restricted witness"):
+        with pytest.raises(RestrictedDelaunayCoverageUnavailable) as forged_witness:
             validate_restricted_delaunay_boundary_witness(
                 construction.mesh,
                 construction.geometry,
@@ -486,6 +500,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
                 distance_witness,
                 forged_binding,
             )
+        assert forged_witness.value.check == "restricted_witness_binding"
         forged_vertex_ids = np.asarray(
             construction.mesh.vertex_global_ids, dtype=np.int64
         ).copy()
@@ -495,7 +510,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
             construction.mesh,
             jnp.asarray(forged_vertex_ids),
         )
-        with pytest.raises(ValueError, match="Target mesh"):
+        with pytest.raises(RestrictedDelaunayCoverageUnavailable) as forged_target:
             validate_restricted_delaunay_boundary_witness(
                 forged_mesh,
                 construction.geometry,
@@ -504,12 +519,10 @@ def test_native_implicit_volume_route_builds_region_mesh(
                 distance_witness,
                 coverage_witness,
             )
+        assert forged_target.value.check == "restricted_mesh_identity"
         from phydrax.discretization._cell_geometry import CellGeometrySpec
         from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-        from phydrax.discretization._cell_mesh import (
-            CellMesh,
-            TetrahedralConnectivity,
-        )
+        from phydrax.discretization._cell_mesh import CellMesh
 
         source_center = np.asarray(source.center, dtype=np.float64)
         target_coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
@@ -546,7 +559,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
             domain_id=source.domain_id,
             distance_witness_id=off_source_distance.witness_id,
         )
-        with pytest.raises(RestrictedDelaunayCoverageUnavailable, match="normal tube"):
+        with pytest.raises(RestrictedDelaunayCoverageUnavailable) as off_source:
             validate_restricted_delaunay_boundary_witness(
                 off_source_mesh,
                 off_source_geometry,
@@ -555,6 +568,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
                 off_source_distance,
                 off_source_coverage,
             )
+        assert off_source.value.check == "analytic_projection_tube"
     else:
         assert isinstance(source, NativeImplicitSource)
         assert discovery is not None
