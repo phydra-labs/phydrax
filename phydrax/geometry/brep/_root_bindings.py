@@ -570,8 +570,6 @@ class BRepRootSupport(StrictModule):
 
     @checked
     def __init__(self, patch: AbstractSurfacePatch, root: TrimIntersectionRoot) -> None:
-        if not isinstance(root, TrimIntersectionRoot):
-            raise TypeError("BRepRootSupport.root must be a trim/trim source root.")
         self.patch, self.root = patch, root
         self.root_id = canonical_fingerprint(
             {
@@ -614,8 +612,6 @@ class BRepCurveSurfaceLift(StrictModule):
     ) -> None:
         from ._correspondence import exact_source_lift
 
-        if not isinstance(source_region, SurfaceRegion):
-            raise TypeError("BRepCurveSurfaceLift.source_region must be a SurfaceRegion.")
         if not _same_parameter_source(source_region.patch, surface):
             raise ValueError(
                 "BRepCurveSurfaceLift.source_region must retain its exact surface source."

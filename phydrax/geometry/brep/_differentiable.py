@@ -2618,8 +2618,6 @@ class FixedTopologyBRepSource(GeometrySource):
             "weights",
         ),
     ) -> None:
-        if not isinstance(model, BRepModel):
-            raise TypeError("model must be a BRepModel.")
         if parameter_map is not None and not isinstance(
             parameter_map, AbstractBRepParameterMap
         ):

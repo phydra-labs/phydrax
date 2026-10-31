@@ -342,8 +342,6 @@ class CurveRange(StrictModule):
     def __init__(
         self, curve: AbstractCurve, first: float | None = None, last: float | None = None
     ) -> None:
-        if not isinstance(curve, AbstractCurve):
-            raise TypeError("CurveRange.curve must be an AbstractCurve.")
         domain = curve.parameter_domain
         period = curve.period
         lower = (

@@ -48,8 +48,6 @@ class SurfaceRegion(StrictModule):
 
     @checked
     def __init__(self, patch: AbstractSurfacePatch, parameter_box: ArrayLike) -> None:
-        if not isinstance(patch, AbstractSurfacePatch):
-            raise TypeError("SurfaceRegion.patch must be an AbstractSurfacePatch.")
         box = np.asarray(parameter_box, dtype=np.float64)
         if box.shape != (2, 2):
             raise ValueError("SurfaceRegion.parameter_box must have shape (2, 2).")
@@ -3438,8 +3436,6 @@ class IntersectionPCurve(AbstractCurve):
         last: float | None = None,
         reversed: bool = False,
     ) -> None:
-        if not isinstance(curve, IntersectionCurve):
-            raise TypeError("IntersectionPCurve.curve must be an IntersectionCurve.")
         side_ = parse(side, IntersectionSide, "side")
         first_ = 0.0 if first is None else float(first)
         last_ = float(curve.num_charts) if last is None else float(last)

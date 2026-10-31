@@ -289,8 +289,6 @@ class BRepSource(GeometrySource):
 
     @checked
     def __init__(self, model: BRepModel) -> None:
-        if not isinstance(model, BRepModel):
-            raise TypeError("model must be a BRepModel.")
         _require_closed_solid(model)
         self.model = model
 

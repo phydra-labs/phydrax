@@ -20,7 +20,7 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._validation import positive_finite_float
 from ...discretization._exact_algebraic_geometry import ExactScalar, rational_coefficient
-from ...typing import checked, ConvertibleToArray
+from ...typing import ConvertibleToArray
 from .._atlas import TrimDomain
 from ._assembly import BRepAffinePlacement, BRepAssemblyGraph
 from ._intersection import (
@@ -85,7 +85,6 @@ class BRepTessellationPolicy(StrictModule):
     trim_samples_per_edge: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         *,

@@ -337,8 +337,6 @@ class BRepTessellation(StrictModule):
         ):
             raise ValueError("triangle_global_ids must be unique nonnegative int64 IDs.")
 
-        if not isinstance(source_chart_witness, SurfaceChartWitness):
-            raise TypeError("source_chart_witness must be a SurfaceChartWitness.")
         witness_ids = np.asarray(source_chart_witness.cell_global_ids, dtype=np.int64)
         if not np.array_equal(
             np.sort(witness_ids), np.sort(raw_triangle_ids.astype(np.int64))
@@ -3490,12 +3488,6 @@ class BRepModel(StrictModule):
         and deflection policy; the model then reuses it instead of recomputing
         the proof. Without it the proof is recomputed.
         """
-        if not isinstance(geometry, BRepGeometry):
-            raise TypeError("geometry must be a BRepGeometry.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
-        if not isinstance(report, BRepImportReport):
-            raise TypeError("report must be a BRepImportReport.")
         if coordinate_contract.spatial_id != report.coordinate_contract.spatial_id:
             raise ValueError("The model and report coordinate contracts must match.")
         patches_ = tuple(patches)

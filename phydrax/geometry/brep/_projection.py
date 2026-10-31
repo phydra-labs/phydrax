@@ -2472,10 +2472,6 @@ class NativeBRepProjection(AbstractBRepProjection):
         embedding: PlanarEmbedding | None,
         /,
     ) -> None:
-        if not isinstance(model, BRepModel):
-            raise TypeError("model must be a BRepModel.")
-        if not isinstance(policy, BRepProjectionPolicy):
-            raise TypeError("policy must be a BRepProjectionPolicy.")
         affine_projection_frames = tuple(
             _prepare_affine_projection_frame(patch) for patch in model.patches
         )
@@ -3015,7 +3011,6 @@ class NativeBRepProjection(AbstractBRepProjection):
             occurrence_paths=occurrence_paths,
         )
 
-    @checked
     def project(
         self,
         points: ArrayLike,
@@ -3062,7 +3057,6 @@ class NativeBRepProjection(AbstractBRepProjection):
         ]
         return self._result(queries, hits)
 
-    @checked
     def project_boundary(
         self,
         points: ArrayLike,
@@ -3243,7 +3237,6 @@ class NativeBRepProjection(AbstractBRepProjection):
             best.path,
         )
 
-    @checked
     def classify(
         self,
         points: ArrayLike,
@@ -3512,7 +3505,6 @@ class NativeBRepProjection(AbstractBRepProjection):
             crossings += trim
         return bool(crossings % 2)
 
-    @checked
     def locate_solids(
         self,
         points: ArrayLike,

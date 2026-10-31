@@ -458,7 +458,6 @@ class BRepOffsetEmbeddingCertificate(StrictModule):
     status: BRepOffsetEmbeddingStatus = eqx.field(static=True)
     reason: str = eqx.field(static=True)
 
-    @checked
     def __init__(self, status: BRepOffsetEmbeddingStatus, reason: str, /) -> None:
         self.status = parse(status, BRepOffsetEmbeddingStatus, "offset_embedding.status")
         if not isinstance(reason, str) or not reason:
@@ -709,8 +708,6 @@ def certify_revolution_offset_embedding(
     from ..._interpolation import rational_bspline_curve_spans
     from .._rational import rational_vector
 
-    if not isinstance(model, BRepModel):
-        raise TypeError("offset embedding model must be a BRepModel.")
     if not isinstance(offset, OffsetSurface):
         return _offset_certificate(
             "unsupported", "offset carrier is not an exact OffsetSurface."
