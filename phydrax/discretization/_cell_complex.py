@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import combinations
-from typing import final
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -27,6 +27,10 @@ from ._topology import (
     EntitySubset,
     OrientedIncidence,
 )
+
+
+if TYPE_CHECKING:
+    from ..geometry.multiregion_surface import MultiRegionSurfaceTopology
 
 
 def _first_appearance_groups(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
@@ -399,6 +403,34 @@ def prepare_polyhedral_worksets(
     )
 
 
+def _require_multiregion_cells(
+    surface: MultiRegionSurfaceTopology,
+    blocks: tuple[np.ndarray, ...],
+    vertex_count: int,
+    /,
+) -> None:
+    from ..geometry.multiregion_surface import (
+        multiregion_cell_complex,
+        MultiRegionSurfaceTopology,
+    )
+
+    if not isinstance(surface, MultiRegionSurfaceTopology):
+        raise TypeError("multiregion_surface must be a MultiRegionSurfaceTopology.")
+    triangles, *others = blocks
+    if any(block.shape[0] for block in others):
+        raise ValueError("A multiregion surface admits triangle cells only.")
+    if surface.vertex_count != vertex_count or not np.array_equal(
+        np.asarray(surface.faces[: surface.face_count], dtype=np.int64),
+        triangles.astype(np.int64),
+    ):
+        raise ValueError(
+            "The multiregion surface topology must describe exactly these triangles."
+        )
+    # The signed region complex checks boundary-of-boundary: each finite
+    # region's side-selected faces form a closed, consistently oriented cycle.
+    multiregion_cell_complex(surface)
+
+
 def polygonal_connectivity(
     triangles: ArrayLike | None,
     quadrilaterals: ArrayLike | None,
@@ -406,8 +438,15 @@ def polygonal_connectivity(
     /,
     *,
     polygons: Sequence[ArrayLike] = (),
+    multiregion_surface: MultiRegionSurfaceTopology | None = None,
 ) -> PolygonalConnectivity:
-    """Build one edge-manifold record for mixed 2-D polygonal cells."""
+    """Build one edge-manifold record for mixed 2-D polygonal cells.
+
+    A labeled multiregion surface of exactly these triangles admits edges shared
+    by more than two cells: its topology owns the non-manifold incidence, and its
+    signed region complex certifies every finite region's boundary as a closed
+    oriented cycle, which replaces the pairwise edge-orientation check.
+    """
 
     vertices = int(vertex_count)
     if vertices < 0:
@@ -461,11 +500,16 @@ def polygonal_connectivity(
     side_edges, first_sides = _first_appearance_groups(side_keys)
     side_signs = np.where(starts < stops, 1.0, -1.0)
     counts = np.bincount(side_edges, minlength=first_sides.size).astype(np.int32)
-    if np.any(counts > 2):
-        raise ValueError("Polygonal cells must be edge-manifold.")
-    orientation = np.bincount(side_edges, weights=side_signs, minlength=first_sides.size)
-    if np.any((counts == 2) & (np.abs(orientation) == 2.0)):
-        raise ValueError("Shared polygon edges must have opposite orientation.")
+    if multiregion_surface is None:
+        if np.any(counts > 2):
+            raise ValueError("Polygonal cells must be edge-manifold.")
+        orientation = np.bincount(
+            side_edges, weights=side_signs, minlength=first_sides.size
+        )
+        if np.any((counts == 2) & (np.abs(orientation) == 2.0)):
+            raise ValueError("Shared polygon edges must have opposite orientation.")
+    else:
+        _require_multiregion_cells(multiregion_surface, blocks, vertices)
 
     edges = side_keys[first_sides]
     cell_edges = np.zeros((cell_count, capacity), dtype=np.int32)
