@@ -148,6 +148,49 @@ def test_native_tetra_metric_commits_complete_periodic_split_orbits() -> None:
     assert target_state.quotient_cells
 
 
+def test_periodic_quotient_ids_continue_once_and_new_entities_take_fresh_ids() -> None:
+    source = _periodic_tetra_source().mesh
+    topology = source.periodic_topology
+    assert topology is not None
+    lifted = CellMesh(
+        source.coordinates, source.blocks, vertex_global_ids=source.vertex_global_ids
+    )
+    orbit_rows = np.asarray(topology.orbit_indices, dtype=np.int64)[
+        : int(topology.lifted_offsets[1])
+    ]
+    source_ids = np.asarray(topology.quotient.entity_sets[0].entity_ids, dtype=np.int64)
+    ancestry = source_ids[orbit_rows].copy()
+    ancestry[orbit_rows == 0] = -1  # quotient row 0 is new
+    ancestry[np.flatnonzero(orbit_rows == 1)[0]] = source_ids[2]  # row 1 is ambiguous
+    ancestry[orbit_rows == 3] = source_ids[4]  # rows 3 and 4 both claim one ID
+
+    def rebuilt() -> PeriodicMeshTopology:
+        return PeriodicMeshTopology(
+            lifted,
+            topology.cell,
+            topology.vertex_representatives,
+            topology.vertex_shifts,
+            entity_allocator_next_ids={0: 1000},
+            quotient_id_ancestry={0: ancestry},
+        )
+
+    first, second = rebuilt(), rebuilt()
+    ids = np.asarray(first.quotient.entity_sets[0].entity_ids, dtype=np.int64)
+    np.testing.assert_array_equal(ids, second.quotient.entity_sets[0].entity_ids)
+    np.testing.assert_array_equal(ids[[2, 5, 6, 7]], source_ids[[2, 5, 6, 7]])
+    # New, ambiguous, and doubly claimed entities retire their IDs in quotient order.
+    np.testing.assert_array_equal(ids[[0, 1, 3, 4]], [1000, 1001, 1002, 1003])
+    assert first.allocator_next_ids[0] == 1004
+    with pytest.raises(ValueError, match="allocator"):
+        PeriodicMeshTopology(
+            lifted,
+            topology.cell,
+            topology.vertex_representatives,
+            topology.vertex_shifts,
+            quotient_id_ancestry={0: ancestry},
+        )
+
+
 def test_native_tetra_metric_rejects_non_equivariant_periodic_spd_data() -> None:
     source = _periodic_tetra_source()
     metric = np.broadcast_to(
