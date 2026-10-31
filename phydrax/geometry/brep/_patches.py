@@ -4222,6 +4222,21 @@ class ConicRootLinePCurve(AbstractCurve):
         AbstractCurve.is_c1_on(self, first, last)
         return True
 
+    def derivative_bounds(
+        self, first: float, last: float, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        self.is_c1_on(first, last)
+        if isinstance(order, bool) or not isinstance(order, int) or order != 1:
+            raise ValueError("Curve derivative bounds support order=1 only.")
+        from .._rational import fraction_down, fraction_up
+
+        # The angle is the constant root phase; only the height coordinate moves.
+        lower, upper = coefficient_interval(self.height_direction_exact, bits=128)
+        return (
+            np.asarray((0.0, fraction_down(lower)), dtype=np.float64),
+            np.asarray((0.0, fraction_up(upper)), dtype=np.float64),
+        )
+
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         from .._rational import fraction_down, fraction_up
 

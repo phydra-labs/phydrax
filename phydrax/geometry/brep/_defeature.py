@@ -51,7 +51,7 @@ from ._constructors import (
 from ._correspondence import native_edge_pcurve
 from ._edge_classification import brep_edge_classification
 from ._exact import exact_frame_orientation, square_root_interval
-from ._intersection import NativePeriodEndpoint
+from ._intersection import NativePeriodEndpoint, RootEndpoint
 from ._intersection_curve import SurfaceRegion
 from ._measure import brep_mass_properties
 from ._model import BRepCurve, BRepEntityId, BRepGeometry, BRepModel
@@ -655,48 +655,37 @@ def _staged_geometry(
     tuple[str, ...],
     tuple[TrimDomain | None, ...],
 ]:
-    from ._conic_gaps import endpoint_gap_bounds
-    from ._model import _certify_edge_face_gap_bounds
-
-    endpoint_rows = []
-    for edge, (curve_index, parameters, (first, last)) in enumerate(
-        zip(builder.edge_curves, builder.edge_ranges, builder.edge_vertices, strict=True)
-    ):
-        if curve_index < 0:
-            endpoint_rows.append((0.0, 0.0))
-            continue
-        try:
-            endpoint_rows.append(
-                endpoint_gap_bounds(
-                    builder.curves[curve_index],
-                    parameters,
-                    np.stack((builder.vertices[first], builder.vertices[last])),
-                    endpoint_roots=_native_endpoint_pair(
-                        builder.edge_endpoint_roots[edge]
-                    ),
-                )
-            )
-        except ValueError as error:
-            raise _Unresolved(
-                f"brep_defeature.endpoint_gap must be continuously certified; got {error}"
-            ) from error
-    vertex_gaps = tuple(endpoint_rows) if any(any(row) for row in endpoint_rows) else None
-    shell_faces, shell_orientations, solid_shells = shells
-    provisional = builder.geometry(
-        solid=True,
-        shell_faces=shell_faces,
-        shell_orientations=shell_orientations,
-        solid_shells=solid_shells,
-        assembly_graph=source.assembly_graph,
-        edge_vertex_gap_bounds=vertex_gaps,
+    from ._model import (
+        _certify_edge_face_gap_bounds,
+        _validate_degenerate_coedge_poles,
     )
+
+    # The staged geometry recertifies every edge/vertex gap from the transported
+    # vertex and endpoint roots; no caller-side limit is needed.
+    shell_faces, shell_orientations, solid_shells = shells
+    try:
+        provisional = builder.geometry(
+            solid=True,
+            shell_faces=shell_faces,
+            shell_orientations=shell_orientations,
+            solid_shells=solid_shells,
+            assembly_graph=source.assembly_graph,
+        )
+    except ValueError as error:
+        raise _Unresolved(
+            f"brep_defeature.endpoint_gap must be continuously certified; got {error}"
+        ) from error
     provisional_geometry, patches, provisional_bounds, _, _, _ = provisional
     try:
+        # Retained poles must replay their exact full-interval collapse proof
+        # before their degenerate coedges contribute a zero face gap.
+        _validate_degenerate_coedge_poles(provisional_geometry, patches)
         face_gaps = _certify_edge_face_gap_bounds(
             provisional_geometry,
             patches,
             exact_unsupported=True,
             parameter_bounds=provisional_bounds,
+            certified_degenerate_coedges=True,
         )
     except ValueError as error:
         raise _Unresolved(
@@ -708,7 +697,7 @@ def _staged_geometry(
         shell_orientations=shell_orientations,
         solid_shells=solid_shells,
         assembly_graph=source.assembly_graph,
-        edge_vertex_gap_bounds=vertex_gaps,
+        edge_vertex_gap_bounds=provisional_geometry.edge_vertex_gap_bounds,
         edge_face_gap_bounds=face_gaps,
     )
 
@@ -730,11 +719,6 @@ def _single_solid(model: BRepModel, /) -> None:
         raise _Refusal(
             "brep_defeature.family must have a supported analytic certificate; "
             "defeaturing requires one unplaced solid occurrence with one shell"
-        )
-    if any(root is not None for root in geometry.vertex_roots):
-        raise _Refusal(
-            "brep_defeature.family must have a supported analytic certificate; "
-            "source-root transport needs a separate extension certificate"
         )
 
 
@@ -1607,7 +1591,7 @@ def _stage_retained_edge(
         endpoint_roots = (None, None)
     else:
         curve = geometry.curves[curve_index]
-        endpoint_roots = _native_roots(geometry, source)
+        endpoint_roots = geometry.edge_endpoint_roots[source]
     return builder.edge(
         curve,
         first,
@@ -2039,20 +2023,24 @@ def _copy_retained(
     edge_map = {}
     for source in used:
         curve_index = geometry.edge_curves[source]
-        if curve_index < 0:
-            raise _Refusal(
-                "brep_defeature.family must have a supported analytic certificate; "
-                "got unrelated pole-edge transport is unsupported"
-            )
         first, last = (float(value) for value in geometry.edge_ranges[source])
         start, end = geometry.edge_vertices[source]
+        if curve_index < 0:
+            # An unchanged pole keeps its vertex and native-period chart roots.
+            edge_map[source] = builder.degenerate(
+                vertex_map[start],
+                first,
+                last,
+                endpoint_roots=geometry.edge_endpoint_roots[source],
+            )
+            continue
         edge_map[source] = builder.edge(
             geometry.curves[curve_index],
             first,
             last,
             vertex_map[start],
             vertex_map[end],
-            endpoint_roots=_native_roots(geometry, source),
+            endpoint_roots=geometry.edge_endpoint_roots[source],
         )
     for source, loops in retained:
         staged = []
@@ -2191,9 +2179,11 @@ def _reparameterize_revolved_cap(
             "brep_defeature.family must have a supported analytic certificate; got "
             + "a degenerate revolved host parameter frame"
         )
-    orientation = int(np.asarray(model.orientation)[cap_face]) * (
-        1 if alignment > 0 else -1
-    )
+    # Coedge senses follow the chart orientation, so a chart whose normal is
+    # opposite the revolved parameter normal reverses both the face
+    # orientation and the retained circle use.
+    chart_sign = 1 if alignment > 0 else -1
+    orientation = int(np.asarray(model.orientation)[cap_face]) * chart_sign
     plane = PlanePatch(
         source_circle.center,
         source_circle.first_axis,
@@ -2243,6 +2233,7 @@ def _reparameterize_revolved_cap(
     coedge_roots = (bind(pcurve, first_root), bind(pcurve, last_root))
     coedge = coedges[0]
     builder.pcurves[coedge] = pcurve
+    builder.coedge_senses[coedge] *= chart_sign
     builder.edge_endpoint_roots[target_edge] = edge_roots
     builder.coedge_endpoint_roots[coedge] = coedge_roots
     first, last = builder.edge_ranges[target_edge]
@@ -2820,6 +2811,8 @@ def _torus_junction(model: BRepModel, face: int, /) -> tuple[int, int, int, int,
             plane, cylinder = (first, second)
         case [CylinderPatch(), PlanePatch()]:
             plane, cylinder = (second, first)
+        case [RevolutionSurface(), RevolutionSurface()]:
+            plane, cylinder = _revolved_torus_neighbors(model, first, second)
         case _:
             raise _Refusal(
                 "brep_defeature.neighbors must be a plane and a cylinder; got an unsupported pair, including cylinder/cylinder quartics"
@@ -2852,23 +2845,35 @@ def _closed_cylinder_seam(geometry: BRepGeometry, face: int, /) -> int:
     return seams[0]
 
 
+def _revolved_torus_neighbors(
+    model: BRepModel, first: int, second: int, /
+) -> tuple[int, int]:
+    """Order a revolved planar host and a revolved straight-generator wall."""
+    for cap, wall in ((first, second), (second, first)):
+        data = _revolved_hole_wall(model, wall)
+        if data is None or data.family != "revolved-cylinder":
+            continue
+        try:
+            _plane(model, cap)
+        except _Refusal:
+            continue
+        return cap, wall
+    raise _Refusal(
+        "brep_defeature.neighbors must be a plane and a cylinder; got an unsupported pair, including cylinder/cylinder quartics"
+    )
+
+
 def _circular_clearance(
     model: BRepModel,
     removed: int,
-    plane_face: int,
-    cylinder_face: int,
+    neighbors: tuple[int, int],
+    axis: _Vector,
     center: _Vector,
     radius: Fraction,
     old_radius: Fraction,
     height_range: tuple[Fraction, Fraction],
     /,
 ) -> None:
-    cylinder = model.patches[cylinder_face]
-    if not isinstance(cylinder, CylinderPatch):
-        raise RuntimeError(
-            "brep_defeature.certificate lost the selected cylinder carrier."
-        )
-    _, _, axis = _frame(cylinder)
     extent = max(radius, old_radius)
     low, high = (min(height_range), max(height_range))
     points = tuple(
@@ -2882,9 +2887,8 @@ def _circular_clearance(
             for s in (-1, 1)
         )
     )
-    _plane_circle_clearance(model, plane_face, center, radius, old_radius)
     for face, patch in enumerate(model.patches):
-        if face in (removed, plane_face, cylinder_face):
+        if face == removed or face in neighbors:
             continue
         if _axial_plane_separate(patch, axis, center, (low, high)):
             continue
@@ -3075,6 +3079,9 @@ def _circular_boundary_level(geometry: BRepGeometry, face: int, edge: int, /) ->
 
 
 def _remove_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
+    _, cylinder_face, *_ = _torus_junction(model, face)
+    if isinstance(model.patches[cylinder_face], RevolutionSurface):
+        return _remove_revolved_torus(model, face)
     intent = _prepare_torus(model, face)
     plane_face, cylinder_face = (intent.plane_face, intent.cylinder_face)
     plane_edge, cylinder_edge, seam_edge = (
@@ -3086,40 +3093,18 @@ def _remove_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
     center, z, radius, r = (intent.center, intent.z, intent.radius, intent.minor_radius)
     old_radius, old_z, phase_error = (intent.old_radius, intent.old_z, intent.phase_error)
     geometry = model.geometry
+    _plane_circle_clearance(model, plane_face, center, radius, old_radius)
     _circular_clearance(
         model,
         face,
-        plane_face,
-        cylinder_face,
+        (plane_face, cylinder_face),
+        _frame(cylinder)[2],
         center,
         radius,
         old_radius,
         (Fraction(), old_z - z),
     )
-    removed_edges = {
-        geometry.coedge_edges[c] for loop in geometry.face_loops[face] for c in loop
-    }
-    retained = tuple(
-        (
-            (
-                source,
-                tuple(
-                    (
-                        tuple(
-                            (
-                                c
-                                for c in loop
-                                if geometry.coedge_edges[c] not in removed_edges
-                            )
-                        )
-                        for loop in loops
-                    )
-                ),
-            )
-            for source, loops in enumerate(geometry.face_loops)
-            if source != face
-        )
-    )
+    retained = _retained_without(geometry, face)
     builder, edge_images = _copy_retained(model, retained)
     face_map = {source: target for target, (source, _) in enumerate(retained)}
     edge_map = dict(edge_images)
@@ -3178,11 +3163,7 @@ def _remove_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
         cylinder_face, seam_edge, edge_map, builder, face_map, old_z, z, vertex
     )
     _compact_staging(builder)
-    lo, hi = square_root_interval(Fraction(2))
-    distance = (
-        max(0.0, fraction_down(r * (Fraction(lo) - 1) - phase_error)),
-        fraction_up(r * (Fraction(hi) - 1) + phase_error),
-    )
+    distance = _torus_distance(r, phase_error)
     return (
         builder,
         tuple(face_map.items()),
@@ -3192,6 +3173,378 @@ def _remove_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
         (center,),
         _g1_evidence(model, (plane_edge, cylinder_edge)),
     )
+
+
+def _retained_without(
+    geometry: BRepGeometry, face: int, /
+) -> tuple[tuple[int, tuple[tuple[int, ...], ...]], ...]:
+    removed_edges = {
+        geometry.coedge_edges[c] for loop in geometry.face_loops[face] for c in loop
+    }
+    return tuple(
+        (
+            source,
+            tuple(
+                tuple(c for c in loop if geometry.coedge_edges[c] not in removed_edges)
+                for loop in loops
+            ),
+        )
+        for source, loops in enumerate(geometry.face_loops)
+        if source != face
+    )
+
+
+def _torus_distance(minor: Fraction, phase_error: Fraction, /) -> tuple[float, float]:
+    lo, hi = square_root_interval(Fraction(2))
+    return (
+        max(0.0, fraction_down(minor * (Fraction(lo) - 1) - phase_error)),
+        fraction_up(minor * (Fraction(hi) - 1) + phase_error),
+    )
+
+
+def _line_parameter(
+    line: tuple[_Vector3, _Vector3], point: _Vector3, /
+) -> Fraction | None:
+    origin, direction = line
+    axis = next((index for index in range(3) if direction[index] != 0), None)
+    if axis is None:
+        return None
+    parameter = (point[axis] - origin[axis]) / direction[axis]
+    return parameter if _vector3_affine(origin, parameter, direction) == point else None
+
+
+def _remove_revolved_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
+    """Remove a torus blend between a revolved planar host and a revolved wall.
+
+    Both neighbors are revolutions of straight profile lines about the torus
+    axis. Their profile lines meet at an exact rational corner; the restored
+    sharp circle, its corner vertex and the extended profile seams are bound
+    to that corner's conic root, mirroring the revolution constructor.
+    """
+    from ._intersection import ConicParameterEndpoint
+    from ._patches import ConicParameterRoot
+    from ._root_bindings import BRepConicVertex, BRepVertexRoot
+
+    torus = model.patches[face]
+    if not isinstance(torus, TorusPatch):
+        raise RuntimeError("brep_defeature.certificate lost the selected torus carrier.")
+    geometry = model.geometry
+    cap_face, wall_face, cap_ring, wall_ring, wall_seam = _torus_junction(model, face)
+    cap_seam = _closed_cylinder_seam(geometry, cap_face)
+    cap, wall = model.patches[cap_face], model.patches[wall_face]
+    wall_data = _revolved_hole_wall(model, wall_face)
+    if (
+        not isinstance(cap, RevolutionSurface)
+        or not isinstance(wall, RevolutionSurface)
+        or wall_data is None
+    ):
+        raise RuntimeError("brep_defeature.certificate lost the revolved torus neighbors.")
+    axis = wall_data.axis
+    axis_origin = _fraction_vector3(rational_vector(np.asarray(wall.axis_origin)))
+    torus_axis = _fraction_vector3(torus.axis_exact)
+    torus_center = _fraction_vector3(torus.center_exact)
+    if axis_origin is None or torus_axis is None or torus_center is None:
+        raise _Refusal("brep_defeature.family must have a rational revolution frame")
+    cap_axis = _fraction_vector3(rational_vector(np.asarray(cap.axis_direction)))
+    cap_origin = _fraction_vector3(rational_vector(np.asarray(cap.axis_origin)))
+    if (
+        cap_axis != axis
+        or cap_origin is None
+        or any(rational_cross(_offset(axis_origin, cap_origin), axis))
+        or any(rational_cross(torus_axis, axis))
+    ):
+        raise _Refusal(
+            "brep_defeature.family must have a supported analytic certificate; got "
+            + "revolved torus neighbors without one shared exact rotation axis"
+        )
+    plane = _plane(model, cap_face)
+    normal = _normal(plane)
+    plane_origin = _fraction_vector3(rational_vector(np.asarray(plane.origin)))
+    wall_line = _line_vector3(wall.curve)
+    cap_line = _line_vector3(cap.curve)
+    if plane_origin is None or wall_line is None or cap_line is None:
+        raise _Refusal(
+            "brep_defeature.family must have rational straight revolution generators"
+        )
+    if any(rational_cross(normal, axis)) or _dot(normal, wall_line[1]) == 0:
+        raise _Refusal(
+            "brep_defeature.family must have a supported analytic certificate; got "
+            + "torus removal requires a plane normal to the shared cylinder/torus frame"
+        )
+    wall_corner = _dot(normal, _offset(wall_line[0], plane_origin)) / _dot(
+        normal, wall_line[1]
+    )
+    corner = _vector3_affine(wall_line[0], wall_corner, wall_line[1])
+    cap_corner = _line_parameter(cap_line, corner)
+    if cap_corner is None:
+        raise _Unresolved(
+            "brep_defeature.certificate must decide the requested operation; got "
+            + "revolved torus generators without an exact common corner"
+        )
+    height = _dot(axis, _offset(axis_origin, corner))
+    center = _vector3_affine(axis_origin, height, axis)
+    rings = tuple(geometry.curves[geometry.edge_curves[edge]] for edge in (cap_ring, wall_ring))
+    cap_circle, wall_circle = rings
+    if not isinstance(cap_circle, CircleCurve) or not isinstance(wall_circle, CircleCurve):
+        raise _Refusal(
+            "brep_defeature.family must have a supported analytic certificate; got "
+            + "torus contact boundaries without native circle carriers"
+        )
+    first_axis = _fraction_vector3(wall_circle.first_axis_exact)
+    second_axis = _fraction_vector3(wall_circle.second_axis_exact)
+    wall_center = _fraction_vector3(wall_circle.center_exact)
+    if (
+        first_axis is None
+        or second_axis is None
+        or wall_center is None
+        or cap_circle.first_axis_exact != wall_circle.first_axis_exact
+        or cap_circle.second_axis_exact != wall_circle.second_axis_exact
+        or _fraction_vector3(cap_circle.center_exact) != center
+    ):
+        raise _Refusal(
+            "brep_defeature.family must have a supported analytic certificate; got "
+            + "torus contact circles without one shared revolution frame"
+        )
+    radial = _offset(center, corner)
+    radius = _dot(radial, first_axis)
+    if radius <= 0 or _vector3_scale(first_axis, radius) != radial:
+        raise _Refusal(
+            "brep_defeature.family must have a supported analytic certificate; got "
+            + "a restored corner off the revolution seam half-plane"
+        )
+    r, major = torus.minor_radius_exact, torus.major_radius_exact
+    old_radius = cap_circle.radius_exact
+    if (
+        not isinstance(r, Fraction)
+        or not isinstance(major, Fraction)
+        or not isinstance(old_radius, Fraction)
+    ):
+        raise _Refusal("brep_defeature.family must have rational torus and circle radii")
+    delta = _offset(center, torus_center)
+    old_height = _dot(axis, _offset(center, wall_center))
+    if (
+        any(rational_cross(delta, axis))
+        or abs(_dot(delta, axis)) != r
+        or abs(radius - major) != r
+        or old_radius != major
+        or wall_circle.radius_exact != radius
+        or old_height != _dot(delta, axis)
+    ):
+        raise _Unresolved(
+            "brep_defeature.certificate must decide the requested operation; got torus coefficients inconsistent with the signed-distance G1 equations"
+        )
+    phase_error = _torus_phase_error(model, face, r)
+    _circular_clearance(
+        model,
+        face,
+        (cap_face, wall_face),
+        axis,
+        center,
+        radius,
+        old_radius,
+        (Fraction(), old_height),
+    )
+    retained = _retained_without(geometry, face)
+    builder, edge_images = _copy_retained(model, retained)
+    face_map = {source: target for target, (source, _) in enumerate(retained)}
+    edge_map = dict(edge_images)
+    circle = CircleCurve(
+        tuple(float(value) for value in center),
+        wall_circle.first_axis,
+        wall_circle.second_axis,
+        float(radius),
+        center_exact=center,
+        first_axis_exact=wall_circle.first_axis_exact,
+        second_axis_exact=wall_circle.second_axis_exact,
+        radius_exact=radius,
+    )
+    corner_root = ConicParameterRoot(circle, Fraction(1), Fraction(0))
+    vertex = builder.vertex(
+        np.asarray(tuple(float(value) for value in corner)),
+        exact_point=corner,
+        root=BRepVertexRoot(BRepConicVertex(corner_root)),
+    )
+    period_roots = (
+        NativePeriodEndpoint(circle, rational=Fraction(), turns=Fraction()),
+        NativePeriodEndpoint(circle, rational=Fraction(), turns=Fraction(1)),
+    )
+    new_edge = builder.edge(
+        circle, 0.0, 2 * pi, vertex, vertex, endpoint_roots=period_roots
+    )
+    for source, patch, line, seam, ring, level in (
+        (cap_face, cap, cap_line, cap_seam, cap_ring, cap_corner),
+        (wall_face, wall, wall_line, wall_seam, wall_ring, wall_corner),
+    ):
+        ring_vertex = geometry.edge_vertices[ring][0]
+        start, end = geometry.edge_vertices[seam]
+        if start == end or ring_vertex not in (start, end):
+            raise _Refusal(
+                "brep_defeature.family must have a supported analytic certificate; got "
+                + "a revolved torus neighbor seam that does not end on its contact circle"
+            )
+        moving = 0 if start == ring_vertex else 1
+        old_roots = geometry.edge_endpoint_roots[seam]
+        fixed_root = old_roots[1 - moving]
+        if fixed_root is not None and not isinstance(fixed_root, ConicParameterEndpoint):
+            raise _Refusal(
+                "brep_defeature.source must preserve native endpoint period identity; "
+                "received an unsupported endpoint root."
+            )
+        fixed_point = (
+            _fraction_vector3(fixed_root.point_exact)
+            if fixed_root is not None
+            else _exact_vertex(geometry, (start, end)[1 - moving])
+        )
+        fixed_level = None if fixed_point is None else _line_parameter(line, fixed_point)
+        if fixed_point is None or fixed_level is None:
+            raise _Unresolved(
+                "brep_defeature.source must preserve rational vertex coordinates."
+            )
+        points = (corner, fixed_point) if moving == 0 else (fixed_point, corner)
+        levels = (level, fixed_level) if moving == 0 else (fixed_level, level)
+        span = _offset(points[0], points[1])
+        seam_line = LineCurve(
+            tuple(float(value) for value in points[0]),
+            tuple(float(value) for value in span),
+            origin_exact=points[0],
+            direction_exact=span,
+        )
+        seam_roots: list[ConicParameterEndpoint | None] = [None, None]
+        seam_roots[moving] = ConicParameterEndpoint(
+            corner_root, seam_line, Fraction(moving), corner
+        )
+        if fixed_root is not None:
+            seam_roots[1 - moving] = ConicParameterEndpoint(
+                fixed_root.root,
+                seam_line,
+                Fraction(1 - moving),
+                fixed_root.point_exact,
+            )
+        target_seam = edge_map[seam]
+        builder.curves[builder.edge_curves[target_seam]] = seam_line
+        builder.edge_ranges[target_seam] = (0.0, 1.0)
+        seam_vertices = list(builder.edge_vertices[target_seam])
+        seam_vertices[moving] = vertex
+        builder.edge_vertices[target_seam] = (seam_vertices[0], seam_vertices[1])
+        builder.edge_endpoint_roots[target_seam] = (seam_roots[0], seam_roots[1])
+        ring_pcurve = LineCurve(
+            (0.0, float(level)),
+            (1.0, 0.0),
+            origin_exact=(Fraction(0), level),
+            direction_exact=(Fraction(1), Fraction(0)),
+        )
+        old_level = None
+        loops = []
+        for loop in geometry.face_loops[source]:
+            staged = []
+            for coedge in loop:
+                edge = geometry.coedge_edges[coedge]
+                pcurve = geometry.pcurves[coedge]
+                if edge == ring:
+                    old_level = _isoline_level(pcurve)
+                    target, pcurve = new_edge, ring_pcurve
+                    endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] = (
+                        _coedge_roots(ring_pcurve, period_roots, patch=patch, axis=0)
+                    )
+                elif edge == seam:
+                    target = target_seam
+                    pcurve = _seam_pcurve(pcurve, patch, levels)
+                    first_root, last_root = (
+                        None
+                        if root is None
+                        else ConicParameterEndpoint(
+                            root.root, pcurve, root.parameter_exact, root.point_exact
+                        )
+                        for root in seam_roots
+                    )
+                    endpoint_roots = (first_root, last_root)
+                elif edge in (cap_ring, wall_ring):
+                    raise _Refusal(
+                        "brep_defeature.family must have a supported analytic certificate; got "
+                        + "a torus contact circle shared by both revolved neighbors"
+                    )
+                else:
+                    target = edge_map[edge]
+                    endpoint_roots = geometry.coedge_endpoint_roots[coedge]
+                staged.append(
+                    builder.coedge(
+                        target,
+                        geometry.coedge_senses[coedge],
+                        pcurve,
+                        endpoint_roots=endpoint_roots,
+                    )
+                )
+            loops.append(staged)
+        target_face = builder.faces[face_map[source]]
+        target_face.loops = loops
+        box = np.asarray(target_face.bounds, dtype=np.float64).copy()
+        # Chart bounds are outward-rounded; the contact isoline owns the nearer
+        # profile bound and the opposite ring keeps the other one.
+        distances = (
+            None
+            if old_level is None
+            else tuple(abs(float(box[row, 1]) - old_level) for row in (0, 1))
+        )
+        if distances is None or distances[0] == distances[1]:
+            raise _Refusal(
+                "brep_defeature.family must have a supported analytic certificate; got "
+                + "a revolved torus neighbor chart not bounded by its contact isoline"
+            )
+        row = 0 if distances[0] < distances[1] else 1
+        other = Fraction(float(box[1 - row, 1]))
+        if (level - other) * (Fraction(old_level) - other) <= 0:
+            raise _Collision(
+                "brep_defeature.extension must avoid unrelated faces and reversed trims; got "
+                + "circular extension makes a revolved neighbor vanish"
+            )
+        bound = float(level)
+        if (row == 1 and Fraction(bound) < level) or (row == 0 and Fraction(bound) > level):
+            bound = float(np.nextafter(bound, np.inf if row == 1 else -np.inf))
+        box[row, 1] = bound
+        target_face.bounds = box
+    _compact_staging(builder)
+    return (
+        builder,
+        tuple(face_map.items()),
+        edge_images,
+        None,
+        _torus_distance(r, phase_error),
+        (center,),
+        _g1_evidence(model, (cap_ring, wall_ring)),
+    )
+
+
+def _isoline_level(pcurve: BRepCurve, /) -> float | None:
+    source = pcurve.source_curve if isinstance(pcurve, PeriodicPCurve) else pcurve
+    if not isinstance(source, LineCurve) or source.direction_exact[1] != 0:
+        return None
+    return float(np.asarray(source.origin)[1])
+
+
+def _seam_pcurve(
+    pcurve: BRepCurve,
+    patch: AbstractSurfacePatch,
+    levels: tuple[Fraction, Fraction],
+    /,
+) -> BRepCurve:
+    """Re-span a profile seam p-curve over the extended seam edge parameter."""
+    source = pcurve.source_curve if isinstance(pcurve, PeriodicPCurve) else pcurve
+    if not isinstance(source, LineCurve) or source.direction_exact[0] != 0:
+        raise _Refusal(
+            "brep_defeature.family must have a supported analytic certificate; got "
+            + "a revolved neighbor seam without a native profile isoline"
+        )
+    angle = source.origin_exact[0]
+    span = levels[1] - levels[0]
+    line = LineCurve(
+        (float(np.asarray(source.origin)[0]), float(levels[0])),
+        (0.0, float(span)),
+        origin_exact=(angle, levels[0]),
+        direction_exact=(Fraction(0), span),
+    )
+    if isinstance(pcurve, PeriodicPCurve):
+        return PeriodicPCurve(line, patch, pcurve.period_shifts)
+    return line
 
 
 def _torus_phase_error(model: BRepModel, face: int, radius: Fraction, /) -> Fraction:
@@ -3206,10 +3559,13 @@ def _torus_phase_error(model: BRepModel, face: int, radius: Fraction, /) -> Frac
         candidates = [
             (k, tuple(sorted((k * low / 2, k * high / 2)))) for k in range(-4, 5)
         ]
+        # Chart bounds may be outward-rounded root enclosures; any coefficient
+        # within pi/8 of one enclosure identifies its quarter turn uniquely, and
+        # the distance to both enclosure ends bounds the phase error rigorously.
         admitted = [
             (k, interval)
             for k, interval in candidates
-            if interval[0] <= coefficient <= interval[1]
+            if interval[0] - low / 8 <= coefficient <= interval[1] + low / 8
         ]
         if len(admitted) != 1:
             raise _Unresolved(
