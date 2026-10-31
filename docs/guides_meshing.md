@@ -1048,8 +1048,9 @@ bound to the source vertices). Routes:
   NUMERICAL_STOP otherwise; `RelocationMeshAdaptation` moves vertices only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
-  and hierarchy of `NATIVE_BISECTION` byte for byte, except that its coarsening
-  stops at the recorded barycentric subdivision level.
+  and hierarchy of `NATIVE_BISECTION` byte for byte. The device passes coarsen
+  bisection families; the commit then removes the recorded barycentric
+  subdivisions they expose by the host rule.
 - `DEVICE_METRIC_2D`: the planar metric and relocation requests executed as
   compiled device passes with FILTERED_DEVICE predicates (below).
 - `MMG`, `OMEGA_H`: the configured provider's metric adaptation; the lineage

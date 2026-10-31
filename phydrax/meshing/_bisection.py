@@ -1864,6 +1864,87 @@ def _coarsening(
     )
 
 
+class _EpochSubdivisions(NamedTuple):
+    """Subdivisions one finished device epoch undoes, with its composed lineage."""
+
+    cells: _Cells
+    subdivisions: _Subdivisions
+    steps: tuple[tuple[np.ndarray, np.ndarray], ...]
+    removed_ids: np.ndarray
+    link_targets: np.ndarray
+    undone_children: np.ndarray
+    restored_ids: np.ndarray
+
+
+def _undone_epoch_subdivisions(
+    source: _Source,
+    request: _Request,
+    subdivisions: _Subdivisions,
+    cells: _Cells,
+    flags: _Flags,
+    facets: tuple[np.ndarray, np.ndarray],
+    vertex_count: int,
+    removed_ids: np.ndarray,
+    link_targets: np.ndarray,
+    /,
+) -> _EpochSubdivisions | None:
+    """Undo the subdivisions exposed once an epoch's bisection coarsening is done.
+
+    Host coarsening removes a subdivision when no bisection family is removable
+    any more; a device epoch reaches that state after its compiled passes, so the
+    host rule restores the parents of its active cells. ``cells`` are the active
+    cells in ascending ID order, ``facets`` their exact facet keys and classes,
+    and every vertex issued after the source stays protected. Source cells that
+    were already removed keep their target, composed through restored parents.
+    """
+
+    protected = np.ones((vertex_count,), dtype=np.bool_)
+    protected[: source.vertex_ids.size] = request.protected_vertices
+    steps, children, parents, undone = [], [], [], []
+    while True:
+        roots = _undone_subdivisions(
+            cells, flags, subdivisions, protected, facets, source.dimension
+        )
+        if roots is None:
+            break
+        cells, flags, subdivisions, step, child_ids, parent_ids, ids, restored = roots
+        steps.append(step)
+        children.append(child_ids)
+        parents.append(parent_ids)
+        undone.append(ids)
+        facets = (
+            np.concatenate((facets[0], restored[0])),
+            np.concatenate((facets[1], restored[1])),
+        )
+    if not steps:
+        return None
+    link_children = np.concatenate(children)
+    order = np.argsort(link_children, kind="stable")
+    link_children = link_children[order]
+    link_parents = np.concatenate(parents)[order]
+
+    def resolved(values: np.ndarray, /) -> np.ndarray:
+        result = values.copy()
+        for _ in steps:
+            linked = _members(link_children, result)
+            result[linked] = link_parents[np.searchsorted(link_children, result[linked])]
+        return result
+
+    newly = source.cells.ids[_members(link_children, source.cells.ids)]
+    removed = np.concatenate((removed_ids, newly))
+    targets = np.concatenate((resolved(link_targets), resolved(newly)))
+    order = np.argsort(removed, kind="stable")
+    return _EpochSubdivisions(
+        cells,
+        subdivisions,
+        tuple(steps),
+        removed[order],
+        targets[order],
+        link_children,
+        np.concatenate(undone),
+    )
+
+
 def _resolved_stencil(growth: _Growth, vertex_base: int, dimension: int, /) -> Any:
     """Source-vertex stencil of every new vertex, composed level by level."""
 

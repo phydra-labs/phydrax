@@ -214,9 +214,7 @@ def test_device_adaptation_scenario_1() -> None:
     )
     _assert_same_arrays(
         partitioned.states,
-        eqx.tree_at(
-            lambda value: value.clocks, update.state, partitioned.states.clocks
-        ),
+        eqx.tree_at(lambda value: value.clocks, update.state, partitioned.states.clocks),
     )
     with pytest.raises(MeshingFailure) as rejection:
         commit_partitioned_adaptive_simplex(partitioned, update.state)
@@ -255,8 +253,6 @@ def _cells(mesh: CellMesh) -> np.ndarray:
 
 def _cell_ids(mesh: CellMesh) -> np.ndarray:
     return np.concatenate(tuple(np.asarray(block.global_ids) for block in mesh.blocks))
-
-
 
 
 def _assert_same_target(host: Any, device: Any) -> None:
@@ -345,6 +341,47 @@ def _assert_same_arrays(first: Any, second: Any) -> None:
     assert all(
         np.array_equal(left, right) for left, right in zip(before, after, strict=True)
     )
+
+
+def test_device_coarsening_undoes_barycentric_subdivision_like_the_host() -> None:
+    points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
+    source = _certified(
+        CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
+    )
+    options = {"compatibility": BisectionCompatibility.UNIFORM_REFINEMENT}
+    host_route = MeshAdaptationRoute.NATIVE_BISECTION
+    device_route = MeshAdaptationRoute.DEVICE_BISECTION
+    subdivided = _adapt(host_route, source, (0,), **options)
+    refined = _adapt(
+        host_route,
+        subdivided.target,
+        np.sort(_cell_ids(subdivided.target.mesh))[::3],
+        hierarchy=subdivided.hierarchy,
+        **options,
+    )
+    for epoch in (subdivided, refined):
+        hierarchy = epoch.hierarchy
+        every = np.sort(_cell_ids(epoch.target.mesh))
+        # One source cell's children alone keep the shared midpoint: rejected.
+        one_side = np.intersect1d(
+            every, np.asarray(subdivided.hierarchy.subdivision_child_ids)[1]
+        )
+        for coarsen in (one_side, every):
+            host = _adapt(
+                host_route, epoch.target, (), coarsen, hierarchy=hierarchy, **options
+            )
+            device = _adapt(
+                device_route, epoch.target, (), coarsen, hierarchy=hierarchy, **options
+            )
+            _assert_same_target(host, device)
+            np.testing.assert_array_equal(
+                device.evidence.rejected_coarsening_ids,
+                host.evidence.rejected_coarsening_ids,
+            )
+            assert device.evidence.restored_cells == host.evidence.restored_cells
+        assert device.target.mesh.topology_id == source.mesh.topology_id
+        assert np.asarray(device.hierarchy.subdivision_parent_ids).size == 0
+        np.testing.assert_array_equal(np.asarray(device.hierarchy.tags), (0, 0))
 
 
 def test_device_adaptation_scenario_2() -> None:
@@ -455,9 +492,9 @@ def _geometry_failure(source: Any) -> Any:
 
 def _assert_same_active_simplex(first: Any, second: Any) -> None:
     for state in (first, second):
-        assert np.all(np.asarray(state.mesh.cell_active)[
-            np.asarray(state.mesh.cell_ids) < 0
-        ] == 0)
+        assert np.all(
+            np.asarray(state.mesh.cell_active)[np.asarray(state.mesh.cell_ids) < 0] == 0
+        )
     first_cells = np.asarray(first.mesh.cell_ids)[np.asarray(first.mesh.cell_active)]
     second_cells = np.asarray(second.mesh.cell_ids)[np.asarray(second.mesh.cell_active)]
     np.testing.assert_array_equal(first_cells, second_cells)

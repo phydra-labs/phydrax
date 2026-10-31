@@ -84,6 +84,8 @@ from ._bisection import (
     _Cells,
     _Coarsening,
     _edit,
+    _EpochSubdivisions,
+    _Flags,
     _Front,
     _global_vertices,
     _Growth,
@@ -96,10 +98,12 @@ from ._bisection import (
     _resolved_stencil,
     _resubdivided,
     _reverse_supports,
+    _select,
     _SHIFT,
     _Source,
     _Start,
     _target_hierarchy,
+    _undone_epoch_subdivisions,
     BisectionEvidence,
     BisectionHierarchy,
 )
@@ -312,14 +316,12 @@ def _vertices(start: _Start, source: _Source, request: Any, /) -> Any:
     }
 
 
-def _prepared_simplex(adaptation: PreparedMeshAdaptation, /) -> PreparedAdaptiveSimplex:
-    policy = adaptation.policy
-    device = policy.device_policy
+def _simplex_request(adaptation: PreparedMeshAdaptation, source: _Source, /) -> Any:
+    """Protection and organization classes of one prepared device source."""
+
     constraints = adaptation.constraints
-    mesh = adaptation.source.mesh
-    source = _prepared_source(mesh)
     empty = np.zeros((0,), dtype=np.int64)
-    request = _prepared_request(
+    return _prepared_request(
         source,
         empty,
         empty,
@@ -328,6 +330,14 @@ def _prepared_simplex(adaptation: PreparedMeshAdaptation, /) -> PreparedAdaptive
         constraints.cell_classes,
         constraints.facet_classes,
     )
+
+
+def _prepared_simplex(adaptation: PreparedMeshAdaptation, /) -> PreparedAdaptiveSimplex:
+    policy = adaptation.policy
+    device = policy.device_policy
+    mesh = adaptation.source.mesh
+    source = _prepared_source(mesh)
+    request = _simplex_request(adaptation, source)
     # ty: ignore[unresolved-attribute]
     hierarchy = adaptation.request.hierarchy
     start = (
@@ -483,6 +493,8 @@ class _HostEpoch(NamedTuple):
     retired: np.ndarray
     refine_rejected: np.ndarray
     coarsen_marked: np.ndarray
+    cell_classes: np.ndarray
+    facet_classes: np.ndarray
     vertex_ids: np.ndarray
     vertex_active: np.ndarray
     coordinates: np.ndarray
@@ -513,6 +525,8 @@ def _host_epoch(state: AdaptiveSimplexState, /) -> _HostEpoch:
         np.asarray(host.retired, dtype=np.bool_),
         np.asarray(host.refine_rejected, dtype=np.bool_),
         np.asarray(host.coarsen_marked, dtype=np.bool_),
+        np.asarray(host.cell_classes, dtype=np.int64),
+        np.asarray(host.facet_classes, dtype=np.int64),
         np.asarray(mesh.vertex_ids, dtype=np.int64),
         np.asarray(mesh.vertex_active, dtype=np.bool_),
         # Exact widening: host predicates resolve the device coordinates.
@@ -581,8 +595,16 @@ def _growth(anchor: _Anchor, host: _HostEpoch, count: int, /) -> _Growth:
     )
 
 
-def _supports(anchor: _Anchor, host: _HostEpoch, /) -> np.ndarray:
-    """Surviving vertices spanning each removed source vertex (reverse passes)."""
+def _supports(
+    anchor: _Anchor,
+    host: _HostEpoch,
+    subdivision_steps: tuple[tuple[np.ndarray, np.ndarray], ...] = (),
+    /,
+) -> np.ndarray:
+    """Surviving vertices spanning each removed source vertex (reverse passes).
+
+    Undone subdivisions follow the device bisection passes.
+    """
 
     count, width = anchor.source.vertex_ids.size, anchor.source.dimension + 1
     removal = np.asarray(host.vertex_removal, dtype=np.int64)[:count]
@@ -592,6 +614,7 @@ def _supports(anchor: _Anchor, host: _HostEpoch, /) -> np.ndarray:
     for index in np.unique(removal[removal >= 0]):
         vertices = np.flatnonzero(removal == index)
         steps.append((vertices, parents[vertices]))
+    steps.extend(subdivision_steps)
     return _reverse_supports(steps, count, anchor.source.dimension)
 
 
@@ -602,6 +625,61 @@ class _Committed(NamedTuple):
     refined: bool
     coarsened: bool
     partial: bool
+
+
+def _epoch_subdivisions(
+    prepared: PreparedAdaptiveSimplex,
+    host: _HostEpoch,
+    cells: _Cells,
+    target: np.ndarray,
+    restored: np.ndarray,
+    lineage: _Lineage,
+    vertex_count: int,
+    /,
+) -> _EpochSubdivisions | None:
+    """Host undo of the barycentric subdivisions the device coarsening exposed.
+
+    The compiled passes coarsen bisection families only; the recorded
+    subdivisions are then removed by the host rule on the active cells, whose
+    facet classes the device maintained. Parents the device restored count as
+    marked, as host-restored parents do.
+    """
+
+    anchor = prepared.anchor
+    source, subdivisions = anchor.source, anchor.start.subdivisions
+    if subdivisions.parent_ids.size == 0:
+        return None
+    count = int(host.cursors[1])
+    width = source.dimension + 1
+    columns = np.asarray(
+        [[j for j in range(width) if j != i] for i in range(width)], dtype=np.intp
+    )
+    keys, first = np.unique(
+        np.sort(cells.rows[:, columns], axis=2).reshape((-1, width - 1)),
+        axis=0,
+        return_index=True,
+    )
+    facet_classes = np.asarray(host.facet_classes)[:count][target].reshape((-1,))
+    marked = np.asarray(host.coarsen_marked)[:count].copy()
+    marked[restored] = True
+    order = np.argsort(cells.ids, kind="stable")
+    flags = _Flags(
+        marked[target][order],
+        np.zeros(order.shape, dtype=np.bool_),
+        np.asarray(host.cell_classes)[:count][target][order],
+    )
+    return _undone_epoch_subdivisions(
+        source,
+        _simplex_request(prepared.adaptation, source),
+        subdivisions,
+        _select(cells, order),
+        flags,
+        # Device facet classes are source class + 1 (0: created by bisection).
+        (keys, facet_classes[first] - 1),
+        vertex_count,
+        lineage.removed_ids,
+        lineage.link_targets,
+    )
 
 
 def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
@@ -649,6 +727,25 @@ def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
     rejected_coarsenings = ids[marked]
     prepared_slots = anchor.cell_ids.size
     restored = np.flatnonzero(active[:prepared_slots] & (anchor.slot_origins < 0))
+    restored_count = restored.size
+    removed_ids, link_targets = lineage.removed_ids, lineage.link_targets
+    subdivisions, subdivision_steps = start.subdivisions, ()
+    undone = _epoch_subdivisions(
+        prepared, host, cells, target, restored, lineage, vertex_count
+    )
+    if undone is not None:
+        cells, subdivisions = undone.cells, undone.subdivisions
+        subdivision_steps = undone.steps
+        removed_ids, link_targets = undone.removed_ids, undone.link_targets
+        removed_vertices = np.union1d(
+            removed_vertices, np.concatenate([step[0] for step in subdivision_steps])
+        )
+        rejected_coarsenings = rejected_coarsenings[
+            ~np.isin(rejected_coarsenings, undone.undone_children)
+        ]
+        restored_count += undone.restored_ids.size - int(
+            np.count_nonzero(np.isin(ids[restored], undone.undone_children))
+        )
     coarsening = _Coarsening(
         _Cells(
             ids[restored],
@@ -659,12 +756,12 @@ def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
             ids[restored],
             generations[restored],
         ),
-        lineage.removed_ids,
-        lineage.link_targets,
+        removed_ids,
+        link_targets,
         np.zeros((0,), dtype=np.int64),
         removed_vertices,
-        _supports(anchor, host),
-        int(counters[AdaptiveSimplexCounter.COARSENING_PASSES]),
+        _supports(anchor, host, subdivision_steps),
+        int(counters[AdaptiveSimplexCounter.COARSENING_PASSES]) + len(subdivision_steps),
         rejected_coarsenings,
     )
     front = _Front(
@@ -684,8 +781,9 @@ def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
     )
     edit, retired_tables = _edit(source, start, refinement, coarsening, cells)
     hierarchy = _target_hierarchy(
-        source, start, cells, records, start.subdivisions, retired_tables, front
+        source, start, cells, records, subdivisions, retired_tables, front
     )
+    subdivision_vertices = sum(step[0].size for step in subdivision_steps)
     evidence = BisectionEvidence(
         requested_refinements=int(counters[AdaptiveSimplexCounter.REQUESTED_REFINEMENTS]),
         accepted_refinements=int(counters[AdaptiveSimplexCounter.ACCEPTED_REFINEMENTS]),
@@ -699,9 +797,10 @@ def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
         incompatible_facets=start.incompatible,
         uniform_refinement_applied=start.uniform,
         requested_coarsenings=int(counters[AdaptiveSimplexCounter.REQUESTED_COARSENINGS]),
-        coarsened_vertices=int(counters[AdaptiveSimplexCounter.COARSENED_VERTICES]),
-        coarsening_passes=int(counters[AdaptiveSimplexCounter.COARSENING_PASSES]),
-        restored_cells=restored.size,
+        coarsened_vertices=int(counters[AdaptiveSimplexCounter.COARSENED_VERTICES])
+        + subdivision_vertices,
+        coarsening_passes=coarsening.passes,
+        restored_cells=restored_count,
         rejected_coarsening_ids=rejected_coarsenings,
     )
     return _Committed(
