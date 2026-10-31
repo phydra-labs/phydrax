@@ -109,6 +109,7 @@ def _register_model_archive_types() -> None:
         ExactPowerCellGeometrySource,
     )
     from ..discretization._fv_precision import FiniteVolumePrecisionPolicy
+    from ..discretization._hexahedral import HexahedralConnectivity
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..discretization._measure import DiscreteMeasure
     from ..discretization._nested_reference_types import (
@@ -312,7 +313,7 @@ def _register_model_archive_types() -> None:
         JacobiPreconditionerBuilder,
         PreconditioningPolicy,
     )
-    from ..linalg._properties import OperatorProperties
+    from ..linalg._properties import OperatorCapabilities, OperatorProperties
     from ..linalg._spaces import ArraySpace, ArraySpaceArchiveRecipe
     from ..meshing._association import (
         GeometryAssociation,
@@ -587,6 +588,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", PeriodicPointOrbits),
         ("phydrax.discretization", PolygonalConnectivity),
         ("phydrax.discretization", PolyhedralBlock),
+        ("phydrax.discretization", HexahedralConnectivity),
         ("phydrax.discretization", PolyhedralConnectivity),
         ("phydrax.discretization", PreparedTensorGrid),
         ("phydrax.discretization", SimplicialConnectivity),
@@ -611,6 +613,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.linalg", HilbertComplex),
         ("phydrax.linalg", EuclideanPairing),
         ("phydrax.linalg", DiagonalPairing),
+        ("phydrax.linalg", OperatorCapabilities),
         ("phydrax.linalg", OperatorProperties),
         ("phydrax.linalg", OperatorPairing),
         ("phydrax.linalg._operator_pairing", OperatorPairingArchiveRecipe),
@@ -1400,30 +1403,30 @@ def _require_periodic_distributed_transfer_current(composition: Any, /) -> None:
         or settings_entry.structure_id != settings_id
         or settings_entry.revision_id != settings_id
         or settings_entry.semantics_id != "periodic-finite-element-transfer-settings"
-        or settings_entry.dependencies
-        != (mesh_entry.binding("structure"), mesh_entry.binding("revision"))
+        or frozenset(settings_entry.dependencies)
+        != {mesh_entry.binding("structure"), mesh_entry.binding("revision")}
         or periodic_entry.role != "transfer"
         or periodic_entry.owner_id != "phydrax.discretization.fem"
         or periodic_entry.structure_id != periodic.complex_map.map_id
         or periodic_entry.revision_id != periodic.transfer_id
         or periodic_entry.semantics_id != "periodic-finite-element-quotient-transfer"
-        or periodic_entry.dependencies
-        != (
+        or frozenset(periodic_entry.dependencies)
+        != {
             mesh_entry.binding("structure"),
             mesh_entry.binding("revision"),
             settings_entry.binding("semantics"),
-        )
+        }
         or distributed_entry.role != "transfer"
         or distributed_entry.owner_id != "phydrax.discretization.fem"
         or distributed_entry.structure_id != distributed.complex_map.map_id
         or distributed_entry.revision_id != distributed.transfer_id
         or distributed_entry.semantics_id
         != "distributed-finite-element-quotient-transfer"
-        or distributed_entry.dependencies
-        != (
+        or frozenset(distributed_entry.dependencies)
+        != {
             periodic_entry.binding("revision"),
             settings_entry.binding("semantics"),
-        )
+        }
         or composition.boundary_id != "periodic-distributed-fe-transfer:archive"
     ):
         raise ValueError("Periodic FE source-context bindings changed.")

@@ -68,6 +68,10 @@ NATIVE_CASE_REGISTRY = {
         ".scenarios.cold_fe_fv",
         "native_cold_fe_fv_continuation",
     ),
+    "native-cold-owner-local": (
+        ".scenarios.cold_owner_local",
+        "native_cold_owner_local",
+    ),
     "native-design-loop": (".scenarios.native_design", "native_design_loop"),
 }
 
