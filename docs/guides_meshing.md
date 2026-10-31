@@ -578,9 +578,14 @@ exactly collinear/coplanar with their sources even when `S` is not a binary64
 point. After recovery such points are suppressed again: under `FIXED` every
 boundary split point, under `CONFORMING` every split point that is not a binary64
 point. Suppression retriangulates the subfaces through the point within their own
-planes and refills its star by contraction onto a neighbour, an exact Steiner-free
-gift-wrapped fill, or cones from interior volume points, each accepted only after
-exact positivity and cavity-boundary checks. Published boundary vertices
+planes and refills each wedge of its star by contraction onto a neighbour, else by
+the first of: the exact constrained Delaunay gift-wrapped fill, cones from one
+cavity vertex, the constrained Delaunay fill with interior volume points, cones
+from one binary64 interior point, and finally an exact exhaustive Steiner-free
+search. Deciding whether a Steiner-free fill exists is NP-complete, so the
+polynomial fills come first and the search, whose use is reported in
+`PlcRecovery3D.suppression_search`, runs only when they all fail. Every fill is
+accepted only after exact positivity and cavity-boundary checks. Published boundary vertices
 therefore lie exactly on their sources. A point that cannot be removed is a typed
 refusal naming its source entity: `STEINER_SUPPRESSION` under `CONFORMING`,
 `FIXED_SEGMENT`/`FIXED_FACET` under `FIXED`. A requested curve feature on an

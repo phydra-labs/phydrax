@@ -2223,6 +2223,150 @@ void test_recover_plc_removes_a_closed_cavity() {
   }
 }
 
+// Point 1455 of a 1552-point CAD PLC under FIXED: its ear-clipped wedge has
+// no constrained Delaunay fill and no cavity vertex sees every wall, but a
+// Steiner-free fill exists; the exhaustive search must find it. Vertices are
+// relabelled 0..13; seven are witnessed split points with exact positions.
+void test_suppression_wedge_without_delaunay_fill_is_searched() {
+  constexpr int32_t kPlaceholder = std::numeric_limits<int32_t>::min() / 2;
+  const std::array<double, 42> points{
+      -0x1.1999999999998p+0, -0x1.6666666666664p-1, 0x1.bc52a869d13cfp+0,
+      -0x1.1999999999998p+0, -0x1.3ee9e7ee94666p-1, 0x1.c6f1726f1c333p+0,
+      -0x1.ed218e7d83891p-1, -0x1.333333333333p-2, 0x1.0cccccccccccep+1,
+      -0x1.c09dc1ffdf5bp-1, -0x1.e7a1ea66251c8p-2, 0x1.0cccccccccccep+1,
+      -0x1.f4ca60e969affp-1, -0x1.6cc31d3f40596p-3, 0x1.0cccccccccccep+1,
+      -0x1.ff814acc7e089p-1, -0x1.89e6425e51188p-2, 0x1.01f66ae769103p+1,
+      -0x1.a9c3fa71f4f7ap-1, -0x1.999999999998p-4, 0x1.1ad780719b708p+1,
+      -0x1.1b461bb45155p-1, -0x1.eba02ab4e65f5p-2, 0x1.2220da22b5454p+1,
+      -0x1.42eb7e2f660ep-1, -0x1.2679d7fe90b02p-1, 0x1.198f92899670fp+1,
+      -0x1.1069bb721c59cp+0, -0x1.139060590573ap-1, 0x1.dc9e3639e3ac9p+0,
+      -0x1.0a45bd91db2c5p+0, -0x1.0075e5475b2cbp-1, 0x1.e873511060528p+0,
+      -0x1.0c3f75ef25046p+0, -0x1.ffd2211d1c739p-2, 0x1.e671de1f1f499p+0,
+      -0x1.07fb18f19eff6p+0, -0x1.ea12f2a8e590dp-2, 0x1.eda55b599fabap+0,
+      -0x1.0b83bc3d7f7a4p+0, -0x1.ff5ae71152c85p-2, 0x1.e729f80422e74p+0};
+  const std::array<int32_t, 7> witnessed{5, 6, 7, 8, 9, 10, 11};
+  const std::array<SourceStratum, 7> strata{
+      SourceStratum::kSegment, SourceStratum::kSegment, SourceStratum::kSegment, SourceStratum::kSegment, SourceStratum::kSegment, SourceStratum::kFacet, SourceStratum::kSegment};
+  const std::array<double, 63> corners{
+      -0x1.1999999999998p+0, -0x1.3ee9e7ee94666p-1, 0x1.c6f1726f1c333p+0,
+      -0x1.ed218e7d83891p-1, -0x1.333333333333p-2, 0x1.0cccccccccccep+1,
+      0.0, 0.0, 0.0,
+      -0x1.ed218e7d83891p-1, -0x1.333333333333p-2, 0x1.0cccccccccccep+1,
+      -0x1.6666666666664p-1, 0x1.99999999999cp-4, 0x1.28e234166a143p+1,
+      0.0, 0.0, 0.0,
+      -0x1.6666666666664p-1, -0x1.5206911b4cc5dp-1, 0x1.11e4c21f9335p+1,
+      -0x1.a04ba20478876p-2, -0x1.333333333333p-2, 0x1.325cf225d7559p+1,
+      0.0, 0.0, 0.0,
+      -0x1.6666666666664p-1, -0x1.5206911b4cc5dp-1, 0x1.11e4c21f9335p+1,
+      -0x1.a04ba20478876p-2, -0x1.333333333333p-2, 0x1.325cf225d7559p+1,
+      0.0, 0.0, 0.0,
+      -0x1.1999999999998p+0, -0x1.3ee9e7ee94666p-1, 0x1.c6f1726f1c333p+0,
+      -0x1.ed218e7d83891p-1, -0x1.333333333333p-2, 0x1.0cccccccccccep+1,
+      0.0, 0.0, 0.0,
+      -0x1.1999999999998p+0, -0x1.6666666666664p-1, 0x1.bc52a869d13cfp+0,
+      -0x1.ed218e7d83891p-1, -0x1.333333333333p-2, 0x1.0cccccccccccep+1,
+      -0x1.1999999999998p+0, -0x1.3ee9e7ee94666p-1, 0x1.c6f1726f1c333p+0,
+      -0x1.1999999999998p+0, -0x1.3ee9e7ee94666p-1, 0x1.c6f1726f1c333p+0,
+      -0x1.ed218e7d83891p-1, -0x1.333333333333p-2, 0x1.0cccccccccccep+1,
+      0.0, 0.0, 0.0};
+  const std::array<double, 14> parameters{
+      0x1.79bd5fc7dda52p-1, 0x0p+0,
+      0x1p-1, 0x0p+0,
+      0x1p-1, 0x0p+0,
+      0x1.e39bbcb4daeep-3, 0x0p+0,
+      0x1.0c85407044b5bp-2, 0x0p+0,
+      0x1.cp-2, 0x1.4p-2,
+      0x1.8642a038225aep-2, 0x0p+0};
+  const std::array<std::array<int32_t, 4>, 24> walls{{
+      {0, 5, 2, kPlaceholder},
+      {9, 10, 1, kPlaceholder},
+      {11, 10, 9, kPlaceholder},
+      {5, 10, 11, kPlaceholder},
+      {5, 0, 10, kPlaceholder},
+      {0, kPlaceholder, 2, 3},
+      {8, 12, kPlaceholder, 7},
+      {kPlaceholder, 6, 7, 12},
+      {3, 8, kPlaceholder, 7},
+      {3, kPlaceholder, 8, 12},
+      {kPlaceholder, 6, 12, 5},
+      {3, 6, 7, kPlaceholder},
+      {12, kPlaceholder, 10, 3},
+      {kPlaceholder, 11, 5, 12},
+      {5, 6, 4, kPlaceholder},
+      {2, 6, 3, kPlaceholder},
+      {3, 0, kPlaceholder, 10},
+      {10, kPlaceholder, 12, 13},
+      {kPlaceholder, 11, 12, 13},
+      {4, 6, 2, kPlaceholder},
+      {5, 4, 2, kPlaceholder},
+      {10, 1, kPlaceholder, 13},
+      {9, 11, kPlaceholder, 13},
+      {9, 1, 13, kPlaceholder}}};
+  const std::array<std::array<int32_t, 4>, 24> marks{{
+      {-1, -1, -1, 558},
+      {-1, -1, -1, 558},
+      {-1, -1, -1, 558},
+      {-1, -1, -1, 558},
+      {-1, -1, -1, 558},
+      {-1, 559, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, 585},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1},
+      {-1, -1, -1, -1}}};
+  detail::SuppressionCavity cavity;
+  cavity.points = points;
+  cavity.witnessed = witnessed;
+  cavity.witness_strata = strata;
+  cavity.witness_corners = corners;
+  cavity.witness_parameters = parameters;
+  cavity.walls = walls;
+  cavity.wall_marks = marks;
+  cavity.placeholder = kPlaceholder;
+  detail::SuppressionCavityFill fill;
+  PHX_CHECK(detail::fill_suppression_cavity(cavity, fill) == PHX_MC_OK);
+  PHX_CHECK(!fill.delaunay);
+  PHX_CHECK(fill.filled);
+  PHX_CHECK(fill.nodes > 0);
+  if (!fill.filled) return;
+  // Every wall side is closed by exactly one cell; every other cell face is
+  // shared with exactly one cell seeing it reversed.
+  std::map<FacetKey, int> sides;
+  for (const auto& cell : fill.cells) {
+    PHX_CHECK(std::find(cell.begin(), cell.end(), kPlaceholder) == cell.end());
+    for (int slot = 0; slot < 4; ++slot) {
+      int32_t face[3];
+      oriented_facet(cell.data(), slot, face);
+      ++sides[FacetKey::of(face)];
+    }
+  }
+  std::set<FacetKey> wall_sides;
+  for (const auto& wall : walls) {
+    const int slot = static_cast<int>(std::find(wall.begin(), wall.end(), kPlaceholder) - wall.begin());
+    int32_t face[3];
+    oriented_facet(wall.data(), slot, face);
+    wall_sides.insert(FacetKey::of(face));
+    PHX_CHECK(sides[FacetKey::of(face)] == 1);
+  }
+  for (const auto& [side, count] : sides) {
+    PHX_CHECK(count == 1);
+    if (!wall_sides.contains(side)) PHX_CHECK(sides.contains(side.reversed()));
+  }
+}
+
 }  // namespace
 
 
@@ -2253,5 +2397,6 @@ int main() {
   test_recover_plc_nonconvex_prism();
   test_recover_plc_removes_a_closed_cavity();
   test_recover_plc_corner_scaffold_tracks_inserted_points_and_region_interface();
+  test_suppression_wedge_without_delaunay_fill_is_searched();
   return phx::mc::test::finish("test_plc3d");
 }

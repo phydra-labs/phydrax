@@ -66,6 +66,38 @@ struct PlcInput {
   const double* segment_tolerances = nullptr;
 };
 
+namespace detail {
+
+// One suppression cavity in exact form: binary64 carriers, the witnessed
+// vertices with their source corners (three per vertex; the third is unused
+// for a segment) and parameters, and the walls (cells holding `placeholder`
+// in the slot opposite the wall face) with their per-slot marks.
+struct SuppressionCavity {
+  std::span<const double> points;
+  std::span<const int32_t> witnessed;
+  std::span<const SourceStratum> witness_strata;
+  std::span<const double> witness_corners;
+  std::span<const double> witness_parameters;
+  std::span<const std::array<int32_t, 4>> walls;
+  std::span<const std::array<int32_t, 4>> wall_marks;
+  int32_t placeholder = std::numeric_limits<int32_t>::min() / 2;
+};
+
+// The Steiner-free fill of Steiner suppression: whether the constrained
+// Delaunay fill succeeded, else whether the exhaustive search did and the
+// states it expanded; the cells of the fill.
+struct SuppressionCavityFill {
+  bool delaunay = false;
+  bool filled = false;
+  std::size_t nodes = 0;
+  std::vector<std::array<int32_t, 4>> cells;
+};
+
+// Replays the production Steiner-free cavity fill on an exact fixture.
+int32_t fill_suppression_cavity(const SuppressionCavity& cavity, SuppressionCavityFill& fill);
+
+}  // namespace detail
+
 struct PlcFailure {
   int32_t reason = kPlcNoFailure;
   int32_t first_kind = kPlcNoEntity;
@@ -77,6 +109,18 @@ struct PlcFailure {
 struct PlcSourceRefusal {
   double certified_deviation = 0.0;
   double declared_bound = 0.0;
+};
+
+// Evidence of the exhaustive Steiner-free suppression search, which runs
+// only for wedges no polynomial fill handles: how many wedges it searched
+// and filled, the states it expanded in total and at most per wedge, and
+// the largest searched wedge (cells around the suppressed point).
+struct PlcSuppressionSearch {
+  int64_t searches = 0;
+  int64_t fills = 0;
+  int64_t nodes = 0;
+  int64_t max_nodes = 0;
+  int64_t max_wedge_cells = 0;
 };
 
 // Recovered complex: input point ids are preserved and new vertices follow.
@@ -100,6 +144,7 @@ struct PlcRecovery {
   // input_triangles. Persistent source banks use SourceWitness instead.
   std::vector<PlcRecoveryWitness> witnesses;
   PlcSourceRefusal source_refusal;
+  PlcSuppressionSearch suppression_search;
   PlcFailure failure;
 };
 

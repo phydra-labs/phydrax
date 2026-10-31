@@ -888,6 +888,58 @@ class PlcRecoveryBuilder {
   const PlcSourceRefusal& source_refusal() const { return candidate_.source_refusal; }
   const PlcFailure& failure() const { return failure_; }
 
+  static int32_t run_cavity_fixture(const detail::SuppressionCavity& input,
+                                    detail::SuppressionCavityFill& result) {
+    result = detail::SuppressionCavityFill{};
+    const std::size_t witnesses = input.witnessed.size();
+    if (input.points.size() % 3 != 0 || input.witness_strata.size() != witnesses ||
+        input.witness_corners.size() != 9 * witnesses ||
+        input.witness_parameters.size() != 2 * witnesses ||
+        input.walls.size() != input.wall_marks.size() || input.placeholder >= 0) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    const std::size_t point_count = input.points.size() / 3;
+    const auto valid_vertex = [&](int32_t vertex) {
+      return vertex >= 0 && static_cast<std::size_t>(vertex) < point_count;
+    };
+    PlcInput empty_input;
+    PlcRecovery empty_source;
+    PlcRecoveryBuilder builder(empty_input, empty_source);
+    builder.work_points_.assign(input.points.begin(), input.points.end());
+    for (std::size_t row = 0; row < witnesses; ++row) {
+      if (!valid_vertex(input.witnessed[row])) return PHX_MC_INVALID_INPUT;
+      const double* corners[3] = {input.witness_corners.data() + 9 * row,
+                                  input.witness_corners.data() + 9 * row + 3,
+                                  input.witness_corners.data() + 9 * row + 6};
+      Expansion position[3];
+      if (!source_point(corners, input.witness_strata[row],
+                        input.witness_parameters.data() + 2 * row, position)) {
+        return PHX_MC_INVALID_INPUT;
+      }
+      builder.exact_points_.assign(input.witnessed[row], position);
+    }
+    std::vector<SuppressionCell> boundary;
+    boundary.reserve(input.walls.size());
+    for (std::size_t row = 0; row < input.walls.size(); ++row) {
+      if (std::count(input.walls[row].begin(), input.walls[row].end(), input.placeholder) != 1) {
+        return PHX_MC_INVALID_INPUT;
+      }
+      for (int32_t vertex : input.walls[row]) {
+        if (vertex != input.placeholder && !valid_vertex(vertex)) return PHX_MC_INVALID_INPUT;
+      }
+      boundary.push_back({input.walls[row], input.wall_marks[row]});
+    }
+    std::vector<SuppressionCell> filled;
+    result.delaunay =
+        builder.wrap_cavity(boundary, input.placeholder, {}, false, filled, result.nodes);
+    result.filled = result.delaunay ||
+        builder.wrap_cavity(boundary, input.placeholder, {}, true, filled, result.nodes);
+    if (result.filled) {
+      for (const SuppressionCell& cell : filled) result.cells.push_back(cell.v);
+    }
+    return PHX_MC_OK;
+  }
+
  private:
   int32_t fail(int32_t status, int32_t reason, int32_t first_kind, int64_t first,
                int32_t second_kind = kPlcNoEntity, int64_t second = -1) {
@@ -3277,16 +3329,19 @@ class PlcRecoveryBuilder {
   // (s, a, b, c) whose link face abc does not strictly face t, with abc
   // unconstrained and a finite neighbour (a, b, c, d), is replaced by the
   // three cells around the new edge sd when all three are exactly positive
-  // (sd crosses the open triangle abc). Each flip replaces one link face of
-  // s by three faces through d and keeps a valid complex; the pass is bounded
-  // by four times the number of cells around s at entry.
+  // (sd crosses the open triangle abc) and each of them either contains t
+  // or has a link face strictly facing t. Termination: let N be the number
+  // of finite cells around s, without t, whose link face does not strictly
+  // face t. A flip removes one such cell, adds three that are not counted,
+  // and leaves every other cell around s unchanged (the neighbour does not
+  // contain s), so N drops by one per flip and the pass ends, when no flip
+  // applies, after at most N flips.
   int32_t flip_star_toward(int32_t s, int32_t t) {
     TetrahedralComplex& complex = triangulation_->complex();
     std::vector<int32_t> cells;
     int32_t status = vertex_cells(s, cells);
     if (status != PHX_MC_OK) return status;
-    std::size_t budget = 4 * cells.size();
-    while (budget-- > 0) {
+    for (;;) {
       bool flipped = false;
       for (int32_t cell : cells) {
         const Tetrahedron tet = complex.tets[static_cast<std::size_t>(cell)];
@@ -3314,6 +3369,11 @@ class PlcRecoveryBuilder {
                                {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
           next.v[static_cast<std::size_t>(slot)] = d;
           valid = orient(next.v[0], next.v[1], next.v[2], next.v[3]) > 0;
+          if (valid && d != t) {
+            std::array<int32_t, 4> toward = next.v;
+            toward[static_cast<std::size_t>(own)] = t;
+            valid = orient(toward[0], toward[1], toward[2], toward[3]) > 0;
+          }
           next.constraints[static_cast<std::size_t>(slot)] = complex.constraint(cell, slot);
           next.constraints[static_cast<std::size_t>(own)] =
               complex.constraint(other, vertex_slot(neighbor, tet.v[slot]));
@@ -3354,7 +3414,6 @@ class PlcRecoveryBuilder {
       status = vertex_cells(s, cells);
       if (status != PHX_MC_OK) return status;
     }
-    return PHX_MC_OK;
   }
 
   // A cell of a suppression proposal and the source facet marks of its faces.
@@ -3363,24 +3422,46 @@ class PlcRecoveryBuilder {
     std::array<int32_t, 4> constraints;
   };
 
-  // Steiner-free fill of a closed cavity by exact gift wrapping. Each
-  // boundary cell carries `placeholder` in one slot: the face opposite it
-  // is a boundary face and a cavity vertex x lies on its inner side exactly
-  // when the cell with x substituted is positive. Sides of faces are keyed
-  // by the face oriented as its cell on that side sees it, so a face may
-  // bound the cavity from both sides (a slit along an open sheet). An open
-  // side is closed by a cavity vertex on its inner side; each other face of
-  // the new cell either closes an open side, or opens the far side of a new
-  // face, and may neither repeat a closed side nor lie outside a boundary
-  // face. The side with the fewest admissible apices is closed first,
-  // apices in increasing order of the number of rivals inside their
-  // circumsphere (the Delaunay choice first) after the `preferred` apex,
-  // with bounded backtracking. A finished fill is a set of positive cells
+  // Steiner-free fill of a closed cavity. Each boundary cell carries
+  // `placeholder` in one slot: the face opposite it is a boundary face (a
+  // wall) and a cavity vertex x lies on its inner side exactly when the cell
+  // with x substituted is positive. Sides of faces are keyed by the face
+  // oriented as its cell on that side sees it, so a face may bound the
+  // cavity from both sides (a slit along an open sheet). An open side is
+  // closed by an apex: a vertex on its inner side that is visible through
+  // it (the new cell's interior meets no wall). Each other face of the new
+  // cell closes an open side or opens its far side, and may neither repeat a
+  // closed side nor lie outside a wall. Apices are ordered by the pencil of
+  // spheres through the side (the exact symbolically perturbed insphere
+  // test orders them totally). A finished fill is a set of positive cells
   // with every face paired and the cavity boundary as boundary, hence the
   // 3-chain of the cavity: the cells tile it.
+  //
+  // Without `exhaustive`, the least open side takes its first apex, with no
+  // backtracking: the gift-wrapping construction of the constrained
+  // Delaunay tetrahedralization of the cavity (Shewchuk, "General-
+  // dimensional constrained Delaunay and constrained regular triangulations
+  // I", DCG 39, 2008). When that tetrahedralization exists (unique under the
+  // perturbation) every step adds one of its cells in any side order, so a
+  // failure means the cavity has none. Each step closes its side for good,
+  // so the fill takes at most one step per cell, each costing
+  // O(candidates * walls) predicates.
+  //
+  // With `exhaustive`, the search branches over every apex of the open side
+  // with the fewest apices and backtracks, so it finds a Steiner-free fill
+  // whenever one exists (every fill closes that side by one of its apices,
+  // and every cell of a fill is visible). The state is the set of closed
+  // sides, which determines the open ones; failed states are remembered and
+  // never explored again, so each state is expanded at most once and the
+  // search ends. Deciding whether a polyhedron has a Steiner-free
+  // tetrahedralization is NP-complete (Ruppert and Seidel, "On the
+  // difficulty of triangulating three-dimensional nonconvex polyhedra",
+  // DCG 7, 1992), so no polynomial method is complete; the caller reaches
+  // this search only after its polynomial fills have failed. `nodes`
+  // receives the number of states expanded.
   bool wrap_cavity(const std::vector<SuppressionCell>& boundary, int32_t placeholder,
-                   int32_t preferred, const std::vector<int32_t>& interior,
-                   std::vector<SuppressionCell>& filled) const {
+                   const std::vector<int32_t>& interior, bool exhaustive,
+                   std::vector<SuppressionCell>& filled, std::size_t& nodes) const {
     struct Open {
       std::array<int32_t, 4> cell;
       int slot;
@@ -3401,6 +3482,7 @@ class PlcRecoveryBuilder {
     std::map<FacetKey, Open> front;
     std::set<FacetKey> outside;
     std::set<int32_t> vertices;
+    std::vector<Triple> walls;
     for (const SuppressionCell& cell : boundary) {
       const auto found = std::find(cell.v.begin(), cell.v.end(), placeholder);
       if (found == cell.v.end()) return false;
@@ -3411,124 +3493,204 @@ class PlcRecoveryBuilder {
         return false;
       }
       outside.insert(side.reversed());
+      walls.push_back({side.a, side.b, side.c});
       for (int k = 0; k < 4; ++k) {
         if (k != slot) vertices.insert(cell.v[static_cast<std::size_t>(k)]);
       }
     }
     // Interior candidates: volume points that may become apices.
     vertices.insert(interior.begin(), interior.end());
-    std::set<FacetKey> closed;
-    filled.clear();
-    // Whether a vertex closes an open side depends only on the oriented
-    // side, so each side's admissible apices are found once per fill and
-    // ordered once, when the side is first chosen.
-    struct Apices {
-      std::vector<int32_t> order;
-      bool sorted = false;
+    // The interior of the positive cell `tet` misses the closed wall exactly
+    // when a plane separates them; the facets of the Minkowski difference
+    // of two polytopes are parallel to a face of either or to an edge of
+    // each, so these planes are the cell's face planes, the wall's plane,
+    // and the planes through a cell edge parallel to a wall edge.
+    const auto separated = [&](const std::array<int32_t, 4>& tet, const Triple& wall) {
+      for (int slot = 0; slot < 4; ++slot) {
+        if (std::none_of(wall.begin(), wall.end(), [&](int32_t x) {
+              return positive(with(tet, slot, x));
+            })) {
+          return true;
+        }
+      }
+      bool above = false;
+      bool below = false;
+      for (int32_t x : tet) {
+        const int side = orient(wall[0], wall[1], wall[2], x);
+        above = above || side > 0;
+        below = below || side < 0;
+      }
+      if (!(above && below)) return true;
+      constexpr int kEdges[6][4] = {{0, 1, 2, 3}, {0, 2, 1, 3}, {0, 3, 1, 2},
+                                    {1, 2, 0, 3}, {1, 3, 0, 2}, {2, 3, 0, 1}};
+      for (const auto& edge : kEdges) {
+        const ExactPointRef p = ref(tet[static_cast<std::size_t>(edge[0])]);
+        const ExactPointRef q = ref(tet[static_cast<std::size_t>(edge[1])]);
+        const ExactPointRef o1 = ref(tet[static_cast<std::size_t>(edge[2])]);
+        const ExactPointRef o2 = ref(tet[static_cast<std::size_t>(edge[3])]);
+        for (int k = 0; k < 3; ++k) {
+          const int32_t r = wall[static_cast<std::size_t>(k)];
+          const int32_t s = wall[static_cast<std::size_t>((k + 1) % 3)];
+          const int32_t m = wall[static_cast<std::size_t>((k + 2) % 3)];
+          // e = p + (s - r): the plane through p, q, e contains pq and is
+          // parallel to rs.
+          Expansion e[3];
+          double carrier[3];
+          for (int axis = 0; axis < 3; ++axis) {
+            e[axis] = coordinate(p, axis) + coordinate(ref(s), axis) - coordinate(ref(r), axis);
+            carrier[axis] = e[axis].estimate();
+          }
+          const ExactPointRef through{carrier, e};
+          if (collinear(p, q, through)) continue;
+          const int a1 = orient3d(p, q, through, o1);
+          const int a2 = orient3d(p, q, through, o2);
+          const int b1 = orient3d(p, q, through, ref(r));
+          const int b2 = orient3d(p, q, through, ref(m));
+          if ((a1 <= 0 && a2 <= 0 && b1 >= 0 && b2 >= 0) ||
+              (a1 >= 0 && a2 >= 0 && b1 <= 0 && b2 <= 0)) {
+            return true;
+          }
+        }
+      }
+      return false;
     };
-    std::map<FacetKey, Apices> apices;
-    const auto apices_of = [&](const FacetKey& side, const Open& open) -> Apices& {
+    // Apices of an open side: the vertices on its inner side whose cell is
+    // visible, in pencil order (number of rivals inside the sphere through
+    // the side). Both depend only on the oriented side and are kept per fill.
+    std::map<FacetKey, std::vector<int32_t>> apices;
+    const auto apices_of = [&](const FacetKey& side, const Open& open) -> const std::vector<int32_t>& {
       const auto known = apices.find(side);
       if (known != apices.end()) return known->second;
-      Apices found;
+      std::vector<int32_t> candidates;
       for (int32_t vertex : vertices) {
         if (vertex == side.a || vertex == side.b || vertex == side.c) continue;
-        if (positive(with(open.cell, open.slot, vertex))) found.order.push_back(vertex);
+        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
+        if (!positive(tet)) continue;
+        if (std::all_of(walls.begin(), walls.end(),
+                        [&](const Triple& wall) { return separated(tet, wall); })) {
+          candidates.push_back(vertex);
+        }
       }
-      return apices.emplace(side, std::move(found)).first->second;
+      std::vector<std::pair<int, int32_t>> ranked;
+      ranked.reserve(candidates.size());
+      for (int32_t vertex : candidates) {
+        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
+        int inside = 0;
+        for (int32_t rival : candidates) {
+          if (rival == vertex) continue;
+          inside += insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
+                                 tet[0], tet[1], tet[2], tet[3], rival) > 0 ? 1 : 0;
+        }
+        ranked.push_back({inside, vertex});
+      }
+      std::sort(ranked.begin(), ranked.end());
+      std::vector<int32_t> order;
+      order.reserve(ranked.size());
+      for (const auto& entry : ranked) order.push_back(entry.second);
+      return apices.emplace(side, std::move(order)).first->second;
     };
-    std::size_t budget = 4096;
+    // Closing side `key` by `apex`: the new cell, the open sides its other
+    // faces close, the sides they seal, and the far sides they open; false
+    // when a face repeats a closed side or lies outside a wall.
+    struct Step {
+      SuppressionCell cell;
+      std::vector<std::pair<FacetKey, Open>> matched;
+      std::vector<FacetKey> sealed;
+      std::vector<std::pair<FacetKey, Open>> opened;
+    };
+    std::set<FacetKey> closed;
+    const auto plan = [&](const Open& open, int32_t apex, Step& step) {
+      step = Step{};
+      const std::array<int32_t, 4> tet = with(open.cell, open.slot, apex);
+      step.cell = {tet, {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+      step.cell.constraints[static_cast<std::size_t>(open.slot)] = open.constraint;
+      for (int slot = 0; slot < 4; ++slot) {
+        if (slot == open.slot) continue;
+        const FacetKey side = side_of(tet, slot);
+        const auto other = front.find(side);
+        if (other != front.end()) {
+          step.cell.constraints[static_cast<std::size_t>(slot)] = other->second.constraint;
+          step.matched.push_back(*other);
+          continue;
+        }
+        if (closed.contains(side) || outside.contains(side)) return false;
+        step.sealed.push_back(side);
+        const FacetKey far = side.reversed();
+        if (closed.contains(far) || front.contains(far)) continue;
+        // The cell across this face lies on its other side.
+        std::array<int32_t, 4> flipped = with(tet, slot, placeholder);
+        std::swap(flipped[static_cast<std::size_t>((slot + 1) % 4)],
+                  flipped[static_cast<std::size_t>((slot + 2) % 4)]);
+        step.opened.push_back({far, Open{flipped, slot, kNoConstraint}});
+      }
+      return true;
+    };
+    const auto apply = [&](const FacetKey& key, const Step& step) {
+      front.erase(key);
+      closed.insert(key);
+      for (const auto& [side, entry] : step.matched) {
+        (void)entry;
+        front.erase(side);
+        closed.insert(side);
+      }
+      for (const FacetKey& side : step.sealed) closed.insert(side);
+      for (const auto& [side, entry] : step.opened) front.emplace(side, entry);
+      filled.push_back(step.cell);
+    };
+    filled.clear();
+    nodes = 0;
+    if (!exhaustive) {
+      while (!front.empty()) {
+        const FacetKey key = front.begin()->first;
+        const Open open = front.begin()->second;
+        const std::vector<int32_t>& order = apices_of(key, open);
+        Step step;
+        if (order.empty() || !plan(open, order.front(), step)) return false;
+        apply(key, step);
+        ++nodes;
+      }
+      return true;
+    }
+    const auto undo = [&](const FacetKey& key, const Open& open, const Step& step) {
+      filled.pop_back();
+      for (const auto& [side, entry] : step.opened) {
+        (void)entry;
+        front.erase(side);
+      }
+      for (const FacetKey& side : step.sealed) closed.erase(side);
+      for (const auto& [side, entry] : step.matched) {
+        closed.erase(side);
+        front.emplace(side, entry);
+      }
+      closed.erase(key);
+      front.emplace(key, open);
+    };
+    std::set<std::vector<FacetKey>> failed;
     std::function<bool()> search = [&]() -> bool {
       if (front.empty()) return true;
-      if (budget == 0) return false;
-      --budget;
+      std::vector<FacetKey> state(closed.begin(), closed.end());
+      if (failed.contains(state)) return false;
+      ++nodes;
       FacetKey key{};
-      Apices* candidates = nullptr;
-      for (const auto& [side, open] : front) {
-        Apices& admissible = apices_of(side, open);
-        if (admissible.order.empty()) return false;
-        if (candidates == nullptr || admissible.order.size() < candidates->order.size()) {
+      Open open{};
+      const std::vector<int32_t>* order = nullptr;
+      for (const auto& [side, entry] : front) {
+        const std::vector<int32_t>& candidates = apices_of(side, entry);
+        if (order == nullptr || candidates.size() < order->size()) {
           key = side;
-          candidates = &admissible;
+          open = entry;
+          order = &candidates;
         }
+        if (candidates.empty()) break;
       }
-      const Open open = front.at(key);
-      if (!candidates->sorted) {
-        std::vector<std::pair<int, int32_t>> ranked;
-        for (int32_t vertex : candidates->order) {
-          const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
-          int inside = 0;
-          for (int32_t rival : candidates->order) {
-            if (rival == vertex) continue;
-            inside += insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
-                                   tet[0], tet[1], tet[2], tet[3], rival) > 0 ? 1 : 0;
-          }
-          // The preferred apex (the contraction target) goes first.
-          ranked.push_back({vertex == preferred ? -1 : inside, vertex});
-        }
-        std::sort(ranked.begin(), ranked.end());
-        for (std::size_t row = 0; row < ranked.size(); ++row) {
-          candidates->order[row] = ranked[row].second;
-        }
-        candidates->sorted = true;
-      }
-      for (int32_t vertex : candidates->order) {
-        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
-        SuppressionCell cell{tet, {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
-        cell.constraints[static_cast<std::size_t>(open.slot)] = open.constraint;
-        std::vector<FacetKey> matched;
-        std::vector<FacetKey> sealed;
-        std::vector<std::pair<FacetKey, Open>> opened;
-        bool valid = true;
-        for (int slot = 0; slot < 4 && valid; ++slot) {
-          if (slot == open.slot) continue;
-          const FacetKey side = side_of(tet, slot);
-          const auto other = front.find(side);
-          if (other != front.end()) {
-            matched.push_back(side);
-            cell.constraints[static_cast<std::size_t>(slot)] = other->second.constraint;
-            continue;
-          }
-          if (closed.contains(side) || outside.contains(side)) {
-            valid = false;
-            break;
-          }
-          sealed.push_back(side);
-          const FacetKey far = side.reversed();
-          if (closed.contains(far) || front.contains(far)) continue;
-          // The cell across this face lies on its other side.
-          std::array<int32_t, 4> flipped = with(tet, slot, placeholder);
-          std::swap(flipped[static_cast<std::size_t>((slot + 1) % 4)],
-                    flipped[static_cast<std::size_t>((slot + 2) % 4)]);
-          opened.push_back({far, Open{flipped, slot, kNoConstraint}});
-        }
-        if (!valid) continue;
-        front.erase(key);
-        closed.insert(key);
-        std::vector<Open> saved;
-        for (const FacetKey& side : matched) {
-          saved.push_back(front.at(side));
-          front.erase(side);
-          closed.insert(side);
-        }
-        for (const FacetKey& side : sealed) closed.insert(side);
-        for (const auto& [side, entry] : opened) front.emplace(side, entry);
-        filled.push_back(cell);
+      for (int32_t apex : *order) {
+        Step step;
+        if (!plan(open, apex, step)) continue;
+        apply(key, step);
         if (search()) return true;
-        filled.pop_back();
-        for (const auto& [side, entry] : opened) {
-          (void)entry;
-          front.erase(side);
-        }
-        for (const FacetKey& side : sealed) closed.erase(side);
-        for (std::size_t row = 0; row < matched.size(); ++row) {
-          closed.erase(matched[row]);
-          front.emplace(matched[row], saved[row]);
-        }
-        closed.erase(key);
-        front.emplace(key, open);
-        if (budget == 0) return false;
+        undo(key, open, step);
       }
+      failed.insert(std::move(state));
       return false;
     };
     return search();
@@ -3566,10 +3728,15 @@ class PlcRecoveryBuilder {
   // (cells joined across faces through s that are not subfaces). A wedge is
   // replaced by its contraction onto t when every finite cell stays
   // positive; a hull wedge of ghost cells over subfaces by ghost cells over
-  // the new subfaces; any other finite wedge by a Steiner-free gift-wrapped
-  // fill of its cavity (link faces and new subfaces), else by the cones from
-  // one binary64 point y = s + l d (d the sum of the inner unit normals of
-  // its subface planes, l halving) over that cavity boundary. Every finite
+  // the new subfaces; any other finite wedge by the first of, in order: the
+  // constrained Delaunay fill of its cavity (wrap_cavity; walls are the link
+  // faces and the new subfaces), the cones from one cavity vertex that sees
+  // every wall not through it, the constrained Delaunay fill with centroid
+  // points of the blocking cells, the cones from one binary64 point
+  // y = s + l d (d the sum of the inner unit normals of its subface planes,
+  // l halving) over the walls, and the exhaustive Steiner-free search of
+  // wrap_cavity; the polynomial options come first, the search (counted in
+  // PlcRecovery::suppression_search) only when they all fail. Every finite
   // proposed cell is exactly positive on exact positions and the cavity edit
   // checks that the proposal's boundary is the link of s with its marks, so
   // the proposal tiles the star. Otherwise nothing changes.
@@ -3745,8 +3912,8 @@ class PlcRecoveryBuilder {
         proposals.insert(proposals.end(), hull.begin(), hull.end());
         continue;
       }
-      // The cavity boundary: link faces (s replaced by the placeholder) and
-      // the new subfaces.
+      // The cavity walls: the new subfaces and the link faces (s replaced
+      // by the placeholder) with their marks.
       std::vector<Proposal> cavity = subface_cells(rows);
       std::vector<std::array<double, 3>> normals;
       double reach = std::numeric_limits<double>::infinity();
@@ -3786,13 +3953,64 @@ class PlcRecoveryBuilder {
           normals.push_back(unit);
         }
       }
+      // 1. The constrained Delaunay fill.
       std::vector<Proposal> wrapped;
-      if (wrap_cavity(cavity, kPlaceholder, t, {}, wrapped)) {
+      std::size_t nodes = 0;
+      if (wrap_cavity(cavity, kPlaceholder, {}, false, wrapped, nodes)) {
         proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
         continue;
       }
-      // Steiner-assisted fill: interior points of the cells that block the
-      // contraction (every cell without a target) join the apex candidates.
+      // 2. Cones from one cavity vertex v over every wall not through v: a
+      // tiling when the cavity is strictly star-shaped from v. A cone face
+      // through v that is a wall carries that wall's mark.
+      std::set<int32_t> on_walls;
+      for (const Proposal& wall : cavity) {
+        for (int32_t vertex : wall.v) {
+          if (vertex != kPlaceholder) on_walls.insert(vertex);
+        }
+      }
+      const auto slot_of = [](const std::array<int32_t, 4>& v, int32_t vertex) {
+        return static_cast<int>(std::find(v.begin(), v.end(), vertex) - v.begin());
+      };
+      bool coned = false;
+      for (int32_t apex : on_walls) {
+        std::vector<Proposal> cones;
+        std::map<Triple, int32_t> through;
+        bool visible = true;
+        for (const Proposal& wall : cavity) {
+          if (std::find(wall.v.begin(), wall.v.end(), apex) == wall.v.end()) continue;
+          const int slot = slot_of(wall.v, kPlaceholder);
+          Triple face{};
+          oriented_facet(wall.v.data(), slot, face.data());
+          through.emplace(sorted_triple(face.data()),
+                          wall.constraints[static_cast<std::size_t>(slot)]);
+        }
+        for (const Proposal& wall : cavity) {
+          if (std::find(wall.v.begin(), wall.v.end(), apex) != wall.v.end()) continue;
+          Proposal cone = wall;
+          std::replace(cone.v.begin(), cone.v.end(), kPlaceholder, apex);
+          if (!positive(cone.v, nullptr)) {
+            visible = false;
+            break;
+          }
+          const int own = slot_of(cone.v, apex);
+          for (int slot = 0; slot < 4; ++slot) {
+            if (slot == own) continue;
+            Triple face{};
+            oriented_facet(cone.v.data(), slot, face.data());
+            const auto wall = through.find(sorted_triple(face.data()));
+            if (wall != through.end()) cone.constraints[static_cast<std::size_t>(slot)] = wall->second;
+          }
+          cones.push_back(cone);
+        }
+        if (!visible) continue;
+        proposals.insert(proposals.end(), cones.begin(), cones.end());
+        coned = true;
+        break;
+      }
+      if (coned) continue;
+      // 3. Steiner-assisted fill: interior points of the cells that block
+      // the contraction (every cell without a target) join the apices.
       std::vector<int32_t> extra;
       for (std::size_t row : blocked) {
         if (root(row) != root(rows.front()) || extra.size() == 8) continue;
@@ -3808,38 +4026,53 @@ class PlcRecoveryBuilder {
         added.push_back(vertex);
         extra.push_back(vertex);
       }
-      if (!extra.empty() && wrap_cavity(cavity, kPlaceholder, t, extra, wrapped)) {
+      if (!extra.empty() && wrap_cavity(cavity, kPlaceholder, extra, false, wrapped, nodes)) {
         proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
         continue;
       }
+      // 4. Cones from one binary64 point y = s + l d over the walls.
       double direction[3] = {0.0, 0.0, 0.0};
       for (const auto& unit : normals) {
         for (int axis = 0; axis < 3; ++axis) direction[axis] += unit[static_cast<std::size_t>(axis)];
       }
       const double norm = std::sqrt(geometry::dot(direction, direction));
-      if (normals.empty() || !(norm > 0.0) || !std::isfinite(reach) || !(reach > 0.0)) {
-        return abandon();
-      }
       bool found = false;
       double location[3];
-      for (double step = 0.25 * reach; step > 0x1p-40 * reach && !found; step *= 0.5) {
-        for (int axis = 0; axis < 3; ++axis) {
-          location[axis] = point(s)[axis] + step * direction[axis] / norm;
+      if (!normals.empty() && norm > 0.0 && std::isfinite(reach) && reach > 0.0) {
+        for (double step = 0.25 * reach; step > 0x1p-40 * reach && !found; step *= 0.5) {
+          for (int axis = 0; axis < 3; ++axis) {
+            location[axis] = point(s)[axis] + step * direction[axis] / norm;
+          }
+          if (!geometry::point_in_domain(location)) continue;
+          const ExactPointRef center{location, nullptr};
+          found = std::all_of(cavity.begin(), cavity.end(), [&](const Proposal& cone) {
+            return positive(cone.v, &center);
+          });
         }
-        if (!geometry::point_in_domain(location)) continue;
-        const ExactPointRef center{location, nullptr};
-        found = std::all_of(cavity.begin(), cavity.end(), [&](const Proposal& cone) {
-          return positive(cone.v, &center);
-        });
       }
-      if (!found) return abandon();
-      // Placeholder ids of later centers stay distinct until appended.
-      for (Proposal& cone : cavity) {
-        std::replace(cone.v.begin(), cone.v.end(), kPlaceholder,
-                     kPlaceholder + 1 + static_cast<int32_t>(centers.size()));
+      if (found) {
+        // Placeholder ids of later centers stay distinct until appended.
+        for (Proposal& cone : cavity) {
+          std::replace(cone.v.begin(), cone.v.end(), kPlaceholder,
+                       kPlaceholder + 1 + static_cast<int32_t>(centers.size()));
+        }
+        centers.push_back({location[0], location[1], location[2]});
+        proposals.insert(proposals.end(), cavity.begin(), cavity.end());
+        continue;
       }
-      centers.push_back({location[0], location[1], location[2]});
-      proposals.insert(proposals.end(), cavity.begin(), cavity.end());
+      // 5. The exact exhaustive Steiner-free search (wrap_cavity), reached
+      // only after every polynomial option has failed.
+      nodes = 0;
+      const bool searched = wrap_cavity(cavity, kPlaceholder, {}, true, wrapped, nodes);
+      PlcSuppressionSearch& evidence = candidate_.suppression_search;
+      ++evidence.searches;
+      evidence.nodes += static_cast<int64_t>(nodes);
+      evidence.max_nodes = std::max(evidence.max_nodes, static_cast<int64_t>(nodes));
+      evidence.max_wedge_cells =
+          std::max(evidence.max_wedge_cells, static_cast<int64_t>(rows.size()));
+      if (!searched) return abandon();
+      ++evidence.fills;
+      proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
     }
 
     for (std::size_t row = 0; row < centers.size(); ++row) {
@@ -3931,10 +4164,10 @@ class PlcRecoveryBuilder {
 
   // Suppresses one witnessed vertex: contraction onto a chain neighbour (a
   // segment point) or a disk neighbour (a facet point), else the ear-clipped
-  // half-fans. A point that cannot be removed is a STEINER_SUPPRESSION
-  // refusal naming its source segment or facet; under FIXED it is the
-  // FIXED_SEGMENT / FIXED_FACET refusal of that entity (its boundary could
-  // not be recovered unmodified).
+  // half-fans. A point that cannot be removed is a
+  // STEINER_SUPPRESSION refusal naming its source segment or facet; under
+  // FIXED it is the FIXED_SEGMENT / FIXED_FACET refusal of that entity (its
+  // boundary could not be recovered unmodified).
   int32_t suppress_vertex(int32_t s) {
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
     const bool segment = witness.stratum == SourceStratum::kSegment;
@@ -4292,6 +4525,19 @@ class PlcRecoveryBuilder {
 };
 
 }  // namespace
+
+namespace detail {
+
+int32_t fill_suppression_cavity(const SuppressionCavity& cavity, SuppressionCavityFill& fill) {
+  try {
+    return PlcRecoveryBuilder::run_cavity_fixture(cavity, fill);
+  } catch (const std::bad_alloc&) {
+    fill = SuppressionCavityFill{};
+    return PHX_MC_ALLOCATION_FAILURE;
+  }
+}
+
+}  // namespace detail
 
 int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
   try {
