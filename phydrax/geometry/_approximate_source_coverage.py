@@ -568,12 +568,21 @@ def _volume_face_owners(
 def _cad_pcurve_parameter(
     use: object, point: tuple[Fraction, Fraction], /
 ) -> Fraction | None:
-    from ._meshing_domain import PatchCurveUse
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse
+    from .brep._boolean_core import PeriodicPCurve
     from .brep._patches import ExactLineCurve, LineCurve
 
-    if not isinstance(use, PatchCurveUse):
+    if not isinstance(use, (PatchCurveUse, PatchPoleUse)):
         return None
     pcurve = use.pcurve
+    if isinstance(pcurve, PeriodicPCurve):
+        # A native-period gauge is its source line shifted by its binary64 offset.
+        shift = tuple(
+            Fraction.from_float(float(value))
+            for value in np.asarray(pcurve.offset_value, dtype=np.float64)
+        )
+        point = (point[0] - shift[0], point[1] - shift[1])
+        pcurve = pcurve.source_curve
     if isinstance(pcurve, ExactLineCurve):
         origin = pcurve.first_exact
         direction = tuple(
@@ -626,11 +635,22 @@ def _cad_chart_vertex_key(
     point: _Point2,
     /,
 ) -> tuple[object, ...]:
-    from ._meshing_domain import PatchCurveUse
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse
 
     labels: set[tuple[object, ...]] = set()
     for loop in domain.patches[patch].loops:
         for use in loop:
+            if isinstance(use, PatchPoleUse):
+                # A collapsed pole side maps every chart point to its one corner.
+                if _cad_pcurve_parameter(use, point) is not None:
+                    labels.add(
+                        (
+                            "corner",
+                            domain.entity_id(0, use.corner),
+                            domain.source_occurrences[0][use.corner],
+                        )
+                    )
+                continue
             if not isinstance(use, PatchCurveUse):
                 continue
             parameter = _cad_pcurve_parameter(use, point)
@@ -1138,6 +1158,11 @@ def _cad_chart_partition(
     for patch in source.patches:
         declared = tuple(declared_by_patch[patch])
         target = tuple(targets_by_patch.get(patch, ()))
+        # Collapsed pole slivers are part of their owner cells' chart preimages.
+        target = (
+            *target,
+            *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+        )
         if not declared or not target:
             raise SourceCoverageUnavailable(
                 f"CAD patch {patch} lacks a complete chart partition.", status="violated"

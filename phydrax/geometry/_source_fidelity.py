@@ -534,12 +534,11 @@ def _partition_findings(
                 )
             )
             continue
-        if isinstance(witness, SurfaceChartWitness):
-            # Collapsed pole slivers are part of their owner cells' chart preimages.
-            target = (
-                *target,
-                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
-            )
+        # Collapsed pole slivers are part of their owner cells' chart preimages.
+        target = (
+            *target,
+            *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+        )
         declared, _ = source._trim_partition_reference_unchecked(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
