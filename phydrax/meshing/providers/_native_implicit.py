@@ -1745,6 +1745,8 @@ def _implicit_plc_carrier(
             *_carrier_quality(vertices, triangles, "after"),
             ("carrier_remesh_edge_length", edge_length),
             ("carrier_remesh_unmet_count", float(counters[4])),
+            ("carrier_remesh_transversality_refusals", float(counters[6])),
+            ("carrier_remesh_distance_refusals", float(counters[7])),
         )
     carrier_revision = canonical_fingerprint(
         {

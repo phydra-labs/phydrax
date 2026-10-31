@@ -40,6 +40,7 @@ from ..geometry._interval_enclosure import prepare_interval_function
 from ..geometry.brep._assembly import BRepAssemblyGraph
 from ..geometry.brep._boolean_core import AffinePCurve, PeriodicPCurve
 from ..geometry.brep._carrier_pieces import carrier_payload
+from ..geometry.brep._conic_gaps import _affine_coefficients
 from ..geometry.brep._constructors import (
     assemble_brep_model,
     BRepTessellationPolicy,
@@ -48,6 +49,7 @@ from ..geometry.brep._correspondence import (
     _affine_bspline_pcurve,
     _affine_surface_frame,
     _plane_parameter_vector,
+    exact_source_lift,
     exact_sphere_pole,
     native_edge_pcurve,
     torus_circle_pcurve,
@@ -3645,6 +3647,50 @@ class CadStage:
         )
         return _IncidenceVertex(definition=definition, bindings=tuple(bindings))
 
+    def _exact_affine_junction(
+        self,
+        vertex: int,
+        junctions: list[tuple[int, int, int, int, int]],
+        pcurves: Sequence[AbstractCurve],
+        coedge_edges: Sequence[int],
+        resolved: Sequence[
+            tuple[list[list[tuple[StagedCoedge, AbstractCurve]]], np.ndarray]
+        ],
+        /,
+    ) -> bool:
+        """Prove an authored vertex is exactly every incident affine carrier endpoint.
+
+        The junction root's binary64 enclosure is outward rounded, so an exact
+        source (zero declared tolerance) needs the algebraic proof instead: each
+        incident carrier is an exact line whose endpoint is the authored vertex
+        in rational arithmetic, and whose p-curve lift onto the face is exact.
+        The authored vertex then is the junction root itself.
+        """
+        authored = tuple(
+            Fraction.from_float(float(value)) for value in self.vertices[vertex]
+        )
+        for face, first, end, second, start in junctions:
+            region = SurfaceRegion(self.faces[face].patch, resolved[face][1])
+            for coedge, endpoint in ((first, end), (second, start)):
+                edge = coedge_edges[coedge]
+                carrier = self.curves[self.edge_curves[edge]]
+                coefficients = _affine_coefficients(carrier)
+                if coefficients is None:
+                    return False
+                lower, upper = self.edge_ranges[edge]
+                if not exact_source_lift(carrier, pcurves[coedge], region, lower, upper):
+                    return False
+                parameter = Fraction.from_float(float(self.edge_ranges[edge][endpoint]))
+                origin, direction = coefficients
+                if any(
+                    point + parameter * slope != value
+                    for point, slope, value in zip(
+                        origin, direction, authored, strict=True
+                    )
+                ):
+                    return False
+        return True
+
     def _bind_incidence_roots(
         self,
         pcurves: Sequence[AbstractCurve],
@@ -3724,11 +3770,14 @@ class CadStage:
                     np.where(box < self.vertices[vertex], -np.inf, np.inf),
                 )
                 incidence_bound = norm_upper(np.max(np.abs(displacement), axis=0))
-                if incidence_bound > self.relative_geometric_tolerance * self.scale:
+                if incidence_bound <= self.relative_geometric_tolerance * self.scale:
+                    self.vertices[vertex] = np.mean(box, axis=0)
+                elif not self._exact_affine_junction(
+                    vertex, plan.junctions[vertex], pcurves, coedge_edges, resolved
+                ):
                     raise ValueError(
                         f"BRepGeometry.vertex_roots must remain within the declared vertex incidence tolerance; got vertex={vertex}, bound={incidence_bound}, limit={self.relative_geometric_tolerance * self.scale}"
                     )
-                self.vertices[vertex] = np.mean(box, axis=0)
                 vertices[vertex] = definition
             except ValueError as error:
                 if not committed:

@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Any, TYPE_CHECKING
 
 import numpy as np
@@ -600,6 +601,56 @@ class _Builder:
         self.rows.append((_SELECT, output.offset, size, a, a_index, block, -1, size))
         return output
 
+    def _fold_exact(
+        self, name: str, values: tuple[_Tensor, ...], output_shape: _Shape, /
+    ) -> _Tensor | None:
+        """Fold constant arithmetic whose binary64 result is the exact real value.
+
+        As the host interpreter rounds only inexact endpoints, an exactly
+        representable constant (e.g. ``0.5 * blockiness``) stays a point, so a
+        derived integer exponent keeps its integer-power lowering.
+        """
+        if name not in ("add", "add_any", "sub", "mul", "div", "neg") or any(
+            value.exact is None for value in values
+        ):
+            return None
+        operands = [
+            np.broadcast_to(np.asarray(value.exact, dtype=np.float64), output_shape)
+            for value in values
+        ]
+        if not all(np.all(np.isfinite(operand)) for operand in operands):
+            return None
+        match name:
+            case "add" | "add_any":
+                result = operands[0] + operands[1]
+            case "sub":
+                result = operands[0] - operands[1]
+            case "mul":
+                result = operands[0] * operands[1]
+            case "div":
+                if np.any(operands[1] == 0.0):
+                    return None
+                result = operands[0] / operands[1]
+            case _:
+                result = -operands[0]
+        result = np.asarray(result, dtype=np.float64)
+        for index in np.ndindex(output_shape):
+            terms = [Fraction(float(operand[index])) for operand in operands]
+            match name:
+                case "add" | "add_any":
+                    exact = terms[0] + terms[1]
+                case "sub":
+                    exact = terms[0] - terms[1]
+                case "mul":
+                    exact = terms[0] * terms[1]
+                case "div":
+                    exact = terms[0] / terms[1]
+                case _:
+                    exact = -terms[0]
+            if not np.isfinite(result[index]) or Fraction(float(result[index])) != exact:
+                return None
+        return self._seed(result, result, exact=result)
+
     def _lower_arithmetic(
         self,
         name: str,
@@ -609,6 +660,9 @@ class _Builder:
         same_input: bool,
         /,
     ) -> tuple[_Tensor, ...]:
+        folded = self._fold_exact(name, values, output_shape)
+        if folded is not None:
+            return (folded,)
         if name in ("add", "add_any"):
             for zero, other in ((values[0], values[1]), (values[1], values[0])):
                 if zero.exact is not None and np.all(zero.exact == 0.0):

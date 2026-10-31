@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ..geometry._source_boundary_records import SourceBoundaryQuery
     from ..geometry._source_fidelity import SourceFidelityWitness
     from ..geometry._surface_source_support import SurfaceSourceCharts
+    from ..geometry.multiregion_surface import MultiRegionSurfaceTopology
     from ..geometry.surface import SurfaceModel
     from ._association import GeometryAssociation
     from ._certification_inputs import ScopedFidelityInput
@@ -81,6 +82,8 @@ class NativeMeshOrganization:
     associations: tuple[GeometryAssociation, ...] = ()
     region_boundary_evidence: tuple[RegionBoundaryEvidence, ...] = ()
     surface_source: SurfaceSourceCharts | None = None
+    # Region-labeled topology of a non-manifold multiregion surface mesh.
+    multiregion_surface: MultiRegionSurfaceTopology | None = None
 
 
 @dataclass(frozen=True, slots=True)

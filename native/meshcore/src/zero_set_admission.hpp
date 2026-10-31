@@ -80,6 +80,13 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   // Certified sign of n . grad f over bbox(T): +1, -1, or 0 when undecided.
   int transversal_sign(const Point& a, const Point& b, const Point& c) const;
 
+  // Refused admissions by first failing condition (evidence for the caller).
+  struct Refusals {
+    int64_t transversality = 0;
+    int64_t distance = 0;
+  };
+  const Refusals& refusals() const { return refusals_; }
+
  private:
   // One unsplit piece: the residual/gradient bound over its (widened) box.
   double piece_distance(const Point& a, const Point& b, const Point& c,
@@ -94,6 +101,7 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   const IntervalBoxProgram& gradient_;
   double tolerance_;
   int orientation_;
+  mutable Refusals refusals_;  // single-threaded, like the program scratch
 };
 
 }  // namespace phx::mc::remesh
