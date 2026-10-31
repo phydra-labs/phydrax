@@ -690,7 +690,13 @@ class OversetPartSpec(StrictModule, NonTrainableState):
 
 
 class OversetPolicy(StrictModule, NonTrainableState):
-    """Scientific donor selection and fringe-depth controls; no work quotas."""
+    """Scientific donor selection and fringe-depth controls; no work quotas.
+
+    ``"part-priority"`` prefers the donor part with the higher declared
+    ``OversetPartSpec.priority`` and then the finer donor cell;
+    ``"finest-donor"`` prefers the finer donor cell and breaks ties by the
+    higher part priority.
+    """
 
     fringe_layers: int = eqx.field(static=True)
     donor_priority: OversetDonorPriority = eqx.field(static=True)
@@ -3147,7 +3153,9 @@ def _resolve_donors(
                             part_priority: float | int = measure
                             size_priority: float | int = -spec.priority
                         case "part-priority":
-                            part_priority = float(spec.priority)
+                            # Higher declared priority donates first, as in the
+                            # owner-local search and the finest-donor tiebreak.
+                            part_priority = -float(spec.priority)
                             size_priority = measure
                         case other:
                             assert_never(other)
