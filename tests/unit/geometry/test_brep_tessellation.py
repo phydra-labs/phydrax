@@ -521,10 +521,36 @@ def test_reflected_reused_solid_occurrences_remain_distinct_in_tessellation() ->
     assert realized.source_revision == tessellation.source_revision
 
 
-def test_singular_pole_trim_refuses_without_claiming_a_tessellation() -> None:
+def test_singular_pole_trim_certifies_a_tessellation_with_bounded_evidence() -> None:
     source = brep_sphere(1.0, coordinate_contract=SpatialCoordinateContract.si())
-    with pytest.raises(RuntimeError, match="collapsed pole trims"):
-        tessellate_brep_model(source, _policy())
+    policy = _policy()
+    tessellation = tessellate_brep_model(source, policy)
+
+    vertices = np.asarray(tessellation.vertices, dtype=np.float64)
+    triangles = np.asarray(tessellation.triangles, dtype=np.int64)
+    deviations = np.asarray(tessellation.deviation_bounds, dtype=np.float64)
+    normals = np.asarray(tessellation.normal_bounds, dtype=np.float64)
+    assert triangles.shape[0] > 0
+    assert deviations.shape == normals.shape == (triangles.shape[0],)
+    assert np.all(np.isfinite(deviations)) and np.all(np.isfinite(normals))
+    assert np.all(deviations <= policy.linear_deflection)
+    assert np.all(normals <= policy.angular_deflection)
+    assert set(np.asarray(tessellation.face_ids).tolist()) == {0}
+    # Every vertex lies on the unit sphere, and every facet faces outward.
+    np.testing.assert_allclose(np.linalg.norm(vertices, axis=1), 1.0, atol=1e-12)
+    corners = vertices[triangles]
+    facets = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    assert np.all(np.sum(facets * corners.mean(axis=1), axis=1) > 0.0)
+    # Every source vertex, including the collapsed pole trims' vertices, is a
+    # tessellation vertex at its source point.
+    dimensions = np.asarray(tessellation.vertex_source_dimensions, dtype=np.int64)
+    source_indices = np.asarray(tessellation.vertex_source_indices, dtype=np.int64)
+    pole_rows = np.flatnonzero(dimensions == 0)
+    source_vertices = np.asarray(source.geometry.vertex_points, dtype=np.float64)
+    assert set(source_indices[pole_rows].tolist()) == set(range(len(source_vertices)))
+    np.testing.assert_allclose(
+        vertices[pole_rows], source_vertices[source_indices[pole_rows]], atol=1e-12
+    )
     assert source.tessellation is None
 
 

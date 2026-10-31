@@ -708,6 +708,83 @@ void convex_bipyramid_reports_unresolved_radius_edge() {
   }
 }
 
+// A fixed constrained needle face (radius-edge ratio about 5) bounds the ratio
+// of every tetrahedron on it from below, so the residual of the cell on that
+// face is FIXED_BOUNDARY, never NO_IMPROVEMENT, whatever interior edits run.
+void fixed_needle_face_reports_fixed_boundary_radius_edge() {
+  constexpr std::array<double, 12> points{
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 0.05, 0.0, 0.5, 0.2, 0.8};
+  constexpr std::array<std::int32_t, 4> tetrahedron{0, 1, 2, 3};
+  constexpr std::array<std::int32_t, 1> regions{3};
+  std::vector<std::int32_t> faces;
+  for (int opposite = 0; opposite < 4; ++opposite) {
+    std::int32_t face[3];
+    oriented_facet(tetrahedron.data(), opposite, face);
+    faces.insert(faces.end(), face, face + 3);
+  }
+  const std::vector<std::int32_t> face_sources{0, 1, 2, 3};
+  const std::vector<std::int32_t> segments{0, 1, 0, 2, 0, 3, 1, 2, 1, 3, 2, 3};
+  const std::vector<std::int32_t> segment_sources{0, 1, 2, 3, 4, 5};
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  const std::int32_t build_status = mesh.build(
+      points, tetrahedron, regions, faces, face_sources, {}, segments, segment_sources,
+      {}, nullptr);
+  PHX_CHECK(build_status == PHX_MC_OK);
+  if (build_status != PHX_MC_OK) return;
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status = improve_mesh(mesh, TetQualityRequest{2.0, 10.0, 1.0e-12}, {},
+                                           inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && unmet > 0);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  PHX_CHECK(same_source_banks(before, after));
+  const std::uint64_t first = before.vertices[0].id;
+  const std::uint64_t second = before.vertices[1].id;
+  const std::uint64_t third = before.vertices[2].id;
+  std::uint64_t needle_facet = kNoUnmetFacet;
+  for (const TetSnapshotFacet& facet : after.constrained_facets) {
+    const auto has = [&](std::uint64_t id) {
+      return std::find(facet.vertices.begin(), facet.vertices.end(), id) != facet.vertices.end();
+    };
+    if (has(first) && has(second) && has(third)) needle_facet = facet.id;
+  }
+  PHX_CHECK(needle_facet != kNoUnmetFacet);
+  // Independent reference: R = abc / (4 area) over the shortest side, sides
+  // 1 and sqrt(0.2525) twice, area 0.025.
+  const double half_side = std::sqrt(0.2525);
+  const double needle_ratio = half_side * half_side / (4.0 * 0.025) / half_side;
+  std::size_t needle_cells = 0;
+  std::size_t needle_records = 0;
+  for (const TetSnapshotCell& cell : after.cells) {
+    const auto has = [&](std::uint64_t id) {
+      return std::find(cell.vertices.begin(), cell.vertices.end(), id) != cell.vertices.end();
+    };
+    const bool on_needle = has(first) && has(second) && has(third);
+    needle_cells += on_needle ? 1 : 0;
+    for (const TetUnmetRecord& record : mesh.unmet_records()) {
+      if (record.cell_id != cell.id || record.criterion != PHX_MC_TET_UNMET_RADIUS_EDGE) {
+        continue;
+      }
+      if (on_needle) {
+        ++needle_records;
+        PHX_CHECK(record.reason == PHX_MC_TET_UNMET_FIXED_BOUNDARY);
+        PHX_CHECK(record.facet_id == needle_facet);
+        PHX_CHECK(std::abs(record.facet_ratio - needle_ratio) <= 1.0e-12 * needle_ratio);
+        PHX_CHECK(record.value >= record.facet_ratio);
+      } else {
+        PHX_CHECK(record.reason == PHX_MC_TET_UNMET_NO_IMPROVEMENT);
+        PHX_CHECK(record.facet_id == kNoUnmetFacet && std::isnan(record.facet_ratio));
+      }
+    }
+  }
+  PHX_CHECK(needle_cells == 1 && needle_records == 1);
+}
+
 void relocation_clears_stale_carrier_ancestry() {
   constexpr std::array<double, 12> points{
       0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
@@ -2580,6 +2657,7 @@ void refused_boundary_insertion_restores_disk_constraints() {
 
 int main() {
   convex_bipyramid_reports_unresolved_radius_edge();
+  fixed_needle_face_reports_fixed_boundary_radius_edge();
   relocation_clears_stale_carrier_ancestry();
   unresolved_radius_target_reports_residuals_without_losing_constraints();
   unrepresentable_positive_sliver_is_measured_not_refused();

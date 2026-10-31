@@ -37,9 +37,7 @@ class NativeCurveSchedule(StrictModule, NonTrainableState):
         intervals = positive_integer(
             quadrature_intervals, "NativeCurveSchedule.quadrature_intervals"
         )
-        order = positive_integer(
-            quadrature_order, "NativeCurveSchedule.quadrature_order"
-        )
+        order = positive_integer(quadrature_order, "NativeCurveSchedule.quadrature_order")
         samples = positive_integer(
             fidelity_samples, "NativeCurveSchedule.fidelity_samples"
         )
@@ -61,11 +59,15 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
 
     The schedule contains no refinement-round ceiling: unresolved physical
     violations terminate through numerical stagnation/representability status.
+    ``normal_deviation_aim`` (radians) also refines cells whose facet turns from
+    sampled source normals by more than the aim; it steers refinement only and
+    is not a certified bound.
     """
 
     quality_angle_degrees: float = eqx.field(static=True)
     spacing_fraction: float = eqx.field(static=True)
     minimum_edge_samples: int = eqx.field(static=True)
+    normal_deviation_aim: float | None = eqx.field(static=True)
     curve_schedule: NativeCurveSchedule
     schedule_id: str = eqx.field(static=True)
 
@@ -76,6 +78,7 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
         quality_angle_degrees: float = 22.0,
         spacing_fraction: float = 0.9,
         minimum_edge_samples: int = 2,
+        normal_deviation_aim: float | None = None,
         curve_schedule: NativeCurveSchedule | None = None,
     ) -> None:
         angle = float(quality_angle_degrees)
@@ -85,31 +88,37 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
                 "NativeSurfaceSchedule.quality_angle_degrees must lie in [0, 34)."
             )
         if not np.isfinite(spacing) or not 0.0 < spacing < 1.0:
-            raise ValueError(
-                "NativeSurfaceSchedule.spacing_fraction must lie in (0, 1)."
-            )
+            raise ValueError("NativeSurfaceSchedule.spacing_fraction must lie in (0, 1).")
         samples = positive_integer(
             minimum_edge_samples, "NativeSurfaceSchedule.minimum_edge_samples"
         )
         if samples < 2:
-            raise ValueError("minimum_edge_samples counts distinct interval endpoints and must be at least two.")
+            raise ValueError(
+                "minimum_edge_samples counts distinct interval endpoints and must be at least two."
+            )
+        aim = None if normal_deviation_aim is None else float(normal_deviation_aim)
+        if aim is not None and (not np.isfinite(aim) or not 0.0 < aim <= np.pi):
+            raise ValueError(
+                "NativeSurfaceSchedule.normal_deviation_aim must lie in (0, pi]."
+            )
         curves = NativeCurveSchedule() if curve_schedule is None else curve_schedule
         if not isinstance(curves, NativeCurveSchedule):
             raise TypeError("curve_schedule must be a NativeCurveSchedule.")
         self.quality_angle_degrees = angle
         self.spacing_fraction = spacing
         self.minimum_edge_samples = samples
+        self.normal_deviation_aim = aim
         self.curve_schedule = curves
-        self.schedule_id = canonical_fingerprint(
-            {
-                "kind": "native-surface-schedule",
-                "quality_angle_degrees": angle,
-                "spacing_fraction": spacing,
-                "minimum_edge_samples": samples,
-                "curve_schedule": curves.schedule_id,
-            }
-        )
-
+        identity: dict[str, object] = {
+            "kind": "native-surface-schedule",
+            "quality_angle_degrees": angle,
+            "spacing_fraction": spacing,
+            "minimum_edge_samples": samples,
+            "curve_schedule": curves.schedule_id,
+        }
+        if aim is not None:
+            identity["normal_deviation_aim"] = aim
+        self.schedule_id = canonical_fingerprint(identity)
 
 
 @final
