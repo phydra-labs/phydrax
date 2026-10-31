@@ -5,6 +5,7 @@ from phydrax._meshcore import meshcore_available
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 from phydrax.meshing._layer_core_mapped import mapped_source_lipschitz_bound
 from phydrax.meshing._layer_core_regions import prepare_layer_region_identity
@@ -58,9 +59,14 @@ def test_fixed_plc_region_identity_retains_explicit_composite_materials() -> Non
 def test_layer_core_region_identity_rejects_unrealized_composite_region() -> None:
     complex_ = _tetrahedron_plc()
 
-    with pytest.raises(ValueError, match="realized layer or bounded core material incidence"):
+    with pytest.raises(
+        ValueError, match="realized layer or bounded core material incidence"
+    ):
         prepare_layer_region_identity(
-            complex_, np.asarray((0,), dtype=np.int64), ("core", "layer"), np.asarray((0,))
+            complex_,
+            np.asarray((0,), dtype=np.int64),
+            ("core", "layer"),
+            np.asarray((0,)),
         )
 
 
@@ -102,7 +108,7 @@ def test_combined_face_table_retains_opposite_transition_sides() -> None:
     assert cycle(shared[0].vertices) == cycle(tuple(reversed(shared[1].vertices)))
 
 
-def test_combined_face_table_rejects_nonmanifold_core_transition() -> None:
+def test_layer_core_assembly_rejects_nonmanifold_core_transition() -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -114,23 +120,23 @@ def test_combined_face_table_rejects_nonmanifold_core_transition() -> None:
         ),
         dtype=np.float64,
     )
-    mesh = CellMesh(
-        points,
-        (
-            CellBlock(
-                "nonmanifold-tetrahedra",
-                "tetrahedron",
-                np.asarray(
-                    ((0, 1, 2, 3), (0, 2, 1, 4), (0, 1, 2, 5)),
-                    dtype=np.int64,
+    # Three cells on one face never reach the combined face table: assembling
+    # the composed mesh already refuses the non-manifold transition.
+    with pytest.raises(ValueError, match="face-manifold"):
+        CellMesh(
+            points,
+            (
+                CellBlock(
+                    "nonmanifold-tetrahedra",
+                    "tetrahedron",
+                    np.asarray(
+                        ((0, 1, 2, 3), (0, 2, 1, 4), (0, 1, 2, 5)),
+                        dtype=np.int64,
+                    ),
+                    global_ids=np.asarray((10, 20, 30), dtype=np.int64),
                 ),
-                global_ids=np.asarray((10, 20, 30), dtype=np.int64),
             ),
-        ),
-    )
-
-    with pytest.raises(ValueError, match="at most two incident cells"):
-        faces(mesh, np.asarray((0, 0, 0), dtype=np.int64))
+        )
 
 
 def test_mapped_layer_core_sizing_uses_physical_root_jacobian_bound() -> None:
@@ -173,6 +179,7 @@ def test_mapped_layer_core_sizing_uses_physical_root_jacobian_bound() -> None:
 
     assert mapped_source_lipschitz_bound(domain) == pytest.approx(2.0)
 
+
 def test_implicit_layer_witness_projects_to_output_volume_facets() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
@@ -208,6 +215,7 @@ def test_implicit_layer_witness_projects_to_output_volume_facets() -> None:
 
 
 def test_mapped_scoped_chart_witness_allows_unrelated_target_exterior_facets() -> None:
+    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
     from phydrax.geometry._source_fidelity import validate_source_fidelity_witness
     from tests.unit.meshing.test_native_mapped_hex_routes import (
         _mapped_cube_source,
@@ -217,19 +225,57 @@ def test_mapped_scoped_chart_witness_allows_unrelated_target_exterior_facets() -
 
     source, domain = _mapped_cube_source()
     geometry = CellGeometrySpec.affine(domain.reference_mesh)
-    full_query, full_witness = _mapped_surface_chart_witness(
-        source, domain, geometry
+    full_query, full_witness = _mapped_surface_chart_witness(source, domain, geometry)
+
+    def scoped_chart_ids(query: MappedReferenceBoundarySource) -> set[str]:
+        # A scoped query keeps the full chart table and selects its scope rows.
+        return {query.face_chart_ids[row] for row in query._selected_rows(2)}
+
+    # Scope every source triangle that charts one complete target hex facet;
+    # the other five facets stay unrelated exterior facets.
+    facets = tuple(
+        zip(
+            np.asarray(full_witness.cell_global_ids).tolist(),
+            np.asarray(full_witness.local_entity_indices).tolist(),
+            strict=True,
+        )
     )
+    rows = tuple(row for row, facet in enumerate(facets) if facet == facets[0])
+    facet_chart_ids = {full_witness.source_chart_ids[row] for row in rows}
     selected_query = source.boundary_query(
-        face_scope_keys=(full_query.face_scope_keys[0],)
+        face_scope_keys=tuple(
+            key
+            for key in full_query.face_scope_keys
+            if scoped_chart_ids(source.boundary_query(face_scope_keys=(key,)))
+            & facet_chart_ids
+        )
     )
-    selected_chart_ids = set(selected_query.face_chart_ids)
-    rows = tuple(
-        row
-        for row, chart_id in enumerate(full_witness.source_chart_ids)
-        if chart_id in selected_chart_ids
+    assert scoped_chart_ids(selected_query) == facet_chart_ids
+    assert 1 < len(rows) < len(facets)
+    sliced = _slice_mapped_chart_witness(full_witness, rows)
+    # A scoped witness names the scoped query it was derived for.
+    witness = SourceBoundaryChartWitness(
+        mesh_id=sliced.mesh_id,
+        geometry_id=sliced.geometry_id,
+        topology_id=sliced.topology_id,
+        source_id=sliced.source_id,
+        source_revision=sliced.source_revision,
+        source_query_id=selected_query.query_id,
+        chart_dimension=sliced.chart_dimension,
+        reference_dimension=sliced.reference_dimension,
+        cell_global_ids=sliced.cell_global_ids,
+        entity_global_ids=sliced.entity_global_ids,
+        local_entity_indices=sliced.local_entity_indices,
+        target_reference_vertices=sliced.target_reference_vertices,
+        target_reference_rational_tokens=sliced.target_reference_rational_tokens,
+        target_face_vertex_global_ids=sliced.target_face_vertex_global_ids,
+        source_chart_ids=sliced.source_chart_ids,
+        source_entity_ids=sliced.source_entity_ids,
+        occurrence_paths=sliced.occurrence_paths,
+        source_parameters=sliced.source_parameters,
+        source_parameter_rational_tokens=sliced.source_parameter_rational_tokens,
+        orientations=sliced.orientations,
     )
-    witness = _slice_mapped_chart_witness(full_witness, rows)
 
     validate_source_fidelity_witness(
         domain.reference_mesh, geometry, selected_query, witness

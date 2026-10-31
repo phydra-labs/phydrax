@@ -543,10 +543,19 @@ mixed `prism`/`tetrahedron` cells (transition pyramids optional) and use the
 `SIMPLEX` fill. Rim columns slide along the adjacent surfaces. A schedule
 whose fronts meet those surfaces before the collision policy can resolve them is
 refused with the colliding wall vertices and their locations, so choose
-thicknesses that are small relative to the surface size. Source fidelity covers
-every exterior facet: the grown cells keep their charts, and fixed cells and
-layer side strips take the closest-point charts of their source face. A column
-shared by two faces lies exactly on their common trim. The `wall` patch is only
+thicknesses that are small relative to the surface size. That refusal is a
+per-column quality predictor: each interior column ray stays below
+`proximity_fraction` of the sampled height at which it becomes nearer another
+boundary triangle than its own wall fan, so it depends on where the surface
+mesh places wall vertices near the rim. Soundness does not rest on it: every
+layer is accepted only after Bernstein validity and exact-predicate intersection
+of its cell faces against earlier layers, the wall, and obstacles (rim side
+sheets touching their adjacent plane are contact, not penetration), and the
+result then carries the global embedding and domain coverage certificates.
+Source fidelity covers every exterior facet: the grown cells keep their charts,
+and fixed cells and layer side strips take the closest-point charts of their
+source face. A column shared by two faces lies exactly on their common trim.
+The `wall` patch is only
 the exterior layer faces that lie on the wall. A side strip rising from rim edge
 `(a, b)` joins the `facet:` patch of the fixed core polygon holding the tops of
 the columns of `a` and `b`. Strips without such a unique polygon form the

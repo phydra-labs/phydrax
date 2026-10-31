@@ -456,6 +456,40 @@ def _int3(values: ArrayLike | Sequence[int], /) -> tuple[int, int, int]:
     return (int(exact[0]), int(exact[1]), int(exact[2]))
 
 
+_TRIANGLE_REFERENCE_CORNERS = (
+    (Fraction(0), Fraction(0)),
+    (Fraction(1), Fraction(0)),
+    (Fraction(0), Fraction(1)),
+)
+
+
+def _implicit_root_corner_rows(
+    root_witness: SourceBoundaryChartWitness,
+    row: int,
+    cell_vertices: ArrayLike | Sequence[int],
+    /,
+) -> tuple[int, int, int]:
+    """Source-wall cell vertices in the order of the root chart's standard corners.
+
+    A wall grown along the zero-set normal keeps the discovery vertex order; a
+    reversed (inward) wall names the same root triangle with its corners in
+    discovery order, so its chart lists the cell's own reference vertices
+    permuted.
+    """
+    vertices = _int3(cell_vertices)
+    corners = _fraction_chart2(root_witness.target_reference_chart(row))
+    local = tuple(
+        _TRIANGLE_REFERENCE_CORNERS.index(corner)
+        for corner in corners
+        if corner in _TRIANGLE_REFERENCE_CORNERS
+    )
+    if sorted(local) != [0, 1, 2]:
+        raise ValueError(
+            "Adaptive root chart corners must permute the source-wall triangle vertices."
+        )
+    return (vertices[local[0]], vertices[local[1]], vertices[local[2]])
+
+
 def _face_key(vertex_ids: np.ndarray, rows: tuple[int, ...], /) -> tuple[int, ...]:
     return tuple(
         sorted(int(value) for value in vertex_ids[np.asarray(rows, dtype=np.int64)])
@@ -817,7 +851,9 @@ def _implicit_source_faces(
     target_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     result: list[_SourceFace] = []
     for chart_row, source_cell_id in enumerate(root_cell_ids):
-        source_vertices = source_cells[source_cell_id]
+        source_vertices = _implicit_root_corner_rows(
+            root_witness, chart_row, source_cells[source_cell_id]
+        )
         target_vertex_rows = _int3(tuple(int(wall_map[row]) for row in source_vertices))
         key = tuple(sorted(int(target_ids[row]) for row in target_vertex_rows))
         candidates = target_faces.get(key, ())

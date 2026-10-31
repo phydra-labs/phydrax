@@ -32,7 +32,12 @@ from ..._meshcore import MeshcoreStatus
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization import CellGeometrySpec, CellMesh, reference_cell_topology
+from ...discretization import (
+    CellBlock,
+    CellGeometrySpec,
+    CellMesh,
+    reference_cell_topology,
+)
 from ...discretization._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
@@ -1579,19 +1584,120 @@ def _layer_cell_reference_identity(
     return result
 
 
+def reversed_triangle_wall(wall: CellMesh, /) -> CellMesh:
+    """The same triangle wall with every cell's orientation reversed.
+
+    Layers grow along the wall orientation. An adaptive implicit zero set is
+    oriented out of its solid, so layers that grow into the solid use this
+    reversal; cell, vertex and numeric identities are kept.
+    """
+    if len(wall.blocks) != 1 or wall.blocks[0].cell_kind != "triangle":
+        raise ValueError("A reversed layer wall must be one triangle block.")
+    block = wall.blocks[0]
+    return CellMesh(
+        wall.coordinates,
+        (
+            CellBlock(
+                block.name,
+                "triangle",
+                np.asarray(block.vertices, dtype=np.int64)[:, (0, 2, 1)],
+                global_ids=np.asarray(block.global_ids, dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=np.asarray(wall.vertex_global_ids, dtype=np.int64),
+        numeric_version=wall.numeric_version,
+    )
+
+
+def _implicit_layer_root_witness(
+    source_id: str,
+    source_revision: str,
+    query: SourceBoundaryQuery,
+    wall: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+) -> SourceBoundaryChartWitness:
+    """Bind the adaptive root charts to an implicit layer wall of either orientation.
+
+    The wall is the exact discovery mesh (layers grow out of the solid) or its
+    reversal (layers grow into it). A reversed cell names the same scaffold
+    triangle; its chart lists the corners in discovery order, so the target
+    reference corners are the cell's own reference vertices permuted and the
+    standard root parameters, cell keys and root edges are unchanged.
+    """
+    from ...geometry.implicit._adaptive_discovery import (
+        AdaptiveImplicitBoundarySource,
+    )
+    from ._native_implicit import _implicit_layer_wall_chart_witness
+
+    adaptive_query = (
+        query
+        if isinstance(query, AdaptiveImplicitBoundarySource)
+        else getattr(query, "adaptive_source", None)
+    )
+    discovered = (
+        adaptive_query.surface.mesh
+        if isinstance(adaptive_query, AdaptiveImplicitBoundarySource)
+        else None
+    )
+    if (
+        discovered is None
+        or len(wall.blocks) != 1
+        or wall.blocks[0].cell_kind != "triangle"
+        or not np.array_equal(
+            np.asarray(wall.blocks[0].vertices, dtype=np.int64)[:, (0, 2, 1)],
+            np.asarray(discovered.faces, dtype=np.int64),
+        )
+    ):
+        return _implicit_layer_wall_chart_witness(
+            source_id, source_revision, query, wall, geometry
+        )
+    outward_wall = reversed_triangle_wall(wall)
+    outward = _implicit_layer_wall_chart_witness(
+        source_id,
+        source_revision,
+        query,
+        outward_wall,
+        CellGeometrySpec.affine(outward_wall),
+    )
+    corners = np.asarray(outward.target_reference_vertices, dtype=np.float64)[
+        :, (0, 2, 1)
+    ]
+    return SourceBoundaryChartWitness(
+        mesh_id=wall.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=wall.topology_id,
+        source_id=outward.source_id,
+        source_revision=outward.source_revision,
+        source_query_id=outward.source_query_id,
+        chart_dimension=outward.chart_dimension,
+        reference_dimension=outward.reference_dimension,
+        cell_global_ids=outward.cell_global_ids,
+        entity_global_ids=outward.entity_global_ids,
+        local_entity_indices=outward.local_entity_indices,
+        target_reference_vertices=corners,
+        source_chart_ids=outward.source_chart_ids,
+        source_entity_ids=outward.source_entity_ids,
+        occurrence_paths=outward.occurrence_paths,
+        source_parameters=outward.source_parameters,
+        source_parameter_rational_tokens=outward.source_parameter_rational_tokens,
+        orientations=-np.asarray(outward.orientations, dtype=np.int8),
+        implicit_cell_keys=outward.implicit_cell_keys,
+        implicit_root_edge_keys=outward.implicit_root_edge_keys,
+    )
+
+
 def _implicit_layer_surface_chart_witness(
     source: sources_owner.NativeLayerCoreSource,
     construction: layer_core_owner.layer_topology.LayerCoreConstruction,
     /,
 ) -> SourceBoundaryChartWitness:
     """Project the original implicit wall charts onto their exact output facets."""
-    from ._native_implicit import _implicit_layer_wall_chart_witness
-
     query = source.fidelity_source
     if query is None:
         raise ValueError("Implicit layer fidelity requires its original boundary query.")
     wall = source.layers.source_wall
-    root_witness = _implicit_layer_wall_chart_witness(
+    root_witness = _implicit_layer_root_witness(
         source.source_id,
         source.source_revision,
         query,
@@ -1647,7 +1753,14 @@ def _implicit_layer_surface_chart_witness(
         root_row = root_row_by_cell.get(source_cell_id)
         if root_row is None:
             raise ValueError("Implicit wall cell is absent from its source root witness.")
-        mapped_rows = wall_map[source_vertices]
+        mapped_rows = wall_map[
+            np.asarray(
+                layer_curving_owner._implicit_root_corner_rows(
+                    root_witness, root_row, source_vertices
+                ),
+                dtype=np.int64,
+            )
+        ]
         mapped_vertex_ids = tuple(int(value) for value in target_ids[mapped_rows])
         candidates = reference_faces.get(tuple(sorted(mapped_vertex_ids)), ())
         if len(candidates) != 1:
@@ -2728,10 +2841,8 @@ class PreparedNativeLayer(StrictModule, NonTrainableState):
                         self.source, layer_construction, query
                     )
                 else:
-                    from ._native_implicit import _implicit_layer_wall_chart_witness
-
                     wall = self.source.layers.source_wall
-                    implicit_root_witness = _implicit_layer_wall_chart_witness(
+                    implicit_root_witness = _implicit_layer_root_witness(
                         self.source.source_id,
                         self.source.source_revision,
                         query,

@@ -13,6 +13,7 @@ from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitSurfacePolicy,
     discover_adaptive_implicit_surface,
 )
+from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.meshing._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -24,9 +25,10 @@ from phydrax.meshing._layer_curving import (
     LayerCurvingConstructionResult,
     LayerCurvingStatus,
 )
-from phydrax.meshing.providers._native_implicit import (
-    _implicit_surface_chart_witness,
-    _NativeImplicitBoundaryQuery,
+from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
+from phydrax.meshing.providers._native_layer import (
+    _implicit_layer_root_witness,
+    reversed_triangle_wall,
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
 
@@ -52,33 +54,45 @@ def make_implicit_layer_curving_archive_case() -> LayerCurvingConstructionResult
         raise ValueError(
             "The implicit layer archive fixture requires a resolved adaptive surface."
         )
+    contract = SpatialCoordinateContract.si()
+    # The sphere distance field is singular at its centre; the exact profile
+    # proves that singular set lies away from the zero-set cover.
+    profile = AnalyticImplicitProfile(
+        geometry,
+        contract,
+        source_id=source_id,
+        source_revision=source_revision,
+    )
     native_source = NativeImplicitSource(
         geometry,
         source_id,
         source_revision,
         discovery=discovery,
+        authoring_profile=profile,
     )
-    contract = SpatialCoordinateContract.si()
     adaptive_query = discovery.boundary_source
     fidelity_source = _NativeImplicitBoundaryQuery(
         adaptive_query,
         native_source.source_id,
         native_source.source_revision,
         contract.spatial_id,
+        authoring_profile=native_source.authoring_profile,
     )
-    wall = CellMesh.from_triangles(
-        discovery.mesh.vertices,
-        discovery.mesh.faces.astype(np.int32),
-        numeric_version=native_source.source_revision,
+    # The zero set is oriented out of the sphere; the layers and the core fill it.
+    wall = reversed_triangle_wall(
+        CellMesh.from_triangles(
+            discovery.mesh.vertices,
+            discovery.mesh.faces.astype(np.int32),
+            numeric_version=native_source.source_revision,
+        )
     )
     wall_geometry = CellGeometrySpec.affine(wall)
-    root_witness = _implicit_surface_chart_witness(
+    root_witness = _implicit_layer_root_witness(
         native_source.source_id,
         native_source.source_revision,
-        discovery,
+        fidelity_source,
         wall,
         wall_geometry,
-        adaptive_query,
     )
     surface_scope_id = int(native_source.scope_entity_ids(2)[0])
     surface_entity_id, occurrence = native_source.source_entity_key_for_scope(
