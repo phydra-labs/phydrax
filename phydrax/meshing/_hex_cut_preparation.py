@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from fractions import Fraction
+from itertools import combinations
 from typing import final, Protocol, runtime_checkable
 
 import equinox as eqx
@@ -615,6 +616,147 @@ def _generic_axis_knots(
     return tuple(origin + index * spacing for index in range(interval_count + 1))
 
 
+def _simplest_fraction_between(lower: Fraction, upper: Fraction, /) -> Fraction:
+    """Smallest-denominator rational in the closed interval ``[lower, upper]``."""
+    if lower > upper:
+        raise ValueError("Simplest-rational search requires an ordered interval.")
+    floor = lower.numerator // lower.denominator
+    if floor == lower or floor + 1 <= upper:
+        return Fraction(floor if floor == lower else floor + 1)
+    return floor + 1 / _simplest_fraction_between(
+        1 / (upper - floor), 1 / (lower - floor)
+    )
+
+
+def _separated_lattice(
+    events: list[Fraction],
+    lower: Fraction,
+    upper: Fraction,
+    spacing: Fraction,
+    /,
+) -> tuple[Fraction, ...]:
+    """Place the fewest knots covering ``[lower, upper]`` far from every event.
+
+    The origin ranges over the window that keeps that knot count; it is put in
+    the middle of the widest gap between window-shifted events, so every event
+    lies at least a quarter of that gap from every knot. The separation is then
+    a positive fraction of the spacing rather than a binary64 accident. A
+    window shorter than a quarter spacing takes one more interval.
+    """
+    intervals = int((upper - lower) // spacing) + 1
+    if intervals * spacing - (upper - lower) < spacing / 4:
+        intervals += 1
+    window_low = upper - intervals * spacing
+    forbidden = {window_low, lower}
+    for event in events:
+        shifted = event - spacing * ((event - window_low) // spacing)
+        while shifted <= lower:
+            forbidden.add(shifted)
+            shifted += spacing
+    ordered = sorted(forbidden)
+    width, start = max(
+        (
+            (second - first, first)
+            for first, second in zip(ordered[:-1], ordered[1:], strict=True)
+        ),
+        key=lambda gap: gap[0],
+    )
+    origin = _simplest_fraction_between(start + width / 4, start + 3 * width / 4)
+    return tuple(origin + index * spacing for index in range(intervals + 1))
+
+
+def _separated_axis_knots(
+    points: tuple[tuple[Fraction, Fraction, Fraction], ...],
+    cells: np.ndarray,
+    spacing: Fraction,
+    /,
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]]:
+    """Choose cut-grid knots robustly separated from the source arrangement.
+
+    Exact genericity is insufficient: a grid plane within roundoff of a source
+    vertex, a grid line within roundoff of a source edge, or a grid vertex
+    within roundoff of a source face yields clipped cells of exactly positive
+    but numerically zero volume. Axes are placed in order; each later axis
+    avoids the coordinates where earlier grid planes and lines cross source
+    edges and faces, which bounds every clipped-vertex separation below.
+    """
+    edges = sorted(
+        {
+            (min(first, second), max(first, second))
+            for cell in cells.tolist()
+            for first, second in combinations(map(int, cell), 2)
+        }
+    )
+    faces = sorted(
+        {
+            tuple(sorted(face))
+            for cell in cells.tolist()
+            for face in combinations(map(int, cell), 3)
+        }
+    )
+    knots: list[tuple[Fraction, ...]] = []
+    for axis in range(3):
+        values = [point[axis] for point in points]
+        events = list(values)
+        for crossing_axis, crossing_knots in enumerate(knots):
+            for first, second in edges:
+                start, end = points[first], points[second]
+                low, high = sorted((start[crossing_axis], end[crossing_axis]))
+                for knot in crossing_knots:
+                    if low < knot < high:
+                        ratio = (knot - start[crossing_axis]) / (
+                            end[crossing_axis] - start[crossing_axis]
+                        )
+                        events.append(start[axis] + ratio * (end[axis] - start[axis]))
+        if axis == 2:
+            for face in faces:
+                corners = tuple(points[row] for row in face)
+                determinant = (corners[1][0] - corners[0][0]) * (
+                    corners[2][1] - corners[0][1]
+                ) - (corners[2][0] - corners[0][0]) * (corners[1][1] - corners[0][1])
+                if determinant == 0:
+                    continue
+                x_low = min(corner[0] for corner in corners)
+                x_high = max(corner[0] for corner in corners)
+                y_low = min(corner[1] for corner in corners)
+                y_high = max(corner[1] for corner in corners)
+                for x_knot in knots[0]:
+                    if not x_low < x_knot < x_high:
+                        continue
+                    for y_knot in knots[1]:
+                        if not y_low < y_knot < y_high:
+                            continue
+                        weights = tuple(
+                            (
+                                (corners[(row + 1) % 3][0] - x_knot)
+                                * (corners[(row + 2) % 3][1] - y_knot)
+                                - (corners[(row + 2) % 3][0] - x_knot)
+                                * (corners[(row + 1) % 3][1] - y_knot)
+                            )
+                            / determinant
+                            for row in range(3)
+                        )
+                        if all(weight >= 0 for weight in weights):
+                            events.append(
+                                sum(
+                                    (
+                                        weight * corner[2]
+                                        for weight, corner in zip(
+                                            weights, corners, strict=True
+                                        )
+                                    ),
+                                    Fraction(0),
+                                )
+                            )
+        lower, upper = min(values), max(values)
+        if lower >= upper:
+            raise ValueError(
+                "Balanced cut grid source fill must have positive extent on each axis."
+            )
+        knots.append(_separated_lattice(events, lower, upper, spacing))
+    return knots[0], knots[1], knots[2]
+
+
 @checked
 def prepare_balanced_cut_grid(
     source: PiecewiseLinearComplex,
@@ -639,7 +781,6 @@ def prepare_balanced_cut_grid(
         raise TypeError("schedule must be NativeHexGridSchedule.")
     if (
         source.boundary != "conforming"
-        or source.geometry is not None
         or source_mesh.topological_dimension != 3
         or source_mesh.ambient_dimension != 3
         or not source_mesh.blocks
@@ -650,7 +791,7 @@ def prepare_balanced_cut_grid(
         )
     ):
         raise ValueError(
-            "Balanced cut clipping requires a conforming piecewise-linear PLC and tetrahedral fill."
+            "Balanced cut clipping requires a conforming PLC and tetrahedral fill."
         )
     target = finite_real_scalar(target_size, "target_size")
     if target <= 0.0:
@@ -748,14 +889,20 @@ def prepare_balanced_cut_grid(
             )
             for point in exact_points
         )
-        spacing = Fraction.from_float(target)
-        knots = tuple(
-            _generic_axis_knots(
-                tuple(point[axis] for point in local_points),
-                spacing,
-                axis + 1,
-            )
-            for axis in range(3)
+        rounded_spacing = Fraction.from_float(target)
+        spacing = _simplest_fraction_between(
+            rounded_spacing * (1 - Fraction(1, 1 << 40)),
+            rounded_spacing * (1 + Fraction(1, 1 << 40)),
+        )
+        knots = _separated_axis_knots(
+            local_points,
+            np.concatenate(
+                [
+                    np.asarray(block.vertices, dtype=np.int64)
+                    for block in source_mesh.blocks
+                ]
+            ),
+            spacing,
         )
     return BalancedCutGridPlan(
         knots,
