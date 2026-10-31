@@ -191,7 +191,9 @@ def _exact_brep_pole_collapse(
     root_point, conic_root = _exact_vertex_root_source(corner_root)
     if corner_exact is not None and (
         len(corner_exact) != 3
-        or any(not isinstance(value, (Fraction, RadicalElement)) for value in corner_exact)
+        or any(
+            not isinstance(value, (Fraction, RadicalElement)) for value in corner_exact
+        )
     ):
         return False
     point = corner_exact if corner_exact is not None else root_point
@@ -243,9 +245,7 @@ def _exact_brep_pole_collapse(
     period = source_patch.periods[0]
     if period is None or last - first != period:
         return False
-    affine = _affine_curve_coefficients(
-        pcurve, (Fraction(0), Fraction(0))
-    )
+    affine = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
     if affine is None:
         return False
     origin, direction = affine
@@ -275,9 +275,7 @@ def _exact_brep_pole_collapse(
     axis_direction = rational_vector(
         np.asarray(source_patch.axis_direction, dtype=np.float64)
     )
-    relative = tuple(
-        value - axis_origin[axis] for axis, value in enumerate(point)
-    )
+    relative = tuple(value - axis_origin[axis] for axis, value in enumerate(point))
     cross = (
         relative[1] * axis_direction[2] - relative[2] * axis_direction[1],
         relative[2] * axis_direction[0] - relative[0] * axis_direction[2],
@@ -375,10 +373,10 @@ def native_edge_pcurve(
         return LineCurve((0.0, curve.fixed_value), (1.0, 0.0))
     if isinstance(curve, SurfaceMappedCurve) and _same_patch(curve.surface, patch):
         return curve.pcurve
-    if isinstance(patch, RevolutionSurface) and isinstance(curve, CircleCurve):
-        return _revolution_circle_pcurve_candidate(curve, patch)
     if isinstance(curve, CircleCurve) and isinstance(patch, CylinderPatch):
         return _cylinder_section_pcurve(curve, patch)
+    if isinstance(patch, RevolutionSurface) and isinstance(curve, CircleCurve):
+        return _revolution_circle_pcurve_candidate(curve, patch)
     frame = _affine_surface_frame(patch)
     if frame is not None and curve.ambient_dimension == 3:
         plane_origin = frame[0]
@@ -394,44 +392,6 @@ def native_edge_pcurve(
         candidate = _affine_pcurve_carrier(curve, uv_origin, uv_direction)
         return candidate if _same_plane_line_lift(curve, candidate, frame) else None
     return None
-
-
-def _revolution_circle_pcurve_candidate(
-    curve: CircleCurve, patch: RevolutionSurface, /
-) -> AbstractCurve | None:
-    """Propose the profile-level ring ``(t, v0)`` of a circle on a line revolution.
-
-    The circle's start point must lie on the line profile at an exactly
-    representable ``v0``; ``exact_source_lift`` then proves the whole lift.
-    """
-    if isinstance(patch.curve, LineCurve):
-        origin, direction = patch.curve.origin_exact, patch.curve.direction_exact
-    elif isinstance(patch.curve, ExactLineCurve):
-        origin = patch.curve.first_exact
-        direction = tuple(
-            last - first
-            for first, last in zip(
-                patch.curve.first_exact, patch.curve.last_exact, strict=True
-            )
-        )
-    else:
-        return None
-    start = tuple(
-        center + curve.radius_exact * axis
-        for center, axis in zip(curve.center_exact, curve.first_axis_exact, strict=True)
-    )
-    pivot = next((index for index, value in enumerate(direction) if value != 0), None)
-    if pivot is None:
-        return None
-    parameter = (start[pivot] - origin[pivot]) / direction[pivot]
-    if not isinstance(parameter, Fraction) or any(
-        origin[index] + parameter * direction[index] != start[index] for index in range(3)
-    ):
-        return None
-    value = float(parameter)
-    if Fraction(value) != parameter:
-        return None
-    return LineCurve((0.0, value), (1.0, 0.0))
 
 
 def _cylinder_section_pcurve(
@@ -471,6 +431,44 @@ def _cylinder_section_pcurve(
         origin_exact=(Fraction(0), height),
         direction_exact=(Fraction(1), Fraction(0)),
     )
+
+
+def _revolution_circle_pcurve_candidate(
+    curve: CircleCurve, patch: RevolutionSurface, /
+) -> AbstractCurve | None:
+    """Propose the profile-level ring ``(t, v0)`` of a circle on a line revolution.
+
+    The circle's start point must lie on the line profile at an exactly
+    representable ``v0``; ``exact_source_lift`` then proves the whole lift.
+    """
+    if isinstance(patch.curve, LineCurve):
+        origin, direction = patch.curve.origin_exact, patch.curve.direction_exact
+    elif isinstance(patch.curve, ExactLineCurve):
+        origin = patch.curve.first_exact
+        direction = tuple(
+            last - first
+            for first, last in zip(
+                patch.curve.first_exact, patch.curve.last_exact, strict=True
+            )
+        )
+    else:
+        return None
+    start = tuple(
+        center + curve.radius_exact * axis
+        for center, axis in zip(curve.center_exact, curve.first_axis_exact, strict=True)
+    )
+    pivot = next((index for index, value in enumerate(direction) if value != 0), None)
+    if pivot is None:
+        return None
+    parameter = (start[pivot] - origin[pivot]) / direction[pivot]
+    if not isinstance(parameter, Fraction) or any(
+        origin[index] + parameter * direction[index] != start[index] for index in range(3)
+    ):
+        return None
+    value = float(parameter)
+    if Fraction(value) != parameter:
+        return None
+    return LineCurve((0.0, value), (1.0, 0.0))
 
 
 def _cylinder_chart_line(
@@ -879,11 +877,14 @@ def _periodic_region_admits_shifts(
 
 def _surface_chart_coefficients(
     curve: AbstractCurve, region: SurfaceRegion, first: float, last: float, /
-) -> tuple[
-    tuple[ExactScalar, ExactScalar],
-    tuple[ExactScalar, ExactScalar],
-    tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
-] | None:
+) -> (
+    tuple[
+        tuple[ExactScalar, ExactScalar],
+        tuple[ExactScalar, ExactScalar],
+        tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+    ]
+    | None
+):
     if curve.ambient_dimension != 2:
         return None
     domain = curve.parameter_domain
@@ -893,9 +894,7 @@ def _surface_chart_coefficients(
     if periodic_source is None:
         return None
     base_curve, shifts = periodic_source
-    affine_chart = _affine_curve_coefficients(
-        base_curve, (Fraction(0), Fraction(0))
-    )
+    affine_chart = _affine_curve_coefficients(base_curve, (Fraction(0), Fraction(0)))
     exact_box = _revolution_region_box(region)
     if affine_chart is None or exact_box is None:
         return None
@@ -965,16 +964,11 @@ def _revolution_profile_curve_lift(
         return False
     domain = patch.curve.parameter_domain
     if domain is not None:
-        profile_first = (
-            uv_origin[1] + Fraction.from_float(float(first)) * uv_direction[1]
-        )
-        profile_last = (
-            uv_origin[1] + Fraction.from_float(float(last)) * uv_direction[1]
-        )
-        if (
-            min(profile_first, profile_last) < Fraction.from_float(domain[0])
-            or max(profile_first, profile_last) > Fraction.from_float(domain[1])
-        ):
+        profile_first = uv_origin[1] + Fraction.from_float(float(first)) * uv_direction[1]
+        profile_last = uv_origin[1] + Fraction.from_float(float(last)) * uv_direction[1]
+        if min(profile_first, profile_last) < Fraction.from_float(domain[0]) or max(
+            profile_first, profile_last
+        ) > Fraction.from_float(domain[1]):
             return False
     return True
 
@@ -1022,10 +1016,6 @@ def _revolution_circle_harmonics_lift(
         and curve_cosine == radial
         and curve_sine == _exact_cross(axis, radial)
     )
-
-
-
-
 
 
 def _conic_parameter_root_in_interval(
@@ -1101,6 +1091,8 @@ def _conic_parameter_root_in_interval(
         and lower_relation >= 0
         and upper_relation <= 0
     )
+
+
 def _rooted_profile_chart(
     pcurve: AbstractCurve,
     patch: AbstractSurfacePatch,
@@ -1116,10 +1108,7 @@ def _rooted_profile_chart(
     )
 
     periodic_source = _periodic_pcurve_source(pcurve, patch)
-    if (
-        periodic_source is None
-        or not _pcurve_execution_shadows_match(pcurve)
-    ):
+    if periodic_source is None or not _pcurve_execution_shadows_match(pcurve):
         return None
     source, shifts = periodic_source
     if not isinstance(source, AffinePCurve):
@@ -1148,10 +1137,7 @@ def _rooted_profile_chart(
     if exact_box is None:
         return None
     first_exact, last_exact = Fraction.from_float(first), Fraction.from_float(last)
-    if not (
-        exact_box[0][0] <= first_exact
-        and last_exact <= exact_box[1][0]
-    ):
+    if not (exact_box[0][0] <= first_exact and last_exact <= exact_box[1][0]):
         return None
     if not _conic_parameter_root_in_interval(
         root_line.root, exact_box[0][1], exact_box[1][1]
@@ -1185,30 +1171,22 @@ def _revolution_circle_profile_point_lift(
 
     axis_origin = rational_vector(np.asarray(patch.axis_origin))
     axis = rational_vector(np.asarray(patch.axis_direction))
-    if (
-        len(axis_origin) != 3
-        or len(axis) != 3
-        or _exact_dot(axis, axis) != 1
-    ):
+    if len(axis_origin) != 3 or len(axis) != 3 or _exact_dot(axis, axis) != 1:
         return False
     axis_origin3 = cast(tuple[ExactScalar, ExactScalar, ExactScalar], axis_origin)
     axis3 = cast(tuple[ExactScalar, ExactScalar, ExactScalar], axis)
-    displacement = tuple(
-        profile_point[index] - axis_origin3[index] for index in range(3)
-    )
+    displacement = tuple(profile_point[index] - axis_origin3[index] for index in range(3))
     axial = _exact_dot(displacement, axis3)
-    center = tuple(
-        axis_origin3[index] + axial * axis3[index] for index in range(3)
-    )
-    radial = tuple(
-        displacement[index] - axial * axis3[index] for index in range(3)
-    )
+    center = tuple(axis_origin3[index] + axial * axis3[index] for index in range(3))
+    radial = tuple(displacement[index] - axial * axis3[index] for index in range(3))
     return _revolution_circle_harmonics_lift(
         curve,
         cast(tuple[ExactScalar, ExactScalar, ExactScalar], center),
         cast(tuple[ExactScalar, ExactScalar, ExactScalar], radial),
         axis3,
     )
+
+
 def _revolution_angular_circle_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
@@ -1226,9 +1204,7 @@ def _revolution_angular_circle_lift(
     ):
         return False
     profile = patch.curve
-    rooted_profile = _rooted_profile_chart(
-        pcurve, patch, profile, region, first, last
-    )
+    rooted_profile = _rooted_profile_chart(pcurve, patch, profile, region, first, last)
     if rooted_profile is not None:
         profile_point = cast(
             tuple[ExactScalar, ExactScalar, ExactScalar],
@@ -1309,8 +1285,7 @@ def _revolution_angular_circle_lift(
             witness.radial_axis_exact[2],
         )
         axial = (
-            witness.axial_origin_exact
-            + profile_parameter * witness.axial_direction_exact
+            witness.axial_origin_exact + profile_parameter * witness.axial_direction_exact
         )
         radius = (
             witness.radial_origin_exact
@@ -1431,6 +1406,7 @@ def _torus_coordinate_circle_lift(
         and actual_sine == expected_sine
     )
 
+
 def _plane_cylinder_section_lift(
     curve: AbstractCurve,
     pcurve: PlaneCylinderSectionPCurve,
@@ -1499,8 +1475,7 @@ def _plane_cylinder_section_lift(
         for index in range(3)
     )
     center = tuple(
-        patch.origin_exact[index]
-        + pcurve.offset_exact[1] * patch.axis_exact[index]
+        patch.origin_exact[index] + pcurve.offset_exact[1] * patch.axis_exact[index]
         for index in range(3)
     )
     cosine = tuple(
@@ -1522,9 +1497,11 @@ def _exact_plane_cylinder_section_endpoint_chart(
     endpoint: ConicParameterEndpoint,
     patch: PlanePatch | CylinderPatch,
     /,
-) -> tuple[ExactScalar, ExactScalar] | tuple[
-    ExactScalar, ExactScalar, int, ExactScalar
-] | None:
+) -> (
+    tuple[ExactScalar, ExactScalar]
+    | tuple[ExactScalar, ExactScalar, int, ExactScalar]
+    | None
+):
     from ._intersection import ConicParameterEndpoint
 
     if (
@@ -1632,8 +1609,7 @@ def _same_plane_conic_root_generator_lift(
         for index in range(3)
     )
     lifted_direction = tuple(
-        chart_direction[0] * first_axis[index]
-        + chart_direction[1] * second_axis[index]
+        chart_direction[0] * first_axis[index] + chart_direction[1] * second_axis[index]
         for index in range(3)
     )
     return source == (lifted_origin, lifted_direction)
@@ -1647,9 +1623,8 @@ def _same_ruled_rail_surface_lift(
     last: float,
     /,
 ) -> bool:
-    if (
-        not isinstance(region.patch, RuledSurface)
-        or not isinstance(pcurve, (LineCurve, ExactLineCurve))
+    if not isinstance(region.patch, RuledSurface) or not isinstance(
+        pcurve, (LineCurve, ExactLineCurve)
     ):
         return False
     if _same_source_definition(curve, region.patch.first):
@@ -1671,7 +1646,8 @@ def _same_ruled_rail_surface_lift(
     lower = tuple(Fraction.from_float(float(value)) for value in box[0])
     upper = tuple(Fraction.from_float(float(value)) for value in box[1])
     return all(
-        lower[axis] <= origin[axis] + Fraction.from_float(parameter) * direction[axis]
+        lower[axis]
+        <= origin[axis] + Fraction.from_float(parameter) * direction[axis]
         <= upper[axis]
         for axis in range(2)
         for parameter in (first, last)
@@ -1803,16 +1779,15 @@ def _bspline_boundary_line_lift(
             continue
         trace_first = chart_origin[free_axis] + slope * parameter_first
         trace_last = chart_origin[free_axis] + slope * parameter_last
-        trace_lower, trace_upper = min(trace_first, trace_last), max(
-            trace_first, trace_last
+        trace_lower, trace_upper = (
+            min(trace_first, trace_last),
+            max(trace_first, trace_last),
         )
         trace_origin = tuple(
             origin - chart_origin[free_axis] * direction / slope
             for origin, direction in zip(source_origin, source_direction, strict=True)
         )
-        trace_direction = tuple(
-            direction / slope for direction in source_direction
-        )
+        trace_direction = tuple(direction / slope for direction in source_direction)
         if fixed_value == domain_bounds[fixed_axis][0]:
             fixed_side = 0
         elif fixed_value == domain_bounds[fixed_axis][1]:
@@ -1820,9 +1795,7 @@ def _bspline_boundary_line_lift(
         else:
             continue
         if not (
-            region_bounds[fixed_axis][0]
-            <= fixed_value
-            <= region_bounds[fixed_axis][1]
+            region_bounds[fixed_axis][0] <= fixed_value <= region_bounds[fixed_axis][1]
             and region_bounds[free_axis][0]
             <= trace_lower
             <= trace_upper
@@ -1832,9 +1805,8 @@ def _bspline_boundary_line_lift(
         matched = False
         for span in spans:
             fixed_bounds = span.parameter_bounds[fixed_axis]
-            if (
-                (fixed_side == 0 and fixed_bounds[0] != fixed_value)
-                or (fixed_side == -1 and fixed_bounds[1] != fixed_value)
+            if (fixed_side == 0 and fixed_bounds[0] != fixed_value) or (
+                fixed_side == -1 and fixed_bounds[1] != fixed_value
             ):
                 continue
             lower, upper = span.parameter_bounds[free_axis]
@@ -1916,16 +1888,15 @@ def _tspline_boundary_line_lift(
             continue
         trace_first = chart_origin[free_axis] + slope * parameter_first
         trace_last = chart_origin[free_axis] + slope * parameter_last
-        trace_lower, trace_upper = min(trace_first, trace_last), max(
-            trace_first, trace_last
+        trace_lower, trace_upper = (
+            min(trace_first, trace_last),
+            max(trace_first, trace_last),
         )
         trace_origin = tuple(
             origin - chart_origin[free_axis] * direction / slope
             for origin, direction in zip(source_origin, source_direction, strict=True)
         )
-        trace_direction = tuple(
-            direction / slope for direction in source_direction
-        )
+        trace_direction = tuple(direction / slope for direction in source_direction)
         if fixed_value == domain_bounds[fixed_axis][0]:
             fixed_side = 0
         elif fixed_value == domain_bounds[fixed_axis][1]:
@@ -1933,9 +1904,7 @@ def _tspline_boundary_line_lift(
         else:
             continue
         if not (
-            region_bounds[fixed_axis][0]
-            <= fixed_value
-            <= region_bounds[fixed_axis][1]
+            region_bounds[fixed_axis][0] <= fixed_value <= region_bounds[fixed_axis][1]
             and region_bounds[free_axis][0]
             <= trace_lower
             <= trace_upper
@@ -1947,9 +1916,8 @@ def _tspline_boundary_line_lift(
             u_lower, u_upper, v_lower, v_upper = extraction.parameter_bounds
             span_bounds = ((u_lower, u_upper), (v_lower, v_upper))
             fixed_bounds = span_bounds[fixed_axis]
-            if (
-                (fixed_side == 0 and fixed_bounds[0] != fixed_value)
-                or (fixed_side == -1 and fixed_bounds[1] != fixed_value)
+            if (fixed_side == 0 and fixed_bounds[0] != fixed_value) or (
+                fixed_side == -1 and fixed_bounds[1] != fixed_value
             ):
                 continue
             lower, upper = span_bounds[free_axis]
@@ -1962,9 +1930,7 @@ def _tspline_boundary_line_lift(
                         (
                             extraction.exact_extraction_operator[row][coefficient]
                             * target[anchor][component]
-                            for row, anchor in enumerate(
-                                extraction.coefficient_row_ids
-                            )
+                            for row, anchor in enumerate(extraction.coefficient_row_ids)
                         ),
                         Fraction(0),
                     )
@@ -1973,8 +1939,7 @@ def _tspline_boundary_line_lift(
                 for coefficient in range(16)
             )
             tensor = tuple(
-                tuple(homogeneous[u * 4 + v] for v in range(4))
-                for u in range(4)
+                tuple(homogeneous[u * 4 + v] for v in range(4)) for u in range(4)
             )
             boundary = (
                 tensor[fixed_side]
@@ -2019,9 +1984,7 @@ def _rational_bernstein_value(
 
 
 def _rational_spans_cover_interval(
-    spans: tuple[
-        tuple[Fraction, Fraction, tuple[tuple[ExactScalar, ...], ...]], ...
-    ],
+    spans: tuple[tuple[Fraction, Fraction, tuple[tuple[ExactScalar, ...], ...]], ...],
     lower: Fraction,
     upper: Fraction,
     /,
@@ -2059,8 +2022,10 @@ def _rational_spans_cover_interval(
             for span_lower, span_upper, coefficients in spans
             if span_lower <= endpoint <= span_upper
         )
-        if not incident or incident[0] is None or any(
-            value != incident[0] for value in incident[1:]
+        if (
+            not incident
+            or incident[0] is None
+            or any(value != incident[0] for value in incident[1:])
         ):
             return False
     return True
@@ -2068,9 +2033,7 @@ def _rational_spans_cover_interval(
 
 def _exact_bspline_curve_spans(
     curve: BSplineCurve, /
-) -> tuple[
-    tuple[Fraction, Fraction, tuple[tuple[ExactScalar, ...], ...]], ...
-] | None:
+) -> tuple[tuple[Fraction, Fraction, tuple[tuple[ExactScalar, ...], ...]], ...] | None:
     if any(
         not isinstance(value, Fraction)
         for row in curve.exact_control_points
@@ -2094,9 +2057,7 @@ def _exact_bspline_curve_spans(
         lower, upper = span.parameter_bounds
         if not isinstance(lower, Fraction) or not isinstance(upper, Fraction):
             return None
-        result.append(
-            (lower, upper, span.homogeneous_bernstein_coefficients)
-        )
+        result.append((lower, upper, span.homogeneous_bernstein_coefficients))
     return tuple(result)
 
 
@@ -2189,9 +2150,7 @@ def _exact_spline_surface_boundary_spans(
     fixed_axis: int,
     fixed_side: int,
     /,
-) -> tuple[
-    tuple[Fraction, Fraction, tuple[tuple[ExactScalar, ...], ...]], ...
-]:
+) -> tuple[tuple[Fraction, Fraction, tuple[tuple[ExactScalar, ...], ...]], ...]:
     from ._tspline import TSplineSurfacePatch
 
     if isinstance(patch, BSplineSurfacePatch):
@@ -2218,9 +2177,8 @@ def _exact_spline_surface_boundary_spans(
         output = []
         for span in spans:
             fixed_bounds = span.parameter_bounds[fixed_axis]
-            if (
-                (fixed_side == 0 and fixed_bounds[0] != fixed_value)
-                or (fixed_side == -1 and fixed_bounds[1] != fixed_value)
+            if (fixed_side == 0 and fixed_bounds[0] != fixed_value) or (
+                fixed_side == -1 and fixed_bounds[1] != fixed_value
             ):
                 continue
             lower, upper = span.parameter_bounds[1 - fixed_axis]
@@ -2245,9 +2203,8 @@ def _exact_spline_surface_boundary_spans(
     for extraction in patch.realization.extractions:
         u_lower, u_upper, v_lower, v_upper = extraction.parameter_bounds
         bounds = ((u_lower, u_upper), (v_lower, v_upper))
-        if (
-            (fixed_side == 0 and bounds[fixed_axis][0] != fixed_value)
-            or (fixed_side == -1 and bounds[fixed_axis][1] != fixed_value)
+        if (fixed_side == 0 and bounds[fixed_axis][0] != fixed_value) or (
+            fixed_side == -1 and bounds[fixed_axis][1] != fixed_value
         ):
             continue
         lower, upper = bounds[1 - fixed_axis]
@@ -2265,10 +2222,7 @@ def _exact_spline_surface_boundary_spans(
             )
             for coefficient in range(16)
         )
-        tensor = tuple(
-            tuple(homogeneous[u * 4 + v] for v in range(4))
-            for u in range(4)
-        )
+        tensor = tuple(tuple(homogeneous[u * 4 + v] for v in range(4)) for u in range(4))
         boundary = (
             tensor[fixed_side]
             if fixed_axis == 0
@@ -2303,7 +2257,11 @@ def _bspline_chart_line(
             for span_lower, span_upper, coefficients in spans
             if span_lower <= parameter <= span_upper
         )
-        if not values or values[0] is None or any(value != values[0] for value in values[1:]):
+        if (
+            not values
+            or values[0] is None
+            or any(value != values[0] for value in values[1:])
+        ):
             return None
         value = values[0]
         return (value[0], value[1]) if len(value) == 2 else None
@@ -2391,7 +2349,9 @@ def _exact_spline_boundary_lift(
     if chart is None:
         return False
     chart_origin, chart_direction = chart
-    if any(not isinstance(value, Fraction) for value in (*chart_origin, *chart_direction)):
+    if any(
+        not isinstance(value, Fraction) for value in (*chart_origin, *chart_direction)
+    ):
         return False
     chart_origin = cast(tuple[Fraction, Fraction], chart_origin)
     chart_direction = cast(tuple[Fraction, Fraction], chart_direction)
@@ -2427,14 +2387,12 @@ def _exact_spline_boundary_lift(
             continue
         trace_first = offset + slope * first_exact
         trace_last = offset + slope * last_exact
-        trace_lower, trace_upper = min(trace_first, trace_last), max(
-            trace_first, trace_last
+        trace_lower, trace_upper = (
+            min(trace_first, trace_last),
+            max(trace_first, trace_last),
         )
         if not (
-            domain[free_axis][0]
-            <= trace_lower
-            < trace_upper
-            <= domain[free_axis][1]
+            domain[free_axis][0] <= trace_lower < trace_upper <= domain[free_axis][1]
             and region_bounds[fixed_axis][0]
             <= fixed_value
             <= region_bounds[fixed_axis][1]
@@ -2447,16 +2405,15 @@ def _exact_spline_boundary_lift(
         boundary_spans = _exact_spline_surface_boundary_spans(
             patch, fixed_axis, fixed_side
         )
-        if not _rational_spans_cover_interval(
-            boundary_spans, trace_lower, trace_upper
-        ):
+        if not _rational_spans_cover_interval(boundary_spans, trace_lower, trace_upper):
             continue
         matched = False
         for boundary_lower, boundary_upper, boundary_coefficients in boundary_spans:
             parameter_first = (boundary_lower - offset) / slope
             parameter_last = (boundary_upper - offset) / slope
-            mapped_lower, mapped_upper = min(parameter_first, parameter_last), max(
-                parameter_first, parameter_last
+            mapped_lower, mapped_upper = (
+                min(parameter_first, parameter_last),
+                max(parameter_first, parameter_last),
             )
             for source_span_lower, source_span_upper, source_coefficients in source_spans:
                 overlap_lower = max(first_exact, mapped_lower, source_span_lower)
@@ -2487,10 +2444,6 @@ def _exact_spline_boundary_lift(
         if matched:
             return True
     return False
-
-
-
-
 
 
 def _ruled_rail_chart_lift(
@@ -2701,20 +2654,14 @@ def exact_source_lift(
     ):
         return True
 
-
     if isinstance(curve, SurfaceMappedCurve):
-        if (
-            isinstance(region.patch, PlanePatch)
-            and _same_plane_conic_root_generator_lift(
-                curve, pcurve, region, first, last
-            )
+        if isinstance(region.patch, PlanePatch) and _same_plane_conic_root_generator_lift(
+            curve, pcurve, region, first, last
         ):
             return True
         return _same_mapped_surface_chart_lift(curve, pcurve, region, first, last)
     if isinstance(region.patch, RevolutionSurface) and (
-        _revolution_profile_curve_lift(
-            curve, pcurve, region.patch, region, first, last
-        )
+        _revolution_profile_curve_lift(curve, pcurve, region.patch, region, first, last)
         or _revolution_angular_circle_lift(
             curve, pcurve, region.patch, region, first, last
         )
@@ -2723,9 +2670,7 @@ def exact_source_lift(
     if isinstance(region.patch, TorusPatch):
         return _torus_coordinate_circle_lift(
             curve, pcurve, region.patch, region, first, last
-        ) or _torus_rooted_circle_lift(
-            curve, pcurve, region.patch, region, first, last
-        )
+        ) or _torus_rooted_circle_lift(curve, pcurve, region.patch, region, first, last)
     if isinstance(region.patch, (PlanePatch, CylinderPatch)):
         section_source = _periodic_pcurve_source(pcurve, region.patch)
         if section_source is None:
@@ -2737,13 +2682,9 @@ def exact_source_lift(
             )
     if isinstance(region.patch, RuledSurface):
         if isinstance(curve, SurfaceIsoparametricCurve):
-            return _ruled_second_revolution_ring_lift(
-                curve, pcurve, region, first, last
-            )
+            return _ruled_second_revolution_ring_lift(curve, pcurve, region, first, last)
         if isinstance(curve, CircleCurve):
-            return _ruled_first_circle_rail_lift(
-                curve, pcurve, region, first, last
-            )
+            return _ruled_first_circle_rail_lift(curve, pcurve, region, first, last)
 
     frame = _affine_surface_frame(region.patch)
     if frame is not None and _same_plane_line_lift(curve, pcurve, frame):
