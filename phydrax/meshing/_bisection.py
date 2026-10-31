@@ -26,14 +26,16 @@ shape measure of every descendant is bounded below by its minimum over the
 classes of the initial mesh. The matching condition (Stevenson 2008) makes the
 conformity closure terminate with the optimal closure-size bound; initial
 labellings that violate it are rejected or first made compatible by one
-barycentric subdivision, whose simplices are pairwise reflected neighbors.
+barycentric subdivision, whose simplices are pairwise reflected neighbors. That
+subdivision is a recorded refinement level of the forest: coarsening removes it
+once every created vertex's star is undone, restoring the source cells exactly.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, permutations
 from typing import Any, final, NamedTuple
 
 import equinox as eqx
@@ -74,10 +76,14 @@ def _identifiers(values: ArrayLike, name: str, /) -> np.ndarray:
     return array
 
 
-def _tag_array(values: ArrayLike, count: int, dimension: int, name: str, /) -> np.ndarray:
+def _tag_array(
+    values: ArrayLike, count: int, dimension: int, name: str, /, *, lowest: int = 1
+) -> np.ndarray:
     tags = np.asarray(values, dtype=np.int32)
-    if tags.shape != (count,) or np.any(tags < 1) or np.any(tags > dimension):
-        raise ValueError(f"{name} must hold one tag in 1..{dimension} per simplex.")
+    if tags.shape != (count,) or np.any(tags < lowest) or np.any(tags > dimension):
+        raise ValueError(
+            f"{name} must hold one tag in {lowest}..{dimension} per simplex."
+        )
     return tags
 
 
@@ -108,6 +114,12 @@ def _retired_tables(keys: Any, ids: Any, dimension: int, /) -> Any:
     return key_tables, id_tables
 
 
+def _subdivision_width(dimension: int, /) -> tuple[int, int]:
+    """Children and created vertices of one barycentric subdivision record."""
+
+    return (6, 4) if dimension == 2 else (24, 11)
+
+
 def _validated_forest(
     dimension: int,
     cell_global_ids: ArrayLike,
@@ -115,6 +127,7 @@ def _validated_forest(
     tags: ArrayLike,
     generations: ArrayLike,
     records: dict[str, ArrayLike],
+    subdivisions: dict[str, ArrayLike],
     /,
 ) -> dict[str, np.ndarray]:
     ids = _identifiers(cell_global_ids, "cell_global_ids")
@@ -132,8 +145,34 @@ def _validated_forest(
     vertices = _identifiers(records["vertex_ids"], "record_vertex_ids")
     if children.shape != (total, 2) or np.any(children < 0):
         raise ValueError("record_child_ids must have shape (records, 2).")
-    if np.unique(children).size != children.size:
-        raise ValueError("Every bisection record owns two distinct child IDs.")
+    roots = _identifiers(subdivisions["parent_ids"], "subdivision_parent_ids")
+    if (
+        np.any(roots[1:] <= roots[:-1])
+        or np.intersect1d(roots, ids).size
+        or np.intersect1d(roots, parents).size
+    ):
+        raise ValueError(
+            "Subdivision parent IDs must be strictly increasing inactive cells "
+            "without bisection records."
+        )
+    arrangements, created = _subdivision_width(dimension)
+    root_count = roots.size
+    root_children = np.asarray(subdivisions["child_ids"], dtype=np.int64)
+    root_blocks = np.asarray(subdivisions["parent_blocks"], dtype=np.int32)
+    root_vertices = np.asarray(subdivisions["vertex_ids"], dtype=np.int64)
+    if root_children.shape != (root_count, arrangements) or np.any(root_children < 0):
+        raise ValueError(
+            f"subdivision_child_ids must have shape (subdivisions, {arrangements})."
+        )
+    if root_vertices.shape != (root_count, created) or np.any(root_vertices < 0):
+        raise ValueError(
+            f"subdivision_vertex_ids must have shape (subdivisions, {created})."
+        )
+    if root_blocks.shape != (root_count,) or np.any(root_blocks < 0):
+        raise ValueError("subdivision_parent_blocks must align with the subdivisions.")
+    issued = np.concatenate((children.reshape((-1,)), root_children.reshape((-1,))))
+    if np.unique(issued).size != issued.size:
+        raise ValueError("Every refinement record owns distinct child IDs.")
     if blocks.shape != (total,) or np.any(blocks < 0) or vertices.shape != (total,):
         raise ValueError("Record blocks and vertices must align with the records.")
     generation = np.asarray(generations, dtype=np.int32)
@@ -144,7 +183,7 @@ def _validated_forest(
         "ordered_vertices": _simplex_rows(
             ordered_vertices, count, dimension, "ordered_vertices"
         ),
-        "tags": _tag_array(tags, count, dimension, "tags"),
+        "tags": _tag_array(tags, count, dimension, "tags", lowest=0),
         "generations": generation,
         "record_parent_ids": parents,
         "record_parent_blocks": blocks,
@@ -159,12 +198,22 @@ def _validated_forest(
         ),
         "record_child_ids": children,
         "record_vertex_ids": vertices,
+        "subdivision_parent_ids": roots,
+        "subdivision_parent_blocks": root_blocks,
+        "subdivision_parent_rows": _simplex_rows(
+            subdivisions["parent_rows"],
+            root_count,
+            dimension,
+            "subdivision_parent_rows",
+        ),
+        "subdivision_child_ids": root_children,
+        "subdivision_vertex_ids": root_vertices,
     }
 
 
 @final
 class BisectionHierarchy(StrictModule, NonTrainableState):
-    """Persistent Maubach labels and bisection forest of one bisection mesh.
+    """Persistent Maubach labels and refinement forest of one bisection mesh.
 
     Active cells are listed by ascending global ID with their canonical Maubach
     tuple (vertex global IDs), tag, and generation. Each forest record is one
@@ -174,6 +223,16 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
     tables keep the global IDs of edges/faces removed by refinement so that
     coarsening restores them under their original IDs. Vertex and cell IDs are
     issued from the high-water counters and never reused.
+
+    Subdivision records are the barycentric pre-subdivision of a source cell whose
+    labels violated the matching condition: the parent cell ID, block, exact block
+    row, its ``(d + 1)!`` child IDs in arrangement order, and the created vertices
+    of the subsets of the ascending parent vertex IDs (edges, then faces of a
+    tetrahedron, then the cell center, each lexicographic). Coarsening removes a
+    subdivision once every child and every created vertex's star is undone, which
+    restores the source cell exactly. A restored cell carries tag ``0`` (its
+    labels are incompatible) and its block row as ordered vertices; refining a
+    hierarchy with such cells subdivides all of them again.
 
     A hierarchy applies to a mesh iff its active cell IDs equal the mesh cell IDs
     and every cell has the same vertex-ID set in both.
@@ -191,6 +250,11 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
     record_parent_tags: Array
     record_child_ids: Array
     record_vertex_ids: Array
+    subdivision_parent_ids: Array
+    subdivision_parent_blocks: Array
+    subdivision_parent_rows: Array
+    subdivision_child_ids: Array
+    subdivision_vertex_ids: Array
     retired_entity_keys: tuple[Array, ...]
     retired_entity_ids: tuple[Array, ...]
     next_vertex_id: int = eqx.field(static=True)
@@ -213,6 +277,11 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         record_parent_tags: ArrayLike,
         record_child_ids: ArrayLike,
         record_vertex_ids: ArrayLike,
+        subdivision_parent_ids: ArrayLike,
+        subdivision_parent_blocks: ArrayLike,
+        subdivision_parent_rows: ArrayLike,
+        subdivision_child_ids: ArrayLike,
+        subdivision_vertex_ids: ArrayLike,
         retired_entity_keys: tuple[ArrayLike, ...],
         retired_entity_ids: tuple[ArrayLike, ...],
         next_vertex_id: int,
@@ -235,6 +304,13 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
                 "child_ids": record_child_ids,
                 "vertex_ids": record_vertex_ids,
             },
+            {
+                "parent_ids": subdivision_parent_ids,
+                "parent_blocks": subdivision_parent_blocks,
+                "parent_rows": subdivision_parent_rows,
+                "child_ids": subdivision_child_ids,
+                "vertex_ids": subdivision_vertex_ids,
+            },
         )
         retired_keys, retired_ids = _retired_tables(
             retired_entity_keys, retired_entity_ids, dimension
@@ -244,11 +320,15 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
             int(np.max(arrays["ordered_vertices"])),
             int(np.max(arrays["record_parent_vertices"], initial=-1)),
             int(np.max(arrays["record_vertex_ids"], initial=-1)),
+            int(np.max(arrays["subdivision_parent_rows"], initial=-1)),
+            int(np.max(arrays["subdivision_vertex_ids"], initial=-1)),
         )
         cell_high = max(
             int(arrays["cell_global_ids"][-1]),
             int(np.max(arrays["record_parent_ids"], initial=-1)),
             int(np.max(arrays["record_child_ids"], initial=-1)),
+            int(np.max(arrays["subdivision_parent_ids"], initial=-1)),
+            int(np.max(arrays["subdivision_child_ids"], initial=-1)),
         )
         if vertex_counter <= vertex_high or cell_counter <= cell_high:
             raise ValueError("Hierarchy counters must exceed every issued ID.")
@@ -264,6 +344,11 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         self.record_parent_tags = jnp.asarray(arrays["record_parent_tags"])
         self.record_child_ids = jnp.asarray(arrays["record_child_ids"])
         self.record_vertex_ids = jnp.asarray(arrays["record_vertex_ids"])
+        self.subdivision_parent_ids = jnp.asarray(arrays["subdivision_parent_ids"])
+        self.subdivision_parent_blocks = jnp.asarray(arrays["subdivision_parent_blocks"])
+        self.subdivision_parent_rows = jnp.asarray(arrays["subdivision_parent_rows"])
+        self.subdivision_child_ids = jnp.asarray(arrays["subdivision_child_ids"])
+        self.subdivision_vertex_ids = jnp.asarray(arrays["subdivision_vertex_ids"])
         self.retired_entity_keys = tuple(jnp.asarray(value) for value in retired_keys)
         self.retired_entity_ids = tuple(jnp.asarray(value) for value in retired_ids)
         self.next_vertex_id = vertex_counter
@@ -414,6 +499,44 @@ _VERTEX_LIMIT = 1 << 31
 _TABLES = {dimension: maubach_bisection_tables(dimension) for dimension in (2, 3)}
 
 
+def _subdivision_tables(dimension: int, /) -> tuple[tuple[tuple[int, ...], ...], Any]:
+    """Created-vertex subsets and the barycentric pieces of every parent facet.
+
+    Subsets index positions of the ascending parent row: edges, then faces of a
+    tetrahedron, then the center. Pieces address the extended row (parent row,
+    then created vertices) with shape ``(d + 1, d!, d)``: facet ``j`` omits
+    position ``j`` and splits into the chains ``(p0, m(p0 p1)[, c(p0 p1 p2)])``.
+    """
+
+    width = dimension + 1
+    subsets = tuple(
+        subset
+        for size in range(2, width + 1)
+        for subset in combinations(range(width), size)
+    )
+    column = {subset: width + index for index, subset in enumerate(subsets)}
+    pieces = np.asarray(
+        tuple(
+            tuple(
+                (order[0],)
+                + tuple(
+                    column[tuple(sorted(order[:size]))]
+                    for size in range(2, dimension + 1)
+                )
+                for order in permutations(
+                    tuple(position for position in range(width) if position != omitted)
+                )
+            )
+            for omitted in range(width)
+        ),
+        dtype=np.int64,
+    )
+    return subsets, pieces
+
+
+_SUBDIVISION = {dimension: _subdivision_tables(dimension) for dimension in (2, 3)}
+
+
 class _Cells(NamedTuple):
     ids: np.ndarray
     rows: np.ndarray
@@ -430,6 +553,14 @@ class _Records(NamedTuple):
     rows: np.ndarray
     tuples: np.ndarray
     tags: np.ndarray
+    child_ids: np.ndarray
+    vertices: np.ndarray
+
+
+class _Subdivisions(NamedTuple):
+    parent_ids: np.ndarray
+    blocks: np.ndarray
+    rows: np.ndarray
     child_ids: np.ndarray
     vertices: np.ndarray
 
@@ -483,6 +614,7 @@ class _Start(NamedTuple):
     incompatible: int
     uniform: bool
     retired: tuple[tuple[np.ndarray, np.ndarray], ...]
+    subdivisions: _Subdivisions
 
 
 class _Refinement(NamedTuple):
@@ -900,10 +1032,31 @@ def _incompatible_facets(cells: _Cells, dimension: int, /) -> int:
     return int(np.sum(~matched))
 
 
-def _subdivided(front: _Front, dimension: int, /) -> _Front:
-    """Barycentric subdivision: each simplex into (d+1)! simplices (v, m, [f,] c)_d."""
+def _empty_subdivisions(dimension: int, /) -> _Subdivisions:
+    arrangements, created = _subdivision_width(dimension)
+    empty = np.zeros((0,), dtype=np.int64)
+    return _Subdivisions(
+        empty,
+        empty,
+        np.zeros((0, dimension + 1), dtype=np.int64),
+        np.zeros((0, arrangements), dtype=np.int64),
+        np.zeros((0, created), dtype=np.int64),
+    )
 
-    cells, width = front.cells, dimension + 1
+
+def _subdivided(
+    front: _Front, selected: np.ndarray, dimension: int, /
+) -> tuple[_Front, _Subdivisions]:
+    """Barycentric subdivision of the selected cells into (v, m, [f,] c)_d simplices.
+
+    Each selected simplex becomes (d+1)! children; the rest stay. The selection
+    must share no edge with the kept cells, and no vertex may have been issued
+    yet, so the created vertices are the first growth rows.
+    """
+
+    if front.growth.levels.size:
+        raise ValueError("Barycentric subdivision precedes every bisection vertex.")
+    cells, width = _select(front.cells, selected), dimension + 1
     orders, odd_orders = _TABLES[dimension][4:]
     count, arrangements = cells.ids.size, orders.shape[0]
     tables = [_simplex_keys(cells.rows, size) for size in range(2, width)]
@@ -921,8 +1074,9 @@ def _subdivided(front: _Front, dimension: int, /) -> _Front:
     tuples = np.stack(columns, axis=2).reshape((-1, width))
     tags = np.full((tuples.shape[0],), dimension, dtype=np.int64)
     tuples, odd = _canonical(tuples, tags, np.tile(odd_orders, count), dimension)
+    child_ids = front.next_cell + np.arange(tuples.shape[0], dtype=np.int64)
     children = _Cells(
-        front.next_cell + np.arange(tuples.shape[0], dtype=np.int64),
+        child_ids,
         _oriented_rows(tuples, odd),
         tuples,
         tags,
@@ -946,9 +1100,27 @@ def _subdivided(front: _Front, dimension: int, /) -> _Front:
         )
     )
     growth = _Growth(parents, weights, np.zeros((parents.shape[0],), dtype=np.int64))
-    return front._replace(
-        cells=children, growth=growth, next_cell=front.next_cell + tuples.shape[0]
+    ascending = np.sort(cells.rows, axis=1)
+    created = [
+        front.vertex_base
+        + offsets[len(subset) - 2]
+        + key_rows(tables[len(subset) - 2], ascending[:, list(subset)])
+        for subset in _SUBDIVISION[dimension][0][:-1]
+    ]
+    created.append(centers)
+    records = _Subdivisions(
+        cells.ids,
+        cells.blocks,
+        cells.rows,
+        child_ids.reshape((count, arrangements)),
+        np.stack(created, axis=1),
     )
+    front = front._replace(
+        cells=_joined(_select(front.cells, ~selected), children),
+        growth=growth,
+        next_cell=front.next_cell + tuples.shape[0],
+    )
+    return front, records
 
 
 def _split_edges(front: _Front, codes: np.ndarray, level: int, dimension: int, /) -> Any:
@@ -1147,7 +1319,7 @@ def _labelled_start(
     front = _initial_front(
         cells, source.vertex_ids.size, int(cells.ids[-1]) + 1, dimension
     )
-    uniform = False
+    subdivisions = _empty_subdivisions(dimension)
     if periodic_edge_lock is not None:
         front = _periodic_locked_front(source, front, request, periodic_edge_lock)
     incompatible = _incompatible_facets(front.cells, dimension)
@@ -1158,29 +1330,15 @@ def _labelled_start(
                 "Locked periodic Maubach edges violate the local matching condition.",
                 stage="bisection-closure",
             )
-        match compatibility:
-            case BisectionCompatibility.REJECT:
-                raise ValueError(
-                    f"{incompatible} interior facets violate the bisection matching "
-                    "condition of the longest-edge labelling; use "
-                    "BisectionCompatibility.UNIFORM_REFINEMENT to subdivide "
-                    "barycentrically into a compatible mesh first."
-                )
-            case BisectionCompatibility.UNIFORM_REFINEMENT:
-                pairs = _TABLES[dimension][3]
-                edges = _edge_codes(
-                    front.cells.rows[:, pairs[:, 0]], front.cells.rows[:, pairs[:, 1]]
-                )
-                if np.any(_members(request.protected_codes, edges)):
-                    raise ValueError(
-                        "Uniform barycentric refinement would split protected edges."
-                    )
-                front = _subdivided(front, dimension)
-                uniform = True
-            case _:
-                raise ValueError(
-                    f"Unsupported bisection compatibility {compatibility!r}."
-                )
+        front, subdivisions = _barycentric_front(
+            front,
+            np.ones(front.cells.ids.shape, dtype=np.bool_),
+            request,
+            compatibility,
+            f"{incompatible} interior facets violate the bisection matching "
+            "condition of the longest-edge labelling",
+            dimension,
+        )
     marks = np.flatnonzero(np.isin(front.cells.origins, request.refine_ids))
     retired = tuple(
         (np.zeros((0, degree + 1), dtype=np.int64), np.zeros((0,), dtype=np.int64))
@@ -1193,19 +1351,89 @@ def _labelled_start(
         int(source.vertex_ids[-1]) + 1,
         incompatible == 0,
         incompatible,
-        uniform,
+        bool(incompatible),
         retired,
+        subdivisions,
     )
 
 
-def _bound_records(source: _Source, hierarchy: BisectionHierarchy, /) -> _Records:
+def _barycentric_front(
+    front: _Front,
+    selected: np.ndarray,
+    request: _Request,
+    compatibility: BisectionCompatibility,
+    reason: str,
+    dimension: int,
+    /,
+) -> tuple[_Front, _Subdivisions]:
+    """Subdivide incompatible cells barycentrically when the policy admits it."""
+
+    match compatibility:
+        case BisectionCompatibility.REJECT:
+            raise ValueError(
+                f"{reason}; use BisectionCompatibility.UNIFORM_REFINEMENT to "
+                "subdivide barycentrically into a compatible mesh first."
+            )
+        case BisectionCompatibility.UNIFORM_REFINEMENT:
+            pairs = _TABLES[dimension][3]
+            rows = front.cells.rows[selected]
+            edges = _edge_codes(rows[:, pairs[:, 0]], rows[:, pairs[:, 1]])
+            if np.any(_members(request.protected_codes, edges)):
+                raise ValueError(
+                    "Uniform barycentric refinement would split protected edges."
+                )
+            return _subdivided(front, selected, dimension)
+        case _:
+            raise ValueError(f"Unsupported bisection compatibility {compatibility!r}.")
+
+
+def _resubdivided(
+    start: _Start,
+    request: _Request,
+    compatibility: BisectionCompatibility,
+    dimension: int,
+    /,
+) -> _Start:
+    """Subdivide every restored (tag 0) source cell again before bisection.
+
+    Restored cells form whole edge-connected components (coarsening removes a
+    subdivision only with every cell around its created vertices), so their
+    subdivision never splits an edge of a kept cell.
+    """
+
+    pending = start.front.cells.tags == 0
+    if not np.any(pending):
+        return start
+    front, subdivisions = _barycentric_front(
+        start.front,
+        pending,
+        request,
+        compatibility,
+        f"{int(np.count_nonzero(pending))} restored source cells keep labels that "
+        "violate the bisection matching condition",
+        dimension,
+    )
+    return start._replace(
+        front=front,
+        marks=np.flatnonzero(np.isin(front.cells.origins, request.refine_ids)),
+        uniform=True,
+        subdivisions=_joined(start.subdivisions, subdivisions),
+    )
+
+
+def _bound_records(
+    source: _Source, hierarchy: BisectionHierarchy, /
+) -> tuple[_Records, _Subdivisions]:
     def vertices(values: Array) -> np.ndarray:
         return _compact_vertices(
             source, np.asarray(values, dtype=np.int64), "BisectionHierarchy"
         )
 
     blocks = np.asarray(hierarchy.record_parent_blocks, dtype=np.int64)
-    if np.any(blocks >= len(source.mesh.blocks)):
+    roots = np.asarray(hierarchy.subdivision_parent_blocks, dtype=np.int64)
+    if np.any(blocks >= len(source.mesh.blocks)) or np.any(
+        roots >= len(source.mesh.blocks)
+    ):
         raise ValueError("BisectionHierarchy records reference undeclared blocks.")
     return _Records(
         np.asarray(hierarchy.record_parent_ids, dtype=np.int64),
@@ -1215,6 +1443,12 @@ def _bound_records(source: _Source, hierarchy: BisectionHierarchy, /) -> _Record
         np.asarray(hierarchy.record_parent_tags, dtype=np.int64),
         np.asarray(hierarchy.record_child_ids, dtype=np.int64),
         vertices(hierarchy.record_vertex_ids),
+    ), _Subdivisions(
+        np.asarray(hierarchy.subdivision_parent_ids, dtype=np.int64),
+        roots,
+        vertices(hierarchy.subdivision_parent_rows),
+        np.asarray(hierarchy.subdivision_child_ids, dtype=np.int64),
+        vertices(hierarchy.subdivision_vertex_ids),
     )
 
 
@@ -1259,15 +1493,17 @@ def _bound_start(
             hierarchy.retired_entity_keys, hierarchy.retired_entity_ids, strict=True
         )
     )
+    records, subdivisions = _bound_records(source, hierarchy)
     return _Start(
         front,
-        _bound_records(source, hierarchy),
+        records,
         np.searchsorted(cells.ids, request.refine_ids),
         hierarchy.next_vertex_id,
         None,
         0,
         False,
         retired,
+        subdivisions,
     )
 
 
@@ -1400,41 +1636,201 @@ def _undone(cells: _Cells, flags: _Flags, records: _Records, family: _Family, /)
     return _select(merged, order), _select(merged_flags, order), _select(records, keep)
 
 
+def _subdivision_facets(
+    subdivisions: _Subdivisions, rows: np.ndarray, facets: Any, dimension: int, /
+) -> Any:
+    """Class agreement of the barycentric pieces of each parent facet."""
+
+    keys, classes = facets
+    pieces = _SUBDIVISION[dimension][1]
+    ascending = np.sort(subdivisions.rows[rows], axis=1)
+    extended = np.concatenate((ascending, subdivisions.vertices[rows]), axis=1)
+    found = key_rows(keys, np.sort(extended[:, pieces], axis=3).reshape((-1, dimension)))
+    if np.any(found < 0):
+        raise ValueError("BisectionHierarchy subdivisions disagree with the mesh facets.")
+    piece_classes = classes[found].reshape((rows.size, dimension + 1, -1))
+    agree = np.all(piece_classes == piece_classes[..., :1], axis=(1, 2))
+    restored = np.stack(
+        tuple(np.delete(ascending, column, axis=1) for column in range(dimension + 1)),
+        axis=1,
+    )
+    return agree, restored, piece_classes[..., 0]
+
+
+def _undone_subdivisions(
+    cells: _Cells,
+    flags: _Flags,
+    subdivisions: _Subdivisions,
+    protected: np.ndarray,
+    facets: Any,
+    dimension: int,
+    /,
+) -> Any:
+    """Restore every subdivided source cell whose children and created stars undo.
+
+    A subdivision is removable when all its children are active, marked,
+    unblocked, and of one class, its facet pieces agree in class, and the star of
+    each created vertex consists only of children of removable subdivisions; the
+    last condition is iterated to its fixed point. Returns ``None`` when nothing
+    is removable.
+    """
+
+    if subdivisions.parent_ids.size == 0:
+        return None
+    flat = subdivisions.child_ids.reshape((-1,))
+    position = np.minimum(np.searchsorted(cells.ids, flat), cells.ids.size - 1)
+    present = (cells.ids[position] == flat).reshape(subdivisions.child_ids.shape)
+    position = position.reshape(subdivisions.child_ids.shape)
+    classes = flags.classes[position]
+    candidate = (
+        np.all(present, axis=1)
+        & np.all(flags.marked[position], axis=1)
+        & ~np.any(flags.blocked[position], axis=1)
+        & np.all(classes == classes[:, :1], axis=1)
+    )
+    rows = np.flatnonzero(candidate)
+    if rows.size == 0:
+        return None
+    agree, restored_keys, restored_classes = _subdivision_facets(
+        subdivisions, rows, facets, dimension
+    )
+    candidate[rows[~agree]] = False
+    vertex_count = protected.size
+    star = np.bincount(cells.rows.reshape((-1,)), minlength=vertex_count)
+    while np.any(candidate):
+        covered = np.bincount(
+            cells.rows[position[candidate].reshape((-1,))].reshape((-1,)),
+            minlength=vertex_count,
+        )
+        good = (star == covered) & ~protected
+        kept = candidate & np.all(good[subdivisions.vertices], axis=1)
+        if np.array_equal(kept, candidate):
+            break
+        candidate = kept
+    if not np.any(candidate):
+        return None
+    undo = np.flatnonzero(candidate)
+    undone_rows = candidate[rows]
+    keys, first = np.unique(
+        restored_keys[undone_rows].reshape((-1, dimension)), axis=0, return_index=True
+    )
+    facet_classes = restored_classes[undone_rows].reshape((-1,))[first]
+    count = undo.size
+    zeros = np.zeros((count,), dtype=np.int64)
+    restored = _Cells(
+        subdivisions.parent_ids[undo],
+        subdivisions.rows[undo],
+        subdivisions.rows[undo],
+        zeros,
+        subdivisions.blocks[undo],
+        subdivisions.parent_ids[undo],
+        zeros,
+    )
+    restored_flags = _Flags(
+        np.ones((count,), dtype=np.bool_),
+        np.zeros((count,), dtype=np.bool_),
+        classes[undo, 0],
+    )
+    removed = np.zeros(cells.ids.shape, dtype=np.bool_)
+    removed[position[undo].reshape((-1,))] = True
+    merged = _joined(_select(cells, ~removed), restored)
+    merged_flags = _joined(_select(flags, ~removed), restored_flags)
+    order = np.argsort(merged.ids, kind="stable")
+    width = dimension + 1
+    ascending = np.sort(subdivisions.rows[undo], axis=1)
+    spans = np.stack(
+        tuple(
+            np.pad(
+                ascending[:, list(subset)],
+                ((0, 0), (0, width - len(subset))),
+                constant_values=-1,
+            )
+            for subset in _SUBDIVISION[dimension][0]
+        ),
+        axis=1,
+    )
+    arrangements = subdivisions.child_ids.shape[1]
+    return (
+        _select(merged, order),
+        _select(merged_flags, order),
+        _select(subdivisions, ~candidate),
+        (subdivisions.vertices[undo].reshape((-1,)), spans.reshape((-1, width))),
+        subdivisions.child_ids[undo].reshape((-1,)),
+        np.repeat(subdivisions.parent_ids[undo], arrangements),
+        subdivisions.parent_ids[undo],
+        (keys, facet_classes),
+    )
+
+
 def _reverse_supports(steps: Any, vertex_count: int, dimension: int, /) -> np.ndarray:
-    """Surviving vertices spanning each source vertex (removed ones by their edges)."""
+    """Surviving vertices spanning each source vertex (removed ones by their parents).
+
+    Each step pairs removed vertices with their parent vertices, padded by -1.
+    """
 
     width = dimension + 1
     supports = np.full((vertex_count, width), -1, dtype=np.int64)
     supports[:, 0] = np.arange(vertex_count)
-    for vertices, first, second in reversed(steps):
+    for vertices, spans in reversed(steps):
         unique, index = np.unique(vertices, return_index=True)
-        spans, counts = _distinct_rows(
-            np.concatenate((supports[first[index]], supports[second[index]]), axis=1)
-        )
+        chosen = spans[index]
+        gathered = np.where((chosen >= 0)[..., None], supports[np.maximum(chosen, 0)], -1)
+        combined, counts = _distinct_rows(gathered.reshape((unique.size, -1)))
         if np.any(counts > width):
             raise ValueError("A coarsened vertex spans more than one target simplex.")
-        supports[unique] = spans[:, :width]
+        supports[unique] = combined[:, :width]
     return supports
 
 
 def _coarsening(
-    start: _Start, request: _Request, blocked: np.ndarray, dimension: int, /
+    source: _Source,
+    start: _Start,
+    request: _Request,
+    blocked: np.ndarray,
+    dimension: int,
+    /,
 ) -> _Coarsening:
     cells, records = start.front.cells, start.records
-    flags = _Flags(np.isin(cells.ids, request.coarsen_ids), blocked, request.cell_classes)
+    subdivisions = start.subdivisions
+    flags = _Flags(
+        np.isin(cells.ids, request.coarsen_ids),
+        blocked,
+        request.cell_classes[np.searchsorted(source.cells.ids, cells.origins)],
+    )
     facets = (request.facet_keys, request.facet_classes)
+    # Vertices issued by this adaptation (a repeated subdivision) stay.
+    protected = np.concatenate(
+        (
+            request.protected_vertices,
+            np.ones((start.front.growth.levels.size,), dtype=np.bool_),
+        )
+    )
+    width = dimension + 1
     steps, children, parents, undone = [], [], [], []
     while request.coarsen_ids.size:
-        family = _removable_family(
-            cells, flags, records, request.protected_vertices, facets, dimension
-        )
+        family = _removable_family(cells, flags, records, protected, facets, dimension)
         if family is None:
-            break
+            roots = _undone_subdivisions(
+                cells, flags, subdivisions, protected, facets, dimension
+            )
+            if roots is None:
+                break
+            cells, flags, subdivisions, step, child_ids, parent_ids, ids, restored = roots
+            steps.append(step)
+            children.append(child_ids)
+            parents.append(parent_ids)
+            undone.append(ids)
+            facets = (
+                np.concatenate((facets[0], restored[0])),
+                np.concatenate((facets[1], restored[1])),
+            )
+            continue
         undo = family.undo
         tuples, tags = records.tuples[undo], records.tags[undo]
-        steps.append(
-            (records.vertices[undo], tuples[:, 0], tuples[np.arange(undo.size), tags])
-        )
+        spans = np.full((undo.size, width), -1, dtype=np.int64)
+        spans[:, 0] = tuples[:, 0]
+        spans[:, 1] = tuples[np.arange(undo.size), tags]
+        steps.append((records.vertices[undo], spans))
         children.append(records.child_ids[undo].reshape((-1,)))
         parents.append(np.repeat(records.parent_ids[undo], 2))
         undone.append(records.parent_ids[undo])
@@ -1691,9 +2087,14 @@ def _merged_forest(
         _select(records, ~np.isin(records.parent_ids, coarsening.undone)),
         refinement.records,
     )
+    subdivisions = start.subdivisions
+    subdivisions = _select(
+        subdivisions, ~np.isin(subdivisions.parent_ids, coarsening.undone)
+    )
     return (
         _select(cells, np.argsort(cells.ids, kind="stable")),
         _select(records, np.argsort(records.parent_ids, kind="stable")),
+        _select(subdivisions, np.argsort(subdivisions.parent_ids, kind="stable")),
     )
 
 
@@ -1702,6 +2103,7 @@ def _target_hierarchy(
     start: _Start,
     cells: _Cells,
     records: _Records,
+    subdivisions: _Subdivisions,
     retired: Any,
     front: _Front,
     /,
@@ -1722,6 +2124,11 @@ def _target_hierarchy(
         record_parent_tags=records.tags,
         record_child_ids=records.child_ids,
         record_vertex_ids=ids(records.vertices),
+        subdivision_parent_ids=subdivisions.parent_ids,
+        subdivision_parent_blocks=subdivisions.blocks,
+        subdivision_parent_rows=ids(subdivisions.rows),
+        subdivision_child_ids=subdivisions.child_ids,
+        subdivision_vertex_ids=ids(subdivisions.vertices),
         retired_entity_keys=tuple(value[0] for value in retired),
         retired_entity_ids=tuple(value[1] for value in retired),
         next_vertex_id=start.next_vertex + front.growth.levels.size,
@@ -1985,6 +2392,8 @@ def execute_bisection(
         )
     else:
         start = _bound_start(source, request, hierarchy)
+        if request.refine_ids.size:
+            start = _resubdivided(start, request, compatibility, dimension)
         if periodic_edge_lock is not None:
             front = _periodic_locked_front(
                 source, start.front, request, periodic_edge_lock
@@ -1999,8 +2408,8 @@ def execute_bisection(
             start = start._replace(front=front, compatible=True, incompatible=0)
     refinement = _refinement(start, request, dimension)
     blocked = np.isin(start.front.cells.ids, refinement.records.parent_ids)
-    coarsening = _coarsening(start, request, blocked, dimension)
-    cells, records = _merged_forest(start, refinement, coarsening)
+    coarsening = _coarsening(source, start, request, blocked, dimension)
+    cells, records, subdivisions = _merged_forest(start, refinement, coarsening)
     edit, retired = _edit(source, start, refinement, coarsening, cells)
     evidence = BisectionEvidence(
         requested_refinements=request.refine_ids.size,
@@ -2040,7 +2449,9 @@ def execute_bisection(
             )
     return BisectionOutcome(
         edit,
-        _target_hierarchy(source, start, cells, records, retired, refinement.front),
+        _target_hierarchy(
+            source, start, cells, records, subdivisions, retired, refinement.front
+        ),
         evidence,
         refinement_parents,
         refinement_edges,

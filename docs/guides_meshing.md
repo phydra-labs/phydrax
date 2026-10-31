@@ -993,10 +993,18 @@ bound to the source vertices). Routes:
   (newest-vertex bisection) and tetrahedron meshes. The initial refinement edge
   is the longest edge (ties by global IDs); an incompatible initial labelling is
   rejected unless `BisectionCompatibility.UNIFORM_REFINEMENT` explicitly requests
-  one barycentric compatibility refinement. The conformity closure is vectorized
-  per iteration; coarsening removes complete bisection patches (Chen–Zhang
-  vertex removal) and restores the recorded cell, edge, and face IDs, so a
-  refine/coarsen round trip reproduces the source topology exactly.
+  one barycentric compatibility refinement. That subdivision is recorded in the
+  `BisectionHierarchy` as a refinement level (each source cell, its exact block
+  row, its (d+1)! children, and its created edge, face, and center vertices). The
+  conformity closure is vectorized per iteration; coarsening removes complete
+  bisection patches (Chen–Zhang vertex removal) and then every subdivision whose
+  children are all marked and whose created vertices' stars are undone together
+  (whole edge-connected components), restoring the recorded cell, edge, and face
+  IDs, so a refine/coarsen round trip reproduces the source topology exactly,
+  including an incompatible source. Restored incompatible cells carry tag 0;
+  refining such a hierarchy subdivides all of them again under
+  `UNIFORM_REFINEMENT` (device bisection does so at preparation) and rejects
+  otherwise.
 - `NATIVE_METRIC_2D`: planar triangle metric adaptation by edge split
   (metric length above sqrt(2)), collapse (below 1/sqrt(2)), metric-quality flip,
   and relocation, with deterministic independent-cavity selection. Orientation
@@ -1005,7 +1013,8 @@ bound to the source vertices). Routes:
   NUMERICAL_STOP otherwise; `RelocationMeshAdaptation` moves vertices only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
-  and hierarchy of `NATIVE_BISECTION` byte for byte.
+  and hierarchy of `NATIVE_BISECTION` byte for byte, except that its coarsening
+  stops at the recorded barycentric subdivision level.
 - `DEVICE_METRIC_2D`: the planar metric and relocation requests executed as
   compiled device passes with FILTERED_DEVICE predicates (below).
 - `MMG`, `OMEGA_H`: the configured provider's metric adaptation; the lineage
