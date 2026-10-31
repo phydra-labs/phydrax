@@ -29,7 +29,7 @@ from ...typing import checked, parse
 from .._interval_enclosure import prepare_interval_function, PreparedIntervalFunction
 from ._intersection_kernel import IntervalEvaluator, krawczyk, KrawczykEvaluator
 from ._patches import AbstractCurve, AbstractSurfacePatch, CylinderPatch
-from ._trim_helpers import PeriodOffset
+from ._trim_helpers import period_scalar_bounds, PeriodOffset
 
 
 IntersectionSide: TypeAlias = Literal["first", "second"]
@@ -802,6 +802,228 @@ def orthogonal_cylinder_graph_bounds(
     return lower, upper
 
 
+def orthogonal_cylinder_closing_root_bounds(
+    family: _OrthogonalCylinderFamily,
+    start_value: float,
+    branch_sign: int,
+    first_angle_reference: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Outward-enclose the source root at the exact one-turn image of a start node.
+
+    A closed graph branch ends on the float image of its start angle plus the
+    small cylinder's native two-pi period. The exact deck image differs from
+    that float by rounding, and wherever the large-cylinder angle moves with the
+    small angle (the loop crosses the large chart's seam there), the slice root
+    and the exact image root differ in every transverse coordinate. The
+    closing node must enclose the exact image so its period turn is proved.
+    """
+    image_lower, image_upper = period_scalar_bounds(
+        PeriodOffset(Fraction.from_float(float(start_value)), Fraction(1))
+    )
+    return orthogonal_cylinder_graph_bounds(
+        family,
+        float(image_lower),
+        float(image_upper),
+        branch_sign,
+        first_angle_reference,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class OrthogonalCylinderSeamCrossing:
+    """One crossing of a branch through the large cylinder's authored seam.
+
+    ``theta_lower``/``theta_upper`` enclose the small angle of the crossing in
+    the small chart window. A crossing on the small chart's own seam is the
+    branch's start node, proved to lie exactly on both seams.
+    """
+
+    theta_lower: float
+    theta_upper: float
+    start: bool
+
+
+def _large_seam_frame(
+    family: _OrthogonalCylinderFamily, /
+) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction], Fraction]:
+    """Return the small-axis and normal coordinates of the large frame and seam."""
+    from .._rational import rational_dot
+
+    large_first = cast(tuple[Fraction, ...], family.large.first_axis_exact)
+    large_second = cast(tuple[Fraction, ...], family.large.second_axis_exact)
+    small_axis = cast(tuple[Fraction, ...], family.small.axis_exact)
+    cosine = (
+        rational_dot(small_axis, large_first),
+        rational_dot(family.normal, large_first),
+    )
+    sine = (
+        rational_dot(small_axis, large_second),
+        rational_dot(family.normal, large_second),
+    )
+    seam = Fraction.from_float(
+        float(family.source_regions[family.large_index].parameter_box[0, 0])
+    )
+    return cosine, sine, seam
+
+
+def orthogonal_cylinder_exact_seam_start(
+    family: _OrthogonalCylinderFamily, branch_sign: int, /
+) -> bool:
+    """Prove exactly that a branch's start root lies on the large cylinder's seam.
+
+    The start root sits on the small chart's seam. Both seams are rational only
+    at angle zero, where the large radial direction of the root has rational
+    small-axis and normal coordinates ``(x, n)`` with ``x`` the branch-signed
+    square root; the proof is then an exact rational identity.
+    """
+    if branch_sign not in (-1, 1):
+        return False
+    small_region = family.source_regions[family.small_index]
+    cosine, sine, seam = _large_seam_frame(family)
+    if seam != 0 or Fraction.from_float(float(small_region.parameter_box[0, 0])) != 0:
+        return False
+    # At seam angle zero the seam direction is the large first axis.
+    normal_x, normal_n = sine
+    along_x, along_n = cosine
+    if normal_n == 0:
+        return False
+    radius = family.large_radius
+    x = branch_sign * radius * abs(normal_n)
+    n = -branch_sign * (1 if normal_n > 0 else -1) * normal_x * radius
+    start_n = family.delta_n + family.small_radius * family.small_normal_coefficients[0]
+    return start_n == n and along_x * x + along_n * n > 0
+
+
+def orthogonal_cylinder_seam_crossings(
+    family: _OrthogonalCylinderFamily, branch_sign: int, /
+) -> tuple[OrthogonalCylinderSeamCrossing, ...] | None:
+    """Enclose every crossing of one branch through the large cylinder's seam.
+
+    On a branch the large radial direction has coordinates ``(x, n)`` in the
+    (small axis, normal) frame, ``x`` the branch-signed root of ``R^2 - n^2``.
+    It points along the seam only where its seam-normal component vanishes
+    with a positive seam component, which fixes ``n``; the normal offset
+    ``n(theta) = delta_n + r cos(theta - phase)`` then meets that value at most
+    twice. Returns ``None`` when an interval sign stays undecided.
+    """
+    if branch_sign not in (-1, 1):
+        return None
+    context = interval_context(80)
+
+    def scalar(value: Fraction) -> Any:
+        return context.mpf(value.numerator) / context.mpf(value.denominator)
+
+    cosine, sine, seam = _large_seam_frame(family)
+    seam_cosine, seam_sine = context.cos(scalar(seam)), context.sin(scalar(seam))
+    normal_x = -seam_sine * scalar(cosine[0]) + seam_cosine * scalar(sine[0])
+    normal_n = -seam_sine * scalar(cosine[1]) + seam_cosine * scalar(sine[1])
+    along_x = seam_cosine * scalar(cosine[0]) + seam_sine * scalar(sine[0])
+    along_n = seam_cosine * scalar(cosine[1]) + seam_sine * scalar(sine[1])
+    if normal_n.a == 0 and normal_n.b == 0:
+        return ()
+    if normal_n.a <= 0 <= normal_n.b:
+        return None
+    normal_sign = 1 if normal_n.a > 0 else -1
+    radius = scalar(family.large_radius)
+    x = branch_sign * normal_sign * normal_n * radius
+    n = -branch_sign * normal_sign * normal_x * radius
+    along = along_x * x + along_n * n
+    if along.b < 0:
+        return ()
+    if along.a <= 0:
+        return None
+    offset_cosine = (n - scalar(family.delta_n)) / scalar(family.small_radius)
+    if offset_cosine.b < -1 or offset_cosine.a > 1:
+        return ()
+    if not (-1 < offset_cosine.a and offset_cosine.b < 1):
+        return None
+    normal_cosine, normal_sine = (
+        scalar(value) for value in family.small_normal_coefficients
+    )
+    phase = context.atan2(normal_sine, normal_cosine)
+    offset = context.atan2(context.sqrt(1 - offset_cosine**2), offset_cosine)
+    small_region = family.source_regions[family.small_index]
+    window = Fraction.from_float(float(small_region.parameter_box[0, 0]))
+    window_lower = scalar(window)
+    window_upper = window_lower + 2 * context.pi
+    crossings = []
+    for theta in (phase - offset, phase + offset):
+        middle = 0.5 * (float(theta.a) + float(theta.b))
+        theta = theta + math.ceil((float(window) - middle) / math.tau) * 2 * context.pi
+        if theta.b < window_lower:
+            theta = theta + 2 * context.pi
+        if theta.a > window_upper:
+            theta = theta - 2 * context.pi
+        touches_start = (theta.a <= window_lower <= theta.b) or (
+            theta.a <= window_upper <= theta.b
+        )
+        if touches_start:
+            if not orthogonal_cylinder_exact_seam_start(family, branch_sign):
+                return None
+            crossings.append(
+                OrthogonalCylinderSeamCrossing(float(window), float(window), True)
+            )
+            continue
+        if not (window_lower < theta.a and theta.b < window_upper):
+            return None
+        lower = float(np.nextafter(float(theta.a), -np.inf))
+        upper = float(np.nextafter(float(theta.b), np.inf))
+        crossings.append(OrthogonalCylinderSeamCrossing(lower, upper, False))
+    return tuple(sorted(crossings, key=lambda item: item.theta_lower))
+
+
+def orthogonal_cylinder_seam_node_certified(
+    family: _OrthogonalCylinderFamily,
+    branch_sign: int,
+    seam_value: float,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+) -> bool:
+    """Prove a box isolates the one branch root on a fixed large-angle slice.
+
+    The box's small-angle range is the free variable: the graph over it lies in
+    the box, the large angle is strictly monotone there, and its two end slices
+    bracket the fixed value strictly, so exactly one branch root has it.
+    """
+    theta_axis = 2 * family.small_index
+    angle_axis = 2 * family.large_index
+    theta_lower, theta_upper = float(lower[theta_axis]), float(upper[theta_axis])
+    if not theta_lower < theta_upper:
+        return False
+    reference = 0.5 * float(lower[angle_axis]) + 0.5 * float(upper[angle_axis])
+    graph = orthogonal_cylinder_graph_bounds(
+        family, theta_lower, theta_upper, branch_sign, reference
+    )
+    derivative = orthogonal_cylinder_graph_derivative_bounds(
+        family, theta_lower, theta_upper, branch_sign
+    )
+    first = orthogonal_cylinder_graph_bounds(
+        family, theta_lower, theta_lower, branch_sign, reference
+    )
+    last = orthogonal_cylinder_graph_bounds(
+        family, theta_upper, theta_upper, branch_sign, reference
+    )
+    if graph is None or derivative is None or first is None or last is None:
+        return False
+    free = np.asarray([axis for axis in range(4) if axis != theta_axis], dtype=np.int64)
+    if np.any(graph[0][free] < lower[free]) or np.any(graph[1][free] > upper[free]):
+        return False
+    value = Fraction.from_float(float(seam_value))
+    if derivative[0][angle_axis] > 0:
+        return (
+            Fraction.from_float(float(first[1][angle_axis])) < value
+            and Fraction.from_float(float(last[0][angle_axis])) > value
+        )
+    if derivative[1][angle_axis] < 0:
+        return (
+            Fraction.from_float(float(first[0][angle_axis])) > value
+            and Fraction.from_float(float(last[1][angle_axis])) < value
+        )
+    return False
+
+
 def orthogonal_cylinder_graph_derivative_bounds(
     family: _OrthogonalCylinderFamily,
     theta_lower: float,
@@ -933,6 +1155,70 @@ def _orthogonal_cylinder_branch_sign(
     return signs[0]
 
 
+def _orthogonal_cylinder_atlas_layout(
+    family: _OrthogonalCylinderFamily,
+    chart_axes: np.ndarray,
+    chart_start: np.ndarray,
+    chart_end: np.ndarray,
+    node_axes: np.ndarray,
+    node_values: np.ndarray,
+    node_lower: np.ndarray,
+    node_upper: np.ndarray,
+    /,
+) -> bool:
+    """Check the chart and node layout of a closed closed-form graph atlas.
+
+    Charts advance the small angle. Nodes fix the small angle, except crossings
+    of the large cylinder's seam, which fix the large angle at the exact seam
+    value. The start and closing nodes fix the small angle one native period
+    apart.
+    """
+    theta_axis = 2 * family.small_index
+    angle_axis = 2 * family.large_index
+    small_region = family.source_regions[family.small_index]
+    large_region = family.source_regions[family.large_index]
+    small_period = small_region.patch.periods[0]
+    charts = len(chart_axes)
+    if (
+        small_period is None
+        or charts < 1
+        or node_values.shape != (charts + 1,)
+        or not np.all(chart_axes == theta_axis)
+        or int(node_axes[0]) != theta_axis
+        or int(node_axes[-1]) != theta_axis
+        or Fraction.from_float(float(node_values[0]))
+        != Fraction.from_float(float(small_region.parameter_box[0, 0]))
+        or Fraction.from_float(float(node_values[-1]))
+        - Fraction.from_float(float(node_values[0]))
+        != Fraction.from_float(float(small_period))
+    ):
+        return False
+    seam = Fraction.from_float(float(large_region.parameter_box[0, 0]))
+    for node in range(charts + 1):
+        thetas = [
+            *((float(chart_end[node - 1, theta_axis]),) if node > 0 else ()),
+            *((float(chart_start[node, theta_axis]),) if node < charts else ()),
+        ]
+        if int(node_axes[node]) == theta_axis:
+            if any(value != float(node_values[node]) for value in thetas):
+                return False
+        elif int(node_axes[node]) == angle_axis:
+            if (
+                Fraction.from_float(float(node_values[node])) != seam
+                or len(set(thetas)) != 1
+                or not node_lower[node, theta_axis]
+                <= thetas[0]
+                <= node_upper[node, theta_axis]
+            ):
+                return False
+        else:
+            return False
+    return all(
+        chart_start[chart, theta_axis] < chart_end[chart, theta_axis]
+        for chart in range(charts)
+    )
+
+
 def _orthogonal_cylinder_curve_branch_sign(
     curve: IntersectionCurve,
     family: _OrthogonalCylinderFamily,
@@ -946,34 +1232,17 @@ def _orthogonal_cylinder_curve_branch_sign(
         or curve.end_kind != "closed"
     ):
         return None
-    theta_axis = 2 * family.small_index
-    small_region = family.source_regions[family.small_index]
-    small_period = small_region.patch.periods[0]
-    if (
-        small_period is None
-        or not np.all(np.asarray(curve.chart_axes) == theta_axis)
-        or not np.all(np.asarray(curve.node_axes) == theta_axis)
-    ):
-        return None
-    node_values = np.asarray(curve.node_values, dtype=np.float64)
-    if (
-        node_values.shape != (curve.num_charts + 1,)
-        or np.any(np.diff(node_values) <= 0.0)
-        or Fraction.from_float(float(node_values[0]))
-        != Fraction.from_float(float(small_region.parameter_box[0, 0]))
-        or Fraction.from_float(float(node_values[-1]))
-        - Fraction.from_float(float(node_values[0]))
-        != Fraction.from_float(float(small_period))
-    ):
-        return None
-    chart_start = np.asarray(curve.chart_start, dtype=np.float64)
-    chart_end = np.asarray(curve.chart_end, dtype=np.float64)
     node_lower = np.asarray(curve.node_lower, dtype=np.float64)
     node_upper = np.asarray(curve.node_upper, dtype=np.float64)
-    if any(
-        chart_start[chart, theta_axis] != node_values[chart]
-        or chart_end[chart, theta_axis] != node_values[chart + 1]
-        for chart in range(curve.num_charts)
+    if not _orthogonal_cylinder_atlas_layout(
+        family,
+        np.asarray(curve.chart_axes),
+        np.asarray(curve.chart_start, dtype=np.float64),
+        np.asarray(curve.chart_end, dtype=np.float64),
+        np.asarray(curve.node_axes),
+        np.asarray(curve.node_values, dtype=np.float64),
+        node_lower,
+        node_upper,
     ):
         return None
     return _orthogonal_cylinder_branch_sign(family, node_lower, node_upper)
@@ -1015,7 +1284,9 @@ def _orthogonal_cylinder_chart_angle_data(
     start = np.asarray(curve.chart_start[chart], dtype=np.float64)
     end = np.asarray(curve.chart_end[chart], dtype=np.float64)
     theta = 0.5 * float(start[theta_axis]) + 0.5 * float(end[theta_axis])
-    point = orthogonal_cylinder_graph_point(family, theta, branch_sign, 0.0)
+    point = orthogonal_cylinder_graph_point(
+        family, theta, branch_sign, float(start[angle_axis])
+    )
     if point is None:
         return None
     cosine, sine = math.cos(theta), math.sin(theta)
@@ -1114,37 +1385,30 @@ def _orthogonal_cylinder_curve_certificate(
         return None
     theta_axis = 2 * family.small_index
     large_angle_axis = 2 * family.large_index
-    small_region = family.source_regions[family.small_index]
-    small_period = small_region.patch.periods[0]
-    if (
-        small_period is None
-        or not np.all(chart_axes == theta_axis)
-        or not np.all(node_axes == theta_axis)
-        or Fraction.from_float(float(node_values[0]))
-        != Fraction.from_float(float(small_region.parameter_box[0, 0]))
-        or Fraction.from_float(float(node_values[-1]))
-        - Fraction.from_float(float(node_values[0]))
-        != Fraction.from_float(float(small_period))
+    if not _orthogonal_cylinder_atlas_layout(
+        family,
+        chart_axes,
+        chart_start,
+        chart_end,
+        node_axes,
+        node_values,
+        node_lower,
+        node_upper,
     ):
         return None
     branch_sign = _orthogonal_cylinder_branch_sign(family, node_lower, node_upper)
     if branch_sign is None:
         return None
-    if any(
-        chart_start[index, theta_axis] != node_values[index]
-        or chart_end[index, theta_axis] != node_values[index + 1]
-        for index in range(len(chart_axes))
-    ):
-        return None
 
-    reference = float(chart_start[0, large_angle_axis])
+    # Every chart and node carries its own large-source sheet; a declared deck
+    # turn between them is checked by the branch's node-binding contract.
     for chart in range(len(chart_axes)):
         first = float(chart_start[chart, theta_axis])
         last = float(chart_end[chart, theta_axis])
         if not first < last:
             return None
         graph = orthogonal_cylinder_graph_bounds(
-            family, first, last, branch_sign, reference
+            family, first, last, branch_sign, float(chart_start[chart, large_angle_axis])
         )
         if (
             graph is None
@@ -1152,9 +1416,18 @@ def _orthogonal_cylinder_curve_certificate(
             or np.any(chart_upper[chart] < graph[1])
         ):
             return None
+    node_references = (
+        0.5 * node_lower[:, large_angle_axis] + 0.5 * node_upper[:, large_angle_axis]
+    )
     for node, value in enumerate(node_values):
+        if int(node_axes[node]) == large_angle_axis:
+            if not orthogonal_cylinder_seam_node_certified(
+                family, branch_sign, float(value), node_lower[node], node_upper[node]
+            ):
+                return None
+            continue
         root = orthogonal_cylinder_graph_bounds(
-            family, float(value), float(value), branch_sign, reference
+            family, float(value), float(value), branch_sign, float(node_references[node])
         )
         if (
             root is None
@@ -1162,6 +1435,15 @@ def _orthogonal_cylinder_curve_certificate(
             or np.any(node_upper[node] < root[1])
         ):
             return None
+    closing_root = orthogonal_cylinder_closing_root_bounds(
+        family, float(node_values[0]), branch_sign, float(node_references[-1])
+    )
+    if (
+        closing_root is None
+        or np.any(node_lower[-1] > closing_root[0])
+        or np.any(node_upper[-1] < closing_root[1])
+    ):
+        return None
 
     # The exact graph has |d gamma / d theta| >= small_radius > 0: the small
     # cylinder's two radial coordinates contribute speed exactly small_radius.
@@ -2150,9 +2432,7 @@ def _implicit_chart_derivative_bounds(
         raise ValueError(
             "IntersectionPCurve derivative interval is unresolved at a singular chart."
         )
-    rhs = interval_multiply(
-        (-jacobian_upper[:, axis], -jacobian_lower[:, axis]), rate
-    )
+    rhs = interval_multiply((-jacobian_upper[:, axis], -jacobian_lower[:, axis]), rate)
 
     def precondition(
         values: tuple[np.ndarray, np.ndarray], /
@@ -2185,7 +2465,12 @@ def _implicit_chart_derivative_bounds(
             sum(
                 (
                     Fraction.from_float(
-                        float(max(abs(error_lower[row, column]), abs(error_upper[row, column])))
+                        float(
+                            max(
+                                abs(error_lower[row, column]),
+                                abs(error_upper[row, column]),
+                            )
+                        )
                     )
                     for column in range(3)
                 ),
@@ -2212,7 +2497,10 @@ def _implicit_chart_derivative_bounds(
             total = interval_add(
                 total,
                 interval_multiply(
-                    (np.asarray(error_lower[row, column]), np.asarray(error_upper[row, column])),
+                    (
+                        np.asarray(error_lower[row, column]),
+                        np.asarray(error_upper[row, column]),
+                    ),
                     ball,
                 ),
             )
@@ -2685,7 +2973,6 @@ class IntersectionCurve(AbstractCurve):
             *self.first.patch.native_period_symbols(),
             *self.second.patch.native_period_symbols(),
         )
-        from ._trim_helpers import period_scalar_bounds, PeriodOffset
 
         lower = np.zeros((4,), dtype=np.float64)
         upper = np.zeros((4,), dtype=np.float64)
@@ -2699,6 +2986,34 @@ class IntersectionCurve(AbstractCurve):
             bounds = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(int(shift))))
             lower[axis], upper[axis] = float(bounds[0]), float(bounds[1])
         return lower, upper
+
+    def node_exact_coordinates(self, node: int, /) -> tuple[tuple[int, float], ...]:
+        """Return the source coordinates that one node's root has exactly.
+
+        Every node fixes one coordinate. A closed-form cylinder start node may
+        also be proved to lie exactly on the large cylinder's seam, when its
+        enclosure sits on the seam's own sheet.
+        """
+        exact = ((int(self.node_axes[node]), float(self.node_values[node])),)
+        if node != 0 or not self.closed:
+            return exact
+        family = orthogonal_cylinder_family(self.first, self.second)
+        if family is None:
+            return exact
+        branch_sign = _orthogonal_cylinder_curve_branch_sign(self, family)
+        if branch_sign is None or not orthogonal_cylinder_exact_seam_start(
+            family, branch_sign
+        ):
+            return exact
+        angle_axis = 2 * family.large_index
+        seam = float(family.source_regions[family.large_index].parameter_box[0, 0])
+        if not (
+            float(self.node_lower[0, angle_axis])
+            <= seam
+            <= float(self.node_upper[0, angle_axis])
+        ):
+            return exact
+        return (*exact, (angle_axis, seam))
 
     def closure_period_shifts(self) -> np.ndarray:
         """Return the integer source deck from the start node to the closing node.
@@ -2815,6 +3130,20 @@ class IntersectionCurve(AbstractCurve):
                     theta_lower = math.nextafter(theta_lower, -math.inf)
                 if Fraction.from_float(theta_upper) < exact_upper:
                     theta_upper = math.nextafter(theta_upper, math.inf)
+                # A seam node's root lies at an irrational small angle that its
+                # chart endpoint only represents; a chart end enclosure also
+                # encloses that node's whole small-angle range.
+                for node, touches in (
+                    (chart, chart_first == chart),
+                    (chart + 1, chart_last == chart + 1),
+                ):
+                    if touches and int(self.node_axes[node]) == large_angle_axis:
+                        theta_lower = min(
+                            theta_lower, float(self.node_lower[node, theta_axis])
+                        )
+                        theta_upper = max(
+                            theta_upper, float(self.node_upper[node, theta_axis])
+                        )
                 bounds = orthogonal_cylinder_graph_bounds(
                     family,
                     theta_lower,
@@ -3173,11 +3502,18 @@ class IntersectionPCurve(AbstractCurve):
             return self._evaluate_on_chart(values, chart)
         carrier = self.first + self.last - values if self.reversed else values
         coupled = self.curve.evaluate_coupled(carrier)
-        return (
+        result = (
             coupled.first_parameters
             if self.side == "first"
             else coupled.second_parameters
         )
+        last_chart = math.ceil(self.last) - 1
+        if self.last == last_chart + 1 and self.last < self.curve.num_charts:
+            # The span's terminal node lies on its own last chart's source
+            # sheet, which a periodic transition may separate from the next's.
+            terminal = self._evaluate_on_chart(values, last_chart)
+            result = jnp.where((carrier >= self.last)[..., None], terminal, result)
+        return result
 
     def is_c1_on(self, first: float, last: float, /) -> bool:
         AbstractCurve.is_c1_on(self, first, last)
