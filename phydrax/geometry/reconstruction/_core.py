@@ -429,7 +429,7 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
         point = (
             (1.0 - first - second) * corners[0] + first * corners[1] + second * corners[2]
         )
-        return point if traced else jnp.asarray(point)
+        return jnp.asarray(point)
 
 
 def _reconstructed_meshing_domain(
