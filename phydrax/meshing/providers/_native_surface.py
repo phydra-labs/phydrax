@@ -2853,6 +2853,7 @@ def _refine_charts(
         for chart, mapping in zip(charts, local_rows, strict=True):
             old_triangles = tuple(chart.triangles)
             requested: dict[tuple[int, int], int] = {}
+            curved_rows: set[int] = set()
             all_edges = {
                 _edge_key(edge[0], edge[1])
                 for triangle in old_triangles
@@ -2871,6 +2872,19 @@ def _refine_charts(
                     (first_uv[0] + last_uv[0]) / 2,
                     (first_uv[1] + last_uv[1]) / 2,
                 )
+                boundary = chart.boundary_edges.get(edge)
+                if boundary is not None:
+                    # A curved trim is split at its p-curve point of the midpoint
+                    # parameter; the chord midpoint lies off the source curve.
+                    patch_row, loop_row, use_row = boundary[1]
+                    use = domain.patches[patch_row].loops[loop_row][use_row]
+                    if isinstance(use, domain_owner.PatchCurveUse) and not isinstance(
+                        use.pcurve, (ExactLineCurve, LineCurve)
+                    ):
+                        midpoint_uv = _use_chart_point(
+                            use, (boundary[2] + boundary[3]) / 2
+                        )
+                        curved_rows.add(len(chart.points))
                 represented_midpoint = (
                     float(midpoint_uv[0]),
                     float(midpoint_uv[1]),
@@ -2884,7 +2898,6 @@ def _refine_charts(
                         category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                         entity_ids=(int(chart.patch),),
                     )
-                boundary = chart.boundary_edges.get(edge)
                 local_row = len(chart.points)
                 chart.points.append(midpoint_uv)
                 if boundary is not None:
@@ -2993,6 +3006,17 @@ def _refine_charts(
                             (ca, bc, c),
                             (ab, bc, ca),
                         )
+                    )
+            orientation = domain.patches[chart.patch].orientation
+            for child in children:
+                if curved_rows.isdisjoint(child):
+                    continue
+                area = _root_edge_cross(*(chart.points[row] for row in child))
+                if area == 0 or (area > 0) != (orientation > 0):
+                    raise _failure(
+                        "curved trim refinement folded a source chart cell",
+                        category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                        entity_ids=(int(chart.patch),),
                     )
             chart.triangles = children
         if not changed:
