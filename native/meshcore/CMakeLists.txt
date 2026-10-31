@@ -69,6 +69,7 @@ set(PHX_MC_SOURCES
   src/tet_mesh_state.cpp
   src/refine3d.cpp
   src/improve3d.cpp
+  src/zero_set_admission.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -103,6 +104,7 @@ set(PHX_MC_HEADERS
   src/topology_keys.hpp
   src/triangulation2d.hpp
   src/triangulation3d.hpp
+  src/zero_set_admission.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -195,4 +197,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_hex_topology)
   phx_mc_add_test(test_surface_envelope)
   phx_mc_add_test(test_surface_mesh)
+  phx_mc_add_test(test_zero_set_admission)
 endif()

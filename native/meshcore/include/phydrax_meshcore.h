@@ -984,6 +984,57 @@ PHX_MC_API void phx_mc_surface_envelope_free(void* result);
 PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* result, double* bounds,
                                                   int64_t* counters);
 
+/* ------------------------------------------------------ zero-set surface remesh */
+/* One straight-line interval program (phx_mc_interval_program_execute) over a
+ * single three-dimensional box: the workspace template carries the constant seeds,
+ * entries [0, 3) receive the box, and `outputs` name the result entries. */
+typedef struct phx_mc_interval_box_program {
+  const int64_t* instructions;
+  int64_t instruction_count;
+  const int64_t* indices;
+  int64_t index_count;
+  const double* parameters;
+  int64_t parameter_count;
+  const double* workspace_lower;
+  const double* workspace_upper;
+  int64_t workspace_size;
+  const int64_t* outputs;
+  int64_t output_count;
+} phx_mc_interval_box_program;
+/* Remeshes a closed, consistently oriented, embedded carrier of the zero set of f
+ * toward `edge_length` and `minimum_angle_degrees`. Every created triangle is
+ * admitted by the kZeroSetBand predicate: its certified distance to {f = 0} is at
+ * most `tolerance` (interval |f| over the triangle against a certified lower bound
+ * of |grad f| over its widened box) and its normal is certified transversal to
+ * grad f with the carrier's orientation (declared by the input triangles whose
+ * sign is certified; disagreement is PHX_MC_INVALID_INPUT, none PHX_MC_UNRESOLVED).
+ * `value` has one output, `gradient` three. Writes counters (splits, collapses,
+ * flips, relocations, triangles below the angle or size target, orientation) and
+ * `distance`: the maximum over surviving triangles of the admitted certified
+ * distance, or `carrier_distance` (the input carrier's declared bound) for
+ * untouched input triangles. */
+typedef struct phx_mc_zero_set_remesh_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  phx_mc_interval_box_program value;
+  phx_mc_interval_box_program gradient;
+  double tolerance;
+  double carrier_distance;
+  double edge_length;
+  double minimum_angle_degrees;
+  void** result;
+  int64_t* counters;
+  double* distance;
+} phx_mc_zero_set_remesh_request;
+PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* request);
+PHX_MC_API int32_t phx_mc_zero_set_remesh_sizes(const void* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_zero_set_remesh_arrays(void* result, int64_t vertex_capacity,
+                                                 int64_t triangle_capacity, double* vertices,
+                                                 int64_t* triangles);
+PHX_MC_API void phx_mc_zero_set_remesh_free(void* result);
+
 /* --------------------------------------------------------------- level sets */
 #define PHX_MC_LEVEL_SET_FULL_CARRIERS 0
 #define PHX_MC_LEVEL_SET_TOPOLOGY_ONLY 1
