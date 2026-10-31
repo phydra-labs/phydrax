@@ -264,7 +264,10 @@ enum phx_mc_tet_unmet_criterion {
   PHX_MC_TET_UNMET_CONSTRUCTION = 3,
   PHX_MC_TET_UNMET_VALIDITY = 4
 };
-/* INPUT_ANGLE: conforming refinement left the cell because the boundary split
+/* FIXED_BOUNDARY: refinement's circumcenter lies beyond a fixed face, or an
+ * improvement radius-edge residual lies on a constrained face whose own
+ * triangle already exceeds the bound (no tetrahedron on it can meet it).
+ * INPUT_ANGLE: conforming refinement left the cell because the boundary split
  * it required falls in the protected region of an acute input feature
  * (segments, or a segment and a facet, meeting below 90 degrees, or facets
  * meeting at a dihedral angle below 90 degrees through the domain). */

@@ -2808,6 +2808,9 @@ class TetMeshPlaneRefusal(MeshcoreError):
 
 
 class TetMeshUnmetReason(IntEnum):
+    # Refinement: the circumcenter lies beyond a fixed face. Improvement: a
+    # radius-edge residual on a constrained face whose own triangle already
+    # exceeds the bound, so no tetrahedron on that face can meet it.
     FIXED_BOUNDARY = 0
     PROTECTED = 1
     NONREPRESENTABLE = 2
