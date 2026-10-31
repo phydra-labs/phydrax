@@ -79,8 +79,9 @@ def _circle_edge(projection: Any, height: Any) -> Any:
 
 
 def test_brep_projection_scenario_1() -> None:
-    shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    _, projection = _bound(shape)
+    # The projection is immutable, so one cylinder import serves every query.
+    _, cylinder = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
+    projection = cylinder
     result = _project(projection, [[0.3, 0.4, 1.0], [1.5, 1.5, 0.25]], _FACE, 0)
 
     np.testing.assert_allclose(result.points, [[0.6, 0.8, 1.0], [2**-0.5, 2**-0.5, 0.25]])
@@ -105,8 +106,7 @@ def test_brep_projection_scenario_1() -> None:
         0,
         occurrence_path=result.occurrence_paths[0],
     )
-    shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    _, projection = _bound(shape)
+    projection = cylinder
     face = _project(projection, [[2.0, 0.0, 0.5], [0.0, 0.0, 1.0]], _FACE, 0)
     rim = _circle_edge(projection, 2.0)
     edge = _project(
@@ -144,8 +144,7 @@ def test_brep_projection_scenario_1() -> None:
         _STATUS.SEAM,
         _STATUS.NON_ISOLATED,
     ]
-    shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    _, projection = _bound(shape)
+    projection = cylinder
     points = np.asarray(
         [[0.0, 1.0, 1.0], [0.0, 1.0, 2.0], [1.0, 0.0, 2.0], [0.2, 0.1, 1.0]]
     )
