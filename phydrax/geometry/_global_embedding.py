@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cache
 from itertools import chain, combinations, product
-from math import lcm
+from math import isfinite, lcm
 from typing import cast, Literal
 
 import numpy as np
@@ -740,6 +740,64 @@ def _cell_simplices(
     )
 
 
+def _point_shadow(point: Point3, /) -> tuple[float, float, float] | None:
+    if not all(isinstance(value, Fraction) for value in point):
+        return None
+    try:
+        shadow = (float(point[0]), float(point[1]), float(point[2]))
+    except OverflowError:
+        return None
+    return shadow if all(isfinite(value) for value in shadow) else None
+
+
+def _orientation_sign(
+    points: tuple[Point3, ...],
+    shadows: tuple[tuple[float, float, float] | None, ...],
+    /,
+) -> int:
+    """Return the exact sign of `determinant3`, deciding it in binary64 if safe.
+
+    Correctly rounded rational corners keep the binary64 triple product within
+    a few tens of unit roundoffs of its permanent; a shadow beyond ``1e-9``
+    times that permanent therefore has the exact sign.
+    """
+    first, second, third, fourth = shadows[0], shadows[1], shadows[2], shadows[3]
+    if first is not None and second is not None and third is not None:
+        if fourth is not None:
+            u = [right - left for left, right in zip(first, second, strict=True)]
+            v = [right - left for left, right in zip(first, third, strict=True)]
+            w = [right - left for left, right in zip(first, fourth, strict=True)]
+            su = [
+                abs(left) + abs(right) for left, right in zip(first, second, strict=True)
+            ]
+            sv = [
+                abs(left) + abs(right) for left, right in zip(first, third, strict=True)
+            ]
+            sw = [
+                abs(left) + abs(right) for left, right in zip(first, fourth, strict=True)
+            ]
+            value = (
+                (u[1] * v[2] - u[2] * v[1]) * w[0]
+                + (u[2] * v[0] - u[0] * v[2]) * w[1]
+                + (u[0] * v[1] - u[1] * v[0]) * w[2]
+            )
+            bound = (
+                1e-9
+                * (
+                    (su[1] * sv[2] + su[2] * sv[1]) * sw[0]
+                    + (su[2] * sv[0] + su[0] * sv[2]) * sw[1]
+                    + (su[0] * sv[1] + su[1] * sv[0]) * sw[2]
+                )
+                + 1e-300
+            )
+            if isfinite(value) and isfinite(bound):
+                if value > bound:
+                    return 1
+                if value < -bound:
+                    return -1
+    return _sign(determinant3(points[0], points[1], points[2], points[3]))
+
+
 def _plane_side_shared_contacts(
     first: tuple[tuple[ExactScalar, ...], ...],
     second: tuple[tuple[ExactScalar, ...], ...],
@@ -760,12 +818,21 @@ def _plane_side_shared_contacts(
     left = tuple(_point3(point) for point in first)
     right = tuple(_point3(point) for point in second)
     shared = tuple(point for point in left if point in right)
-    if len(shared) == 3 or len(set(left)) != 3 or len(set(right)) != 3:
+    if (
+        len(shared) == 3
+        or not _distinct_triangle_corners(left)
+        or not _distinct_triangle_corners(right)
+    ):
         return None
-    for plane, other in ((left, right), (right, left)):
+    left_shadow = tuple(_point_shadow(point) for point in left)
+    right_shadow = tuple(_point_shadow(point) for point in right)
+    for plane, plane_shadow, other, other_shadow in (
+        (left, left_shadow, right, right_shadow),
+        (right, right_shadow, left, left_shadow),
+    ):
         sides = {
-            _sign(determinant3(plane[0], plane[1], plane[2], point))
-            for point in other
+            _orientation_sign((*plane, point), (*plane_shadow, shadow))
+            for point, shadow in zip(other, other_shadow, strict=True)
             if point not in shared
         }
         # A nonzero side proves the plane triangle nondegenerate; the other
@@ -773,10 +840,17 @@ def _plane_side_shared_contacts(
         if (
             len(sides) == 1
             and 0 not in sides
-            and any(determinant3(other[0], other[1], other[2], point) for point in plane)
+            and any(
+                _orientation_sign((*other, point), (*other_shadow, shadow))
+                for point, shadow in zip(plane, plane_shadow, strict=True)
+            )
         ):
             return shared
     return None
+
+
+def _distinct_triangle_corners(points: tuple[Point3, ...], /) -> bool:
+    return points[0] != points[1] and points[0] != points[2] and points[1] != points[2]
 
 
 def _piece_contacts(
