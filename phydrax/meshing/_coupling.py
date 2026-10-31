@@ -724,16 +724,14 @@ class OversetCoupling(MeshCoupling):
             )
         valid = donors >= 0
         source_ids = np.asarray(source_scope.entity_ids)
-        if (
-            np.any(donors < -1)
-            or not np.all(np.isin(donors[valid], source_ids))
-            or np.any(~np.isfinite(weights))
-            or np.any(weights < 0)
-            or np.any(weights[~valid] != 0)
-        ):
+        if np.any(donors < -1) or not np.all(np.isin(donors[valid], source_ids)):
             raise ValueError(
-                "Overset donors and weights contain invalid IDs, padding or weights."
+                "Overset donor IDs must be source-scope entities or -1 padding."
             )
+        if np.any(~np.isfinite(weights)) or np.any(weights < 0):
+            raise ValueError("Overset donors require finite non-negative weights.")
+        if np.any(weights[~valid] != 0):
+            raise ValueError("Overset padding (-1 donor IDs) must carry zero weight.")
         if np.any(np.abs(np.sum(weights, axis=1) - 1.0) > tol):
             raise ValueError(
                 "Every overset receptor must have donor weights summing to one."
@@ -1027,9 +1025,11 @@ def _overset_donor_search(
     if hole_scope is not None:
         target.require_scope(hole_scope)
     cell_map, coordinates, vertex_rows = _donor_cell_map(source)
-    # The vertex-aligned affine P1 inverse is solved by one centroid Newton step.
+    # The vertex-aligned affine P1 inverse is solved by one Newton step from the
+    # seed, provided the step is not truncated: the trust radius exceeds the
+    # unit reference simplex diameter sqrt(2), so every in-cell step is exact.
     policy = (
-        SimplicialLocationPolicy(cell_map.cell_count, 1, 1)
+        SimplicialLocationPolicy(cell_map.cell_count, 1, 1, trust_radius=2.0)
         if location_policy is None
         else location_policy
     )
