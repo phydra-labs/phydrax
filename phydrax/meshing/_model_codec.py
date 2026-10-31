@@ -420,6 +420,7 @@ def _register_model_archive_types() -> None:
         VolumeFillStrategy,
         VolumeMeshingSpec,
     )
+    from ._curving import _ExactCoordinateBankMap
     from ._device_adaptation import (
         OwnerLocalPeriodicAdaptiveResult,
         OwnerLocalPeriodicCellMetadata,
@@ -584,6 +585,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", NativeHexGridSchedule),
         ("phydrax.meshing", HexFrameIntegerLayout),
         ("phydrax.meshing.internal", _RestrictedCoordinateMap),
+        ("phydrax.meshing.internal", _ExactCoordinateBankMap),
         ("phydrax.discretization", RationalComposedCellGeometryElement),
         ("phydrax.discretization", CellValidityPolicy),
         ("phydrax.discretization", CellGeometryTransition),

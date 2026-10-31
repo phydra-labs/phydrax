@@ -154,6 +154,10 @@ class RadicalElement:
     def __bool__(self) -> bool:
         return bool(self.terms)
 
+    def __repr__(self) -> str:
+        # Content-only: static PyTree metadata strings enter source identities.
+        return f"RadicalElement(terms={self.terms!r})"
+
     def __hash__(self) -> int:
         if not self.terms:
             return hash(Fraction(0))
