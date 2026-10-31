@@ -25,7 +25,11 @@ from phydrax.geometry.brep._constructors import (
     ProfileLoop,
     ProfilePlane,
 )
-from phydrax.geometry.brep._model import BRepModel
+from phydrax.geometry.brep._model import (
+    _certify_edge_face_gap_bounds,
+    BRepGeometry,
+    BRepModel,
+)
 from phydrax.geometry.brep._patches import BSplineSurfacePatch
 from phydrax.geometry.brep._projection import prepare_brep_projection
 from phydrax.geometry.brep._projection_contracts import (
@@ -80,6 +84,58 @@ def _tspline_planar_model(*, curved: bool) -> BRepModel:
     )
 
 
+def _declared_gap_model(
+    base: BRepModel,
+    patch: BSplineSurfacePatch,
+    source_id: str,
+) -> BRepModel:
+    """Bind a spline patch to the unit-square edges with honestly declared gaps.
+
+    The folded and near-singular test nets do not pass through the square's
+    edges, so each coedge declares its recomputed exact face-gap bound.
+    """
+    geometry = base.geometry
+    face_gaps = _certify_edge_face_gap_bounds(
+        geometry,
+        (patch,),
+        parameter_bounds=base.parameter_bounds,
+        exact_unsupported=True,
+        certified_degenerate_coedges=True,
+    )
+    assert face_gaps is not None and max(face_gaps) > 0.0
+    declared = BRepGeometry(
+        vertex_points=geometry.vertex_points,
+        vertex_exact_points=geometry.vertex_exact_points,
+        vertex_roots=geometry.vertex_roots,
+        edge_endpoint_roots=geometry.edge_endpoint_roots,
+        coedge_endpoint_roots=geometry.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=geometry.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=face_gaps,
+        curves=geometry.curves,
+        edge_curves=geometry.edge_curves,
+        edge_ranges=geometry.edge_ranges,
+        edge_vertices=geometry.edge_vertices,
+        pcurves=geometry.pcurves,
+        coedge_edges=geometry.coedge_edges,
+        coedge_senses=geometry.coedge_senses,
+        face_loops=geometry.face_loops,
+        shell_faces=geometry.shell_faces,
+        shell_orientations=geometry.shell_orientations,
+        solid_shells=geometry.solid_shells,
+        assembly_graph=geometry.assembly_graph,
+    )
+    return assemble_brep_model(
+        declared,
+        (patch,),
+        np.asarray(base.parameter_bounds),
+        np.asarray(base.orientation),
+        base.physical_tags,
+        coordinate_contract=base.coordinate_contract,
+        source_id=source_id,
+        trim_domains=base.trim_domains,
+    )
+
+
 def _bspline_surface_model(
     *, competing: bool = False
 ) -> tuple[BRepModel, BSplineSurfacePatch]:
@@ -127,6 +183,11 @@ def _bspline_surface_model(
         exact_control_points=tuple(exact_points),
         exact_weights=tuple(exact_weights),
     )
+    if competing:
+        # The folded net leaves the square's x edges: its gaps are declared.
+        return _declared_gap_model(
+            base, patch, "native-bspline-competing-projection"
+        ), patch
     model = assemble_brep_model(
         base.geometry,
         (patch,),
@@ -134,11 +195,7 @@ def _bspline_surface_model(
         np.asarray(base.orientation),
         base.physical_tags,
         coordinate_contract=contract,
-        source_id=(
-            "native-bspline-competing-projection"
-            if competing
-            else "native-rational-bspline-projection"
-        ),
+        source_id="native-rational-bspline-projection",
         trim_domains=base.trim_domains,
     )
     return model, patch
@@ -182,17 +239,9 @@ def _nearby_stationary_root_surface_model() -> tuple[BRepModel, BSplineSurfacePa
         exact_control_points=exact_points,
         exact_weights=exact_weights,
     )
-    model = assemble_brep_model(
-        base.geometry,
-        (patch,),
-        np.asarray(base.parameter_bounds),
-        np.asarray(base.orientation),
-        base.physical_tags,
-        coordinate_contract=contract,
-        source_id="native-bspline-nearby-stationary-roots",
-        trim_domains=base.trim_domains,
-    )
-    return model, patch
+    return _declared_gap_model(
+        base, patch, "native-bspline-nearby-stationary-roots"
+    ), patch
 
 
 def _near_tied_folded_bspline_model() -> tuple[BRepModel, BSplineSurfacePatch]:
@@ -239,17 +288,7 @@ def _near_tied_folded_bspline_model() -> tuple[BRepModel, BSplineSurfacePatch]:
         exact_control_points=exact_points,
         exact_weights=exact_weights,
     )
-    model = assemble_brep_model(
-        base.geometry,
-        (patch,),
-        np.asarray(base.parameter_bounds),
-        np.asarray(base.orientation),
-        base.physical_tags,
-        coordinate_contract=contract,
-        source_id="native-bspline-near-tied-minima",
-        trim_domains=base.trim_domains,
-    )
-    return model, patch
+    return _declared_gap_model(base, patch, "native-bspline-near-tied-minima"), patch
 
 
 def _tspline_non_graph_model(
@@ -450,9 +489,15 @@ def test_curved_t_spline_projection_has_complete_strong_convexity_evidence() -> 
 
     assert int(np.asarray(result.status)[0]) == SourceProjectionStatus.UNIQUE
     assert result.entity_ids() == (entity_id,)
-    np.testing.assert_allclose(result.points, ((0.5, 0.5, 0.0625),), atol=1e-14)
+    # Greville-sampled controls reproduce only the linear coordinates: the cubic
+    # quasi-interpolant of u(1-u) is 11/48 at u=1/2, so the cap height is (11/48)^2.
+    height = Fraction(11, 48) ** 2
+    distance = float(Fraction(1, 4) - height)
+    np.testing.assert_allclose(result.points, ((0.5, 0.5, float(height)),), atol=1e-14)
     np.testing.assert_allclose(result.parameters, ((0.5, 0.5),), atol=1e-14)
-    assert float(result.distance_lower_bounds[0]) <= 0.1875 <= float(result.residuals[0])
+    assert (
+        float(result.distance_lower_bounds[0]) <= distance <= float(result.residuals[0])
+    )
     patch = model.patches[0]
     assert isinstance(patch, TSplineSurfacePatch)
     fixed_parameters = jnp.asarray(result.parameters)
