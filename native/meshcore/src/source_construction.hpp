@@ -52,10 +52,6 @@ struct PlcRecoveryWitness {
   double deviation = 0.0;
 };
 
-inline int source_corner_count(SourceStratum stratum) {
-  return stratum == SourceStratum::kSegment ? 2 : 3;
-}
-
 bool source_parameters_valid(SourceStratum stratum, const double* parameters);
 bool source_point(const double* const* corners, SourceStratum stratum,
                   const double* parameters, Expansion* point);
