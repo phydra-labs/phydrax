@@ -2764,9 +2764,11 @@ def _single_sheet_preimages(
     error). Every lift moves a face point by at most the face's certified
     target-to-root bound, so a face whose distance lower bound to q exceeds
     that bound plus q's error has no preimage of q; the lifting face itself
-    is injective. A face the prepared bound cannot exclude is re-proved on
-    finer pieces toward half its distance margin. Any other face that cannot
-    be excluded (a folded or duplicated sheet) leaves the degree unresolved.
+    is injective. A face the prepared bound cannot exclude is re-proved by
+    splitting only its pieces whose lifted-point boxes still reach q, until each
+    is excluded, lifts into q's error, or cannot be split further in binary64.
+    A face that still reaches q (a folded or duplicated sheet) leaves the degree
+    unresolved.
     """
     from ..discretization._coordinate_enclosure import affine_map
     from ._domain_numerics import cell_coordinate_expressions
@@ -2863,21 +2865,22 @@ def _single_sheet_preimages(
             for row, distance in distances.items()
             if distance <= math.nextafter(bounds[row] + lifted.root_error, math.inf)
         ]
-        refined = (
-            root_map.refined_target_to_root_bounds(
-                blocking,
-                [0.5 * (distances[row] - lifted.root_error) for row in blocking],
-            )
+        excluded = (
+            root_map.excludes_point(blocking, point, lifted.root_error)
             if blocking
             else ()
         )
-        for row, bound in zip(blocking, refined, strict=True):
-            if distances[row] <= math.nextafter(bound + lifted.root_error, math.inf):
-                raise SourceCoverageUnavailable(
-                    "A second implicit target sheet may cover the zero-set point lifted "
-                    f"from target face row {lifting_row}; the boundary degree is not one.",
-                    status="unresolved",
-                )
+        covering = tuple(
+            row for row, decided in zip(blocking, excluded, strict=True) if not decided
+        )
+        if covering:
+            raise SourceCoverageUnavailable(
+                "A second implicit target sheet may cover the zero-set point lifted "
+                f"from target face row {lifting_row}: target face rows {covering} "
+                "still reach it within its certified error or at binary64 "
+                "resolution; the boundary degree is not one.",
+                status="unresolved",
+            )
         preimages.append(
             (
                 lifting_row,

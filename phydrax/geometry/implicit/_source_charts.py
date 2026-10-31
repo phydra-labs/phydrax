@@ -164,6 +164,10 @@ class _PieceProof:
     target_jacobian: IntervalMatrix2
     # Enclosure of the target-map derivative DP over the piece.
     target_derivatives: IntervalDerivative3x2
+    # DP K over the piece for a conditioned face (see `_tangent_conditioner`).
+    conditioned_derivatives: IntervalDerivative3x2 | None
+    # Enclosure of the lifted points P + t grad f(P) over the piece.
+    root_box: IntervalVector3
 
 
 type _PieceOutcome = tuple[_PieceProof | None, str, bool]
@@ -339,36 +343,38 @@ class AdaptiveImplicitRootChartMap:
             results[index] = lifted
         return tuple(result for result in results if result is not None)
 
-    def refined_target_to_root_bounds(
+    def excludes_point(
         self,
         rows: Sequence[int],
-        tolerances: Sequence[float],
+        point: np.ndarray,
+        error: float,
         /,
-        *,
-        generations: int = 4,
-    ) -> tuple[float, ...]:
-        """Re-prove certified faces until each target-to-root bound meets its tolerance.
+    ) -> tuple[bool, ...]:
+        """Decide per certified face that no chart point lifts within ``error`` of ``point``.
 
-        Each listed face is subdivided again, independently of the prepared
-        pieces, until every piece's certified target-to-root bound is at most its
-        tolerance or ``generations`` splits are spent. The returned bound is the
-        certified maximum over the new pieces, or ``inf`` where the tolerance is
-        not reached. The prepared chart is unchanged.
+        A piece is excluded when the distance lower bound from ``point`` to its
+        root box (the enclosure of its lifted points) exceeds ``error``.
+        Starting from the prepared pieces, only pieces that are not
+        excluded are split and re-proved, until every piece is excluded (True)
+        or a remaining piece cannot be proved or split further in binary64
+        (False, the face may cover the point). The prepared chart is unchanged.
         """
-        if len(rows) != len(tolerances):
-            raise ValueError("rows and tolerances must align.")
+        target = np.asarray(point, dtype=np.float64)
+        if target.shape != (3,) or not np.all(np.isfinite(target)):
+            raise ValueError("point must be one finite physical point.")
+        error_ = float(error)
+        if not math.isfinite(error_) or error_ < 0.0:
+            raise ValueError("error must be finite and nonnegative.")
         faces = [self._faces[int(row)] for row in rows]
         if any(face.evidence.status != "certified" for face in faces):
-            raise ValueError("Only certified implicit charts can be refined.")
+            raise ValueError("Only certified implicit charts can exclude a point.")
         return tuple(
             _run_faces(
                 self._bounds,
                 self._hessian_program,
                 [
-                    _refined_bound_steps(
-                        self._surface, face, float(tolerance), generations
-                    )
-                    for face, tolerance in zip(faces, tolerances, strict=True)
+                    _point_exclusion_steps(self._surface, face, target, error_)
+                    for face in faces
                 ],
             )
         )
@@ -477,6 +483,39 @@ class AdaptiveImplicitRootChartMap:
                 "Adaptive implicit root-chart map no longer matches its source and target map."
             )
 
+    def require_request(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: AdaptiveImplicitSourceQuery,
+        witness: SourceBoundaryChartWitness,
+        /,
+        *,
+        tolerance: float | None,
+        maximum_normal_deviation: float | None,
+    ) -> None:
+        """Require this map to be the one prepared for exactly these operands."""
+        _, inherited_frame = _source_authority(source)
+        tolerance_ = None if tolerance is None else float(tolerance)
+        normal_ = (
+            None if maximum_normal_deviation is None else float(maximum_normal_deviation)
+        )
+        if (
+            self.mesh_id != mesh.mesh_id
+            or self.topology_id != mesh.topology_id
+            or self.geometry_id != cell_geometry_id(geometry)
+            or self.source_id != str(source.source_id)
+            or self.source_revision != str(source.source_revision)
+            or (inherited_frame and self.frame_id != inherited_frame)
+            or self.witness.witness_id != witness.witness_id
+            or self.tolerance != tolerance_
+            or self.maximum_normal_deviation != normal_
+        ):
+            raise ValueError(
+                "Prepared implicit root charts were prepared for a different mesh, "
+                "geometry, source, witness or control."
+            )
+
 
 def _interval_add(first: Interval, second: Interval, /) -> Interval:
     return (
@@ -510,9 +549,10 @@ def _interval_subtract(first: Interval, second: Interval, /) -> Interval:
 def _interval_divide(numerator: Interval, denominator: Interval, /) -> Interval:
     if denominator[0] <= 0.0 <= denominator[1]:
         return (-math.inf, math.inf)
-    reciprocal = (1.0 / denominator[1], 1.0 / denominator[0])
-    if reciprocal[0] > reciprocal[1]:
-        reciprocal = (reciprocal[1], reciprocal[0])
+    reciprocal = (
+        float(np.nextafter(1.0 / denominator[1], -np.inf)),
+        float(np.nextafter(1.0 / denominator[0], np.inf)),
+    )
     return _interval_multiply(numerator, reciprocal)
 
 
@@ -677,6 +717,62 @@ class _FaceEnclosure:
         tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial],
         tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial],
     ]
+    # Reference directions (columns) whose physical tangents are orthonormal at
+    # the face centroid, kept only for ill-conditioned (needle) faces.
+    conditioner: FractionMatrix2 | None
+
+
+# Faces whose centroid tangent condition number exceeds this get conditioned
+# tangents for their chart Jacobian.
+_CONDITIONING_THRESHOLD = 8.0
+
+# Endpoint-sign failures double the root bracket at most this often before the
+# piece splits; each doubling costs one batched tube evaluation.
+_ROOT_BRACKET_DOUBLINGS = 4
+
+
+def _tangent_conditioner(
+    tangents: tuple[
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial],
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial],
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial],
+    ],
+    /,
+) -> FractionMatrix2 | None:
+    """``R^-1`` of the QR factorization of the centroid tangents, if ill-conditioned.
+
+    Along its columns ``d`` the physical tangents ``DP d`` are orthonormal at
+    the centroid, so a needle face's nearly parallel tangent pair becomes a
+    well-conditioned pair whose cross product does not cancel.
+    """
+    centroid = (Fraction(1, 3), Fraction(1, 3))
+    matrix = np.asarray(
+        [
+            [
+                float(evaluate_expression(value.center, centroid))
+                if value.center
+                else 0.0
+                for value in row
+            ]
+            for row in tangents
+        ],
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(matrix)):
+        return None
+    singular = np.linalg.svd(matrix, compute_uv=False)
+    if singular[1] <= 0.0 or singular[0] <= _CONDITIONING_THRESHOLD * singular[1]:
+        return None
+    _, upper = np.linalg.qr(matrix)
+    if upper[0, 0] == 0.0 or upper[1, 1] == 0.0:
+        return None
+    inverse = np.linalg.inv(upper)
+    if not np.all(np.isfinite(inverse)):
+        return None
+    return (
+        (Fraction(float(inverse[0, 0])), Fraction(float(inverse[0, 1]))),
+        (Fraction(float(inverse[1, 0])), Fraction(float(inverse[1, 1]))),
+    )
 
 
 def _enclose_face(expressions: Polynomial3, /) -> _FaceEnclosure:
@@ -697,10 +793,12 @@ def _enclose_face(expressions: Polynomial3, /) -> _FaceEnclosure:
             _enclosed_derivative(along_v, 1),
         )
 
+    tangents = (tangent(first), tangent(second), tangent(third))
     return _FaceEnclosure(
         (first, second, third),
-        (tangent(first), tangent(second), tangent(third)),
+        tangents,
         (curvature(first), curvature(second), curvature(third)),
+        _tangent_conditioner(tangents),
     )
 
 
@@ -716,14 +814,17 @@ def _enclosed_box(
 
 def _restricted_face(
     face: _FaceEnclosure, triangle: TriangleReference, /
-) -> tuple[tuple[np.ndarray, np.ndarray], IntervalDerivative3x2]:
+) -> tuple[
+    tuple[np.ndarray, np.ndarray], IntervalDerivative3x2, IntervalDerivative3x2 | None
+]:
     """Restrict each face coordinate once to a piece; enclose it and its gradient.
 
     With ``R = C(a + E s)`` for the piece corners ``a, b, c`` and
     ``E = [b - a, c - a]``, the chain rule ``[R_s, R_t] = [C_u, C_v] E`` gives
     the restricted derivatives ``[C_u, C_v](a + E s) = [R_s, R_t] E^-1``
     exactly, so one composition per coordinate serves the value and both
-    derivatives.
+    derivatives. A face conditioner ``K`` also yields ``[C_u, C_v] K``, each
+    column enclosed from its own exact polynomial.
     """
     a, b, c = triangle
     e00, e01 = b[0] - a[0], c[0] - a[0]
@@ -734,6 +835,7 @@ def _restricted_face(
     lower: list[float] = []
     upper: list[float] = []
     derivatives: list[IntervalVector2] = []
+    conditioned: list[IntervalVector2] = []
     for value, (tangent_u, tangent_v) in zip(face.values, face.tangents, strict=True):
         restricted = _restrict_polynomial(value.center, triangle)
         low, high = _widen(polynomial_bounds(restricted, "simplex", 2), value.error)
@@ -763,9 +865,34 @@ def _restricted_face(
                 _widen(polynomial_bounds(derivative_v, "simplex", 2), tangent_v.error),
             )
         )
+        if face.conditioner is not None:
+            columns: list[Interval] = []
+            for column in range(2):
+                first_weight = face.conditioner[0][column]
+                second_weight = face.conditioner[1][column]
+                directional: Polynomial = {
+                    exponent: derivative_u[exponent] * first_weight
+                    + derivative_v[exponent] * second_weight
+                    for exponent in exponents
+                }
+                # The weights are binary64 values, so these outward-rounded
+                # products bound the radical-coefficient error exactly.
+                error = _interval_add(
+                    _interval_scale(
+                        (tangent_u.error, tangent_u.error), abs(float(first_weight))
+                    ),
+                    _interval_scale(
+                        (tangent_v.error, tangent_v.error), abs(float(second_weight))
+                    ),
+                )[1]
+                columns.append(
+                    _widen(polynomial_bounds(directional, "simplex", 2), error)
+                )
+            conditioned.append((columns[0], columns[1]))
     return (
         (np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)),
         (derivatives[0], derivatives[1], derivatives[2]),
+        (conditioned[0], conditioned[1], conditioned[2]) if conditioned else None,
     )
 
 
@@ -1581,6 +1708,7 @@ def _face_piece_proofs(
     projected_axes: tuple[int, int, int],
     tolerance: float | None,
     maximum_normal_deviation: float | None,
+    root_newton_steps: int = 0,
 ) -> tuple[_PieceSteps, ...]:
     """Piece proofs of sibling subtriangles, run together by `_run_piece_steps`."""
     return tuple(
@@ -1592,6 +1720,7 @@ def _face_piece_proofs(
             projected_axes,
             tolerance,
             maximum_normal_deviation,
+            root_newton_steps,
         )
         for triangle in triangles
     )
@@ -1605,13 +1734,18 @@ def _face_piece_steps(
     projected_axes: tuple[int, int, int],
     tolerance: float | None,
     maximum_normal_deviation: float | None,
+    root_newton_steps: int = 0,
 ) -> _PieceSteps:
     """Prove one subtriangle's scalar root chart and interval differential.
 
     The proof yields its field and Hessian box queries, so sibling pieces share
-    one batched interval evaluation per step.
+    one batched interval evaluation per step. ``root_newton_steps`` further
+    narrows the root parameter interval, and so the piece's root box, by
+    midpoint interval Newton steps after the proof.
     """
-    (p_low, p_high), target_derivatives = _restricted_face(face, triangle)
+    (p_low, p_high), target_derivatives, conditioned_derivatives = _restricted_face(
+        face, triangle
+    )
     if np.array_equal(p_low, p_high):
         return (
             None,
@@ -1713,7 +1847,6 @@ def _face_piece_steps(
         )
     if not (math.isfinite(root_parameters[0]) and math.isfinite(root_parameters[1])):
         return None, "implicit root-chart normal tube is not finitely enclosed", True
-    maximum_root_parameter = max(-root_parameters[0], root_parameters[1])
     base_box = tuple((float(p_low[axis]), float(p_high[axis])) for axis in range(3))
     if exact_on_source:
         gradient_q = gradient_p
@@ -1722,102 +1855,136 @@ def _face_piece_steps(
             float(np.nextafter(gradient_norm[1] ** 2, np.inf)),
         )
     else:
-        tube = tuple(
-            _interval_add(
-                base_box[axis], _interval_multiply(root_parameters, gradient_p[axis])
-            )
-            for axis in range(3)
-        )
-        tube_lower = np.asarray([value[0] for value in tube], dtype=np.float64)
-        tube_upper = np.asarray([value[1] for value in tube], dtype=np.float64)
-        if (
-            not (np.all(np.isfinite(tube_lower)) and np.all(np.isfinite(tube_upper)))
-            or np.any(tube_lower < surface.volume.domain[0])
-            or np.any(tube_upper > surface.volume.domain[1])
-        ):
-            return (
-                None,
-                "implicit root-chart tube leaves the certified source domain",
-                True,
-            )
-        endpoint_boxes = [
-            (
-                np.asarray([value[0] for value in box], dtype=np.float64),
-                np.asarray([value[1] for value in box], dtype=np.float64),
-            )
-            for box in (
-                tuple(
-                    _interval_add(
-                        base_box[axis],
-                        _interval_multiply((shift, shift), gradient_p[axis]),
-                    )
-                    for axis in range(3)
+        # A bracket that misses a strict endpoint sign doubles on the failing
+        # side while its tube stays in the certified domain and phi' stays
+        # positive on it, so sign success never hinges on how the bracket
+        # estimate and the endpoint enclosures happen to scale with the piece.
+        attempt = 0
+        while True:
+            tube = _lifted_box(base_box, root_parameters, gradient_p)
+            tube_lower, tube_upper = _box_arrays(tube)
+            if (
+                not (np.all(np.isfinite(tube_lower)) and np.all(np.isfinite(tube_upper)))
+                or np.any(tube_lower < surface.volume.domain[0])
+                or np.any(tube_upper > surface.volume.domain[1])
+            ):
+                return (
+                    None,
+                    "implicit root-chart tube leaves the certified source domain",
+                    True,
                 )
+            endpoint_boxes = [
+                _box_arrays(_lifted_box(base_box, (shift, shift), gradient_p))
                 for shift in root_parameters
+            ]
+            shifted_centers = [
+                _shifted_center_box(center_low, center_high, center_gradient, shift)
+                for shift in root_parameters
+            ]
+            fields, _ = yield _BoxRequests(
+                (
+                    (tube_lower, tube_upper),
+                    *endpoint_boxes,
+                    *(box for box in shifted_centers if box is not None),
+                )
             )
-        ]
-        shifted_centers = [
-            _shifted_center_box(center_low, center_high, center_gradient, shift)
-            for shift in root_parameters
-        ]
-        fields, _ = yield _BoxRequests(
-            (
-                (tube_lower, tube_upper),
-                *endpoint_boxes,
-                *(box for box in shifted_centers if box is not None),
-            )
-        )
-        gradient_q = fields[0][1]
-        (_, minus_value_upper), minus_gradient = fields[1]
-        (plus_value_lower, _), plus_gradient = fields[2]
-        center_fields = iter(fields[3:])
-        if shifted_centers[0] is not None:
-            minus_value_upper = min(
-                minus_value_upper,
-                _mean_value_interval(
-                    next(center_fields)[0],
-                    _chain_slopes(
-                        minus_gradient,
-                        _shifted_tangents(
-                            target_derivatives,
-                            hessian_intervals,
-                            (root_parameters[0], root_parameters[0]),
+            gradient_q = fields[0][1]
+            (_, minus_value_upper), minus_gradient = fields[1]
+            (plus_value_lower, _), plus_gradient = fields[2]
+            center_fields = iter(fields[3:])
+            if shifted_centers[0] is not None:
+                minus_value_upper = min(
+                    minus_value_upper,
+                    _mean_value_interval(
+                        next(center_fields)[0],
+                        _chain_slopes(
+                            minus_gradient,
+                            _shifted_tangents(
+                                target_derivatives,
+                                hessian_intervals,
+                                (root_parameters[0], root_parameters[0]),
+                            ),
                         ),
-                    ),
-                    offsets,
-                )[1],
+                        offsets,
+                    )[1],
+                )
+            if shifted_centers[1] is not None:
+                plus_value_lower = max(
+                    plus_value_lower,
+                    _mean_value_interval(
+                        next(center_fields)[0],
+                        _chain_slopes(
+                            plus_gradient,
+                            _shifted_tangents(
+                                target_derivatives,
+                                hessian_intervals,
+                                (root_parameters[1], root_parameters[1]),
+                            ),
+                        ),
+                        offsets,
+                    )[0],
+                )
+            directional_derivative = sum_interval(
+                (
+                    _interval_multiply(gradient_q[0], gradient_p[0]),
+                    _interval_multiply(gradient_q[1], gradient_p[1]),
+                    _interval_multiply(gradient_q[2], gradient_p[2]),
+                )
             )
-        if shifted_centers[1] is not None:
-            plus_value_lower = max(
-                plus_value_lower,
-                _mean_value_interval(
-                    next(center_fields)[0],
-                    _chain_slopes(
-                        plus_gradient,
-                        _shifted_tangents(
-                            target_derivatives,
-                            hessian_intervals,
+            if directional_derivative[0] <= 0.0:
+                return (
+                    None,
+                    "normal-line field derivative is not strictly positive",
+                    True,
+                )
+            # phi(t) = f(P + t grad f(P)) has phi' >= D_lo on the tube of T, which
+            # contains 0, so phi(T_hi) >= f(P) + T_hi D_lo and phi(T_lo) <=
+            # f(P) + T_lo D_lo: the piece residual itself bounds both endpoint signs.
+            if root_parameters[1] > 0.0:
+                plus_value_lower = max(
+                    plus_value_lower,
+                    _interval_add(
+                        (value_low, value_low),
+                        _interval_multiply(
                             (root_parameters[1], root_parameters[1]),
+                            (directional_derivative[0], directional_derivative[0]),
                         ),
-                    ),
-                    offsets,
-                )[0],
+                    )[0],
+                )
+            if root_parameters[0] < 0.0:
+                minus_value_upper = min(
+                    minus_value_upper,
+                    _interval_add(
+                        (value_high, value_high),
+                        _interval_multiply(
+                            (root_parameters[0], root_parameters[0]),
+                            (directional_derivative[0], directional_derivative[0]),
+                        ),
+                    )[1],
+                )
+            minus_signed = minus_value_upper < 0.0
+            plus_signed = plus_value_lower > 0.0
+            if minus_signed and plus_signed:
+                break
+            if attempt == _ROOT_BRACKET_DOUBLINGS:
+                return (
+                    None,
+                    "normal-line root chart lacks strict interval endpoint signs",
+                    True,
+                )
+            attempt += 1
+            span = max(-root_parameters[0], root_parameters[1])
+            lower, upper = root_parameters
+            if not minus_signed:
+                lower = 2.0 * lower if lower < 0.0 else -span
+            if not plus_signed:
+                upper = 2.0 * upper if upper > 0.0 else span
+            root_parameters = (
+                float(np.nextafter(lower, -np.inf)),
+                float(np.nextafter(upper, np.inf)),
             )
-        directional_derivative = sum_interval(
-            (
-                _interval_multiply(gradient_q[0], gradient_p[0]),
-                _interval_multiply(gradient_q[1], gradient_p[1]),
-                _interval_multiply(gradient_q[2], gradient_p[2]),
-            )
-        )
-        if directional_derivative[0] <= 0.0:
-            return None, "normal-line field derivative is not strictly positive", True
-        if not (minus_value_upper < 0.0 and plus_value_lower > 0.0):
-            return (
-                None,
-                "normal-line root chart lacks strict interval endpoint signs",
-                True,
-            )
+    maximum_root_parameter = max(-root_parameters[0], root_parameters[1])
+    if not exact_on_source:
         # Mean-value (interval Newton) step: 0 = f(P) + t* grad f(xi) . grad f(P)
         # with xi on the certified segment, so t* lies in -f(P box) / D.
         root_parameters = _intersect_intervals(
@@ -1844,13 +2011,30 @@ def _face_piece_steps(
     # With R_u = Pi B P_u, where Pi projects along grad f(P) onto grad f(R)^perp,
     # det[R_u, R_v, grad f(R)] = det[B P_u, B P_v, grad f(P)] |grad f(R)|^2 /
     # (grad f(R) . grad f(P)); this avoids the dependency of the projected rows.
+    # A needle face uses det[B DP K, grad f(P)] / det K with its conditioner K,
+    # whose conditioned tangents do not cancel in the cross product.
     source_norm = _interval_vector_norm_bounds(gradient_q)
-    cross_dot = _interval_multiply(
-        _normal_area_interval(
+    if conditioned_derivatives is None or face.conditioner is None:
+        normal_area = _normal_area_interval(
             _shifted_tangents(target_derivatives, hessian_intervals, root_parameters),
             gradient_p,
             source_orientation,
-        ),
+        )
+    else:
+        (k00, k01), (k10, k11) = face.conditioner
+        conditioner_determinant = k00 * k11 - k01 * k10
+        normal_area = _interval_multiply(
+            _normal_area_interval(
+                _shifted_tangents(
+                    conditioned_derivatives, hessian_intervals, root_parameters
+                ),
+                gradient_p,
+                source_orientation,
+            ),
+            _exact_interval(1 / conditioner_determinant),
+        )
+    cross_dot = _interval_multiply(
+        normal_area,
         _interval_divide(
             _interval_multiply(source_norm, source_norm), directional_derivative
         ),
@@ -1871,18 +2055,27 @@ def _face_piece_steps(
             "implicit source chart Jacobian is not strictly positive in its source orientation",
             True,
         )
+    # The normal of DP K is det K times the normal of DP, so a conditioned
+    # needle face measures its normal from the non-cancelling tangent pair.
+    normal_derivatives = target_derivatives
+    normal_orientation = source_orientation
+    if conditioned_derivatives is not None and face.conditioner is not None:
+        (k00, k01), (k10, k11) = face.conditioner
+        normal_derivatives = conditioned_derivatives
+        if k00 * k11 - k01 * k10 < 0:
+            normal_orientation = -source_orientation
     tangent_u: IntervalVector3 = (
-        target_derivatives[0][0],
-        target_derivatives[1][0],
-        target_derivatives[2][0],
+        normal_derivatives[0][0],
+        normal_derivatives[1][0],
+        normal_derivatives[2][0],
     )
     tangent_v: IntervalVector3 = (
-        target_derivatives[0][1],
-        target_derivatives[1][1],
-        target_derivatives[2][1],
+        normal_derivatives[0][1],
+        normal_derivatives[1][1],
+        normal_derivatives[2][1],
     )
     target_normal = _normal_angle_bounds(
-        tangent_u, tangent_v, gradient_q, source_orientation
+        tangent_u, tangent_v, gradient_q, normal_orientation
     )
     lower_distance = 0.0
     f_abs_lower = _point_interval(residual)
@@ -1903,13 +2096,18 @@ def _face_piece_steps(
             max(-root_parameters[0], root_parameters[1]) * gradient_norm[1], np.inf
         )
     )
+    # A limit of pi admits every normal; the angle enclosure itself may round
+    # past the binary64 pi.
+    normal_limit = (
+        maximum_normal_deviation
+        if maximum_normal_deviation is not None and maximum_normal_deviation < math.pi
+        else None
+    )
     unresolved_requirement = (tolerance is not None and upper_distance > tolerance) or (
-        maximum_normal_deviation is not None
-        and target_normal[1] > maximum_normal_deviation
+        normal_limit is not None and target_normal[1] > normal_limit
     )
     violated_requirement = (tolerance is not None and lower_distance > tolerance) or (
-        maximum_normal_deviation is not None
-        and target_normal[0] > maximum_normal_deviation
+        normal_limit is not None and target_normal[0] > normal_limit
     )
     if violated_requirement:
         detail = (
@@ -1922,6 +2120,32 @@ def _face_piece_steps(
             None,
             "target-to-root or normal interval bound needs face subdivision",
             True,
+        )
+    lifted_parameters = root_parameters
+    for _ in range(0 if exact_on_source else root_newton_steps):
+        # Midpoint interval Newton for phi(t) = f(P + t grad f(P)): every root
+        # in T lies in m - phi(m) / phi'(T), with phi'(T) enclosed over the
+        # tube of T; unlike the step from t = 0 its width shrinks with the piece.
+        middle = 0.5 * lifted_parameters[0] + 0.5 * lifted_parameters[1]
+        fields, _ = yield _BoxRequests(
+            (
+                _box_arrays(_lifted_box(base_box, (middle, middle), gradient_p)),
+                _box_arrays(_lifted_box(base_box, lifted_parameters, gradient_p)),
+            )
+        )
+        (middle_value, _), (_, tube_gradient) = fields
+        slope = sum_interval(
+            (
+                _interval_multiply(tube_gradient[0], gradient_p[0]),
+                _interval_multiply(tube_gradient[1], gradient_p[1]),
+                _interval_multiply(tube_gradient[2], gradient_p[2]),
+            )
+        )
+        if not slope[0] > 0.0:
+            break
+        lifted_parameters = _intersect_intervals(
+            lifted_parameters,
+            _interval_subtract((middle, middle), _interval_divide(middle_value, slope)),
         )
     return (
         _PieceProof(
@@ -1945,9 +2169,29 @@ def _face_piece_steps(
                 map_derivatives[projected_axes[2]],
             ),
             target_derivatives,
+            conditioned_derivatives,
+            _lifted_box(base_box, lifted_parameters, gradient_p),
         ),
         "",
         False,
+    )
+
+
+def _lifted_box(
+    base: Sequence[Interval], scale: Interval, gradient: IntervalVector3, /
+) -> IntervalVector3:
+    """Enclose ``P + t grad f(P)`` for ``P`` in ``base`` and ``t`` in ``scale``."""
+    return (
+        _interval_add(base[0], _interval_multiply(scale, gradient[0])),
+        _interval_add(base[1], _interval_multiply(scale, gradient[1])),
+        _interval_add(base[2], _interval_multiply(scale, gradient[2])),
+    )
+
+
+def _box_arrays(box: IntervalVector3, /) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.asarray([value[0] for value in box], dtype=np.float64),
+        np.asarray([value[1] for value in box], dtype=np.float64),
     )
 
 
@@ -1988,17 +2232,13 @@ _STANDARD_TRIANGLE = (
 def _prove_face_triangles(
     prove: _PieceProver,
     triangles: Sequence[TriangleReference],
-    generations: int | None = None,
 ) -> _FaceSteps[tuple[tuple[_PieceProof, ...], str]]:
     """Prove target subtriangles, splitting only the pieces that need refinement.
 
-    Each refinement generation is one face round, batched across faces. With
-    ``generations``, a piece still undecided after that many splits leaves the
-    face unresolved.
+    Each refinement generation is one face round, batched across faces.
     """
     pending = list(triangles)
     accepted: list[_PieceProof] = []
-    generation = 0
     while pending:
         children: list[TriangleReference] = []
         outcomes, _ = yield _FaceRound(prove(pending))
@@ -2008,8 +2248,6 @@ def _prove_face_triangles(
                 continue
             if not refine:
                 return tuple(accepted), detail
-            if generations is not None and generation >= generations:
-                return tuple(accepted), detail or "implicit chart refinement limit"
             split = _split_triangle(triangle)
             if split is None:
                 return tuple(
@@ -2017,7 +2255,6 @@ def _prove_face_triangles(
                 ), detail or "implicit chart reached target-parameter representability"
             children.extend(split)
         pending = children
-        generation += 1
     return tuple(accepted), ""
 
 
@@ -2081,16 +2318,62 @@ def _transversal_injectivity(
         for row in face.tangents
     )
 
-    def chord_tangents(piece: _PieceProof, /) -> IntervalDerivative3x2:
-        def entry(axis: int, column: int, /) -> Interval:
-            error = chord_errors[axis][column]
-            return _interval_add(piece.target_derivatives[axis][column], (-error, error))
-
-        return (
-            (entry(0, 0), entry(0, 1)),
-            (entry(1, 0), entry(1, 1)),
-            (entry(2, 0), entry(2, 1)),
+    conditioner = face.conditioner
+    # For a conditioned face A K replaces A: det[A K, w] = det K det[A, w], and
+    # the chord error of column j is |K_0j| e_u + |K_1j| e_v per coordinate.
+    conditioned_errors = (
+        None
+        if conditioner is None
+        else tuple(
+            tuple(
+                _interval_add(
+                    _interval_scale((row[0], row[0]), abs(float(conditioner[0][column]))),
+                    _interval_scale((row[1], row[1]), abs(float(conditioner[1][column]))),
+                )[1]
+                for column in range(2)
+            )
+            for row in chord_errors
         )
+    )
+    inverse_determinant = (
+        None
+        if conditioner is None
+        else _exact_interval(
+            1
+            / (
+                conditioner[0][0] * conditioner[1][1]
+                - conditioner[0][1] * conditioner[1][0]
+            )
+        )
+    )
+
+    def chord_determinant(piece: _PieceProof, direction: IntervalVector3, /) -> Interval:
+        derivatives = piece.target_derivatives
+        errors = chord_errors
+        if (
+            conditioned_errors is not None
+            and inverse_determinant is not None
+            and piece.conditioned_derivatives is not None
+        ):
+            derivatives = piece.conditioned_derivatives
+            errors = conditioned_errors
+
+        def entry(axis: int, column: int, /) -> Interval:
+            error = errors[axis][column]
+            return _interval_add(derivatives[axis][column], (-error, error))
+
+        determinant = _normal_area_interval(
+            (
+                (entry(0, 0), entry(0, 1)),
+                (entry(1, 0), entry(1, 1)),
+                (entry(2, 0), entry(2, 1)),
+            ),
+            direction,
+            orientation,
+        )
+        if derivatives is piece.target_derivatives or inverse_determinant is None:
+            return determinant
+        return _interval_multiply(determinant, inverse_determinant)
 
     face_tangents = tuple(
         tuple(_enclosed_interval(value, _STANDARD_TRIANGLE) for value in row)
@@ -2137,9 +2420,7 @@ def _transversal_injectivity(
             return 0.0
         lower = math.inf
         for piece in pieces:
-            determinant = _normal_area_interval(
-                chord_tangents(piece), direction, orientation
-            )
+            determinant = chord_determinant(piece, direction)
             if determinant[0] <= 0.0:
                 return 0.0
             lower = min(lower, determinant[0])
@@ -2458,30 +2739,76 @@ def _source_cell_rows(surface: AdaptiveImplicitSurface, /) -> dict[SourceCellKey
     }
 
 
-def _refined_bound_steps(
+def _box_distance_lower(point: np.ndarray, box: IntervalVector3, /) -> float:
+    """A rounded-down lower bound on the distance from a point to a closed box."""
+    gaps = []
+    for axis in range(3):
+        gap = max(box[axis][0] - float(point[axis]), float(point[axis]) - box[axis][1])
+        gaps.append(float(np.nextafter(gap, 0.0)) if gap > 0.0 else 0.0)
+    squared = float(
+        np.nextafter(math.fsum(float(np.nextafter(gap * gap, 0.0)) for gap in gaps), 0.0)
+    )
+    return max(0.0, float(np.nextafter(math.sqrt(max(squared, 0.0)), 0.0)))
+
+
+def _point_exclusion_steps(
     surface: AdaptiveImplicitSurface,
     face: _PreparedFace,
-    tolerance: float,
-    generations: int,
-) -> _FaceSteps[float]:
-    """Certified target-to-root bound of one face refined to ``tolerance``, else inf."""
-    if not math.isfinite(tolerance) or tolerance <= 0.0:
-        return math.inf
+    point: np.ndarray,
+    error: float,
+) -> _FaceSteps[bool]:
+    """Exclude ``point`` from one face's lift, splitting only the pieces that reach it.
+
+    A piece's lifted points lie in its root box (target box plus the certified
+    root parameter times the gradient box), whose width shrinks with the piece;
+    the piece is excluded once that box is farther than ``error`` from the point.
+    A piece whose root box is within ``error`` of the point and no wider than
+    ``error`` on every axis already lifts into the point's uncertainty, so the
+    face is not excluded; so is a piece that cannot be proved or split in binary64.
+    """
     prove: _PieceProver = partial(
         _face_piece_proofs,
         surface,
         _enclose_face(face.face_expressions),
         source_orientation=face.orientation,
         projected_axes=face.projected_axes,
-        tolerance=tolerance,
+        tolerance=None,
         maximum_normal_deviation=None,
+        root_newton_steps=3,
     )
-    pieces, detail = yield from _prove_face_triangles(
-        prove, (_STANDARD_TRIANGLE,), generations
-    )
-    if detail or not pieces:
-        return math.inf
-    return float(np.nextafter(max(piece.target_to_source[1] for piece in pieces), np.inf))
+
+    def decide(proof: _PieceProof, /) -> bool | None:
+        """True: excluded; False: reaches the point at its resolution; None: split."""
+        if _box_distance_lower(point, proof.root_box) > error:
+            return True
+        if all(upper - lower <= error for lower, upper in proof.root_box):
+            return False
+        return None
+
+    pending: list[TriangleReference] = []
+    proofs: list[_PieceProof | None] = list(face.pieces)
+    triangles: list[TriangleReference] = [piece.triangle for piece in face.pieces]
+    refinable = [True] * len(proofs)
+    while True:
+        for triangle, proof, refine in zip(triangles, proofs, refinable, strict=True):
+            if proof is not None:
+                decision = decide(proof)
+                if decision is True:
+                    continue
+                if decision is False:
+                    return False
+            elif not refine:
+                return False
+            split = _split_triangle(triangle)
+            if split is None:
+                return False
+            pending.extend(split)
+        if not pending:
+            return True
+        outcomes, _ = yield _FaceRound(prove(pending))
+        triangles, pending = pending, []
+        proofs = [proof for proof, _detail, _refine in outcomes]
+        refinable = [refine for _proof, _detail, refine in outcomes]
 
 
 def _build_face(
@@ -3272,8 +3599,14 @@ def certify_adaptive_implicit_charts(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> SourceFidelityCertificate:
-    """Certify nonlinear P1/P2/P3 target maps against an adaptive implicit root cover."""
+    """Certify nonlinear P1/P2/P3 target maps against an adaptive implicit root cover.
+
+    ``root_charts`` is a chart map the caller already prepared for exactly this
+    mesh, geometry, source, witness and controls; it is checked against them
+    and used instead of preparing the charts again.
+    """
     from ..._bvh import bvh_nearest_items, prepare_bvh
     from ...geometry._source_fidelity import (
         _surface_target_chart_rows,
@@ -3284,8 +3617,8 @@ def certify_adaptive_implicit_charts(
     from ...linalg._hermitian_spectral import fraction_sqrt_interval
 
     validate_source_fidelity_witness(mesh, geometry, source, witness)
-    try:
-        root_map = prepare_adaptive_implicit_root_charts(
+    if root_charts is not None:
+        root_charts.require_request(
             mesh,
             geometry,
             source,
@@ -3293,24 +3626,35 @@ def certify_adaptive_implicit_charts(
             tolerance=tolerance,
             maximum_normal_deviation=maximum_normal_deviation,
         )
-    except (ArithmeticError, IndexError, TypeError, ValueError) as error:
-        return _unresolved_fidelity(
-            mesh,
-            geometry,
-            source,
-            tolerance=tolerance,
-            maximum_normal_deviation=maximum_normal_deviation,
-            witness=witness,
-            coverage=None,
-            findings=(
-                MeshCertificateFinding(
-                    "implicit_root_chart",
-                    "unresolved",
-                    "mesh",
-                    detail=f"Source-owned implicit target-to-root chart is unresolved: {error}",
+        root_map = root_charts
+    else:
+        try:
+            root_map = prepare_adaptive_implicit_root_charts(
+                mesh,
+                geometry,
+                source,
+                witness,
+                tolerance=tolerance,
+                maximum_normal_deviation=maximum_normal_deviation,
+            )
+        except (ArithmeticError, IndexError, TypeError, ValueError) as error:
+            return _unresolved_fidelity(
+                mesh,
+                geometry,
+                source,
+                tolerance=tolerance,
+                maximum_normal_deviation=maximum_normal_deviation,
+                witness=witness,
+                coverage=None,
+                findings=(
+                    MeshCertificateFinding(
+                        "implicit_root_chart",
+                        "unresolved",
+                        "mesh",
+                        detail=f"Source-owned implicit target-to-root chart is unresolved: {error}",
+                    ),
                 ),
-            ),
-        )
+            )
     findings: list[MeshCertificateFinding] = []
     for evidence in root_map.chart_evidence:
         if evidence.status != "certified":
@@ -3349,7 +3693,7 @@ def certify_adaptive_implicit_charts(
                     ),
                 )
             )
-        if maximum_normal_deviation is not None:
+        if maximum_normal_deviation is not None and maximum_normal_deviation < math.pi:
             normal_status = (
                 "violated"
                 if evidence.source_normal_deviation_bounds[0] > maximum_normal_deviation

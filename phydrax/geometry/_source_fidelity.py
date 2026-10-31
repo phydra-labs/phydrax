@@ -96,6 +96,7 @@ if TYPE_CHECKING:
         AdaptiveImplicitBoundarySource,
         AdaptiveImplicitSurface,
     )
+    from .implicit._source_charts import AdaptiveImplicitRootChartMap
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
 
@@ -5640,8 +5641,29 @@ def certify_source_fidelity(
     tolerance: float,
     maximum_normal_deviation: float | None = None,
     witness: SourceFidelityWitness | None = None,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> SourceFidelityCertificate:
-    """Certify continuous physical source fidelity from one typed witness."""
+    """Certify continuous physical source fidelity from one typed witness.
+
+    ``root_charts`` passes adaptive implicit root charts the caller already
+    prepared for exactly this request; other sources and witnesses refuse it.
+    """
+    if root_charts is not None:
+        from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
+        from .implicit._source_charts import _AdaptiveImplicitBoundaryCarrier
+
+        if (
+            not isinstance(witness, SourceBoundaryChartWitness)
+            or witness.chart_dimension != 2
+            or not isinstance(
+                source,
+                (AdaptiveImplicitBoundarySource, _AdaptiveImplicitBoundaryCarrier),
+            )
+        ):
+            raise ValueError(
+                "Prepared implicit root charts require an adaptive implicit source "
+                "and a face chart witness."
+            )
     tolerance_ = float(tolerance)
     if not math.isfinite(tolerance_) or tolerance_ < 0.0:
         raise ValueError("source fidelity tolerance must be finite and nonnegative.")
@@ -5770,6 +5792,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    root_charts=root_charts,
                 )
         return _unresolved_fidelity(
             mesh,
