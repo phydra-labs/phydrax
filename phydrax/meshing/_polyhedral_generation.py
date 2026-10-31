@@ -26,9 +26,11 @@ from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._exact_power_geometry import (
+    ExactPoint3,
     ExactPowerCellGeometrySource,
     prepare_exact_power_geometry_source,
 )
+from phydrax.discretization._mapped_power_geometry import MappedPowerCellGeometrySource
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import (
     exact_periodic_element,
@@ -1037,13 +1039,19 @@ def _source_split_flags(
     site_count: int,
     /,
 ) -> np.ndarray:
-    """Split sites only for features that same-site joining would swallow.
+    """Split sites only where same-site joining would swallow structure.
 
     Native joining merges a site's pieces across unconstrained carrier faces
     only, so every facet-polygon edge and vertex stays on a constrained face.
     Segments or protected vertices off every facet polygon lie in the volume
     and survive only as edges or vertices of unjoined per-tetrahedron pieces.
+    A mapped source with several root cells also keeps pieces unjoined: each
+    published polyhedron then restricts one affine root chart, so its physical
+    faces stay planar across root interfaces.
     """
+    mapped_roots = (
+        0 if source.mapped_domain is None else len(source.mapped_domain.root_cell_ids)
+    )
     complex_ = source.complex
     offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64).tolist()
     loops = np.asarray(complex_.polygon_vertices, dtype=np.int64).tolist()
@@ -1066,7 +1074,11 @@ def _source_split_flags(
             np.isin(vertex_bank, np.asarray(feature.scope.entity_ids, dtype=np.int64))
         )
     )
-    return np.full((site_count,), floating_segment or floating_vertex, dtype=np.int8)
+    return np.full(
+        (site_count,),
+        floating_segment or floating_vertex or mapped_roots > 1,
+        dtype=np.int8,
+    )
 
 
 def _mapped_face_ancestry(
@@ -1137,14 +1149,14 @@ def _sqrt_fraction_upper(value: Fraction, /) -> float:
 
 def _cell_diameter_upper_bounds(
     mesh: CellMesh,
-    coordinate_source: ExactPowerCellGeometrySource,
+    geometry: CellGeometrySpec,
     /,
 ) -> np.ndarray:
-    """Bound cell diameters by the diagonals of exact coordinate boxes."""
+    """Bound physical cell diameters by the diagonals of exact coordinate boxes."""
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Power-cell size measurement requires polyhedral connectivity.")
-    coordinates = coordinate_source.source_coordinates()
+    coordinates = geometry.rational_source_coordinates()
     if len(coordinates) != mesh.coordinates.shape[0]:
         raise ValueError(
             "Exact power coordinates must align with published mesh vertices."
@@ -1166,6 +1178,45 @@ def _cell_diameter_upper_bounds(
         )
         result[cell] = _sqrt_fraction_upper(squared)
     return result
+
+
+def _mapped_power_source(
+    carrier: VolumeConstruction,
+    coordinate_source: ExactPowerCellGeometrySource,
+    piece_cells: np.ndarray,
+    piece_tetrahedra: np.ndarray,
+    cell_count: int,
+    /,
+) -> MappedPowerCellGeometrySource:
+    """Place reference power vertices through each carrier tet's root chart."""
+    controls = carrier.reference_chart_controls
+    carrier_ids = np.asarray(carrier.mesh.blocks[0].global_ids, dtype=np.int64)
+    if len(carrier.mesh.blocks) != 1 or tuple(
+        (control.target_cell_row, control.target_cell_id) for control in controls
+    ) != tuple(enumerate(carrier_ids.tolist())):
+        raise ValueError(
+            "Mapped restricted-power carriers need one exact root chart per carrier tetrahedron."
+        )
+    charts: list[tuple[ExactPoint3, ExactPoint3, ExactPoint3, ExactPoint3]] = []
+    for control in controls:
+        corners = tuple(
+            (point[0], point[1], point[2]) for point in control.source_reference_vertices
+        )
+        if len(corners) != 4 or any(
+            len(point) != 3 for point in control.source_reference_vertices
+        ):
+            raise ValueError(
+                "Mapped restricted-power carriers must chart tetrahedra into 3-D roots."
+            )
+        charts.append((corners[0], corners[1], corners[2], corners[3]))
+    return MappedPowerCellGeometrySource(
+        coordinate_source,
+        np.asarray([control.source_cell_id for control in controls], dtype=np.int64),
+        tuple(charts),
+        piece_cells,
+        piece_tetrahedra,
+        cell_count,
+    )
 
 
 def _construct_polyhedral(
@@ -1217,12 +1268,22 @@ def _construct_polyhedral(
             source.complex if source.mapped_domain is None else source.mapped_domain
         ),
     )
-    geometry = CellGeometrySpec.power(mesh, coordinate_source)
-    cell_diameters = _cell_diameter_upper_bounds(mesh, coordinate_source)
     piece_sites = source_site_ids[np.asarray(restricted.piece_sites, dtype=np.int64)]
     if np.any(piece_sites < 0):
         raise RuntimeError("Hidden guard sites must not own a restricted convex piece.")
     piece_cells = inverse_cell_order[np.asarray(restricted.piece_cells, dtype=np.int64)]
+    piece_tetrahedra = np.asarray(restricted.piece_tets, dtype=np.int64)
+    if source.mapped_domain is None:
+        geometry = CellGeometrySpec.power(mesh, coordinate_source)
+    else:
+        mapped_source = _mapped_power_source(
+            carrier, coordinate_source, piece_cells, piece_tetrahedra, len(cell_sites)
+        )
+        mesh = mesh.with_coordinates(
+            mapped_source.rounded_vertices, numeric_version=mesh.numeric_version
+        )
+        geometry = CellGeometrySpec.power(mesh, mapped_source)
+    cell_diameters = _cell_diameter_upper_bounds(mesh, geometry)
     identity = canonical_fingerprint(
         {
             "kind": "native-polyhedral-construction",
@@ -1260,7 +1321,7 @@ def _construct_polyhedral(
         interface_faces=interface_faces,
         sheet_faces=sheet_faces,
         piece_sites=piece_sites,
-        piece_tetrahedra=np.asarray(restricted.piece_tets, dtype=np.int64),
+        piece_tetrahedra=piece_tetrahedra,
         piece_cells=piece_cells,
         piece_volumes=np.asarray(restricted.piece_volumes, dtype=np.float64),
         piece_moments=np.asarray(restricted.piece_moments, dtype=np.float64),

@@ -116,6 +116,7 @@ def _exact_coordinate_bank_key(
         for row in values
     )
 
+
 def _determinant3(
     first: tuple[int, int, int],
     second: tuple[int, int, int],
@@ -130,8 +131,7 @@ def _determinant3(
 
 def _orient3d_sign(points: np.ndarray, vertices: tuple[int, int, int, int], /) -> int:
     exact = tuple(
-        tuple(Fraction(float(value)) for value in points[row])
-        for row in vertices
+        tuple(Fraction(float(value)) for value in points[row]) for row in vertices
     )
     origin, second, third, fourth = exact
     first_edge = tuple(second[axis] - origin[axis] for axis in range(3))
@@ -139,8 +139,10 @@ def _orient3d_sign(points: np.ndarray, vertices: tuple[int, int, int, int], /) -
     third_edge = tuple(fourth[axis] - origin[axis] for axis in range(3))
     determinant = (
         first_edge[0] * (second_edge[1] * third_edge[2] - second_edge[2] * third_edge[1])
-        - first_edge[1] * (second_edge[0] * third_edge[2] - second_edge[2] * third_edge[0])
-        + first_edge[2] * (second_edge[0] * third_edge[1] - second_edge[1] * third_edge[0])
+        - first_edge[1]
+        * (second_edge[0] * third_edge[2] - second_edge[2] * third_edge[0])
+        + first_edge[2]
+        * (second_edge[0] * third_edge[1] - second_edge[1] * third_edge[0])
     )
     return 1 if determinant > 0 else -1 if determinant < 0 else 0
 
@@ -165,9 +167,9 @@ class HexDominantConstruction(StrictModule, NonTrainableState):
     source_topology_id: str = eqx.field(static=True)
     source_geometry_id: str = eqx.field(static=True)
     source_validity_id: str = eqx.field(static=True)
-    reference_chart_determinant_bounds: tuple[
-        tuple[Fraction, Fraction], ...
-    ] = eqx.field(static=True)
+    reference_chart_determinant_bounds: tuple[tuple[Fraction, Fraction], ...] = eqx.field(
+        static=True
+    )
     source_reference_coverage: tuple[Fraction, ...] = eqx.field(static=True)
     construction_id: str = eqx.field(static=True)
 
@@ -188,9 +190,7 @@ class HexDominantConstruction(StrictModule, NonTrainableState):
         source: CellMesh,
         source_geometry_id: str,
         source_validity_id: str,
-        reference_chart_determinant_bounds: Sequence[
-            tuple[Fraction, Fraction]
-        ],
+        reference_chart_determinant_bounds: Sequence[tuple[Fraction, Fraction]],
         source_reference_coverage: Sequence[Fraction],
         construction_id: str,
         /,
@@ -204,10 +204,12 @@ class HexDominantConstruction(StrictModule, NonTrainableState):
             (Fraction(lower), Fraction(upper))
             for lower, upper in reference_chart_determinant_bounds
         )
-        reference_coverage = tuple(
-            Fraction(value) for value in source_reference_coverage
+        reference_coverage = tuple(Fraction(value) for value in source_reference_coverage)
+        counts = (
+            int(hex_cell_count),
+            int(pyramid_cell_count),
+            int(tetrahedron_cell_count),
         )
-        counts = (int(hex_cell_count), int(pyramid_cell_count), int(tetrahedron_cell_count))
         cell_count = sum(counts)
         if not isinstance(global_embedding, GlobalEmbeddingCertificate):
             raise TypeError("global_embedding must be a GlobalEmbeddingCertificate.")
@@ -215,7 +217,9 @@ class HexDominantConstruction(StrictModule, NonTrainableState):
             global_embedding.status != "certified"
             or global_embedding.validity.certificate_id != validity.certificate_id
         ):
-            raise ValueError("Hex-dominant global embedding must bind its current validity.")
+            raise ValueError(
+                "Hex-dominant global embedding must bind its current validity."
+            )
         global_embedding.binding.require(mesh, geometry)
         if not source.blocks or any(
             not _is_tetrahedron_block(block) for block in source.blocks
@@ -229,7 +233,9 @@ class HexDominantConstruction(StrictModule, NonTrainableState):
             reference_cell_topology(block.cell_kind).family not in output_families
             for block in mesh.blocks
         ):
-            raise ValueError("Hex-dominant transitions may contain only hexes, pyramids, and tetrahedra.")
+            raise ValueError(
+                "Hex-dominant transitions may contain only hexes, pyramids, and tetrahedra."
+            )
         actual = {
             family: sum(
                 block.cell_count
@@ -258,11 +264,17 @@ class HexDominantConstruction(StrictModule, NonTrainableState):
             or any(lower <= 0 or upper < lower for lower, upper in chart_bounds)
             or len(reference_coverage) != source_cell_count
             or any(value != Fraction(1, 6) for value in reference_coverage)
-            or np.any(np.asarray(validity.status) != int(CellValidityStatus.CERTIFIED_VALID))
+            or np.any(
+                np.asarray(validity.status) != int(CellValidityStatus.CERTIFIED_VALID)
+            )
         ):
-            raise ValueError("Hex-dominant ancestry and whole-cell proof banks must align.")
+            raise ValueError(
+                "Hex-dominant ancestry and whole-cell proof banks must align."
+            )
         if not all((source_geometry_id, source_validity_id, construction_id)):
-            raise ValueError("Hex-dominant source and proof identities must be non-empty.")
+            raise ValueError(
+                "Hex-dominant source and proof identities must be non-empty."
+            )
         self.mesh = mesh
         self.geometry = geometry
         self.validity = validity
@@ -292,7 +304,9 @@ def _pyramid_orientation(
     first = _orient3d_sign(points, (base[0], base[1], base[2], apex))
     second = _orient3d_sign(points, (base[0], base[2], base[3], apex))
     if first == 0 or second == 0 or first != second:
-        raise ValueError("A clipped PLC quad face does not form a nondegenerate pyramid transition.")
+        raise ValueError(
+            "A clipped PLC quad face does not form a nondegenerate pyramid transition."
+        )
     if first != reference_sign:
         return (base[0], base[3], base[2], base[1], apex)
     return (*base, apex)
@@ -333,7 +347,9 @@ def _pyramid_shape_functions(
         one = constant(Fraction(1), 3)
         lower = add(one, scale(height, Fraction(-1)))
         return (
-            multiply(multiply(lower, add(one, scale(first, -1))), add(one, scale(second, -1))),
+            multiply(
+                multiply(lower, add(one, scale(first, -1))), add(one, scale(second, -1))
+            ),
             multiply(multiply(lower, first), add(one, scale(second, -1))),
             multiply(multiply(lower, first), second),
             multiply(multiply(lower, add(one, scale(first, -1))), second),
@@ -418,8 +434,7 @@ def _pyramid_collapsed_rational_extension(
         if coefficient != 0
     }
     if not denominator or any(
-        len(powers) != 3 or powers[0] != 0 or powers[1] != 0
-        for powers in denominator
+        len(powers) != 3 or powers[0] != 0 or powers[1] != 0 for powers in denominator
     ):
         return None
     degree = max(powers[2] for powers in denominator)
@@ -427,8 +442,7 @@ def _pyramid_collapsed_rational_extension(
     if degree == 0 or scale_factor == 0:
         return None
     expected_denominator = {
-        (0, 0, power): scale_factor
-        * Fraction((-1) ** power * comb(degree, power))
+        (0, 0, power): scale_factor * Fraction((-1) ** power * comb(degree, power))
         for power in range(degree + 1)
     }
     if denominator != expected_denominator:
@@ -461,10 +475,7 @@ def _pyramid_collapsed_rational_extension(
     for (first_power, second_power, _), coefficient in extension.items():
         key = (first_power, second_power)
         apex_terms[key] = apex_terms.get(key, Fraction(0)) + coefficient
-    if any(
-        key != (0, 0) and coefficient != 0
-        for key, coefficient in apex_terms.items()
-    ):
+    if any(key != (0, 0) and coefficient != 0 for key, coefficient in apex_terms.items()):
         return None
     return extension
 
@@ -474,8 +485,7 @@ def _chart_jacobian_determinant(
     /,
 ) -> Expression:
     jacobian = tuple(
-        tuple(derivative(component, axis) for axis in range(3))
-        for component in chart
+        tuple(derivative(component, axis) for axis in range(3)) for component in chart
     )
     minor0 = add(
         multiply(jacobian[1][1], jacobian[2][2]),
@@ -498,8 +508,6 @@ def _chart_jacobian_determinant(
     )
 
 
-
-
 def _require_polynomial_expression(
     expression: Expression,
     /,
@@ -507,6 +515,8 @@ def _require_polynomial_expression(
     if isinstance(expression, RationalPolynomial):
         raise ValueError("Exact mixed-family reference charts require polynomials.")
     return expression
+
+
 def _pyramid_reduced_chart_determinant(
     vertices: tuple[Point3, Point3, Point3, Point3, Point3],
     /,
@@ -570,7 +580,9 @@ def _positive_chart_bounds(
     family = reference_cell_topology(cell_kind).family
     if family == "pyramid":
         if pyramid_vertices is None or len(pyramid_vertices) != 5:
-            raise ValueError("Pyramid chart proof requires its five exact source corners.")
+            raise ValueError(
+                "Pyramid chart proof requires its five exact source corners."
+            )
         pyramid_points = (
             pyramid_vertices[0],
             pyramid_vertices[1],
@@ -578,9 +590,7 @@ def _positive_chart_bounds(
             pyramid_vertices[3],
             pyramid_vertices[4],
         )
-        determinant: Expression = _pyramid_reduced_chart_determinant(
-            pyramid_points
-        )
+        determinant: Expression = _pyramid_reduced_chart_determinant(pyramid_points)
     else:
         determinant = _chart_jacobian_determinant(chart)
     if isinstance(determinant, RationalPolynomial):
@@ -588,18 +598,12 @@ def _positive_chart_bounds(
             f"Exact {cell_kind} chart determinant for cell ID {cell_id} "
             "is rational rather than a polynomial."
         )
-    domain: Literal["simplex", "box"] = (
-        "simplex" if family == "tetrahedron" else "box"
-    )
+    domain: Literal["simplex", "box"] = "simplex" if family == "tetrahedron" else "box"
     raw_controls = bernstein_coefficients(determinant, domain, 3)
     controls: tuple[Fraction, ...] = tuple(
         value for value in raw_controls if isinstance(value, Fraction)
     )
-    if (
-        len(controls) != len(raw_controls)
-        or not controls
-        or min(controls) <= 0
-    ):
+    if len(controls) != len(raw_controls) or not controls or min(controls) <= 0:
         raise ValueError(
             f"Exact {cell_kind} reference chart for cell ID {cell_id} lacks "
             "a strictly positive whole-cell Bernstein determinant bound."
@@ -619,9 +623,7 @@ def _reference_chart_volume(
         if domain == "simplex":
             degree = sum(exponent)
             total += coefficient * Fraction(
-                factorial(exponent[0])
-                * factorial(exponent[1])
-                * factorial(exponent[2]),
+                factorial(exponent[0]) * factorial(exponent[1]) * factorial(exponent[2]),
                 factorial(degree + 3),
             )
         else:
@@ -682,11 +684,8 @@ def _canonical_face_cycle(
     forward = (*cycle[start:], *cycle[:start])
     reverse = (forward[0], *reversed(forward[1:]))
     return (
-        forward
-        if int(vertex_ids[forward[1]]) < int(vertex_ids[forward[-1]])
-        else reverse
+        forward if int(vertex_ids[forward[1]]) < int(vertex_ids[forward[-1]]) else reverse
     )
-
 
 
 def _face_key3(vertices: tuple[int, int, int], /) -> tuple[int, int, int]:
@@ -696,6 +695,7 @@ def _face_key3(vertices: tuple[int, int, int], /) -> tuple[int, int, int]:
 
 def _edge_key2(first: int, second: int, /) -> tuple[int, int]:
     return (first, second) if first <= second else (second, first)
+
 
 @dataclass(frozen=True, slots=True)
 class _SourceCellChart:
@@ -716,8 +716,7 @@ def _source_cell_chart(
     block_index = next(
         block_index
         for block_index, block in enumerate(source.blocks)
-        if sum(item.cell_count for item in source.blocks[: block_index + 1])
-        > cell_row
+        if sum(item.cell_count for item in source.blocks[: block_index + 1]) > cell_row
     )
     block_offset = sum(block.cell_count for block in source.blocks[:block_index])
     local_row = cell_row - block_offset
@@ -754,11 +753,12 @@ def _source_cell_chart(
     )
     root_expressions = linear_combinations(basis, components)
     physical_expressions = tuple(
-        compose_expression(expression, parent_to_root)
-        for expression in root_expressions
+        compose_expression(expression, parent_to_root) for expression in root_expressions
     )
     if len(physical_expressions) != 3:
-        raise ValueError("Mixed-family source maps must preserve three physical coordinates.")
+        raise ValueError(
+            "Mixed-family source maps must preserve three physical coordinates."
+        )
     return _SourceCellChart(
         root_element,
         int(root_cell_id),
@@ -800,12 +800,18 @@ class _ComposedCell:
 
 @final
 class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
-    """Retain exact parent controls and exact mixed-cell vertex images."""
+    """Retain exact parent controls and the exact vertex-family node images.
+
+    The coefficient bank is the parent source coefficients followed by the
+    exact images of ``node_vertex_rows``, the target vertices that serve as
+    vertex-family (pyramid) geometry nodes.
+    """
 
     source_mesh: CellMesh
     source_geometry: CellGeometrySpec
     rounded_vertices: np.ndarray
     exact_vertex_images: tuple[ExactPoint3, ...] = eqx.field(static=True)
+    node_vertex_rows: tuple[int, ...] = eqx.field(static=True)
     exact_coordinate_bank: tuple[ExactPoint3, ...] = eqx.field(static=True)
     source_mesh_id: str = eqx.field(static=True)
     source_topology_id: str = eqx.field(static=True)
@@ -822,12 +828,13 @@ class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
         source_geometry: CellGeometrySpec,
         target_mesh: CellMesh,
         exact_vertex_images: tuple[ExactPoint3, ...],
+        node_vertex_rows: tuple[int, ...],
         /,
     ) -> None:
-        if not isinstance(source_mesh, CellMesh) or not isinstance(
-            target_mesh, CellMesh
-        ):
-            raise TypeError("Mixed coordinate maps require parent and target CellMesh values.")
+        if not isinstance(source_mesh, CellMesh) or not isinstance(target_mesh, CellMesh):
+            raise TypeError(
+                "Mixed coordinate maps require parent and target CellMesh values."
+            )
         if not isinstance(source_geometry, CellGeometrySpec):
             raise TypeError("source_geometry must be CellGeometrySpec.")
         source_geometry.resolve(source_mesh)
@@ -846,14 +853,21 @@ class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mixed-family parent coefficient rows must be three-dimensional."
             )
+        rows = tuple(int(row) for row in node_vertex_rows)
+        if any(row < 0 or row >= len(exact_vertex_images) for row in rows) or len(
+            set(rows)
+        ) != len(rows):
+            raise ValueError(
+                "Mixed-family geometry node rows must name distinct target vertices."
+            )
         exact_bank = tuple(
             (point[0], point[1], point[2]) for point in parent_coefficients
-        ) + exact_vertex_images
+        ) + tuple(exact_vertex_images[row] for row in rows)
         parent_values = np.asarray(source_geometry.coordinates, dtype=np.float64)
-        rounded_vertices = np.array(
-            target_mesh.coordinates, dtype=np.float64, copy=True
+        rounded_vertices = np.array(target_mesh.coordinates, dtype=np.float64, copy=True)
+        expected = np.concatenate(
+            (parent_values, rounded_vertices[np.asarray(rows, dtype=np.int64)]), axis=0
         )
-        expected = np.concatenate((parent_values, rounded_vertices), axis=0)
         rounded_bank = np.asarray(exact_bank, dtype=np.float64)
         if rounded_bank.shape != expected.shape or not np.array_equal(
             rounded_bank, expected
@@ -863,9 +877,7 @@ class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
             )
         rounded_vertices.setflags(write=False)
         parent_map = source_geometry.source_map
-        source_id = (
-            source_mesh.mesh_id if parent_map is None else parent_map.source_id
-        )
+        source_id = source_mesh.mesh_id if parent_map is None else parent_map.source_id
         source_revision = (
             source_mesh.numeric_version
             if parent_map is None
@@ -877,6 +889,7 @@ class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
         self.source_geometry = source_geometry
         self.rounded_vertices = rounded_vertices
         self.exact_vertex_images = exact_vertex_images
+        self.node_vertex_rows = rows
         self.exact_coordinate_bank = exact_bank
         self.source_mesh_id = source_mesh.mesh_id
         self.source_topology_id = source_mesh.topology_id
@@ -899,9 +912,8 @@ class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
                 "target_geometry": target_mesh.geometry_id,
                 "source": (source_id, source_revision),
                 "exact_coordinate_bank": _exact_coordinate_bank_key(exact_bank),
-                "exact_vertex_images": _exact_coordinate_bank_key(
-                    exact_vertex_images
-                ),
+                "exact_vertex_images": _exact_coordinate_bank_key(exact_vertex_images),
+                "node_vertex_rows": rows,
             }
         )
 
@@ -918,21 +930,18 @@ class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
             or target_mesh.topology_id != value.target_topology_id
             or target_mesh.geometry_id != value.target_geometry_id
         ):
-            raise ValueError(
-                "Stored mixed coordinate maps bind a different target mesh."
-            )
+            raise ValueError("Stored mixed coordinate maps bind a different target mesh.")
         renewed = cls(
             value.source_mesh,
             value.source_geometry,
             target_mesh,
             value.exact_vertex_images,
+            value.node_vertex_rows,
         )
         if (
             renewed.source_map_id != value.source_map_id
             or renewed.exact_coordinate_bank != value.exact_coordinate_bank
-            or not np.array_equal(
-                renewed.rounded_vertices, value.rounded_vertices
-            )
+            or not np.array_equal(renewed.rounded_vertices, value.rounded_vertices)
         ):
             raise ValueError(
                 "Stored mixed coordinate fields do not renew their exact identity."
@@ -946,9 +955,7 @@ class _HexDominantCoordinateMap(StrictModule, NonTrainableState):
             return self.exact_coordinate_bank
         rows = np.asarray(indices)
         if rows.ndim != 1 or rows.dtype.kind not in "iu":
-            raise TypeError(
-                "Mixed coordinate source indices must be an integer vector."
-            )
+            raise TypeError("Mixed coordinate source indices must be an integer vector.")
         row_ids = np.asarray(rows, dtype=np.int64)
         if np.any((row_ids < 0) | (row_ids >= len(self.exact_coordinate_bank))):
             raise IndexError(
@@ -966,8 +973,7 @@ def _source_reference_point(
     cell = tuple(int(value) for value in source_cells[cell_row])
     references = reference_cell_topology("tetrahedron").vertices
     local: dict[int, Point3] = {
-        vertex: _fraction_point3(references[corner])
-        for corner, vertex in enumerate(cell)
+        vertex: _fraction_point3(references[corner]) for corner, vertex in enumerate(cell)
     }
     if not support or any(vertex not in local for vertex in support):
         raise ValueError(
@@ -978,6 +984,7 @@ def _source_reference_point(
         sum((local[vertex][1] for vertex in support), Fraction(0)) / len(support),
         sum((local[vertex][2] for vertex in support), Fraction(0)) / len(support),
     )
+
 
 def _validate_source_geometry_faces(
     source: CellMesh,
@@ -993,9 +1000,7 @@ def _validate_source_geometry_faces(
     vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
     face_ids = np.asarray(source.entity_set(2).entity_ids, dtype=np.int64)
     face_lookup: dict[tuple[int, int, int], int] = {
-        _face_key3((int(face[0]), int(face[1]), int(face[2]))): int(
-            face_ids[row]
-        )
+        _face_key3((int(face[0]), int(face[1]), int(face[2]))): int(face_ids[row])
         for row, face in enumerate(faces.tolist())
     }
     local_faces = reference_cell_topology("tetrahedron").entities[2]
@@ -1045,8 +1050,7 @@ def _validate_source_geometry_faces(
             )
         face_map = _face_chart(reference_by_id[0])
         left = tuple(
-            compose_expression(value, face_map)
-            for value in expressions[adjacent[0][0]]
+            compose_expression(value, face_map) for value in expressions[adjacent[0][0]]
         )
         right = tuple(
             compose_expression(value, _face_chart(reference_by_id[1]))
@@ -1060,6 +1064,7 @@ def _validate_source_geometry_faces(
                 f"Exact source coordinate charts disagree across source face ID "
                 f"{face_lookup[key]}."
             )
+
 
 def _exact_dual_coordinates(
     source: CellMesh,
@@ -1121,7 +1126,9 @@ def _exact_dual_coordinates(
         exact_images[vertex_row] = images[0]
         rounded = np.asarray([float(value) for value in images[0]], dtype=np.float64)
         if not np.all(np.isfinite(rounded)):
-            raise ValueError("Exact source chart composition produced a nonfinite dual vertex.")
+            raise ValueError(
+                "Exact source chart composition produced a nonfinite dual vertex."
+            )
         coordinates[vertex_row] = rounded
     return coordinates, expressions, exact_images
 
@@ -1131,7 +1138,9 @@ def _expression_chart3(
     /,
 ) -> tuple[Expression, Expression, Expression]:
     if len(values) != 3:
-        raise ValueError("Exact three-dimensional charts require three coordinate expressions.")
+        raise ValueError(
+            "Exact three-dimensional charts require three coordinate expressions."
+        )
     return (values[0], values[1], values[2])
 
 
@@ -1139,27 +1148,22 @@ def _compose_mixed_geometry(
     source: CellMesh,
     source_geometry: CellGeometrySpec,
     source_validity: CellValidityCertificate,
-    scaffold: CellMesh,
+    vertex_global_ids: np.ndarray,
     vertex_supports: np.ndarray,
     coordinates: np.ndarray,
-    source_expression_tuple: tuple[
-        tuple[Expression, Expression, Expression], ...
-    ],
+    source_expression_tuple: tuple[tuple[Expression, Expression, Expression], ...],
     exact_vertex_images: dict[int, ExactPoint3],
     cell_specs: tuple[tuple[str, tuple[int, ...], int, int], ...],
     /,
 ) -> tuple[
-        CellMesh,
-        CellGeometrySpec,
-        CellValidityCertificate,
-        np.ndarray,
-        tuple[tuple[Fraction, Fraction], ...],
-        tuple[Fraction, ...],
-    ]:
-    if (
-        len(source.blocks) != 1
-        or not _is_tetrahedron_block(source.blocks[0])
-    ):
+    CellMesh,
+    CellGeometrySpec,
+    CellValidityCertificate,
+    np.ndarray,
+    tuple[tuple[Fraction, Fraction], ...],
+    tuple[Fraction, ...],
+]:
+    if len(source.blocks) != 1 or not _is_tetrahedron_block(source.blocks[0]):
         raise ValueError(
             "Mixed-family composition requires source tetrahedra in one topological block."
         )
@@ -1201,16 +1205,16 @@ def _compose_mixed_geometry(
             determinant_chart = _pyramid_chart(parent_vertices, collapsed=True)
         else:
             if len(parent_vertices) != 4:
-                raise ValueError("Tetrahedral transition charts require four exact corners.")
+                raise ValueError(
+                    "Tetrahedral transition charts require four exact corners."
+                )
             tetrahedron_vertices = (
                 parent_vertices[0],
                 parent_vertices[1],
                 parent_vertices[2],
                 parent_vertices[3],
             )
-            source_chart = _expression_chart3(
-                _tetrahedron_chart(tetrahedron_vertices)
-            )
+            source_chart = _expression_chart3(_tetrahedron_chart(tetrahedron_vertices))
             determinant_chart = source_chart
         chart_bounds = _positive_chart_bounds(
             kind,
@@ -1234,11 +1238,12 @@ def _compose_mixed_geometry(
         base_element = root_record.base_element
         parent_to_base = root_record.parent_to_root
         if len(parent_to_base) != 3:
-            raise ValueError("Source cell chart must retain all three reference coordinates.")
+            raise ValueError(
+                "Source cell chart must retain all three reference coordinates."
+            )
         target_chart = _expression_chart3(
             tuple(
-                compose_expression(argument, source_chart)
-                for argument in parent_to_base
+                compose_expression(argument, source_chart) for argument in parent_to_base
             )
         )
         source_route = root_record.source_route
@@ -1273,9 +1278,7 @@ def _compose_mixed_geometry(
             vertex_chart = _pyramid_chart(vertex_physical)
             pyramid_vertex_family = all(
                 expression_equal(actual, expected)
-                for actual, expected in zip(
-                    physical_chart, vertex_chart, strict=True
-                )
+                for actual, expected in zip(physical_chart, vertex_chart, strict=True)
             )
             if not pyramid_vertex_family:
                 raise ValueError(
@@ -1300,7 +1303,6 @@ def _compose_mixed_geometry(
             )
         )
 
-
     source_reference_coverage: list[Fraction] = [
         Fraction(0) for _ in range(source_cells.shape[0])
     ]
@@ -1318,8 +1320,7 @@ def _compose_mixed_geometry(
     group_rows: dict[tuple[str, str], int] = {}
     for record in records:
         rational = any(
-            isinstance(argument, RationalPolynomial)
-            for argument in record.target_chart
+            isinstance(argument, RationalPolynomial) for argument in record.target_chart
         )
         if rational:
             domain: Literal["simplex", "box"] = (
@@ -1364,12 +1365,28 @@ def _compose_mixed_geometry(
     parent_vertex_ids: dict[str, np.ndarray] = {}
     source_block_names: dict[str, str] = {}
     flattened_records: list[_ComposedCell] = []
-    source_geometry_coordinates = np.asarray(source_geometry.coordinates, dtype=np.float64)
+    source_geometry_coordinates = np.asarray(
+        source_geometry.coordinates, dtype=np.float64
+    )
     pyramid_geometry_offset = source_geometry_coordinates.shape[0]
-    pyramid_geometry_coordinates = (
-        np.concatenate((source_geometry_coordinates, coordinates), axis=0)
-        if any(record.pyramid_vertex_family for record in records)
-        else source_geometry_coordinates
+    # Vertex-family pyramids own geometry nodes only at their own vertices.
+    pyramid_node_rows = np.unique(
+        np.asarray(
+            [
+                vertex
+                for record in records
+                if record.pyramid_vertex_family
+                for vertex in record.vertices
+            ],
+            dtype=np.int64,
+        )
+    )
+    pyramid_node_slot = np.full((coordinates.shape[0],), -1, dtype=np.int64)
+    pyramid_node_slot[pyramid_node_rows] = np.arange(
+        pyramid_node_rows.size, dtype=np.int64
+    )
+    pyramid_geometry_coordinates = np.concatenate(
+        (source_geometry_coordinates, coordinates[pyramid_node_rows]), axis=0
     )
     for group_index, group in enumerate(groups):
         first = group[0]
@@ -1386,7 +1403,7 @@ def _compose_mixed_geometry(
         )
         if first.pyramid_vertex_family:
             elements[name] = lagrange_element("pyramid", 1)
-            routes[name] = pyramid_geometry_offset + target_cells
+            routes[name] = pyramid_geometry_offset + pyramid_node_slot[target_cells]
         else:
             elements[name] = PerCellRestrictedCellGeometryElement(
                 first.base_element,
@@ -1415,7 +1432,7 @@ def _compose_mixed_geometry(
     target_mesh = CellMesh(
         coordinates,
         tuple(target_blocks),
-        vertex_global_ids=np.asarray(scaffold.vertex_global_ids, dtype=np.int64),
+        vertex_global_ids=np.asarray(vertex_global_ids, dtype=np.int64),
         numeric_version=source.numeric_version,
     )
     restriction = CellGeometryRestrictionSource(
@@ -1434,13 +1451,12 @@ def _compose_mixed_geometry(
             source_geometry,
             target_mesh,
             exact_vertex_image_bank,
+            tuple(int(row) for row in pyramid_node_rows.tolist()),
         )
     elif source_geometry.source_map is None:
         restricted_map = None
     else:
-        restricted_map = _RestrictedCoordinateMap(
-            source, source_geometry, target_mesh
-        )
+        restricted_map = _RestrictedCoordinateMap(source, source_geometry, target_mesh)
     geometry = CellGeometrySpec(
         elements,
         routes,
@@ -1452,7 +1468,9 @@ def _compose_mixed_geometry(
 
     target_connectivity = target_mesh.connectivity
     if not isinstance(target_connectivity, PolyhedralConnectivity):
-        raise ValueError("Mixed-family output requires explicit polyhedral face connectivity.")
+        raise ValueError(
+            "Mixed-family output requires explicit polyhedral face connectivity."
+        )
     target_face_offsets = np.asarray(
         target_connectivity.face_vertex_offsets, dtype=np.int64
     )
@@ -1466,8 +1484,7 @@ def _compose_mixed_geometry(
         zip(target_face_offsets[:-1], target_face_offsets[1:], strict=True)
     ):
         vertices = tuple(
-            int(value)
-            for value in target_face_vertices[int(start) : int(stop)].tolist()
+            int(value) for value in target_face_vertices[int(start) : int(stop)].tolist()
         )
         target_face_lookup[tuple(sorted(vertices))] = int(target_face_ids[row])
     records_by_id = {record.global_id: record for record in flattened_records}
@@ -1485,9 +1502,7 @@ def _compose_mixed_geometry(
                 cycle = tuple(record.vertices[int(index)] for index in local_face)
                 canonical = _canonical_face_cycle(cycle, target_vertex_ids)
                 reference_by_vertex: dict[int, Point3] = {
-                    record.vertices[local]: _fraction_point3(
-                        topology.vertices[local]
-                    )
+                    record.vertices[local]: _fraction_point3(topology.vertices[local])
                     for local in range(len(record.vertices))
                 }
                 face_records.setdefault(tuple(sorted(canonical)), []).append(
@@ -1569,6 +1584,8 @@ def _compose_mixed_geometry(
         chart_bounds,
         tuple(source_reference_coverage),
     )
+
+
 @checked
 def extract_hex_dominant(
     source: CellMesh,
@@ -1592,7 +1609,9 @@ def extract_hex_dominant(
         or len(source.blocks) != 1
         or not _is_tetrahedron_block(source.blocks[0])
     ):
-        raise ValueError("Hex-dominant closure requires one three-dimensional tetrahedron block.")
+        raise ValueError(
+            "Hex-dominant closure requires one three-dimensional tetrahedron block."
+        )
     if source_geometry is None:
         source_geometry = CellGeometrySpec.affine(source)
     elif not isinstance(source_geometry, CellGeometrySpec):
@@ -1606,16 +1625,26 @@ def extract_hex_dominant(
     source_cell_ids = np.asarray(source.blocks[0].global_ids, dtype=np.int64)
     requested = np.asarray(core_cell_ids)
     if requested.ndim != 1 or requested.dtype.kind not in "iu":
-        raise TypeError("core_cell_ids must be an integer vector of source tetrahedron IDs.")
+        raise TypeError(
+            "core_cell_ids must be an integer vector of source tetrahedron IDs."
+        )
     core_ids = np.asarray(requested, dtype=np.int64)
     if not core_ids.size or np.unique(core_ids).size != core_ids.size:
-        raise ValueError("Hex-dominant core IDs must be a nonempty unique source-cell selection.")
-    row_by_id = {int(identifier): row for row, identifier in enumerate(source_cell_ids.tolist())}
+        raise ValueError(
+            "Hex-dominant core IDs must be a nonempty unique source-cell selection."
+        )
+    row_by_id = {
+        int(identifier): row for row, identifier in enumerate(source_cell_ids.tolist())
+    }
     if any(int(identifier) not in row_by_id for identifier in core_ids.tolist()):
         raise ValueError("Hex-dominant core IDs must name source tetrahedra.")
-    core_rows = np.asarray([row_by_id[int(identifier)] for identifier in core_ids], dtype=np.int64)
+    core_rows = np.asarray(
+        [row_by_id[int(identifier)] for identifier in core_ids], dtype=np.int64
+    )
     if core_rows.size == source_cells.shape[0]:
-        raise ValueError("An all-hex request must use a genuine all-hex generation route.")
+        raise ValueError(
+            "An all-hex request must use a genuine all-hex generation route."
+        )
     selected = np.zeros((source_cells.shape[0],), dtype=np.bool_)
     selected[core_rows] = True
 
@@ -1643,7 +1672,9 @@ def extract_hex_dominant(
         for row, face in enumerate(face_rows.tolist())
     }
     if np.any(face_incidence > 2):
-        raise ValueError("Hex-dominant transitions require a manifold tetrahedral face complex.")
+        raise ValueError(
+            "Hex-dominant transitions require a manifold tetrahedral face complex."
+        )
 
     original = source.coordinates.shape[0]
     edge_count = edge_rows.shape[0]
@@ -1652,9 +1683,7 @@ def extract_hex_dominant(
     for row in core_rows.tolist():
         cell = source_cells[row]
         for left, right in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
-            marked_edges.add(
-                edge_lookup[_edge_key2(int(cell[left]), int(cell[right]))]
-            )
+            marked_edges.add(edge_lookup[_edge_key2(int(cell[left]), int(cell[right]))])
 
     face_pieces: list[tuple[tuple[int, ...], ...]] = []
     for face_row, face_values in enumerate(face_rows.tolist()):
@@ -1723,31 +1752,69 @@ def extract_hex_dominant(
                     tetrahedron = (*piece, center)
                     sign = _orient3d_sign(coordinates, tetrahedron)
                     if sign == 0:
-                        raise ValueError("A hex-dominant tetrahedron transition is degenerate.")
+                        raise ValueError(
+                            "A hex-dominant tetrahedron transition is degenerate."
+                        )
                     if sign < 0:
-                        tetrahedron = (tetrahedron[1], tetrahedron[0], tetrahedron[2], tetrahedron[3])
+                        tetrahedron = (
+                            tetrahedron[1],
+                            tetrahedron[0],
+                            tetrahedron[2],
+                            tetrahedron[3],
+                        )
                     tetrahedron_rows.append(tetrahedron)
                     tetrahedron_parents.append(cell_row)
                 else:
-                    raise AssertionError("Transition face templates contain triangles or quads only.")
+                    raise AssertionError(
+                        "Transition face templates contain triangles or quads only."
+                    )
 
     cell_specs: list[tuple[str, tuple[int, ...], int, int]] = []
     next_cell_id = 0
-    for vertices, parent in zip(core_hexes.tolist(), core_parent_rows.tolist(), strict=True):
+    for vertices, parent in zip(
+        core_hexes.tolist(), core_parent_rows.tolist(), strict=True
+    ):
         cell_specs.append(
-            ("hexahedron", tuple(int(value) for value in vertices), int(parent), next_cell_id)
+            (
+                "hexahedron",
+                tuple(int(value) for value in vertices),
+                int(parent),
+                next_cell_id,
+            )
         )
         next_cell_id += 1
     for vertices, parent in zip(pyramid_rows, pyramid_parents, strict=True):
         cell_specs.append(
-            ("pyramid", tuple(int(value) for value in vertices), int(parent), next_cell_id)
+            (
+                "pyramid",
+                tuple(int(value) for value in vertices),
+                int(parent),
+                next_cell_id,
+            )
         )
         next_cell_id += 1
     for vertices, parent in zip(tetrahedron_rows, tetrahedron_parents, strict=True):
         cell_specs.append(
-            ("tetrahedron", tuple(int(value) for value in vertices), int(parent), next_cell_id)
+            (
+                "tetrahedron",
+                tuple(int(value) for value in vertices),
+                int(parent),
+                next_cell_id,
+            )
         )
         next_cell_id += 1
+    # The dual scaffold carries every edge, face and cell center; only those the
+    # closure templates reference become output vertices.
+    used_rows = np.unique(
+        np.asarray([vertex for spec in cell_specs for vertex in spec[1]], dtype=np.int64)
+    )
+    compact_row = np.full((coordinates.shape[0],), -1, dtype=np.int64)
+    compact_row[used_rows] = np.arange(used_rows.size, dtype=np.int64)
+    cell_specs = [
+        (kind, tuple(int(compact_row[vertex]) for vertex in vertices), parent, identifier)
+        for kind, vertices, parent, identifier in cell_specs
+    ]
+    vertex_supports = np.asarray(dual.vertex_supports, dtype=np.int64)[used_rows]
     (
         mesh,
         geometry,
@@ -1759,11 +1826,14 @@ def extract_hex_dominant(
         source,
         source_geometry,
         source_validity,
-        dual.mesh,
-        np.asarray(dual.vertex_supports, dtype=np.int64),
-        coordinates,
+        np.asarray(dual.mesh.vertex_global_ids, dtype=np.int64)[used_rows],
+        vertex_supports,
+        np.asarray(coordinates, dtype=np.float64)[used_rows],
         source_expression_tuple,
-        exact_vertex_images,
+        {
+            int(compact_row[row]): exact_vertex_images[int(row)]
+            for row in used_rows.tolist()
+        },
         tuple(cell_specs),
     )
     global_embedding = _require_global_embedding(
@@ -1798,7 +1868,7 @@ def extract_hex_dominant(
         geometry,
         validity,
         global_embedding,
-        np.asarray(dual.vertex_supports, dtype=np.int64),
+        vertex_supports,
         core_ids,
         parent_offsets,
         parents,

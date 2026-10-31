@@ -13,6 +13,7 @@ from typing import final, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -21,6 +22,7 @@ from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, finite_real_scalar
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._interval_enclosure import prepare_interval_function, PreparedIntervalFunction
+from ._rational import fraction_down, fraction_up
 from ._source_boundary_records import SourceBoundaryDistance, SourceBoundarySamples
 from .brep._patches import AbstractCurve, SurfaceMappedCurve
 
@@ -816,4 +818,112 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["ParametricCurveBoundarySource"]
+@final
+class SegmentChartCurve(AbstractCurve):
+    """Exact affine chart of one authored segment on a declared parameter range.
+
+    The chart parameter ``t`` in ``[first, last]`` maps to
+    ``start + (t - first) / (last - first) * (end - start)``. The map's rational
+    coefficients let chart certification bound the source/target difference
+    polynomial exactly. The float realization is barycentric in the local
+    parameter, so ``t = first`` and ``t = last`` reproduce the authored
+    endpoints bit for bit, as exact source endpoint bounds require.
+    """
+
+    start: Array
+    end: Array
+    first: float = eqx.field(static=True)
+    last: float = eqx.field(static=True)
+    origin_exact: tuple[Fraction, ...] = eqx.field(static=True)
+    direction_exact: tuple[Fraction, ...] = eqx.field(static=True)
+
+    def __init__(
+        self, start: ArrayLike, end: ArrayLike, first: float, last: float, /
+    ) -> None:
+        start_ = np.asarray(start, dtype=np.float64)
+        end_ = np.asarray(end, dtype=np.float64)
+        first_ = finite_real_scalar(first, "first")
+        last_ = finite_real_scalar(last, "last")
+        if (
+            start_.ndim != 1
+            or start_.shape != end_.shape
+            or not np.all(np.isfinite(start_))
+            or not np.all(np.isfinite(end_))
+        ):
+            raise ValueError(
+                "Segment chart endpoints must be finite points of one dimension."
+            )
+        if np.array_equal(start_, end_) or first_ == last_:
+            raise ValueError("A segment chart needs distinct endpoints and parameters.")
+        first_exact = Fraction.from_float(first_)
+        span = Fraction.from_float(last_) - first_exact
+        start_exact = tuple(Fraction.from_float(float(value)) for value in start_)
+        direction = tuple(
+            (Fraction.from_float(float(value)) - origin) / span
+            for origin, value in zip(start_exact, end_, strict=True)
+        )
+        self.start = jnp.asarray(start_, dtype=jnp.float64)
+        self.end = jnp.asarray(end_, dtype=jnp.float64)
+        self.first = first_
+        self.last = last_
+        self.origin_exact = tuple(
+            value - first_exact * slope
+            for value, slope in zip(start_exact, direction, strict=True)
+        )
+        self.direction_exact = direction
+
+    @property
+    def ambient_dimension(self) -> int:
+        return self.start.shape[0]
+
+    def evaluate(self, parameters: Array, /) -> Array:
+        local = (jnp.asarray(parameters, dtype=jnp.float64) - self.first) / (
+            self.last - self.first
+        )
+        return (1.0 - local)[..., None] * self.start + local[..., None] * self.end
+
+    def evaluate_exact(self, parameter: Fraction, /) -> tuple[Fraction, ...]:
+        return tuple(
+            origin + parameter * direction
+            for origin, direction in zip(
+                self.origin_exact, self.direction_exact, strict=True
+            )
+        )
+
+    def is_c1_on(self, first: float, last: float, /) -> bool:
+        AbstractCurve.is_c1_on(self, first, last)
+        return True
+
+    def derivative_bounds(
+        self, first: float, last: float, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        self.is_c1_on(first, last)
+        if isinstance(order, bool) or not isinstance(order, int) or order != 1:
+            raise ValueError("Segment chart derivative bounds support order=1 only.")
+        return (
+            np.asarray(
+                tuple(fraction_down(value) for value in self.direction_exact),
+                dtype=np.float64,
+            ),
+            np.asarray(
+                tuple(fraction_up(value) for value in self.direction_exact),
+                dtype=np.float64,
+            ),
+        )
+
+    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+        """Outward box of the exact affine image of ``[first, last]``."""
+        if not math.isfinite(first) or not math.isfinite(last) or first > last:
+            raise ValueError("Segment chart bounds must be finite and ordered.")
+        left = self.evaluate_exact(Fraction.from_float(float(first)))
+        right = self.evaluate_exact(Fraction.from_float(float(last)))
+        return np.asarray(
+            (
+                tuple(fraction_down(min(a, b)) for a, b in zip(left, right, strict=True)),
+                tuple(fraction_up(max(a, b)) for a, b in zip(left, right, strict=True)),
+            ),
+            dtype=np.float64,
+        )
+
+
+__all__ = ["ParametricCurveBoundarySource", "SegmentChartCurve"]

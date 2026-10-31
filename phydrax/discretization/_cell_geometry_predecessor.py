@@ -435,6 +435,8 @@ def reuse_cell_geometry_validity(
     source_lower = np.empty((count,), dtype=np.float64)
     source_upper = np.empty((count,), dtype=np.float64)
     source_depth = np.empty((count,), dtype=np.int64)
+    apex_unique = np.ones((count,), dtype=np.bool_)
+    prior_apex_unique = np.asarray(source_validity.apex_derivative_unique)
     prior_execution_status = np.asarray(source_validity.execution_status)
     prior_lower = np.asarray(source_validity.determinant_lower)
     prior_upper = np.asarray(source_validity.determinant_upper)
@@ -450,6 +452,7 @@ def reuse_cell_geometry_validity(
         determinant_lower[target_row] = prior_lower[source_row]
         determinant_upper[target_row] = prior_upper[source_row]
         depth[target_row] = prior_depth[source_row]
+        apex_unique[target_row] = prior_apex_unique[source_row]
         if context.distinct_source:
             source_status[target_row] = prior_source_status[source_row]
             source_lower[target_row] = prior_source_lower[source_row]
@@ -534,6 +537,7 @@ def reuse_cell_geometry_validity(
                 determinant_lower[changed_offset] = execution_proof.lower
                 determinant_upper[changed_offset] = execution_proof.upper
                 depth[changed_offset] = execution_proof.depth
+                apex_unique[changed_offset] = execution_proof.apex_flags()
                 if context.distinct_source:
                     try:
                         source_proof, source_unsupported = _certify_source_block(
@@ -552,6 +556,7 @@ def reuse_cell_geometry_validity(
                     source_lower[changed_offset] = source_proof.lower
                     source_upper[changed_offset] = source_proof.upper
                     source_depth[changed_offset] = source_proof.depth
+                    apex_unique[changed_offset] &= source_proof.apex_flags()
             elif isinstance(element, CellVertexGeometryElement):
                 if kind == "polygon":
                     execution_proof = _certify_polygon_block(
@@ -636,6 +641,7 @@ def reuse_cell_geometry_validity(
         maximum_element_coefficient_rounding_error=(
             context.maximum_element_coefficient_rounding_error
         ),
+        apex_derivative_unique=apex_unique,
         geometry=geometry,
         mesh=mesh,
         policy=policy,

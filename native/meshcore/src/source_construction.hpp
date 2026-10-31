@@ -21,7 +21,11 @@
 // exact predicates and validated cavity transactions.
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <vector>
 
 #include "expansion.hpp"
 
@@ -67,5 +71,88 @@ bool source_carrier(const double* const* corners, SourceStratum stratum,
 void source_locator(const double* const* corners, SourceStratum stratum,
                     const double* position, double* parameters, bool clamp = true);
 void clamp_source_parameters(SourceStratum stratum, double* parameters);
+
+// Exactly witnessed vertices. A source-segment split point S = A + t (B - A)
+// with a binary64 parameter t is a dyadic rational point of the segment but
+// usually not a binary64 point; its carrier is only the rounding of S. Every
+// predicate involving such a vertex evaluates S itself in expansion
+// arithmetic, so incidences with the source (collinearity with A and B,
+// coplanarity with every facet through AB) hold exactly.
+//
+// A predicate argument: the carrier, and the exact position when the carrier
+// is only its rounding (null when the carrier is the exact position).
+struct ExactPointRef {
+  const double* carrier = nullptr;
+  const Expansion* exact = nullptr;
+};
+
+// Exact positions of the witnessed vertices of one vertex bank, keyed by
+// vertex index; vertices without an entry are exact at their carrier.
+class ExactVertexBank {
+ public:
+  void clear() {
+    slots_.clear();
+    positions_.clear();
+  }
+  bool empty() const { return positions_.empty(); }
+  // Three exact coordinates of `vertex`, or null when its carrier is exact.
+  const Expansion* position(int32_t vertex) const {
+    if (vertex < 0 || static_cast<std::size_t>(vertex) >= slots_.size()) return nullptr;
+    const int32_t slot = slots_[static_cast<std::size_t>(vertex)];
+    return slot < 0 ? nullptr : positions_[static_cast<std::size_t>(slot)].data();
+  }
+  void assign(int32_t vertex, const Expansion* position) {
+    if (static_cast<std::size_t>(vertex) >= slots_.size()) {
+      slots_.resize(static_cast<std::size_t>(vertex) + 1, -1);
+    }
+    int32_t& slot = slots_[static_cast<std::size_t>(vertex)];
+    if (slot < 0) {
+      slot = static_cast<int32_t>(positions_.size());
+      positions_.emplace_back();
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      positions_[static_cast<std::size_t>(slot)][static_cast<std::size_t>(axis)] =
+          position[axis];
+    }
+  }
+  void erase(int32_t vertex) {
+    if (vertex >= 0 && static_cast<std::size_t>(vertex) < slots_.size()) {
+      slots_[static_cast<std::size_t>(vertex)] = -1;
+    }
+  }
+  ExactPointRef reference(const double* carriers, int32_t vertex) const {
+    return {carriers + 3 * static_cast<std::ptrdiff_t>(vertex), position(vertex)};
+  }
+
+ private:
+  std::vector<int32_t> slots_;
+  // A deque keeps returned coordinate pointers valid while entries are added.
+  std::deque<std::array<Expansion, 3>> positions_;
+};
+
+// Exact predicates on references; all-carrier arguments use the filtered
+// binary64 predicates, otherwise expansion arithmetic on the exact positions.
+int orient3d(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+             const ExactPointRef& d);
+int orient3d_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                 const ExactPointRef& d, int64_t ia, int64_t ib, int64_t ic, int64_t id);
+int insphere_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                 const ExactPointRef& d, const ExactPointRef& e, int64_t ia, int64_t ib,
+                 int64_t ic, int64_t id, int64_t ie);
+// orient2d of the projections that drop coordinate `axis`, in the cyclic
+// coordinate order (axis + 1, axis + 2).
+int orient2d_projected(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                       int axis);
+bool same_point(const ExactPointRef& a, const ExactPointRef& b);
+bool collinear(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c);
+// Exact coordinate `axis` of a reference.
+Expansion coordinate(const ExactPointRef& point, int axis);
+// Feature of the nondegenerate triangle containing x (the codes of
+// intersections.hpp: vertex k, 3 + k for the edge opposite vertex k,
+// kFeatureInterior, kFeatureNone); side receives orient3d(t0, t1, t2, x).
+int8_t locate_on_triangle(const ExactPointRef& x, const ExactPointRef* triangle, int& side);
+// Exact position of the source point of a segment witness.
+void segment_witness_position(const double* first, const double* second, double parameter,
+                              Expansion* position);
 
 }  // namespace phx::mc

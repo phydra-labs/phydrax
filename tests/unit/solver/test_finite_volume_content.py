@@ -564,7 +564,8 @@ def test_state_validates_versions_active_mask_volumes_and_inactive_content() -> 
         _state(active_cell_mask=(True,))
     with pytest.raises(ValueError, match="exact shape"):
         _state(volumes=(2.0, 3.0, 4.0))
-    with pytest.raises(ValueError, match="non-empty cell and component axes"):
+    # Empty cell axes are admitted for empty owner-local ranks; component axes are not.
+    with pytest.raises(ValueError, match="non-empty component axes"):
         _state(content=(1.0, 2.0), volumes=(2.0, 3.0))
     with pytest.raises(ValueError, match="cell and component shapes"):
         _state().with_content(jnp.ones((2, 3)))

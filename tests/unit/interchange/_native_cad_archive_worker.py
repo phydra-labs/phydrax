@@ -4946,11 +4946,8 @@ def _rebuild_reconstructed_triangle_patch(value: object, /) -> object:
             dtype=np.float64,
         )
     )
-    if (
-        rebuilt.exact_corners != corners
-        or not np.array_equal(np.asarray(rebuilt.origin), np.asarray(value.origin))
-        or not np.array_equal(np.asarray(rebuilt.first), np.asarray(value.first))
-        or not np.array_equal(np.asarray(rebuilt.second), np.asarray(value.second))
+    if rebuilt.exact_corners != corners or not np.array_equal(
+        np.asarray(rebuilt.corners), np.asarray(value.corners)
     ):
         raise ValueError(
             "Reconstructed triangle patch does not renew from exact authored corners."

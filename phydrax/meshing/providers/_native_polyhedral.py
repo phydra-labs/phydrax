@@ -13,7 +13,20 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.discretization import CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.discretization._mapped_power_geometry import MappedPowerCellGeometrySource
+from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+from phydrax.geometry._planar_primitives import (
+    area2,
+    intersection,
+    plane_key,
+    signed_area2,
+)
+from phydrax.geometry._source_boundary_records import (
+    rational_chart_tokens,
+    SourceBoundaryChartWitness,
+)
+from phydrax.geometry._source_fidelity import polyhedral_face_triangle_vertex_ids
 from phydrax.meshing._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -54,6 +67,7 @@ from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_periodic_constraints import (
     validate_periodic_mesh_constraints,
 )
+from phydrax.meshing.providers._native_plc_geometry import volume_cell_entity_rows
 from phydrax.meshing.providers._native_sources import (
     NativePlcSource,
     NativePolyhedralSource,
@@ -555,9 +569,7 @@ def _edge_association(
                     # facet's recovered faces, which disambiguates corners
                     # shared by several facets.
                     if len(common_facets) > 1 and edge_facets[edge]:
-                        common_facets &= {
-                            facet_keys[row] for row in edge_facets[edge]
-                        }
+                        common_facets &= {facet_keys[row] for row in edge_facets[edge]}
                     if len(common_facets) == 1:
                         facet_key = next(iter(common_facets))
                         role, identifier, occurrence_path = (
@@ -919,7 +931,7 @@ def _polyhedral_compliance(
     specification: VolumeMeshingSpec,
     /,
 ) -> MeshingComplianceReport:
-    coordinates = construction.coordinate_source.source_coordinates()
+    coordinates = construction.geometry.rational_source_coordinates()
     connectivity = construction.mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Polyhedral compliance requires polyhedral connectivity.")
@@ -1133,33 +1145,38 @@ def _polyhedral_organization(
         labels.append(
             MeshLabel("internal_curve", _mesh_scope(mesh, 1, edge_ids[curve_rows]))
         )
-    site_weights = construction.site_weights[construction.cell_sites]
-    site_parent_rows = construction.site_parents[construction.cell_sites]
+    # Meshing scopes store sorted entity IDs; attribute values follow that order.
+    sorted_rows = np.argsort(cell_ids, kind="stable")
+    all_cells_scope = _mesh_scope(mesh, 3, cell_ids)
     attributes = [
         MeshAttribute(
-            "power_site_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            construction.cell_sites,
-        ),
-        MeshAttribute(
-            "power_component_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            construction.component_ids,
-        ),
-        MeshAttribute(
-            "power_site_parent_index",
-            MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            site_parent_rows,
-        ),
-        MeshAttribute(
-            "power_site_weight",
-            MeshAttributeRole.USER,
-            _mesh_scope(mesh, 3, cell_ids),
-            site_weights,
-        ),
+            name,
+            role,
+            all_cells_scope,
+            np.asarray(values)[sorted_rows],
+        )
+        for name, role, values in (
+            (
+                "power_site_index",
+                MeshAttributeRole.MARKER,
+                construction.cell_sites,
+            ),
+            (
+                "power_component_index",
+                MeshAttributeRole.MARKER,
+                construction.component_ids,
+            ),
+            (
+                "power_site_parent_index",
+                MeshAttributeRole.MARKER,
+                construction.site_parents[construction.cell_sites],
+            ),
+            (
+                "power_site_weight",
+                MeshAttributeRole.USER,
+                construction.site_weights[construction.cell_sites],
+            ),
+        )
     ]
     for site, site_id in enumerate(construction.site_ids):
         cells = np.flatnonzero(construction.cell_sites == site)
@@ -1207,6 +1224,225 @@ def _polyhedral_organization(
         labels=tuple(labels),
         attributes=tuple(attributes),
         associations=associations,
+    )
+
+
+def _triangle_parameters(
+    point: tuple[Fraction, Fraction],
+    triangle: tuple[tuple[Fraction, Fraction], ...],
+    /,
+) -> tuple[Fraction, Fraction]:
+    first = (triangle[1][0] - triangle[0][0], triangle[1][1] - triangle[0][1])
+    second = (triangle[2][0] - triangle[0][0], triangle[2][1] - triangle[0][1])
+    delta = (point[0] - triangle[0][0], point[1] - triangle[0][1])
+    determinant = first[0] * second[1] - first[1] * second[0]
+    if determinant == 0:
+        raise ValueError("A mapped root-face triangle chart is singular.")
+    return (
+        (delta[0] * second[1] - delta[1] * second[0]) / determinant,
+        (first[0] * delta[1] - first[1] * delta[0]) / determinant,
+    )
+
+
+def _mapped_polyhedral_boundary_chart_witness(
+    source: NativePolyhedralSource,
+    construction: PolyhedralConstruction,
+    query: MappedReferenceBoundarySource,
+    /,
+) -> SourceBoundaryChartWitness:
+    """Bind every selected exterior face triangle to its exact root-face charts.
+
+    Each canonical exterior face triangle is restricted through its owner
+    polyhedron's carrier root chart, lies on one root-cell face, and is cut by
+    the source charts of that root face into pieces with exact target and
+    source triangle parameters.
+    """
+    domain = source.mapped_domain
+    mesh, geometry = construction.mesh, construction.geometry
+    source_map = geometry.source_map
+    connectivity = mesh.connectivity
+    if (
+        domain is None
+        or not isinstance(source_map, MappedPowerCellGeometrySource)
+        or not isinstance(connectivity, PolyhedralConnectivity)
+        or query.domain.domain_id != domain.domain_id
+        or (query.source_id, query.source_revision)
+        != (source.source_id, source.source_revision)
+    ):
+        raise ValueError(
+            "Mapped polyhedral chart witnesses require mapped power geometry and the current root query."
+        )
+    query.require_current()
+    vertex_rows = {
+        identifier: row
+        for row, identifier in enumerate(
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
+        )
+    }
+    face_ids = np.asarray(connectivity.face_global_ids, dtype=np.int64)
+    face_row_by_id = {identifier: row for row, identifier in enumerate(face_ids.tolist())}
+    cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
+    cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    owners = np.asarray(connectivity.face_owner, dtype=np.int64)
+    neighbors = np.asarray(connectivity.face_neighbor, dtype=np.int64)
+    piece_groups = source_map.cell_piece_tetrahedra()
+    selected_keys = set(query.face_scope_keys)
+    charts_by_root_face: dict[tuple[int, tuple[str, tuple[str, ...]]], list[str]] = {}
+    for chart_id in query.face_chart_ids:
+        chart_row = query.chart_row(2, chart_id)
+        charts_by_root_face.setdefault(
+            (
+                int(query.polygon_root_face_global_ids[chart_row]),
+                query.chart_source_key(2, chart_id),
+            ),
+            [],
+        ).append(chart_id)
+    root_mesh = domain.reference_mesh
+    root_rows = {
+        int(identifier): row for row, identifier in enumerate(domain.root_cell_ids)
+    }
+    root_kinds = tuple(
+        block.cell_kind for block in root_mesh.blocks for _ in range(block.cell_count)
+    )
+    _, root_cell_face_rows = volume_cell_entity_rows(
+        root_mesh, np.asarray(domain.root_cell_ids, dtype=np.int64)
+    )
+    root_face_ids = np.asarray(root_mesh.entity_set(2).entity_ids, dtype=np.int64)
+    root_face_planes: dict[str, tuple[tuple[int, int, int, int], ...]] = {}
+    for kind in set(root_kinds):
+        topology = reference_cell_topology(kind)
+        corners = tuple(
+            tuple(Fraction(float(value)) for value in point)
+            for point in topology.vertices
+        )
+        root_face_planes[kind] = tuple(
+            plane_key(tuple(corners[int(index)] for index in face[:3]))
+            for face in topology.entities[2]
+        )
+
+    cell_rows: list[int] = []
+    entity_rows: list[int] = []
+    local_rows: list[int] = []
+    triangle_rows: list[tuple[int, int, int]] = []
+    target_rows: list[tuple[tuple[Fraction, Fraction], ...]] = []
+    chart_ids: list[str] = []
+    entity_ids: list[str] = []
+    occurrence_paths: list[tuple[str, ...]] = []
+    parameter_rows: list[tuple[tuple[Fraction, Fraction], ...]] = []
+    orientations: list[int] = []
+    for face_id, triangle in polyhedral_face_triangle_vertex_ids(mesh, geometry):
+        face_row = face_row_by_id[face_id]
+        if neighbors[face_row] >= 0:
+            continue
+        facet_id = construction.face_source_ids[face_row]
+        if facet_id is None:
+            raise ValueError("An exterior polyhedral face has no recovered source facet.")
+        key = (facet_id, construction.face_source_occurrence_paths[face_row])
+        if key not in selected_keys:
+            continue
+        cell_row = int(owners[face_row])
+        local_face = (
+            cell_faces[cell_face_offsets[cell_row] : cell_face_offsets[cell_row + 1]]
+            .tolist()
+            .index(face_row)
+        )
+        root_id, root_points = source_map.restricted_root_chart(
+            piece_groups[cell_row],
+            np.asarray([vertex_rows[vertex] for vertex in triangle], dtype=np.int64),
+        )
+        root_row = root_rows[root_id]
+        candidates = tuple(
+            local
+            for local, plane in enumerate(root_face_planes[root_kinds[root_row]])
+            if all(
+                plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3]
+                == 0
+                for point in root_points
+            )
+        )
+        if len(candidates) != 1:
+            raise ValueError(
+                "A mapped polyhedral face triangle must lie on one root-cell face."
+            )
+        root_local_face = candidates[0]
+        root_face_id = int(
+            root_face_ids[int(root_cell_face_rows[root_row, root_local_face])]
+        )
+        target_uv = tuple(
+            query.root_face_uv(root_face_id, root_id, root_local_face, root_points)
+        )
+        target_area = area2(target_uv)
+        if target_area == 0:
+            raise ValueError(
+                "A mapped polyhedral face triangle is degenerate in its root chart."
+            )
+        covered = Fraction(0)
+        for chart_id in charts_by_root_face.get((root_face_id, key), ()):
+            chart_row = query.chart_row(2, chart_id)
+            if (
+                int(query.polygon_root_cell_global_ids[chart_row]) != root_id
+                or int(query.polygon_root_local_face_indices[chart_row])
+                != root_local_face
+            ):
+                continue
+            source_uv = tuple(query.chart_face_uv(chart_id))
+            clipped = intersection(target_uv, source_uv)
+            area = area2(clipped)
+            if area == 0:
+                continue
+            covered += area
+            source_entity_id, occurrence = query.chart_source_key(2, chart_id)
+            for index in range(1, len(clipped) - 1):
+                piece = (clipped[0], clipped[index], clipped[index + 1])
+                target_parameters = tuple(
+                    _triangle_parameters(point, target_uv) for point in piece
+                )
+                source_parameters = tuple(
+                    _triangle_parameters(point, source_uv) for point in piece
+                )
+                cell_rows.append(int(cell_ids[cell_row]))
+                entity_rows.append(face_id)
+                local_rows.append(local_face)
+                triangle_rows.append(triangle)
+                target_rows.append(target_parameters)
+                chart_ids.append(chart_id)
+                entity_ids.append(source_entity_id)
+                occurrence_paths.append(occurrence)
+                parameter_rows.append(source_parameters)
+                orientations.append(
+                    1
+                    if signed_area2(target_parameters) * signed_area2(source_parameters)
+                    > 0
+                    else -1
+                )
+        if covered != target_area:
+            raise ValueError(
+                "Mapped root charts do not exactly partition a polyhedral face triangle."
+            )
+    if not chart_ids:
+        raise ValueError("The mapped root query selects no exterior polyhedral face.")
+    return SourceBoundaryChartWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=mesh.topology_id,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_query_id=query.source_query_id,
+        chart_dimension=2,
+        reference_dimension=2,
+        cell_global_ids=np.asarray(cell_rows, dtype=np.int64),
+        entity_global_ids=np.asarray(entity_rows, dtype=np.int64),
+        local_entity_indices=np.asarray(local_rows, dtype=np.int32),
+        target_reference_vertices=np.asarray(target_rows, dtype=np.float64),
+        target_reference_rational_tokens=rational_chart_tokens(target_rows),
+        source_chart_ids=tuple(chart_ids),
+        source_entity_ids=tuple(entity_ids),
+        occurrence_paths=tuple(occurrence_paths),
+        source_parameters=np.asarray(parameter_rows, dtype=np.float64),
+        source_parameter_rational_tokens=rational_chart_tokens(parameter_rows),
+        orientations=np.asarray(orientations, dtype=np.int8),
+        target_face_vertex_global_ids=np.asarray(triangle_rows, dtype=np.int64),
     )
 
 
@@ -1258,6 +1494,15 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
         )
         if mapped_source and isinstance(self.source, NativePlcSource):
             fidelity_source = self.source.boundary_query()
+        fidelity_witness = (
+            _mapped_polyhedral_boundary_chart_witness(
+                self.source, construction, fidelity_source
+            )
+            if mapped_source
+            and isinstance(self.source, NativePolyhedralSource)
+            and isinstance(fidelity_source, MappedReferenceBoundarySource)
+            else None
+        )
         certification = NativeCertificationRequest(
             MeshCertificationSchedule("mapped_volume" if mapped_source else "volume_plc"),
             self.source.source_id,
@@ -1266,6 +1511,7 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
             cell_regions=construction.cell_regions,
             fidelity_source=fidelity_source if mapped_source else None,
             fidelity_tolerance=tolerance if mapped_source else None,
+            fidelity_witness=fidelity_witness,
         )
         associations = _polyhedral_associations(self.source, construction)
         if self.specification.periodic_constraints:

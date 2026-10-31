@@ -154,6 +154,96 @@ def _group(owner_count: int) -> tuple[ExecutionGroup, int] | None:
     return group, ranks.index(jax.process_index())
 
 
+def _run_in_owner_group(function_name: str, owner_count: int, /, *arguments: int) -> None:
+    """Run one module test in ``owner_count`` real native process owners.
+
+    Outside a live group the coordinator launches the same test function in
+    supervised child processes; a child that cannot bind its group fails rather
+    than skipping, so a launched smoke is never reported as a pass by skip.
+    """
+    import os
+    import socket
+    import sys
+    from pathlib import Path
+
+    from phydrax import config as pxconfig
+    from phydrax._execution_launch import (
+        launch_local_processes,
+        LocalProcessLaunchError,
+        LocalProcessLaunchPlan,
+    )
+
+    if os.environ.get("PHYDRAX_PROCESS_ID") is not None:
+        raise RuntimeError(
+            f"A launched owner process could not bind its {owner_count}-owner group."
+        )
+    if os.name != "posix" or os.environ.get("PYTEST_XDIST_WORKER") is not None:
+        pytest.skip("Native owner groups require POSIX supervision outside xdist.")
+    repository = Path(__file__).resolve().parents[3]
+    base_environment = dict(os.environ)
+    for name in (
+        "PHYDRAX_COORDINATOR_ADDRESS",
+        "PHYDRAX_NUM_PROCESSES",
+        "PHYDRAX_PROCESS_ID",
+        "PHYDRAX_LOCAL_DEVICE_IDS",
+        "PHYDRAX_COORDINATOR_BIND_ADDRESS",
+    ):
+        base_environment.pop(name, None)
+    library = base_environment.get("PHYDRAX_MESHCORE_LIBRARY")
+    if library:
+        base_environment["PHYDRAX_MESHCORE_LIBRARY"] = str(
+            Path(library).resolve(strict=True)
+        )
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            enable_x64=True,
+            platforms=("cpu",),
+            cpu_device_count=1,
+            cpu_collectives_implementation="gloo",
+        ),
+        base=base_environment,
+    )
+    environment.update(
+        PYTHONPATH=str(repository),
+        OMP_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+        XLA_PYTHON_CLIENT_PREALLOCATE="false",
+    )
+    script = (
+        "import runpy, sys; "
+        "runpy.run_path(sys.argv[1])[sys.argv[2]](*map(int, sys.argv[3:]))"
+    )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    try:
+        launch_local_processes(
+            (
+                sys.executable,
+                "-c",
+                script,
+                str(Path(__file__).resolve()),
+                function_name,
+                *(str(value) for value in arguments),
+            ),
+            LocalProcessLaunchPlan(
+                owner_count, f"127.0.0.1:{port}", devices_per_process=1
+            ),
+            environment=environment,
+            cwd=str(repository),
+            timeout_seconds=1800.0,
+        )
+    except LocalProcessLaunchError as error:
+        details = "\n".join(
+            f"rank {result.process_id} exited {result.returncode}; stderr:\n"
+            + result.stderr.decode("utf-8", errors="replace")
+            for result in error.results
+        )
+        raise AssertionError(
+            f"{error.reason or 'owner-group launch failed'}\n{details}"
+        ) from error
+
+
 def _owner_view(assembly: MeshAssembly, name: str, /) -> OwnerLocalCellGeometry:
     matches = tuple(part for part in assembly.parts if part.name == name)
     if len(matches) != 1:
@@ -640,9 +730,10 @@ def test_curved_root_owner_integrates_exact_remote_reference_maps() -> None:
 def test_owner_local_curved_root_remap_routes_exact_remote_maps() -> None:
     bound = _group(2)
     if bound is None:
-        pytest.skip(
-            "This smoke requires exactly two native process owners, one device each."
+        _run_in_owner_group(
+            "test_owner_local_curved_root_remap_routes_exact_remote_maps", 2
         )
+        return
     group, rank = bound
     base_mesh, base_geometry, _ = make_curved_root()
     source_mesh, source_geometry, _ = make_root_restriction(
@@ -938,9 +1029,12 @@ def test_owner_local_physical_remap_has_independent_periodic_mass_oracle(
 ) -> None:
     bound = _group(owner_count)
     if bound is None:
-        pytest.skip(
-            f"This smoke requires exactly {owner_count} native process owners, one device each."
+        _run_in_owner_group(
+            "test_owner_local_physical_remap_has_independent_periodic_mass_oracle",
+            owner_count,
+            owner_count,
         )
+        return
     group, rank = bound
     source_name, target_name = "remap-source", "remap-target"
     lattice = np.asarray(

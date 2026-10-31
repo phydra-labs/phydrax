@@ -589,9 +589,11 @@ PHX_MC_API int32_t phx_mc_tet_mesh_refine(
     const char* frame_id, int64_t frame_id_length, double radius_edge_bound,
     int64_t size_count, const double* sizes, int32_t* edit_status,
     int32_t* run_status, int64_t* inserted_count, int64_t* unmet_count);
-/* Improve preserves every constrained face/segment and region. The run status
- * is UNRESOLVED while either radius-edge or dihedral target, or the determinant
- * floor, remains unmet; `phx_mc_tet_mesh_unmet` reports each residual criterion. */
+/* Improve preserves every constrained face/segment and region. Flips,
+ * collapses, relocations, and interior vertex insertions are accepted by one
+ * sorted-score order. The run status is UNRESOLVED while either radius-edge or
+ * dihedral target, or the determinant floor, remains unmet;
+ * `phx_mc_tet_mesh_unmet` reports each residual criterion. */
 PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(
     phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
     const char* source_id, int64_t source_id_length,
@@ -600,8 +602,8 @@ PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(
     const char* frame_id, int64_t frame_id_length,
     double radius_edge_bound, double minimum_dihedral_degrees,
     double minimum_relative_determinant,
-    int32_t* edit_status, int32_t* run_status, int64_t* collapsed_vertices,
-    int64_t* relocated_vertices, int64_t* unmet_cells);
+    int32_t* edit_status, int32_t* run_status, int64_t* inserted_vertices,
+    int64_t* collapsed_vertices, int64_t* relocated_vertices, int64_t* unmet_cells);
 PHX_MC_API void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh);
 
 #define PHX_MC_QUADRATIC_VALIDITY_VALID 0
@@ -1074,7 +1076,10 @@ enum phx_mc_plc_failure_reason {
   PHX_MC_PLC_NONREPRESENTABLE = 10,
   PHX_MC_PLC_INVALID_SEED = 14,
   PHX_MC_PLC_OUTSIDE_DOMAIN = 15,
-  PHX_MC_PLC_SOURCE_DEVIATION = 17
+  PHX_MC_PLC_SOURCE_DEVIATION = 17,
+  /* A non-representable segment split point could not be moved off the
+   * boundary: first names the PLC edge row, second the split point. */
+  PHX_MC_PLC_STEINER_SUPPRESSION = 18
 };
 enum phx_mc_plc_entity_kind {
   PHX_MC_PLC_ENTITY_NONE = 0,

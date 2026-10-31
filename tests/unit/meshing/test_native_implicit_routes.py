@@ -466,10 +466,16 @@ def test_native_implicit_volume_route_builds_region_mesh(
         assert proof.target_facet_count > 0
         assert proof.source_facet_count == proof.covered_source_facet_count == 0
         assert coverage_witness.distance_witness_id == distance_witness.witness_id
-        forged_binding = eqx.tree_at(
-            lambda value: value.mesh_id,
-            coverage_witness,
-            "forged-restricted-mesh",
+        # Witness identities are static fields; forge one through the constructor.
+        forged_binding = RestrictedDelaunayBoundaryWitness(
+            mesh_id="forged-restricted-mesh",
+            geometry_id=coverage_witness.geometry_id,
+            topology_id=coverage_witness.topology_id,
+            profile_id=coverage_witness.profile_id,
+            source_id=coverage_witness.source_id,
+            source_revision=coverage_witness.source_revision,
+            domain_id=coverage_witness.domain_id,
+            distance_witness_id=coverage_witness.distance_witness_id,
         )
         with pytest.raises(ValueError, match="restricted witness"):
             validate_restricted_delaunay_boundary_witness(

@@ -275,3 +275,46 @@ def test_t_spline_spline_pair_produces_certified_intersection_graph(
         np.testing.assert_allclose(
             actual, (2.0 * u - 1.0, 0.0, 0.0), atol=2.0e-8, rtol=0.0
         )
+
+
+def test_t_spline_spline_pair_refuses_closed_loop_between_slices() -> None:
+    flat = _tspline_patch(
+        lambda u, v: (2 * u - 1, 2 * v - 1, Fraction(0)),
+        lambda _u, _v: Fraction(1),
+    )
+    bowl = _tspline_patch(
+        lambda u, v: (
+            2 * u - 1,
+            2 * v - 1,
+            (2 * u - 1) ** 2 + (2 * v - 1) ** 2 - Fraction(9, 25),
+        ),
+        lambda _u, _v: Fraction(1),
+    )
+    region = np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)
+
+    result = intersect_surface_regions(
+        SurfaceRegion(flat, region),
+        SurfaceRegion(bowl, region),
+        policy=ParametricIntersectionPolicy(),
+    )
+
+    # The section is one closed loop that meets no region face and no first
+    # slice; the transversality proof must localize its turning point.
+    assert not result.complete
+    assert not result.curves
+    assert len(result.unresolved) == 1
+    evidence = result.unresolved[0]
+    assert evidence.reason == "singular"
+
+    def height(u: float, /) -> float:
+        point = bowl.evaluate(jnp.asarray((u, 0.5), dtype=jnp.float64))
+        return float(np.asarray(point, dtype=np.float64)[2])
+
+    turning = (
+        brentq(height, 0.0, 0.5, xtol=1.0e-15),
+        brentq(height, 0.5, 1.0, xtol=1.0e-15),
+    )
+    lower = np.asarray(evidence.lower, dtype=np.float64)
+    upper = np.asarray(evidence.upper, dtype=np.float64)
+    assert min(abs(0.5 * (lower[0] + upper[0]) - value) for value in turning) < 1.0e-9
+    np.testing.assert_allclose(0.5 * (lower + upper)[[1, 3]], (0.5, 0.5), atol=1.0e-9)

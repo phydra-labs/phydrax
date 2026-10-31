@@ -34,6 +34,7 @@ enum PlcFailureReason : int32_t {
   kPlcInvalidSeed = 14,
   kPlcOutsideDomain = 15,
   kPlcSourceDeviation = 17,
+  kPlcSteinerSuppression = 18,
 };
 
 enum PlcEntityKind : int32_t {

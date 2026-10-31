@@ -1463,17 +1463,32 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         field_name: str = "state",
         component_names: Sequence[str] = ("value",),
     ) -> "UnstructuredFiniteVolumePlan":
-        """Lower one compact owner-local cell view without assembling a root mesh."""
-        from .._view_support import OwnerLocalCellGeometry
+        """Lower one compact owner-local cell view without assembling a root mesh.
 
-        if not isinstance(view, OwnerLocalCellGeometry):
-            raise TypeError("view must be OwnerLocalCellGeometry.")
+        A composite multi-part view lowers to one disjoint local layout whose
+        part blocks keep their own stable cell IDs and owner/halo classes.
+        """
+        from .._view_support import (
+            OwnerLocalCellGeometry,
+            OwnerLocalCompositeCellGeometry,
+        )
+
+        if not isinstance(
+            view, (OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry)
+        ):
+            raise TypeError(
+                "view must be OwnerLocalCellGeometry or OwnerLocalCompositeCellGeometry."
+            )
         field = str(field_name)
         if not field or field.strip() != field:
             raise ValueError("field_name must be a non-empty exact identifier.")
         components = _component_names(component_names)
         dimension = view.topological_dimension
-        mesh, geometry = view.reconstruct_local_geometry()
+        if isinstance(view, OwnerLocalCompositeCellGeometry):
+            mesh = view.union_local_mesh()
+            geometry = None
+        else:
+            mesh, geometry = view.reconstruct_local_geometry()
         if mesh is None:
             if (
                 geometry is not None
@@ -1548,7 +1563,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 owner_local_view=view,
             )
             return cls(None, _prepared=prepared)
-        if geometry is None or view.local_mesh_id != mesh.mesh_id:
+        if isinstance(view, OwnerLocalCellGeometry) and (
+            geometry is None or view.local_mesh_id != mesh.mesh_id
+        ):
             raise ValueError("Owner-local FV carrier lacks its exact local geometry map.")
         cell_ids = np.asarray(
             mesh.topology.entity_sets[dimension].entity_ids, dtype=np.int64

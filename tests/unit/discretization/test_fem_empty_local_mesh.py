@@ -323,7 +323,7 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
         target_shares=np.asarray((0.0, 0.0, 1.0), dtype=np.float64),
         maximum_imbalance=1.0,
         require_nonempty=False,
-        refinement_passes=0,
+        refinement_passes=1,
     )
     graph_evidence = partition_owner_local_finite_element_graph(
         source_view,
@@ -755,8 +755,9 @@ def _launch_native_owner_local_fe_worker(worker_name: str, /) -> list[dict[str, 
 
     from phydrax import config as pxconfig
     from phydrax._execution_launch import (
-        LocalProcessLaunchPlan,
         launch_local_processes,
+        LocalProcessLaunchError,
+        LocalProcessLaunchPlan,
     )
 
     if jax.process_count() != 1:
@@ -766,10 +767,7 @@ def _launch_native_owner_local_fe_worker(worker_name: str, /) -> list[dict[str, 
             "The native FE ownership fixture requires POSIX supervision outside xdist."
         )
     repository = Path(__file__).resolve().parents[3]
-    worker_script = (
-        "import runpy, sys; "
-        f"runpy.run_path(sys.argv[1])[{worker_name!r}]()"
-    )
+    worker_script = f"import runpy, sys; runpy.run_path(sys.argv[1])[{worker_name!r}]()"
     base_environment = dict(os.environ)
     for name in (
         "PHYDRAX_COORDINATOR_ADDRESS",
@@ -802,18 +800,30 @@ def _launch_native_owner_local_fe_worker(worker_name: str, /) -> list[dict[str, 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
-    results = launch_local_processes(
-        (
-            sys.executable,
-            "-c",
-            worker_script,
-            str(Path(__file__).resolve()),
-        ),
-        LocalProcessLaunchPlan(3, f"127.0.0.1:{port}", devices_per_process=1),
-        environment=environment,
-        cwd=str(repository),
-        timeout_seconds=900.0,
-    )
+    try:
+        results = launch_local_processes(
+            (
+                sys.executable,
+                "-c",
+                worker_script,
+                str(Path(__file__).resolve()),
+            ),
+            LocalProcessLaunchPlan(3, f"127.0.0.1:{port}", devices_per_process=1),
+            environment=environment,
+            cwd=str(repository),
+            timeout_seconds=900.0,
+        )
+    except LocalProcessLaunchError as error:
+        # The launcher keeps only stderr tails; the owning Python traceback
+        # precedes the coordination-service shutdown noise.
+        details = "\n".join(
+            f"rank {result.process_id} exited {result.returncode}; full stderr:\n"
+            + result.stderr.decode("utf-8", errors="replace")
+            for result in error.results
+        )
+        raise AssertionError(
+            f"{error.reason or 'FE worker launch failed'}\n{details}"
+        ) from error
     return [
         json.loads(result.stdout.decode().strip().splitlines()[-1]) for result in results
     ]
@@ -862,6 +872,7 @@ def _native_owner_local_fe_topology_worker() -> None:
     from jax.experimental import multihost_utils
 
     import phydrax as phx
+    from phydrax.discretization._view_support import OwnerLocalCellGeometry
     from phydrax.lifecycle import CompositionEntry
     from phydrax.meshing._assembly import MeshPartManifest
     from phydrax.solver._finite_element_adaptivity import (
@@ -871,11 +882,10 @@ def _native_owner_local_fe_topology_worker() -> None:
         _compile_owner_local_problem,
         _current_group,
         _owner_local_views,
+        _periodic_p0_owner_integral,
         _solve_physical_problem,
         _source_composition,
     )
-
-    from phydrax.discretization._view_support import OwnerLocalCellGeometry
 
     group, rank = _current_group()
     (
@@ -963,14 +973,15 @@ def _native_owner_local_fe_topology_worker() -> None:
         or len(target_identities) != 2
         or tuple(layout.layout_id for layout in source_layouts)
         != tuple(layout.layout_id for layout in target_layouts)
-        or tuple(layout.field_spec.name for layout in source_layouts)
-        != ("u", "content")
+        or tuple(layout.field_spec.name for layout in source_layouts) != ("u", "content")
     ):
         raise ValueError("The adaptive FE plans do not carry the declared P1/P0 fields.")
 
     source_physical = _solve_physical_problem(
         source_compiled,
-        tuple(int(dof_map.global_dof_count) for dof_map in source_discretization.dof_maps),
+        tuple(
+            int(dof_map.global_dof_count) for dof_map in source_discretization.dof_maps
+        ),
     )
     source_full_fields = (
         np.asarray(source_physical["values"], dtype=np.float64),
@@ -1100,9 +1111,7 @@ def _native_owner_local_fe_topology_worker() -> None:
             source_root_entry.binding("revision"),
             source_root_entry.binding("semantics"),
             source_composition.entry("mesh/specification").binding("revision"),
-            source_composition.entry("mesh/adaptation-specification").binding(
-                "revision"
-            ),
+            source_composition.entry("mesh/adaptation-specification").binding("revision"),
             source_composition.entry("mesh/source-graph-plan").binding("revision"),
             source_composition.entry("mesh/target-graph-plan").binding("revision"),
         ),
@@ -1206,7 +1215,7 @@ def _native_owner_local_fe_topology_worker() -> None:
 
     def certify(mesh: Any, fields: Any, state: Any, lineage: Any, context: Any) -> bool:
         del mesh, state, lineage, context
-        return (
+        return bool(
             len(fields) == 2
             and np.all(np.isfinite(np.asarray(fields[0])))
             and np.all(np.asarray(fields[0]) > 0.0)
@@ -1277,6 +1286,8 @@ def _native_owner_local_fe_topology_worker() -> None:
         np.asarray(jax.random.key_data(target_integrator[rng_name])),
         np.asarray(jax.random.key_data(rng)),
     )
+    if source_state.materials is None or result.state.materials is None:
+        raise RuntimeError("Topology adaptation dropped replicated material state.")
     source_material = source_state.materials.states[0]
     target_material = result.state.materials.states[0]
     if (
@@ -1284,7 +1295,9 @@ def _native_owner_local_fe_topology_worker() -> None:
         or source_material.model_id != target_material.model_id
         or source_material.state_version != target_material.state_version
     ):
-        raise RuntimeError("Replicated material state changed during topology adaptation.")
+        raise RuntimeError(
+            "Replicated material state changed during topology adaptation."
+        )
     np.testing.assert_array_equal(
         np.asarray(target_material.committed), np.asarray(source_material.committed)
     )
@@ -1294,14 +1307,18 @@ def _native_owner_local_fe_topology_worker() -> None:
 
     next_solve = _solve_physical_problem(
         target_compiled,
-        tuple(int(dof_map.global_dof_count) for dof_map in target_discretization.dof_maps),
+        tuple(
+            int(dof_map.global_dof_count) for dof_map in target_discretization.dof_maps
+        ),
     )
     if (
         not next_solve["successful"]
         or not np.all(np.isfinite(np.asarray(next_solve["values"])))
         or not np.all(np.isfinite(np.asarray(next_solve["content_values"])))
     ):
-        raise RuntimeError("The accepted target FE state is not followed by a valid solve.")
+        raise RuntimeError(
+            "The accepted target FE state is not followed by a valid solve."
+        )
 
     rows = np.asarray(
         multihost_utils.process_allgather(
@@ -1331,6 +1348,48 @@ def _native_owner_local_fe_topology_worker() -> None:
     )
     if not float(np.max(nonconstant[:, 1]) - np.min(nonconstant[:, 0])) > 1.0e-5:
         raise RuntimeError("The conservative P0 test field is not genuinely nonconstant.")
+
+    # Independent oracle: the owned content integral (P0 average times cell measure,
+    # summed over every owner) of the nonconstant field is preserved exactly up to
+    # rounding of the absolute content.
+    def global_content(
+        view: Any, discretization: Any, identity: Any, values: Any
+    ) -> float:
+        return float(
+            np.sum(
+                multihost_utils.process_allgather(
+                    np.asarray(
+                        _periodic_p0_owner_integral(
+                            view, discretization, identity, values
+                        ),
+                        dtype=np.float64,
+                    )
+                )
+            )
+        )
+
+    source_content = global_content(
+        source_view, source_discretization, source_identities[1], source_fields[1]
+    )
+    source_absolute = global_content(
+        source_view,
+        source_discretization,
+        source_identities[1],
+        np.abs(np.asarray(source_fields[1], dtype=np.float64)),
+    )
+    target_content = global_content(
+        target_view,
+        target_discretization,
+        result.target_identity_plans[1],
+        result.state.fields[1],
+    )
+    if not source_absolute > 0.0 or abs(target_content - source_content) > (
+        64.0 * np.finfo(np.float64).eps * max(1.0, source_absolute)
+    ):
+        raise RuntimeError(
+            "Owner-local P0 adaptation changed the global nonconstant content: "
+            f"{source_content!r} -> {target_content!r}."
+        )
     print(
         json.dumps(
             {
