@@ -383,6 +383,73 @@ def test_interval_selection_keeps_uncertain_and_decided_lanes_distinct() -> None
     np.testing.assert_array_equal(upper, ((1.0,), (1.0,), (-1.0,)))
 
 
+_COMPARISON_LOWER = np.asarray(
+    (
+        (2.0, 0.0, -1.0, 5.0),
+        (0.0, 1.0, -1.0, 5.0),
+        (0.0, 0.5, -1.0, 5.0),
+        (1.0, 1.0, -1.0, 5.0),
+        (-np.inf, 0.0, -np.inf, 1.0),
+        (-1.0, 0.0, 0.0, 3.0),
+    ),
+    dtype=np.float64,
+)
+_COMPARISON_UPPER = np.asarray(
+    (
+        (3.0, 1.0, 0.0, 6.0),
+        (1.0, 2.0, 0.0, 6.0),
+        (1.0, 0.5, 0.0, 6.0),
+        (1.0, 1.0, 0.0, 6.0),
+        (0.0, np.inf, 0.0, 2.0),
+        (1.0, 0.0, 1.0, np.inf),
+    ),
+    dtype=np.float64,
+)
+
+
+@pytest.mark.parametrize("comparison", ("gt", "ge", "lt", "le"))
+def test_native_interval_comparison_selection_matches_host(comparison: str) -> None:
+    # Shared vectors with the native test_interval_program compare/select case:
+    # decided lanes return their branch exactly, undecided lanes the hull.
+    compare = {
+        "gt": jnp.greater,
+        "ge": jnp.greater_equal,
+        "lt": jnp.less,
+        "le": jnp.less_equal,
+    }[comparison]
+
+    def function(point: jax.Array) -> jax.Array:
+        return jnp.where(compare(point[0], point[1]), point[2], point[3])
+
+    native = prepare_interval_function(function, 4, execution="native")
+    host = prepare_interval_function(function, 4, execution="host")
+    native_bounds = native.evaluate(_COMPARISON_LOWER, _COMPARISON_UPPER)
+    host_bounds = host.evaluate(_COMPARISON_LOWER, _COMPARISON_UPPER)
+
+    assert native.execution == "native"
+    np.testing.assert_array_equal(native_bounds[0], host_bounds[0])
+    np.testing.assert_array_equal(native_bounds[1], host_bounds[1])
+
+
+def test_native_interval_lowers_the_finite_norm_gradient() -> None:
+    center = jnp.asarray((0.37, 0.13, -0.36), dtype=jnp.float64)
+
+    def gradient(point: jax.Array) -> jax.Array:
+        return jax.grad(lambda value: _finite_norm(value - center))(point)
+
+    native = prepare_interval_function(gradient, 3, execution="native")
+    host = prepare_interval_function(gradient, 3, execution="host")
+    # A box away from the centre (decided guard) and one around it (hull).
+    lower = np.asarray(((1.0, 1.0, 1.0), (0.3, 0.1, -0.4)), dtype=np.float64)
+    upper = np.asarray(((1.25, 1.25, 1.25), (0.4, 0.2, -0.3)), dtype=np.float64)
+    native_bounds = native.evaluate(lower, upper)
+    host_bounds = host.evaluate(lower, upper)
+
+    _assert_nested_enclosures(native_bounds, host_bounds)
+    assert np.all(np.isfinite(native_bounds[0][0])) and np.all(native_bounds[0][0] > 0.0)
+    assert not np.all(np.isfinite(native_bounds[0][1]))
+
+
 def test_interval_split_keeps_unequal_component_bounds() -> None:
     def function(point: jax.Array) -> jax.Array:
         first, middle, last = jnp.split(point, (1, 3))

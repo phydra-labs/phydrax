@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 from jax.core import ShapedArray
@@ -16,6 +16,10 @@ from jax.extend import core as jax_core
 from numpy.typing import NDArray
 
 from ._interval_enclosure import IntervalExtensionError, IntervalOperandIdentity
+
+
+if TYPE_CHECKING:
+    from .._meshcore import IntervalBoxProgram
 
 
 type _Interval = tuple[np.ndarray | np.generic, np.ndarray | np.generic]
@@ -34,6 +38,8 @@ _COSINE = 9
 _SQRT = 10
 _RECIPROCAL = 11
 _SQUARE = 12
+_COMPARE = 13
+_SELECT = 14
 
 
 def _size(shape: _Shape, /) -> int:
@@ -134,6 +140,32 @@ class NativeIntervalProgram:
                 "meshcore does not advertise native interval opcodes "
                 f"{tuple(sorted(missing_opcodes))}."
             )
+
+    def box_program(self, /) -> IntervalBoxProgram:
+        """Return the one-box native form: seeded workspace template and output entries."""
+        if self.batch_capacity != 1 or self.input_dimension != 3:
+            raise ValueError(
+                "a native box program requires batch capacity 1 and three inputs."
+            )
+        lower = np.zeros((self.workspace_size,), dtype=np.float64)
+        upper = np.zeros_like(lower)
+        for seed in self.seeds:
+            size = seed.lower.size
+            lower[seed.offset : seed.offset + size] = seed.lower
+            upper[seed.offset : seed.offset + size] = seed.upper
+        if self.output.locations is None:
+            outputs = np.arange(
+                self.output.offset,
+                self.output.offset + _size(self.output.shape),
+                dtype=np.int64,
+            )
+        else:
+            outputs = np.asarray(self.output.locations, dtype=np.int64).reshape((-1,))
+        from .._meshcore import IntervalBoxProgram
+
+        return IntervalBoxProgram(
+            self.instructions, self.indices, self.parameters, lower, upper, outputs
+        )
 
 
 class _Builder:
@@ -408,6 +440,90 @@ class _Builder:
         exact_float = np.asarray(exact, dtype=np.float64)
         return self._seed(exact_float, exact_float, exact=exact_float)
 
+    def _interval_compare(
+        self,
+        name: str,
+        first: _Tensor,
+        second: _Tensor,
+        output_shape: _Shape,
+        /,
+    ) -> _Tensor:
+        """Three-valued order comparison as a [0, 1] indicator interval."""
+        match name:
+            case "gt":
+                left, right, strictness = first, second, 0
+            case "ge":
+                left, right, strictness = first, second, 1
+            case "lt":
+                left, right, strictness = second, first, 0
+            case "le":
+                left, right, strictness = second, first, 1
+            case _:
+                raise IntervalExtensionError(
+                    f"native interval primitive {name!r} requires constant operands."
+                )
+        mapped_left = self._mapped(left, output_shape)
+        mapped_right = self._mapped(right, output_shape)
+        output = self._allocate(output_shape)
+        a, a_index = self._operand(mapped_left, output_shape)
+        b, b_index = self._operand(mapped_right, output_shape)
+        self.rows.append(
+            (
+                _COMPARE,
+                output.offset,
+                _size(output_shape),
+                a,
+                a_index,
+                b,
+                b_index,
+                strictness,
+            )
+        )
+        return output
+
+    def _select(
+        self,
+        predicate: _Tensor,
+        cases: tuple[_Tensor, ...],
+        output_shape: _Shape,
+        /,
+    ) -> _Tensor:
+        """select_n over two branches: the decided branch exactly, else their hull."""
+        if len(cases) == 1:
+            return self._mapped(cases[0], output_shape)
+        if len(cases) != 2:
+            raise IntervalExtensionError(
+                "native interval selection supports a boolean predicate over two cases."
+            )
+        first = self._mapped(cases[0], output_shape)
+        second = self._mapped(cases[1], output_shape)
+        mapped = self._mapped(predicate, output_shape)
+        if mapped.exact is not None:
+            chosen = np.broadcast_to(mapped.exact, output_shape) != 0.0
+            locations = np.where(
+                chosen, self._locations(second), self._locations(first)
+            ).reshape((-1,))
+            exact = (
+                None
+                if first.exact is None or second.exact is None
+                else np.where(
+                    chosen,
+                    np.broadcast_to(second.exact, output_shape),
+                    np.broadcast_to(first.exact, output_shape),
+                )
+            )
+            offset = int(locations[0]) if locations.size else 0
+            return _Tensor(output_shape, offset, locations, exact)
+        size = _size(output_shape)
+        block = self._reserve((2 * size,))
+        for half, case in enumerate((first, second)):
+            a, a_index = self._operand(case, output_shape)
+            self.rows.append((_GATHER, block + half * size, size, a, a_index, -1, -1, 0))
+        output = self._allocate(output_shape)
+        a, a_index = self._operand(mapped, output_shape)
+        self.rows.append((_SELECT, output.offset, size, a, a_index, block, -1, size))
+        return output
+
     def _lower_arithmetic(
         self,
         name: str,
@@ -508,7 +624,9 @@ class _Builder:
             exact = np.broadcast_to(base.reshape(reshape), output_shape)
             return (self._seed(exact, exact, exact=exact),)
         if name in ("eq", "ne", "lt", "le", "gt", "ge"):
-            return (self._exact_compare(name, values[0], values[1], output_shape),)
+            if values[0].exact is not None and values[1].exact is not None:
+                return (self._exact_compare(name, values[0], values[1], output_shape),)
+            return (self._interval_compare(name, values[0], values[1], output_shape),)
         if name == "convert_element_type":
             new_dtype = np.dtype(params["new_dtype"])
             source = values[0]
@@ -758,6 +876,9 @@ class _Builder:
         ):
             (output_shape,) = output_shapes
             return self._lower_static(name, values, params, output_shape)
+        if name == "select_n":
+            (output_shape,) = output_shapes
+            return (self._select(values[0], values[1:], output_shape),)
         if name in ("reshape", "transpose", "squeeze", "broadcast_in_dim", "slice"):
             (output_shape,) = output_shapes
             return self._lower_shape_transform(name, values, params, output_shape)
