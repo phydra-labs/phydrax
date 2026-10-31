@@ -508,6 +508,21 @@ def test_notch_arc_across_the_cylinder_seam_splits_under_an_exact_deck() -> None
         assert {float(arc.node_values[0]), float(arc.node_values[-1])} == {0.0, 0.5}
 
 
+def test_notch_tangent_contacts_outside_the_trim_are_exactly_empty() -> None:
+    # The notch face y = 1 is a tangent plane of the cylinder and its cap edges
+    # are tangent lines, touching at x = 0, outside the notch (x >= 0.5). The
+    # exact zero discriminants place those double roots outside each trim.
+    _, branches = _notch_branches((0.5, 0.25, 0.5), (1.5, 1.0, 1.5))
+    assert len(branches) == 4
+    lines = [branch for branch in branches if int(branch.chart_axes[0]) == 1]
+    arcs = [branch for branch in branches if int(branch.chart_axes[0]) == 0]
+    assert len(lines) == 2 and len(arcs) == 2
+    for arc in arcs:
+        # Each arc runs from the edge y = 0.25 to the edge x = 0.5 of its cap.
+        assert {int(arc.node_axes[0]), int(arc.node_axes[-1])} == {2, 3}
+        assert {float(arc.node_values[0]), float(arc.node_values[-1])} == {0.0}
+
+
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:
     first = brep_cylinder(1.0, 2.0, coordinate_contract=_COORDINATES)
     second = brep_cylinder(

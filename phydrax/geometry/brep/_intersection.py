@@ -3858,6 +3858,15 @@ def _line_cylinder_region_intersections(
     if discriminant < 0:
         return CurveIntersectionResult()
     if discriminant == 0:
+        # The line touches the cylinder at one exact rational parameter; a touch
+        # outside the edge's own range is no contact with this edge.
+        touch = -linear / (2 * quadratic)
+        if not (
+            Fraction.from_float(float(source.first))
+            <= touch
+            <= Fraction.from_float(float(source.last))
+        ):
+            return CurveIntersectionResult()
         return CurveIntersectionResult(
             unresolved=(
                 UnresolvedParameterRegion(domain_lower, domain_upper, "singular"),
@@ -6829,6 +6838,48 @@ class _IsolineArc:
     across_seam: bool = False
 
 
+def _edge_tangency_misses_segment(
+    center: Sequence[ExactScalar],
+    cosine: Sequence[ExactScalar],
+    sine: Sequence[ExactScalar],
+    bounds: np.ndarray,
+    axis: int,
+    value: float,
+    /,
+) -> bool:
+    """Prove a circle meets one rectangle edge line only outside the edge.
+
+    ``c + a cos t + b sin t = e`` has a double root exactly when the rational
+    discriminant ``a^2 + b^2 - (e - c)^2`` vanishes; the circle then touches
+    the edge line once, at the unit direction ``(a, b) / (e - c)``, where the
+    other chart coordinate is rational. A negative discriminant means no
+    contact at all. Anything else is not proved here.
+    """
+    other = 1 - axis
+    values = (
+        center[axis],
+        cosine[axis],
+        sine[axis],
+        center[other],
+        cosine[other],
+        sine[other],
+    )
+    if not all(isinstance(item, Fraction) for item in values):
+        return False
+    c, a, b, other_center, other_cosine, other_sine = cast(tuple[Fraction, ...], values)
+    gap = Fraction.from_float(value) - c
+    discriminant = a * a + b * b - gap * gap
+    if discriminant < 0:
+        return True
+    if discriminant > 0 or gap == 0:
+        return False
+    # The double root has cos t = a / gap and sin t = b / gap exactly.
+    touch = other_center + (other_cosine * a + other_sine * b) / gap
+    return touch < Fraction.from_float(float(bounds[0, other])) or touch > (
+        Fraction.from_float(float(bounds[1, other]))
+    )
+
+
 def _isoline_rectangle_arcs(
     center: Sequence[ExactScalar],
     cosine: Sequence[ExactScalar],
@@ -6889,6 +6940,10 @@ def _isoline_rectangle_arcs(
             if ratio.b < -1 or ratio.a > 1:
                 continue
             if not (-1 < ratio.a and ratio.b < 1):
+                if _edge_tangency_misses_segment(
+                    center, cosine, sine, bounds, axis, value
+                ):
+                    continue
                 return None
             offset = context.atan2(context.sqrt(1 - ratio**2), ratio)
             for angle in (phase - offset, phase + offset):
@@ -7380,8 +7435,6 @@ def _revolution_plane_generator_lines(
     squared_amplitude = cosine_coefficient**2 + sine_coefficient**2
     if offset**2 > squared_amplitude:
         return SurfaceIntersectionResult()
-    if offset**2 == squared_amplitude:
-        return _unresolved_surface(first, second, "singular")
     base_point = tuple(axis_origin[index] + axial * axis[index] for index in range(3))
     uv_base = _plane_chart_coordinates(plane, base_point, point=True)
     uv_radial = _plane_chart_coordinates(plane, radial, point=False)
@@ -7390,6 +7443,38 @@ def _revolution_plane_generator_lines(
     if uv_base is None or uv_radial is None or uv_tangent is None or uv_rate is None:
         return None
     plane_bounds = np.asarray(plane_region.parameter_box, dtype=np.float64)
+    if offset**2 == squared_amplitude:
+        # A tangent plane touches along the one generator at the exact unit
+        # direction (a, b) / h. Only a touch outside the trimmed plane chart
+        # and profile range is proved empty here.
+        touch = [
+            uv_base[index]
+            + (
+                cosine_coefficient * uv_radial[index]
+                + sine_coefficient * uv_tangent[index]
+            )
+            / offset
+            for index in range(2)
+        ]
+        touch_rates = [uv_rate[index] for index in range(2)]
+        if not all(isinstance(value, Fraction) for value in (*touch, *touch_rates)):
+            return _unresolved_surface(first, second, "singular")
+        lowest = Fraction.from_float(profile_lower)
+        highest = Fraction.from_float(profile_upper)
+        for index in range(2):
+            base = cast(Fraction, touch[index])
+            rate = cast(Fraction, touch_rates[index])
+            edge_lower = Fraction.from_float(float(plane_bounds[0, index]))
+            edge_upper = Fraction.from_float(float(plane_bounds[1, index]))
+            if rate == 0:
+                if not edge_lower <= base <= edge_upper:
+                    return SurfaceIntersectionResult()
+                continue
+            ends = sorted(((edge_lower - base) / rate, (edge_upper - base) / rate))
+            lowest, highest = max(lowest, ends[0]), min(highest, ends[1])
+        if lowest > highest:
+            return SurfaceIntersectionResult()
+        return _unresolved_surface(first, second, "singular")
     context = interval_context(80)
 
     def interval(value: ExactScalar, /) -> Any:
