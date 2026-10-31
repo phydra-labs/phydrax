@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from fractions import Fraction
 from typing import cast, final, Literal, TYPE_CHECKING
@@ -1300,6 +1301,14 @@ def _require_brep_domain_binding(
     )
 
 
+def _source_entity_slot_index(
+    keys: tuple[str, ...], /
+) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    """Order one stratum's canonical keys for bisection back to their slots."""
+    order = sorted(range(len(keys)), key=lambda slot: (keys[slot], slot))
+    return tuple(keys[slot] for slot in order), tuple(order)
+
+
 @final
 class MeshingDomain(StrictModule, NonTrainableState):
     """Revision/frame-bound view of actual surface, curve, corner, and region sources."""
@@ -1328,6 +1337,16 @@ class MeshingDomain(StrictModule, NonTrainableState):
     scope_entity_id_banks: tuple[np.ndarray, ...]
     scope_entity_key_banks: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...]
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
+    source_entity_slot_index: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...]
+
+    if not TYPE_CHECKING:
+
+        def __getattribute__(self, name: str, /) -> object:
+            # Equinox binds each method as a BoundMethod pytree whose construction
+            # flattens the whole receiver. A domain is host-side source data with
+            # one patch per source face, so per-entity loops over its methods
+            # became quadratic. Its methods bind as plain Python methods.
+            return object.__getattribute__(self, name)
 
     @checked
     def __init__(
@@ -1581,11 +1600,15 @@ class MeshingDomain(StrictModule, NonTrainableState):
         self.accuracy = accuracy_
         self.tolerance = tolerance_
         self.scale = scale_
+        stratum_keys = tuple(self.stratum_entity_ids(dimension) for dimension in range(4))
         (
             self.scope_entity_id_banks,
             self.scope_entity_key_banks,
             self.scope_entity_set_ids,
-        ) = self._prepare_scope_entity_banks()
+        ) = self._prepare_scope_entity_banks(stratum_keys)
+        self.source_entity_slot_index = tuple(
+            _source_entity_slot_index(keys) for keys in stratum_keys
+        )
         self.domain_id = self.content_domain_id()
 
     @classmethod
@@ -1820,7 +1843,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         occurrence_path: tuple[str, ...] | None = None,
     ) -> int:
         """Resolve a canonical source key through the actual source stratum."""
-        kind, source_indices, source_paths = self._source_entity_table(dimension)
+        _, _, source_paths = self._source_entity_table(dimension)
         if not isinstance(source_entity_id, str) or not source_entity_id:
             raise TypeError("source_entity_id must be a canonical identity string.")
         if occurrence_path is not None:
@@ -1829,20 +1852,13 @@ class MeshingDomain(StrictModule, NonTrainableState):
             occurrence_path = tuple(
                 canonical_identifier(value, "occurrence_id") for value in occurrence_path
             )
+        keys, slots = self.source_entity_slot_index[dimension]
+        first = bisect_left(keys, source_entity_id)
+        last = bisect_right(keys, source_entity_id, lo=first)
         matches = tuple(
-            slot
-            for slot, (entity, path) in enumerate(
-                zip(source_indices, source_paths, strict=True)
-            )
-            if (occurrence_path is None or path == occurrence_path)
-            and canonical_source_entity_id(
-                self.source_id,
-                self.source_revision,
-                kind,
-                entity,
-                occurrence_path=path,
-            )
-            == source_entity_id
+            slots[position]
+            for position in range(first, last)
+            if occurrence_path is None or source_paths[slots[position]] == occurrence_path
         )
         if len(matches) != 1:
             raise ValueError(
@@ -1893,7 +1909,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         return tuple(range(len(source_indices))) if any(source_paths) else source_indices
 
     def _prepare_scope_entity_banks(
-        self, /
+        self, stratum_keys: tuple[tuple[str, ...], ...], /
     ) -> tuple[
         tuple[np.ndarray, ...],
         tuple[tuple[tuple[str, tuple[str, ...]], ...], ...],
@@ -1906,7 +1922,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         source_id, source_revision = self.source_id, self.source_revision
         for dimension in range(4):
             _, source_ids, occurrence_paths = self._source_entity_table(dimension)
-            entity_keys = self.stratum_entity_ids(dimension)
+            entity_keys = stratum_keys[dimension]
             records = []
             for source_index, path, entity_key in zip(
                 source_ids, occurrence_paths, entity_keys, strict=True

@@ -1,3 +1,4 @@
+import types
 from fractions import Fraction
 
 import equinox as eqx
@@ -1158,8 +1159,8 @@ def test_meshing_domain_prepares_scope_banks_once_per_stratum(
 
     monkeypatch.setattr(MeshingDomain, "_source_entity_table", counted_table)
     domain = MeshingDomain.from_brep(model)
-    # Each method call rebuilds a bound-method pytree over the whole domain, so
-    # the bank preparation reads each stratum table a fixed number of times.
+    # Bank preparation reads each stratum table a fixed number of times rather
+    # than once per entity.
     assert sorted(calls) == [0, 0, 1, 1, 2, 2, 3, 3]
     monkeypatch.undo()
 
@@ -1173,5 +1174,18 @@ def test_meshing_domain_prepares_scope_banks_once_per_stratum(
         assert set(domain.scope_entity_key_banks[dimension]) == set(
             zip(keys, domain._source_entity_table(dimension)[2], strict=True)
         )
+        paths = domain.source_occurrences[dimension] if dimension < 3 else ()
+        for slot, key in enumerate(keys):
+            assert domain.resolve_entity_id(dimension, key) == slot
+            if paths:
+                assert (
+                    domain.resolve_entity_id(dimension, key, occurrence_path=paths[slot])
+                    == slot
+                )
+    # Domain methods bind as plain methods: an Equinox bound-method pytree would
+    # flatten the whole domain on every call.
+    assert type(domain.entity_id) is types.MethodType
+    with pytest.raises(ValueError, match="resolve uniquely"):
+        domain.resolve_entity_id(2, "absent-source-entity")
     with pytest.raises(ValueError, match="outside its source stratum"):
         domain.entity_ids(np.asarray((2,)), np.asarray((6,)))
