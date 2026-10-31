@@ -760,6 +760,8 @@ class _GeometryReader:
                 points, weights = self._spline_poles(count, 3, u_rational or v_rational)
                 u_knots = np.repeat((0.0, 1.0), u_degree + 1)
                 v_knots = np.repeat((0.0, 1.0), v_degree + 1)
+                # A Bezier record lists its poles u-major/v-fast; that source
+                # ordinal is the pole's persistent identity.
                 return _Carrier(
                     label,
                     BSplineSurfacePatch(
@@ -769,6 +771,9 @@ class _GeometryReader:
                         v_knots,
                         u_degree,
                         v_degree,
+                        control_point_ids=np.arange(count).reshape(
+                            u_degree + 1, v_degree + 1
+                        ),
                     ),
                 )
             case 9:
@@ -820,6 +825,10 @@ class _GeometryReader:
                 )
                 grid = points.reshape(u_poles, v_poles, 3)
                 weight_grid = weights.reshape(u_poles, v_poles)
+                # Persistent pole identity is the u-major/v-fast ordinal in
+                # OCCT's unperiodized pole sequence (BSplCLib::Unperiodize). For
+                # a nonperiodic record that is the record's own pole order; the
+                # encoder writes exactly this sequence, so identities round-trip.
                 return _Carrier(
                     label,
                     BSplineSurfacePatch(
@@ -829,6 +838,9 @@ class _GeometryReader:
                         v_expanded,
                         u_degree,
                         v_degree,
+                        control_point_ids=np.arange(
+                            u_indices.size * v_indices.size
+                        ).reshape(u_indices.size, v_indices.size),
                     ),
                 )
             case _:
