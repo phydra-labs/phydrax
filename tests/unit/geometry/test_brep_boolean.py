@@ -185,8 +185,15 @@ def test_boolean_pcurve_execution_shadows_match_exact_source_fields() -> None:
     (
         ((-2.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
         ((2.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        ((0.0, -2.0, 0.0), (0.0, 1.0, 0.0)),
+        ((0.0, 2.0, 0.0), (0.0, -1.0, 0.0)),
     ),
-    ids=("positive-profile", "negative-profile"),
+    ids=(
+        "positive-profile",
+        "negative-profile",
+        "seam-crossing-positive-profile",
+        "seam-crossing-negative-profile",
+    ),
 )
 def test_nonrational_quadric_boolean_publishes_complete_branches_and_pcurves(
     second_base: tuple[float, float, float],
@@ -333,6 +340,81 @@ def test_closed_branch_endpoints_isolated_on_opposite_seam_bind_one_chart_point(
         assert not root.same_uv_endpoint(
             model.patches[other_faces[-1]], pcurve, end, pcurve, start
         )
+
+
+def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks() -> None:
+    # The second cylinder runs along y, so one loop crosses the first
+    # cylinder's seam twice; one crossing coincides with the second
+    # cylinder's seam, where the loop closes.
+    first = brep_cylinder(
+        1.0, 4.0, base_center=(0.0, 0.0, -2.0), coordinate_contract=_COORDINATES
+    )
+    second = brep_cylinder(
+        0.8,
+        4.0,
+        base_center=(0.0, -2.0, 0.0),
+        axis=(0.0, 1.0, 0.0),
+        coordinate_contract=_COORDINATES,
+    )
+    model = boolean_brep(first, second, "intersection").model
+    geometry = model.geometry
+    assert geometry is not None
+    assert model.topology.num_solids == 1
+    branches = {
+        curve.branch_id: curve
+        for curve in geometry.curves
+        if isinstance(curve, IntersectionCurve)
+    }
+    crossing = tuple(
+        branch
+        for branch in branches.values()
+        if np.any(np.asarray(branch.node_axes) == 0)
+    )
+    others = tuple(
+        branch
+        for branch in branches.values()
+        if not np.any(np.asarray(branch.node_axes) == 0)
+    )
+    assert len(crossing) == 1 and len(others) == 1
+    branch = crossing[0]
+    # Each source chart closes under its own exact native turn.
+    np.testing.assert_array_equal(branch.closure_period_shifts(), (1, 0, 1, 0))
+    np.testing.assert_array_equal(others[0].closure_period_shifts(), (0, 0, 1, 0))
+    # The interior crossing fixes the first cylinder's angle at its exact seam
+    # value, and the charts on either side differ by one exact deck turn.
+    seam_nodes = tuple(
+        int(node)
+        for node in np.flatnonzero(np.asarray(branch.node_axes) == 0)
+        if 0 < node < branch.num_charts
+    )
+    assert len(seam_nodes) == 1
+    node = seam_nodes[0]
+    assert float(branch.node_values[node]) == 0.0
+    shifts = np.asarray(branch.node_period_shifts[node])
+    assert abs(int(shifts[0, 0]) - int(shifts[1, 0])) == 1
+    np.testing.assert_array_equal(shifts[:, 1:], 0)
+    # The start node lies exactly on both seams.
+    assert set(branch.node_exact_coordinates(0)) == {(2, 0.0), (0, 0.0)}
+    # Every chart lies on the authored first-cylinder sheet.
+    angles = np.concatenate(
+        (np.asarray(branch.chart_start)[:, 0], np.asarray(branch.chart_end)[:, 0])
+    )
+    assert np.all(angles >= -1.0e-12) and np.all(angles <= 2.0 * np.pi + 1.0e-12)
+
+    # The disk the loop bounds on the first cylinder is split along that
+    # cylinder's seam into two faces sharing one seam segment.
+    def on_first_cylinder(face: int) -> bool:
+        point = np.asarray(model.patches[face].evaluate(jnp.asarray((0.5, 0.5))))
+        return bool(np.isclose(np.hypot(point[0], point[1]), 1.0, rtol=0.0, atol=1e-12))
+
+    seam_edges = tuple(
+        edge
+        for edge, faces in enumerate(geometry.topology.edge_faces)
+        if isinstance(geometry.curves[geometry.edge_curves[edge]], LineCurve)
+        and len(set(faces)) == 2
+        and all(on_first_cylinder(face) for face in faces)
+    )
+    assert len(seam_edges) == 1
 
 
 def test_tangent_cylinder_contact_has_empty_regularized_intersection() -> None:

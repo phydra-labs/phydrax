@@ -2794,18 +2794,27 @@ class BranchRootEndpoint(StrictModule):
                 transported = np.stack(interval_add((image[0], image[1]), (lower, upper)))
             fixed_axis = int(self.curve.node_axes[frame])
             fixed_value = float(self.curve.node_values[frame])
-            if (
-                transported[0, fixed_axis] != fixed_value
-                or transported[1, fixed_axis] != fixed_value
-            ):
-                continue
             node_lower = np.asarray(self.curve.node_lower[frame], dtype=np.float64)
             node_upper = np.asarray(self.curve.node_upper[frame], dtype=np.float64)
-            if np.all(transported[0] >= node_lower) and np.all(
-                transported[1] <= node_upper
+            if (
+                transported[0, fixed_axis] == fixed_value
+                and transported[1, fixed_axis] == fixed_value
             ):
-                return True
-            if self._isolation_contains_node(transported, node_lower, node_upper):
+                if np.all(transported[0] >= node_lower) and np.all(
+                    transported[1] <= node_upper
+                ):
+                    return True
+                if self._isolation_contains_node(transported, node_lower, node_upper):
+                    return True
+                continue
+            # A node proved to lie exactly on another source coordinate shares
+            # the source line's root when it sits inside that root's isolation.
+            if any(
+                axis != fixed_axis
+                and transported[0, axis] == value
+                and transported[1, axis] == value
+                for axis, value in self.curve.node_exact_coordinates(frame)
+            ) and self._isolation_contains_node(transported, node_lower, node_upper):
                 return True
         return False
 
@@ -7232,8 +7241,11 @@ def _orthogonal_cylinder_family_intersection(
     """Construct the exact two-loop analytic branch atlas for a cylinder family."""
     from ._intersection_curve import (
         IntersectionCurve,
+        orthogonal_cylinder_closing_root_bounds,
         orthogonal_cylinder_graph_bounds,
         orthogonal_cylinder_graph_point,
+        orthogonal_cylinder_seam_crossings,
+        OrthogonalCylinderSeamCrossing,
     )
 
     regions = family.source_regions
@@ -7274,86 +7286,180 @@ def _orthogonal_cylinder_family_intersection(
     large_box = np.asarray(regions[family.large_index].parameter_box, dtype=np.float64)
     large_lower, large_upper = float(large_box[0, 0]), float(large_box[1, 0])
 
-    def branch_charts(
-        branch_sign: int, reference: float, /
-    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] | None:
-        charts = []
-        for first, last in zip(
-            ordered_breakpoints[:-1], ordered_breakpoints[1:], strict=True
-        ):
-            start = orthogonal_cylinder_graph_point(family, first, branch_sign, reference)
-            end = orthogonal_cylinder_graph_point(family, last, branch_sign, reference)
-            bounds = orthogonal_cylinder_graph_bounds(
-                family, first, last, branch_sign, reference
-            )
-            if start is None or end is None or bounds is None:
-                return None
-            lower = np.minimum(bounds[0], np.minimum(start, end))
-            upper = np.maximum(bounds[1], np.maximum(start, end))
-            lower, upper = (
-                np.nextafter(lower, -np.inf),
-                np.nextafter(upper, np.inf),
-            )
-            if np.any(lower >= upper):
-                return None
-            charts.append((start, end, lower, upper))
-        return charts
+    periods = np.asarray(
+        tuple(
+            0.0 if value is None else float(value)
+            for value in (*source_patches[0].periods, *source_patches[1].periods)
+        ),
+        dtype=np.float64,
+    )
+
+    def sheet_reference(bounds: tuple[np.ndarray, np.ndarray], /) -> float:
+        # The large angle is monotone on every chart: the breakpoints isolate
+        # each extremum of the normal offset, and the large angle is monotone
+        # in that offset on one branch. The chart midpoint therefore selects
+        # the one authored large-source sheet that holds the whole chart.
+        middle = 0.5 * float(bounds[0][large_angle_axis]) + 0.5 * float(
+            bounds[1][large_angle_axis]
+        )
+        return middle - math.floor((middle - large_lower) / math.tau) * math.tau
+
+    def meets_sheet(lower: np.ndarray, upper: np.ndarray, turn: int, /) -> bool:
+        # A node seen through an exact deck turn must touch the authored large
+        # sheet; otherwise its chart crosses a seam strictly inside.
+        shift_lower, shift_upper = (
+            period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(turn)))
+            if turn
+            else (np.asarray(0.0), np.asarray(0.0))
+        )
+        return Fraction.from_float(float(lower[large_angle_axis])) + Fraction.from_float(
+            float(shift_lower)
+        ) <= Fraction.from_float(large_upper) and Fraction.from_float(
+            float(upper[large_angle_axis])
+        ) + Fraction.from_float(float(shift_upper)) >= Fraction.from_float(large_lower)
 
     curves = []
     for branch_sign in (-1, 1):
-        seed = orthogonal_cylinder_graph_point(family, theta_lower, branch_sign, 0.0)
-        if seed is None:
+        crossings = orthogonal_cylinder_seam_crossings(family, branch_sign)
+        if crossings is None:
             return _unresolved_surface(regions[0], regions[1], "continuation")
-        reference = float(seed[large_angle_axis])
-        charts = branch_charts(branch_sign, reference)
-        if charts is None:
-            return _unresolved_surface(regions[0], regions[1], "continuation")
-        # Select the native-turn gauge that places every chart node of the
-        # branch in the authored large-source chart. The gauge is a choice of
-        # representative only; certification still comes from the chart boxes.
-        node_angles = [float(item[0][large_angle_axis]) for item in charts] + [
-            float(item[1][large_angle_axis]) for item in charts
-        ]
-        turns = math.ceil((large_lower - min(node_angles)) / math.tau)
-        if (
-            turns
-            and large_upper - large_lower >= math.tau
-            and max(node_angles) + turns * math.tau <= large_upper
-        ):
-            reference += turns * math.tau
-            charts = branch_charts(branch_sign, reference)
-            if charts is None:
+        start_on_seam = any(item.start for item in crossings)
+        seam_crossings = tuple(item for item in crossings if not item.start)
+        # A seam crossing becomes a node fixing the large angle at the exact
+        # seam value; a float breakpoint that only represents the same closed
+        # form is replaced by it.
+        thetas = tuple(
+            value
+            for value in ordered_breakpoints
+            if value in (theta_lower, theta_upper)
+            or not any(
+                item.theta_lower - 8.0 * math.ulp(value)
+                <= value
+                <= item.theta_upper + 8.0 * math.ulp(value)
+                for item in seam_crossings
+            )
+        )
+        layout: list[tuple[float, OrthogonalCylinderSeamCrossing | None]] = sorted(
+            (
+                *((value, None) for value in thetas),
+                *(
+                    (0.5 * item.theta_lower + 0.5 * item.theta_upper, item)
+                    for item in seam_crossings
+                ),
+            ),
+            key=lambda entry: entry[0],
+        )
+        chart_spans = tuple(
+            (layout[index][0], layout[index + 1][0]) for index in range(len(layout) - 1)
+        )
+        chart_references = []
+        for first, last in chart_spans:
+            if not first < last:
                 return _unresolved_surface(regions[0], regions[1], "continuation")
-
-        node_values = np.asarray(ordered_breakpoints, dtype=np.float64)
-        node_lower = []
-        node_upper = []
-        node_shifts = np.zeros((len(node_values), 2, 4), dtype=np.int32)
-        for node, value in enumerate(node_values):
             bounds = orthogonal_cylinder_graph_bounds(
-                family, float(value), float(value), branch_sign, reference
+                family, first, last, branch_sign, 0.0
             )
             if bounds is None:
                 return _unresolved_surface(regions[0], regions[1], "continuation")
-            lower, upper = bounds[0].copy(), bounds[1].copy()
-            endpoint_data = (
-                (0, charts[node - 1][1]) if node > 0 else None,
-                (1, charts[node][0]) if node < len(charts) else None,
-            )
-            for endpoint in endpoint_data:
-                if endpoint is None:
-                    continue
-                direction, point = endpoint
-                lower = np.minimum(lower, point)
-                upper = np.maximum(upper, point)
-                shifts = _periodic_endpoint_deck_shift(
-                    point, lower, upper, source_patches
+            chart_references.append(sheet_reference(bounds))
+        # Seam nodes take the sheet holding the exact seam value. Every other
+        # node takes the sheet of the chart leaving it, and the closing node
+        # that of the chart entering it. Seam crossings then appear as exact
+        # per-node deck turns, and the closure turn of every source chart
+        # follows from the start and closing nodes.
+        node_references = [
+            large_lower
+            if crossing is not None or (node == 0 and start_on_seam)
+            else chart_references[min(node, len(chart_spans) - 1)]
+            for node, (_, crossing) in enumerate(layout)
+        ]
+        node_axes = np.asarray(
+            [
+                theta_axis if crossing is None else large_angle_axis
+                for _, crossing in layout
+            ],
+            dtype=np.int32,
+        )
+        node_values = np.asarray(
+            [theta if crossing is None else large_lower for theta, crossing in layout],
+            dtype=np.float64,
+        )
+        node_lower: list[np.ndarray] = []
+        node_upper: list[np.ndarray] = []
+        node_points: list[np.ndarray] = []
+        for node, (theta, crossing) in enumerate(layout):
+            reference = node_references[node]
+            point = orthogonal_cylinder_graph_point(family, theta, branch_sign, reference)
+            if crossing is None:
+                bounds = orthogonal_cylinder_graph_bounds(
+                    family, theta, theta, branch_sign, reference
                 )
-                if shifts is None:
+            else:
+                theta_range = (
+                    float(
+                        np.nextafter(np.nextafter(crossing.theta_lower, -np.inf), -np.inf)
+                    ),
+                    float(
+                        np.nextafter(np.nextafter(crossing.theta_upper, np.inf), np.inf)
+                    ),
+                )
+                bounds = orthogonal_cylinder_graph_bounds(
+                    family, *theta_range, branch_sign, reference
+                )
+            if bounds is None or point is None:
+                return _unresolved_surface(regions[0], regions[1], "continuation")
+            lower, upper = bounds[0].copy(), bounds[1].copy()
+            if node == len(layout) - 1:
+                # The closing node is the start root's exact one-turn deck image,
+                # not only the root on the float slice that represents it.
+                closing = orthogonal_cylinder_closing_root_bounds(
+                    family, float(node_values[0]), branch_sign, reference
+                )
+                if closing is None:
+                    return _unresolved_surface(regions[0], regions[1], "continuation")
+                lower = np.minimum(lower, closing[0])
+                upper = np.maximum(upper, closing[1])
+            lower = np.minimum(np.nextafter(lower, -np.inf), point)
+            upper = np.maximum(np.nextafter(upper, np.inf), point)
+            if crossing is not None:
+                # The small angle is the free variable of a seam node's box.
+                lower[theta_axis], upper[theta_axis] = theta_range
+            node_lower.append(lower)
+            node_upper.append(upper)
+            node_points.append(point)
+
+        charts = []
+        node_shifts = np.zeros((len(node_values), 2, 4), dtype=np.int32)
+        for chart, (first, last) in enumerate(chart_spans):
+            reference = chart_references[chart]
+            bounds = orthogonal_cylinder_graph_bounds(
+                family, first, last, branch_sign, reference
+            )
+            if bounds is None:
+                return _unresolved_surface(regions[0], regions[1], "continuation")
+            endpoints = []
+            for node, direction in ((chart, 1), (chart + 1, 0)):
+                turn = round((reference - node_references[node]) / math.tau)
+                deck = np.zeros((4,), dtype=np.int32)
+                deck[large_angle_axis] = turn
+                point = node_points[node] + deck * periods
+                shifts = _periodic_endpoint_deck_shift(
+                    point, node_lower[node], node_upper[node], source_patches
+                )
+                if (
+                    shifts is None
+                    or np.any(shifts != deck)
+                    or not meets_sheet(node_lower[node], node_upper[node], turn)
+                ):
                     return _unresolved_surface(regions[0], regions[1], "continuation")
                 node_shifts[node, direction] = shifts
-            node_lower.append(np.nextafter(lower, -np.inf))
-            node_upper.append(np.nextafter(upper, np.inf))
+                endpoints.append(point)
+            start, end = endpoints
+            lower = np.nextafter(np.minimum(bounds[0], np.minimum(start, end)), -np.inf)
+            upper = np.nextafter(np.maximum(bounds[1], np.maximum(start, end)), np.inf)
+            if np.any(lower >= upper):
+                return _unresolved_surface(regions[0], regions[1], "continuation")
+            charts.append((start, end, lower, upper))
         try:
             curve = IntersectionCurve(
                 regions[0],
@@ -7363,7 +7469,7 @@ def _orthogonal_cylinder_family_intersection(
                 chart_end=np.stack([item[1] for item in charts]),
                 chart_lower=np.stack([item[2] for item in charts]),
                 chart_upper=np.stack([item[3] for item in charts]),
-                node_axes=np.full((len(node_values),), theta_axis, dtype=np.int32),
+                node_axes=node_axes,
                 node_values=node_values,
                 node_lower=np.stack(node_lower),
                 node_upper=np.stack(node_upper),
