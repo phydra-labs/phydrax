@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <set>
 #include <span>
 #include <unordered_map>
@@ -247,7 +248,11 @@ struct TetEditBatch {
   std::vector<TetEdit> operations;
   std::string source_id;
   std::string source_map_id;
+  // The current periodic identity (staleness is guarded with the generation).
   TetPeriodicIdentity periodic_identity;
+  // A periodic edit rebinds the identity of the state it produces; absent, the
+  // identity is kept.
+  std::optional<TetPeriodicIdentity> target_periodic_identity;
 };
 
 struct TetEditResult {

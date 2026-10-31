@@ -272,6 +272,18 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
       results.clear();
       return TetEditStatus::kApplied;
     }
+    // An edit keeps whether the state is identity-bound; a bound state is
+    // rebound to the bound target identity of the state the edit produces.
+    if (batch.target_periodic_identity.has_value() &&
+        (batch.target_periodic_identity->bound != periodic_identity_.bound ||
+         std::any_of(batch.target_periodic_identity->ids.begin(),
+                     batch.target_periodic_identity->ids.end(),
+                     [&](const std::string& id) {
+                       return batch.target_periodic_identity->bound && id.empty();
+                     }))) {
+      results.assign(batch.operations.size(), TetEditResult{});
+      return TetEditStatus::kRejectedTopology;
+    }
     TetMesh staged(policy_);
     copy_state_to(staged);
     std::vector<TetEditResult> staged_results;
@@ -307,6 +319,9 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
       return TetEditStatus::kRejectedTopology;
     }
     staged.generation_ = generation_ + 1;
+    if (batch.target_periodic_identity.has_value()) {
+      staged.periodic_identity_ = *batch.target_periodic_identity;
+    }
     swap_state(staged);
     unmet_records_.clear();
     results.swap(staged_results);
