@@ -886,6 +886,125 @@ def test_periodic_local_metric_commits_a_full_split_orbit() -> None:
     assert target_topology.vertex_orbit_count > source_topology.vertex_orbit_count
 
 
+def test_periodic_topology_edit_stages_non_binary64_split_roots_with_exact_bank() -> None:
+    from phydrax.discretization._exact_plc_geometry import (
+        ExactPlcCellGeometrySource,
+    )
+    from phydrax.discretization._periodic_exact import exact_periodic_element
+
+    # The unlocked 2D staging path: a split orbit on the skew (non-dyadic) lattice
+    # whose roots are exact quotient-chart midpoints. Their lifted members are the
+    # canonical roundings of exact translates, which are not always translates of
+    # the rounded roots, so only the exact vertex bank witnesses the quotient.
+    mesh = _skew_periodic_mesh()
+    source_topology = mesh.periodic_topology
+    assert source_topology is not None
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    edge_count = mesh.entity_set(1).entity_ids.size
+    outcome = execute_local_metric_adaptation(
+        mesh,
+        np.broadcast_to(4.0 * np.eye(2), (points.shape[0], 2, 2)).copy(),
+        cell_classes=np.zeros((mesh.entity_set(2).entity_ids.size,), dtype=np.int64),
+        edge_classes=np.ones((edge_count,), dtype=np.int64),
+        protected_edges=np.zeros((edge_count,), dtype=np.bool_),
+        fixed_vertices=np.ones((points.shape[0],), dtype=np.bool_),
+        predicate_mode=PredicateMode.EXACT,
+        topology_operations=True,
+        relocation=False,
+    )
+    assert outcome.evidence.splits > 0
+    edit = outcome.edit
+    rounded_target = _require_periodic_outcome(mesh, outcome)
+    target_topology = rounded_target.periodic_topology
+    assert target_topology is not None
+    cell = target_topology.cell
+
+    def exact_lift(
+        root: tuple[Fraction, ...], shift: np.ndarray, /
+    ) -> tuple[Fraction, ...]:
+        matrix = exact_periodic_element(cell, shift)
+        base = (*root, Fraction(1))
+        return tuple(
+            sum((matrix[axis][column] * base[column] for column in range(3)), Fraction(0))
+            for axis in range(2)
+        )
+
+    source_representatives = np.asarray(
+        source_topology.vertex_representatives, dtype=np.int64
+    )
+    source_shifts = np.asarray(source_topology.vertex_shifts, dtype=np.int64)
+    source_exact = [
+        exact_lift(
+            tuple(Fraction(float(value)) for value in points[root]), source_shifts[row]
+        )
+        for row, root in enumerate(source_representatives.tolist())
+    ]
+    assert all(
+        tuple(float(value) for value in row) == tuple(points[index])
+        for index, row in enumerate(source_exact)
+    )
+    edge_vertices = np.stack(_entity_vertex_rows(mesh)[1])
+    exact_midpoints = {}
+    for first, second in edge_vertices.tolist():
+        midpoint = tuple(
+            (source_exact[first][axis] + source_exact[second][axis]) / 2
+            for axis in range(2)
+        )
+        exact_midpoints.setdefault(tuple(float(value) for value in midpoint), midpoint)
+    source_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(mesh.vertex_global_ids).tolist())
+    }
+    target_ids = np.asarray(edit.vertex_global_ids, dtype=np.int64)
+    coordinates = np.asarray(edit.coordinates, dtype=np.float64)
+    representatives = np.asarray(target_topology.vertex_representatives, dtype=np.int64)
+    shifts = np.asarray(target_topology.vertex_shifts, dtype=np.int64)
+    roots: dict[int, tuple[Fraction, ...]] = {}
+    for root in np.unique(representatives).tolist():
+        source_row = source_rows.get(int(target_ids[root]))
+        if source_row is not None:
+            roots[root] = source_exact[source_row]
+        else:
+            roots[root] = exact_midpoints.get(
+                tuple(coordinates[root]),
+                tuple(Fraction(float(value)) for value in coordinates[root]),
+            )
+    exact_rows = tuple(
+        exact_lift(roots[root], shifts[row])
+        for row, root in enumerate(representatives.tolist())
+    )
+    assert any(Fraction(float(value)) != value for row in exact_rows for value in row)
+    canonical = np.asarray(
+        [[float(value) for value in row] for row in exact_rows], dtype=np.float64
+    )
+    assert np.any(canonical != coordinates)
+    canonical_edit = edit._replace(coordinates=canonical)
+    bank = ExactPlcCellGeometrySource(
+        "periodic-quotient-chart",
+        mesh.mesh_id,
+        target_ids,
+        exact_rows,
+        vertex_source_entity_ids=(None,) * target_ids.size,
+        vertex_occurrence_paths=((),) * target_ids.size,
+    )
+
+    with pytest.raises(ValueError, match="vertex_shifts"):
+        stage_periodic_topology_edit(mesh, canonical_edit)
+    target = stage_periodic_topology_edit(
+        mesh, canonical_edit, exact_coordinate_source=bank
+    )
+    assert target is not None
+    staged_topology = target.periodic_topology
+    assert staged_topology is not None
+    assert staged_topology.coordinate_source_map_id == bank.source_map_id
+    np.testing.assert_array_equal(target.coordinates, canonical)
+    staged_topology.require_lifted(
+        target.topology, target.lifted_topology_id, target.blocks
+    )
+    staged_topology.require_coordinates(target.coordinates)
+    assert staged_topology.vertex_orbit_count == target_topology.vertex_orbit_count
+
+
 def test_periodic_local_metric_commits_a_full_collapse_orbit() -> None:
     mesh = _periodic_grid_mesh(4, perturbation=0.02)
     metric = np.broadcast_to(0.01 * np.eye(2), (mesh.coordinates.shape[0], 2, 2)).copy()
