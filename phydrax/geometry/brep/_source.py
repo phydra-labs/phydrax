@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from math import fsum
 
 import jax
@@ -122,17 +123,41 @@ def _width_limit(query: np.ndarray, /) -> np.ndarray:
     )
 
 
+class BRepSourceDerivativeError(TypeError):
+    """A native B-Rep source query output has no certified point derivative."""
+
+
+@partial(jax.custom_jvp, nondiff_argnums=(0,))
+def _refuse_derivative(query: str, points: Array, /) -> Array:
+    return points
+
+
+@_refuse_derivative.defjvp
+def _refuse_derivative_jvp(
+    query: str, primals: tuple[Array], tangents: tuple[Array], /
+) -> tuple[Array, Array]:
+    del primals, tangents
+    raise BRepSourceDerivativeError(
+        f"Native B-Rep source {query} has no certified point derivative; "
+        "differentiate boundary_field, or a planar-source boundary_normal."
+    )
+
+
 def _source_query(
     points: Array,
     host: Callable[[np.ndarray], tuple[np.ndarray, ...]],
     outputs: tuple[tuple[tuple[int, ...], DTypeLike], ...],
     /,
+    *,
+    underived: str | None,
 ) -> tuple[Array, ...]:
     """Evaluate a host source query at concrete or traced points.
 
     The query is always evaluated on the host from exact source carriers. Traced
-    points reach it through a callback on their primal values, so its results are
-    non-differentiable source data.
+    points reach it through a callback on their primal values. ``underived=None``
+    states that the outputs are discrete or locally constant data, or that the
+    caller supplies their derivative; otherwise differentiating the outputs raises
+    ``BRepSourceDerivativeError`` naming that query instead of yielding zeros.
     """
     if not isinstance(points, Tracer):
         query, leading = _host_points(points)
@@ -154,6 +179,11 @@ def _source_query(
             for value, (shape, dtype) in zip(host(query), outputs, strict=True)
         )
 
+    arguments = (
+        jax.lax.stop_gradient(values)
+        if underived is None
+        else jax.lax.stop_gradient(_refuse_derivative(underived, values))
+    )
     return tuple(
         jax.pure_callback(
             callback,
@@ -161,7 +191,7 @@ def _source_query(
                 jax.ShapeDtypeStruct((*leading, *shape), dtype)
                 for shape, dtype in outputs
             ),
-            jax.lax.stop_gradient(values),
+            arguments,
             vmap_method="expand_dims",
         )
     )
@@ -478,16 +508,22 @@ class _BRepKernel(GeometryKernel):
     def contains(self, state: DesignState, points: Array, /) -> Array:
         del state
         (inside,) = _source_query(
-            points, lambda query: (self._inside(query),), (((), jnp.bool_),)
+            points,
+            lambda query: (self._inside(query),),
+            (((), jnp.bool_),),
+            underived=None,
         )
         return inside
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         del state
+        # The signed field's derivative is the oriented normal, supplied by the
+        # custom JVP of ``_oriented_boundary_field`` on the traced points.
         closest, normals, inside = _source_query(
             points,
             self._boundary_frame,
             (((3,), jnp.float64), ((3,), jnp.float64), ((), jnp.bool_)),
+            underived=None,
         )
         return _oriented_boundary_field(
             jnp.asarray(points, dtype=jnp.float64), closest, normals, inside
@@ -495,7 +531,18 @@ class _BRepKernel(GeometryKernel):
 
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         del state
-        (normals,) = _source_query(points, self._boundary_normals, (((3,), jnp.float64),))
+        # Over affine planar faces the selected face normal is locally constant;
+        # curved faces would need their shape operator, which is not certified.
+        planar = all(
+            _affine_planar_face(self.model, face)
+            for face in range(len(self.model.patches))
+        )
+        (normals,) = _source_query(
+            points,
+            self._boundary_normals,
+            (((3,), jnp.float64),),
+            underived=None if planar else "boundary_normal",
+        )
         return normals
 
     def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
@@ -512,6 +559,7 @@ class _BRepKernel(GeometryKernel):
                 ((), jnp.bool_),
                 ((), jnp.bool_),
             ),
+            underived="closest_point",
         )
         leading = unique.shape
         return ClosestPointResult(
@@ -641,4 +689,4 @@ class _BRepKernel(GeometryKernel):
         return self.model.boundary_atlas
 
 
-__all__ = ["BRepSource"]
+__all__ = ["BRepSource", "BRepSourceDerivativeError"]
