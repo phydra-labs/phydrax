@@ -52,6 +52,8 @@ class Remesher {
   std::vector<uint32_t> scores;
   std::vector<std::vector<int64_t>> star;
   std::unordered_map<uint64_t, std::vector<int64_t>> buckets;
+  std::vector<uint32_t> visited;  // candidate-gathering stamps per triangle
+  uint32_t epoch = 0;
   std::set<std::pair<uint32_t, int64_t>> queue;
   int64_t splits = 0, collapses = 0, flips = 0, relocations = 0;
 
@@ -127,6 +129,9 @@ class Remesher {
     scores[slot] = score(triangles[slot], {}, {});
     if (scores[slot] < kScoreLevels && !stuck[slot]) queue.emplace(scores[slot], id);
   }
+  // Grid cells met by the triangle's bounding box. Two triangles in contact
+  // have overlapping boxes, and a point of the overlap lies in a cell of both
+  // ranges (floor is monotone), so exact ranges find every contact pair.
   std::array<int64_t, 6> bucket_range(const F& t) const {
     V lo = points[static_cast<size_t>(t[0])], hi = lo;
     for (int64_t v : t)
@@ -136,10 +141,38 @@ class Remesher {
       }
     std::array<int64_t, 6> range{};
     for (int d = 0; d < 3; ++d) {
-      range[d] = static_cast<int64_t>(std::floor(lo[d] / h)) - 1;
-      range[3 + d] = static_cast<int64_t>(std::floor(hi[d] / h)) + 1;
+      range[d] = static_cast<int64_t>(std::floor(lo[d] / h));
+      range[3 + d] = static_cast<int64_t>(std::floor(hi[d] / h));
     }
     return range;
+  }
+  // Live triangles other than `removed` (sorted IDs) registered in a cell of
+  // `t`'s range, each once; dead entries met on the way are dropped from
+  // their cells.
+  void gather_candidates(const F& t, const std::vector<int64_t>& removed,
+                         std::vector<int64_t>& out) {
+    out.clear();
+    if (++epoch == 0) {
+      std::fill(visited.begin(), visited.end(), 0);
+      epoch = 1;
+    }
+    visited.resize(triangles.size(), 0);
+    const auto range = bucket_range(t);
+    for (int64_t i = range[0]; i <= range[3]; ++i)
+      for (int64_t j = range[1]; j <= range[4]; ++j)
+        for (int64_t k = range[2]; k <= range[5]; ++k) {
+          const auto found = buckets.find(cell_key(i, j, k));
+          if (found == buckets.end()) continue;
+          auto& cell = found->second;
+          cell.erase(std::remove_if(cell.begin(), cell.end(),
+                                    [&](int64_t id) { return !alive[static_cast<size_t>(id)]; }),
+                     cell.end());
+          for (int64_t id : cell) {
+            if (visited[static_cast<size_t>(id)] == epoch) continue;
+            visited[static_cast<size_t>(id)] = epoch;
+            if (!std::binary_search(removed.begin(), removed.end(), id)) out.push_back(id);
+          }
+        }
   }
   // Registers a triangle in the buckets and stars; its score depends on its
   // edge neighbors, so callers rescore once the edit's triangles are all in.
@@ -331,20 +364,7 @@ class Remesher {
             !legal(contact))
           return restore();
       }
-      candidates.clear();
-      const auto range = bucket_range(t);
-      for (int64_t i = range[0]; i <= range[3]; ++i)
-        for (int64_t j = range[1]; j <= range[4]; ++j)
-          for (int64_t k = range[2]; k <= range[5]; ++k) {
-            const auto found = buckets.find(cell_key(i, j, k));
-            if (found == buckets.end()) continue;
-            for (int64_t id : found->second)
-              if (alive[static_cast<size_t>(id)] &&
-                  !std::binary_search(removed_ids.begin(), removed_ids.end(), id))
-                candidates.push_back(id);
-          }
-      std::sort(candidates.begin(), candidates.end());
-      candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+      gather_candidates(t, removed_ids, candidates);
       for (int64_t id : candidates) {
         const F& u = triangles[static_cast<size_t>(id)];
         const double* u_points[3] = {points[static_cast<size_t>(u[0])].data(),
