@@ -718,12 +718,32 @@ def trim_source_join(first: AbstractCurve, second: AbstractCurve, /) -> bool:
     def oriented_end(
         curve: AbstractCurve, start: bool
     ) -> tuple[AbstractCurve, _BooleanRootEndpoint | None, Fraction] | None:
+        # Transports keep their exact chart map over the unwrapped trim source,
+        # whose parameter is the one ``nested`` reports.
         if isinstance(curve, AffinePCurve):
             nested = oriented_end(curve.curve, start)
-            return None if nested is None else (curve, nested[1], nested[2])
+            if nested is None:
+                return None
+            source = (
+                curve
+                if nested[0] is curve.curve
+                else AffinePCurve(
+                    nested[0],
+                    np.asarray(curve.matrix, dtype=np.object_),
+                    np.asarray(curve.offset, dtype=np.object_),
+                )
+            )
+            return source, nested[1], nested[2]
         if isinstance(curve, PeriodicPCurve):
             nested = oriented_end(curve.source_curve, start)
-            return None if nested is None else (curve, nested[1], nested[2])
+            if nested is None:
+                return None
+            source = (
+                curve
+                if nested[0] is curve.source_curve
+                else PeriodicPCurve(nested[0], curve.patch, curve.period_shifts)
+            )
+            return source, nested[1], nested[2]
         if not isinstance(curve, CurveTrimSegment):
             return None
         lower_root, upper_root = curve.first_root, curve.last_root

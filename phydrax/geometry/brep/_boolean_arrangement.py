@@ -1579,7 +1579,12 @@ def _edge_key(
 
 
 def _endpoint_on_carrier(
-    endpoint: RootEndpoint | None, carrier: AbstractCurve, parameter: Fraction
+    endpoint: RootEndpoint | None,
+    carrier: AbstractCurve,
+    parameter: Fraction,
+    patch: AbstractSurfacePatch,
+    *,
+    coedge: bool,
 ) -> RootEndpoint | None:
     """Bind an authored native scalar or conic root to the retained source lift.
 
@@ -1587,6 +1592,10 @@ def _endpoint_on_carrier(
     The new carrier retains the source source expression and chart map. A conic
     root reached on a coincident carrier binds that carrier at the retained raw
     edge parameter; the model's exact conic endpoint check proves the point.
+    A native period root names its period through the publishing face patch:
+    a transported coedge root keeps its raw expression and rebinds the
+    coincident patch's identical declared period on the same axis; an edge
+    root rebinds only when its publishing patch declares that period.
     Isolated roots remain with their existing certified support definitions.
     """
     if isinstance(endpoint, ConicParameterEndpoint):
@@ -1595,14 +1604,38 @@ def _endpoint_on_carrier(
         return ConicParameterEndpoint(
             endpoint.root, carrier, parameter, endpoint.point_exact
         )
-    if not isinstance(endpoint, NativePeriodEndpoint) or (
-        canonical_fingerprint(carrier_payload(endpoint.curve))
-        == canonical_fingerprint(carrier_payload(carrier))
+    if not isinstance(endpoint, NativePeriodEndpoint):
+        return endpoint
+    same_curve = canonical_fingerprint(
+        carrier_payload(endpoint.curve)
+    ) == canonical_fingerprint(carrier_payload(carrier))
+    period_patch = endpoint.patch
+    if period_patch is not None and carrier_payload(period_patch) != carrier_payload(
+        patch
     ):
+        axis = endpoint.axis
+        target_period = None if axis is None else patch.periods[axis]
+        source_period = None if axis is None else period_patch.periods[axis]
+        if (
+            axis is not None
+            and patch.native_period_symbols()[axis] == "two_pi"
+            and target_period is not None
+            and source_period is not None
+            and float(target_period) == float(source_period)
+        ):
+            period_patch = patch
+        elif coedge:
+            raise BRepBooleanFailure(
+                "BRepBoolean.native_period_endpoint must rebind an identical declared period on its publishing face patch"
+            )
+        elif same_curve:
+            # An edge root may keep the period of another incident face.
+            return endpoint
+    elif same_curve:
         return endpoint
     return NativePeriodEndpoint(
         carrier,
-        endpoint.patch,
+        period_patch,
         endpoint.axis,
         rational=endpoint.rational,
         turns=endpoint.turns,
@@ -1731,6 +1764,43 @@ class _BoundaryTopology(StrictModule):
             if entity.occurrence_path in face_paths
         )
 
+    def _vertex_occurrences(
+        self,
+        state: Arrangement,
+        owner: FaceOwner,
+        source_entities: tuple[SourceEntity, ...],
+        /,
+    ) -> tuple[SourceEntity, ...]:
+        """Bind model-level source vertices to their exact operand occurrences.
+
+        A vertex of the publishing face's operand keeps the occurrences carrying
+        that face; a coincident operand's vertex must have one occurrence.
+        """
+        result: list[SourceEntity] = []
+        for operand, entity in source_entities:
+            if entity.occurrence_path != ():
+                result.append((operand, entity))
+                continue
+            occurrences = (
+                self._entities_on_face(state, owner, "vertex", entity.index)
+                if operand == owner[0]
+                else self._entity_index_for_model(state, operand).get(
+                    ("vertex", entity.index), ()
+                )
+            )
+            if len(occurrences) != 1 and operand != owner[0]:
+                raise BRepBooleanFailure(
+                    "BRepBoolean.lineage.coincident_vertex must name one exact operand occurrence",
+                    (str(entity),),
+                )
+            if not occurrences:
+                raise BRepBooleanFailure(
+                    "BRepBoolean.lineage.source_vertex must lie on its publishing face occurrence",
+                    (str(entity),),
+                )
+            result.extend((operand, occurrence) for occurrence in occurrences)
+        return tuple(result)
+
     def append_piece(
         self,
         state: Arrangement,
@@ -1757,7 +1827,9 @@ class _BoundaryTopology(StrictModule):
                 self.vertex_exact_points.append(prepared.exact_point)
                 self.vertex_sources.append(set())
             vertex = self.vertex_ids[cut.vertex]
-            self.vertex_sources[vertex].update(source_entities)
+            self.vertex_sources[vertex].update(
+                self._vertex_occurrences(state, arc.owner, source_entities)
+            )
             ids.append(vertex)
         source = None if overlay_sources is None else overlay_sources.get(arc.token)
         key = _edge_key(piece, source)
@@ -1765,6 +1837,7 @@ class _BoundaryTopology(StrictModule):
             Fraction(arc.offset) + Fraction(arc.scale) * Fraction(cut.parameter)
             for cut in endpoints
         )
+        patch = state.models[arc.owner[0]].patches[arc.owner[1]]
         if key not in self.edge_ids:
             edge = len(self.edge_vertices)
             self.edge_ids[key] = edge
@@ -1785,10 +1858,14 @@ class _BoundaryTopology(StrictModule):
                 (
                     endpoints[0].endpoint
                     if arc.curve is None
-                    else _endpoint_on_carrier(endpoints[0].endpoint, arc.curve, raw[0]),
+                    else _endpoint_on_carrier(
+                        endpoints[0].endpoint, arc.curve, raw[0], patch, coedge=False
+                    ),
                     endpoints[1].endpoint
                     if arc.curve is None
-                    else _endpoint_on_carrier(endpoints[1].endpoint, arc.curve, raw[1]),
+                    else _endpoint_on_carrier(
+                        endpoints[1].endpoint, arc.curve, raw[1], patch, coedge=False
+                    ),
                 )
             )
         edge = self.edge_ids[key]
@@ -1850,8 +1927,12 @@ class _BoundaryTopology(StrictModule):
         self.coedge_senses.append(piece.sense * (1 if arc.scale > 0.0 else -1))
         self.coedge_roots.append(
             (
-                _endpoint_on_carrier(endpoints[0].endpoint, pcurve, raw[0]),
-                _endpoint_on_carrier(endpoints[1].endpoint, pcurve, raw[1]),
+                _endpoint_on_carrier(
+                    endpoints[0].endpoint, pcurve, raw[0], patch, coedge=True
+                ),
+                _endpoint_on_carrier(
+                    endpoints[1].endpoint, pcurve, raw[1], patch, coedge=True
+                ),
             )
         )
         return coedge

@@ -17,7 +17,10 @@ from phydrax.discretization._exact_algebraic_geometry import (
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization._surface_chart_records import SurfaceChartWitness
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
-from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+from phydrax.geometry._domain_boundary import (
+    _point_triangle_squared,
+    MeshingDomainBoundarySource,
+)
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
@@ -36,9 +39,11 @@ from phydrax.geometry._source_boundary_records import (
 from phydrax.geometry._source_fidelity import (
     _box_gap_upper,
     _exact_triangle2,
+    _nearest_triangle_distance_upper,
     _partition_findings,
     _require_reference_chart_partition,
     _surface_target_chart_rows,
+    _triangle_centroid_balls,
     _volume_boundary_facet_lookup,
     certify_source_fidelity,
     polyhedral_face_triangle_vertex_ids,
@@ -52,6 +57,7 @@ from phydrax.geometry.brep._patches import (
     PlanePatch,
 )
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
+from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.units import METER, MILLIMETER
 
 
@@ -661,7 +667,9 @@ def test_curve_fidelity_binds_a_real_edge_of_a_surface_mesh() -> None:
         np.all(np.sort(edge_values, axis=1) == local_edge_values[None, :], axis=1)
     )
     if edge_rows.shape != (1,):
-        raise AssertionError("Triangle fixture must have one canonical local edge entity.")
+        raise AssertionError(
+            "Triangle fixture must have one canonical local edge entity."
+        )
     edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
     edge_id = int(edge_ids[int(edge_rows[0])])
     witness = SourceBoundaryChartWitness(
@@ -1158,6 +1166,43 @@ def test_analytic_profile_distance_witness_is_continuous_without_claiming_covera
     assert certificate.coverage is None
     assert certificate.mesh_to_source_upper <= 2.0
     assert certificate.source_to_mesh_upper <= 2.0
+
+
+@pytest.mark.parametrize("origin", (0.0, 1.0e6))
+def test_pruned_reverse_distance_equals_the_exact_minimum_over_every_triangle(
+    origin: float,
+) -> None:
+    generator = np.random.default_rng(7)
+    corners = origin + generator.uniform(-1.0, 1.0, size=(60, 3, 3))
+    # Near ties: translated copies sit a sub-ulp-scale step farther away.
+    corners[30:40] = corners[:10] + 1.0e-12
+
+    def exact(value: np.ndarray) -> tuple[Fraction, Fraction, Fraction]:
+        return (
+            Fraction.from_float(float(value[0])),
+            Fraction.from_float(float(value[1])),
+            Fraction.from_float(float(value[2])),
+        )
+
+    triangles = tuple(
+        (exact(triangle[0]), exact(triangle[1]), exact(triangle[2]))
+        for triangle in corners
+    )
+    centers, radii = _triangle_centroid_balls(triangles)
+    center_values = np.asarray(
+        [[float(value) for value in center] for center in centers], dtype=np.float64
+    )
+    radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
+    for sample in origin + generator.uniform(-1.5, 1.5, size=(25, 3)):
+        point = exact(sample)
+        unpruned = min(
+            fraction_sqrt_interval(_point_triangle_squared(point, triangle))[1]
+            for triangle in triangles
+        )
+        pruned = _nearest_triangle_distance_upper(
+            point, sample, triangles, center_values, radius_values
+        )
+        assert pruned == unpruned
 
 
 def test_missing_fidelity_witness_retains_unbounded_failure_evidence() -> None:
