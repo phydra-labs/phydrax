@@ -68,7 +68,6 @@ type _SurfaceDomain = tuple[tuple[float, float], tuple[float, float]] | None
 _BoundValue = TypeVar("_BoundValue")
 
 
-
 class _PatchBinding(StrictModule, Generic[_BoundValue]):
     bindings: tuple[ParameterBinding | None, ...] = eqx.field(static=True)
     tree_definition: PyTreeDef = eqx.field(static=True)
@@ -82,7 +81,9 @@ class _PatchBinding(StrictModule, Generic[_BoundValue]):
         defaults: Iterable[Array],
     ) -> None:
         if jax.tree_util.tree_structure(source_value) != tree_definition:
-            raise ValueError("A BRep parameter binding must retain its declared PyTree structure.")
+            raise ValueError(
+                "A BRep parameter binding must retain its declared PyTree structure."
+            )
         self.bindings = tuple(bindings)
         self.tree_definition = tree_definition
         self.defaults = tuple(defaults)
@@ -94,6 +95,7 @@ class _PatchBinding(StrictModule, Generic[_BoundValue]):
         )
         return jax.tree_util.tree_unflatten(self.tree_definition, values)
 
+
 _SurfaceCarrier = TypeVar("_SurfaceCarrier", bound=AbstractSurfacePatch)
 _CurveCarrier = TypeVar("_CurveCarrier", bound=AbstractCurve)
 
@@ -102,7 +104,9 @@ def _require_surface_realization(
     value: AbstractSurfacePatch, carrier_type: type[_SurfaceCarrier], /
 ) -> _SurfaceCarrier:
     if not isinstance(value, carrier_type):
-        raise TypeError("A dynamic surface realization must preserve its source carrier type.")
+        raise TypeError(
+            "A dynamic surface realization must preserve its source carrier type."
+        )
     return value
 
 
@@ -110,7 +114,9 @@ def _require_curve_realization(
     value: AbstractCurve, carrier_type: type[_CurveCarrier], /
 ) -> _CurveCarrier:
     if not isinstance(value, carrier_type):
-        raise TypeError("A dynamic curve realization must preserve its source carrier type.")
+        raise TypeError(
+            "A dynamic curve realization must preserve its source carrier type."
+        )
     return value
 
 
@@ -137,6 +143,7 @@ class _RealizedTrimEdge(AbstractCurve):
 
     def evaluate(self, parameters: Array, /) -> Array:
         return self.patch.evaluate(self.pcurve.evaluate(parameters))
+
 
 class _RealizedIsoparametricCurve(AbstractCurve):
     """Numeric-only fixed-coordinate curve on a realized source patch."""
@@ -344,7 +351,9 @@ class _RealizedIntersectionCurve(AbstractCurve):
         shape = values.shape
         restored = tuple(value.reshape((*shape, *value.shape[1:])) for value in result)
         if scalar:
-            restored = tuple(value.reshape(value.shape[len(shape) :]) for value in restored)
+            restored = tuple(
+                value.reshape(value.shape[len(shape) :]) for value in restored
+            )
         return IntersectionCurvePoint(*restored)
 
     def evaluate(self, parameters: Array, /) -> Array:
@@ -376,7 +385,11 @@ class _RealizedIntersectionPCurve(AbstractCurve):
         values = jnp.asarray(parameters, dtype=jnp.float64)
         carrier = self.first + self.last - values if self.reversed else values
         coupled = self.curve.evaluate_coupled(carrier)
-        return coupled.first_parameters if self.side == "first" else coupled.second_parameters
+        return (
+            coupled.first_parameters
+            if self.side == "first"
+            else coupled.second_parameters
+        )
 
 
 class _RealizedLineCurve(AbstractCurve):
@@ -420,7 +433,9 @@ class _RealizedLineCurve(AbstractCurve):
         if parameter_domain is not None:
             first, last = parameter_domain
             if not (np.isfinite(first) and np.isfinite(last) and first < last):
-                raise ValueError("A realized affine curve domain must be finite and increasing.")
+                raise ValueError(
+                    "A realized affine curve domain must be finite and increasing."
+                )
             parameter_domain = float(first), float(last)
         self.origin = origin_
         self.direction = direction_
@@ -441,17 +456,29 @@ class _RealizedLineCurve(AbstractCurve):
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         from .._rational import fraction_down, fraction_up
 
-        origin = tuple(Fraction.from_float(float(value)) for value in np.asarray(self.origin))
-        direction = tuple(Fraction.from_float(float(value)) for value in np.asarray(self.direction))
+        origin = tuple(
+            Fraction.from_float(float(value)) for value in np.asarray(self.origin)
+        )
+        direction = tuple(
+            Fraction.from_float(float(value)) for value in np.asarray(self.direction)
+        )
         parameters = (Fraction.from_float(float(first)), Fraction.from_float(float(last)))
         points = tuple(
-            tuple(origin[axis] + parameter * direction[axis] for axis in range(len(origin)))
+            tuple(
+                origin[axis] + parameter * direction[axis] for axis in range(len(origin))
+            )
             for parameter in parameters
         )
         return np.stack(
             (
-                tuple(fraction_down(min(point[axis] for point in points)) for axis in range(len(origin))),
-                tuple(fraction_up(max(point[axis] for point in points)) for axis in range(len(origin))),
+                tuple(
+                    fraction_down(min(point[axis] for point in points))
+                    for axis in range(len(origin))
+                ),
+                tuple(
+                    fraction_up(max(point[axis] for point in points))
+                    for axis in range(len(origin))
+                ),
             )
         )
 
@@ -484,7 +511,9 @@ class _RealizedConicCurve(AbstractCurve):
         period_symbol: str | None = None,
     ) -> None:
         if kind not in ("circle", "ellipse", "parabola", "hyperbola"):
-            raise ValueError("A realized conic kind must be circle, ellipse, parabola, or hyperbola.")
+            raise ValueError(
+                "A realized conic kind must be circle, ellipse, parabola, or hyperbola."
+            )
         center_ = jnp.asarray(center, dtype=jnp.float64)
         first_ = jnp.asarray(first_axis, dtype=jnp.float64)
         second_ = jnp.asarray(second_axis, dtype=jnp.float64)
@@ -540,12 +569,18 @@ class _RealizedConicCurve(AbstractCurve):
         if parameter_domain is not None:
             lower, upper = parameter_domain
             if not (np.isfinite(lower) and np.isfinite(upper) and lower < upper):
-                raise ValueError("A realized conic parameter domain must be finite and increasing.")
+                raise ValueError(
+                    "A realized conic parameter domain must be finite and increasing."
+                )
             parameter_domain = float(lower), float(upper)
         if period is not None and (not np.isfinite(period) or period <= 0.0):
             raise ValueError("A realized conic period must be finite and positive.")
-        if period_symbol is not None and (not isinstance(period_symbol, str) or not period_symbol):
-            raise ValueError("A realized conic period symbol must be nonempty when supplied.")
+        if period_symbol is not None and (
+            not isinstance(period_symbol, str) or not period_symbol
+        ):
+            raise ValueError(
+                "A realized conic period symbol must be nonempty when supplied."
+            )
         self.kind = kind
         self.center = center_
         self.first_axis = first_
@@ -664,8 +699,9 @@ class _RealizedConicCurve(AbstractCurve):
             )
             lower, upper = interval_add(interval_add((center, center), quadratic), linear)
             return np.stack((lower, upper))
-        raise NotImplementedError("A sound interval extension for the hyperbola realization is unavailable.")
-
+        raise NotImplementedError(
+            "A sound interval extension for the hyperbola realization is unavailable."
+        )
 
 
 class _RealizedPlanePatch(AbstractSurfacePatch):
@@ -707,7 +743,11 @@ class _RealizedPlanePatch(AbstractSurfacePatch):
 
     def evaluate(self, parameters: Array, /) -> Array:
         values = jnp.asarray(parameters, dtype=self.origin.dtype)
-        return self.origin + values[..., :1] * self.first_axis + values[..., 1:2] * self.second_axis
+        return (
+            self.origin
+            + values[..., :1] * self.first_axis
+            + values[..., 1:2] * self.second_axis
+        )
 
 
 class _RealizedCylinderPatch(AbstractSurfacePatch):
@@ -740,13 +780,38 @@ class _RealizedCylinderPatch(AbstractSurfacePatch):
         radius_ = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         if any(value.shape != (3,) for value in (origin_, first_, second_, axis_)):
             raise ValueError("A realized cylinder requires four aligned 3D vectors.")
-        origin_ = eqx.error_if(origin_, jnp.any(~jnp.isfinite(origin_)), "Realized cylinder origin must be finite.")
-        first_ = eqx.error_if(first_, jnp.any(~jnp.isfinite(first_)), "Realized cylinder first axis must be finite.")
-        second_ = eqx.error_if(second_, jnp.any(~jnp.isfinite(second_)), "Realized cylinder second axis must be finite.")
-        axis_ = eqx.error_if(axis_, jnp.any(~jnp.isfinite(axis_)), "Realized cylinder axis must be finite.")
-        radius_ = eqx.error_if(radius_, jnp.any(~jnp.isfinite(radius_)), "Realized cylinder radius must be finite.")
-        radius_ = eqx.error_if(radius_, radius_ <= 0.0, "A realized cylinder radius must be positive.")
-        self.origin, self.first_axis, self.second_axis, self.axis = origin_, first_, second_, axis_
+        origin_ = eqx.error_if(
+            origin_,
+            jnp.any(~jnp.isfinite(origin_)),
+            "Realized cylinder origin must be finite.",
+        )
+        first_ = eqx.error_if(
+            first_,
+            jnp.any(~jnp.isfinite(first_)),
+            "Realized cylinder first axis must be finite.",
+        )
+        second_ = eqx.error_if(
+            second_,
+            jnp.any(~jnp.isfinite(second_)),
+            "Realized cylinder second axis must be finite.",
+        )
+        axis_ = eqx.error_if(
+            axis_, jnp.any(~jnp.isfinite(axis_)), "Realized cylinder axis must be finite."
+        )
+        radius_ = eqx.error_if(
+            radius_,
+            jnp.any(~jnp.isfinite(radius_)),
+            "Realized cylinder radius must be finite.",
+        )
+        radius_ = eqx.error_if(
+            radius_, radius_ <= 0.0, "A realized cylinder radius must be positive."
+        )
+        self.origin, self.first_axis, self.second_axis, self.axis = (
+            origin_,
+            first_,
+            second_,
+            axis_,
+        )
         self.radius = radius_
         self.source_parameter_domain = parameter_domain
         self.source_periods = periods
@@ -766,14 +831,24 @@ class _RealizedCylinderPatch(AbstractSurfacePatch):
     def evaluate(self, parameters: Array, /) -> Array:
         values = jnp.asarray(parameters, dtype=self.origin.dtype)
         angle, height = values[..., 0], values[..., 1]
-        radial = jnp.cos(angle)[..., None] * self.first_axis + jnp.sin(angle)[..., None] * self.second_axis
+        radial = (
+            jnp.cos(angle)[..., None] * self.first_axis
+            + jnp.sin(angle)[..., None] * self.second_axis
+        )
         return self.origin + self.radius * radial + height[..., None] * self.axis
 
-    def is_c1_along(self, fixed_axis: int, fixed_value: float, first: float, last: float, /) -> bool:
+    def is_c1_along(
+        self, fixed_axis: int, fixed_value: float, first: float, last: float, /
+    ) -> bool:
         if isinstance(fixed_axis, bool) or fixed_axis not in (0, 1):
             raise ValueError("fixed_axis must be 0 or 1.")
-        if not all(np.isfinite(value) for value in (fixed_value, first, last)) or first > last:
-            raise ValueError("Realized cylinder isoline bounds must be finite and ordered.")
+        if (
+            not all(np.isfinite(value) for value in (fixed_value, first, last))
+            or first > last
+        ):
+            raise ValueError(
+                "Realized cylinder isoline bounds must be finite and ordered."
+            )
         return True
 
 
@@ -799,7 +874,10 @@ class _RealizedTorusPatch(AbstractSurfacePatch):
         /,
         *,
         parameter_domain: _SurfaceDomain = None,
-        periods: tuple[float | None, float | None] = (float(2.0 * np.pi), float(2.0 * np.pi)),
+        periods: tuple[float | None, float | None] = (
+            float(2.0 * np.pi),
+            float(2.0 * np.pi),
+        ),
         period_symbols: tuple[str | None, str | None] = ("two_pi", "two_pi"),
     ) -> None:
         center_ = jnp.asarray(center, dtype=jnp.float64)
@@ -810,15 +888,46 @@ class _RealizedTorusPatch(AbstractSurfacePatch):
         minor_ = jnp.asarray(minor_radius, dtype=jnp.float64).reshape(())
         if any(value.shape != (3,) for value in (center_, first_, second_, axis_)):
             raise ValueError("A realized torus requires four aligned 3D vectors.")
-        center_ = eqx.error_if(center_, jnp.any(~jnp.isfinite(center_)), "Realized torus center must be finite.")
-        first_ = eqx.error_if(first_, jnp.any(~jnp.isfinite(first_)), "Realized torus first axis must be finite.")
-        second_ = eqx.error_if(second_, jnp.any(~jnp.isfinite(second_)), "Realized torus second axis must be finite.")
-        axis_ = eqx.error_if(axis_, jnp.any(~jnp.isfinite(axis_)), "Realized torus axis must be finite.")
-        major_ = eqx.error_if(major_, jnp.any(~jnp.isfinite(major_)), "Realized torus major radius must be finite.")
-        minor_ = eqx.error_if(minor_, jnp.any(~jnp.isfinite(minor_)), "Realized torus minor radius must be finite.")
-        major_ = eqx.error_if(major_, major_ <= 0.0, "A realized torus major radius must be positive.")
-        minor_ = eqx.error_if(minor_, minor_ <= 0.0, "A realized torus minor radius must be positive.")
-        self.center, self.first_axis, self.second_axis, self.axis = center_, first_, second_, axis_
+        center_ = eqx.error_if(
+            center_,
+            jnp.any(~jnp.isfinite(center_)),
+            "Realized torus center must be finite.",
+        )
+        first_ = eqx.error_if(
+            first_,
+            jnp.any(~jnp.isfinite(first_)),
+            "Realized torus first axis must be finite.",
+        )
+        second_ = eqx.error_if(
+            second_,
+            jnp.any(~jnp.isfinite(second_)),
+            "Realized torus second axis must be finite.",
+        )
+        axis_ = eqx.error_if(
+            axis_, jnp.any(~jnp.isfinite(axis_)), "Realized torus axis must be finite."
+        )
+        major_ = eqx.error_if(
+            major_,
+            jnp.any(~jnp.isfinite(major_)),
+            "Realized torus major radius must be finite.",
+        )
+        minor_ = eqx.error_if(
+            minor_,
+            jnp.any(~jnp.isfinite(minor_)),
+            "Realized torus minor radius must be finite.",
+        )
+        major_ = eqx.error_if(
+            major_, major_ <= 0.0, "A realized torus major radius must be positive."
+        )
+        minor_ = eqx.error_if(
+            minor_, minor_ <= 0.0, "A realized torus minor radius must be positive."
+        )
+        self.center, self.first_axis, self.second_axis, self.axis = (
+            center_,
+            first_,
+            second_,
+            axis_,
+        )
         self.major_radius, self.minor_radius = major_, minor_
         self.source_parameter_domain = parameter_domain
         self.source_periods = periods
@@ -838,8 +947,15 @@ class _RealizedTorusPatch(AbstractSurfacePatch):
     def evaluate(self, parameters: Array, /) -> Array:
         values = jnp.asarray(parameters, dtype=self.center.dtype)
         longitude, tube = values[..., 0], values[..., 1]
-        radial = jnp.cos(longitude)[..., None] * self.first_axis + jnp.sin(longitude)[..., None] * self.second_axis
-        return self.center + (self.major_radius + self.minor_radius * jnp.cos(tube))[..., None] * radial + (self.minor_radius * jnp.sin(tube))[..., None] * self.axis
+        radial = (
+            jnp.cos(longitude)[..., None] * self.first_axis
+            + jnp.sin(longitude)[..., None] * self.second_axis
+        )
+        return (
+            self.center
+            + (self.major_radius + self.minor_radius * jnp.cos(tube))[..., None] * radial
+            + (self.minor_radius * jnp.sin(tube))[..., None] * self.axis
+        )
 
 
 class _RealizedConePatch(AbstractSurfacePatch):
@@ -853,14 +969,22 @@ class _RealizedConePatch(AbstractSurfacePatch):
     source_period_symbols: tuple[str | None, str | None] = eqx.field(static=True)
 
     def __init__(
-        self, origin: ArrayLike, first_axis: ArrayLike, second_axis: ArrayLike,
-        axis: ArrayLike, reference_radius: ArrayLike, semi_angle: ArrayLike, /
+        self,
+        origin: ArrayLike,
+        first_axis: ArrayLike,
+        second_axis: ArrayLike,
+        axis: ArrayLike,
+        reference_radius: ArrayLike,
+        semi_angle: ArrayLike,
+        /,
     ) -> None:
         self.origin = jnp.asarray(origin, dtype=jnp.float64)
         self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64)
         self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64)
         self.axis = jnp.asarray(axis, dtype=jnp.float64)
-        self.reference_radius = jnp.asarray(reference_radius, dtype=jnp.float64).reshape(())
+        self.reference_radius = jnp.asarray(reference_radius, dtype=jnp.float64).reshape(
+            ()
+        )
         self.semi_angle = jnp.asarray(semi_angle, dtype=jnp.float64).reshape(())
         self.source_periods = (float(2.0 * np.pi), None)
         self.source_period_symbols = ("two_pi", None)
@@ -875,7 +999,10 @@ class _RealizedConePatch(AbstractSurfacePatch):
     def evaluate(self, parameters: Array, /) -> Array:
         values = jnp.asarray(parameters, dtype=self.origin.dtype)
         angle, axial = values[..., 0], values[..., 1]
-        radial = jnp.cos(angle)[..., None] * self.first_axis + jnp.sin(angle)[..., None] * self.second_axis
+        radial = (
+            jnp.cos(angle)[..., None] * self.first_axis
+            + jnp.sin(angle)[..., None] * self.second_axis
+        )
         radius = self.reference_radius + axial * jnp.tan(self.semi_angle)
         return self.origin + axial[..., None] * self.axis + radius[..., None] * radial
 
@@ -889,7 +1016,15 @@ class _RealizedSpherePatch(AbstractSurfacePatch):
     source_periods: tuple[float | None, float | None] = eqx.field(static=True)
     source_period_symbols: tuple[str | None, str | None] = eqx.field(static=True)
 
-    def __init__(self, center: ArrayLike, first_axis: ArrayLike, second_axis: ArrayLike, axis: ArrayLike, radius: ArrayLike, /) -> None:
+    def __init__(
+        self,
+        center: ArrayLike,
+        first_axis: ArrayLike,
+        second_axis: ArrayLike,
+        axis: ArrayLike,
+        radius: ArrayLike,
+        /,
+    ) -> None:
         self.center = jnp.asarray(center, dtype=jnp.float64)
         self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64)
         self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64)
@@ -908,17 +1043,28 @@ class _RealizedSpherePatch(AbstractSurfacePatch):
     def evaluate(self, parameters: Array, /) -> Array:
         values = jnp.asarray(parameters, dtype=self.center.dtype)
         longitude, latitude = values[..., 0], values[..., 1]
-        equatorial = jnp.cos(longitude)[..., None] * self.first_axis + jnp.sin(longitude)[..., None] * self.second_axis
-        direction = jnp.cos(latitude)[..., None] * equatorial + jnp.sin(latitude)[..., None] * self.axis
+        equatorial = (
+            jnp.cos(longitude)[..., None] * self.first_axis
+            + jnp.sin(longitude)[..., None] * self.second_axis
+        )
+        direction = (
+            jnp.cos(latitude)[..., None] * equatorial
+            + jnp.sin(latitude)[..., None] * self.axis
+        )
         return self.center + self.radius * direction
 
-def _realized_bspline_basis(knots: Array, degree: int, count: int, parameter: Array, /) -> Array:
+
+def _realized_bspline_basis(
+    knots: Array, degree: int, count: int, parameter: Array, /
+) -> Array:
     basis = ((parameter >= knots[:-1]) & (parameter < knots[1:])).astype(knots.dtype)
     for order in range(1, degree + 1):
         width = basis.shape[0] - 1
         left_denominator = knots[order : order + width] - knots[:width]
         right_denominator = knots[order + 1 : order + 1 + width] - knots[1 : 1 + width]
-        left = (parameter - knots[:width]) / jnp.where(left_denominator != 0.0, left_denominator, 1.0)
+        left = (parameter - knots[:width]) / jnp.where(
+            left_denominator != 0.0, left_denominator, 1.0
+        )
         right = (knots[order + 1 : order + 1 + width] - parameter) / jnp.where(
             right_denominator != 0.0, right_denominator, 1.0
         )
@@ -972,11 +1118,29 @@ class _RealizedBSplineSurfacePatch(AbstractSurfacePatch):
             or control_points_.shape[0] <= u_degree
             or control_points_.shape[1] <= v_degree
         ):
-            raise ValueError("Realized B-spline surface arrays must preserve their fixed tensor topology.")
-        control_points_ = eqx.error_if(control_points_, jnp.any(~jnp.isfinite(control_points_)), "B-spline controls must be finite.")
-        weights_ = eqx.error_if(weights_, jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0), "B-spline weights must be finite and positive.")
-        u_knots_ = eqx.error_if(u_knots_, jnp.any(~jnp.isfinite(u_knots_)) | jnp.any(jnp.diff(u_knots_) < 0.0), "B-spline u-knots must be finite and nondecreasing.")
-        v_knots_ = eqx.error_if(v_knots_, jnp.any(~jnp.isfinite(v_knots_)) | jnp.any(jnp.diff(v_knots_) < 0.0), "B-spline v-knots must be finite and nondecreasing.")
+            raise ValueError(
+                "Realized B-spline surface arrays must preserve their fixed tensor topology."
+            )
+        control_points_ = eqx.error_if(
+            control_points_,
+            jnp.any(~jnp.isfinite(control_points_)),
+            "B-spline controls must be finite.",
+        )
+        weights_ = eqx.error_if(
+            weights_,
+            jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0),
+            "B-spline weights must be finite and positive.",
+        )
+        u_knots_ = eqx.error_if(
+            u_knots_,
+            jnp.any(~jnp.isfinite(u_knots_)) | jnp.any(jnp.diff(u_knots_) < 0.0),
+            "B-spline u-knots must be finite and nondecreasing.",
+        )
+        v_knots_ = eqx.error_if(
+            v_knots_,
+            jnp.any(~jnp.isfinite(v_knots_)) | jnp.any(jnp.diff(v_knots_) < 0.0),
+            "B-spline v-knots must be finite and nondecreasing.",
+        )
         self.control_points, self.weights = control_points_, weights_
         self.u_knots, self.v_knots = u_knots_, v_knots_
         self.u_degree, self.v_degree = u_degree, v_degree
@@ -998,8 +1162,12 @@ class _RealizedBSplineSurfacePatch(AbstractSurfacePatch):
     def _evaluate_one(self, uv: Array, /) -> Array:
         from ...ein import contract
 
-        basis_u = _realized_bspline_basis(self.u_knots, self.u_degree, self.control_points.shape[0], uv[0])
-        basis_v = _realized_bspline_basis(self.v_knots, self.v_degree, self.control_points.shape[1], uv[1])
+        basis_u = _realized_bspline_basis(
+            self.u_knots, self.u_degree, self.control_points.shape[0], uv[0]
+        )
+        basis_v = _realized_bspline_basis(
+            self.v_knots, self.v_degree, self.control_points.shape[1], uv[1]
+        )
         weighted_basis = basis_u[:, None] * basis_v[None, :] * self.weights
         denominator = jnp.sum(weighted_basis)
         return contract("uv,uvc->c", weighted_basis, self.control_points) / denominator
@@ -1009,7 +1177,9 @@ class _RealizedBSplineSurfacePatch(AbstractSurfacePatch):
         if values.ndim == 1:
             return self._evaluate_one(values)
         leading = values.shape[:-1]
-        return jax.vmap(self._evaluate_one)(values.reshape((-1, 2))).reshape((*leading, 3))
+        return jax.vmap(self._evaluate_one)(values.reshape((-1, 2))).reshape(
+            (*leading, 3)
+        )
 
 
 class _RealizedOperationSurface(AbstractSurfacePatch):
@@ -1043,16 +1213,34 @@ class _RealizedOperationSurface(AbstractSurfacePatch):
         period_symbols: tuple[str | None, str | None] = (None, None),
     ) -> None:
         if kind not in ("offset", "extrusion", "revolution"):
-            raise ValueError("A realized operation surface kind must be offset, extrusion, or revolution.")
+            raise ValueError(
+                "A realized operation surface kind must be offset, extrusion, or revolution."
+            )
         if frame_sign not in (-1, 0, 1):
             raise ValueError("A realized offset frame sign must be -1, 0, or 1.")
         self.kind, self.frame_sign = kind, frame_sign
         self.base = base
         self.curve = curve
-        self.distance = None if distance is None else jnp.asarray(distance, dtype=jnp.float64).reshape(())
-        self.direction = None if direction is None else jnp.asarray(direction, dtype=jnp.float64).reshape((3,))
-        self.axis_origin = None if axis_origin is None else jnp.asarray(axis_origin, dtype=jnp.float64).reshape((3,))
-        self.axis_direction = None if axis_direction is None else jnp.asarray(axis_direction, dtype=jnp.float64).reshape((3,))
+        self.distance = (
+            None
+            if distance is None
+            else jnp.asarray(distance, dtype=jnp.float64).reshape(())
+        )
+        self.direction = (
+            None
+            if direction is None
+            else jnp.asarray(direction, dtype=jnp.float64).reshape((3,))
+        )
+        self.axis_origin = (
+            None
+            if axis_origin is None
+            else jnp.asarray(axis_origin, dtype=jnp.float64).reshape((3,))
+        )
+        self.axis_direction = (
+            None
+            if axis_direction is None
+            else jnp.asarray(axis_direction, dtype=jnp.float64).reshape((3,))
+        )
         self.source_parameter_domain = parameter_domain
         self.source_periods = periods
         self.source_period_symbols = period_symbols
@@ -1073,7 +1261,11 @@ class _RealizedOperationSurface(AbstractSurfacePatch):
             assert self.curve is not None and self.direction is not None
             return self.curve.evaluate(uv[0]) + uv[1] * self.direction
         if self.kind == "revolution":
-            assert self.curve is not None and self.axis_origin is not None and self.axis_direction is not None
+            assert (
+                self.curve is not None
+                and self.axis_origin is not None
+                and self.axis_direction is not None
+            )
             angle = uv[0]
             relative = self.curve.evaluate(uv[1]) - self.axis_origin
             axial = jnp.sum(relative * self.axis_direction)
@@ -1086,23 +1278,48 @@ class _RealizedOperationSurface(AbstractSurfacePatch):
         assert self.base is not None and self.distance is not None
         if self.frame_sign != 0 and isinstance(self.base, _RealizedSpherePatch):
             longitude, latitude = uv[0], uv[1]
-            equatorial = jnp.cos(longitude) * self.base.first_axis + jnp.sin(longitude) * self.base.second_axis
-            direction = jnp.cos(latitude) * equatorial + jnp.sin(latitude) * self.base.axis
-            return self.base.center + (self.base.radius + self.frame_sign * self.distance) * direction
+            equatorial = (
+                jnp.cos(longitude) * self.base.first_axis
+                + jnp.sin(longitude) * self.base.second_axis
+            )
+            direction = (
+                jnp.cos(latitude) * equatorial + jnp.sin(latitude) * self.base.axis
+            )
+            return (
+                self.base.center
+                + (self.base.radius + self.frame_sign * self.distance) * direction
+            )
         if self.frame_sign != 0 and isinstance(self.base, _RealizedCylinderPatch):
             angle, height = uv[0], uv[1]
-            radial = jnp.cos(angle) * self.base.first_axis + jnp.sin(angle) * self.base.second_axis
-            return self.base.origin + (self.base.radius + self.frame_sign * self.distance) * radial + height * self.base.axis
+            radial = (
+                jnp.cos(angle) * self.base.first_axis
+                + jnp.sin(angle) * self.base.second_axis
+            )
+            return (
+                self.base.origin
+                + (self.base.radius + self.frame_sign * self.distance) * radial
+                + height * self.base.axis
+            )
         if self.frame_sign != 0 and isinstance(self.base, _RealizedTorusPatch):
             longitude, tube = uv[0], uv[1]
-            radial = jnp.cos(longitude) * self.base.first_axis + jnp.sin(longitude) * self.base.second_axis
-            normal = (jnp.cos(tube) * radial + jnp.sin(tube) * self.base.axis) * self.frame_sign
+            radial = (
+                jnp.cos(longitude) * self.base.first_axis
+                + jnp.sin(longitude) * self.base.second_axis
+            )
+            normal = (
+                jnp.cos(tube) * radial + jnp.sin(tube) * self.base.axis
+            ) * self.frame_sign
             return self.base.evaluate(uv) + self.distance * normal
         if self.frame_sign != 0 and isinstance(self.base, _RealizedConePatch):
             angle = uv[0]
-            radial = jnp.cos(angle) * self.base.first_axis + jnp.sin(angle) * self.base.second_axis
+            radial = (
+                jnp.cos(angle) * self.base.first_axis
+                + jnp.sin(angle) * self.base.second_axis
+            )
             tangent = jnp.tan(self.base.semi_angle)
-            normal = (radial - tangent * self.base.axis) / jnp.sqrt(1.0 + tangent * tangent)
+            normal = (radial - tangent * self.base.axis) / jnp.sqrt(
+                1.0 + tangent * tangent
+            )
             return self.base.evaluate(uv) + self.frame_sign * self.distance * normal
         point = self.base.evaluate(uv)
         differential = jax.jacfwd(self.base.evaluate)(uv)
@@ -1116,7 +1333,10 @@ class _RealizedOperationSurface(AbstractSurfacePatch):
         if values.ndim == 1:
             return self._evaluate_one(values)
         leading = values.shape[:-1]
-        return jax.vmap(self._evaluate_one)(values.reshape((-1, 2))).reshape((*leading, 3))
+        return jax.vmap(self._evaluate_one)(values.reshape((-1, 2))).reshape(
+            (*leading, 3)
+        )
+
 
 class _RealizedBSplineCurve(AbstractCurve):
     control_points: Array
@@ -1151,14 +1371,30 @@ class _RealizedBSplineCurve(AbstractCurve):
             or degree < 1
             or controls.shape[0] <= degree
         ):
-            raise ValueError("Realized B-spline curve arrays must preserve fixed curve topology.")
-        controls = eqx.error_if(controls, jnp.any(~jnp.isfinite(controls)), "B-spline controls must be finite.")
-        weights_ = eqx.error_if(weights_, jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0), "B-spline weights must be finite and positive.")
-        knots_ = eqx.error_if(knots_, jnp.any(~jnp.isfinite(knots_)) | jnp.any(jnp.diff(knots_) < 0.0), "B-spline knots must be finite and nondecreasing.")
+            raise ValueError(
+                "Realized B-spline curve arrays must preserve fixed curve topology."
+            )
+        controls = eqx.error_if(
+            controls,
+            jnp.any(~jnp.isfinite(controls)),
+            "B-spline controls must be finite.",
+        )
+        weights_ = eqx.error_if(
+            weights_,
+            jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0),
+            "B-spline weights must be finite and positive.",
+        )
+        knots_ = eqx.error_if(
+            knots_,
+            jnp.any(~jnp.isfinite(knots_)) | jnp.any(jnp.diff(knots_) < 0.0),
+            "B-spline knots must be finite and nondecreasing.",
+        )
         if parameter_domain is not None:
             lower, upper = parameter_domain
             if not (np.isfinite(lower) and np.isfinite(upper) and lower < upper):
-                raise ValueError("A realized B-spline curve domain must be finite and increasing.")
+                raise ValueError(
+                    "A realized B-spline curve domain must be finite and increasing."
+                )
             parameter_domain = float(lower), float(upper)
         self.control_points, self.weights, self.knots = controls, weights_, knots_
         self.degree = degree
@@ -1200,7 +1436,9 @@ class _RealizedBSplineCurve(AbstractCurve):
 
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         if not (np.isfinite(first) and np.isfinite(last) and first <= last):
-            raise ValueError("A realized B-spline bound requires a finite ordered interval.")
+            raise ValueError(
+                "A realized B-spline bound requires a finite ordered interval."
+            )
         domain = self.parameter_domain
         if domain is not None and (first < domain[0] or last > domain[1]):
             raise ValueError("A realized B-spline bound must lie in its source interval.")
@@ -1217,7 +1455,13 @@ class _RealizedTrimSegment(AbstractCurve):
     reversed: bool = eqx.field(static=True)
 
     def __init__(
-        self, curve: AbstractCurve, first: ArrayLike, last: ArrayLike, /, *, reversed: bool = False
+        self,
+        curve: AbstractCurve,
+        first: ArrayLike,
+        last: ArrayLike,
+        /,
+        *,
+        reversed: bool = False,
     ) -> None:
         if not isinstance(curve, AbstractCurve) or curve.ambient_dimension != 2:
             raise TypeError("A realized planar trim requires a 2D curve carrier.")
@@ -1225,8 +1469,14 @@ class _RealizedTrimSegment(AbstractCurve):
             raise TypeError("A realized trim orientation must be bool.")
         first_ = jnp.asarray(first, dtype=jnp.float64).reshape(())
         last_ = jnp.asarray(last, dtype=jnp.float64).reshape(())
-        first_ = eqx.error_if(first_, ~jnp.isfinite(first_), "A realized trim start must be finite.")
-        last_ = eqx.error_if(last_, ~jnp.isfinite(last_) | (last_ <= first_), "A realized trim range must be finite and increasing.")
+        first_ = eqx.error_if(
+            first_, ~jnp.isfinite(first_), "A realized trim start must be finite."
+        )
+        last_ = eqx.error_if(
+            last_,
+            ~jnp.isfinite(last_) | (last_ <= first_),
+            "A realized trim range must be finite and increasing.",
+        )
         self.curve, self.first, self.last, self.reversed = curve, first_, last_, reversed
 
     @property
@@ -1246,7 +1496,11 @@ class _RealizedTrimSegment(AbstractCurve):
         return self.curve.bounding_box(lower, upper)
 
     def identity_payload(self, /) -> dict[str, object]:
-        raise NotImplementedError("A numeric trim realization has no exact source identity.")
+        raise NotImplementedError(
+            "A numeric trim realization has no exact source identity."
+        )
+
+
 class _RealizedTSplineSurfacePatch(AbstractSurfacePatch):
     """T-spline evaluation over a dynamic control bank, without exact bank fields."""
 
@@ -1259,7 +1513,9 @@ class _RealizedTSplineSurfacePatch(AbstractSurfacePatch):
     source_periods: tuple[float | None, float | None] = eqx.field(static=True)
     source_period_symbols: tuple[str | None, str | None] = eqx.field(static=True)
 
-    def __init__(self, source: TSplineSurfacePatch, control_points: ArrayLike, weights: ArrayLike) -> None:
+    def __init__(
+        self, source: TSplineSurfacePatch, control_points: ArrayLike, weights: ArrayLike
+    ) -> None:
         self.mesh = source.mesh
         self.realization = source.realization
         self.transfer_plans = tuple(source.transfer_plans)
@@ -1284,7 +1540,9 @@ class _RealizedTSplineSurfacePatch(AbstractSurfacePatch):
         values = jnp.asarray(parameters, dtype=jnp.float64)
         control_points, weights = self.control_points, self.weights
         for plan in self.transfer_plans:
-            control_points, weights = plan.apply_homogeneous_geometry(control_points, weights)
+            control_points, weights = plan.apply_homogeneous_geometry(
+                control_points, weights
+            )
         leading = values.shape[:-1]
         jet = self.realization.evaluate_rational(
             values.reshape((-1, 2)), control_points, weights, maximum_order=0
@@ -1431,9 +1689,7 @@ def _realize_surface_patch(
     if isinstance(patch, PlacedSurface):
         value = _require_surface_realization(value, PlacedSurface)
         definition = (
-            patch_lookup.get(id(patch.definition))
-            if patch_lookup is not None
-            else None
+            patch_lookup.get(id(patch.definition)) if patch_lookup is not None else None
         )
         if definition is None:
             definition = _realize_surface_patch(
@@ -1589,13 +1845,13 @@ def _realize_curve(
         value = _require_curve_realization(value, ConicRootLinePCurve)
         origin = jnp.stack((value.angle, value.height_origin))
         direction = jnp.stack((jnp.zeros_like(value.angle), value.height_direction))
-        return _RealizedLineCurve(origin, direction, parameter_domain=curve.parameter_domain)
+        return _RealizedLineCurve(
+            origin, direction, parameter_domain=curve.parameter_domain
+        )
     if isinstance(curve, SurfaceMappedCurve):
         value = _require_curve_realization(value, SurfaceMappedCurve)
         surface = (
-            patch_lookup.get(id(curve.surface))
-            if patch_lookup is not None
-            else None
+            patch_lookup.get(id(curve.surface)) if patch_lookup is not None else None
         )
         if surface is None:
             surface = _realize_surface_patch(
@@ -1610,9 +1866,7 @@ def _realize_curve(
     if isinstance(curve, SurfaceIsoparametricCurve):
         value = _require_curve_realization(value, SurfaceIsoparametricCurve)
         surface = (
-            patch_lookup.get(id(curve.surface))
-            if patch_lookup is not None
-            else None
+            patch_lookup.get(id(curve.surface)) if patch_lookup is not None else None
         )
         if surface is None:
             surface = _realize_surface_patch(
@@ -1627,9 +1881,7 @@ def _realize_curve(
     if isinstance(curve, PlacedCurve):
         value = _require_curve_realization(value, PlacedCurve)
         definition = (
-            curve_lookup.get(id(curve.definition))
-            if curve_lookup is not None
-            else None
+            curve_lookup.get(id(curve.definition)) if curve_lookup is not None else None
         )
         if definition is None:
             definition = _realize_curve(
@@ -1642,14 +1894,10 @@ def _realize_curve(
     if isinstance(curve, IntersectionCurve):
         value = _require_curve_realization(value, IntersectionCurve)
         first = (
-            patch_lookup.get(id(curve.first.patch))
-            if patch_lookup is not None
-            else None
+            patch_lookup.get(id(curve.first.patch)) if patch_lookup is not None else None
         )
         second = (
-            patch_lookup.get(id(curve.second.patch))
-            if patch_lookup is not None
-            else None
+            patch_lookup.get(id(curve.second.patch)) if patch_lookup is not None else None
         )
         if first is None:
             first = _realize_surface_patch(
@@ -1662,11 +1910,7 @@ def _realize_curve(
         return _RealizedIntersectionCurve(curve, first, second, value)
     if isinstance(curve, IntersectionPCurve):
         value = _require_curve_realization(value, IntersectionPCurve)
-        realized = (
-            curve_lookup.get(id(curve.curve))
-            if curve_lookup is not None
-            else None
-        )
+        realized = curve_lookup.get(id(curve.curve)) if curve_lookup is not None else None
         if realized is None:
             realized = _realize_curve(
                 curve.curve,
@@ -1675,13 +1919,16 @@ def _realize_curve(
                 numeric=value.curve,
             )
         if not isinstance(realized, _RealizedIntersectionCurve):
-            raise TypeError("An intersection p-curve requires its realized branch carrier.")
+            raise TypeError(
+                "An intersection p-curve requires its realized branch carrier."
+            )
         return _RealizedIntersectionPCurve(
             realized, curve.side, curve.first, curve.last, curve.reversed
         )
     raise NotImplementedError(
         f"A numeric-only CAD realization for {type(curve).__name__} is unavailable."
     )
+
 
 def _realize_trim_domains(
     source_domains: Sequence[TrimDomain | None],
@@ -1698,7 +1945,9 @@ def _realize_trim_domains(
     realized_domains: list[TrimDomain] = []
     for face, source in enumerate(source_domains):
         if source is not None and not isinstance(source, TrimDomain):
-            raise TypeError("BRep parameter source trims must be TrimDomain values or None.")
+            raise TypeError(
+                "BRep parameter source trims must be TrimDomain values or None."
+            )
         face_loops = geometry.face_loops[face]
         lower = parameter_bounds[face, 0]
         extent = parameter_bounds[face, 1] - lower
@@ -1717,9 +1966,7 @@ def _realize_trim_domains(
                         if geometry.coedge_senses[coedge] > 0
                         else ranges[edge, 1]
                     )
-                    points.append(
-                        (pcurves[coedge].evaluate(parameter) - lower) / extent
-                    )
+                    points.append((pcurves[coedge].evaluate(parameter) - lower) / extent)
                 polygon_loops.append(jnp.stack(points))
             realized_domains.append(
                 TrimDomain(
@@ -1734,9 +1981,7 @@ def _realize_trim_domains(
             segments = []
             for coedge in coedge_loop:
                 edge = geometry.coedge_edges[coedge]
-                normalized = _RealizedNormalizedCurve(
-                    pcurves[coedge], lower, extent
-                )
+                normalized = _RealizedNormalizedCurve(pcurves[coedge], lower, extent)
                 segments.append(
                     _RealizedTrimSegment(
                         normalized,
@@ -1748,6 +1993,7 @@ def _realize_trim_domains(
             loops.append(tuple(segments))
         realized_domains.append(TrimDomain.from_curve_loops(tuple(loops)))
     return tuple(realized_domains)
+
 
 class BRepParameterGeometry(StrictModule):
     """Numeric CAD realization paired with an immutable exact source snapshot.
@@ -1787,7 +2033,9 @@ class BRepParameterGeometry(StrictModule):
     ) -> None:
         patch_values = tuple(patches)
         if not isinstance(source_geometry, BRepGeometry):
-            raise TypeError("BRepParameterGeometry.source_geometry must be a BRepGeometry snapshot.")
+            raise TypeError(
+                "BRepParameterGeometry.source_geometry must be a BRepGeometry snapshot."
+            )
         source_patches_ = tuple(source_patches)
         if (
             len(patch_values) != len(source_geometry.face_loops)
@@ -1836,16 +2084,19 @@ class BRepParameterGeometry(StrictModule):
             )
 
         if any(
-            trim is not None and not isinstance(trim, TrimDomain)
-            for trim in source_trims
+            trim is not None and not isinstance(trim, TrimDomain) for trim in source_trims
         ):
-            raise TypeError("BRepParameterGeometry source trims must be TrimDomain values or None.")
+            raise TypeError(
+                "BRepParameterGeometry source trims must be TrimDomain values or None."
+            )
         points_ = jnp.asarray(
             source_geometry.vertex_points if vertex_points is None else vertex_points,
             dtype=jnp.float64,
         )
         if points_.shape != source_geometry.vertex_points.shape:
-            raise ValueError("Dynamic B-Rep vertex points must preserve source vertex rows.")
+            raise ValueError(
+                "Dynamic B-Rep vertex points must preserve source vertex rows."
+            )
         points_ = eqx.error_if(
             points_,
             jnp.any(~jnp.isfinite(points_)),
@@ -1856,16 +2107,16 @@ class BRepParameterGeometry(StrictModule):
         if len(curve_values) != len(source_geometry.curves) or any(
             not isinstance(curve, AbstractCurve) for curve in curve_values
         ):
-            raise ValueError("Dynamic B-Rep curves must preserve source edge-carrier rows.")
+            raise ValueError(
+                "Dynamic B-Rep curves must preserve source edge-carrier rows."
+            )
         if len(pcurve_values) != len(source_geometry.pcurves) or any(
             not isinstance(curve, AbstractCurve) for curve in pcurve_values
         ):
             raise ValueError("Dynamic B-Rep p-curves must preserve source coedge rows.")
         curve_values_ = tuple(
             _realize_curve(source, patch_lookup, numeric=value)
-            for source, value in zip(
-                source_geometry.curves, curve_values, strict=True
-            )
+            for source, value in zip(source_geometry.curves, curve_values, strict=True)
         )
         curve_lookup = {
             id(source): realized
@@ -1875,9 +2126,7 @@ class BRepParameterGeometry(StrictModule):
         }
         pcurves_ = tuple(
             _realize_curve(source, patch_lookup, curve_lookup, numeric=value)
-            for source, value in zip(
-                source_geometry.pcurves, pcurve_values, strict=True
-            )
+            for source, value in zip(source_geometry.pcurves, pcurve_values, strict=True)
         )
         curve_lookup.update(
             {
@@ -1889,9 +2138,7 @@ class BRepParameterGeometry(StrictModule):
         )
         curves_ = tuple(
             _realize_curve(source, patch_lookup, curve_lookup, numeric=value)
-            for source, value in zip(
-                source_geometry.curves, curve_values, strict=True
-            )
+            for source, value in zip(source_geometry.curves, curve_values, strict=True)
         )
         ranges_ = jnp.asarray(
             source_geometry.edge_ranges if edge_ranges is None else edge_ranges,
@@ -1963,6 +2210,7 @@ class AbstractBoundBRepParameterMap(StrictModule):
     @abstractmethod
     def realize(self, state: DesignState, /) -> BRepParameterGeometry:
         raise NotImplementedError
+
 
 _NUMERIC_SOURCE_ARRAY_FIELDS = frozenset(
     {
@@ -2081,7 +2329,9 @@ class _PatchCoefficientMap(AbstractBRepParameterMap):
         self, context: _ParameterCollector, model: BRepModel, /
     ) -> AbstractBoundBRepParameterMap:
         if model.source_revision != self.model.source_revision:
-            raise ValueError("A patch coefficient map must compile against its declared source.")
+            raise ValueError(
+                "A patch coefficient map must compile against its declared source."
+            )
         geometry = model.geometry
         revision = model.source_revision
         patch_bindings = tuple(
@@ -2234,11 +2484,15 @@ class FixedTopologyBRepRealization(StrictModule):
     ) -> None:
         self.parameter_geometry = parameter_geometry
         self.patches = tuple(patches)
-        self.vertices = None if vertices is None else jnp.asarray(vertices, dtype=jnp.float64)
+        self.vertices = (
+            None if vertices is None else jnp.asarray(vertices, dtype=jnp.float64)
+        )
         self.faces = None if faces is None else jnp.asarray(faces, dtype=jnp.int32)
         self.atlas = atlas
         self.seam_residual = (
-            None if seam_residual is None else jnp.asarray(seam_residual, dtype=jnp.float64).reshape(())
+            None
+            if seam_residual is None
+            else jnp.asarray(seam_residual, dtype=jnp.float64).reshape(())
         )
 
 
@@ -2277,7 +2531,9 @@ def _evaluate_corners(
         else jnp.asarray(triangle_parameters, dtype=jnp.float64)
     )
     if parameters_.shape != model.triangle_parameters.shape:
-        raise ValueError("Dynamic triangle parameters must preserve the source corner rows.")
+        raise ValueError(
+            "Dynamic triangle parameters must preserve the source corner rows."
+        )
     chart_indices = jnp.repeat(model.triangle_face_ids, 3)
     parameters = parameters_.reshape((-1, 2))
     bounds = bounds_[chart_indices]
@@ -2303,9 +2559,7 @@ def evaluate_fixed_topology_mesh(
         if corner_weights is None
         else jnp.asarray(corner_weights, dtype=jnp.float64).reshape((-1,))
     )
-    corners = _evaluate_corners(
-        patches, model, parameter_bounds, triangle_parameters
-    )
+    corners = _evaluate_corners(patches, model, parameter_bounds, triangle_parameters)
     vertex_indices = model.mesh_faces.reshape((-1,))
     if weights.shape != (vertex_indices.shape[0],):
         raise ValueError("corner_weights must contain one entry per triangle corner.")
@@ -2323,9 +2577,7 @@ def _seam_residual(
     parameter_bounds: Array | None = None,
     triangle_parameters: Array | None = None,
 ) -> Array:
-    corners = _evaluate_corners(
-        patches, model, parameter_bounds, triangle_parameters
-    )
+    corners = _evaluate_corners(patches, model, parameter_bounds, triangle_parameters)
     vertex_indices = model.mesh_faces.reshape((-1,))
     reference = jnp.zeros_like(model.mesh_vertices)
     reference = reference.at[vertex_indices].add(corners)
@@ -2412,7 +2664,9 @@ class _FixedTopologyBRepKernel(GeometryKernel):
             None
             if model.tessellation is None
             else TriangleBVH(
-                TriangleMesh(model.mesh_vertices, model.mesh_faces, source_id=model.model_id)
+                TriangleMesh(
+                    model.mesh_vertices, model.mesh_faces, source_id=model.model_id
+                )
             )
         )
 
@@ -2470,20 +2724,26 @@ class _FixedTopologyBRepKernel(GeometryKernel):
     def _parameter_geometry(self, state: DesignState, /) -> BRepParameterGeometry:
         value = self.bound_parameter_map.realize(state)
         if not isinstance(value, BRepParameterGeometry):
-            raise TypeError("A bound BRep parameter map must realize BRepParameterGeometry.")
+            raise TypeError(
+                "A bound BRep parameter map must realize BRepParameterGeometry."
+            )
+        from .._mesh_certificates import _same_tree_content
+
+        # Leaf restoration rebuilds the kernel's and the map's model nodes
+        # separately, so the snapshot is compared by structure and every leaf.
         source = self.model.geometry
         if (
-            value.source_geometry is not source
+            not _same_tree_content(value.source_geometry, source)
             or len(value.source_patches) != len(self.model.patches)
             or any(
-                actual is not expected
+                not _same_tree_content(actual, expected)
                 for actual, expected in zip(
                     value.source_patches, self.model.patches, strict=True
                 )
             )
             or len(value.source_trim_domains) != len(self.model.trim_domains)
             or any(
-                actual is not expected
+                not _same_tree_content(actual, expected)
                 for actual, expected in zip(
                     value.source_trim_domains, self.model.trim_domains, strict=True
                 )
@@ -2537,21 +2797,26 @@ class _FixedTopologyBRepKernel(GeometryKernel):
     def seam_residual(self, state: DesignState, /) -> Array:
         residual = self.realize(state).seam_residual
         if residual is None:
-            raise NotImplementedError("A source-only B-Rep has no tessellated seam residual.")
+            raise NotImplementedError(
+                "A source-only B-Rep has no tessellated seam residual."
+            )
         return residual
 
     def _triangles(self, state: DesignState, /) -> Array:
         realization = self.realize(state)
         if realization.vertices is None or realization.faces is None:
-            raise NotImplementedError("This source-only B-Rep has no triangle realization.")
+            raise NotImplementedError(
+                "This source-only B-Rep has no triangle realization."
+            )
         return realization.vertices[realization.faces]
-
 
     def _nearest_query(
         self, state: DesignState, points: Array, *, k: int
     ) -> tuple[MeshQueryResult, Array, Array]:
         if self.query_bvh is None:
-            raise NotImplementedError("This source-only B-Rep has no tessellated query backend.")
+            raise NotImplementedError(
+                "This source-only B-Rep has no tessellated query backend."
+            )
         points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
@@ -2708,7 +2973,6 @@ class _FixedTopologyBRepKernel(GeometryKernel):
             plan=plan_,
             dtype=bounds.dtype,
         )
-
 
     def sample_boundary(
         self,

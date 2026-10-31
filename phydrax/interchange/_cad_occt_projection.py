@@ -32,7 +32,7 @@ from .._bvh import bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from .._validation import positive_finite_float
 from ..geometry._planar_embedding import PlanarEmbedding
-from ..geometry.brep._assembly import BRepAssemblyUse
+from ..geometry.brep._assembly import BRepAffinePlacement, BRepAssemblyUse
 from ..geometry.brep._model import BRepModel
 from ..geometry.brep._projection_contracts import (
     AbstractBRepProjection,
@@ -256,11 +256,103 @@ def _add_entity_binding(
     return True
 
 
+def _coedge_vertices(geometry: Any, coedge: int, /) -> tuple[int, int]:
+    """Return a native coedge's start and end vertices along its traversal."""
+    first, last = geometry.edge_vertices[geometry.coedge_edges[coedge]]
+    return (first, last) if geometry.coedge_senses[coedge] > 0 else (last, first)
+
+
+def _aligned_wire(
+    model: BRepModel,
+    native_loop: tuple[int, ...],
+    wire_edges: tuple[Any, ...],
+    placement: BRepAffinePlacement | None,
+    occt_modules: Any,
+    /,
+) -> tuple[tuple[Any, Any, Any], ...] | None:
+    """Align one OCCT wire with a native loop up to rotation and reversal.
+
+    The native decoder orients loops about the face normal and may start them
+    anywhere, so the wire's cyclic edge sequence is matched in both directions.
+    Each candidate must reproduce every coedge's start and end vertex at the
+    placed native vertex points; only a unique alignment is accepted.
+    """
+    count = len(native_loop)
+    if count != len(wire_edges) or not count:
+        return None
+    geometry = model.geometry
+    points = np.asarray(geometry.vertex_points, dtype=np.float64)
+    scale = float(model.report.curve_surface_scale)
+    tolerance = max(
+        float(model.report.curve_surface_tolerance),
+        64.0 * float(np.finfo(np.float64).eps) * max(1.0, scale),
+    )
+
+    def placed(vertex: int, /) -> np.ndarray:
+        point = tuple(float(value) for value in points[vertex])
+        if placement is not None:
+            point = tuple(float(value) for value in placement.apply(point))
+        return np.asarray(point, dtype=np.float64)
+
+    def external_point(vertex: Any, /) -> np.ndarray:
+        point = occt_modules.BRep.BRep_Tool.Pnt_s(vertex)
+        return np.asarray((point.X(), point.Y(), point.Z()), dtype=np.float64)
+
+    # Cumulated orientation orders each edge's vertices along the wire.
+    uses = tuple(
+        (
+            edge,
+            occt_modules.TopExp.TopExp.FirstVertex_s(edge, True),
+            occt_modules.TopExp.TopExp.LastVertex_s(edge, True),
+        )
+        for edge in wire_edges
+    )
+    if any(first.IsNull() or last.IsNull() for _, first, last in uses):
+        return None
+    native_ends = tuple(
+        tuple(placed(vertex) for vertex in _coedge_vertices(geometry, coedge))
+        for coedge in native_loop
+    )
+    external_ends = tuple(
+        (external_point(first), external_point(last)) for _, first, last in uses
+    )
+    forward = occt_modules.TopAbs.TopAbs_FORWARD
+    candidates: list[tuple[tuple[Any, Any, Any], ...]] = []
+    for reverse in (False, True):
+        start, end = (1, 0) if reverse else (0, 1)
+        for shift in range(count):
+            order = tuple(
+                (count - 1 - (shift + position)) % count
+                if reverse
+                else (shift + position) % count
+                for position in range(count)
+            )
+            # A reversed traversal flips each coedge's sense against its edge.
+            if all(
+                geometry.coedge_senses[coedge]
+                == (1 if uses[row][0].Orientation() == forward else -1)
+                * (-1 if reverse else 1)
+                and np.max(np.abs(native[0] - external_ends[row][start])) <= tolerance
+                and np.max(np.abs(native[1] - external_ends[row][end])) <= tolerance
+                for coedge, native, row in zip(
+                    native_loop, native_ends, order, strict=True
+                )
+            ):
+                candidates.append(
+                    tuple(
+                        (uses[row][0], uses[row][1 + start], uses[row][1 + end])
+                        for row in order
+                    )
+                )
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _map_face(
     model: BRepModel,
     face_index: int,
     path: tuple[str, ...],
     orientation_sign: int,
+    placement: BRepAffinePlacement | None,
     face: Any,
     faces: tuple[Any, ...],
     edges: tuple[Any, ...],
@@ -296,40 +388,46 @@ def _map_face(
     wires = _explore_all(
         face,
         occt_modules.TopAbs.TopAbs_WIRE,
-        occt_modules.TopoDS.Wire,
+        occt_modules.TopoDS.TopoDS.Wire,
         occt_modules,
     )
     if len(loops) != len(wires):
         return None
     pole_rows: set[int] = set()
-    for native_loop, wire in zip(loops, wires, strict=True):
-        wire_edges = _wire_edges(wire, face, occt_modules)
-        if len(native_loop) != len(wire_edges):
+    unmatched = list(range(len(wires)))
+    for native_loop in loops:
+        matches = [
+            (row, aligned)
+            for row in unmatched
+            if (
+                aligned := _aligned_wire(
+                    model,
+                    native_loop,
+                    _wire_edges(wires[row], face, occt_modules),
+                    placement,
+                    occt_modules,
+                )
+            )
+            is not None
+        ]
+        if len(matches) != 1:
             return None
-        for coedge, edge in zip(native_loop, wire_edges, strict=True):
+        row, aligned_edges = matches[0]
+        unmatched.remove(row)
+        for coedge, (edge, first, last) in zip(native_loop, aligned_edges, strict=True):
             native_edge = geometry.coedge_edges[coedge]
             try:
                 edge_row = shape_index(edges, edge)
             except RuntimeError:
                 return None
-            if bool(occt_modules.BRep_Tool.Degenerated_s(edge)) != (
+            if bool(occt_modules.BRep.BRep_Tool.Degenerated_s(edge)) != (
                 geometry.edge_curves[native_edge] < 0
             ):
                 return None
             if not bind_local(int(BRepEntityDimension.EDGE), native_edge, edge_row):
                 return None
-            native_vertices = geometry.edge_vertices[native_edge]
-            first = occt_modules.TopExp.FirstVertex_s(edge)
-            last = occt_modules.TopExp.LastVertex_s(edge)
-            if first.IsNull() or last.IsNull():
-                return None
-            oriented_vertices = (
-                native_vertices
-                if geometry.coedge_senses[coedge] > 0
-                else (native_vertices[1], native_vertices[0])
-            )
             for native_vertex, external_vertex in zip(
-                oriented_vertices, (first, last), strict=True
+                _coedge_vertices(geometry, coedge), (first, last), strict=True
             ):
                 try:
                     vertex_row = shape_index(vertices, external_vertex)
@@ -360,12 +458,12 @@ def _map_free_edge(
 ) -> dict[tuple[int, int, tuple[str, ...]], int] | None:
     geometry = model.geometry
     edge = edges[external_row]
-    if bool(occt_modules.BRep_Tool.Degenerated_s(edge)) != (
+    if bool(occt_modules.BRep.BRep_Tool.Degenerated_s(edge)) != (
         geometry.edge_curves[source_edge] < 0
     ):
         return None
-    first = occt_modules.TopExp.FirstVertex_s(edge)
-    last = occt_modules.TopExp.LastVertex_s(edge)
+    first = occt_modules.TopExp.TopExp.FirstVertex_s(edge)
+    last = occt_modules.TopExp.TopExp.LastVertex_s(edge)
     if first.IsNull() or last.IsNull():
         return None
     orientation = edge.Orientation()
@@ -447,7 +545,7 @@ def _build_source_mapping(
             external_faces = _explore_all(
                 solid_shape,
                 occt_modules.TopAbs.TopAbs_FACE,
-                occt_modules.TopoDS.Face,
+                occt_modules.TopoDS.TopoDS.Face,
                 occt_modules,
             )
             if len(native_faces) != len(external_faces):
@@ -461,6 +559,7 @@ def _build_source_mapping(
                     native_face,
                     path,
                     sign,
+                    occurrence_by_path[path].placement,
                     external_face,
                     faces,
                     edges,
@@ -498,7 +597,7 @@ def _build_source_mapping(
         for external_face in _explore_all(
             solid,
             occt_modules.TopAbs.TopAbs_FACE,
-            occt_modules.TopoDS.Face,
+            occt_modules.TopoDS.TopoDS.Face,
             occt_modules,
         )
     }
@@ -521,6 +620,7 @@ def _build_source_mapping(
                 native_face,
                 (),
                 1,
+                None,
                 faces[external_face_row],
                 faces,
                 edges,
@@ -551,7 +651,7 @@ def _build_source_mapping(
         for external_edge in _explore_all(
             face,
             occt_modules.TopAbs.TopAbs_EDGE,
-            occt_modules.TopoDS.Edge,
+            occt_modules.TopoDS.TopoDS.Edge,
             occt_modules,
         )
     }
@@ -595,8 +695,8 @@ def _build_source_mapping(
     external_attached_vertices: set[int] = set()
     for edge in edges:
         for external_vertex in (
-            occt_modules.TopExp.FirstVertex_s(edge),
-            occt_modules.TopExp.LastVertex_s(edge),
+            occt_modules.TopExp.TopExp.FirstVertex_s(edge),
+            occt_modules.TopExp.TopExp.LastVertex_s(edge),
         ):
             if external_vertex.IsNull():
                 continue
@@ -723,11 +823,13 @@ def _bound_shape(model: BRepModel, source: str | Path | TopoDS_Shape, /) -> Topo
         raise ValueError(
             "BRepModel source accuracy must be finite and have a positive physical scale before OCCT projection."
         )
+    # The report records the absolute curve-surface tolerance, i.e. the import
+    # policy's relative tolerance times the source scale.
     native_source = model_from_occt_shape(
         shape,
         coordinate_contract=model.coordinate_contract,
         source_id=model.source_id,
-        relative_geometric_tolerance=tolerance,
+        relative_geometric_tolerance=tolerance / scale,
     )
     if native_source.source_revision != model.source_revision:
         raise ValueError(

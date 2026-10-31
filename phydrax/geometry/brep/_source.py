@@ -39,14 +39,13 @@ from .._sampling import (
 from ..design._schema import _ParameterCollector, DesignState
 from ._model import BRepImportReport, BRepModel
 from ._patches import (
-    AbstractSurfacePatch,
     ExactLineCurve,
     ExtrusionSurface,
     LineCurve,
     PlanePatch,
 )
 from ._projection import NativeBRepProjection, prepare_brep_projection
-from ._projection_contracts import BRepProjectionStatus
+from ._projection_contracts import BRepProjectionPolicy, BRepProjectionStatus
 
 
 @jax.custom_jvp
@@ -153,7 +152,6 @@ def _face_area(model: BRepModel, face: int, /) -> float:
 
 
 def _polyhedral_measure(model: BRepModel, /) -> float:
-    geometry = model.geometry
     topology = model.topology
     volumes = []
     for faces, face_signs in zip(
@@ -231,7 +229,18 @@ class BRepSource(GeometrySource):
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
         del context
-        return _BRepKernel(self.model, prepare_brep_projection(self.model))
+        # Containment is exact: only the binary64 resolution of the source scale
+        # counts as boundary, never the projection's default classifier band.
+        scale = max(
+            1.0,
+            float(
+                np.max(np.abs(np.asarray(self.model.geometry.vertex_points)), initial=0.0)
+            ),
+        )
+        policy = BRepProjectionPolicy(
+            classifier_tolerance=256.0 * float(np.finfo(np.float64).eps) * scale
+        )
+        return _BRepKernel(self.model, prepare_brep_projection(self.model, policy=policy))
 
 
 class _BRepKernel(GeometryKernel):
@@ -279,12 +288,16 @@ class _BRepKernel(GeometryKernel):
                     GeometryCapability.INTERIOR_SAMPLING,
                 }
             )
-        if self.model.patches and all(
-            domain is not None and domain.outer is not None and not domain.curve_loops
-            for domain in self.model.trim_domains
-        ) and all(
-            isinstance(curve, (LineCurve, ExactLineCurve))
-            for curve in self.model.geometry.pcurves
+        if (
+            self.model.patches
+            and all(
+                domain is not None and domain.outer is not None and not domain.curve_loops
+                for domain in self.model.trim_domains
+            )
+            and all(
+                isinstance(curve, (LineCurve, ExactLineCurve))
+                for curve in self.model.geometry.pcurves
+            )
         ):
             capabilities.add(GeometryCapability.BOUNDARY_SAMPLING)
         return frozenset(capabilities)
