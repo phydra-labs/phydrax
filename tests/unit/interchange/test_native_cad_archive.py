@@ -3407,6 +3407,8 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
         text=True,
     )
     assert refused_paths.returncode != 0
+    # Identity-determined claims are compared before any proof replay.
+    assert "Stored material coverage differs" in refused_paths.stderr
 
 
 def test_region_boundary_archive_preserves_source_occurrence_identity_cold(

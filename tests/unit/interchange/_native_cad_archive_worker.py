@@ -355,6 +355,7 @@ from phydrax.meshing._hex_generation import extract_volume_hexes
 from phydrax.meshing._hex_schedule import NativeHexGridSchedule
 from phydrax.meshing._lineage import CellMeshTransition, VertexInterpolationStencil
 from phydrax.meshing._model_codec import read_model_artifact, write_model_artifact
+from phydrax.meshing._native_construction import NativeMeshOrganization
 from phydrax.meshing._organization import (
     MeshAttribute,
     MeshLabel,
@@ -6136,6 +6137,21 @@ def _rebuild_continuation_value(
         )
         certification_inputs = None if premises is None else premises[0]
         audit_policy = None if premises is None else premises[1]
+        if value.certification is not None and premises is not None:
+            # Identity-determined claims are compared before any proof replay so a
+            # tampered report is refused without recomputing acceptance.
+            value.certification.require_premises(
+                premises[0],
+                audit_policy=premises[1],
+                organization=NativeMeshOrganization(
+                    boundary=boundary,
+                    patches=patches,
+                    zones=zones,
+                    labels=labels,
+                    attributes=attributes,
+                    associations=associations,
+                ),
+            )
         layer_curving_evidence = (
             None
             if value.layer_curving_evidence is None
@@ -9058,9 +9074,15 @@ def _rebuild_source_coverage_composition(
     if witness is None:
         raise ValueError("Cold source-coverage continuation lost its proof input.")
     report.require_passed()
-    # The restore recomputed this report (and its embedding) from the rebuilt
-    # premises; revalidation reuses that in-hand embedding explicitly.
-    report.revalidate(result.mesh, result.geometry, embedding=report.embedding)
+    # The restore recomputed this report from the rebuilt premises in this
+    # process; replaying it again on the same objects is determined by their
+    # identity, so only the binding to the restored mesh and map is required.
+    report.inputs.require_current(
+        result.mesh,
+        result.geometry,
+        domain=report.inputs.domain,
+        source=report.inputs.source,
+    )
     if report.coverage is None:
         raise ValueError("Cold restricted coverage lost its computed domain certificate.")
     if not isinstance(report.inputs.domain, AnalyticImplicitProfile):
