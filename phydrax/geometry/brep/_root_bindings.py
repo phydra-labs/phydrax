@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, TypeAlias, Union
+from typing import cast, TYPE_CHECKING, TypeAlias, Union
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -376,6 +376,55 @@ def _tspline_spans(
     return spans
 
 
+def _exact_line_extrusion_box(
+    patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
+) -> np.ndarray | None:
+    """Enclose an extruded exact line, an affine map of ``(u, v)``.
+
+    Rational coordinates (such as a box side ``lower + extent`` that no float
+    represents) are evaluated exactly at the four parameter corners, where an
+    affine map takes its extremes, and rounded outward.
+    """
+    from .._rational import fraction_down, fraction_up
+    from ._patches import ExactLineCurve, ExtrusionSurface, LineCurve
+
+    if not isinstance(patch, ExtrusionSurface):
+        return None
+    curve = patch.curve
+    if isinstance(curve, LineCurve):
+        origin, direction = curve.origin_exact, curve.direction_exact
+    elif isinstance(curve, ExactLineCurve):
+        origin = curve.first_exact
+        direction = tuple(
+            last - first
+            for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
+        )
+    else:
+        return None
+    if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+        return None
+    generator = tuple(
+        Fraction.from_float(float(value)) for value in np.asarray(patch.direction)
+    )
+    corners = [
+        (Fraction.from_float(float(u)), Fraction.from_float(float(v)))
+        for u in (lower[0], upper[0])
+        for v in (lower[1], upper[1])
+    ]
+    lower_values: list[float] = []
+    upper_values: list[float] = []
+    for index in range(3):
+        values = [
+            cast(Fraction, origin[index])
+            + u * cast(Fraction, direction[index])
+            + v * generator[index]
+            for u, v in corners
+        ]
+        lower_values.append(fraction_down(min(values)))
+        upper_values.append(fraction_up(max(values)))
+    return np.asarray((lower_values, upper_values), dtype=np.float64)
+
+
 def _patch_box(
     patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
@@ -383,6 +432,7 @@ def _patch_box(
         BSplineSurfacePatch,
         CircleCurve,
         CylinderPatch,
+        ExtrusionSurface,
         RevolutionSurface,
         RuledSurface,
         TorusPatch,
@@ -403,6 +453,10 @@ def _patch_box(
         return _exact_span_surface_box(_tspline_spans(patch), lower, upper)
     if isinstance(patch, CylinderPatch) and not _source_coefficients_are_binary(patch):
         return _exact_cylinder_patch_box(patch, lower, upper)
+    if isinstance(patch, ExtrusionSurface) and not _source_coefficients_are_binary(patch):
+        linear_box = _exact_line_extrusion_box(patch, lower, upper)
+        if linear_box is not None:
+            return linear_box
     from ._model import _bspline_revolution_box
 
     source_box = _bspline_revolution_box(
