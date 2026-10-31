@@ -3300,9 +3300,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
     source = tmp_path / "source-coverage.phx"
     corrupted_directory = tmp_path / "changed-source-coverage-witness"
     corrupted_directory.mkdir()
-    # The worker writes this archive without admission limits (its manifest
-    # carries one association row per mesh entity); read it the same way.
-    manifest, arrays = read_model_archive(source, limits=None)
+    manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
     def find_witness(node: object) -> dict[str, Any] | None:
         if isinstance(node, dict):
@@ -3341,7 +3339,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
         corrupted_directory / "source-coverage.phx",
         manifest=manifest,
         arrays=arrays,
-        limits=None,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [
@@ -3359,7 +3357,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
     assert expected["coverage_region_occurrence_paths"] == [[]]
-    path_manifest, path_arrays = read_model_archive(source, limits=None)
+    path_manifest, path_arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
     def find_coverage_certificate(node: object) -> dict[str, Any] | None:
         if isinstance(node, dict):
@@ -3391,7 +3389,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
         path_directory / "source-coverage.phx",
         manifest=path_manifest,
         arrays=path_arrays,
-        limits=None,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused_paths = subprocess.run(
         [

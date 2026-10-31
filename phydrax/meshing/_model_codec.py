@@ -77,6 +77,7 @@ MODEL_ARCHIVE_LIMITS = ArrayArchiveLimits(max_manifest_nesting=64, max_members=4
 
 def _register_model_archive_types() -> None:
     """Register built-in scientific models supported by the generic recipe codec."""
+    from .._archive_columns import StaticColumnArchiveRecipe, TextColumnArchiveRecipe
     from .._geometry_predicates import PredicateMode
     from .._identity import SemanticProvenance
     from .._model._artifacts import register_artifact_value
@@ -200,6 +201,7 @@ def _register_model_archive_types() -> None:
         EmbeddingCounts,
         MeshCertificateFinding,
         MeshEmbeddingWitness,
+        MeshEmbeddingWitnessArchiveRecipe,
         PeriodicAffineTorusDegreeEvidence,
         PeriodicMappedTorusDegreeEvidence,
         PeriodicRestrictionPartitionEvidence,
@@ -302,6 +304,7 @@ def _register_model_archive_types() -> None:
     from ..geometry.surface._contracts import (
         SurfaceInterface,
         SurfaceMetadata,
+        SurfaceMetadataArchiveRecipe,
         SurfaceOrientationRepair,
         SurfaceSelection,
     )
@@ -335,6 +338,7 @@ def _register_model_archive_types() -> None:
     from ..linalg._spaces import ArraySpace, ArraySpaceArchiveRecipe
     from ..meshing._association import (
         GeometryAssociation,
+        GeometryAssociationArchiveRecipe,
         GeometryAssociationKind,
         GeometryAssociationProvenance,
         GeometrySourceEntityRole,
@@ -660,6 +664,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", CellMeshAuditReport),
         ("phydrax.geometry.surface", SurfaceInterface),
         ("phydrax.geometry.surface", SurfaceMetadata),
+        ("phydrax.geometry.surface", SurfaceMetadataArchiveRecipe),
         ("phydrax.geometry.surface", SurfaceModel),
         ("phydrax.geometry.surface", SurfaceOrientationRepair),
         ("phydrax.geometry.surface", SurfaceSelection),
@@ -710,6 +715,9 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing.internal", OwnerLocalPeriodicSizeStatistic),
         ("phydrax.geometry", MeshCertificateFinding),
         ("phydrax.geometry", MeshEmbeddingWitness),
+        ("phydrax.geometry", MeshEmbeddingWitnessArchiveRecipe),
+        ("phydrax.model.archive", StaticColumnArchiveRecipe),
+        ("phydrax.model.archive", TextColumnArchiveRecipe),
         ("phydrax.geometry", PreparedCommonRefinement),
         ("phydrax.geometry", EulerianVolumeOverlapChain),
         ("phydrax.geometry", EulerianVolumeOverlapMap),
@@ -751,6 +759,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", VolumeFillStrategy),
         ("phydrax.meshing", VolumeMeshingSpec),
         ("phydrax.meshing", GeometryAssociation),
+        ("phydrax.meshing", GeometryAssociationArchiveRecipe),
         ("phydrax.meshing", GeometryAssociationKind),
         ("phydrax.meshing", GeometryAssociationProvenance),
         ("phydrax.meshing", GeometrySourceEntityRole),

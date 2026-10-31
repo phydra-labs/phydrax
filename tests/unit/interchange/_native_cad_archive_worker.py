@@ -354,7 +354,11 @@ from phydrax.meshing._hex_cut_preparation import (
 from phydrax.meshing._hex_generation import extract_volume_hexes
 from phydrax.meshing._hex_schedule import NativeHexGridSchedule
 from phydrax.meshing._lineage import CellMeshTransition, VertexInterpolationStencil
-from phydrax.meshing._model_codec import read_model_artifact, write_model_artifact
+from phydrax.meshing._model_codec import (
+    MODEL_ARCHIVE_LIMITS,
+    read_model_artifact,
+    write_model_artifact,
+)
 from phydrax.meshing._native_construction import NativeMeshOrganization
 from phydrax.meshing._organization import (
     MeshAttribute,
@@ -9016,7 +9020,9 @@ def _source_coverage_composition(
 def _write_source_coverage_artifact(directory: Path, /) -> None:
     source, result = _source_coverage_archive_fixture()
     composition = _source_coverage_composition(source, result)
-    write_model_artifact(directory / "source-coverage.phx", composition, limits=None)
+    write_model_artifact(
+        directory / "source-coverage.phx", composition, limits=MODEL_ARCHIVE_LIMITS
+    )
     report = result.certification
     if report is None or report.inputs.source_coverage_witness is None:
         raise ValueError("Restricted coverage report omitted its witness.")
@@ -9150,7 +9156,7 @@ def _read_source_coverage_artifact(
         directory / "source-coverage.phx",
         expected_type=Composition,
         restore=lambda value: _rebuild_source_coverage_composition(value, expected),
-        limits=None,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     if composition.composition_id != expected["composition_id"]:
         raise ValueError("Cold source-coverage Composition identity changed.")

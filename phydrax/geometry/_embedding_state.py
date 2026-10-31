@@ -6,10 +6,16 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import final, Literal
+from typing import final, Literal, NamedTuple
 
 import equinox as eqx
+import numpy as np
 
+from .._archive_columns import (
+    integer_column,
+    integer_column_values,
+    TextColumnArchiveRecipe,
+)
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -161,6 +167,47 @@ class MeshEmbeddingWitness(StrictModule, NonTrainableState):
             witness.exact_values,
         )
         if renewed.witness_id != witness.witness_id:
+            raise ValueError("Stored mesh-embedding witness identity is malformed.")
+        return renewed
+
+
+class MeshEmbeddingWitnessArchiveRecipe(NamedTuple):
+    """Archive form of an embedding witness with its per-entity rows as arrays.
+
+    Entity IDs are one int64 array and exact values one UTF-8 text column, so a
+    witness over every mesh entity does not put one manifest node per row.
+    :meth:`restore` rebuilds through the constructor and requires the stored
+    witness identity.
+    """
+
+    theorem: str
+    premise_ids: tuple[str, ...]
+    entity_ids: np.ndarray
+    exact_values: TextColumnArchiveRecipe
+    witness_id: str
+
+    @classmethod
+    def from_witness(
+        cls, witness: MeshEmbeddingWitness, /
+    ) -> MeshEmbeddingWitnessArchiveRecipe:
+        if type(witness) is not MeshEmbeddingWitness:
+            raise TypeError("witness must be MeshEmbeddingWitness.")
+        return cls(
+            witness.theorem,
+            witness.premise_ids,
+            integer_column(witness.entity_ids),
+            TextColumnArchiveRecipe.encode(witness.exact_values),
+            witness.witness_id,
+        )
+
+    def restore(self) -> MeshEmbeddingWitness:
+        renewed = MeshEmbeddingWitness(
+            self.theorem,
+            self.premise_ids,
+            integer_column_values(self.entity_ids),
+            self.exact_values.decode(),
+        )
+        if renewed.witness_id != self.witness_id:
             raise ValueError("Stored mesh-embedding witness identity is malformed.")
         return renewed
 
@@ -810,6 +857,7 @@ __all__ = [
     "MeshCertificateEntityKind",
     "MeshCertificateFinding",
     "MeshEmbeddingWitness",
+    "MeshEmbeddingWitnessArchiveRecipe",
     "MeshFindingStatus",
     "PeriodicAffineTorusDegreeEvidence",
     "PeriodicMappedTorusDegreeEvidence",
