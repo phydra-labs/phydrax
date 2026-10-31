@@ -1719,6 +1719,71 @@ void test_recover_plc_publishes_a_single_region_tetrahedron() {
   PHX_CHECK(result.witnesses.size() == 4);
 }
 
+// A unit-square prism whose top facet lies on z = 1 + 0.1 x + 0.3 y: its six
+// correctly rounded top vertices are not exactly coplanar, so only the
+// declared plane groups the six top triangles (their five internal diagonals
+// stop being PLC edges). Each vertex is admitted by its rounding box alone;
+// a vertex lifted by 1e-6 is refused unless the tolerance covers it.
+void test_declared_facet_plane_groups_rounded_triangles() {
+  std::array<double, 30> points{
+      0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+      0, 0, 0x1.0p+0, 1, 0, 0x1.199999999999ap+0, 1, 1, 0x1.6666666666666p+0,
+      0, 1, 0x1.4cccccccccccdp+0, 0.5, 0.5, 0x1.3333333333333p+0,
+      0x1.3333333333333p-2, 0x1.6666666666666p-1, 0x1.3d70a3d70a3d7p+0};
+  const std::array<int64_t, 12> offsets{0, 4, 8, 12, 16, 20, 23, 26, 29, 32, 35, 38};
+  const std::array<int32_t, 38> vertices{0, 3, 2, 1, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6,
+                                         3, 0, 4, 7, 4, 5, 8, 5, 6, 8, 6, 7, 9, 7, 4, 9,
+                                         6, 9, 8, 4, 8, 9};
+  const std::array<int32_t, 11> polygon_facets{0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5};
+  const std::array<int32_t, 12> facet_regions{-1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0};
+  std::array<double, 54> planes{};
+  planes.fill(std::numeric_limits<double>::quiet_NaN());
+  const std::array<double, 9> top{0, 0, 1, 1, 0, 0.1, 0, 1, 0.3};
+  std::copy(top.begin(), top.end(), planes.begin() + 45);
+  PlcInput input;
+  input.point_count = 10;
+  input.points = points.data();
+  input.polygon_count = 11;
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = vertices.data();
+  input.polygon_facets = polygon_facets.data();
+  input.facet_count = 6;
+  input.facet_regions = facet_regions.data();
+  input.policy = BoundaryPolicy::kFixed;
+
+  PlcRecovery undeclared;
+  PHX_CHECK(prepare_plc_source(input, undeclared) == PHX_MC_OK);
+  PHX_CHECK(undeclared.plc_edges.size() == 2 * 17);
+  input.facet_planes = planes.data();
+  PlcRecovery declared;
+  PHX_CHECK(prepare_plc_source(input, declared) == PHX_MC_OK);
+  PHX_CHECK(declared.plc_edges.size() == 2 * 12);
+  PlcRecovery recovered;
+  PHX_CHECK(recover_plc(input, recovered) == PHX_MC_OK);
+  PHX_CHECK(recovered.points.size() == points.size());
+  PHX_CHECK(recovered.segments.size() == 2 * 12);
+
+  points[29] += 1e-6;
+  PlcRecovery refused;
+  PHX_CHECK(recover_plc(input, refused) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(refused.failure.reason == kPlcSourceDeviation);
+  PHX_CHECK(refused.failure.first_kind == kPlcFacet && refused.failure.first == 5);
+  PHX_CHECK(refused.failure.second_kind == kPlcPoint && refused.failure.second == 9);
+  PHX_CHECK(refused.source_refusal.certified_deviation > 9.5e-7 &&
+            refused.source_refusal.certified_deviation < 9.6e-7);
+  const std::array<double, 6> tolerances{0, 0, 0, 0, 0, 1e-5};
+  input.facet_plane_tolerances = tolerances.data();
+  PlcRecovery tolerated;
+  PHX_CHECK(recover_plc(input, tolerated) == PHX_MC_OK);
+
+  planes[52] = 0.0;
+  planes[51] = 0.0;
+  planes[53] = 0.0;  // second axis (0, 0, 0): no plane
+  PlcRecovery invalid;
+  PHX_CHECK(prepare_plc_source(input, invalid) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(invalid.failure.reason == kPlcSourceDeviation && invalid.failure.first == 5);
+}
+
 void test_recover_fixed_triangulated_planar_facets() {
   const std::array<double, 24> points{
       0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0,
@@ -2610,6 +2675,7 @@ int main() {
   test_incremental_point_slot_reindexes_corners_and_rolls_back();
   test_external_cavity_replacement_reseeds_incremental_locate();
   test_recover_plc_publishes_a_single_region_tetrahedron();
+  test_declared_facet_plane_groups_rounded_triangles();
   test_recover_fixed_triangulated_planar_facets();
   test_recover_fixed_warped_facet_edge_without_steiner();
   test_recover_fixed_non_delaunay_internal_facet_without_split();

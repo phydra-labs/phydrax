@@ -1194,8 +1194,9 @@ def generate_plc_volume(
         else NativePlcBoundaryPolicy.CONFORMING
     )
     # Native source preparation owns polygon loops and omits grouped coplanar
-    # internal diagonals. Only authored segments and requested curve features
-    # are passed as explicit 1D constraints.
+    # internal diagonals, and those of declared-plane facets whatever their
+    # rounding. Only authored segments and requested curve features are
+    # passed as explicit 1D constraints.
     recovery = recover_plc_3d(
         complex_.vertices,
         complex_.polygon_offsets,
@@ -1208,6 +1209,8 @@ def generate_plc_volume(
         facet_tolerances=facet_tolerances,
         segment_tolerances=active_segment_tolerances,
         boundary_policy=native_boundary_policy,
+        facet_planes=complex_.facet_planes,
+        facet_plane_tolerances=complex_.facet_plane_tolerances,
     )
     tables = _source_tables(complex_, specification, recovery)
     if complex_.geometry is not None and source_domain is None:

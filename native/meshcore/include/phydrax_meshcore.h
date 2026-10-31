@@ -1135,6 +1135,14 @@ typedef struct phx_mc_plc3d_prepare_source_request {
   int32_t boundary_policy;
   const double* facet_tolerances;
   const double* segment_tolerances;
+  /* Optional declared exact facet planes: 9 values per facet (origin, first
+   * axis, second axis; an all-NaN row declares none) and their tolerances
+   * (facet_count values; null = 0). A declared facet's triangles form one
+   * group whatever their rounding once every vertex is admitted (the plane
+   * meets its rounding box or lies within the tolerance), else the facet
+   * refuses with SOURCE_DEVIATION naming the vertex. */
+  const double* facet_planes;
+  const double* facet_plane_tolerances;
   phx_mc_plc3d_result** result;
 } phx_mc_plc3d_prepare_source_request;
 PHX_MC_API int32_t phx_mc_plc3d_prepare_source(
@@ -1167,11 +1175,12 @@ PHX_MC_API int32_t phx_mc_plc3d_failure(
     const phx_mc_plc3d_result* result, int32_t* reason, int32_t* first_kind,
     int64_t* first, int32_t* second_kind, int64_t* second, double* certified_deviation,
     double* declared_bound);
-// Steiner-suppression search evidence: values[0..8] = wedges searched,
+// Steiner-suppression search evidence: values[0..11] = wedges searched,
 // wedges filled, states expanded, most states in one wedge, largest searched
 // wedge (cells), wedges filled after merging with neighbouring cells, most
 // merged layers, wedges whose region was exhausted unfilled, largest
-// exhausted region (cells). Available after a refusal too.
+// exhausted region (cells), constrained Delaunay wraps run, cells they laid,
+// most cells laid by one wrap. Available after a refusal too.
 PHX_MC_API int32_t phx_mc_plc3d_suppression_search(
     const phx_mc_plc3d_result* result, int64_t* values);
 PHX_MC_API void phx_mc_plc3d_free(phx_mc_plc3d_result* result);
