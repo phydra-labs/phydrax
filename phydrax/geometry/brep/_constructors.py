@@ -51,6 +51,13 @@ from ._patches import (
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
 )
+from ._profile_certificate import (
+    arc_pieces,
+    bspline_pieces,
+    bspline_turn_terms,
+    certify_profile_contacts,
+    line_piece,
+)
 from ._root_bindings import BRepConicVertex, BRepVertexRoot
 
 
@@ -365,7 +372,11 @@ class PlanarProfile:
             gap_rows = tuple(
                 rows
                 if normalized[index] is original_loops[index]
-                else tuple((last, first) for first, last in reversed(rows))
+                else tuple(
+                    (rows[(len(rows) - edge - 2) % len(rows)][1],
+                     rows[(len(rows) - edge - 2) % len(rows)][0])
+                    for edge in range(len(rows))
+                )
                 for index, rows in enumerate(gap_rows)
             )
             object.__setattr__(self, "endpoint_gap_bounds", gap_rows)
@@ -722,12 +733,17 @@ def _polygon_area(loop: ProfileLoop, /) -> Fraction:
     )
 
 
-def _profile_bspline_domain(
+def _profile_bspline_controls(
     curve: BSplineCurve,
     start: tuple[float, float],
     end: tuple[float, float],
     /,
-) -> tuple[float, float]:
+) -> tuple[
+    tuple[tuple[Fraction, ...], ...],
+    tuple[Fraction, ...],
+    tuple[Fraction, ...],
+]:
+    """Exact controls and endpoint chord of one clamped profile B-spline."""
     if curve.ambient_dimension != 2:
         raise ValueError(
             "Planar profile B-splines must have two-dimensional control points."
@@ -751,9 +767,34 @@ def _profile_bspline_domain(
             "Profile B-spline boundary controls must match declared vertices exactly."
         )
     delta = tuple(b - a for a, b in zip(exact_start, exact_end, strict=True))
-    axis = max(range(2), key=lambda index: abs(delta[index]))
-    if delta[axis] == 0:
+    if delta[0] == 0 and delta[1] == 0:
         raise ValueError("Profile B-spline endpoints must be distinct.")
+    return controls, exact_start, delta
+
+
+def _profile_bspline_is_straight(
+    curve: BSplineCurve,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    /,
+) -> bool:
+    """Whether every control lies exactly on the endpoint chord."""
+    controls, exact_start, delta = _profile_bspline_controls(curve, start, end)
+    return all(
+        (point[0] - exact_start[0]) * delta[1] - (point[1] - exact_start[1]) * delta[0]
+        == 0
+        for point in controls
+    )
+
+
+def _profile_bspline_domain(
+    curve: BSplineCurve,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    /,
+) -> tuple[float, float]:
+    controls, exact_start, delta = _profile_bspline_controls(curve, start, end)
+    axis = max(range(2), key=lambda index: abs(delta[index]))
     previous = Fraction(0)
     for point in controls:
         offset = tuple(point[i] - exact_start[i] for i in range(2))
@@ -767,14 +808,25 @@ def _profile_bspline_domain(
                 "Profile B-spline controls must be ordered along their endpoint line."
             )
         previous = fraction
-    return first, last
+    return curve.parameter_domain
 
 
 def _profile_loop_is_polygon(loop: ProfileLoop, /) -> bool:
+    """Classify loops whose every segment is an exact chord.
+
+    A curved B-spline makes the loop non-polygonal; it is not a refusal here.
+    A straight B-spline must also be monotone along its chord to be a polygon
+    edge, which ``_profile_bspline_domain`` certifies.
+    """
     return all(
         isinstance(segment, ProfileLine)
         or (
             isinstance(segment, BSplineCurve)
+            and _profile_bspline_is_straight(
+                segment,
+                loop.vertices[index],
+                loop.vertices[(index + 1) % len(loop.vertices)],
+            )
             and bool(
                 _profile_bspline_domain(
                     segment,
@@ -791,7 +843,9 @@ def _reverse_loop(loop: ProfileLoop, /) -> ProfileLoop:
     count = len(loop.vertices)
     segments = []
     for index in range(count):
-        source = loop.segments[(count - index - 1) % count]
+        # Reversed vertex k is source vertex n-1-k, so reversed segment k
+        # (vertex k to k+1) is source segment n-2-k traversed backward.
+        source = loop.segments[(count - index - 2) % count]
         if isinstance(source, ProfileLine):
             segments.append(ProfileLine())
         elif isinstance(source, ProfileArc):
@@ -869,8 +923,12 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
     for index in range(len(loop.segments)):
         curve, first, last = _segment_curve(loop, index)
         tangent_pairs.append((_unit_tangent(curve, first), _unit_tangent(curve, last)))
-        if isinstance(curve, (LineCurve, BSplineCurve)):
+        if isinstance(curve, LineCurve):
             intrinsic_turns.append(0.0)
+            continue
+        if isinstance(curve, BSplineCurve):
+            # Exact hodograph turns; a straight spline contributes zero.
+            intrinsic_turns.extend(bspline_turn_terms(curve))
             continue
         first_axis = np.asarray(curve.first_axis, dtype=np.float64)
         second_axis = np.asarray(curve.second_axis, dtype=np.float64)
@@ -1024,7 +1082,10 @@ def _segment_curve(
             1.0,
         )
     if isinstance(segment, BSplineCurve):
-        first, last = _profile_bspline_domain(segment, start, end)
+        if _profile_bspline_is_straight(segment, start, end):
+            first, last = _profile_bspline_domain(segment, start, end)
+        else:
+            first, last = segment.parameter_domain
         return segment, first, last
     if isinstance(segment, ProfileArc):
         first, last = _arc_range(start, end, segment.center, segment.counterclockwise)
@@ -1333,6 +1394,9 @@ def _profile_edge(
             LineCurve(start, np.subtract(end, start)), 0.0, 1.0, start, end, 0.0, 0.0
         )
     if isinstance(segment, BSplineCurve):
+        if not _profile_bspline_is_straight(segment, start, end):
+            first, last = segment.parameter_domain
+            return _ProfileEdge(segment, first, last, start, end, 0.0, 0.0)
         _profile_bspline_domain(segment, start, end)
         return _ProfileEdge(
             LineCurve(start, np.subtract(end, start)),
@@ -1690,9 +1754,14 @@ def _curved_loop_is_simple(loop: ProfileLoop, /) -> bool:
         (_fraction(point[0]), _fraction(point[1])) for point in loop.vertices
     )
     count = len(edges)
+    splines = any(isinstance(edge.pcurve, BSplineCurve) for edge in edges)
     for first_index in range(count):
         for second_index in range(first_index + 1, count):
             first, second = edges[first_index], edges[second_index]
+            if isinstance(first.pcurve, BSplineCurve) or isinstance(
+                second.pcurve, BSplineCurve
+            ):
+                continue
             shared = frozenset(
                 vertices[index]
                 for index in (first_index, (first_index + 1) % count)
@@ -1714,6 +1783,28 @@ def _curved_loop_is_simple(loop: ProfileLoop, /) -> bool:
                 return False
             if contact:
                 return False
+    if splines:
+        pieces = []
+        for edge in edges:
+            if isinstance(edge.pcurve, BSplineCurve):
+                pieces.append(bspline_pieces(edge.pcurve))
+            elif isinstance(edge.pcurve, LineCurve):
+                pieces.append(line_piece(edge.start, edge.end))
+            elif isinstance(edge.pcurve, CircleCurve):
+                pieces.append(
+                    arc_pieces(
+                        tuple(float(value) for value in np.asarray(edge.pcurve.center)),
+                        float(edge.pcurve.radius),
+                        edge.start,
+                        edge.end,
+                        edge.turn > 0,
+                        edge.last - edge.first,
+                    )
+                )
+            else:
+                return False
+        # Pairs with a B-spline piece are decided or refused here.
+        certify_profile_contacts(pieces)
     return True
 
 

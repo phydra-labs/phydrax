@@ -48,17 +48,6 @@ class _Atom:
     owner: str
 
 
-@dataclass(frozen=True, slots=True)
-class _Face:
-    key: FaceKey
-    normal_axis: int
-    normal_sign: int
-    first_axis: int
-    second_axis: int
-    lower: Point
-    upper: Point
-
-
 def _fraction_point(value: np.ndarray, /) -> Point:
     return (
         Fraction.from_float(float(value[0])),
@@ -353,27 +342,6 @@ def _face_axes(axis: int, sign: int, /) -> tuple[int, int]:
             raise ValueError("A box face normal requires one axis and an oriented sign.")
 
 
-def _face_corners(face: _Face, /) -> tuple[Point, Point, Point, Point]:
-    axis, fixed, _, _, _, _ = face.key
-    lower = list(face.lower)
-    upper = list(face.upper)
-    lower[axis] = fixed
-    upper[axis] = fixed
-    first, second = face.first_axis, face.second_axis
-    values: list[Point] = []
-    for first_upper, second_upper in (
-        (False, False),
-        (True, False),
-        (True, True),
-        (False, True),
-    ):
-        point = list(lower)
-        point[first] = upper[first] if first_upper else lower[first]
-        point[second] = upper[second] if second_upper else lower[second]
-        values.append((point[0], point[1], point[2]))
-    return values[0], values[1], values[2], values[3]
-
-
 def _source_face_key(model: BRepModel, face_index: int, /) -> FaceKey:
     geometry = model.geometry
     vertex_ids = {
@@ -623,57 +591,296 @@ def _arrangement(plan: BRepPartitionPlan, /) -> tuple[tuple[_Atom, ...], dict[st
     return tuple(atoms), operand_boxes
 
 
+def _replace(point: Point, axis: int, value: Fraction, /) -> Point:
+    values = list(point)
+    values[axis] = value
+    return values[0], values[1], values[2]
+
+
+def _cell_key(lower: Point, upper: Point, axis: int, /) -> FaceKey:
+    first, second = (value for value in range(3) if value != axis)
+    return axis, lower[axis], lower[first], upper[first], lower[second], upper[second]
+
+
+def _point_in_face(point: Point, key: FaceKey, /) -> bool:
+    axis, fixed, lower_first, upper_first, lower_second, upper_second = key
+    first, second = (value for value in range(3) if value != axis)
+    return (
+        point[axis] == fixed
+        and lower_first <= point[first] <= upper_first
+        and lower_second <= point[second] <= upper_second
+    )
+
+
+def _segment_axis(segment: tuple[Point, Point], /) -> int:
+    start, end = segment
+    return next(axis for axis in range(3) if start[axis] != end[axis])
+
+
+def _union_find(count: int, pairs: list[tuple[int, int]], /) -> list[int]:
+    parent = list(range(count))
+
+    def find(index: int, /) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for first, second in pairs:
+        first_root, second_root = find(first), find(second)
+        if first_root != second_root:
+            parent[max(first_root, second_root)] = min(first_root, second_root)
+    return [find(index) for index in range(count)]
+
+
+@dataclass(frozen=True, slots=True)
+class _RegionFace:
+    """One maximal planar face separating two different region solids."""
+
+    axis: int
+    sign: int
+    first_axis: int
+    second_axis: int
+    coordinate: Fraction
+    negative_solid: int | None
+    positive_solid: int | None
+    cells: tuple[FaceKey, ...]
+    loops: tuple[tuple[tuple[Point, Point], ...], ...]
+    origin: Point
+
+
+@dataclass(frozen=True, slots=True)
+class _PartitionLayout:
+    """Exact atom-to-region-solid and grid-cell-to-face lineage of one partition."""
+
+    solid_atoms: tuple[tuple[int, ...], ...]
+    solid_owners: tuple[str, ...]
+    face_cells: tuple[tuple[FaceKey, ...], ...]
+    edge_segments: tuple[tuple[tuple[Point, Point], ...], ...]
+
+
+def _region_solids(
+    atoms: tuple[_Atom, ...], rank: dict[str, int], /
+) -> tuple[tuple[int, ...], ...]:
+    """Group atoms into face-connected components of one owning region."""
+    by_lower = {atom.bounds[0]: index for index, atom in enumerate(atoms)}
+    pairs: list[tuple[int, int]] = []
+    for index, atom in enumerate(atoms):
+        lower, upper = atom.bounds
+        for axis in range(3):
+            neighbor = by_lower.get(_replace(lower, axis, upper[axis]))
+            if neighbor is not None and atoms[neighbor].owner == atom.owner:
+                pairs.append((index, neighbor))
+    roots = _union_find(len(atoms), pairs)
+    components: dict[int, list[int]] = {}
+    for index, root in enumerate(roots):
+        components.setdefault(root, []).append(index)
+    return tuple(
+        sorted(
+            (tuple(indices) for indices in components.values()),
+            key=lambda indices: (
+                rank[atoms[indices[0]].owner],
+                min(atoms[index].bounds for index in indices),
+            ),
+        )
+    )
+
+
+def _face_loops(
+    cells: tuple[tuple[Point, Point], ...],
+    first_axis: int,
+    second_axis: int,
+    /,
+) -> tuple[tuple[tuple[Point, Point], ...], ...]:
+    """Trace the cancelled directed boundary of edge-connected grid rectangles."""
+    directed: set[tuple[Point, Point]] = set()
+    for lower, upper in cells:
+        first_corner = _replace(lower, first_axis, upper[first_axis])
+        corners = (
+            lower,
+            first_corner,
+            _replace(first_corner, second_axis, upper[second_axis]),
+            _replace(lower, second_axis, upper[second_axis]),
+        )
+        for index, start in enumerate(corners):
+            end = corners[(index + 1) % 4]
+            if (end, start) in directed:
+                directed.remove((end, start))
+            else:
+                directed.add((start, end))
+    successor: dict[Point, Point] = {}
+    for start, end in directed:
+        if start in successor:
+            raise NotImplementedError(
+                "Native box partition region faces must not pinch at a vertex."
+            )
+        successor[start] = end
+    loops: list[tuple[tuple[Point, Point], ...]] = []
+    areas: list[Fraction] = []
+    while successor:
+        start = min(successor)
+        point = start
+        loop: list[tuple[Point, Point]] = []
+        area = Fraction(0)
+        while True:
+            following = successor.pop(point)
+            loop.append((point, following))
+            area += (
+                point[first_axis] * following[second_axis]
+                - following[first_axis] * point[second_axis]
+            )
+            point = following
+            if point == start:
+                break
+        loops.append(tuple(loop))
+        areas.append(area)
+    outer = [index for index, area in enumerate(areas) if area > 0]
+    if len(outer) != 1 or any(area == 0 for area in areas):
+        raise NotImplementedError(
+            "Native box partition region faces need one outer loop and inner holes."
+        )
+    return (loops[outer[0]],) + tuple(
+        loop for index, loop in enumerate(loops) if index != outer[0]
+    )
+
+
+def _region_faces(
+    atoms: tuple[_Atom, ...],
+    solid_atoms: tuple[tuple[int, ...], ...],
+    /,
+) -> tuple[_RegionFace, ...]:
+    """Merge differently owned grid rectangles into maximal planar region faces."""
+    solid_of = {
+        atom_index: solid
+        for solid, indices in enumerate(solid_atoms)
+        for atom_index in indices
+    }
+    by_lower = {atom.bounds[0]: index for index, atom in enumerate(atoms)}
+    by_upper = {atom.bounds[1]: index for index, atom in enumerate(atoms)}
+    groups: dict[
+        tuple[int, Fraction, int | None, int | None], set[tuple[Point, Point]]
+    ] = {}
+    for index, atom in enumerate(atoms):
+        lower, upper = atom.bounds
+        solid = solid_of[index]
+        for axis in range(3):
+            for sign in (-1, 1):
+                if sign > 0:
+                    coordinate = upper[axis]
+                    neighbor = by_lower.get(_replace(lower, axis, coordinate))
+                else:
+                    coordinate = lower[axis]
+                    neighbor = by_upper.get(_replace(upper, axis, coordinate))
+                neighbor_solid = None if neighbor is None else solid_of[neighbor]
+                if neighbor_solid == solid:
+                    continue
+                negative, positive = (
+                    (solid, neighbor_solid) if sign > 0 else (neighbor_solid, solid)
+                )
+                groups.setdefault((axis, coordinate, negative, positive), set()).add(
+                    (_replace(lower, axis, coordinate), _replace(upper, axis, coordinate))
+                )
+    faces: list[_RegionFace] = []
+    for (axis, coordinate, negative, positive), cell_set in sorted(
+        groups.items(),
+        key=lambda item: (
+            item[0][0],
+            item[0][1],
+            -1 if item[0][2] is None else item[0][2],
+            -1 if item[0][3] is None else item[0][3],
+        ),
+    ):
+        cells = tuple(sorted(cell_set))
+        cell_by_lower = {lower: index for index, (lower, _) in enumerate(cells)}
+        in_plane = tuple(value for value in range(3) if value != axis)
+        pairs = [
+            (index, neighbor)
+            for index, (lower, upper) in enumerate(cells)
+            for planar_axis in in_plane
+            if (
+                neighbor := cell_by_lower.get(
+                    _replace(lower, planar_axis, upper[planar_axis])
+                )
+            )
+            is not None
+        ]
+        roots = _union_find(len(cells), pairs)
+        components: dict[int, list[tuple[Point, Point]]] = {}
+        for index, root in enumerate(roots):
+            components.setdefault(root, []).append(cells[index])
+        sign = 1 if negative is not None else -1
+        first_axis, second_axis = _face_axes(axis, sign)
+        for component in sorted(components.values()):
+            component_cells = tuple(component)
+            origin = _replace(
+                _replace(
+                    component_cells[0][0],
+                    first_axis,
+                    min(lower[first_axis] for lower, _ in component_cells),
+                ),
+                second_axis,
+                min(lower[second_axis] for lower, _ in component_cells),
+            )
+            faces.append(
+                _RegionFace(
+                    axis,
+                    sign,
+                    first_axis,
+                    second_axis,
+                    coordinate,
+                    negative,
+                    positive,
+                    tuple(_cell_key(lower, upper, axis) for lower, upper in component),
+                    _face_loops(component_cells, first_axis, second_axis),
+                    origin,
+                )
+            )
+    return tuple(faces)
+
+
 def _build_model(
     atoms: tuple[_Atom, ...],
     plan: BRepPartitionPlan,
     tessellation: BRepTessellationPolicy | None,
     /,
-) -> tuple[BRepModel, tuple[FaceKey, ...]]:
-    faces: dict[FaceKey, _Face] = {}
-    atom_face_keys: list[list[tuple[FaceKey, int]]] = []
-    for atom in atoms:
-        lower, upper = atom.bounds
-        entries: list[tuple[FaceKey, int]] = []
-        for axis in range(3):
-            for sign in (-1, 1):
-                fixed = lower[axis] if sign < 0 else upper[axis]
-                first_axis, second_axis = _face_axes(axis, sign)
-                points: list[Point] = []
-                for first_upper, second_upper in (
-                    (False, False),
-                    (True, False),
-                    (True, True),
-                    (False, True),
-                ):
-                    point = list(lower)
-                    point[axis] = fixed
-                    point[first_axis] = (
-                        upper[first_axis] if first_upper else lower[first_axis]
-                    )
-                    point[second_axis] = (
-                        upper[second_axis] if second_upper else lower[second_axis]
-                    )
-                    points.append((point[0], point[1], point[2]))
-                key = _face_key(tuple(points))
-                if key not in faces:
-                    faces[key] = _Face(
-                        key, axis, sign, first_axis, second_axis, lower, upper
-                    )
-                entries.append((key, sign))
-        atom_face_keys.append(entries)
+) -> tuple[BRepModel, _PartitionLayout]:
+    rank = {name: index for index, name in enumerate(plan.policy.region_precedence)}
+    solid_atoms = _region_solids(atoms, rank)
+    faces = _region_faces(atoms, solid_atoms)
+
+    segment_faces: dict[tuple[Point, Point], set[int]] = {}
+    point_segments: dict[Point, set[tuple[Point, Point]]] = {}
+    for face_id, face in enumerate(faces):
+        for loop in face.loops:
+            for start, end in loop:
+                key = (start, end) if start < end else (end, start)
+                segment_faces.setdefault(key, set()).add(face_id)
+                point_segments.setdefault(start, set()).add(key)
+                point_segments.setdefault(end, set()).add(key)
+
+    def is_vertex(point: Point, /) -> bool:
+        # Collinear grid segments merge into one edge only through a degree-two
+        # point whose two segments bound exactly the same faces.
+        segments = point_segments[point]
+        if len(segments) != 2:
+            return True
+        first, second = segments
+        return (
+            _segment_axis(first) != _segment_axis(second)
+            or segment_faces[first] != segment_faces[second]
+        )
 
     vertices: list[Point] = []
     vertex_index: dict[Point, int] = {}
     curves: list[ExactLineCurve] = []
-    edge_ranges: list[tuple[float, float]] = []
     edge_vertices: list[tuple[int, int]] = []
+    edge_segments: list[tuple[tuple[Point, Point], ...]] = []
     edge_index: dict[tuple[Point, Point], int] = {}
     pcurves: list[ExactLineCurve] = []
     coedge_edges: list[int] = []
     coedge_senses: list[int] = []
     face_loops: list[tuple[tuple[int, ...], ...]] = []
-    face_keys = tuple(faces)
-    face_index = {key: index for index, key in enumerate(face_keys)}
+    face_edges: list[set[int]] = []
     face_bounds: list[np.ndarray] = []
     patches: list[PlanePatch] = []
     tags: list[str] = []
@@ -686,68 +893,126 @@ def _build_model(
             vertices.append(point)
         return index
 
-    for key in face_keys:
-        face = faces[key]
-        corners = _face_corners(face)
-        uvs = (
-            (0.0, 0.0),
-            (float(face.upper[face.first_axis] - face.lower[face.first_axis]), 0.0),
-            (
-                float(face.upper[face.first_axis] - face.lower[face.first_axis]),
-                float(face.upper[face.second_axis] - face.lower[face.second_axis]),
-            ),
-            (0.0, float(face.upper[face.second_axis] - face.lower[face.second_axis])),
+    for face in faces:
+        first_axis, second_axis = face.first_axis, face.second_axis
+        origin_first = face.origin[first_axis]
+        origin_second = face.origin[second_axis]
+        loops: list[tuple[int, ...]] = []
+        edges: set[int] = set()
+        for loop in face.loops:
+            offset = next(
+                index for index, (start, _) in enumerate(loop) if is_vertex(start)
+            )
+            chains: list[list[tuple[Point, Point]]] = []
+            for segment in loop[offset:] + loop[:offset]:
+                if is_vertex(segment[0]):
+                    chains.append([])
+                chains[-1].append(segment)
+            coedges: list[int] = []
+            for chain in chains:
+                start, end = chain[0][0], chain[-1][1]
+                edge_key = (start, end) if start < end else (end, start)
+                global_edge = edge_index.get(edge_key)
+                if global_edge is None:
+                    global_edge = len(curves)
+                    edge_index[edge_key] = global_edge
+                    curves.append(ExactLineCurve(*edge_key))
+                    edge_vertices.append((vertex(edge_key[0]), vertex(edge_key[1])))
+                    edge_segments.append(
+                        tuple(
+                            (first, last) if first < last else (last, first)
+                            for first, last in chain
+                        )
+                    )
+                coedge = len(coedge_edges)
+                coedge_edges.append(global_edge)
+                coedge_senses.append(1 if start == edge_key[0] else -1)
+                pcurves.append(
+                    ExactLineCurve(
+                        *(
+                            (
+                                point[first_axis] - origin_first,
+                                point[second_axis] - origin_second,
+                            )
+                            for point in edge_key
+                        )
+                    )
+                )
+                coedges.append(coedge)
+                edges.add(global_edge)
+            loops.append(tuple(coedges))
+        face_loops.append(tuple(loops))
+        face_edges.append(edges)
+        patches.append(
+            PlanePatch(
+                np.asarray([float(value) for value in face.origin], dtype=np.float64),
+                np.eye(3, dtype=np.float64)[first_axis],
+                np.eye(3, dtype=np.float64)[second_axis],
+            )
         )
-        loop: list[int] = []
-        for index, start in enumerate(corners):
-            end = corners[(index + 1) % len(corners)]
-            edge_key = (start, end) if start < end else (end, start)
-            global_edge = edge_index.get(edge_key)
-            if global_edge is None:
-                global_edge = len(curves)
-                edge_index[edge_key] = global_edge
-                first, last = edge_key
-                curves.append(ExactLineCurve(first, last))
-                edge_ranges.append((0.0, 1.0))
-                edge_vertices.append((vertex(first), vertex(last)))
-            coedge = len(coedge_edges)
-            coedge_edges.append(global_edge)
-            coedge_senses.append(1 if start == edge_key[0] else -1)
-            pcurve_start = (
-                edge_key[0][face.first_axis] - face.lower[face.first_axis],
-                edge_key[0][face.second_axis] - face.lower[face.second_axis],
-            )
-            pcurve_end = (
-                edge_key[1][face.first_axis] - face.lower[face.first_axis],
-                edge_key[1][face.second_axis] - face.lower[face.second_axis],
-            )
-            pcurves.append(ExactLineCurve(pcurve_start, pcurve_end))
-            loop.append(coedge)
-        face_loops.append((tuple(loop),))
-        origin = np.asarray([float(value) for value in face.lower], dtype=np.float64)
-        origin[face.normal_axis] = float(face.key[1])
-        first_axis = np.eye(3, dtype=np.float64)[face.first_axis]
-        second_axis = np.eye(3, dtype=np.float64)[face.second_axis]
-        patches.append(PlanePatch(origin, first_axis, second_axis))
         face_bounds.append(
             np.asarray(
-                ((0.0, 0.0), (uvs[1][0], uvs[2][1])),
+                (
+                    (0.0, 0.0),
+                    (
+                        float(
+                            max(start[first_axis] for start, _ in face.loops[0])
+                            - origin_first
+                        ),
+                        float(
+                            max(start[second_axis] for start, _ in face.loops[0])
+                            - origin_second
+                        ),
+                    ),
+                ),
                 dtype=np.float64,
             )
         )
-        tags.append(f"native-box-face:{face.normal_axis}:{face.normal_sign}")
+        tags.append(f"native-box-face:{face.axis}:{face.sign}")
 
     shell_faces: list[tuple[int, ...]] = []
     shell_orientations: list[tuple[int, ...]] = []
-    for entries in atom_face_keys:
-        indices = []
-        orientations = []
-        for key, outward_sign in entries:
-            face_id = face_index[key]
-            indices.append(face_id)
-            orientations.append(outward_sign * faces[key].normal_sign)
-        shell_faces.append(tuple(indices))
-        shell_orientations.append(tuple(orientations))
+    solid_shells: list[tuple[int, ...]] = []
+    for solid in range(len(solid_atoms)):
+        entries = tuple(
+            (face_id, face.sign if face.negative_solid == solid else -face.sign)
+            for face_id, face in enumerate(faces)
+            if solid in (face.negative_solid, face.positive_solid)
+        )
+        edge_uses: dict[int, list[int]] = {}
+        for position, (face_id, _) in enumerate(entries):
+            for edge in face_edges[face_id]:
+                edge_uses.setdefault(edge, []).append(position)
+        if any(len(uses) != 2 for uses in edge_uses.values()):
+            raise NotImplementedError(
+                "Native box partition region solids must have manifold edges."
+            )
+        roots = _union_find(
+            len(entries), [(uses[0], uses[1]) for uses in edge_uses.values()]
+        )
+        shells: dict[int, list[int]] = {}
+        for position, root in enumerate(roots):
+            shells.setdefault(root, []).append(position)
+
+        def lowest_point(
+            positions: list[int], /, entries: tuple[tuple[int, int], ...] = entries
+        ) -> Point:
+            return min(
+                start
+                for position in positions
+                for loop in faces[entries[position][0]].loops
+                for start, _ in loop
+            )
+
+        solid_shell_ids: list[int] = []
+        # The outer shell carries the solid's lexicographically lowest point.
+        for positions in sorted(shells.values(), key=lowest_point):
+            solid_shell_ids.append(len(shell_faces))
+            shell_faces.append(tuple(entries[position][0] for position in positions))
+            shell_orientations.append(
+                tuple(entries[position][1] for position in positions)
+            )
+        solid_shells.append(tuple(solid_shell_ids))
     geometry = BRepGeometry(
         vertex_points=np.asarray(
             [[float(value) for value in point] for point in vertices], dtype=np.float64
@@ -755,7 +1020,7 @@ def _build_model(
         vertex_exact_points=tuple(vertices),
         curves=tuple(curves),
         edge_curves=tuple(range(len(curves))),
-        edge_ranges=np.asarray(edge_ranges, dtype=np.float64).reshape((-1, 2)),
+        edge_ranges=np.tile(np.asarray([0.0, 1.0], dtype=np.float64), (len(curves), 1)),
         edge_vertices=tuple(edge_vertices),
         pcurves=tuple(pcurves),
         coedge_edges=tuple(coedge_edges),
@@ -763,21 +1028,24 @@ def _build_model(
         face_loops=tuple(face_loops),
         shell_faces=tuple(shell_faces),
         shell_orientations=tuple(shell_orientations),
-        solid_shells=tuple((index,) for index in range(len(atoms))),
+        solid_shells=tuple(solid_shells),
     )
     source_digest = canonical_fingerprint(
         {
             "kind": "native-axis-box-partition-result",
             "plan": plan.plan_id,
-            "cells": tuple(
+            "solids": tuple(
                 (
-                    atom.owner,
+                    atoms[indices[0]].owner,
                     tuple(
-                        tuple(coefficient_payload(value) for value in point)
-                        for point in atom.bounds
+                        tuple(
+                            tuple(coefficient_payload(value) for value in point)
+                            for point in atoms[index].bounds
+                        )
+                        for index in indices
                     ),
                 )
-                for atom in atoms
+                for indices in solid_atoms
             ),
         }
     )
@@ -793,7 +1061,13 @@ def _build_model(
         curve_surface_tolerance=0.0,
         tessellation=tessellation,
     )
-    return model, face_keys
+    layout = _PartitionLayout(
+        solid_atoms,
+        tuple(atoms[indices[0]].owner for indices in solid_atoms),
+        tuple(face.cells for face in faces),
+        tuple(edge_segments),
+    )
+    return model, layout
 
 
 def partition_native_boxes(
@@ -814,11 +1088,11 @@ def partition_native_boxes(
     )
 
     atoms, operand_boxes = _arrangement(plan)
-    model, face_keys = _build_model(atoms, plan, tessellation)
+    model, layout = _build_model(atoms, plan, tessellation)
     source_revision, source_occurrence_ids = _composite_revision(plan, plan.operands)
     target_revision = cad_revision_from_brep_model(model)
     rank = {name: index for index, name in enumerate(plan.policy.region_precedence)}
-    solid_owner = tuple(atom.owner for atom in atoms)
+    solid_owner = layout.solid_owners
     source_occurrence_by_operand: dict[str, tuple[str, ...]] = {}
     source_face_keys: dict[str, tuple[tuple[str, FaceKey], ...]] = {}
     for operand in plan.operands:
@@ -873,15 +1147,23 @@ def partition_native_boxes(
         return tuple(chain)
 
     correspondence_pairs: set[tuple[str, str]] = set()
-    for solid_index, atom in enumerate(atoms):
+    for solid_index, atom_indices in enumerate(layout.solid_atoms):
         target_solid_id, occurrence_path = target_solid_occurrences[solid_index]
         target_assemblies = assembly_chain(target_revision, target_solid_id)
         for operand_id, (lower, upper) in operand_boxes.items():
-            if all(
-                a >= b and c <= d
-                for a, c, b, d in zip(
-                    atom.bounds[0], atom.bounds[1], lower, upper, strict=True
+            # A region solid descends from every operand containing one of its atoms.
+            if any(
+                all(
+                    a >= b and c <= d
+                    for a, c, b, d in zip(
+                        atoms[index].bounds[0],
+                        atoms[index].bounds[1],
+                        lower,
+                        upper,
+                        strict=True,
+                    )
                 )
+                for index in atom_indices
             ):
                 source_id = source_occurrence_by_operand[operand_id][0]
                 correspondence_pairs.add((source_id, target_solid_id))
@@ -901,33 +1183,55 @@ def partition_native_boxes(
             target_face_id = target_face_occurrences[(solid_index, face_index)]
             for face_sources in source_face_keys.values():
                 for source_id, source_key in face_sources:
-                    if not _contained_face(face_keys[face_index], source_key):
+                    # Faces, edges and vertices descend from a source face through
+                    # positive-area grid cells, positive-length grid segments and
+                    # exact incident points of its closed rectangle.
+                    if not any(
+                        _contained_face(cell, source_key)
+                        for cell in layout.face_cells[face_index]
+                    ):
                         continue
                     correspondence_pairs.add((source_id, target_face_id))
-                    for loop in model.geometry.face_loops[face_index]:
-                        for coedge in loop:
-                            edge = model.geometry.coedge_edges[coedge]
-                            edge_id = _entity_occurrence_id(
-                                BRepEntityId(
-                                    model.source_id,
-                                    model.source_revision,
-                                    "edge",
-                                    edge,
-                                    occurrence_path,
+                    for edge in model.topology.face_edges[face_index]:
+                        if any(
+                            _point_in_face(start, source_key)
+                            and _point_in_face(end, source_key)
+                            for start, end in layout.edge_segments[edge]
+                        ):
+                            correspondence_pairs.add(
+                                (
+                                    source_id,
+                                    _entity_occurrence_id(
+                                        BRepEntityId(
+                                            model.source_id,
+                                            model.source_revision,
+                                            "edge",
+                                            edge,
+                                            occurrence_path,
+                                        )
+                                    ),
                                 )
                             )
-                            correspondence_pairs.add((source_id, edge_id))
-                            for vertex in model.geometry.edge_vertices[edge]:
-                                vertex_id = _entity_occurrence_id(
-                                    BRepEntityId(
-                                        model.source_id,
-                                        model.source_revision,
-                                        "vertex",
-                                        vertex,
-                                        occurrence_path,
-                                    )
+                        for vertex in model.geometry.edge_vertices[edge]:
+                            exact_point = model.geometry.vertex_exact_points[vertex]
+                            if exact_point is None or not _point_in_face(
+                                exact_point, source_key
+                            ):
+                                continue
+                            correspondence_pairs.add(
+                                (
+                                    source_id,
+                                    _entity_occurrence_id(
+                                        BRepEntityId(
+                                            model.source_id,
+                                            model.source_revision,
+                                            "vertex",
+                                            vertex,
+                                            occurrence_path,
+                                        )
+                                    ),
                                 )
-                                correspondence_pairs.add((source_id, vertex_id))
+                            )
     certificate_id = canonical_fingerprint(
         {
             "kind": "native-axis-box-partition-history",
@@ -965,7 +1269,7 @@ def partition_native_boxes(
         )
         for name in plan.policy.region_precedence
     )
-    region_for_solid = {index: atom.owner for index, atom in enumerate(atoms)}
+    region_for_solid = dict(enumerate(solid_owner))
     grouped_faces: dict[tuple[str, ...], list[BRepEntityId]] = {}
     for face_index, solids in enumerate(model.topology.face_solids):
         adjacent = tuple(
