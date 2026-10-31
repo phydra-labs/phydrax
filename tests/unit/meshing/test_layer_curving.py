@@ -43,6 +43,7 @@ from phydrax.meshing._layer_curving_records import (
 )
 from phydrax.meshing._mixed_adaptation import MixedCoarseningMap
 from tests._support.implicit_layer_curving_fixtures import (
+    certified_implicit_layer_wall,
     make_implicit_layer_curving_archive_case,
 )
 from tests._support.layer_curving_fixtures import (
@@ -529,7 +530,12 @@ def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ance
 ):
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
-    _surface, source, _contract, wall, _wall_geometry, root_witness = _adaptive_source()
+    _surface, source, _contract, _discovery_wall, _geometry, _ = _adaptive_source()
+    # The discovery scaffold has sliver triangles; the layer wall is the
+    # certified zero-set remeshed carrier, each cell seeded by a scaffold chart.
+    layer_wall, root_witness = certified_implicit_layer_wall(source)
+    assert dict(layer_wall.evidence)["carrier_remeshed"] == 1.0
+    wall = layer_wall.wall
     layers = _layer_mesh(wall, None)
     mesh = layers.mesh
     faces = _implicit_source_faces(mesh, layers, source, root_witness)
@@ -540,9 +546,9 @@ def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ance
         "zero-set",
     )
     implicit_cell_keys = np.asarray(root_witness.implicit_cell_keys, dtype=np.int64)
-    root_by_chart = {
-        chart_id: (
-            int(cell_id),
+    root_by_cell = {
+        int(cell_id): (
+            chart_id,
             tuple(int(implicit_cell_keys[row, axis]) for axis in range(3)),
         )
         for row, (chart_id, cell_id) in enumerate(
@@ -553,17 +559,17 @@ def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ance
             )
         )
     }
-    assert root_by_chart
+    assert root_by_cell
     assert root_witness.source_entity_ids == tuple(
         implicit_entity for _ in root_witness.source_chart_ids
     )
     assert tuple(face.source_entity_id for face in faces) == tuple(
         implicit_entity for _ in faces
     )
-    assert {face.implicit_chart_id for face in faces} == set(root_by_chart)
+    assert {face.source_cell_id for face in faces} == set(root_by_cell)
     for face in faces:
-        root_cell_id, implicit_cell_key = root_by_chart[face.implicit_chart_id]
-        assert face.source_cell_id == root_cell_id
+        chart_id, implicit_cell_key = root_by_cell[face.source_cell_id]
+        assert face.implicit_chart_id == chart_id
         assert face.implicit_cell_key == implicit_cell_key
     source_cells: dict[int, tuple[int, int, int]] = {}
     for block in wall.blocks:
@@ -579,8 +585,10 @@ def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ance
             )
     source_vertex_ids = np.asarray(wall.vertex_global_ids, dtype=np.int64)
     for face in faces:
+        # The inward wall reverses its cells; root charts keep zero-set order.
+        first, second, third = source_cells[face.source_cell_id]
         root_vertices = tuple(
-            int(source_vertex_ids[row]) for row in source_cells[face.source_cell_id]
+            int(source_vertex_ids[row]) for row in (first, third, second)
         )
         assert face.implicit_root_cell_vertex_global_ids == root_vertices
         assert set(face.source_column_root_vertex_ids) <= set(source_vertex_ids.tolist())
