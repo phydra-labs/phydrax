@@ -1321,8 +1321,27 @@ def _brep_corner_realization(
     return np.asarray(tuple(float(value) for value in source_point), dtype=np.float64)
 
 
+def _placed_copy_keys(
+    occurrences: tuple[BRepAssemblyOccurrence, ...], /
+) -> dict[tuple[str, ...], tuple[tuple[tuple[Fraction, ...], ...], int]]:
+    """Key each occurrence by its exact placement and reuse rank.
+
+    Distinct solids at one exact placement form one placed copy and share their
+    common faces, edges, and corners; a repeated use of the same solid at the
+    same placement starts a new copy, so reused definitions stay separate.
+    """
+    uses: dict[tuple[int, tuple[tuple[Fraction, ...], ...]], int] = {}
+    keys: dict[tuple[str, ...], tuple[tuple[tuple[Fraction, ...], ...], int]] = {}
+    for occurrence in occurrences:
+        matrix = occurrence.placement.matrix
+        rank = uses.get((occurrence.solid_index, matrix), 0)
+        uses[(occurrence.solid_index, matrix)] = rank + 1
+        keys[occurrence.path] = (matrix, rank)
+    return keys
+
+
 def _same_placed_copy(
-    placements: dict[tuple[str, ...], BRepAffinePlacement],
+    copies: dict[tuple[str, ...], tuple[tuple[tuple[Fraction, ...], ...], int]],
     first: tuple[str, ...],
     second: tuple[str, ...],
     /,
@@ -1330,13 +1349,8 @@ def _same_placed_copy(
     """Whether two occurrence paths realize one exactly placed copy of the source."""
     if first == second:
         return True
-    first_placement = placements.get(first)
-    second_placement = placements.get(second)
-    return (
-        first_placement is not None
-        and second_placement is not None
-        and first_placement.matrix == second_placement.matrix
-    )
+    first_copy = copies.get(first)
+    return first_copy is not None and first_copy == copies.get(second)
 
 
 def _require_brep_source_scope(
@@ -1395,7 +1409,7 @@ def _require_brep_region_bindings(
     region_indices: tuple[int, ...],
     region_occurrences: tuple[tuple[str, ...], ...],
     occurrences_by_path: dict[tuple[str, ...], BRepAssemblyOccurrence],
-    placements: dict[tuple[str, ...], BRepAffinePlacement],
+    copies: dict[tuple[str, ...], tuple[tuple[tuple[Fraction, ...], ...], int]],
     /,
 ) -> None:
     topology = authority.topology
@@ -1434,7 +1448,7 @@ def _require_brep_region_bindings(
         )
         observed: list[tuple[int, int]] = []
         for patch, sign in region.boundary:
-            if not _same_placed_copy(placements, source_occurrences[2][patch], path):
+            if not _same_placed_copy(copies, source_occurrences[2][patch], path):
                 raise ValueError(
                     "Domain region boundary changes its authoritative BRep occurrence."
                 )
@@ -1453,6 +1467,7 @@ def _require_brep_corner_bindings(
     indices: _SourceIndexBanks,
     paths: _SourceOccurrenceBanks,
     placements: dict[tuple[str, ...], BRepAffinePlacement],
+    copies: dict[tuple[str, ...], tuple[tuple[tuple[Fraction, ...], ...], int]],
     /,
 ) -> None:
     geometry = authority.geometry
@@ -1468,8 +1483,8 @@ def _require_brep_corner_bindings(
         if edge >= len(geometry.edge_vertices) or (
             (indices[0][curve.start], indices[0][curve.end])
             != geometry.edge_vertices[edge]
-            or not _same_placed_copy(placements, paths[0][curve.start], path)
-            or not _same_placed_copy(placements, paths[0][curve.end], path)
+            or not _same_placed_copy(copies, paths[0][curve.start], path)
+            or not _same_placed_copy(copies, paths[0][curve.end], path)
         ):
             raise ValueError(
                 "Domain curve changes its authoritative BRep vertex incidence."
@@ -1486,6 +1501,7 @@ def _require_brep_use_binding(
     paths: _SourceOccurrenceBanks,
     path: tuple[str, ...],
     placements: dict[tuple[str, ...], BRepAffinePlacement],
+    copies: dict[tuple[str, ...], tuple[tuple[tuple[Fraction, ...], ...], int]],
     /,
 ) -> None:
     from ._mesh_certificates import _same_tree_content
@@ -1504,7 +1520,7 @@ def _require_brep_use_binding(
         if (
             geometry.edge_curves[edge] >= 0
             or indices[0][use.corner] != source_vertex
-            or not _same_placed_copy(placements, paths[0][use.corner], path)
+            or not _same_placed_copy(copies, paths[0][use.corner], path)
         ):
             raise ValueError("Domain pole changes its authoritative BRep corner.")
         from .brep._correspondence import _exact_brep_pole_collapse
@@ -1525,7 +1541,7 @@ def _require_brep_use_binding(
     elif (
         geometry.edge_curves[edge] < 0
         or indices[1][use.curve] != edge
-        or not _same_placed_copy(placements, paths[1][use.curve], path)
+        or not _same_placed_copy(copies, paths[1][use.curve], path)
     ):
         raise ValueError("Domain trim use changes its authoritative BRep edge.")
     original = geometry.pcurves[coedge]
@@ -1610,10 +1626,13 @@ def _require_brep_domain_binding(
     if len(occurrences_by_path) != len(occurrences):
         raise ValueError("BRep source occurrence paths must identify unique occurrences.")
     placements = {occurrence.path: occurrence.placement for occurrence in occurrences}
+    copies = _placed_copy_keys(occurrences)
     _require_brep_source_scope(
         authority, indices, paths, source_kinds, occurrences_by_path
     )
-    _require_brep_corner_bindings(authority, curves, points, indices, paths, placements)
+    _require_brep_corner_bindings(
+        authority, curves, points, indices, paths, placements, copies
+    )
     ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
     orientations = np.asarray(authority.orientation)
     for row, patch in enumerate(patches):
@@ -1648,6 +1667,7 @@ def _require_brep_domain_binding(
                     paths,
                     path,
                     placements,
+                    copies,
                 )
                 next_slot = (slot + 1) % len(uses)
                 next_use = uses[next_slot]
@@ -1667,7 +1687,7 @@ def _require_brep_domain_binding(
         region_indices,
         region_paths,
         occurrences_by_path,
-        placements,
+        copies,
     )
 
 
@@ -3285,11 +3305,12 @@ def _placed_brep_domain(
     # shared source entity: a face, edge, or corner incident to several solids of
     # that copy is one domain slot, recorded under its first occurrence path, and
     # each region references the shared patch with its own shell sign.
-    vertex_slots: dict[tuple[int, tuple[tuple[Fraction, ...], ...]], int] = {}
-    edge_slots: dict[tuple[int, tuple[tuple[Fraction, ...], ...]], int] = {}
-    face_slots: dict[tuple[int, tuple[tuple[Fraction, ...], ...]], int] = {}
+    vertex_slots: dict[tuple[int, tuple[tuple[tuple[Fraction, ...], ...], int]], int] = {}
+    edge_slots: dict[tuple[int, tuple[tuple[tuple[Fraction, ...], ...], int]], int] = {}
+    face_slots: dict[tuple[int, tuple[tuple[tuple[Fraction, ...], ...], int]], int] = {}
+    copies = _placed_copy_keys(occurrences)
     for occurrence in occurrences:
-        placement = occurrence.placement.matrix
+        placement = copies[occurrence.path]
         solid = occurrence.solid_index
         face_ids = topology.solid_faces[solid]
         edge_ids = sorted(
