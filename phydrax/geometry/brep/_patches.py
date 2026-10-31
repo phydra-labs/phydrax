@@ -2129,17 +2129,22 @@ class RevolutionSurface(AbstractSurfacePatch):
         }
 
     def evaluate(self, parameters: Array, /) -> Array:
+        # The axial part of the profile point does not rotate. Keeping it out of
+        # the angle terms leaves interval enclosures of this map, its Jacobian
+        # and Hessian free of a dependency on the angle interval that the
+        # equivalent Rodrigues form carries through ``cos`` twice.
         parameters_ = jnp.asarray(parameters, dtype=self.axis_origin.dtype)
         angle = parameters_[..., 0:1]
         relative = self.curve.evaluate(parameters_[..., 1]) - self.axis_origin
         axis = self.axis_direction
-        axial = jnp.sum(relative * axis, axis=-1, keepdims=True)
-        rotated = (
-            relative * jnp.cos(angle)
-            + jnp.cross(axis, relative) * jnp.sin(angle)
-            + axis * axial * (1.0 - jnp.cos(angle))
+        axial = axis * jnp.sum(relative * axis, axis=-1, keepdims=True)
+        radial = relative - axial
+        return (
+            self.axis_origin
+            + axial
+            + radial * jnp.cos(angle)
+            + jnp.cross(axis, radial) * jnp.sin(angle)
         )
-        return self.axis_origin + rotated
 
     def _validate_source_parameter_box(
         self, parameter_box: ConvertibleToArray, /
