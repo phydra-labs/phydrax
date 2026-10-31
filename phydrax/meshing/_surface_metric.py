@@ -193,6 +193,12 @@ class _ImplicitMetricDomain:
 
 @dataclass(frozen=True, slots=True)
 class _ImplicitSurfaceChartBank:
+    """Exact analytic parameter charts of an implicit surface's extracted cells.
+
+    The certified witness keeps root-cell/root-edge ancestry; the metric carrier is the
+    profile's analytic chart, read exactly from each vertex's projection parameters.
+    """
+
     mesh: CellMesh
     geometry: CellGeometrySpec
     domain: _ImplicitMetricDomain
@@ -201,7 +207,8 @@ class _ImplicitSurfaceChartBank:
     coordinate_contract: SpatialCoordinateContract
     cell_global_ids: tuple[int, ...]
     source_witness_rows: np.ndarray
-    root_parameters: np.ndarray
+    cell_charts: tuple[_ExactTriangle, ...]
+    collapsed_vertices: np.ndarray
     root_patches: np.ndarray
     source_root_cell_ids: np.ndarray
     source_piece_ids: tuple[tuple[int, ...], ...]
@@ -209,18 +216,10 @@ class _ImplicitSurfaceChartBank:
     source_revision: str
     source_chart_id: str
 
-    def root_parameter_chart(self, row: int, /) -> tuple[tuple[Fraction, ...], ...]:
-        if not 0 <= row < self.source_witness_rows.size:
+    def root_parameter_chart(self, row: int, /) -> _ExactTriangle:
+        if not 0 <= row < len(self.cell_charts):
             raise IndexError("Implicit source chart row is out of range.")
-        # Read the witness token field directly: binding a witness method builds an
-        # equinox bound-method module that flattens the whole witness per row.
-        tokens = self.witness.source_parameter_rational_tokens[
-            int(self.source_witness_rows[row])
-        ]
-        return tuple(
-            tuple(Fraction(numerator, denominator) for numerator, denominator in point)
-            for point in tokens
-        )
+        return self.cell_charts[row]
 
     def require_current(self) -> None:
         self.witness.require_current(self.mesh, self.geometry, self.fidelity_source)
@@ -263,6 +262,8 @@ class SurfaceMetricSource(NamedTuple):
     source_fixed_vertices: np.ndarray
     periodic_rank: int
     periodic_axes: tuple[int, ...]
+    periods: tuple[Fraction, ...]
+    collapsed_source_vertices: np.ndarray
 
 
 class SurfaceMetricGeometryWitness(NamedTuple):
@@ -377,42 +378,18 @@ def _integer_class_rows(keys: tuple[tuple[object, ...], ...], /) -> np.ndarray:
 def _periods(
     domain: MeshingDomain | _ImplicitMetricDomain,
     patches: np.ndarray,
-    charts: tuple[tuple[_ExactPoint, ...], ...],
     /,
 ) -> tuple[tuple[Fraction, ...], tuple[int, ...]]:
+    # A chart stays periodic where it is periodic: singular loci such as sphere poles
+    # are collapsed chart boundaries carried by distinct pole copies, not a reason to
+    # discard the seam lattice.
     active: tuple[tuple[int, Fraction], ...] | None = None
     for patch in np.unique(patches).tolist():
-        surface = domain.patches[int(patch)].surface
-        values = surface.periods
         current = tuple(
             (axis, Fraction.from_float(float(value)))
-            for axis, value in enumerate(values)
+            for axis, value in enumerate(domain.patches[int(patch)].surface.periods)
             if value is not None
         )
-        if current:
-            chart_parameters = np.asarray(
-                [
-                    [float(value) for value in point]
-                    for row, chart in enumerate(charts)
-                    if int(patches[row]) == int(patch)
-                    for point in chart
-                ],
-                dtype=np.float64,
-            )
-            differential = jax.jacfwd(surface.evaluate)
-            jacobians = np.asarray(
-                jax.vmap(differential)(jnp.asarray(chart_parameters, dtype=jnp.float64)),
-                dtype=np.float64,
-            )
-            scales = np.maximum(1.0, np.linalg.norm(jacobians, axis=(1, 2)))
-            if any(
-                np.any(
-                    np.linalg.norm(jacobians[:, :, axis], axis=1)
-                    <= 32.0 * np.finfo(np.float64).eps * scales
-                )
-                for axis, _ in current
-            ):
-                current = ()
         if not current:
             continue
         if active is None:
@@ -429,6 +406,49 @@ def _periods(
     )
 
 
+def _lattice_class(
+    chart: _ExactPoint,
+    periods: tuple[Fraction, ...],
+    periodic_axes: tuple[int, ...],
+    /,
+) -> tuple[_ExactPoint, tuple[int, ...]]:
+    """Exact fundamental-cell image of one chart point and its integer winding."""
+    reduced = [chart[0], chart[1]]
+    winding: list[int] = []
+    for period, axis in zip(periods, periodic_axes, strict=True):
+        turns = math.floor(chart[axis] / period)
+        reduced[axis] = chart[axis] - turns * period
+        winding.append(turns)
+    return (reduced[0], reduced[1]), tuple(winding)
+
+
+def _exact_chart_copy(
+    representative: _ExactPoint,
+    copy: _ExactPoint,
+    periods: tuple[Fraction, ...],
+    periodic_axes: tuple[int, ...],
+    /,
+    *,
+    collapsed: bool,
+) -> bool:
+    """Whether one chart copy is its representative's exact lattice image.
+
+    On a declared collapsed boundary the periodic coordinates are free, so twins agree
+    exactly on the remaining chart axes.
+    """
+    if any(
+        copy[axis] != representative[axis]
+        for axis in range(2)
+        if axis not in periodic_axes
+    ):
+        return False
+    return (
+        collapsed
+        or _lattice_class(copy, periods, periodic_axes)[0]
+        == _lattice_class(representative, periods, periodic_axes)[0]
+    )
+
+
 def _periodic_rows(
     vertex_source_rows: np.ndarray,
     vertex_patches: np.ndarray,
@@ -440,53 +460,33 @@ def _periodic_rows(
     count = vertex_source_rows.size
     representatives = np.arange(count, dtype=np.int64)
     shifts = np.zeros((count, len(periods)), dtype=np.int64)
-    if not periods:
-        return representatives, shifts, np.arange(count, dtype=np.int64)
-    groups: dict[tuple[int, int], list[int]] = defaultdict(list)
-    for row, (source_row, patch) in enumerate(
-        zip(vertex_source_rows.tolist(), vertex_patches.tolist(), strict=True)
-    ):
-        groups[(int(source_row), int(patch))].append(row)
     orbit_codes = np.arange(count, dtype=np.int64)
-    for rows in groups.values():
-        if len(rows) < 2:
-            continue
-        anchor = min(rows)
-        anchor_chart = vertex_charts[anchor]
-        compatible: list[tuple[int, tuple[int, ...]]] = []
-        for row in rows:
-            valid = True
-            winding: list[int] = []
-            chart = vertex_charts[row]
-            for period, axis in zip(periods, periodic_axes, strict=True):
-                difference = chart[axis] - anchor_chart[axis]
-                turns = difference / period
-                if turns.denominator != 1:
-                    valid = False
-                    break
-                winding.append(turns.numerator)
-            if valid and any(
-                chart[axis] != anchor_chart[axis]
-                for axis in range(2)
-                if axis not in periodic_axes
-            ):
-                valid = False
-            if valid:
-                compatible.append((row, tuple(winding)))
-        if len(compatible) < 2:
-            continue
-        representative = min(row for row, _ in compatible)
-        reference = next(
-            row_winding for row, row_winding in compatible if row == representative
+    if not periods:
+        return representatives, shifts, orbit_codes
+    # Copies of one source vertex are one orbit exactly when their charts share the
+    # exact fundamental-cell image; the integer winding difference is the lattice shift.
+    classes: dict[tuple[int, int, _ExactPoint], list[tuple[int, tuple[int, ...]]]] = (
+        defaultdict(list)
+    )
+    for row, (source_row, patch, chart) in enumerate(
+        zip(
+            vertex_source_rows.tolist(),
+            vertex_patches.tolist(),
+            vertex_charts,
+            strict=True,
         )
-        for row, row_winding in compatible:
-            relative = tuple(
-                value - base for value, base in zip(row_winding, reference, strict=True)
+    ):
+        reduced, winding = _lattice_class(chart, periods, periodic_axes)
+        classes[(int(source_row), int(patch), reduced)].append((row, winding))
+    for members in classes.values():
+        representative, reference = members[0]
+        for row, winding in members[1:]:
+            representatives[row] = representative
+            shifts[row] = np.asarray(
+                [value - base for value, base in zip(winding, reference, strict=True)],
+                dtype=np.int64,
             )
-            if row != representative or any(relative):
-                representatives[row] = representative
-                shifts[row] = np.asarray(relative, dtype=np.int64)
-                orbit_codes[row] = representative
+            orbit_codes[row] = representative
     return representatives, shifts, orbit_codes
 
 
@@ -657,7 +657,7 @@ def prepare_surface_metric_source(
     )
     if domain.source_id != source_charts.source_id:
         raise ValueError("Source charts no longer bind their declared source domain.")
-    periods, periodic_axes = _periods(domain, cell_patches, exact_charts)
+    periods, periodic_axes = _periods(domain, cell_patches)
     supplied_cell_classes = (
         np.zeros((source_cells.shape[0],), dtype=np.int64)
         if cell_classes is None
@@ -968,7 +968,77 @@ def prepare_surface_metric_source(
         work_fixed,
         len(periods),
         periodic_axes,
+        periods,
+        (
+            np.asarray(source_charts.collapsed_vertices, dtype=np.bool_)
+            if isinstance(source_charts, _ImplicitSurfaceChartBank)
+            else np.zeros((mesh.coordinates.shape[0],), dtype=np.bool_)
+        ),
     )
+
+
+def _implicit_cell_charts(
+    profile: AnalyticImplicitProfile,
+    coordinates: np.ndarray,
+    parameters: np.ndarray,
+    cells: np.ndarray,
+    /,
+) -> tuple[tuple[_ExactTriangle, ...], np.ndarray]:
+    """Lift every source cell into one exact cell of the analytic chart lattice.
+
+    A vertex's chart root is its binary64 projection parameter read exactly. Each cell
+    takes the nearest lattice lift of its corners relative to its first regular corner
+    and is then translated so its least periodic coordinate lies in ``[0, period)``.
+    Sphere poles are a declared collapsed chart boundary: longitude is undefined there,
+    so every incident cell carries its own pole copy at the exact mean longitude of its
+    regular corners, keeping the polar coordinate of the pole root.
+    """
+    period = Fraction.from_float(math.tau)
+    sphere = profile.family == "sphere"
+    periodic_axes = (1,) if sphere else (0, 1)
+    relative = coordinates - np.asarray(profile.center, dtype=np.float64)
+    collapsed = (
+        (relative[:, 0] == 0.0) & (relative[:, 1] == 0.0)
+        if sphere
+        else np.zeros((coordinates.shape[0],), dtype=np.bool_)
+    )
+    roots = tuple(
+        (Fraction.from_float(first), Fraction.from_float(second))
+        for first, second in parameters.tolist()
+    )
+    collapsed_rows = collapsed.tolist()
+    charts: list[_ExactTriangle] = []
+    for cell in cells.tolist():
+        regular = [int(vertex) for vertex in cell if not collapsed_rows[int(vertex)]]
+        if len(regular) < 2:
+            raise ValueError(
+                "A source cell meets the collapsed chart boundary at more than one corner."
+            )
+        lifted = {vertex: [roots[vertex][0], roots[vertex][1]] for vertex in regular}
+        for axis in periodic_axes:
+            reference = lifted[regular[0]][axis]
+            for vertex in regular[1:]:
+                turns = math.floor(
+                    (lifted[vertex][axis] - reference) / period + Fraction(1, 2)
+                )
+                lifted[vertex][axis] -= turns * period
+            values = [lifted[vertex][axis] for vertex in regular]
+            if max(values) - min(values) >= period / 2:
+                raise ValueError(
+                    "A source cell spans half a chart period, so its lattice lift is ambiguous."
+                )
+            base = math.floor(min(values) / period)
+            for vertex in regular:
+                lifted[vertex][axis] -= base * period
+        mean = sum((lifted[vertex][1] for vertex in regular), Fraction(0)) / len(regular)
+        chart = tuple(
+            (roots[int(vertex)][0], mean)
+            if collapsed_rows[int(vertex)]
+            else (lifted[int(vertex)][0], lifted[int(vertex)][1])
+            for vertex in cell
+        )
+        charts.append((chart[0], chart[1], chart[2]))
+    return tuple(charts), collapsed
 
 
 def prepare_implicit_surface_metric_source(
@@ -1004,7 +1074,7 @@ def prepare_implicit_surface_metric_source(
         raise ValueError(
             "Implicit metric source requires exact cell and root-edge ancestry."
         )
-    _, source_cell_ids, _ = _source_cells(mesh)
+    source_cells, source_cell_ids, _ = _source_cells(mesh)
     witness_rows_by_cell = {
         int(identifier): row
         for row, identifier in enumerate(
@@ -1039,30 +1109,13 @@ def prepare_implicit_surface_metric_source(
         witness.occurrence_paths[0],
         _ImplicitParameterSurface(profile),
     )
-    bank = _ImplicitSurfaceChartBank(
-        mesh,
-        geometry,
-        domain,
-        witness,
-        fidelity_source,
-        coordinate_contract,
-        tuple(int(value) for value in source_cell_ids.tolist()),
-        witness_rows,
-        np.asarray(witness.source_parameters, dtype=np.float64)[witness_rows],
-        np.zeros((source_cell_ids.size,), dtype=np.int64),
-        root_ids,
-        source_pieces,
-        profile.source_id,
-        profile.source_revision,
-        witness.witness_id,
-    )
-    bank.require_root(mesh, geometry)
     entity_id = witness.source_entity_ids[0]
     occurrences = tuple(
         witness.occurrence_paths[0] for _ in range(mesh.coordinates.shape[0])
     )
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     projected = profile.project_boundary(
-        np.asarray(mesh.coordinates, dtype=np.float64),
+        coordinates,
         entity_ids=tuple(entity_id for _ in range(mesh.coordinates.shape[0])),
         occurrence_paths=occurrences,
     )
@@ -1075,6 +1128,31 @@ def prepare_implicit_surface_metric_source(
         raise ValueError(
             "Implicit metric source vertices lack unique source-bound projections."
         )
+    cell_charts, collapsed = _implicit_cell_charts(
+        profile,
+        coordinates,
+        np.asarray(projected.parameters, dtype=np.float64),
+        source_cells,
+    )
+    bank = _ImplicitSurfaceChartBank(
+        mesh,
+        geometry,
+        domain,
+        witness,
+        fidelity_source,
+        coordinate_contract,
+        tuple(int(value) for value in source_cell_ids.tolist()),
+        witness_rows,
+        cell_charts,
+        collapsed,
+        np.zeros((source_cell_ids.size,), dtype=np.int64),
+        root_ids,
+        source_pieces,
+        profile.source_id,
+        profile.source_revision,
+        witness.witness_id,
+    )
+    bank.require_root(mesh, geometry)
     return prepare_surface_metric_source(
         mesh,
         bank,
@@ -1373,6 +1451,13 @@ def _implicit_target_witness(
     ],
     /,
 ) -> tuple[SourceBoundaryChartWitness, np.ndarray, np.ndarray]:
+    """Bind each target cell to the projective root chart of its parent cell.
+
+    The analytic UV carrier only steers the edit. The source-bound witness keeps the
+    adaptive root chart, so every target row retains its parent's standard root
+    parameters, orientation, and root-cell/root-edge keys; the certified root map
+    lifts the target cell itself.
+    """
     source_charts = prepared.source_charts
     if not isinstance(source_charts, _ImplicitSurfaceChartBank):
         raise TypeError(
@@ -1382,7 +1467,6 @@ def _implicit_target_witness(
     source_rows: list[int] = []
     cell_keys: list[np.ndarray] = []
     root_edges: list[np.ndarray] = []
-    exact_charts: list[_ExactTriangle] = []
     for identifier_raw in target_cell_ids.tolist():
         identifier = int(identifier_raw)
         metadata = chart_by_cell_id[identifier]
@@ -1409,7 +1493,6 @@ def _implicit_target_witness(
         source_rows.append(int(witness_rows[0]))
         cell_keys.append(source_key_rows[0])
         root_edges.append(source_edge_rows[0])
-        exact_charts.append(metadata[3])
     reference_points = tuple(
         tuple(Fraction(float(value)) for value in point)
         for point in reference_cell_topology("triangle").vertices
@@ -1448,24 +1531,15 @@ def _implicit_target_witness(
         occurrence_paths=tuple(
             source_witness.occurrence_paths[int(row)] for row in source_rows
         ),
-        source_parameters=np.asarray(
-            [
-                [[float(value) for value in point] for point in chart]
-                for chart in exact_charts
-            ],
-            dtype=np.float64,
-        ),
+        source_parameters=np.asarray(source_witness.source_parameters, dtype=np.float64)[
+            np.asarray(source_rows, dtype=np.int64)
+        ],
         source_parameter_rational_tokens=tuple(
-            tuple(
-                tuple((value.numerator, value.denominator) for value in point)
-                for point in chart
-            )
-            for chart in exact_charts
+            source_witness.source_parameter_rational_tokens[row] for row in source_rows
         ),
-        orientations=np.asarray(
-            [1 if _chart_area(chart) > 0 else -1 for chart in exact_charts],
-            dtype=np.int8,
-        ),
+        orientations=np.asarray(source_witness.orientations, dtype=np.int8)[
+            np.asarray(source_rows, dtype=np.int64)
+        ],
         implicit_cell_keys=np.asarray(cell_keys, dtype=np.int64),
         implicit_root_edge_keys=np.asarray(root_edges, dtype=np.int64),
     )
@@ -1742,6 +1816,7 @@ def _physical_edit(
     )
     target_physical_id_by_work_row = np.empty((target_ids.size,), dtype=np.int64)
     group_rows: list[tuple[int, ...]] = []
+    collapsed_groups: list[bool] = []
     for key, rows in group_records:
         physical_id = key[1] if key[0] == "source" else next_vertex_id
         if key[0] != "source":
@@ -1749,6 +1824,14 @@ def _physical_edit(
         for row in rows:
             target_physical_id_by_work_row[row] = physical_id
         group_rows.append(tuple(rows))
+        collapsed_groups.append(
+            key[0] == "source"
+            and bool(
+                prepared.collapsed_source_vertices[
+                    old_id_to_source_row[int(target_ids[rows[0]])]
+                ]
+            )
+        )
     cell_parents = tuple(
         _source_rows_for_cell(cell_relation, int(target_id), source_rows_by_cell)
         for target_id in local_cell_ids.tolist()
@@ -1836,16 +1919,30 @@ def _physical_edit(
     physical_coordinates = np.empty((physical_ids.size, 3), dtype=np.float64)
     physical_stencils: list[tuple[tuple[int, Fraction], ...]] = []
     maximum_residual = 0.0
-    for physical_row, copies in enumerate(group_rows):
+    for physical_row, (copies, collapsed) in enumerate(
+        zip(group_rows, collapsed_groups, strict=True)
+    ):
         representative = copies[0]
         point = work_points[representative]
         physical_coordinates[physical_row] = point
         stencil = _physical_stencil(prepared, work_stencils[representative])
         for copy_row in copies[1:]:
+            # Copies are one vertex when their exact charts are lattice images or
+            # collapsed-boundary twins; the binary64 evaluations are only roundings of
+            # that identity, so their residual is evidence, not the decision.
             residual = float(np.linalg.norm(point - work_points[copy_row], ord=np.inf))
             maximum_residual = max(maximum_residual, residual)
             scale = max(1.0, float(np.linalg.norm(point, ord=np.inf)))
-            if residual > 2.0e-10 * scale:
+            if not (
+                vertex_patches[copy_row] == vertex_patches[representative]
+                and _exact_chart_copy(
+                    target_uv[representative],
+                    target_uv[copy_row],
+                    prepared.periods,
+                    prepared.periodic_axes,
+                    collapsed=collapsed,
+                )
+            ) and (residual > 2.0e-10 * scale):
                 raise ValueError(
                     "Periodic and chart-copy source evaluations disagree at one target vertex."
                 )
