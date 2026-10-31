@@ -270,19 +270,20 @@ def test_audit_quality_scenario_2() -> None:
     equality_policy = phx.discretization.CellValidityPolicy(
         relative_determinant_floor=0.5
     )
-    unresolved = phx.discretization.certify_cell_geometry_validity(
+    decided = phx.discretization.certify_cell_geometry_validity(
         equality_geometry, mesh=equality_mesh, policy=equality_policy
     )
 
-    assert int(unresolved.status[0]) == phx.discretization.CellValidityStatus.UNRESOLVED
-    assert int(unresolved.depth[0]) > 0
+    # The exact affine proof decides the margin is exactly zero against a strict
+    # floor, so the cell is invalid; UNRESOLVED is only for undecided enclosures.
+    assert int(decided.status[0]) == phx.discretization.CellValidityStatus.INVALID
     rejected = phx.meshing.audit_cell_mesh(
         equality_mesh,
         equality_geometry,
         policy=phx.meshing.CellMeshAuditPolicy(validity_policy=equality_policy),
     )
-    assert "unresolved_geometry_validity" in rejected.issues
-    assert "unresolved_geometry_validity" in rejected.evaluated_checks
+    assert "invalid_geometry" in rejected.issues
+    assert "unresolved_geometry_validity" not in rejected.issues
     recorded = phx.meshing.audit_cell_mesh(
         equality_mesh,
         equality_geometry,
@@ -291,9 +292,9 @@ def test_audit_quality_scenario_2() -> None:
             unresolved=phx.meshing.CellMeshAuditDisposition.RECORD,
         ),
     )
-    assert recorded.passed
-    assert recorded.recorded == ("unresolved_geometry_validity",)
-    assert "unresolved_geometry_validity" in recorded.evaluated_checks
+    # Recording undecided proofs never admits a decided invalid cell.
+    assert not recorded.passed
+    assert "invalid_geometry" in recorded.issues
 
 
 def _single_triangle() -> Any:
