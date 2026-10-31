@@ -2198,17 +2198,20 @@ def _stage_source_loop(
                 raise BRepBlendUnsupported(
                     "unsupported parallel-cylinder fillet: cap conic roots are unavailable"
                 )
+            # Conic endpoints carry their parameter in the conic root; only the
+            # affine cap line binds the exact unit-interval endpoint parameters.
+            line_cap = isinstance(cap_pcurve, LineCurve)
             cap_roots = (
                 ConicParameterEndpoint(
                     cap_first.root,
                     cap_pcurve,
-                    Fraction(0),
+                    Fraction(0) if line_cap else None,
                     cap_first.point_exact,
                 ),
                 ConicParameterEndpoint(
                     cap_second.root,
                     cap_pcurve,
-                    Fraction(1),
+                    Fraction(1) if line_cap else None,
                     cap_second.point_exact,
                 ),
             )

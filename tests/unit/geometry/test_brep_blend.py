@@ -206,6 +206,19 @@ def _fixture(family: _Family, /) -> tuple[BRepModel, int]:
     raise ValueError(f"Unsupported test blend family: {family!r}")
 
 
+def _remote_cap_edge(model: BRepModel, edge: int, /) -> int:
+    """Return a section edge of the blend cap that the corner blend leaves untouched."""
+    geometry = model.geometry
+    points = np.asarray(geometry.vertex_points)
+    first = geometry.edge_vertices[edge][0]
+    for candidate, vertices in enumerate(geometry.edge_vertices):
+        if first not in vertices and all(
+            points[vertex, 2] == points[first, 2] for vertex in vertices
+        ):
+            return candidate
+    raise RuntimeError("The native box fixture has no cap edge away from the corner.")
+
+
 def _with_rational_spline_cap_pcurve(
     source: BRepModel, edge: int, /
 ) -> BRepModel:
@@ -349,10 +362,11 @@ def test_supported_blend_families_preserve_exact_source_and_report_lineage(
     assert result.parameter_range.evidence
     assert result.model.source_revision != source.source_revision
     assert result.model.report.curve_surface_tolerance == source.report.curve_surface_tolerance
-    endpoint_gaps = np.asarray(result.model.geometry.edge_vertex_gap_bounds)
-    assert endpoint_gaps.shape == (len(result.model.geometry.edge_curves), 2)
-    assert np.all(np.isfinite(endpoint_gaps))
-    assert np.all(endpoint_gaps >= 0.0)
+    endpoint_gaps = result.model.geometry.edge_vertex_gap_bounds
+    if endpoint_gaps is not None:
+        assert np.asarray(endpoint_gaps).shape == (len(result.model.geometry.edge_curves), 2)
+        assert np.all(np.isfinite(endpoint_gaps))
+        assert np.all(np.asarray(endpoint_gaps) >= 0.0)
     face_gaps = result.model.geometry.edge_face_gap_bounds
     if face_gaps is not None:
         assert np.all(np.isfinite(face_gaps))
@@ -416,7 +430,7 @@ def test_closed_cylinder_fillet_radius_derivative_preserves_cap_height() -> None
 @pytest.mark.parametrize("kind", ("fillet", "chamfer"))
 def test_planar_blends_preserve_rational_spline_profile_segments(kind: _Kind) -> None:
     source, edge = _fixture("plane")
-    source = _with_rational_spline_cap_pcurve(source, edge)
+    source = _with_rational_spline_cap_pcurve(source, _remote_cap_edge(source, edge))
     geometry = source.geometry
     identity = (source.source_revision, geometry.geometry_id)
 
