@@ -306,7 +306,7 @@ class BalancedCutGridPlan(StrictModule, NonTrainableState):
     frame_origin: tuple[Fraction, Fraction, Fraction] = eqx.field(static=True)
     frame_id: str | None = eqx.field(static=True)
     frame_layout_id: str | None = eqx.field(static=True)
-    frame_layout: _HexFrameIntegerLayout | None = eqx.field(static=True)
+    frame_layout: _HexFrameIntegerLayout | None
     frame_block_indices: tuple[int, ...] = eqx.field(static=True)
     block_axis_knots: tuple[tuple[tuple[Fraction, ...], ...], ...] = eqx.field(
         static=True

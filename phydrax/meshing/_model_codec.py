@@ -109,6 +109,7 @@ def _register_model_archive_types() -> None:
         ExactPowerCellGeometrySource,
     )
     from ..discretization._fv_precision import FiniteVolumePrecisionPolicy
+    from ..discretization._hexahedral import HexahedralConnectivity
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..discretization._measure import DiscreteMeasure
     from ..discretization._nested_reference_types import (
@@ -584,6 +585,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", PeriodicCell),
         ("phydrax.discretization", PeriodicIsometryGroup),
         ("phydrax.discretization", PeriodicMeshTopology),
+        ("phydrax.discretization", HexahedralConnectivity),
         ("phydrax.meshing", PeriodicPointOrbits),
         ("phydrax.discretization", PolygonalConnectivity),
         ("phydrax.discretization", PolyhedralBlock),
