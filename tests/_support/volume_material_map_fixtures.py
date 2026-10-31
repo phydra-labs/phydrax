@@ -5,11 +5,15 @@ import numpy as np
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry import (
+    CellGeometryRestrictionSource,
     CellGeometrySpec,
     PerCellRestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
-from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
+from phydrax.discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    certify_cell_geometry_validity,
+)
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._nested_reference_types import (
     ExactReferenceChartExpression,
@@ -122,6 +126,45 @@ def reference_map_witness(
             if chart_arguments is None
             else freeze_reference_chart_arguments(chart_arguments)
         ),
+    )
+
+
+def with_root_restriction(
+    root_mesh: CellMesh,
+    root_geometry: CellGeometrySpec,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    reference_map: ReferenceCellMapWitnesses,
+    /,
+) -> CellGeometrySpec:
+    """Retain the exact child→root chart ancestry of one restricted child mesh."""
+    (block,) = mesh.blocks
+    (root_block,) = root_mesh.blocks
+    parents = np.asarray(reference_map.source_cell_ids, dtype=np.int64)
+    root_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(root_block.global_ids))
+    }
+    root_vertices = np.asarray(root_mesh.vertex_global_ids, dtype=np.int64)[
+        np.asarray(root_block.vertices, dtype=np.int64)
+    ]
+    restriction = CellGeometryRestrictionSource(
+        cell_geometry_id(root_geometry),
+        root_mesh.topology_id,
+        {block.name: parents},
+        {
+            block.name: np.stack(
+                [root_vertices[root_rows[int(parent)]] for parent in parents]
+            )
+        },
+        block_source_blocks={block.name: root_block.name},
+        block_parent_reference_maps={block.name: reference_map},
+    )
+    return CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        geometry.coordinates,
+        restriction_source=restriction,
     )
 
 
@@ -314,13 +357,18 @@ def make_curved_material_refinement(
         cell_ids=cell_ids,
         duplicate_vertices=duplicate,
     )
+    exact_maps = reference_map_witness(
+        tuple(range(len(cells))),
+        tuple(7 for _ in cells),
+        cells,
+        chart_arguments=tuple(affine_reference_chart(cell) for cell in cells),
+    )
+    # Coverage of a child mesh requires its exact chart ancestry to the root.
+    target_geometry = with_root_restriction(
+        root_mesh, root_geometry, target_mesh, target_geometry, exact_maps
+    )
     if exact_chart_arguments:
-        target_maps = reference_map_witness(
-            tuple(range(len(cells))),
-            tuple(7 for _ in cells),
-            cells,
-            chart_arguments=tuple(affine_reference_chart(cell) for cell in cells),
-        )
+        target_maps = exact_maps
     source_maps = reference_map_witness((0,), (7,), (ROOT_REFERENCE_TETRAHEDRON,))
     witness = None
     if not mismatched_source:
