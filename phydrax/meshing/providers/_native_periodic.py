@@ -2890,8 +2890,8 @@ def _migrate_owner_local_periodic_delaunay_data(
                 or any(len(row) != dimension for row in key_relative_windings)
                 or len(cell_winding) != dimension
                 or exact_measure <= 0
-                or len(support_lower_bits) != dimension
-                or len(support_upper_bits) != dimension
+                or len(support_lower_bits) not in (0, dimension)
+                or len(support_upper_bits) != len(support_lower_bits)
                 or len(neighbors) != len(neighbor_owners)
                 or len(neighbors) != len(neighbor_weights)
                 or len(set(neighbors)) != len(neighbors)
@@ -3035,12 +3035,27 @@ def _migrate_owner_local_periodic_delaunay_data(
         key_windings = np.asarray(mesh_data["cell_key_relative_windings"], dtype=np.int64)
         cell_windings = np.asarray(mesh_data["cell_windings"], dtype=np.int64)
         exact_measures = tuple(mesh_data["exact_cell_measures"])
-        support_lower = np.asarray(
-            mesh_data["support_fractional_lower"], dtype=np.float64
-        ).view(np.uint64)
-        support_upper = np.asarray(
-            mesh_data["support_fractional_upper"], dtype=np.float64
-        ).view(np.uint64)
+        raw_support_lower = mesh_data["support_fractional_lower"]
+        raw_support_upper = mesh_data["support_fractional_upper"]
+        if (raw_support_lower is None) != (raw_support_upper is None):
+            raise ValueError("Periodic cell support bounds are only partially present.")
+        support_lower = (
+            None
+            if raw_support_lower is None
+            else np.asarray(raw_support_lower, dtype=np.float64).view(np.uint64)
+        )
+        support_upper = (
+            None
+            if raw_support_upper is None
+            else np.asarray(raw_support_upper, dtype=np.float64).view(np.uint64)
+        )
+        support_width = 0 if support_lower is None else dimension
+        if support_lower is not None and (
+            support_upper is None
+            or support_lower.shape != (cell_ids.size, dimension)
+            or support_upper.shape != support_lower.shape
+        ):
+            raise ValueError("Periodic cell support bound rows are malformed.")
         graph_ids = np.asarray(mesh_data["graph_cell_ids"], dtype=np.int64)
         graph_offsets = np.asarray(mesh_data["graph_cell_offsets"], dtype=np.int64)
         graph_neighbors = np.asarray(mesh_data["graph_neighbor_ids"], dtype=np.int64)
@@ -3147,12 +3162,16 @@ def _migrate_owner_local_periodic_delaunay_data(
                     int(value) for value in cell_windings[cell_row].tolist()
                 ],
                 "measure": pair(exact_measures[cell_row]),
-                "support_lower_bits": [
-                    int(value) for value in support_lower[cell_row].tolist()
-                ],
-                "support_upper_bits": [
-                    int(value) for value in support_upper[cell_row].tolist()
-                ],
+                "support_lower_bits": (
+                    []
+                    if support_lower is None
+                    else [int(value) for value in support_lower[cell_row].tolist()]
+                ),
+                "support_upper_bits": (
+                    []
+                    if support_upper is None
+                    else [int(value) for value in support_upper[cell_row].tolist()]
+                ),
                 "neighbors": [
                     int(value)
                     for value in graph_neighbors[neighbor_start:neighbor_stop].tolist()
@@ -3172,10 +3191,14 @@ def _migrate_owner_local_periodic_delaunay_data(
             }
             cell_payloads_by_owner[target_owner].append(record)
             for vertex in vertex_payloads:
-                source_ids = {vertex["source_id"]}
+                # An adapted birth keys itself; its source points are the roots
+                # of its exact coordinate ancestry.
                 ancestry = vertex["coordinate_ancestry"]
-                if ancestry is not None:
-                    source_ids.update(ancestry["source_ids"])
+                source_ids = (
+                    {vertex["source_id"]}
+                    if ancestry is None
+                    else set(ancestry["source_ids"])
+                )
                 for source_id in source_ids:
                     if source_id not in source_point_payloads_by_id:
                         raise ValueError(
@@ -3318,10 +3341,12 @@ def _migrate_owner_local_periodic_delaunay_data(
                         "Graph migration received conflicting quotient vertices."
                     )
                 vertex_records[vertex["vertex_id"]] = vertex
-                source_ids = {vertex["source_id"]}
                 ancestry = vertex["coordinate_ancestry"]
-                if ancestry is not None:
-                    source_ids.update(ancestry["source_ids"])
+                source_ids = (
+                    {vertex["source_id"]}
+                    if ancestry is None
+                    else set(ancestry["source_ids"])
+                )
                 if not source_ids.issubset(source_point_records):
                     raise ValueError(
                         "Graph migration omitted an exact coordinate ancestry root."
@@ -3366,26 +3391,37 @@ def _migrate_owner_local_periodic_delaunay_data(
         ],
         dtype=np.int32,
     )
+    # The site-weight exchange is collective: every owner reaches it, after one
+    # collective verdict on the received source sites. Adapted vertices are their
+    # own quotient keys (their roots were checked through the ancestry above);
+    # only cells of ancestry-free vertices key source sites.
     local_error = None
-    try:
-        if any(
-            int(source_id) not in source_point_records
-            for cell in cell_records.values()
-            for source_id in cell["key_source_ids"]
-        ):
-            raise ValueError("Graph migration omitted a cell-key source site.")
-        from ._native_periodic_power import (
-            _owner_local_periodic_site_weights_for_support,
-        )
+    if any(
+        int(source_id) not in source_point_records
+        for cell in cell_records.values()
+        if all(vertex["coordinate_ancestry"] is None for vertex in cell["vertices"])
+        for source_id in cell["key_source_ids"]
+    ):
+        local_error = "ValueError: Graph migration omitted a cell-key source site."
+    _owner_group_fail_if_any(
+        local_error,
+        execution_group,
+        f"{axis_name}_key_sources",
+        "periodic graph migrated cell-key source sites",
+    )
+    from ._native_periodic_power import (
+        _owner_local_periodic_site_weights_for_support,
+    )
 
-        migrated_site_weights = _owner_local_periodic_site_weights_for_support(
-            source,
-            point_ids,
-            point_owner_ranks,
-            rank,
-            execution_group,
-            axis_name=f"{axis_name}_site_weights",
-        )
+    migrated_site_weights = _owner_local_periodic_site_weights_for_support(
+        source,
+        point_ids,
+        point_owner_ranks,
+        rank,
+        execution_group,
+        axis_name=f"{axis_name}_site_weights",
+    )
+    try:
         new_source = NativePeriodicSource(
             PeriodicPointOrbits(source.domain.cell, points, point_ids),
             source.source_id,
@@ -3509,8 +3545,18 @@ def _migrate_owner_local_periodic_delaunay_data(
         cell_key_relative_windings = np.asarray(
             cell_key_windings, dtype=np.int64
         ).reshape((-1, dimension))
+        if any(
+            len(cell_records[int(identifier)]["support_lower_bits"]) != support_width
+            for identifier in target_cell_ids.tolist()
+        ):
+            raise ValueError(
+                "Periodic graph migration support-bound rows disagree with the "
+                "source mesh support contract."
+            )
         support_fractional_lower = (
-            np.asarray(
+            None
+            if support_width == 0
+            else np.asarray(
                 [
                     cell_records[int(identifier)]["support_lower_bits"]
                     for identifier in target_cell_ids.tolist()
@@ -3521,7 +3567,9 @@ def _migrate_owner_local_periodic_delaunay_data(
             .view(np.float64)
         )
         support_fractional_upper = (
-            np.asarray(
+            None
+            if support_width == 0
+            else np.asarray(
                 [
                     cell_records[int(identifier)]["support_upper_bits"]
                     for identifier in target_cell_ids.tolist()
@@ -6185,6 +6233,12 @@ def _owner_local_periodic_mesh_authority(
         _owner_local_periodic_delaunay_neighbor_halo(
             mesh_data, candidate, source, rank, execution_group, axis_name
         )
+        # A halo that grew the resident source bank publishes the expanded
+        # source (built from the candidate bank); the owner directory binds the
+        # same context as the published view.
+        expanded = mesh_data.get("expanded_source_authority")
+        if expanded is not None:
+            source_context_id = expanded.binding_id
         cell_ids = np.asarray(mesh_data["cell_ids"], dtype=np.int64)
         graph_cell_ids = np.asarray(mesh_data["graph_cell_ids"], dtype=np.int64)
         owned_cell_rows = np.searchsorted(cell_ids, graph_cell_ids).astype(
@@ -8482,11 +8536,14 @@ def _owner_local_periodic_candidate_from_accepted_view(
         cell_neighbor_ids=mesh_data["graph_neighbor_ids"],
         cell_neighbor_owner_ranks=mesh_data["graph_neighbor_owner_ranks"],
         cell_neighbor_weights=mesh_data["graph_neighbor_weights"],
+        # A real empty owner materializes no ancestry stencil and no offsets.
         vertex_coordinate_stencil=(
             mesh_data["source_coordinate_stencil"] if adapted else None
         ),
         exact_vertex_coordinate_offsets=(
-            tuple(mesh_data["exact_vertex_coordinate_offsets"]) if adapted else None
+            None
+            if not adapted or mesh_data["exact_vertex_coordinate_offsets"] is None
+            else tuple(mesh_data["exact_vertex_coordinate_offsets"])
         ),
     )
 
