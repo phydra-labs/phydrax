@@ -2257,6 +2257,106 @@ def _prove_face_triangles(
     return tuple(accepted), ""
 
 
+_IDENTITY_BASIS: FractionMatrix2 = (
+    (Fraction(1), Fraction(0)),
+    (Fraction(0), Fraction(1)),
+)
+# Vertices of the chord set of the standard triangle: the differences u1 - u2
+# fill the hexagon spanned by these directions and their negatives.
+_CHORD_DIRECTIONS = ((1, 0), (0, 1), (1, -1))
+
+
+def _chord_errors(
+    face: _FaceEnclosure, basis: FractionMatrix2, /
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+    """Bound the chord-mean error ``|D^3 P[d, d, B e_j]| / 24`` per coordinate.
+
+    For a map of degree at most three the chord mean of ``DP B`` differs from
+    its midpoint value by ``D^2(DP)[d, d] B / 24``, whose column ``j`` is
+    ``D^3 P[d, d, B e_j] / 24``. With ``d = B s`` this is
+    ``sum_ab D^3 P[B e_a, B e_b, B e_j] s_a s_b / 24``: the directional third
+    derivatives are formed exactly before their magnitudes are taken, and
+    ``|s_a|`` is bounded by ``B^-1`` over the chord hexagon. A needle face's
+    reference derivatives then cancel exactly along its conditioned basis
+    instead of being bounded term by term and amplified by ``B``.
+    """
+    (k00, k01), (k10, k11) = basis
+    determinant = k00 * k11 - k01 * k10
+    inverse = (
+        (k11 / determinant, -k01 / determinant),
+        (-k10 / determinant, k00 / determinant),
+    )
+    extents = tuple(
+        max(
+            abs(inverse[axis][0] * x + inverse[axis][1] * y) for x, y in _CHORD_DIRECTIONS
+        )
+        for axis in range(2)
+    )
+    columns = ((k00, k10), (k01, k11))
+    rows: list[tuple[float, float]] = []
+    for along_uu, along_uv, along_vv in face.curvatures:
+        # Third derivatives indexed by their number of v differentiations.
+        thirds = (
+            _enclosed_derivative(along_uu, 0),
+            _enclosed_derivative(along_uu, 1),
+            _enclosed_derivative(along_uv, 1),
+            _enclosed_derivative(along_vv, 1),
+        )
+        row: list[float] = []
+        for column in range(2):
+            total = Fraction(0)
+            for first in range(2):
+                for second in range(2):
+                    weights = [Fraction(0)] * 4
+                    for p in range(2):
+                        for q in range(2):
+                            for r in range(2):
+                                weights[p + q + r] += (
+                                    columns[first][p]
+                                    * columns[second][q]
+                                    * columns[column][r]
+                                )
+                    center: Polynomial = {}
+                    error = 0.0
+                    for weight, third in zip(weights, thirds, strict=True):
+                        if weight == 0:
+                            continue
+                        for exponent, coefficient in third.center.items():
+                            center[exponent] = (
+                                center.get(exponent, Fraction(0)) + weight * coefficient
+                            )
+                        if third.error:
+                            error = float(
+                                np.nextafter(
+                                    error
+                                    + float(
+                                        np.nextafter(
+                                            _exact_interval(abs(weight))[1] * third.error,
+                                            np.inf,
+                                        )
+                                    ),
+                                    np.inf,
+                                )
+                            )
+                    magnitude = (
+                        max(
+                            abs(value)
+                            for value in _widen(
+                                _poly_interval(center, _STANDARD_TRIANGLE), error
+                            )
+                        )
+                        if center or error
+                        else 0.0
+                    )
+                    if not math.isfinite(magnitude):
+                        unbounded = (math.inf, math.inf)
+                        return unbounded, unbounded, unbounded
+                    total += Fraction(magnitude) * extents[first] * extents[second]
+            row.append(_exact_interval(total / 24)[1])
+        rows.append((row[0], row[1]))
+    return rows[0], rows[1], rows[2]
+
+
 def _transversal_injectivity(
     face: _FaceEnclosure,
     orientation: int,
@@ -2289,51 +2389,10 @@ def _transversal_injectivity(
         sum(max(abs(entry[0]), abs(entry[1])) for entry in row) for row in hessian
     )
     gradient_bound = max(max(abs(entry[0]), abs(entry[1])) for entry in gradient)
-    # |D^2(DP)[d, d]| / 24 with |d_a d_b| <= 1 on the standard triangle; the
-    # third derivatives of a map of degree at most three are constants.
-    chord_errors = tuple(
-        tuple(
-            float(
-                np.nextafter(
-                    sum(
-                        max(
-                            abs(value)
-                            for value in _enclosed_interval(
-                                _enclosed_derivative(
-                                    _enclosed_derivative(tangent, first), second
-                                ),
-                                _STANDARD_TRIANGLE,
-                            )
-                        )
-                        for first in (0, 1)
-                        for second in (0, 1)
-                    )
-                    / 24.0,
-                    np.inf,
-                )
-            )
-            for tangent in row
-        )
-        for row in face.tangents
-    )
-
+    chord_errors = _chord_errors(face, _IDENTITY_BASIS)
     conditioner = face.conditioner
-    # For a conditioned face A K replaces A: det[A K, w] = det K det[A, w], and
-    # the chord error of column j is |K_0j| e_u + |K_1j| e_v per coordinate.
-    conditioned_errors = (
-        None
-        if conditioner is None
-        else tuple(
-            tuple(
-                _interval_add(
-                    _interval_scale((row[0], row[0]), abs(float(conditioner[0][column]))),
-                    _interval_scale((row[1], row[1]), abs(float(conditioner[1][column]))),
-                )[1]
-                for column in range(2)
-            )
-            for row in chord_errors
-        )
-    )
+    # For a conditioned face A K replaces A: det[A K, w] = det K det[A, w].
+    conditioned_errors = None if conditioner is None else _chord_errors(face, conditioner)
     inverse_determinant = (
         None
         if conditioner is None
