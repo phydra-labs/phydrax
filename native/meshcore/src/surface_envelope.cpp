@@ -7,8 +7,11 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <iterator>
 #include <map>
 #include <memory>
+#include <set>
+#include <unordered_map>
 #include <utility>
 
 #include "capi_guard.hpp"
@@ -34,6 +37,12 @@ struct EnvelopeData {
   std::vector<V> surface_points, volume_points;
   std::vector<F> triangles;
   std::vector<C> cells;
+  // Certification state retained for band-constrained remeshing: the source
+  // covering cloud, its covering radius, the arithmetic error, the certified
+  // band and the sampling spacing.
+  std::vector<V> cloud;
+  double covering_radius = 0, arithmetic_error = 0, roundoff = 0, spacing = 0, offset = 0;
+  std::array<double, 4> bounds{};
 };
 V add(const V& a, const V& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 V mul(const V& a, double t) { return {a[0] * t, a[1] * t, a[2] * t}; }
@@ -587,6 +596,13 @@ phx_mc_surface_envelope_create(const phx_mc_surface_envelope_create_request* req
     if (status != PHX_MC_OK) return status;
     status = certify_envelope(*request, grid, data.get(), cloud);
     if (status != PHX_MC_OK) return status;
+    data->cloud = std::move(cloud);
+    data->covering_radius = grid.covering_radius;
+    data->arithmetic_error = grid.arithmetic_error;
+    data->roundoff = grid.roundoff;
+    data->spacing = grid.spacing;
+    data->offset = request->offset;
+    std::copy(request->bounds, request->bounds + 4, data->bounds.begin());
     *request->result = data.release();
     return PHX_MC_OK;
   });
@@ -643,3 +659,698 @@ extern "C" PHX_MC_API int32_t phx_mc_surface_envelope_arrays(
 extern "C" PHX_MC_API void phx_mc_surface_envelope_free(void* handle) {
   delete static_cast<EnvelopeData*>(handle);
 }
+// ---------------------------------------------------------------------------
+// Band-constrained remeshing of the extracted envelope surface.
+//
+// The marching-tetrahedra surface certifies that every point of every output
+// triangle lies in the band bounds[2] <= d_source <= bounds[1]. Its triangles
+// are cuts of grid tetrahedra, often needles and caps. Remeshing replaces them
+// by local edits (edge split, edge flip, edge collapse, vertex relocation)
+// toward a target edge length h (twice the sampling spacing) and a 30 degree
+// minimum angle. An edit is admitted only if
+//  * every new triangle provably stays in the same band: d_source is
+//    1-Lipschitz, so on a triangle with vertex values in [L_i, U_i] and every
+//    point within R of a vertex, d_source lies in [min L_i - R, max U_i + R];
+//    vertex values are bounded through the covering cloud exactly as in the
+//    certificate (d_cloud - covering - arithmetic <= d_source <= d_cloud +
+//    arithmetic), and R is the triangle's largest vertex-free disc radius;
+//  * the surface stays an embedded, consistently oriented closed 2-manifold:
+//    link condition for collapses, no duplicate edge for flips, orientation
+//    agreeing with the replaced patch, and exact triangle-triangle contact
+//    classification against every nearby triangle (only shared vertices and
+//    shared edges are legal contacts);
+//  * the edit strictly raises the worst quantized triangle score of the patch
+//    it replaces. Every new score exceeds a removed one, so the multiset of
+//    scores (finitely many quantized levels) decreases in the well-founded
+//    multiset order and the worst-first pass terminates without caps.
+// Untouched triangles keep their marching-tetrahedra certificate; the band
+// bounds and the interpolation error are unchanged, and the source-to-surface
+// bound is recomputed on the remeshed vertices.
+namespace {
+constexpr uint32_t kScoreLevels = 1u << 20;
+
+// Uniform bucket grid over a point set answering nearest-distance queries.
+struct PointIndex {
+  const std::vector<V>* points = nullptr;
+  double cell = 1;
+  V lo{};
+  std::array<int64_t, 3> shape{1, 1, 1};
+  std::vector<int64_t> start, items;
+
+  int32_t build(const std::vector<V>& values, double cell_size) {
+    points = &values;
+    cell = cell_size;
+    if (values.empty() || !(cell > 0) || !std::isfinite(cell)) return PHX_MC_INVALID_INPUT;
+    lo = values[0];
+    V hi = values[0];
+    for (const V& p : values)
+      for (int d = 0; d < 3; ++d) {
+        lo[d] = std::min(lo[d], p[d]);
+        hi[d] = std::max(hi[d], p[d]);
+      }
+    int64_t total = 1;
+    for (int d = 0; d < 3; ++d) {
+      const double n = std::floor((hi[d] - lo[d]) / cell) + 1;
+      if (!std::isfinite(n) || n < 1 || n > 1 << 20) return PHX_MC_UNRESOLVED;
+      shape[d] = static_cast<int64_t>(n);
+      total *= shape[d];
+      if (total > (int64_t{1} << 31)) return PHX_MC_UNRESOLVED;
+    }
+    start.assign(static_cast<size_t>(total + 1), 0);
+    std::vector<int64_t> slot(values.size());
+    for (size_t i = 0; i < values.size(); ++i) {
+      slot[i] = flat(coordinates(values[i]));
+      ++start[static_cast<size_t>(slot[i] + 1)];
+    }
+    for (int64_t i = 0; i < total; ++i) start[i + 1] += start[i];
+    items.resize(values.size());
+    std::vector<int64_t> fill(start.begin(), start.end() - 1);
+    for (size_t i = 0; i < values.size(); ++i)
+      items[static_cast<size_t>(fill[static_cast<size_t>(slot[i])]++)] = static_cast<int64_t>(i);
+    return PHX_MC_OK;
+  }
+  std::array<int64_t, 3> coordinates(const V& p) const {
+    std::array<int64_t, 3> c{};
+    for (int d = 0; d < 3; ++d) {
+      const double t = std::floor((p[d] - lo[d]) / cell);
+      c[d] = static_cast<int64_t>(std::clamp(t, -1.0e15, 1.0e15));
+    }
+    return c;
+  }
+  int64_t flat(const std::array<int64_t, 3>& c) const {
+    return (c[0] * shape[1] + c[1]) * shape[2] + c[2];
+  }
+  // Binary64 distance to the nearest indexed point (each length rounded once).
+  double nearest(const V& x) const {
+    const auto c = coordinates(x);
+    int64_t reach = 0;
+    for (int d = 0; d < 3; ++d)
+      reach = std::max({reach, std::abs(c[d]), std::abs(c[d] - (shape[d] - 1))});
+    double best = std::numeric_limits<double>::infinity();
+    for (int64_t r = 0; r <= reach; ++r) {
+      if (r > 0 && best <= static_cast<double>(r - 1) * cell) break;
+      for (int64_t i = std::max<int64_t>(0, c[0] - r); i <= std::min(shape[0] - 1, c[0] + r); ++i)
+        for (int64_t j = std::max<int64_t>(0, c[1] - r); j <= std::min(shape[1] - 1, c[1] + r);
+             ++j) {
+          const bool shell = std::abs(i - c[0]) == r || std::abs(j - c[1]) == r;
+          for (int64_t k = std::max<int64_t>(0, c[2] - r);
+               k <= std::min(shape[2] - 1, c[2] + r); ++k) {
+            if (!shell && std::abs(k - c[2]) != r) continue;
+            const int64_t cell_index = flat({i, j, k});
+            for (int64_t s = start[static_cast<size_t>(cell_index)];
+                 s < start[static_cast<size_t>(cell_index + 1)]; ++s)
+              best = std::min(best, length(difference(x, (*points)[static_cast<size_t>(items[s])])));
+          }
+        }
+    }
+    return best;
+  }
+  // Nearest indexed point itself (for projection of candidate positions).
+  int64_t nearest_index(const V& x) const {
+    const auto c = coordinates(x);
+    int64_t reach = 0;
+    for (int d = 0; d < 3; ++d)
+      reach = std::max({reach, std::abs(c[d]), std::abs(c[d] - (shape[d] - 1))});
+    double best = std::numeric_limits<double>::infinity();
+    int64_t found = -1;
+    for (int64_t r = 0; r <= reach; ++r) {
+      if (r > 0 && best <= static_cast<double>(r - 1) * cell) break;
+      for (int64_t i = std::max<int64_t>(0, c[0] - r); i <= std::min(shape[0] - 1, c[0] + r); ++i)
+        for (int64_t j = std::max<int64_t>(0, c[1] - r); j <= std::min(shape[1] - 1, c[1] + r);
+             ++j) {
+          const bool shell = std::abs(i - c[0]) == r || std::abs(j - c[1]) == r;
+          for (int64_t k = std::max<int64_t>(0, c[2] - r);
+               k <= std::min(shape[2] - 1, c[2] + r); ++k) {
+            if (!shell && std::abs(k - c[2]) != r) continue;
+            const int64_t cell_index = flat({i, j, k});
+            for (int64_t s = start[static_cast<size_t>(cell_index)];
+                 s < start[static_cast<size_t>(cell_index + 1)]; ++s) {
+              const int64_t item = items[static_cast<size_t>(s)];
+              const double value = length(difference(x, (*points)[static_cast<size_t>(item)]));
+              if (value < best || (value == best && item < found)) {
+                best = value;
+                found = item;
+              }
+            }
+          }
+        }
+    }
+    return found;
+  }
+};
+
+uint64_t cell_key(int64_t i, int64_t j, int64_t k) {
+  constexpr int64_t bias = int64_t{1} << 20;
+  return (static_cast<uint64_t>(i + bias) << 42) ^ (static_cast<uint64_t>(j + bias) << 21) ^
+         static_cast<uint64_t>(k + bias);
+}
+
+struct EnvelopeRemesher {
+  EnvelopeData& data;
+  PointIndex cloud;
+  double h = 0, lower = 0, upper = 0;
+  std::vector<V> points;
+  std::vector<double> nearest;  // binary64 cloud distance per vertex
+  std::vector<F> triangles;
+  std::vector<uint8_t> alive, stuck;
+  std::vector<uint32_t> scores;
+  std::vector<std::vector<int64_t>> star;
+  std::unordered_map<uint64_t, std::vector<int64_t>> buckets;
+  std::set<std::pair<uint32_t, int64_t>> queue;
+  int64_t splits = 0, collapses = 0, flips = 0, relocations = 0;
+
+  explicit EnvelopeRemesher(EnvelopeData& envelope) : data(envelope) {}
+
+  double vertex_upper(int64_t v) const {
+    return next_up(nearest[static_cast<size_t>(v)] + data.arithmetic_error);
+  }
+  double vertex_lower(int64_t v) const {
+    return next_down(next_down(nearest[static_cast<size_t>(v)] - data.covering_radius) -
+                     data.arithmetic_error);
+  }
+  // Upper bound on the distance from any triangle point to its nearest corner:
+  // the circumradius when the circumcenter lies in the closed triangle, else
+  // the larger perpendicular-bisector crossing of the longest edge.
+  double free_radius(const V& a, const V& b, const V& c) const {
+    const double ab = length(difference(b, a)), bc = length(difference(c, b)),
+                 ca = length(difference(a, c));
+    const V normal = cross(difference(b, a), difference(c, a));
+    const double twice_area = length(normal);
+    if (!(twice_area > 0) || !std::isfinite(twice_area))
+      return std::numeric_limits<double>::infinity();
+    std::array<double, 3> sides{bc, ca, ab};  // opposite a, b, c
+    std::array<double, 3> squares{bc * bc, ca * ca, ab * ab};
+    int obtuse = -1;
+    for (int k = 0; k < 3; ++k)
+      if (squares[k] > squares[(k + 1) % 3] + squares[(k + 2) % 3]) obtuse = k;
+    double radius;
+    if (obtuse < 0) {
+      radius = ab * bc * ca / (2 * twice_area);
+    } else {
+      // Obtuse at corner k: the bisectors of its two sides meet the longest
+      // side at distance side / (2 cos(adjacent angle)) from that side's ends.
+      radius = 0;
+      for (int k = 0; k < 3; ++k) {
+        if (k == obtuse) continue;
+        const int other = 3 - k - obtuse;
+        // Angle at corner k is between the sides opposite `obtuse` and `other`.
+        const double cosine = (squares[obtuse] + squares[other] - squares[k]) /
+                              (2 * sides[obtuse] * sides[other]);
+        if (!(cosine > 0)) return std::numeric_limits<double>::infinity();
+        radius = std::max(radius, sides[other] / (2 * cosine));
+      }
+    }
+    return next_up(next_up(radius * (1 + 64 * std::numeric_limits<double>::epsilon())) +
+                   data.roundoff);
+  }
+  bool in_band(const F& t) const {
+    const V& a = points[static_cast<size_t>(t[0])];
+    const V& b = points[static_cast<size_t>(t[1])];
+    const V& c = points[static_cast<size_t>(t[2])];
+    const double radius = free_radius(a, b, c);
+    if (!std::isfinite(radius)) return false;
+    double high = 0, low = std::numeric_limits<double>::infinity();
+    for (int64_t v : t) {
+      high = std::max(high, vertex_upper(v));
+      low = std::min(low, vertex_lower(v));
+    }
+    return next_up(high + radius) <= upper && next_down(low - radius) >= lower;
+  }
+  uint32_t score(const V& a, const V& b, const V& c) const {
+    std::array<double, 3> lengths{length(difference(b, c)), length(difference(c, a)),
+                                  length(difference(a, b))};
+    std::sort(lengths.begin(), lengths.end());
+    const double twice_area = length(cross(difference(b, a), difference(c, a)));
+    if (!(twice_area > 0) || !(lengths[0] > 0)) return 0;
+    const double sine = std::min(1.0, twice_area / (lengths[1] * lengths[2]));
+    const double minimum_angle = std::asin(sine) * 180.0 / std::acos(-1.0);
+    const double shape = std::min(1.0, minimum_angle / 30.0);
+    const double size = std::min(1.0, (4.0 / 3.0) * h / lengths[2]);
+    const double value = std::floor(shape * size * kScoreLevels);
+    return static_cast<uint32_t>(std::clamp(value, 0.0, static_cast<double>(kScoreLevels)));
+  }
+  uint32_t score(const F& t) const {
+    return score(points[static_cast<size_t>(t[0])], points[static_cast<size_t>(t[1])],
+                 points[static_cast<size_t>(t[2])]);
+  }
+  std::array<int64_t, 6> bucket_range(const F& t) const {
+    V lo = points[static_cast<size_t>(t[0])], hi = lo;
+    for (int64_t v : t)
+      for (int d = 0; d < 3; ++d) {
+        lo[d] = std::min(lo[d], points[static_cast<size_t>(v)][d]);
+        hi[d] = std::max(hi[d], points[static_cast<size_t>(v)][d]);
+      }
+    std::array<int64_t, 6> range{};
+    for (int d = 0; d < 3; ++d) {
+      range[d] = static_cast<int64_t>(std::floor(lo[d] / h)) - 1;
+      range[3 + d] = static_cast<int64_t>(std::floor(hi[d] / h)) + 1;
+    }
+    return range;
+  }
+  void insert(int64_t id) {
+    const F& t = triangles[static_cast<size_t>(id)];
+    const auto range = bucket_range(t);
+    for (int64_t i = range[0]; i <= range[3]; ++i)
+      for (int64_t j = range[1]; j <= range[4]; ++j)
+        for (int64_t k = range[2]; k <= range[5]; ++k) buckets[cell_key(i, j, k)].push_back(id);
+    for (int64_t v : t) star[static_cast<size_t>(v)].push_back(id);
+    scores[static_cast<size_t>(id)] = score(t);
+    if (scores[static_cast<size_t>(id)] < kScoreLevels)
+      queue.emplace(scores[static_cast<size_t>(id)], id);
+  }
+  int64_t add_triangle(const F& t) {
+    const int64_t id = static_cast<int64_t>(triangles.size());
+    triangles.push_back(t);
+    alive.push_back(1);
+    stuck.push_back(0);
+    scores.push_back(0);
+    insert(id);
+    return id;
+  }
+  void kill(int64_t id) {
+    alive[static_cast<size_t>(id)] = 0;
+    queue.erase({scores[static_cast<size_t>(id)], id});
+  }
+  std::vector<int64_t> live_star(int64_t v) {
+    auto& incident = star[static_cast<size_t>(v)];
+    incident.erase(std::remove_if(incident.begin(), incident.end(),
+                                  [&](int64_t id) { return !alive[static_cast<size_t>(id)]; }),
+                   incident.end());
+    return incident;
+  }
+  std::vector<int64_t> edge_triangles(int64_t a, int64_t b) {
+    std::vector<int64_t> found;
+    for (int64_t id : live_star(a)) {
+      const F& t = triangles[static_cast<size_t>(id)];
+      if (t[0] == b || t[1] == b || t[2] == b) found.push_back(id);
+    }
+    return found;
+  }
+  std::vector<int64_t> neighbors(int64_t v) {
+    std::vector<int64_t> result;
+    for (int64_t id : live_star(v))
+      for (int64_t w : triangles[static_cast<size_t>(id)])
+        if (w != v) result.push_back(w);
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+  }
+  V project(const V& x) const {
+    const int64_t item = cloud.nearest_index(x);
+    if (item < 0) return x;
+    const V& p = data.cloud[static_cast<size_t>(item)];
+    const V direction = difference(x, p);
+    const double norm = length(direction);
+    if (!(norm > 0) || !std::isfinite(norm)) return x;
+    return add(p, mul(direction, data.offset / norm));
+  }
+
+  struct Edit {
+    std::vector<int64_t> removed;
+    std::vector<std::pair<int64_t, V>> moved;
+    bool adds_vertex = false;
+    V added{};
+    int64_t dropped = -1;
+    std::vector<F> created;
+  };
+
+  static std::array<int64_t, 3> sorted(const F& t) {
+    std::array<int64_t, 3> key{t[0], t[1], t[2]};
+    std::sort(key.begin(), key.end());
+    return key;
+  }
+
+  // Stages the edit's positions, checks every admission condition, and either
+  // applies it or restores the previous positions.
+  bool apply_if_admissible(const Edit& edit) {
+    if (edit.created.empty() || edit.removed.empty()) return false;
+    uint32_t removed_minimum = kScoreLevels;
+    V reference{0, 0, 0};
+    std::vector<std::array<int64_t, 3>> removed_keys;
+    for (int64_t id : edit.removed) {
+      if (!alive[static_cast<size_t>(id)]) return false;
+      removed_minimum = std::min(removed_minimum, scores[static_cast<size_t>(id)]);
+      const F& t = triangles[static_cast<size_t>(id)];
+      reference = add(reference, cross(difference(points[static_cast<size_t>(t[1])],
+                                                  points[static_cast<size_t>(t[0])]),
+                                       difference(points[static_cast<size_t>(t[2])],
+                                                  points[static_cast<size_t>(t[0])])));
+      removed_keys.push_back(sorted(t));
+    }
+    std::sort(removed_keys.begin(), removed_keys.end());
+    std::vector<int64_t> removed_ids = edit.removed;
+    std::sort(removed_ids.begin(), removed_ids.end());
+    std::vector<std::pair<int64_t, V>> saved;
+    std::vector<double> saved_nearest;
+    for (const auto& [vertex, position] : edit.moved) {
+      saved.emplace_back(vertex, points[static_cast<size_t>(vertex)]);
+      saved_nearest.push_back(nearest[static_cast<size_t>(vertex)]);
+    }
+    bool pushed = false;
+    auto restore = [&]() {
+      for (size_t i = 0; i < saved.size(); ++i) {
+        points[static_cast<size_t>(saved[i].first)] = saved[i].second;
+        nearest[static_cast<size_t>(saved[i].first)] = saved_nearest[i];
+      }
+      if (pushed) {
+        points.pop_back();
+        nearest.pop_back();
+        star.pop_back();
+      }
+      return false;
+    };
+    for (const auto& [vertex, position] : edit.moved) {
+      if (!point_in_domain(position)) return restore();
+      points[static_cast<size_t>(vertex)] = position;
+      nearest[static_cast<size_t>(vertex)] = cloud.nearest(position);
+    }
+    if (edit.adds_vertex) {
+      points.push_back(edit.added);
+      nearest.push_back(cloud.nearest(edit.added));
+      star.emplace_back();
+      pushed = true;
+      if (!point_in_domain(edit.added)) return restore();
+    }
+    std::vector<std::array<int64_t, 3>> created_keys;
+    for (const F& t : edit.created) {
+      if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) return restore();
+      const V& a = points[static_cast<size_t>(t[0])];
+      const V& b = points[static_cast<size_t>(t[1])];
+      const V& c = points[static_cast<size_t>(t[2])];
+      if (phx::mc::geometry::collinear(a, b, c, 0)) return restore();
+      if (score(t) <= removed_minimum) return restore();
+      const V normal = cross(difference(b, a), difference(c, a));
+      if (!(dot(normal.data(), reference.data()) > 0)) return restore();
+      if (!in_band(t)) return restore();
+      created_keys.push_back(sorted(t));
+    }
+    std::sort(created_keys.begin(), created_keys.end());
+    if (std::adjacent_find(created_keys.begin(), created_keys.end()) != created_keys.end())
+      return restore();
+    // A created face may not duplicate a surviving face.
+    for (const F& t : edit.created)
+      for (int64_t id : live_star(t[0])) {
+        if (std::binary_search(removed_ids.begin(), removed_ids.end(), id)) continue;
+        if (sorted(triangles[static_cast<size_t>(id)]) == sorted(t)) return restore();
+      }
+    auto legal = [](const phx::mc::Contact& contact) {
+      return contact.kind == PHX_MC_DISJOINT || contact.kind == PHX_MC_SHARED_VERTEX ||
+             contact.kind == PHX_MC_SHARED_EDGE;
+    };
+    std::vector<int64_t> candidates;
+    for (size_t first = 0; first < edit.created.size(); ++first) {
+      const F& t = edit.created[first];
+      const double* t_points[3] = {points[static_cast<size_t>(t[0])].data(),
+                                   points[static_cast<size_t>(t[1])].data(),
+                                   points[static_cast<size_t>(t[2])].data()};
+      for (size_t second = first + 1; second < edit.created.size(); ++second) {
+        const F& u = edit.created[second];
+        const double* u_points[3] = {points[static_cast<size_t>(u[0])].data(),
+                                     points[static_cast<size_t>(u[1])].data(),
+                                     points[static_cast<size_t>(u[2])].data()};
+        phx::mc::Contact contact;
+        if (phx::mc::intersect_triangles(t_points, u_points, t.data(), u.data(), contact) !=
+                PHX_MC_OK ||
+            !legal(contact))
+          return restore();
+      }
+      candidates.clear();
+      const auto range = bucket_range(t);
+      for (int64_t i = range[0]; i <= range[3]; ++i)
+        for (int64_t j = range[1]; j <= range[4]; ++j)
+          for (int64_t k = range[2]; k <= range[5]; ++k) {
+            const auto found = buckets.find(cell_key(i, j, k));
+            if (found == buckets.end()) continue;
+            for (int64_t id : found->second)
+              if (alive[static_cast<size_t>(id)] &&
+                  !std::binary_search(removed_ids.begin(), removed_ids.end(), id))
+                candidates.push_back(id);
+          }
+      std::sort(candidates.begin(), candidates.end());
+      candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+      for (int64_t id : candidates) {
+        const F& u = triangles[static_cast<size_t>(id)];
+        const double* u_points[3] = {points[static_cast<size_t>(u[0])].data(),
+                                     points[static_cast<size_t>(u[1])].data(),
+                                     points[static_cast<size_t>(u[2])].data()};
+        phx::mc::Contact contact;
+        if (phx::mc::intersect_triangles(t_points, u_points, t.data(), u.data(), contact) !=
+                PHX_MC_OK ||
+            !legal(contact))
+          return restore();
+      }
+    }
+    for (int64_t id : edit.removed) kill(id);
+    if (edit.dropped >= 0) star[static_cast<size_t>(edit.dropped)].clear();
+    std::vector<int64_t> touched;
+    for (const F& t : edit.created) {
+      add_triangle(t);
+      touched.insert(touched.end(), t.begin(), t.end());
+    }
+    std::sort(touched.begin(), touched.end());
+    touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+    for (int64_t v : touched)
+      for (int64_t id : live_star(v))
+        if (stuck[static_cast<size_t>(id)]) {
+          stuck[static_cast<size_t>(id)] = 0;
+          if (scores[static_cast<size_t>(id)] < kScoreLevels)
+            queue.emplace(scores[static_cast<size_t>(id)], id);
+        }
+    return true;
+  }
+
+  bool split(int64_t a, int64_t b, const V& position) {
+    const auto incident = edge_triangles(a, b);
+    if (incident.size() != 2) return false;
+    Edit edit;
+    edit.removed = incident;
+    edit.adds_vertex = true;
+    edit.added = position;
+    const int64_t m = static_cast<int64_t>(points.size());
+    for (int64_t id : incident) {
+      const F& t = triangles[static_cast<size_t>(id)];
+      for (int i = 0; i < 3; ++i) {
+        const int64_t p = t[i], q = t[(i + 1) % 3], r = t[(i + 2) % 3];
+        if ((p == a && q == b) || (p == b && q == a)) {
+          edit.created.push_back({p, m, r});
+          edit.created.push_back({m, q, r});
+        }
+      }
+    }
+    if (!apply_if_admissible(edit)) return false;
+    ++splits;
+    return true;
+  }
+
+  bool flip(int64_t a, int64_t b) {
+    const auto incident = edge_triangles(a, b);
+    if (incident.size() != 2) return false;
+    int64_t c = -1, d = -1;
+    for (int64_t id : incident) {
+      const F& t = triangles[static_cast<size_t>(id)];
+      for (int i = 0; i < 3; ++i) {
+        if (t[i] == a && t[(i + 1) % 3] == b) c = t[(i + 2) % 3];
+        if (t[i] == b && t[(i + 1) % 3] == a) d = t[(i + 2) % 3];
+      }
+    }
+    if (c < 0 || d < 0 || c == d || !edge_triangles(c, d).empty()) return false;
+    Edit edit;
+    edit.removed = incident;
+    edit.created = {{c, a, d}, {c, d, b}};
+    if (!apply_if_admissible(edit)) return false;
+    ++flips;
+    return true;
+  }
+
+  // Collapses u into v and places v at `position`.
+  bool collapse(int64_t u, int64_t v, const V& position) {
+    const auto incident = edge_triangles(u, v);
+    if (incident.size() != 2) return false;
+    std::vector<int64_t> opposite;
+    for (int64_t id : incident)
+      for (int64_t w : triangles[static_cast<size_t>(id)])
+        if (w != u && w != v) opposite.push_back(w);
+    std::sort(opposite.begin(), opposite.end());
+    const auto u_neighbors = neighbors(u), v_neighbors = neighbors(v);
+    std::vector<int64_t> common;
+    std::set_intersection(u_neighbors.begin(), u_neighbors.end(), v_neighbors.begin(),
+                          v_neighbors.end(), std::back_inserter(common));
+    if (common != opposite || opposite.size() != 2) return false;
+    for (int64_t w : opposite)
+      if (neighbors(w).size() <= 3) return false;
+    Edit edit;
+    std::vector<int64_t> patch = live_star(u);
+    for (int64_t id : live_star(v)) patch.push_back(id);
+    std::sort(patch.begin(), patch.end());
+    patch.erase(std::unique(patch.begin(), patch.end()), patch.end());
+    edit.removed = patch;
+    for (int64_t id : patch) {
+      F t = triangles[static_cast<size_t>(id)];
+      const bool has_u = t[0] == u || t[1] == u || t[2] == u;
+      const bool has_v = t[0] == v || t[1] == v || t[2] == v;
+      if (has_u && has_v) continue;
+      for (int64_t& w : t)
+        if (w == u) w = v;
+      edit.created.push_back(t);
+    }
+    edit.moved.emplace_back(v, position);
+    edit.dropped = u;
+    if (!apply_if_admissible(edit)) return false;
+    ++collapses;
+    return true;
+  }
+
+  bool relocate(int64_t v, const V& position) {
+    if (position == points[static_cast<size_t>(v)]) return false;
+    Edit edit;
+    edit.removed = live_star(v);
+    for (int64_t id : edit.removed) edit.created.push_back(triangles[static_cast<size_t>(id)]);
+    edit.moved.emplace_back(v, position);
+    if (!apply_if_admissible(edit)) return false;
+    ++relocations;
+    return true;
+  }
+
+  V star_centroid(int64_t v) {
+    V sum{0, 0, 0};
+    double weight = 0;
+    for (int64_t id : live_star(v)) {
+      const F& t = triangles[static_cast<size_t>(id)];
+      const V& a = points[static_cast<size_t>(t[0])];
+      const V& b = points[static_cast<size_t>(t[1])];
+      const V& c = points[static_cast<size_t>(t[2])];
+      const double area = length(cross(difference(b, a), difference(c, a)));
+      sum = add(sum, mul(add(add(a, b), c), area / 3));
+      weight += area;
+    }
+    return weight > 0 ? mul(sum, 1 / weight) : points[static_cast<size_t>(v)];
+  }
+
+  bool improve(int64_t id) {
+    const F t = triangles[static_cast<size_t>(id)];
+    std::array<std::pair<double, int>, 3> edges;  // (length, local edge opposite corner k)
+    for (int k = 0; k < 3; ++k)
+      edges[k] = {length(difference(points[static_cast<size_t>(t[(k + 1) % 3])],
+                                    points[static_cast<size_t>(t[(k + 2) % 3])])),
+                  k};
+    std::sort(edges.begin(), edges.end());
+    auto endpoints = [&](int k) {
+      return std::pair<int64_t, int64_t>{t[(k + 1) % 3], t[(k + 2) % 3]};
+    };
+    auto midpoint = [&](int64_t a, int64_t b) {
+      return mul(add(points[static_cast<size_t>(a)], points[static_cast<size_t>(b)]), 0.5);
+    };
+    const auto [la, lb] = endpoints(edges[2].second);
+    if (edges[2].first > (4.0 / 3.0) * h) {
+      const V middle = midpoint(la, lb);
+      if (split(la, lb, project(middle)) || split(la, lb, middle)) return true;
+    }
+    // The longest edge is opposite the largest angle.
+    for (int rank = 2; rank >= 0; --rank) {
+      const auto [a, b] = endpoints(edges[rank].second);
+      if (flip(a, b)) return true;
+    }
+    const auto [sa, sb] = endpoints(edges[0].second);
+    if (collapse(sa, sb, project(midpoint(sa, sb))) ||
+        collapse(sa, sb, points[static_cast<size_t>(sb)]) ||
+        collapse(sb, sa, points[static_cast<size_t>(sa)]))
+      return true;
+    for (int64_t v : t) {
+      const V centroid = star_centroid(v);
+      if (relocate(v, project(centroid)) || relocate(v, centroid) ||
+          relocate(v, project(points[static_cast<size_t>(v)])))
+        return true;
+    }
+    const V middle = midpoint(la, lb);
+    return split(la, lb, project(middle)) || split(la, lb, middle);
+  }
+
+  int32_t run() {
+    h = 2 * data.spacing;
+    lower = data.bounds[2];
+    upper = data.bounds[1];
+    if (!(h > 0) || !(lower > 0) || !(upper > lower)) return PHX_MC_INVALID_ARGUMENT;
+    int32_t status = cloud.build(data.cloud, std::max(h / 2, data.covering_radius));
+    if (status != PHX_MC_OK) return status;
+    points = data.surface_points;
+    nearest.resize(points.size());
+    for (size_t v = 0; v < points.size(); ++v) nearest[v] = cloud.nearest(points[v]);
+    star.assign(points.size(), {});
+    for (const F& t : data.triangles) add_triangle(t);
+    while (!queue.empty()) {
+      const int64_t id = queue.begin()->second;
+      queue.erase(queue.begin());
+      if (!alive[static_cast<size_t>(id)]) continue;
+      if (!improve(id)) stuck[static_cast<size_t>(id)] = 1;
+    }
+    return finish();
+  }
+
+  int32_t finish() {
+    std::vector<int64_t> remap(points.size(), -1);
+    std::vector<V> output_points;
+    std::vector<F> output_triangles;
+    for (size_t id = 0; id < triangles.size(); ++id) {
+      if (!alive[id]) continue;
+      F t = triangles[id];
+      for (int64_t& v : t) {
+        if (remap[static_cast<size_t>(v)] < 0) {
+          remap[static_cast<size_t>(v)] = static_cast<int64_t>(output_points.size());
+          output_points.push_back(points[static_cast<size_t>(v)]);
+        }
+        v = remap[static_cast<size_t>(v)];
+      }
+      output_triangles.push_back(t);
+    }
+    if (output_triangles.empty()) return PHX_MC_INTERNAL_ERROR;
+    // Source-to-surface: every source point lies within the covering radius of
+    // a cloud point, which lies within its nearest-vertex distance of the
+    // surface.
+    PointIndex vertices;
+    int32_t status = vertices.build(output_points, h);
+    if (status != PHX_MC_OK) return status;
+    double source_upper = 0;
+    for (const V& p : data.cloud)
+      source_upper = std::max(source_upper,
+                              upper_sum(upper_sum(next_up(vertices.nearest(p)),
+                                                  data.covering_radius),
+                                        data.arithmetic_error));
+    if (!std::isfinite(source_upper)) return PHX_MC_RANGE_ERROR;
+    data.bounds[0] = next_up(source_upper);
+    data.surface_points = std::move(output_points);
+    data.triangles = std::move(output_triangles);
+    // The marching-tetrahedra carrier no longer bounds the remeshed surface.
+    data.volume_points = data.surface_points;
+    data.cells.clear();
+    return PHX_MC_OK;
+  }
+
+  int64_t unmet() const {
+    int64_t count = 0;
+    for (size_t id = 0; id < triangles.size(); ++id)
+      count += alive[id] && scores[id] < kScoreLevels;
+    return count;
+  }
+};
+}  // namespace
+
+extern "C" PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* handle, double* bounds,
+                                                              int64_t* counters) {
+  if (handle == nullptr || bounds == nullptr || counters == nullptr)
+    return PHX_MC_INVALID_ARGUMENT;
+  return phx::mc::guarded([&]() -> int32_t {
+    auto& data = *static_cast<EnvelopeData*>(handle);
+    if (data.cloud.empty() || data.triangles.empty()) return PHX_MC_INVALID_ARGUMENT;
+    EnvelopeRemesher remesher(data);
+    const int32_t status = remesher.run();
+    if (status != PHX_MC_OK) return status;
+    std::copy(data.bounds.begin(), data.bounds.end(), bounds);
+    counters[0] = remesher.splits;
+    counters[1] = remesher.collapses;
+    counters[2] = remesher.flips;
+    counters[3] = remesher.relocations;
+    counters[4] = remesher.unmet();
+    return PHX_MC_OK;
+  });
+}
+

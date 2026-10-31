@@ -916,6 +916,14 @@ PHX_MC_API int32_t phx_mc_surface_envelope_arrays(
     int64_t volume_vertex_capacity, int64_t tetrahedron_capacity, double* surface_vertices,
     int64_t* surface_triangles, double* volume_vertices, int64_t* tetrahedra);
 PHX_MC_API void phx_mc_surface_envelope_free(void* result);
+/* Remeshes a created envelope surface in place toward edge length 2 * spacing and a
+ * 30 degree minimum angle; every edit keeps its triangles inside the certified
+ * distance band [bounds[2], bounds[1]] and the surface an embedded oriented closed
+ * 2-manifold. Writes the updated four bounds and counters (splits, collapses, flips,
+ * relocations, triangles still below the angle or size target). The tetrahedral
+ * carrier is dropped: the volume vertices become the surface vertices, no cells. */
+PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* result, double* bounds,
+                                                  int64_t* counters);
 
 /* --------------------------------------------------------------- level sets */
 #define PHX_MC_LEVEL_SET_FULL_CARRIERS 0

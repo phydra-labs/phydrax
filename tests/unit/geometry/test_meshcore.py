@@ -1090,6 +1090,54 @@ def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
     assert not result.bounds.flags.writeable
 
 
+def _minimum_triangle_angles(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
+    corners = [vertices[triangles[:, k]] for k in range(3)]
+    angles = []
+    for k in range(3):
+        first = corners[(k + 1) % 3] - corners[k]
+        second = corners[(k + 2) % 3] - corners[k]
+        cosine = np.sum(first * second, axis=1) / (
+            np.linalg.norm(first, axis=1) * np.linalg.norm(second, axis=1)
+        )
+        angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    return np.min(np.stack(angles), axis=0)
+
+
+def test_surface_envelope_remesh_keeps_the_band_and_raises_angles() -> None:
+    triangles = np.asarray(
+        ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
+        dtype=np.int64,
+    )
+    extracted = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1)
+    remeshed = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1, remesh=True)
+
+    assert extracted.remesh_counters is None
+    assert remeshed.remesh_counters is not None
+    assert remeshed.remesh_counters.shape == (5,)
+    assert int(np.sum(remeshed.remesh_counters[:4])) > 0
+    # The band and interpolation error are unchanged; only the source-to-surface
+    # bound is recomputed on the remeshed vertices.
+    np.testing.assert_array_equal(remeshed.bounds[1:], extracted.bounds[1:])
+    assert 0.0 < remeshed.bounds[0] < remeshed.bounds[1]
+    assert remeshed.tetrahedra.shape == (0, 4)
+    np.testing.assert_array_equal(remeshed.volume_vertices, remeshed.surface_vertices)
+    assert np.min(
+        _minimum_triangle_angles(remeshed.surface_vertices, remeshed.surface_triangles)
+    ) > np.min(
+        _minimum_triangle_angles(extracted.surface_vertices, extracted.surface_triangles)
+    )
+    directed = {
+        (int(face[k]), int(face[(k + 1) % 3]))
+        for face in remeshed.surface_triangles
+        for k in range(3)
+    }
+    assert len(directed) == 3 * remeshed.surface_triangles.shape[0]
+    assert all((second, first) in directed for first, second in directed)
+    again = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1, remesh=True)
+    np.testing.assert_array_equal(again.surface_vertices, remeshed.surface_vertices)
+    np.testing.assert_array_equal(again.surface_triangles, remeshed.surface_triangles)
+
+
 def test_surface_envelope_names_the_offset_domination_contract() -> None:
     triangles = np.asarray(
         ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
