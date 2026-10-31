@@ -3056,6 +3056,8 @@ def _validate_mapped_region_seeds(
             status = int(np.asarray(result.status)[0])
             complete = bool(np.asarray(result.candidates_complete)[0])
             successful = bool(np.asarray(result.successful)[0])
+            # A complete candidate search proves OUTSIDE; only LOCATED rows
+            # additionally carry a successful inverse.
             if (
                 status
                 not in (
@@ -3063,7 +3065,7 @@ def _validate_mapped_region_seeds(
                     int(CellLocationStatus.LOCATED),
                 )
                 or not complete
-                or not successful
+                or (status == int(CellLocationStatus.LOCATED) and not successful)
             ):
                 raise ValueError(
                     "Mapped region-seed admission requires a complete resolved source-map inverse."
