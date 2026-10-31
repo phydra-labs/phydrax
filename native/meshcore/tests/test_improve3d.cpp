@@ -2804,6 +2804,99 @@ void flat_fixed_boundary_cells_are_removed_by_kernel_cones() {
   }
 }
 
+// A sliver (a unit square with one diagonal raised by 1e-9) inside an
+// octahedron, with the octahedron's faces and edges fixed: its radius-edge
+// ratio is 0.71 and, with a dihedral target of 0, it meets every quality
+// target, while its relative determinant (1.4e-9) is above the requested
+// floor 1e-12 but far below what a binary64 metric determinant det(E^T E)
+// can certify (a layer-core fill published such a cell, and finite-element
+// preparation evaluated its metric determinant as negative). Improvement
+// applies kMetricDeterminantFloor whatever floor is requested, scores the
+// sliver 0 and removes it.
+void sliver_below_metric_determinant_floor_is_removed() {
+  constexpr double kRaise = 1.0e-9;
+  const std::vector<double> points{0.0, 0.0, kRaise, 1.0, 0.0, 0.0, 1.0, 1.0, kRaise,
+                                   0.0, 1.0, 0.0,    0.5, 0.5, 0.8, 0.5, 0.5, -0.8};
+  std::vector<std::array<std::int32_t, 4>> cells{
+      {0, 1, 3, 2}, {4, 0, 1, 2}, {4, 0, 2, 3}, {5, 1, 3, 2}, {5, 1, 0, 3}};
+  const auto corner = [&](std::int32_t vertex) { return points.data() + 3 * vertex; };
+  for (std::array<std::int32_t, 4>& cell : cells) {
+    if (orient3d(corner(cell[0]), corner(cell[1]), corner(cell[2]), corner(cell[3])) < 0) {
+      std::swap(cell[2], cell[3]);
+    }
+  }
+  std::vector<std::int32_t> tetrahedra;
+  for (const std::array<std::int32_t, 4>& cell : cells) {
+    tetrahedra.insert(tetrahedra.end(), cell.begin(), cell.end());
+  }
+  std::map<std::array<std::int32_t, 3>, std::pair<int, std::array<std::int32_t, 3>>> face_uses;
+  for (const std::array<std::int32_t, 4>& cell : cells) {
+    for (int opposite = 0; opposite < 4; ++opposite) {
+      std::int32_t face[3];
+      oriented_facet(cell.data(), opposite, face);
+      std::array<std::int32_t, 3> key{face[0], face[1], face[2]};
+      std::sort(key.begin(), key.end());
+      auto& use = face_uses[key];
+      ++use.first;
+      use.second = {face[0], face[1], face[2]};
+    }
+  }
+  std::vector<std::int32_t> faces;
+  std::set<std::array<std::int32_t, 2>> edges;
+  for (const auto& [key, use] : face_uses) {
+    if (use.first != 1) continue;
+    faces.insert(faces.end(), use.second.begin(), use.second.end());
+    edges.insert({key[0], key[1]});
+    edges.insert({key[0], key[2]});
+    edges.insert({key[1], key[2]});
+  }
+  PHX_CHECK(faces.size() == 3 * 8 && edges.size() == 12);
+  std::vector<std::int32_t> face_sources(faces.size() / 3);
+  for (std::size_t row = 0; row < face_sources.size(); ++row) {
+    face_sources[row] = static_cast<std::int32_t>(row);
+  }
+  std::vector<std::int32_t> segments;
+  for (const std::array<std::int32_t, 2>& edge : edges) {
+    segments.insert(segments.end(), edge.begin(), edge.end());
+  }
+  std::vector<std::int32_t> segment_sources(segments.size() / 2);
+  for (std::size_t row = 0; row < segment_sources.size(); ++row) {
+    segment_sources[row] = static_cast<std::int32_t>(row);
+  }
+  const std::vector<std::int32_t> regions(cells.size(), 0);
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  const std::int32_t build_status = mesh.build(points, tetrahedra, regions, faces, face_sources,
+                                               {}, segments, segment_sources, {}, nullptr);
+  PHX_CHECK(build_status == PHX_MC_OK);
+  if (build_status != PHX_MC_OK) return;
+  const auto smallest_relative_determinant = [&](const TetMeshSnapshot& state) {
+    double smallest = 1.0;
+    for (const TetSnapshotCell& cell : state.cells) {
+      std::array<const double*, 4> corners{};
+      for (std::size_t index = 0; index < 4; ++index) {
+        corners[index] = mesh.point(mesh.vertex_slot(cell.vertices[index]));
+      }
+      smallest = std::min(smallest, geometry::relative_determinant(corners.data()));
+    }
+    return smallest;
+  };
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  const double sliver = smallest_relative_determinant(before);
+  PHX_CHECK(sliver > 1.0e-12 && sliver < kMetricDeterminantFloor);
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status = improve_mesh(mesh, TetQualityRequest{8.0, 0.0, 1.0e-12}, {},
+                                           inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_OK && unmet == 0);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  PHX_CHECK(smallest_relative_determinant(after) > kMetricDeterminantFloor);
+  PHX_CHECK(same_source_banks(before, after));
+}
+
 }  // namespace
 
 int main() {
@@ -2828,5 +2921,6 @@ int main() {
   boundary_point_insertion_splits_segment_and_fans();
   refused_boundary_insertion_restores_disk_constraints();
   flat_fixed_boundary_cells_are_removed_by_kernel_cones();
+  sliver_below_metric_determinant_floor_is_removed();
   return phx::mc::test::finish("test_improve3d");
 }

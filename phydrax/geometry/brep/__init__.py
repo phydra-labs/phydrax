@@ -69,6 +69,7 @@ _DEFERRED_EXPORTS = {
     "BRepSewingPolicy": "._sewing",
     "BRepSewingResult": "._sewing",
     "BRepSource": "._source",
+    "BRepSourceDerivativeError": "._source",
     "BRepTessellationPolicy": "._constructors",
     "BRepTessellation": "._model",
     "BRepTopology": "._model",
@@ -289,5 +290,8 @@ if TYPE_CHECKING:
         BRepSewingResult as BRepSewingResult,
         sew_brep as sew_brep,
     )
-    from ._source import BRepSource as BRepSource
+    from ._source import (
+        BRepSource as BRepSource,
+        BRepSourceDerivativeError as BRepSourceDerivativeError,
+    )
     from ._tspline import TSplineSurfacePatch as TSplineSurfacePatch

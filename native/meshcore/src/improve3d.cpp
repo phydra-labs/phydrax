@@ -1874,6 +1874,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   };
   refresh_slot_sizes();
   TetQualityRequest request = requested;
+  request.minimum_relative_determinant =
+      std::max(requested.minimum_relative_determinant, kMetricDeterminantFloor);
   request.slot_sizes = &slot_sizes;
   bool has_unmet_quality = false;
   QualityVector before_cavity_quality;
