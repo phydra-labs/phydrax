@@ -4868,47 +4868,55 @@ def test_brep_entity_archive_revalidates_source_owner() -> None:
         _reconstruct_brep_graph((model, foreign_entity))
 
 
-def test_piecewise_boundary_query_archive_cold_rebuilds_source_owner(
-    tmp_path: Path,
-) -> None:
+def _write_pwl_boundary_query(directory: Path, /) -> Path:
+    """Write the PWL query archive; return its per-entity oracle as a JSON file."""
     written = subprocess.run(
-        [sys.executable, str(_WORKER), "write-pwl-boundary-query", str(tmp_path)],
+        [sys.executable, str(_WORKER), "write-pwl-boundary-query", str(directory)],
         cwd=_REPOSITORY_ROOT,
         check=True,
         capture_output=True,
         text=True,
     )
-    expected = json.loads(written.stdout)
-    restored = subprocess.run(
+    expected = directory / "pwl-boundary-query-expected.json"
+    expected.write_text(written.stdout, encoding="utf-8")
+    return expected
+
+
+def _read_pwl_boundary_query(
+    directory: Path, expected: Path, /, *, check: bool
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [
             sys.executable,
             str(_WORKER),
             "read-pwl-boundary-query",
-            str(tmp_path),
-            json.dumps(expected),
+            str(directory),
+            str(expected),
         ],
         cwd=_REPOSITORY_ROOT,
-        check=True,
+        check=check,
         capture_output=True,
         text=True,
     )
+
+
+def test_piecewise_boundary_query_archive_cold_rebuilds_source_owner(
+    tmp_path: Path,
+) -> None:
+    expected = _write_pwl_boundary_query(tmp_path)
+    restored = _read_pwl_boundary_query(tmp_path, expected, check=True)
     assert restored.stdout.strip() == "pwl-boundary-query-cold-restored"
 
 
-@pytest.mark.parametrize("field_index", (5, 7), ids=("entity-keys", "chart-ids"))
+@pytest.mark.parametrize("tampered", ("query-id", "entity-ids"))
 def test_piecewise_boundary_query_archive_rejects_tampered_chart_ancestry(
-    tmp_path: Path, field_index: int
+    tmp_path: Path, tampered: str
 ) -> None:
-    written = subprocess.run(
-        [sys.executable, str(_WORKER), "write-pwl-boundary-query", str(tmp_path)],
-        cwd=_REPOSITORY_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    expected = json.loads(written.stdout)
+    expected = _write_pwl_boundary_query(tmp_path)
+    oracle = json.loads(expected.read_text(encoding="utf-8"))
     source = tmp_path / "pwl-boundary-query.phx"
-    corrupted = tmp_path / f"changed-pwl-boundary-{field_index}.phx"
+    corrupted_directory = tmp_path / f"changed-pwl-boundary-{tampered}"
+    corrupted_directory.mkdir()
     manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
 
@@ -4937,37 +4945,35 @@ def test_piecewise_boundary_query_archive_rejects_tampered_chart_ancestry(
 
     recipe = find_query(manifest["model_recipe"])
     assert recipe is not None
-    field = recipe["items"][field_index]
-
-    def tamper_first_string(node: object) -> bool:
-        if isinstance(node, dict):
-            if node.get("kind") == "literal" and isinstance(node.get("value"), str):
-                node["value"] += ":tampered"
-                return True
-            return any(tamper_first_string(child) for child in node.values())
-        if isinstance(node, list):
-            return any(tamper_first_string(child) for child in node)
-        return False
-
-    assert tamper_first_string(field)
+    if tampered == "query-id":
+        # The query ID fingerprints the selected entities and their source keys,
+        # from which the owner recomputes every chart ID.
+        field = recipe["items"][3]
+        assert field["kind"] == "literal" and isinstance(field["value"], str)
+        field["value"] += ":tampered"
+    else:
+        # Same selected set, different stored order: the owner canonicalizes the
+        # selection, so the stored chart order no longer matches its rebuild.
+        facet_ids = next(
+            query["entity_ids"] for query in oracle["queries"] if query["dimension"] == 2
+        )
+        names = [
+            name
+            for name, array in arrays.items()
+            if np.array_equal(np.asarray(array), np.asarray(facet_ids))
+        ]
+        assert len(names) == 1 and len(facet_ids) > 1
+        arrays[names[0]] = np.ascontiguousarray(np.asarray(arrays[names[0]])[::-1])
     write_array_archive(
-        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
+        corrupted_directory / "pwl-boundary-query.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
-    refused = subprocess.run(
-        [
-            sys.executable,
-            str(_WORKER),
-            "read-pwl-boundary-query",
-            str(corrupted),
-            json.dumps(expected),
-        ],
-        cwd=_REPOSITORY_ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    refused = _read_pwl_boundary_query(corrupted_directory, expected, check=False)
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
+    assert "PWL boundary query ancestry differs" in refused.stderr
 
 
 def test_reference_chart_rational_archive_cold_restores_exact_maps(

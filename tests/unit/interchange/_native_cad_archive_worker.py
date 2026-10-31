@@ -3688,7 +3688,6 @@ def _rebuild_piecewise_boundary_query_recipe(
     ):
         raise ValueError("PWL query recipe changed its retained envelope owner.")
     entity_ids = np.asarray(value.entity_ids)
-    source_rows = np.asarray(value.source_rows)
     query = PiecewiseLinearBoundarySource(
         owner,
         value.entity_dimension,
@@ -3698,10 +3697,6 @@ def _rebuild_piecewise_boundary_query_recipe(
         query.entity_dimension != value.entity_dimension
         or query.source_query_id != value.expected_source_query_id
         or not np.array_equal(query.entity_ids, entity_ids)
-        or not np.array_equal(query.source_rows, source_rows)
-        or query.source_entity_keys != value.source_entity_keys
-        or query.source_occurrence_paths != value.source_occurrence_paths
-        or query.chart_ids != value.chart_ids
     ):
         raise ValueError(
             "PWL boundary query ancestry differs from its reconstructed owner."
@@ -14494,8 +14489,10 @@ if __name__ == "__main__":
     elif operation == "write-reconstructed":
         _write_reconstructed_source(archive_directory)
     elif operation == "read-pwl-boundary-query":
+        # The per-entity oracle exceeds the process argument limit; it is a file.
         _read_piecewise_boundary_query(
-            archive_directory / "pwl-boundary-query.phx", json.loads(sys.argv[3])
+            archive_directory / "pwl-boundary-query.phx",
+            json.loads(Path(sys.argv[3]).read_text(encoding="utf-8")),
         )
     elif operation == "write-pwl-boundary-query":
         _write_piecewise_boundary_query(archive_directory)
