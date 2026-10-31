@@ -3469,6 +3469,41 @@ def _offset_period_roots(
         )
     return rebound[0], rebound[1]
 
+def _offset_chart_pcurve(
+    pcurve: AbstractCurve,
+    source_patch: AbstractSurfacePatch,
+    offset_patch: AbstractSurfacePatch,
+    /,
+) -> AbstractCurve:
+    """Rebind native-period sheet gauges from a source chart to its normal offset.
+
+    A normal offset shares the source chart and declared periods, so the same
+    integer gauge names the same sheet of the offset patch.
+    """
+    from ._boolean_core import PeriodicPCurve
+
+    if not isinstance(pcurve, PeriodicPCurve) or pcurve.patch is not source_patch:
+        return pcurve
+    return PeriodicPCurve(
+        _offset_chart_pcurve(pcurve.source_curve, source_patch, offset_patch),
+        offset_patch,
+        pcurve.period_shifts,
+    )
+
+
+def _offset_native_turn_roots(
+    carrier: AbstractCurve,
+    patch: AbstractSurfacePatch,
+    axis: int,
+    /,
+) -> tuple[NativePeriodEndpoint, NativePeriodEndpoint]:
+    """Bind one whole native turn of a zero-phase offset trim line."""
+    return (
+        NativePeriodEndpoint(carrier, patch, axis, rational=0, turns=0),
+        NativePeriodEndpoint(carrier, patch, axis, rational=0, turns=1),
+    )
+
+
 
 def _single_chart_torus_offset(
     model: BRepModel,
@@ -3479,9 +3514,9 @@ def _single_chart_torus_offset(
     source_id: str,
     include_parameter_range: bool,
 ) -> BRepOffsetResult | None:
+    from ._boolean_core import AffinePCurve, PeriodicPCurve
     from ._carrier_pieces import carrier_payload
     from ._intersection import NativePeriodEndpoint
-    from ._intersection_curve import exact_curve_parameter_point
     from ._offset_result import exact_operation_offset_result
 
     geometry = model.geometry
@@ -3610,7 +3645,6 @@ def _single_chart_torus_offset(
         for axis_index in range(2)
     ):
         return None
-    patch_payload = carrier_payload(patch)
     uses: list[list[int]] = [[] for _ in geometry.edge_curves]
     for coedge, edge in enumerate(geometry.coedge_edges):
         uses[edge].append(coedge)
@@ -3620,35 +3654,108 @@ def _single_chart_torus_offset(
     ):
         return None
 
-    def full_period_pair(
+    # A rooted one-vertex profile starts at its exact zero phase; any other
+    # rooted start has no rational chart coordinate for the offset trim lines.
+    vertex_root = geometry.vertex_roots[0]
+    profile_point = geometry.vertex_exact_points[0]
+    if vertex_root is not None:
+        primary = vertex_root.primary
+        if (
+            not isinstance(primary, BRepConicVertex)
+            or vertex_root.aliases
+            or any(primary.offset_exact)
+            or primary.point_exact != profile_point
+        ):
+            return None
+
+    def zero_phase_profile_root(root: ConicParameterRoot, turns: int, /) -> bool:
+        return (
+            profile_point is not None
+            and carrier_payload(root.conic) == carrier_payload(curve)
+            and (root.cosine_exact, root.sine_exact, root.turns) == (1, 0, turns)
+            and root.exact_point() == profile_point
+        )
+
+    def native_pair(
         roots: tuple[object | None, object | None],
-        carrier: BRepCurve,
+        carrier: AbstractCurve,
         axis_index: int,
-        rational: Fraction,
         /,
     ) -> bool:
         first_root, last_root = roots
-        if not isinstance(first_root, NativePeriodEndpoint) or not isinstance(
-            last_root, NativePeriodEndpoint
-        ):
-            return False
-        return bool(
-            carrier_payload(first_root.curve) == carrier_payload(carrier)
+        return (
+            isinstance(first_root, NativePeriodEndpoint)
+            and isinstance(last_root, NativePeriodEndpoint)
+            and carrier_payload(first_root.curve) == carrier_payload(carrier)
             and carrier_payload(last_root.curve) == carrier_payload(carrier)
             and first_root.patch is not None
             and last_root.patch is not None
-            and carrier_payload(first_root.patch) == patch_payload
-            and carrier_payload(last_root.patch) == patch_payload
+            and carrier_payload(first_root.patch) == carrier_payload(patch)
+            and carrier_payload(last_root.patch) == carrier_payload(patch)
             and first_root.axis == last_root.axis == axis_index
-            and first_root.rational == last_root.rational == rational
+            and first_root.rational == last_root.rational == 0
             and first_root.turns == 0
             and last_root.turns == 1
         )
 
-    edge_roots: list[tuple[NativePeriodEndpoint, NativePeriodEndpoint]] = []
-    chart_points: list[tuple[Fraction, ...]] = []
-    edge_lines: list[tuple[int, int, int, int, Fraction]] = []
-    fixed_values: list[list[Fraction]] = [[] for _ in uses]
+    def rooted_turn_pair(roots: tuple[object | None, object | None], /) -> bool:
+        first_root, last_root = roots
+        return (
+            isinstance(first_root, ConicParameterEndpoint)
+            and isinstance(last_root, ConicParameterEndpoint)
+            and first_root.parameter_exact is None
+            and last_root.parameter_exact is None
+            and first_root.point_exact == profile_point
+            and last_root.point_exact == profile_point
+            and zero_phase_profile_root(first_root.root, 0)
+            and zero_phase_profile_root(last_root.root, 1)
+        )
+
+    def chart_line(
+        pcurve: AbstractCurve, /
+    ) -> (
+        tuple[
+            tuple[ExactScalar, ExactScalar],
+            tuple[ExactScalar, ExactScalar],
+            tuple[int, int],
+        ]
+        | None
+    ):
+        """Return the exact chart line and native sheet of one source use."""
+        shifts = (0, 0)
+        while isinstance(pcurve, PeriodicPCurve):
+            if pcurve.patch is not patch:
+                return None
+            shifts = (
+                shifts[0] + pcurve.period_shifts[0],
+                shifts[1] + pcurve.period_shifts[1],
+            )
+            pcurve = pcurve.source_curve
+        if isinstance(pcurve, AffinePCurve):
+            inner = pcurve.curve
+            if (
+                not isinstance(inner, ConicRootLinePCurve)
+                or not zero_phase_profile_root(inner.root, 0)
+                or inner.phase_shift_exact != 0
+                or pcurve.matrix != ((0, 1), (1, 0))
+            ):
+                return None
+            # The rooted ring chart is (t, phase) at the exact zero phase.
+            return (
+                (pcurve.offset[0] + inner.height_origin_exact, pcurve.offset[1]),
+                (inner.height_direction_exact, Fraction(0)),
+                shifts,
+            )
+        if not isinstance(pcurve, LineCurve):
+            return None
+        return (
+            (pcurve.origin_exact[0], pcurve.origin_exact[1]),
+            (pcurve.direction_exact[0], pcurve.direction_exact[1]),
+            shifts,
+        )
+
+    edge_axes: list[int] = []
+    coedge_lines: dict[int, tuple[int, tuple[int, int]]] = {}
     for edge, coedges in enumerate(uses):
         curve_index = geometry.edge_curves[edge]
         if curve_index < 0:
@@ -3660,146 +3767,87 @@ def _single_chart_torus_offset(
         ):
             return None
         edge_pair = geometry.edge_endpoint_roots[edge]
-        first_root, last_root = edge_pair
-        if not isinstance(first_root, NativePeriodEndpoint) or not isinstance(
-            last_root, NativePeriodEndpoint
-        ):
+        if native_pair(edge_pair, edge_curve, 0):
+            axis_index = 0
+        elif native_pair(edge_pair, edge_curve, 1) or rooted_turn_pair(edge_pair):
+            axis_index = 1
+        else:
             return None
-        axis_index, rational = first_root.axis, first_root.rational
-        if axis_index not in (0, 1) or not full_period_pair(
-            edge_pair, edge_curve, axis_index, rational
-        ):
-            return None
-        edge_roots.append((first_root, last_root))
-        first_parameter, last_parameter = (
+        edge_axes.append(axis_index)
+        edge_range = tuple(
             Fraction.from_float(float(value))
             for value in np.asarray(geometry.edge_ranges[edge])
         )
+        if edge_range != (0, period_exact[axis_index]):
+            return None
+        fixed_axis = 1 - axis_index
         for coedge in coedges:
-            pcurve = geometry.pcurves[coedge]
-            if not isinstance(pcurve, LineCurve):
+            line = chart_line(geometry.pcurves[coedge])
+            if line is None:
                 return None
-            origin, direction = (
-                exact_vector(pcurve.origin),
-                exact_vector(pcurve.direction),
-            )
-            variable_axes = tuple(
-                index
-                for index in range(2)
-                if direction[index] == 1 and direction[1 - index] == 0
-            )
-            if len(variable_axes) != 1:
-                return None
-            variable_axis = variable_axes[0]
+            origin, direction, shifts = line
             if (
-                variable_axis != axis_index
-                or origin[variable_axis] + direction[variable_axis] * first_parameter
-                != rational
-                or not full_period_pair(
-                    geometry.coedge_endpoint_roots[coedge],
-                    pcurve,
-                    variable_axis,
-                    rational,
-                )
+                direction[axis_index] != 1
+                or direction[fixed_axis] != 0
+                or origin != (0, 0)
+                or shifts[axis_index]
+                or shifts[fixed_axis] not in (0, 1)
             ):
                 return None
-            fixed_axis = 1 - variable_axis
-            fixed_value = origin[fixed_axis]
-            fixed_values[edge].append(fixed_value)
-            first_uv = exact_curve_parameter_point(pcurve, first_parameter)
-            last_uv = exact_curve_parameter_point(pcurve, last_parameter)
-            if (
-                first_uv is None
-                or last_uv is None
-                or len(first_uv) != 2
-                or len(last_uv) != 2
+            coedge_roots = geometry.coedge_endpoint_roots[coedge]
+            if not (
+                native_pair(coedge_roots, geometry.pcurves[coedge], axis_index)
+                or (axis_index == 1 and rooted_turn_pair(coedge_roots))
             ):
                 return None
-            try:
-                chart_points.extend(
-                    tuple(
-                        rational_coefficient(value, role="periodic chart point")
-                        for value in uv
-                    )
-                    for uv in (first_uv, last_uv)
-                )
-            except ValueError:
-                return None
-            edge_lines.append((edge, coedge, variable_axis, fixed_axis, fixed_value))
-
-    if len({root.axis for pair in edge_roots for root in pair[:1]}) != 2:
+            coedge_lines[coedge] = (axis_index, shifts)
+        # Each closed edge is used once on the base sheet and once one turn later.
+        if sorted(coedge_lines[coedge][1][fixed_axis] for coedge in coedges) != [0, 1]:
+            return None
+    if sorted(edge_axes) != [0, 1]:
         return None
-    anchor = chart_points[0]
-    for point in chart_points[1:]:
-        if any(
-            (
-                (point[axis_index] - anchor[axis_index]) / period_exact[axis_index]
-            ).denominator
-            != 1
-            for axis_index in range(2)
-        ):
-            return None
-    for edge, values in enumerate(fixed_values):
-        edge_axis = edge_roots[edge][0].axis
-        if edge_axis is None:
-            return None
-        if (
-            len(values) != 2
-            or ((values[1] - values[0]) / period_exact[1 - edge_axis]).denominator != 1
-        ):
-            return None
 
     offset_patch = OffsetSurface(
         patch,
         Fraction.from_float(distance),
         frame_sign=frame_sign,
     )
-    offset_curves: list[AbstractCurve | None] = [None] * len(uses)
-    for edge, coedge, variable_axis, fixed_axis, fixed_value in edge_lines:
-        if offset_curves[edge] is None:
-            first, last = (
-                float(value) for value in np.asarray(geometry.edge_ranges[edge])
-            )
-            if offset_patch.native_period_symbols()[variable_axis] == "two_pi":
-                offset_curves[edge] = SurfaceIsoparametricCurve(
-                    offset_patch,
-                    fixed_axis,
-                    float(fixed_value),
-                    parameter_range=(first, last),
-                )
-            else:
-                offset_curves[edge] = SurfaceMappedCurve(
-                    offset_patch, geometry.pcurves[coedge]
-                )
-    if any(curve is None for curve in offset_curves):
-        return None
     builder = _Builder()
     vertex_point = np.asarray(
-        offset_patch.evaluate(jnp.asarray(anchor, dtype=jnp.float64)),
+        offset_patch.evaluate(jnp.zeros((2,), dtype=jnp.float64)),
         dtype=np.float64,
     )
     builder.vertex(vertex_point)
-    for edge, offset_curve in enumerate(offset_curves):
-        if offset_curve is None:
-            raise ValueError("Every admitted offset edge must retain its source curve.")
+    for edge, axis_index in enumerate(edge_axes):
         first, last = (float(value) for value in np.asarray(geometry.edge_ranges[edge]))
-        roots = edge_roots[edge]
+        offset_curve = SurfaceIsoparametricCurve(
+            offset_patch, 1 - axis_index, 0.0, parameter_range=(first, last)
+        )
         builder.edge(
             offset_curve,
             first,
             last,
-            geometry.edge_vertices[edge][0],
-            geometry.edge_vertices[edge][1],
-            endpoint_roots=_offset_period_roots(roots, offset_curve, offset_patch),
+            0,
+            0,
+            endpoint_roots=_offset_native_turn_roots(offset_curve, offset_patch, axis_index),
         )
     for coedge, edge in enumerate(geometry.coedge_edges):
-        pcurve = geometry.pcurves[coedge]
-        roots = geometry.coedge_endpoint_roots[coedge]
+        axis_index, shifts = coedge_lines[coedge]
+        direction = (
+            (Fraction(1), Fraction(0)) if axis_index == 0 else (Fraction(0), Fraction(1))
+        )
+        line = LineCurve(
+            (0.0, 0.0),
+            tuple(float(value) for value in direction),
+            origin_exact=(Fraction(0), Fraction(0)),
+            direction_exact=direction,
+        )
+        pcurve = PeriodicPCurve(line, offset_patch, shifts) if any(shifts) else line
         builder.coedge(
             edge,
             geometry.coedge_senses[coedge],
             pcurve,
-            endpoint_roots=_offset_period_roots(roots, pcurve, offset_patch),
+            endpoint_roots=_offset_native_turn_roots(pcurve, offset_patch, axis_index),
         )
     builder.face(
         offset_patch,
@@ -3844,6 +3892,7 @@ def _single_chart_sphere_offset(
     source_id: str,
     include_parameter_range: bool,
 ) -> BRepOffsetResult | None:
+    from ._boolean_core import PeriodicPCurve
     from ._carrier_pieces import carrier_payload
     from ._intersection import NativePeriodEndpoint
     from ._offset_result import exact_operation_offset_result
@@ -3958,10 +4007,11 @@ def _single_chart_sphere_offset(
     ):
         return None
     if isinstance(patch, SpherePatch):
-        if profile_bounds != (
+        profile_limits = (
             Fraction.from_float(-0.5 * pi),
             Fraction.from_float(0.5 * pi),
-        ):
+        )
+        if profile_bounds != profile_limits:
             return None
     else:
         profile = patch.curve
@@ -3975,7 +4025,12 @@ def _single_chart_sphere_offset(
         ):
             return None
         quarter_turn = Fraction.from_float(0.25 * float(profile_period))
-        if profile_bounds != (-quarter_turn, quarter_turn):
+        profile_limits = (-quarter_turn, quarter_turn)
+        # Rooted pole vertices widen the chart to their parameter enclosures.
+        if not (
+            profile_bounds[0] <= profile_limits[0]
+            and profile_limits[1] <= profile_bounds[1]
+        ):
             return None
         profile_axis = tuple(profile.second_axis_exact)
         if (
@@ -3997,17 +4052,27 @@ def _single_chart_sphere_offset(
         return None
 
     def line_data(pcurve: AbstractCurve, /) -> tuple[int, int, Fraction] | None:
+        # A forward seam use lives on its closing native-period sheet.
+        shifts = (0, 0)
+        if isinstance(pcurve, PeriodicPCurve):
+            shifts, pcurve = pcurve.period_shifts, pcurve.source_curve
         if not isinstance(pcurve, LineCurve):
             return None
         origin, direction = exact_vector(pcurve.origin), exact_vector(pcurve.direction)
         variable = tuple(
             axis for axis in range(2) if direction[axis] == 1 and direction[1 - axis] == 0
         )
-        if len(variable) != 1:
+        if len(variable) != 1 or shifts[variable[0]]:
             return None
         variable_axis = variable[0]
         fixed_axis = 1 - variable_axis
-        return variable_axis, fixed_axis, origin[fixed_axis]
+        if shifts[fixed_axis] and fixed_axis != 0:
+            return None
+        return (
+            variable_axis,
+            fixed_axis,
+            origin[fixed_axis] + shifts[fixed_axis] * period_exact,
+        )
 
     degenerate_vertices: set[int] = set()
     for edge in degenerate_edges:
@@ -4028,7 +4093,7 @@ def _single_chart_sphere_offset(
         if info is None or info[0] != 0:
             return None
         latitude = info[2]
-        if latitude not in profile_bounds:
+        if latitude not in profile_limits:
             return None
         roots = geometry.edge_endpoint_roots[edge]
         pcurve = geometry.pcurves[coedges[0]]
@@ -4082,7 +4147,7 @@ def _single_chart_sphere_offset(
     if (
         len(profile_uses) != 2
         or not isinstance(profile_curve, (CircleCurve, SurfaceIsoparametricCurve))
-        or profile_range != profile_bounds
+        or profile_range != profile_limits
     ):
         return None
     source_pole_roots: dict[int, BRepConicVertex] = {}
@@ -4319,17 +4384,25 @@ def _single_chart_sphere_offset(
                 )
             )
         else:
-            pcurve = geometry.pcurves[uses[edge][0]]
+            # The edge carrier follows its base-sheet use, not the closing sheet.
+            pcurve = min(
+                (geometry.pcurves[coedge] for coedge in uses[edge]),
+                key=lambda value: isinstance(value, PeriodicPCurve),
+            )
             info = line_data(pcurve)
             if info is None:
                 raise ValueError(
                     "Every admitted sphere offset edge needs its line chart."
                 )
+            # The carrier spans the chart so rooted pole enclosures stay in domain.
             curve = SurfaceIsoparametricCurve(
                 offset_patch,
                 info[1],
                 float(info[2]),
-                parameter_range=(first, last),
+                parameter_range=(
+                    float(min(first, bounds[0, info[0]])),
+                    float(max(last, bounds[1, info[0]])),
+                ),
             )
             start, end = geometry.edge_vertices[edge]
             endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] = (
@@ -4362,7 +4435,7 @@ def _single_chart_sphere_offset(
                 )
             )
     for coedge, edge in enumerate(geometry.coedge_edges):
-        pcurve = geometry.pcurves[coedge]
+        pcurve = _offset_chart_pcurve(geometry.pcurves[coedge], patch, offset_patch)
         roots = geometry.coedge_endpoint_roots[coedge]
         rebound_roots: list[RootEndpoint | None] = []
         for endpoint, root in enumerate(roots):
