@@ -19,7 +19,9 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
+from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+from ...geometry._planar_coverage import PlcSourcePointWitness
 from ...geometry._source_boundary_records import SourceBoundaryChartWitness
 from ...typing import checked
 from .._association import (
@@ -1076,6 +1078,57 @@ def _source_associations(
     return vertex_association, edge_association, face_association, cell_association
 
 
+def _plc_source_point_witness(
+    source: NativePlcSource, construction: VolumeConstruction, /
+) -> PlcSourcePointWitness | None:
+    """Exact source points of a PLC mesh whose boundary received source points.
+
+    Absent unless refinement inserted a segment, facet or plane point; an
+    unsplit boundary consists of source vertices, whose carriers are exact.
+    """
+    domain = construction.domain
+    if not isinstance(domain, PiecewiseLinearDomain):
+        return None
+    input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
+    strata = np.asarray(construction.witness_strata, dtype=np.int64)
+    inserted = (input_vertices < 0) & (strata > 0)
+    if not np.any(inserted):
+        return None
+    kinds = np.where(input_vertices >= 0, 0, np.where(strata > 0, strata, -1))
+    entities = np.where(
+        input_vertices >= 0,
+        input_vertices,
+        np.where(strata > 0, np.asarray(construction.witness_entities), -1),
+    )
+    parameters = np.where(
+        inserted[:, None], np.asarray(construction.witness_parameters), 0.0
+    )
+    face_facets = np.asarray(construction.source_face_facets, dtype=np.int64)
+    complex_ = source.complex
+    sides = np.asarray(complex_.facet_regions, dtype=np.int64)[face_facets]
+    if complex_.facet_planes is None:
+        planes = np.full((face_facets.size, 3, 3), np.nan, dtype=np.float64)
+        tolerances = np.zeros((face_facets.size,), dtype=np.float64)
+    else:
+        planes = np.asarray(complex_.facet_planes, dtype=np.float64)[face_facets]
+        tolerances = np.asarray(complex_.facet_plane_tolerances, dtype=np.float64)[
+            face_facets
+        ]
+    return PlcSourcePointWitness(
+        np.asarray(construction.mesh.vertex_global_ids, dtype=np.int64),
+        kinds,
+        entities,
+        parameters,
+        segments=construction.source_segment_vertices,
+        faces=construction.source_faces,
+        face_groups=face_facets,
+        face_planes=planes,
+        face_plane_tolerances=tolerances,
+        domain_face_rows=np.flatnonzero(sides[:, 0] != sides[:, 1]),
+        domain_id=domain.domain_id,
+    )
+
+
 def _organization(
     source: NativePlcSource,
     specification: VolumeMeshingSpec,
@@ -1292,6 +1345,7 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
             protected_features=self.specification.protected_features,
             scoped_fidelity=tuple(scoped_fidelity),
             feature_source=self.source if self.specification.protected_features else None,
+            source_coverage_witness=_plc_source_point_witness(self.source, construction),
         )
         return NativeMeshConstruction(
             construction.mesh,

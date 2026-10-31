@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from fractions import Fraction
 from typing import final, Literal, NamedTuple
 
@@ -37,7 +39,7 @@ from ._mesh_certificates import (
     MeshCertificateStatus,
 )
 from ._meshing_domain import MeshingDomain
-from ._planar_coverage import FacetOverlap
+from ._planar_coverage import FacetOverlap, PlcSourcePoints, PlcSourcePointWitness
 from ._source_boundary_records import SourceBoundaryDistanceWitness, SourceBoundaryQuery
 from ._source_fidelity import (
     _AdaptiveImplicitBoundaryCarrier,
@@ -61,6 +63,7 @@ type CoverageDomain = (
     | AdaptiveImplicitSurface
     | AnalyticImplicitProfile
 )
+type SourceCoverageWitness = RestrictedDelaunayCoverageWitness | PlcSourcePointWitness
 type CoverageMethod = Literal[
     "exact_oriented_facets", "mapped_reference_charts", "source_boundary_homotopy"
 ]
@@ -198,6 +201,7 @@ class _BoundaryCoverageProof(NamedTuple):
     source_coverage_id: str | None
     source_distance_upper: float | None
     source_region_degree_ids: tuple[str, ...]
+    cell_measures: Mapping[int, Fraction] | None = None
 
 
 def _coverage_finding(
@@ -264,7 +268,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
     binding: MeshCertificateBinding
     domain: CoverageDomain
     source: SourceBoundaryQuery | None
-    source_coverage_witness: RestrictedDelaunayCoverageWitness | None
+    source_coverage_witness: SourceCoverageWitness | None
     fidelity: SourceFidelityCertificate | None
     embedding: GlobalEmbeddingCertificate
     domain_id: str
@@ -300,7 +304,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         embedding: GlobalEmbeddingCertificate,
         source: SourceBoundaryQuery | None = None,
         fidelity: SourceFidelityCertificate | None = None,
-        source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None,
+        source_coverage_witness: SourceCoverageWitness | None = None,
     ) -> None:
         if fidelity is not None and source is None:
             source = fidelity.source
@@ -407,7 +411,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         embedding: GlobalEmbeddingCertificate,
         source: SourceBoundaryQuery | None = None,
         fidelity: SourceFidelityCertificate | None = None,
-        source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None,
+        source_coverage_witness: SourceCoverageWitness | None = None,
     ) -> None:
         """Cheaply require the same retained inputs for normal certificate composition."""
         require_coverage_domain(domain)
@@ -470,10 +474,11 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
                 (
                     RestrictedDelaunayBoundaryWitness,
                     RestrictedDelaunayCoverageTransportWitness,
+                    PlcSourcePointWitness,
                 ),
             ):
                 raise TypeError(
-                    "source_coverage_witness must be a restricted-Delaunay coverage witness or None."
+                    "source_coverage_witness must be a restricted-Delaunay or PLC source-point witness or None."
                 )
             if (
                 self.source_coverage_witness is None
@@ -507,7 +512,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         embedding: GlobalEmbeddingCertificate | None = None,
         source: SourceBoundaryQuery | None = None,
         fidelity: SourceFidelityCertificate | None = None,
-        source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None,
+        source_coverage_witness: SourceCoverageWitness | None = None,
     ) -> None:
         """Recompute embedding and coverage before accepting a restored report."""
         current_embedding = self.embedding if embedding is None else embedding
@@ -727,8 +732,13 @@ def _target_region_measures(
     /,
     *,
     required: bool = True,
+    cell_measures: Mapping[int, Fraction] | None = None,
 ) -> tuple[ExactScalar | None, ...]:
-    """Integrate target cells under their explicit dense region assignments."""
+    """Integrate target cells under their explicit dense region assignments.
+
+    ``cell_measures`` replaces the measures of cells whose corners were
+    substituted by exact source points, keyed by cell order.
+    """
     from ._domain_numerics import affine_cell_measure, polyhedral_cell_measures
 
     polyhedral_measures: tuple[Fraction | None, ...] | None = None
@@ -745,14 +755,18 @@ def _target_region_measures(
         for mesh_block in mesh.blocks
         for _ in range(mesh_block.cell_count)
     )
-    for assignment, expressions, cell_kind in zip(
-        preparation.assignments,
-        preparation.coordinate_maps,
-        cell_kinds,
-        strict=True,
+    for cell, (assignment, expressions, cell_kind) in enumerate(
+        zip(
+            preparation.assignments,
+            preparation.coordinate_maps,
+            cell_kinds,
+            strict=True,
+        )
     ):
         try:
-            if expressions is None:
+            if cell_measures is not None and cell in cell_measures:
+                measure = cell_measures[cell]
+            elif expressions is None:
                 if polyhedral_measures is None:
                     raise ValueError(
                         "Exact polyhedral cell integration is unavailable: "
@@ -878,7 +892,7 @@ def _coverage_boundary_partition(
     embedding: GlobalEmbeddingCertificate,
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
-    source_coverage_witness: RestrictedDelaunayCoverageWitness | None,
+    source_coverage_witness: SourceCoverageWitness | None,
 ) -> _BoundaryCoverageProof:
     """Prove exact chain equality or an explicit source-boundary homotopy."""
     from ..discretization._coordinate_enclosure import affine_map
@@ -889,6 +903,7 @@ def _coverage_boundary_partition(
     chart_certificate_id: str | None = None
     source_distance_upper: float | None = None
     source_region_degree_ids: tuple[str, ...] = ()
+    source_points: PlcSourcePoints | None = None
     if isinstance(domain, AnalyticImplicitProfile):
         if not isinstance(source, AnalyticImplicitProfile) or not _same_tree_content(
             source, domain
@@ -921,7 +936,13 @@ def _coverage_boundary_partition(
             return _BoundaryCoverageProof(
                 (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
             )
-        if source_coverage_witness is None:
+        if not isinstance(
+            source_coverage_witness,
+            (
+                RestrictedDelaunayBoundaryWitness,
+                RestrictedDelaunayCoverageTransportWitness,
+            ),
+        ):
             findings.append(
                 _coverage_finding(
                     "restricted_delaunay_coverage_witness",
@@ -991,13 +1012,18 @@ def _coverage_boundary_partition(
             distance_upper,
             (proof.degree_id,),
         )
-    if source_coverage_witness is not None:
+    if source_coverage_witness is not None and not (
+        isinstance(source_coverage_witness, PlcSourcePointWitness)
+        and isinstance(domain, PiecewiseLinearDomain)
+    ):
         findings.append(
             _coverage_finding(
                 "source_coverage_witness_domain",
                 "violated",
                 "source_region",
-                detail="Restricted-Delaunay analytic coverage evidence cannot be applied to this source-domain type.",
+                detail="PLC source-point evidence applies only to piecewise-linear source domains."
+                if isinstance(source_coverage_witness, PlcSourcePointWitness)
+                else "Restricted-Delaunay analytic coverage evidence cannot be applied to this source-domain type.",
             )
         )
     if isinstance(domain, MappedReferenceDomain):
@@ -1121,6 +1147,24 @@ def _coverage_boundary_partition(
         else:
             from ._domain_planar_boundary import oriented_target_facets
 
+            if isinstance(source_coverage_witness, PlcSourcePointWitness) and isinstance(
+                domain, PiecewiseLinearDomain
+            ):
+                source_points = _plc_source_points(
+                    mesh, domain, preparation, source_coverage_witness, findings
+                )
+                if source_points is None:
+                    return _BoundaryCoverageProof(
+                        (),
+                        0,
+                        None,
+                        len(source_domain.facets),
+                        0,
+                        "exact_oriented_facets",
+                        None,
+                        None,
+                        (),
+                    )
             target_facets, issues = oriented_target_facets(
                 mesh,
                 preparation.cell_regions,
@@ -1128,10 +1172,13 @@ def _coverage_boundary_partition(
                 source_domain=source_domain,
                 geometry=geometry,
                 exact_face_images=True,
+                source_points=source_points,
             )
             target_facet_count = len(target_facets)
             facet_overlaps, partition_issues = partition_overlaps(
-                source_domain, target_facets
+                source_domain,
+                target_facets,
+                sources=None if source_points is None else source_points.sources,
             )
             exact_issues = bool(issues or partition_issues)
             if (
@@ -1229,7 +1276,7 @@ def _coverage_boundary_partition(
                 )
             chart_certificate_id = cad_boundary_id
             source_coverage_id = cad_boundary_id
-        else:
+        elif source_points is None:
             source_coverage_id = canonical_fingerprint(
                 {
                     "kind": "exact-oriented-domain-boundary",
@@ -1238,7 +1285,31 @@ def _coverage_boundary_partition(
                     "target_facet_count": target_facet_count,
                 }
             )
-        coverage_method = "exact_oriented_facets"
+        else:
+            # Exact source points decide the chain; the carriers round them, and
+            # declared-plane charts identify source triangles with their plane.
+            source_distance_upper = _upper_sum(
+                source_points.carrier_deviation_upper,
+                source_points.chart_deviation_upper,
+            )
+            source_coverage_id = canonical_fingerprint(
+                {
+                    "kind": "witnessed-oriented-domain-boundary",
+                    "domain": domain.domain_id,
+                    "source_points": source_coverage_witness.witness_id
+                    if isinstance(source_coverage_witness, PlcSourcePointWitness)
+                    else None,
+                    "charts": tuple(sorted(source_points.charts)),
+                    "overlaps": _overlap_payload(facet_overlaps),
+                    "target_facet_count": target_facet_count,
+                    "distance_upper": source_distance_upper,
+                }
+            )
+        coverage_method = (
+            "source_boundary_homotopy"
+            if source_points is not None and source_points.charts
+            else "exact_oriented_facets"
+        )
         if not issues and not partition_issues and embedding.status == "certified":
             source_region_degree_ids = _exact_region_degree_ids(
                 source_domain,
@@ -1297,7 +1368,57 @@ def _coverage_boundary_partition(
         source_coverage_id,
         source_distance_upper,
         source_region_degree_ids,
+        None if source_points is None else source_points.cell_measures,
     )
+
+
+def _plc_source_points(
+    mesh: CellMesh,
+    domain: PiecewiseLinearDomain,
+    preparation: DomainCoveragePreparation,
+    witness: PlcSourcePointWitness,
+    findings: list[MeshCertificateFinding],
+    /,
+) -> PlcSourcePoints | None:
+    """Recompute the exact source points a PLC mesh's carriers round."""
+    from ._domain_planar_boundary import affine_cell_corners
+    from ._planar_coverage import resolve_plc_source_points, SourcePointRefusal
+
+    try:
+        cells = affine_cell_corners(mesh, preparation.coordinate_maps)
+    except (TypeError, ValueError, KeyError, ArithmeticError) as error:
+        findings.append(
+            _coverage_finding(
+                "source_point_cells",
+                "unresolved",
+                "mesh",
+                detail=f"Exact source points need exact affine cell corners: {error}",
+            )
+        )
+        return None
+    try:
+        return resolve_plc_source_points(
+            witness,
+            domain,
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+            cells,
+        )
+    except SourcePointRefusal as error:
+        findings.append(
+            _coverage_finding(
+                error.check,
+                error.status,
+                "vertex",
+                error.entity_ids,
+                detail=str(error),
+            )
+        )
+        return None
+
+
+def _upper_sum(first: float, second: float, /) -> float:
+    total = first + second
+    return total if total - first >= second else math.nextafter(total, math.inf)
 
 
 def _prove_coverage(
@@ -1310,7 +1431,7 @@ def _prove_coverage(
     embedding: GlobalEmbeddingCertificate,
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
-    source_coverage_witness: RestrictedDelaunayCoverageWitness | None,
+    source_coverage_witness: SourceCoverageWitness | None,
 ) -> _CoverageProof:
     """Recompute exact source chains or a witnessed source-boundary homotopy."""
     from ._approximate_source_coverage import (
@@ -1336,10 +1457,14 @@ def _prove_coverage(
         raise TypeError("source must implement SourceBoundaryQuery.")
     if source_coverage_witness is not None and not isinstance(
         source_coverage_witness,
-        (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness),
+        (
+            RestrictedDelaunayBoundaryWitness,
+            RestrictedDelaunayCoverageTransportWitness,
+            PlcSourcePointWitness,
+        ),
     ):
         raise TypeError(
-            "source_coverage_witness must be a restricted-Delaunay coverage witness or None."
+            "source_coverage_witness must be a restricted-Delaunay or PLC source-point witness or None."
         )
     source_revision = _coverage_source_revision(domain, source)
     findings: list[MeshCertificateFinding] = []
@@ -1436,6 +1561,7 @@ def _prove_coverage(
         preparation,
         findings,
         required=boundary.coverage_method != "source_boundary_homotopy",
+        cell_measures=boundary.cell_measures,
     )
     if boundary.coverage_method != "source_boundary_homotopy":
         for region, (source_measure, target_measure) in enumerate(
@@ -1490,7 +1616,7 @@ def certify_domain_coverage(
     embedding: GlobalEmbeddingCertificate,
     source: SourceBoundaryQuery | None = None,
     fidelity: SourceFidelityCertificate | None = None,
-    source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None,
+    source_coverage_witness: SourceCoverageWitness | None = None,
 ) -> DomainCoverageCertificate:
     """Compute exact or witnessed bounded coverage from source authority."""
     return DomainCoverageCertificate(
@@ -1511,4 +1637,5 @@ __all__ = [
     "CoverageMethod",
     "DomainCoverageCertificate",
     "certify_domain_coverage",
+    "SourceCoverageWitness",
 ]

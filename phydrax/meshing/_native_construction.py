@@ -22,15 +22,12 @@ if TYPE_CHECKING:
     from .._physical import SpatialCoordinateContract
     from ..discretization import CellGeometrySpec, CellMesh
     from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
-    from ..geometry._domain_certification import CoverageDomain
+    from ..geometry._domain_certification import CoverageDomain, SourceCoverageWitness
     from ..geometry._global_embedding import GlobalEmbeddingCertificate
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import SourceBoundaryQuery
     from ..geometry._source_fidelity import SourceFidelityWitness
     from ..geometry._surface_source_support import SurfaceSourceCharts
-    from ..geometry.implicit._restricted_delaunay_coverage import (
-        RestrictedDelaunayCoverageWitness,
-    )
     from ..geometry.surface import SurfaceModel
     from ._association import GeometryAssociation
     from ._certification_inputs import ScopedFidelityInput
@@ -66,7 +63,7 @@ class NativeCertificationRequest:
     maximum_normal_deviation: float | None = None
     fidelity_witness: SourceFidelityWitness | None = None
     feature_source: _SourceEntityScopes | None = None
-    source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None
+    source_coverage_witness: SourceCoverageWitness | None = None
     # Global embedding the route already computed for exactly this mesh and
     # coordinate map; acceptance checks its bound inputs and reuses it.
     global_embedding: GlobalEmbeddingCertificate | None = None
