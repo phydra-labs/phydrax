@@ -1644,6 +1644,20 @@ def validate_source_entity_scope(
             )
         query.require_current()
         return
+    if isinstance(query, _AdaptiveImplicitBoundaryCarrier):
+        if dimension != 2:
+            raise ValueError(
+                "Adaptive implicit source queries validate only their zero-set surface scope."
+            )
+        query.require_current()
+        surface_key = source_entity_id(
+            query.source_id, query.source_revision, "implicit-surface", "zero-set"
+        )
+        if set(keys) != {(surface_key, ())}:
+            raise ValueError(
+                "Adaptive implicit query scope must name exactly its zero-set entity."
+            )
+        return
     raise TypeError("No source-scope validator supports this query authority.")
 
 
