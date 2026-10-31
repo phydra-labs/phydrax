@@ -2175,14 +2175,19 @@ def stage_periodic_refinement_candidate(
 
 
 def stage_periodic_topology_edit(
-    source: CellMesh, edit: CellTopologyEdit, /
+    source: CellMesh,
+    edit: CellTopologyEdit,
+    /,
+    *,
+    exact_coordinate_source: ExactPlcCellGeometrySource | None = None,
 ) -> CellMesh | None:
     """Build and validate a periodic target before any topology edit is published.
 
     Relation signatures are compared over every source entity orbit at each
     dimension. Thus split, collapse, flip, and relocation records either cover
     every lifted image with the same quotient operation or reject the entire
-    immutable candidate.
+    immutable candidate. ``exact_coordinate_source`` is the target's exact
+    quotient-chart vertex bank when generated vertices are not binary64.
     """
     if not isinstance(source, CellMesh):
         raise TypeError("source must be a CellMesh.")
@@ -2241,6 +2246,7 @@ def stage_periodic_topology_edit(
         vertex_orbit_keys=edit.vertex_orbit_keys,
         vertex_windings=edit.vertex_windings,
         source_entity_degree=edit.source_entity_degree,
+        exact_coordinate_source=exact_coordinate_source,
     )
     if descriptor is None:
         raise ValueError(

@@ -1096,6 +1096,8 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             degree: int(next_id)
             for degree, next_id in enumerate(stored.allocator_next_ids)
         }
+        # A witness-only topology (exact coordinate bank, no bound mapped geometry)
+        # takes its bank from the current geometry but stays unbound to it.
         renewed = cls(
             lifted_mesh,
             stored.cell,
@@ -1103,7 +1105,9 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             stored.vertex_shifts,
             entity_global_ids=quotient_ids,
             entity_allocator_next_ids=allocator,
-            actual_geometry=actual_geometry,
+            actual_geometry=(
+                None if stored._actual_geometry is None else actual_geometry
+            ),
             exact_coordinate_source=exact_coordinate_source,
         )
         array_fields = (

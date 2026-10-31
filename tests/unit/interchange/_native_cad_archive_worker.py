@@ -53,9 +53,7 @@ if TYPE_CHECKING:
     )
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
     from phydrax.discretization.fem._de_rham import (
-        DistributedFiniteElementTransfer,
         FiniteElementTransferResult,
-        PeriodicFiniteElementTransfer,
         SparseCommutingEvidence,
         SparseTransferEntryEvidence,
     )
@@ -88,10 +86,8 @@ if TYPE_CHECKING:
         LayerCurvingSourceEvidence,
     )
     from phydrax.meshing._lineage import (
-        CellMeshTransition,
         EntityLineage,
         MeshLineage,
-        VertexInterpolationStencil,
     )
     from phydrax.meshing._surface_boundary_sources import (
         SurfaceChartBoundarySource,
@@ -129,6 +125,7 @@ from phydrax.discretization._axis_domain import AxisDomain
 from phydrax.discretization._cell_geometry import (
     CellGeometryRestrictionSource,
     CellGeometrySpec,
+    CellVertexGeometryElement,
     PerCellRestrictedCellGeometryElement,
     RationalComposedCellGeometryElement,
 )
@@ -164,6 +161,10 @@ from phydrax.discretization.fem import (
     FiniteElementFieldSpec,
     FiniteElementPlan,
     form_element,
+)
+from phydrax.discretization.fem._de_rham import (
+    DistributedFiniteElementTransfer,
+    PeriodicFiniteElementTransfer,
 )
 from phydrax.discretization.fem._distributed import finite_element_dof_identity_plan
 from phydrax.discretization.fem._reference import FiniteElementSpec, lagrange_element
@@ -351,7 +352,7 @@ from phydrax.meshing._hex_cut_preparation import (
 )
 from phydrax.meshing._hex_generation import extract_volume_hexes
 from phydrax.meshing._hex_schedule import NativeHexGridSchedule
-from phydrax.meshing._lineage import CellMeshTransition
+from phydrax.meshing._lineage import CellMeshTransition, VertexInterpolationStencil
 from phydrax.meshing._model_codec import read_model_artifact, write_model_artifact
 from phydrax.meshing._organization import (
     MeshAttribute,
@@ -5698,6 +5699,8 @@ def _rebuild_continuation_value(
             tabulator_id=value.tabulator_id,
             form_basis=value.form_basis,
         )
+    if type(value) is CellVertexGeometryElement:
+        return CellVertexGeometryElement(value.cell_kind, value.local_dof_count)
     if isinstance(value, PerCellRestrictedCellGeometryElement):
         source_element = _rebuild_scalar_coordinate_element(value.source_element)
         charts = tuple(
@@ -11555,14 +11558,6 @@ def _owner_local_periodic_adaptive_archive_fixture() -> tuple[
             np.asarray(periodic_points.point_ids).shape, dtype=np.int32
         ),
     )
-    vertex_scope = MeshingScope(
-        source_id,
-        source_revision,
-        MeshingEntityKind.GEOMETRY,
-        0,
-        source.scope_entity_set_id(0),
-        source.scope_entity_ids(0),
-    )
     surface_scope = MeshingScope(
         source_id,
         source_revision,
@@ -11578,7 +11573,7 @@ def _owner_local_periodic_adaptive_archive_fixture() -> tuple[
             CellFamilyPolicy(required=("triangle",)),
         ),
         surface_scope,
-        size_controls=(UniformSizeControl(vertex_scope, 0.35),),
+        size_controls=(UniformSizeControl(surface_scope, 0.35),),
         size_compliance=SizeCompliancePolicy(relative_tolerance=0.5),
     )
     graph_partition_plan = GraphPartitionPlan(

@@ -5283,7 +5283,9 @@ def _finalize_native(
             if source.mesh.topological_dimension == 2 and all(
                 block.cell_kind == "triangle" for block in mesh.blocks
             ):
-                periodic_candidate = stage_periodic_topology_edit(source.mesh, edit)
+                periodic_candidate = stage_periodic_topology_edit(
+                    source.mesh, edit, exact_coordinate_source=quotient_bank
+                )
                 periodic_topology = (
                     None
                     if periodic_candidate is None
