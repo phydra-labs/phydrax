@@ -132,7 +132,7 @@ def _refusal(
     return BRepBlendResult(
         status=status,
         reason=reason,
-        source_model_id=model.model_id,
+        source_model_id=model.source_revision,
         source_edges=edges,
         model=None,
         g1_angle_bounds=jnp.empty((0, 2), dtype=jnp.float64),
@@ -382,7 +382,7 @@ def _blend(
     return BRepBlendResult(
         status="certified",
         reason="certified native analytic blend with exact source correspondence",
-        source_model_id=model.model_id,
+        source_model_id=model.source_revision,
         source_edges=edges,
         model=rebuilt,
         g1_angle_bounds=bounds,

@@ -6,11 +6,13 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Mapping
 from fractions import Fraction
-from typing import final
+from typing import final, NamedTuple, TYPE_CHECKING
 
+import jax
 import numpy as np
 
 import phydrax.discretization._nested_reference as nested_reference_owner
@@ -28,7 +30,7 @@ import phydrax.meshing._sizing as sizing_owner
 import phydrax.meshing.providers._native_options as options_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
-from ..._meshcore import MeshcoreStatus
+from ..._meshcore import MeshcoreError, MeshcoreStatus, zero_set_remesh
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -57,6 +59,7 @@ from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryQuery,
 )
+from ...geometry._source_identity import source_entity_id
 from ...typing import checked
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import (
@@ -76,6 +79,12 @@ from .._controls import (
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
 from ._native_polyhedral import polyhedral_support_issues
+
+
+if TYPE_CHECKING:
+    from ...geometry.implicit._adaptive_discovery import (
+        AdaptiveImplicitBoundarySource,
+    )
 
 
 def _lower_polyhedral_periodic_constraints(
@@ -1609,6 +1618,282 @@ def reversed_triangle_wall(wall: CellMesh, /) -> CellMesh:
     )
 
 
+class ImplicitLayerWall(NamedTuple):
+    """An implicit layer wall taken from the certified implicit carrier path."""
+
+    wall: CellMesh
+    """Closed triangle wall, oriented along the requested growth direction."""
+    distance: float
+    """Certified wall-to-zero-set distance bound."""
+    evidence: tuple[tuple[str, float], ...]
+    """Carrier quality before/after the zero-set remesh, and whether it ran."""
+
+
+def _adaptive_layer_query(
+    query: SourceBoundaryQuery, /
+) -> AdaptiveImplicitBoundarySource:
+    from ...geometry.implicit._adaptive_discovery import (
+        AdaptiveImplicitBoundarySource,
+    )
+
+    adaptive_query = (
+        query
+        if isinstance(query, AdaptiveImplicitBoundarySource)
+        else getattr(query, "adaptive_source", None)
+    )
+    if not isinstance(adaptive_query, AdaptiveImplicitBoundarySource):
+        raise ValueError(
+            "Implicit layer walls require the original adaptive boundary query."
+        )
+    adaptive_query.require_current()
+    return adaptive_query
+
+
+def implicit_layer_wall(
+    query: SourceBoundaryQuery,
+    /,
+    *,
+    radius_edge_bound: float = 2.0,
+    edge_length: float | None = None,
+    inward: bool = True,
+) -> ImplicitLayerWall:
+    """The implicit zero-set wall a layer route grows from.
+
+    This is the implicit volume provider's carrier: the discovery scaffold
+    triangles when every one is within ``radius_edge_bound`` (the core fill
+    schedule bound; a layer column inherits its wall triangle's shape), else
+    the native zero-set band remesh toward ``edge_length`` (default: the
+    scaffold's mean edge) with every created triangle certified within the
+    scaffold's distance bound and transversal to the field gradient. Its root
+    charts and boundary degree are proved downstream like the volume
+    carrier's. Layers grow along the wall orientation; ``inward`` reverses the
+    outward zero-set orientation so they grow into the solid.
+    """
+    from ...geometry._interval_enclosure import (
+        IntervalExtensionError,
+        prepare_interval_function,
+    )
+    from ._native_implicit import (
+        _CARRIER_MINIMUM_ANGLE_DEGREES,
+        _carrier_quality,
+        _face_radius_edge_ratios,
+    )
+
+    if not (math.isfinite(radius_edge_bound) and radius_edge_bound >= 1.0):
+        raise ValueError("radius_edge_bound must be a finite ratio of at least one.")
+    if edge_length is not None and not (math.isfinite(edge_length) and edge_length > 0.0):
+        raise ValueError("edge_length must be positive and finite when supplied.")
+    adaptive_query = _adaptive_layer_query(query)
+    discovery = adaptive_query.surface
+    if discovery.mesh is None:
+        raise ValueError("Implicit layer walls require a complete discovery mesh.")
+    vertices = np.asarray(discovery.mesh.vertices, dtype=np.float64)
+    faces = np.asarray(discovery.mesh.faces, dtype=np.int64)
+    scaffold_distance = float(
+        discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance
+    )
+    before = _carrier_quality(vertices, faces, "before")
+    if float(np.max(_face_radius_edge_ratios(vertices, faces))) <= radius_edge_bound:
+        distance = scaffold_distance
+        evidence = (("carrier_remeshed", 0.0), *before)
+    else:
+        kernel, state = discovery.geometry.kernel, discovery.geometry.state
+
+        def value(point: jax.Array) -> jax.Array:
+            return kernel.boundary_field(state, point[None, :])[0]
+
+        try:
+            value_program, gradient_program = (
+                prepare_interval_function(
+                    function, 3, batch_capacity=1, execution="native"
+                ).native_program
+                for function in (value, jax.grad(value))
+            )
+        except IntervalExtensionError as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                "The implicit layer wall remesh requires a native interval lowering "
+                f"of the field and its gradient: {error}",
+                provider_code="native_layer_implicit_wall",
+                stage="source_inspection",
+            ) from error
+        if value_program is None or gradient_program is None:
+            raise RuntimeError("Native interval preparation returned no native program.")
+        if edge_length is None:
+            edges = np.unique(
+                np.sort(
+                    np.concatenate(
+                        (faces[:, (0, 1)], faces[:, (1, 2)], faces[:, (2, 0)])
+                    ),
+                    axis=1,
+                ),
+                axis=0,
+            )
+            edge_length = float(
+                np.mean(
+                    np.linalg.norm(vertices[edges[:, 1]] - vertices[edges[:, 0]], axis=1)
+                )
+            )
+        try:
+            remeshed = zero_set_remesh(
+                vertices,
+                faces,
+                value_program.box_program(),
+                gradient_program.box_program(),
+                scaffold_distance,
+                scaffold_distance,
+                edge_length,
+                _CARRIER_MINIMUM_ANGLE_DEGREES,
+            )
+        except (MeshcoreError, ValueError, OverflowError) as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                f"The implicit layer wall zero-set remesh could not be certified: {error}",
+                provider_code="native_layer_implicit_wall",
+                stage="surface_meshing",
+            ) from error
+        vertices = np.array(remeshed.vertices, dtype=np.float64, copy=True)
+        faces = np.array(remeshed.triangles, dtype=np.int64, copy=True)
+        worst = float(np.max(_face_radius_edge_ratios(vertices, faces)))
+        if not worst <= radius_edge_bound:
+            raise MeshingFailure(
+                MeshingFailureCategory.QUALITY_REJECTED,
+                "The certified zero-set remesh of the implicit layer wall leaves a "
+                f"triangle with radius-edge ratio {worst:.6g} above "
+                f"{radius_edge_bound:.6g}.",
+                provider_code="native_layer_implicit_wall",
+                stage="surface_meshing",
+            )
+        distance = float(remeshed.distance)
+        evidence = (
+            ("carrier_remeshed", 1.0),
+            *before,
+            *_carrier_quality(vertices, faces, "after"),
+            ("carrier_remesh_edge_length", edge_length),
+            ("carrier_remesh_unmet_count", float(remeshed.counters[4])),
+        )
+    wall = CellMesh.from_triangles(vertices, faces, numeric_version=query.source_revision)
+    return ImplicitLayerWall(
+        reversed_triangle_wall(wall) if inward else wall, distance, evidence
+    )
+
+
+def _implicit_carrier_root_witness(
+    source_id: str,
+    source_revision: str,
+    query: SourceBoundaryQuery,
+    adaptive_query: AdaptiveImplicitBoundarySource,
+    wall: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+) -> SourceBoundaryChartWitness:
+    """Root charts of a remeshed implicit wall, seeded like the volume carrier's.
+
+    Each cell names the scaffold triangle with the nearest centroid. Corners
+    that are not scaffold roots lift from their points, and repeated or omitted
+    scaffold triangles leave the boundary degree to the covering proof. Cells
+    oriented against the field gradient (an inward wall) list their corners
+    reversed, so every chart keeps the zero-set orientation; the chart proofs
+    certify that orientation.
+    """
+    from ._native_implicit import _nearest_scaffold_rows
+
+    discovery = adaptive_query.surface
+    scaffold_mesh = discovery.mesh
+    if (
+        scaffold_mesh is None
+        or (query.source_id, query.source_revision) != (source_id, source_revision)
+        or wall.numeric_version != source_revision
+        or wall.topological_dimension != 2
+        or wall.ambient_dimension != 3
+        or len(wall.blocks) != 1
+        or wall.blocks[0].cell_kind != "triangle"
+    ):
+        raise ValueError(
+            "An implicit carrier wall must be one triangle block of the current "
+            "source revision."
+        )
+    block = wall.blocks[0]
+    points = np.asarray(wall.coordinates, dtype=np.float64)
+    faces = np.asarray(block.vertices, dtype=np.int64)
+    triangles = points[faces]
+    normals = np.cross(
+        triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+    )
+    kernel, state = discovery.geometry.kernel, discovery.geometry.state
+
+    def field(point: jax.Array) -> jax.Array:
+        return kernel.boundary_field(state, point[None, :])[0]
+
+    gradients = np.asarray(
+        jax.vmap(jax.grad(field))(np.mean(triangles, axis=1)), dtype=np.float64
+    )
+    signs = np.einsum("ij,ij->i", normals, gradients)
+    if not (np.all(signs > 0.0) or np.all(signs < 0.0)):
+        raise ValueError(
+            "An implicit carrier wall must be oriented consistently along or "
+            "against the field gradient."
+        )
+    outward = bool(signs[0] > 0.0)
+    rows = _nearest_scaffold_rows(
+        np.asarray(scaffold_mesh.vertices, dtype=np.float64),
+        np.asarray(scaffold_mesh.faces, dtype=np.int64),
+        points,
+        faces,
+    )
+    scaffold = discovery.scaffold
+    cell_keys = np.asarray(scaffold.cell_indices, dtype=np.int64)[
+        np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)[rows]
+    ]
+    root_edge_keys = np.asarray(scaffold.root_edge_ids, dtype=np.int64)[
+        np.asarray(scaffold.triangle_root_edge_rows, dtype=np.int64)[rows]
+    ]
+    chart_ids = tuple(
+        source_fidelity_owner._implicit_chart_id(
+            adaptive_query.source_id,
+            adaptive_query.source_revision,
+            (int(cell[0]), int(cell[1]), int(cell[2]), int(cell[3])),
+            tuple(
+                (
+                    (int(edge[0, 0]), int(edge[0, 1]), int(edge[0, 2])),
+                    (int(edge[1, 0]), int(edge[1, 1]), int(edge[1, 2])),
+                )
+                for edge in edges
+            ),
+        )
+        for cell, edges in zip(cell_keys, root_edge_keys, strict=True)
+    )
+    count = faces.shape[0]
+    standard = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
+    cell_ids = np.asarray(block.global_ids, dtype=np.int64)
+    surface_entity_id = source_entity_id(
+        source_id, source_revision, "implicit-surface", "zero-set"
+    )
+    return SourceBoundaryChartWitness(
+        mesh_id=wall.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=wall.topology_id,
+        source_id=source_id,
+        source_revision=source_revision,
+        source_query_id=adaptive_query.source_revision,
+        chart_dimension=2,
+        reference_dimension=2,
+        cell_global_ids=cell_ids,
+        entity_global_ids=cell_ids,
+        local_entity_indices=np.full(count, -1, dtype=np.int32),
+        target_reference_vertices=np.broadcast_to(
+            standard if outward else standard[(0, 2, 1), :], (count, 3, 2)
+        ),
+        source_chart_ids=chart_ids,
+        source_entity_ids=(surface_entity_id,) * count,
+        occurrence_paths=((),) * count,
+        source_parameters=np.broadcast_to(standard, (count, 3, 2)),
+        orientations=np.full(count, 1 if outward else -1, dtype=np.int8),
+        implicit_cell_keys=cell_keys,
+        implicit_root_edge_keys=root_edge_keys,
+    )
+
+
 def _implicit_layer_root_witness(
     source_id: str,
     source_revision: str,
@@ -1617,37 +1902,37 @@ def _implicit_layer_root_witness(
     geometry: CellGeometrySpec,
     /,
 ) -> SourceBoundaryChartWitness:
-    """Bind the adaptive root charts to an implicit layer wall of either orientation.
+    """Bind the adaptive root charts to an implicit layer wall.
 
-    The wall is the exact discovery mesh (layers grow out of the solid) or its
-    reversal (layers grow into it). A reversed cell names the same scaffold
+    The wall is the exact discovery mesh (layers grow out of the solid), its
+    reversal (layers grow into it), or a zero-set remeshed carrier from
+    `implicit_layer_wall`. A reversed scaffold cell names the same scaffold
     triangle; its chart lists the corners in discovery order, so the target
     reference corners are the cell's own reference vertices permuted and the
     standard root parameters, cell keys and root edges are unchanged.
     """
-    from ...geometry.implicit._adaptive_discovery import (
-        AdaptiveImplicitBoundarySource,
-    )
     from ._native_implicit import _implicit_layer_wall_chart_witness
 
-    adaptive_query = (
-        query
-        if isinstance(query, AdaptiveImplicitBoundarySource)
-        else getattr(query, "adaptive_source", None)
-    )
-    discovered = (
-        adaptive_query.surface.mesh
-        if isinstance(adaptive_query, AdaptiveImplicitBoundarySource)
-        else None
-    )
+    adaptive_query = _adaptive_layer_query(query)
+    discovered = adaptive_query.surface.mesh
     if (
         discovered is None
         or len(wall.blocks) != 1
         or wall.blocks[0].cell_kind != "triangle"
-        or not np.array_equal(
-            np.asarray(wall.blocks[0].vertices, dtype=np.int64)[:, (0, 2, 1)],
-            np.asarray(discovered.faces, dtype=np.int64),
+    ):
+        return _implicit_layer_wall_chart_witness(
+            source_id, source_revision, query, wall, geometry
         )
+    if not np.array_equal(
+        np.asarray(wall.coordinates, dtype=np.float64),
+        np.asarray(discovered.vertices, dtype=np.float64),
+    ):
+        return _implicit_carrier_root_witness(
+            source_id, source_revision, query, adaptive_query, wall, geometry
+        )
+    if not np.array_equal(
+        np.asarray(wall.blocks[0].vertices, dtype=np.int64)[:, (0, 2, 1)],
+        np.asarray(discovered.faces, dtype=np.int64),
     ):
         return _implicit_layer_wall_chart_witness(
             source_id, source_revision, query, wall, geometry

@@ -2810,7 +2810,7 @@ def test_brep_archive_recomputes_conic_root_source_identity(
 
     spline = find_spline(spline_manifest["model_recipe"])
     assert spline is not None
-    spline["fields"]["exact_control_points"]["items"][1]["items"][0]["numerator"] = 2
+    spline["fields"]["exact_control_point_bank"]["items"][1]["items"][0]["numerator"] = 2
     spline_corrupted = tmp_path / "changed-exact-spline-controls.phx"
     write_model_archive(
         spline_corrupted,
@@ -2863,7 +2863,7 @@ def test_brep_archive_refuses_tampered_exact_bspline_surface_bank(
 
     surface = find_surface(manifest["model_recipe"])
     assert surface is not None
-    surface["fields"]["exact_control_points"]["items"][0]["items"][0]["items"][0][
+    surface["fields"]["exact_control_point_bank"]["items"][0]["items"][0]["items"][0][
         "numerator"
     ] = 1
     write_model_archive(

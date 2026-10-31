@@ -1502,6 +1502,27 @@ def _orthogonal_cylinder_curve_certificate(
     return chart_preconditioners, chart_contractions
 
 
+# Prepared interval programs of a concrete branch's source pair, keyed by the
+# branch's identity and dropped when the branch is collected. Preparation is
+# pure in the immutable source regions; enclosure queries repeat it otherwise.
+_BRANCH_PREPARED: dict[int, KrawczykEvaluator] = {}
+
+
+def _branch_prepared_pair(curve: IntersectionCurve, /) -> KrawczykEvaluator:
+    key = id(curve)
+    prepared = _BRANCH_PREPARED.get(key)
+    if prepared is not None:
+        return prepared
+    prepared = _prepare_pair(
+        SurfacePairSystem(curve.first.patch, curve.second.patch),
+        source_regions=(curve.first, curve.second),
+    )
+    if _region_is_concrete(curve.first) and _region_is_concrete(curve.second):
+        _BRANCH_PREPARED[key] = prepared
+        weakref.finalize(curve, _BRANCH_PREPARED.pop, key, None)
+    return prepared
+
+
 def _prepare_pair(
     system: SurfacePairSystem,
     /,
@@ -3161,10 +3182,7 @@ class IntersectionCurve(AbstractCurve):
                     "A branch parameter interval must intersect at least one source chart."
                 )
             return np.stack(boxes)
-        prepared = _prepare_pair(
-            SurfacePairSystem(self.first.patch, self.second.patch),
-            source_regions=(self.first, self.second),
-        )
+        prepared = _branch_prepared_pair(self)
         boxes: list[np.ndarray] = []
         for chart in range(first_chart, last_chart + 1):
             chart_first = max(lower_parameter, float(chart))
@@ -3207,6 +3225,20 @@ class IntersectionCurve(AbstractCurve):
             contracted_upper[list(free_axes)] = witness.upper[0]
             if isinstance(prepared, _ExactAffinePairPrepared):
                 prepared.intersect_exact_coordinates(contracted_lower, contracted_upper)
+            # A node fixing another coordinate (the trim edge a boundary branch
+            # ends on) is only represented by its chart endpoint; an enclosure
+            # reaching that node also encloses the node's own root.
+            for node, touches in (
+                (chart, chart_first == chart),
+                (chart + 1, chart_last == chart + 1),
+            ):
+                if touches and int(self.node_axes[node]) != axis:
+                    contracted_lower = np.minimum(
+                        contracted_lower, np.asarray(self.node_lower[node])
+                    )
+                    contracted_upper = np.maximum(
+                        contracted_upper, np.asarray(self.node_upper[node])
+                    )
             boxes.append(np.stack((contracted_lower, contracted_upper)))
         if not boxes:
             raise ValueError(
@@ -3646,6 +3678,14 @@ class IntersectionPCurve(AbstractCurve):
             branch_last = self.first + self.last - first
         else:
             branch_first, branch_last = first, last
+        if (
+            branch_first == branch_last == self.last
+            and self.first < self.last
+            and float(self.last).is_integer()
+        ):
+            # The span's terminal node lies on its own last chart's source
+            # sheet; a point query there would select the next chart.
+            branch_first = max(self.first, math.nextafter(branch_last, -math.inf))
         boxes = self.curve.parameter_enclosures(branch_first, branch_last)
         columns = slice(0, 2) if self.side == "first" else slice(2, 4)
         lower = np.min(boxes[:, 0, columns], axis=0)
@@ -3943,7 +3983,29 @@ class CurveTrimSegment(AbstractCurve):
             raise ValueError("CurveTrimSegment query must lie inside its unit interval.")
         a, b = float(self.source_parameters(first)), float(self.source_parameters(last))
         lower, upper = min(a, b), max(a, b)
-        return self.curve.bounding_box(lower, upper)
+        box = np.asarray(self.curve.bounding_box(lower, upper), dtype=np.float64)
+        # A trim end is a root whose representative parameter only lies in its
+        # enclosure; a box reaching that end also encloses the root itself.
+        domain = self.curve.parameter_domain
+        for value, edge, root in (
+            (lower, self.first, self.first_root),
+            (upper, self.last, self.last_root),
+        ):
+            if value != edge or root is None:
+                continue
+            root_lower, root_upper = root.parameter_enclosure()
+            if domain is not None:
+                root_lower = max(root_lower, float(domain[0]))
+                root_upper = min(root_upper, float(domain[1]))
+            if root_lower > root_upper:
+                continue
+            root_box = np.asarray(
+                self.curve.bounding_box(root_lower, root_upper), dtype=np.float64
+            )
+            box = np.stack(
+                (np.minimum(box[0], root_box[0]), np.maximum(box[1], root_box[1]))
+            )
+        return box
 
     def identity_payload(self) -> dict[str, object]:
         from ._carrier_pieces import carrier_payload
