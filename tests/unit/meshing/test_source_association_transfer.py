@@ -474,7 +474,10 @@ def test_implicit_volume_boundary_remap_orients_triangles_outward() -> None:
     certification = source.certification
     if certification is None:
         raise AssertionError("Native implicit volume must retain source certification.")
-    transfer = ImplicitAssociationTransfer(certification.inputs.feature_source)
+    authority = certification.inputs.feature_source
+    if not isinstance(authority, NativeImplicitSource):
+        raise AssertionError("Native implicit volume must retain its implicit source.")
+    transfer = ImplicitAssociationTransfer(authority)
     lineage, _ = _identity_lineage(source.mesh)
     # The native volume carries simplicial incidence; the copy carries
     # vertex-sorted tetrahedral face rows. Both remap to outward triangles.
