@@ -72,6 +72,7 @@ from ._local_metric import (
     _COLLAPSED,
     _CORNER,
     _CURVE,
+    _DEVIATION_QUANTUM,
     _distinct,
     _IMPROVEMENT,
     _initial_state,
@@ -1083,9 +1084,14 @@ def _periodic_edge_batch(
     items: Array,
     rank: Array,
     layout: DeviceMetricLayout,
+    guard: Array | None = None,
     /,
 ) -> tuple[Array, Array, Array]:
-    """Select complete edge orbits with disjoint lifted cavities."""
+    """Select complete edge orbits with disjoint lifted cavities.
+
+    ``guard`` (per representative half) adds cells a group's decision read
+    to its independence footprint without counting as member overlap.
+    """
     half_count = 3 * layout.cell_capacity
     halves = jnp.arange(half_count, dtype=jnp.int32)
     representative = work.periodic_edge_representative
@@ -1117,8 +1123,9 @@ def _periodic_edge_batch(
         & (sorted_members[:, 1:] != sorted_members[:, :-1]),
         axis=1,
     )
+    footprint = group_items if guard is None else jnp.concatenate((group_items, guard), 1)
     selected_representatives = _independent(
-        rank, group_valid & ~overlap, group_items, layout.cell_capacity
+        rank, group_valid & ~overlap, footprint, layout.cell_capacity
     )
     selected_members = (
         (representative >= 0)
@@ -1900,9 +1907,15 @@ class _CollapseCandidates(NamedTuple):
 
 
 def _collapse_candidates(
-    work: _Work, topology: _Topology, layout: DeviceMetricLayout, /
+    work: _Work, topology: _Topology, layout: DeviceMetricLayout, escape: Any, /
 ) -> _CollapseCandidates:
-    """Classification, link condition, moved-ball orientation, and new lengths."""
+    """Classification, link condition, moved-ball orientation, and new lengths.
+
+    Length admission as on the host route: a regular collapse that removes or
+    keeps a birth must keep every new edge at or below the split threshold,
+    other collapses up to ``_COLLAPSE_LIMIT``; the stall escape (``_adapted``)
+    admits every collapse up to ``_COLLAPSE_LIMIT``.
+    """
     vertex_capacity = layout.vertex_capacity
     width = layout.ball_width
     halves = jnp.arange(3 * layout.cell_capacity, dtype=jnp.int32)
@@ -1957,21 +1970,11 @@ def _collapse_candidates(
         ).reshape((-1, 2)),
     ).reshape(link.shape)
     longest = jnp.max(jnp.where(fresh, created, 0.0), axis=1)
+    births = (work.source_rows[removed] < 0) | (work.source_rows[kept] < 0)
+    limit = jnp.where(escape, _COLLAPSE_LIMIT, jnp.where(births, _UPPER, _COLLAPSE_LIMIT))
     geometric = jnp.maximum(
         jnp.maximum(orientation, straight),
-        jnp.where(
-            linked
-            & (
-                longest
-                <= jnp.where(
-                    (work.source_rows[removed] < 0) | (work.source_rows[kept] < 0),
-                    _UPPER,
-                    _COLLAPSE_LIMIT,
-                )
-            ),
-            _OK,
-            _INVALID,
-        ),
+        jnp.where(linked & (longest <= limit), _OK, _INVALID),
     )
     status = jnp.where(
         interior | curve, jnp.where(cavity, _CAVITY, geometric), _INADMISSIBLE
@@ -2055,14 +2058,14 @@ def _collapse_children(
 
 
 def _collapse_round_nonperiodic(
-    work: _Work, done: Array, layout: DeviceMetricLayout, /
+    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any, /
 ) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
     halves_count = 3 * layout.cell_capacity
     short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
-    found = _collapse_candidates(work, topology, layout)
+    found = _collapse_candidates(work, topology, layout, escape)
     counters, bits = _tally(
         work.counters,
         jnp.minimum(found.status[:halves_count], found.status[halves_count:]),
@@ -2109,8 +2112,104 @@ def _collapse_round_nonperiodic(
     return work, done, bits, count
 
 
+class _QuotientLink(NamedTuple):
+    """Quotient link condition of every collapse direction (periodic rounds).
+
+    ``exact``: every vertex involved is a pure-translation deck image, so a
+    lifted edge ``(a, b)`` is the quotient edge ``(orbit a, orbit b, t_b - t_a)``.
+    ``conflict``: the collapse would make a quotient loop or duplicate a
+    quotient edge some other copy of the kept orbit already has. ``guard``: the
+    balls of every kept copy, whose links the decision read.
+    """
+
+    exact: Array
+    conflict: Array
+    guard: Array
+
+
+def _quotient_link(
+    work: _Work,
+    topology: _Topology,
+    found: _CollapseCandidates,
+    layout: DeviceMetricLayout,
+    /,
+) -> _QuotientLink:
+    """Decide the link condition on the quotient, not only on the lifted cover.
+
+    Moving the removed vertex onto lifted kept copy ``k`` turns each fresh link
+    vertex ``x`` into the quotient edge ``(orbit k, orbit x, t_x - t_k)``. It
+    duplicates an existing edge exactly when some kept copy ``p`` has a lifted
+    neighbor ``z`` of orbit ``x`` with ``t_z - t_p = t_x - t_k`` (every quotient
+    edge has a lifted member). Rounded differences of exact translations agree
+    whenever the exact differences do, so a false match only refuses.
+    """
+    vertex_capacity = layout.vertex_capacity
+    removed, kept = found.removed, found.kept
+    orbit = work.periodic_vertex_orbits
+    translation = work.periodic_vertex_translation
+    deck = work.periodic_vertex_deck
+
+    def copies(vertex: Array, /) -> Array:
+        return work.periodic_vertex_members[
+            jnp.maximum(work.periodic_vertex_representative[vertex], 0)
+        ]
+
+    link = topology.link[removed]
+    listed = (link >= 0) & (link != kept[:, None])
+    neighbor = jnp.maximum(link, 0)
+    kept_rows = jnp.broadcast_to(kept[:, None], link.shape)
+    fresh = listed & (_edge_half(topology, kept_rows, neighbor, vertex_capacity) < 0)
+    loop = jnp.any(
+        listed
+        & (
+            (orbit[neighbor] == orbit[kept][:, None])
+            | (orbit[neighbor] == orbit[removed][:, None])
+        ),
+        axis=1,
+    )
+    kept_copies = copies(kept)
+    kept_present = kept_copies >= 0
+    safe_kept = jnp.maximum(kept_copies, 0)
+    neighbor_copies = copies(neighbor)
+    neighbor_present = neighbor_copies >= 0
+    safe_neighbor = jnp.maximum(neighbor_copies, 0)
+    # Axes: [direction, link vertex, kept copy, link vertex copy].
+    offset = translation[neighbor] - translation[kept][:, None, :]
+    relative = (
+        translation[safe_neighbor][:, :, None, :, :]
+        - translation[safe_kept][:, None, :, None, :]
+    )
+    matched = (
+        fresh[:, :, None, None]
+        & kept_present[:, None, :, None]
+        & neighbor_present[:, :, None, :]
+        & jnp.all(relative == offset[:, :, None, None, :], axis=-1)
+    )
+    adjacent = (
+        _edge_half(
+            topology,
+            jnp.broadcast_to(safe_kept[:, None, :, None], matched.shape),
+            jnp.broadcast_to(safe_neighbor[:, :, None, :], matched.shape),
+            vertex_capacity,
+        )
+        >= 0
+    )
+    duplicate = jnp.any(matched & adjacent, axis=(1, 2, 3))
+    exact = (
+        jnp.all(~kept_present | deck[safe_kept], axis=1)
+        & jnp.all(~listed | deck[neighbor], axis=1)
+        & jnp.all(
+            ~(listed[..., None] & neighbor_present) | deck[safe_neighbor], axis=(1, 2)
+        )
+    )
+    guard = jnp.where(kept_present[..., None], topology.ball[safe_kept], -1).reshape(
+        (kept.shape[0], -1)
+    )
+    return _QuotientLink(exact, loop | duplicate, guard)
+
+
 def _collapse_round_periodic(
-    work: _Work, done: Array, layout: DeviceMetricLayout, /
+    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any, /
 ) -> Any:
     """Collapse only when every lifted member of one quotient edge is valid."""
     work = _compact_cells(work, layout)
@@ -2118,7 +2217,8 @@ def _collapse_round_periodic(
     vertex_capacity = layout.vertex_capacity
     edge_count = 3 * layout.cell_capacity
     halves = jnp.arange(edge_count, dtype=jnp.int32)
-    found = _collapse_candidates(work, topology, layout)
+    found = _collapse_candidates(work, topology, layout, escape)
+    quotient = _quotient_link(work, topology, found, layout)
     short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
     counters, bits = _tally(
         work.counters,
@@ -2146,12 +2246,19 @@ def _collapse_round_periodic(
 
     def covers_vertex_orbits(direction: Array, /) -> Array:
         # The edge orbit's lifted members must remove every lifted copy of the
-        # removed vertex and land on every copy of the kept vertex; otherwise
-        # the collapse is a cover collapse that only the host route performs.
+        # removed vertex, otherwise the collapse is a cover collapse that only
+        # the host route performs. Landing on only some copies of the kept
+        # vertex needs the exact quotient link condition; every exactly
+        # decided collapse must pass it.
         removed = found.removed[direction][safe_members]
         kept = found.kept[direction][safe_members]
-        return (_distinct_count(removed, present) == vertex_orbit_size[removed[:, 0]]) & (
-            _distinct_count(kept, present) == vertex_orbit_size[kept[:, 0]]
+        exact = jnp.all(~present | quotient.exact[direction][safe_members], axis=1)
+        clear = jnp.all(~present | ~quotient.conflict[direction][safe_members], axis=1)
+        kept_cover = _distinct_count(kept, present) == vertex_orbit_size[kept[:, 0]]
+        return (
+            (_distinct_count(removed, present) == vertex_orbit_size[removed[:, 0]])
+            & (kept_cover | exact)
+            & (clear | ~exact)
         )
 
     start_members = (
@@ -2226,7 +2333,13 @@ def _collapse_round_periodic(
         work.periodic_edge_orbits,
     )
     selected_representatives, selected_edges, overlap = _periodic_edge_batch(
-        work, topology, chosen_valid, items, rank, layout
+        work,
+        topology,
+        chosen_valid,
+        items,
+        rank,
+        layout,
+        quotient.guard[chosen_direction],
     )
     bits = bits | jnp.where(
         jnp.any(overlap) | jnp.any(cover_only),
@@ -2267,12 +2380,16 @@ def _collapse_round_periodic(
     return work, done, bits, count
 
 
-def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+def _collapse_round(
+    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any = False, /
+) -> Any:
+    """One collapse round; ``escape`` (traced) selects the stall-escape admission."""
+
     def periodic(operands: Any) -> Any:
-        return _collapse_round_periodic(operands[0], operands[1], layout)
+        return _collapse_round_periodic(operands[0], operands[1], layout, escape)
 
     def ordinary(operands: Any) -> Any:
-        return _collapse_round_nonperiodic(operands[0], operands[1], layout)
+        return _collapse_round_nonperiodic(operands[0], operands[1], layout, escape)
 
     return jax.lax.cond(
         work.periodic_enabled,
@@ -2890,8 +3007,49 @@ def _unit(work: _Work, /) -> Array:
     return jnp.all(~measured | inside)
 
 
-def _phase(step: Any, work: _Work, done: Array, bits: Array, layout: Any, /) -> Any:
-    """Exhaust a finite phase batch until no operation applies or status stops it."""
+def _stall_potential(work: _Work, /) -> Array:
+    """Well-founded stall measure ``(out-of-band, quantized band excess)``.
+
+    Counted over the measured half-edges of ``_unit``; both entries are natural
+    numbers, so their lexicographic order admits no infinite strictly
+    decreasing sequence (see ``_adapted``).
+    """
+    lengths = _lengths(work, _half_ends(work.cells))
+    active = jnp.repeat(work.cell_active, 3)
+    unprotected = active & ~work.edge_protected.reshape((-1,))
+    measured = jnp.where(jnp.any(unprotected), unprotected, active)
+    outside = measured & ((lengths < _LOWER) | (lengths > _UPPER))
+    excess = jnp.maximum(
+        jnp.abs(jnp.log(jnp.where(measured, lengths, 1.0))) - np.log(_UPPER), 0.0
+    )
+    return jnp.stack(
+        (
+            jnp.sum(outside, dtype=jnp.int64),
+            jnp.sum(jnp.floor(excess / _DEVIATION_QUANTUM).astype(jnp.int64)),
+        )
+    )
+
+
+def _potential_below(potential: Array, bound: Array, /) -> Array:
+    """Strict lexicographic order of two stall potentials."""
+    return (potential[0] < bound[0]) | (
+        (potential[0] == bound[0]) & (potential[1] < bound[1])
+    )
+
+
+def _phase(
+    step: Any,
+    work: _Work,
+    done: Array,
+    bits: Array,
+    layout: Any,
+    enabled: Any = True,
+    /,
+) -> Any:
+    """Exhaust a finite phase batch until no operation applies or status stops it.
+
+    A disabled (traced ``enabled``) phase runs no round.
+    """
 
     def proceed(carry: Any) -> Any:
         _, _, bits, count, _ = carry
@@ -2905,24 +3063,38 @@ def _phase(step: Any, work: _Work, done: Array, bits: Array, layout: Any, /) -> 
     work, done, bits, _, total = jax.lax.while_loop(
         proceed,
         sub_round,
-        (work, done, bits, jnp.int32(1), jnp.int32(0)),
+        (work, done, bits, jnp.where(enabled, 1, 0).astype(jnp.int32), jnp.int32(0)),
     )
     return work, done, bits, total
 
 
-def _pass(work: _Work, bits: Array, layout: DeviceMetricLayout, /) -> Any:
-    """Split, collapse, and flip phases, then relocation (each vertex once)."""
+def _pass(
+    work: _Work, bits: Array, layout: DeviceMetricLayout, escaping: Array, /
+) -> Any:
+    """Split, collapse, and flip phases, then relocation (each vertex once).
+
+    An escaping pass (``_adapted``) runs only the escape collapse phase; the
+    collapse rounds are compiled once with the traced admission flag.
+    """
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
+    regular = ~escaping
 
     def skipped(operand: Any) -> Any:
         work, bits = operand
         return work, bits, jnp.int32(0)
 
+    def collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
+        return _collapse_round(work, done, layout, escaping)
+
     def topological(operand: Any) -> Any:
         work, bits = operand
         total = jnp.int32(0)
-        for step in (_split_round, _collapse_round, _flip_round):
-            work, _, bits, count = _phase(step, work, done, bits, layout)
+        for step, enabled in (
+            (_split_round, regular),
+            (collapse_round, True),
+            (_flip_round, regular),
+        ):
+            work, _, bits, count = _phase(step, work, done, bits, layout, enabled)
             total = total + count
         return work, bits, total
 
@@ -2935,9 +3107,11 @@ def _pass(work: _Work, bits: Array, layout: DeviceMetricLayout, /) -> Any:
         work.controls[_TOPOLOGY] != 0, topological, skipped, (work, bits)
     )
     work, bits, moved = jax.lax.cond(
-        work.controls[_RELOCATION] != 0, relocating, skipped, (work, bits)
+        (work.controls[_RELOCATION] != 0) & regular, relocating, skipped, (work, bits)
     )
-    work = work._replace(counters=work.counters.at[_PASSES].add(1))
+    work = work._replace(
+        counters=work.counters.at[_PASSES].add(jnp.where(escaping, 0, 1))
+    )
     return work, bits, changed + moved
 
 
@@ -3012,7 +3186,11 @@ class _DeviceMetricRound(NamedTuple):
 def _periodic_round(
     layout: DeviceMetricLayout, source: _Work, operation: Array, /
 ) -> _DeviceMetricRound:
-    """Execute one source-bound orbit transaction without host synchronization."""
+    """Execute one source-bound orbit transaction without host synchronization.
+
+    Operations: split, collapse, flip, relocate, and (4) the stall-escape
+    collapse, which shares the collapse branch through its traced flag.
+    """
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
 
     def split(operand: Any) -> Any:
@@ -3022,7 +3200,7 @@ def _periodic_round(
 
     def collapse(operand: Any) -> Any:
         work, done = operand
-        work, _, bits, count = _collapse_round(work, done, layout)
+        work, _, bits, count = _collapse_round(work, done, layout, operation == 4)
         return work, bits, count
 
     def flip(operand: Any) -> Any:
@@ -3036,7 +3214,7 @@ def _periodic_round(
         return work, bits, count
 
     work, bits, _ = jax.lax.switch(
-        operation,
+        jnp.where(operation == 4, 1, operation),
         (split, collapse, flip, relocate),
         (source, done),
     )
@@ -3098,21 +3276,64 @@ def _refused_call(
 
 
 def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate:
-    """Run complete metric phases, rolling back only on actual terminal status."""
+    """Run complete metric phases, rolling back only on actual terminal status.
+
+    Stall escape (the host route's, ``execute_local_metric_adaptation``): at a
+    pass that applies nothing outside the unit criterion, an escape phase runs
+    every collapse up to ``_COLLAPSE_LIMIT`` (births included). It stands when
+    the run reaches the unit criterion or a stall of strictly lower
+    ``_stall_potential``; otherwise the run returns the escaped stall's state
+    and status bits as a stall. Termination: the escaped stalls' potentials
+    strictly decrease in a well-founded order (pairs of natural numbers), each
+    escape phase removes a vertex per collapse, and between escapes the regular
+    passes are unchanged.
+    """
 
     def proceed(carry: Any) -> Any:
-        work, bits, stalled = carry
+        work, bits, stalled = carry[:3]
         return ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
 
     def adaptation_pass(carry: Any) -> Any:
-        work, bits, _ = carry
-        work, bits, applied = _pass(work, bits, layout)
-        return work, bits, applied == 0
+        work, bits, _, escaping, escaped, bound, anchor, anchor_bits = carry
+        work, bits, applied = _pass(work, bits, layout, escaping)
+        quiet = applied == 0
+        potential = _stall_potential(work)
+        stall = (
+            quiet
+            & ~escaping
+            & ((bits & _FAILURES) == 0)
+            & (work.controls[_TOPOLOGY] != 0)
+            & ~_unit(work)
+        )
+        admitted = ~escaped | _potential_below(potential, bound)
+        start = stall & admitted
+        # A stall that does not lower the last escaped stall's potential
+        # returns that stall; an escape phase that applies nothing stalls.
+        restore = stall & ~admitted
+        return (
+            _select(restore, anchor, work),
+            jnp.where(restore, anchor_bits, bits),
+            quiet & ~start,
+            start,
+            escaped | start,
+            jnp.where(start, potential, bound),
+            _select(start, work, anchor),
+            jnp.where(start, bits, anchor_bits),
+        )
 
-    work, bits, stalled = jax.lax.while_loop(
+    work, bits, stalled, *_ = jax.lax.while_loop(
         proceed,
         adaptation_pass,
-        (source, jnp.int32(0), jnp.bool_(False)),
+        (
+            source,
+            jnp.int32(0),
+            jnp.bool_(False),
+            jnp.bool_(False),
+            jnp.bool_(False),
+            jnp.zeros((2,), dtype=jnp.int64),
+            source,
+            jnp.int32(0),
+        ),
     )
     converged = _unit(work)
     stalled = stalled & ~converged
@@ -3547,6 +3768,16 @@ def _periodic_device_adaptation(
 
     controls = np.asarray(jax.device_get(current_state.controls), dtype=np.int32)
     stalled = False
+    # The last escaped stall: its layout, state, preparation, and potential.
+    escaped_from: (
+        tuple[
+            DeviceMetricLayout,
+            DeviceMetricState,
+            PreparedDeviceMetricAdaptation,
+            tuple[int, ...],
+        ]
+        | None
+    ) = None
     while True:
         if bool(np.asarray(jax.device_get(_unit(_work(current_state))))):
             break
@@ -3572,9 +3803,29 @@ def _periodic_device_adaptation(
             pass_applied += applied
         if bool(np.asarray(jax.device_get(_unit(_work(current_state))))):
             break
-        if pass_applied == 0:
-            stalled = True
+        if pass_applied != 0:
+            continue
+        stalled = True
+        if not controls[_TOPOLOGY]:
             break
+        # Stall escape and its well-founded potential, as in ``_adapted``.
+        potential = tuple(
+            int(value)
+            for value in np.asarray(
+                jax.device_get(_stall_potential(_work(current_state)))
+            ).tolist()
+        )
+        if escaped_from is not None and potential >= escaped_from[3]:
+            current_layout, current_state, current_prepared, _ = escaped_from
+            break
+        stall = (current_layout, current_state, current_prepared, potential)
+        applied, failure = run_phase(4)
+        if failure:
+            return rollback(failure)
+        if applied == 0:
+            break
+        stalled = False
+        escaped_from = stall
     converged = bool(np.asarray(jax.device_get(_unit(_work(current_state)))))
     stalled = stalled and not converged
     result_work = _work(current_state)

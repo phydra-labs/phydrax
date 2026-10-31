@@ -1111,7 +1111,13 @@ so seam edges stay unclassified. A collapse removes every lifted member of the
 vertex orbit onto exact deck images of the kept vertex; a lifted member row the
 collapse empties is retired onto another member of its orbit, keeping the
 quotient vertex and the feature/lineage records of its quotient edges. Seam
-edge orbits flip across the seam. When the route stalls it refuses with
+edge orbits flip across the seam. The device route collapses on the lifted
+cover when the edge orbit's members remove every copy of the removed vertex;
+landing on only some copies of the kept vertex additionally requires the exact
+quotient link condition (every vertex a pure-translation deck image; no new
+edge `(orbit k, orbit x, t_x - t_k)` may already exist at another kept copy or
+close a quotient loop), and the balls of all kept copies join the collapse's
+independence footprint. When the route stalls it refuses with
 `COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
 `MeshingFailureEvidence` holds each remaining edge's metric length and refusal
 reasons.
@@ -1384,13 +1390,24 @@ bound to the source vertices). Routes:
   diagonal without lowering their quality pair; a relocation likewise when it
   raises its star's minimum quality or keeps it and strictly improves the
   worst-first quantized deviations of its edges. Neither rule creates vertices,
-  so each phase terminates. Orientation decisions use the policy's predicate
-  mode; unresolved filtered signs reject the operation. The status is COMPLETE
-  when the unit-mesh criterion holds, STALLED or NUMERICAL_STOP otherwise; a
-  stalled `LocalMetricEvidence.stalled_edges` lists every remaining edge (one per
-  quotient orbit) with its metric length and refusal reasons, for example
-  `collapse=hysteresis+inadmissible;flip=invalid`. `RelocationMeshAdaptation`
-  moves vertices only.
+  so each phase terminates. A full pass that applies nothing outside the unit
+  criterion is a stall; it runs one escape phase of the split/collapse
+  hysteresis that admits every collapse up to metric length 2, births included
+  (the next split phase splits the long edges). The escape stands when the run
+  then reaches the unit criterion or a stall whose potential
+  `(out-of-band edges, sum of floor(band excess of |ln L| / 2^-20))` is
+  strictly lower (which may escape again); otherwise the run returns the
+  escaped stall's state. Escaped stall potentials strictly decrease in the
+  well-founded lexicographic order on pairs of natural numbers, so escapes are
+  finitely many and no pass cap is needed. Orientation decisions use the
+  policy's predicate mode; unresolved filtered signs reject the operation. The
+  status is COMPLETE when the unit-mesh criterion holds, STALLED or
+  NUMERICAL_STOP otherwise; a stalled `LocalMetricEvidence.stalled_edges`
+  lists every remaining edge (one per quotient orbit) with its metric length
+  and refusal reasons, for example `collapse=hysteresis+inadmissible;flip=invalid`
+  (`hysteresis`: above the split threshold, and the escape did not lower the
+  stall potential; `long`: above 2). `RelocationMeshAdaptation` moves vertices
+  only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
   and hierarchy of `NATIVE_BISECTION` byte for byte. The device passes coarsen
@@ -1712,7 +1729,9 @@ and FILTERED_DEVICE orientation predicates. An operation whose predicate is
 unresolved is never applied and the pass reports `NEEDS_HOST_RESOLUTION`; there
 is no host callback inside the passes. The commit reuses the host metric edit
 assembly, so the result carries the same lineage kinds and vertex stencil as
-`NATIVE_METRIC_2D`.
+`NATIVE_METRIC_2D`. The collapse length admission and the stall escape with its
+potential are the host route's; the compiled loop carries the escaped stall's
+state and restores it when the next stall does not lower the potential.
 
 `prepare_device_metric_adaptation(source, request, policy=...)` binds a
 `MetricMeshAdaptation` or `RelocationMeshAdaptation` to a `DeviceMetricState`
