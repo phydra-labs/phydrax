@@ -1111,7 +1111,13 @@ so seam edges stay unclassified. A collapse removes every lifted member of the
 vertex orbit onto exact deck images of the kept vertex; a lifted member row the
 collapse empties is retired onto another member of its orbit, keeping the
 quotient vertex and the feature/lineage records of its quotient edges. Seam
-edge orbits flip across the seam. When the route stalls it refuses with
+edge orbits flip across the seam. The device route collapses on the lifted
+cover when the edge orbit's members remove every copy of the removed vertex;
+landing on only some copies of the kept vertex additionally requires the exact
+quotient link condition (every vertex a pure-translation deck image; no new
+edge `(orbit k, orbit x, t_x - t_k)` may already exist at another kept copy or
+close a quotient loop), and the balls of all kept copies join the collapse's
+independence footprint. When the route stalls it refuses with
 `COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
 `MeshingFailureEvidence` holds each remaining edge's metric length and refusal
 reasons.

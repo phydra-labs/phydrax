@@ -1084,9 +1084,14 @@ def _periodic_edge_batch(
     items: Array,
     rank: Array,
     layout: DeviceMetricLayout,
+    guard: Array | None = None,
     /,
 ) -> tuple[Array, Array, Array]:
-    """Select complete edge orbits with disjoint lifted cavities."""
+    """Select complete edge orbits with disjoint lifted cavities.
+
+    ``guard`` (per representative half) adds cells a group's decision read
+    to its independence footprint without counting as member overlap.
+    """
     half_count = 3 * layout.cell_capacity
     halves = jnp.arange(half_count, dtype=jnp.int32)
     representative = work.periodic_edge_representative
@@ -1118,8 +1123,9 @@ def _periodic_edge_batch(
         & (sorted_members[:, 1:] != sorted_members[:, :-1]),
         axis=1,
     )
+    footprint = group_items if guard is None else jnp.concatenate((group_items, guard), 1)
     selected_representatives = _independent(
-        rank, group_valid & ~overlap, group_items, layout.cell_capacity
+        rank, group_valid & ~overlap, footprint, layout.cell_capacity
     )
     selected_members = (
         (representative >= 0)
@@ -2106,8 +2112,104 @@ def _collapse_round_nonperiodic(
     return work, done, bits, count
 
 
+class _QuotientLink(NamedTuple):
+    """Quotient link condition of every collapse direction (periodic rounds).
+
+    ``exact``: every vertex involved is a pure-translation deck image, so a
+    lifted edge ``(a, b)`` is the quotient edge ``(orbit a, orbit b, t_b - t_a)``.
+    ``conflict``: the collapse would make a quotient loop or duplicate a
+    quotient edge some other copy of the kept orbit already has. ``guard``: the
+    balls of every kept copy, whose links the decision read.
+    """
+
+    exact: Array
+    conflict: Array
+    guard: Array
+
+
+def _quotient_link(
+    work: _Work,
+    topology: _Topology,
+    found: _CollapseCandidates,
+    layout: DeviceMetricLayout,
+    /,
+) -> _QuotientLink:
+    """Decide the link condition on the quotient, not only on the lifted cover.
+
+    Moving the removed vertex onto lifted kept copy ``k`` turns each fresh link
+    vertex ``x`` into the quotient edge ``(orbit k, orbit x, t_x - t_k)``. It
+    duplicates an existing edge exactly when some kept copy ``p`` has a lifted
+    neighbor ``z`` of orbit ``x`` with ``t_z - t_p = t_x - t_k`` (every quotient
+    edge has a lifted member). Rounded differences of exact translations agree
+    whenever the exact differences do, so a false match only refuses.
+    """
+    vertex_capacity = layout.vertex_capacity
+    removed, kept = found.removed, found.kept
+    orbit = work.periodic_vertex_orbits
+    translation = work.periodic_vertex_translation
+    deck = work.periodic_vertex_deck
+
+    def copies(vertex: Array, /) -> Array:
+        return work.periodic_vertex_members[
+            jnp.maximum(work.periodic_vertex_representative[vertex], 0)
+        ]
+
+    link = topology.link[removed]
+    listed = (link >= 0) & (link != kept[:, None])
+    neighbor = jnp.maximum(link, 0)
+    kept_rows = jnp.broadcast_to(kept[:, None], link.shape)
+    fresh = listed & (_edge_half(topology, kept_rows, neighbor, vertex_capacity) < 0)
+    loop = jnp.any(
+        listed
+        & (
+            (orbit[neighbor] == orbit[kept][:, None])
+            | (orbit[neighbor] == orbit[removed][:, None])
+        ),
+        axis=1,
+    )
+    kept_copies = copies(kept)
+    kept_present = kept_copies >= 0
+    safe_kept = jnp.maximum(kept_copies, 0)
+    neighbor_copies = copies(neighbor)
+    neighbor_present = neighbor_copies >= 0
+    safe_neighbor = jnp.maximum(neighbor_copies, 0)
+    # Axes: [direction, link vertex, kept copy, link vertex copy].
+    offset = translation[neighbor] - translation[kept][:, None, :]
+    relative = (
+        translation[safe_neighbor][:, :, None, :, :]
+        - translation[safe_kept][:, None, :, None, :]
+    )
+    matched = (
+        fresh[:, :, None, None]
+        & kept_present[:, None, :, None]
+        & neighbor_present[:, :, None, :]
+        & jnp.all(relative == offset[:, :, None, None, :], axis=-1)
+    )
+    adjacent = (
+        _edge_half(
+            topology,
+            jnp.broadcast_to(safe_kept[:, None, :, None], matched.shape),
+            jnp.broadcast_to(safe_neighbor[:, :, None, :], matched.shape),
+            vertex_capacity,
+        )
+        >= 0
+    )
+    duplicate = jnp.any(matched & adjacent, axis=(1, 2, 3))
+    exact = (
+        jnp.all(~kept_present | deck[safe_kept], axis=1)
+        & jnp.all(~listed | deck[neighbor], axis=1)
+        & jnp.all(
+            ~(listed[..., None] & neighbor_present) | deck[safe_neighbor], axis=(1, 2)
+        )
+    )
+    guard = jnp.where(kept_present[..., None], topology.ball[safe_kept], -1).reshape(
+        (kept.shape[0], -1)
+    )
+    return _QuotientLink(exact, loop | duplicate, guard)
+
+
 def _collapse_round_periodic(
-    work: _Work, done: Array, layout: DeviceMetricLayout, /
+    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any, /
 ) -> Any:
     """Collapse only when every lifted member of one quotient edge is valid."""
     work = _compact_cells(work, layout)
@@ -2115,7 +2217,8 @@ def _collapse_round_periodic(
     vertex_capacity = layout.vertex_capacity
     edge_count = 3 * layout.cell_capacity
     halves = jnp.arange(edge_count, dtype=jnp.int32)
-    found = _collapse_candidates(work, topology, layout)
+    found = _collapse_candidates(work, topology, layout, escape)
+    quotient = _quotient_link(work, topology, found, layout)
     short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
     counters, bits = _tally(
         work.counters,
@@ -2143,12 +2246,19 @@ def _collapse_round_periodic(
 
     def covers_vertex_orbits(direction: Array, /) -> Array:
         # The edge orbit's lifted members must remove every lifted copy of the
-        # removed vertex and land on every copy of the kept vertex; otherwise
-        # the collapse is a cover collapse that only the host route performs.
+        # removed vertex, otherwise the collapse is a cover collapse that only
+        # the host route performs. Landing on only some copies of the kept
+        # vertex needs the exact quotient link condition; every exactly
+        # decided collapse must pass it.
         removed = found.removed[direction][safe_members]
         kept = found.kept[direction][safe_members]
-        return (_distinct_count(removed, present) == vertex_orbit_size[removed[:, 0]]) & (
-            _distinct_count(kept, present) == vertex_orbit_size[kept[:, 0]]
+        exact = jnp.all(~present | quotient.exact[direction][safe_members], axis=1)
+        clear = jnp.all(~present | ~quotient.conflict[direction][safe_members], axis=1)
+        kept_cover = _distinct_count(kept, present) == vertex_orbit_size[kept[:, 0]]
+        return (
+            (_distinct_count(removed, present) == vertex_orbit_size[removed[:, 0]])
+            & (kept_cover | exact)
+            & (clear | ~exact)
         )
 
     start_members = (
@@ -2223,7 +2333,13 @@ def _collapse_round_periodic(
         work.periodic_edge_orbits,
     )
     selected_representatives, selected_edges, overlap = _periodic_edge_batch(
-        work, topology, chosen_valid, items, rank, layout
+        work,
+        topology,
+        chosen_valid,
+        items,
+        rank,
+        layout,
+        quotient.guard[chosen_direction],
     )
     bits = bits | jnp.where(
         jnp.any(overlap) | jnp.any(cover_only),
