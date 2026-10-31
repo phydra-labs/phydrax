@@ -548,9 +548,12 @@ def _compile_owner_local_problem(
         )
         return jnp.sin(2.0 * jnp.pi * (fractional[..., 0] + 2.0 * fractional[..., 1]))
 
+    # Action rules are keyed by mesh block name; the periodic producer names its
+    # simplex block "periodic", so key every resident block explicitly.
     content_rule = phx.integration.ReferenceTriangleRule(
         phx.integration.GaussLegendreRule(20)
     )
+    content_rules = {block.name: content_rule for block in mesh.blocks}
     content_coefficient = phx.equations.coefficient(
         periodic_content_source,
         coefficient_id=(
@@ -567,13 +570,13 @@ def _compile_owner_local_problem(
             phx.equations.MassAction(
                 "content",
                 action_id="periodic-p0-mass",
-                rules={"triangles": content_rule},
+                rules=content_rules,
             ),
             phx.equations.SourceAction(
                 "content",
                 content_coefficient,
                 action_id="periodic-p0-sine-source",
-                rules={"triangles": content_rule},
+                rules=content_rules,
             ),
         ),
     )
@@ -611,9 +614,15 @@ def _compile_owner_local_problem(
 def _periodic_p0_content_values(view: Any, discretization: Any, /) -> np.ndarray:
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
 
+    if not isinstance(view, OwnerLocalCellGeometry):
+        raise TypeError("Periodic P0 content requires an owner-local cell view.")
+    if not np.asarray(view.cell_ids).size:
+        # An empty owner carries no blocks and no P0 rows.
+        if view.blocks or int(discretization.dof_maps[1].global_dof_count):
+            raise ValueError("An empty periodic owner retained P0 blocks or rows.")
+        return np.empty((0,), dtype=np.float64)
     if (
-        not isinstance(view, OwnerLocalCellGeometry)
-        or len(view.blocks) != 1
+        len(view.blocks) != 1
         or view.blocks[0].cell_kind != "triangle"
         or view.source_value is None
         or not hasattr(view.source_value.domain, "cell")
@@ -632,7 +641,9 @@ def _periodic_p0_content_values(view: Any, discretization: Any, /) -> np.ndarray
         if block.cell_vertex_shifts is None
         else np.asarray(block.cell_vertex_shifts, dtype=np.int64)
     )
-    basis = np.asarray(view.source_value.domain.cell.vectors, dtype=np.float64)
+    periodic_cell = view.source_value.domain.cell
+    basis = np.asarray(periodic_cell.vectors, dtype=np.float64)
+    origin = np.asarray(periodic_cell.origin, dtype=np.float64)
     if (
         not np.array_equal(block_cell_ids, cell_ids)
         or vertices.shape != (cell_ids.size, 3)
@@ -644,12 +655,22 @@ def _periodic_p0_content_values(view: Any, discretization: Any, /) -> np.ndarray
         or shifts is None
         or shifts.shape != (cell_ids.size, 3, 2)
         or basis.shape != (2, 2)
+        or origin.shape != (2,)
         or not np.all(np.isfinite(basis))
+        or not np.all(np.isfinite(origin))
     ):
         raise ValueError(
             "Periodic P0 cell rows differ from the compact triangle geometry."
         )
-    fractional_vertices = (coordinates[vertices] + shifts @ basis) @ np.linalg.inv(basis)
+    # Compact vertex rows are lifted images: each cell vertex is its fundamental
+    # representative displaced by the cell's vertex shift. Recover the
+    # representatives independently and require them in the fundamental cell.
+    fractional_vertices = (coordinates[vertices] - origin) @ np.linalg.inv(basis)
+    representatives = fractional_vertices - shifts
+    if np.any(representatives < -1.0e-12) or np.any(representatives >= 1.0 + 1.0e-12):
+        raise ValueError(
+            "Periodic P0 lifted vertex rows disagree with their cell vertex shifts."
+        )
     nodes, weights = np.polynomial.legendre.leggauss(20)
     unit_nodes = 0.5 * (nodes + 1.0)
     unit_weights = 0.5 * weights
@@ -684,6 +705,26 @@ def _periodic_p0_content_values(view: Any, discretization: Any, /) -> np.ndarray
     if not np.all(np.isfinite(values)):
         raise ValueError("Periodic P0 field contains nonfinite cell averages.")
     return values
+
+
+def _periodic_p1_owner_integral(view: Any, discretization: Any, values: Any, /) -> float:
+    """Exact integral of a local P1 field over this rank's owned (non-halo) cells."""
+    field = np.asarray(values, dtype=np.float64)
+    cell_dofs = np.asarray(discretization.dof_maps[0].cell_dofs[0], dtype=np.int64)
+    owned_cells = np.asarray(view.owned, dtype=np.bool_)
+    measures = np.asarray(view.cell_measures, dtype=np.float64)
+    if (
+        field.shape != (int(discretization.dof_maps[0].global_dof_count),)
+        or cell_dofs.shape != (owned_cells.size, 3)
+        or measures.shape != owned_cells.shape
+        or np.any(~np.isfinite(measures[owned_cells]))
+    ):
+        raise ValueError("Local P1 rows cannot be paired with owned cell measures.")
+    # A P1 field is affine on each straight triangle: its cell integral is the
+    # cell measure times its vertex mean.
+    return float(
+        np.dot(measures[owned_cells], np.mean(field[cell_dofs[owned_cells]], axis=1))
+    )
 
 
 def _periodic_p0_owner_integral(
@@ -1631,11 +1672,17 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
                 f"Owner-local FE ranks disagree on {contract}: {flags.tolist()}."
             )
 
-    def solve_record(compiled: Any, discretization: Any, /) -> dict[str, Any]:
+    def solve_record(compiled: Any, discretization: Any, view: Any, /) -> dict[str, Any]:
         local_dof_counts = tuple(
             int(dof_map.global_dof_count) for dof_map in discretization.dof_maps
         )
-        return _solve_physical_problem(compiled, local_dof_counts)
+        record = _solve_physical_problem(compiled, local_dof_counts)
+        # The local solve covers owned and halo cells; the group integral sums
+        # each rank's owned cells exactly once.
+        record["physical_integral"] = _periodic_p1_owner_integral(
+            view, discretization, record["values"]
+        )
+        return record
 
     def verify_periodic_adaptation(
         view: Any, source_view: Any, stage: str, /
@@ -1864,18 +1911,30 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
                 )
             )
         )
-        physical = solve_record(source_compiled, source_discretization)
+        physical = solve_record(source_compiled, source_discretization, source_view)
         source_content_reference = _periodic_p0_content_values(
             source_view, source_discretization
         )
         source_content_full = np.asarray(physical["content_values"], dtype=np.float64)
-        if (
-            source_content_full.shape != source_content_reference.shape
-            or np.max(np.abs(source_content_full - source_content_reference), initial=0.0)
-            > 2.0e-10
-        ):
+        if source_content_full.shape != source_content_reference.shape:
             raise RuntimeError(
-                "P0 FE mass/source solution differs from independent periodic cell averages."
+                "P0 FE mass/source rows differ from the periodic cell rows: "
+                f"{source_content_full.shape} != {source_content_reference.shape}."
+            )
+        content_error = np.abs(source_content_full - source_content_reference)
+        if np.max(content_error, initial=0.0) > 2.0e-10:
+            source_cell_dofs = np.asarray(
+                source_discretization.dof_maps[1].cell_dofs[0], dtype=np.int64
+            )[:, 0]
+            bad_rows = np.flatnonzero(content_error[source_cell_dofs] > 2.0e-10)
+            raise RuntimeError(
+                "P0 FE mass/source solution differs from independent periodic cell "
+                f"averages on {bad_rows.size}/{source_cell_dofs.size} cells: "
+                f"cell_ids={np.asarray(source_view.cell_ids)[bad_rows[:8]].tolist()}, "
+                f"owned={np.asarray(source_view.owned)[bad_rows[:8]].tolist()}, "
+                f"solved={source_content_full[source_cell_dofs[bad_rows[:8]]].tolist()}, "
+                "reference="
+                f"{source_content_reference[source_cell_dofs[bad_rows[:8]]].tolist()}."
             )
         source_content_values, source_content_ownership = content_identity.shard_values(
             source_content_full
@@ -2038,19 +2097,28 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
                 )
             )
         )
-        if (
-            np.any(source_placement[:2, 0] <= 0)
-            or source_placement[2, 0] != 0
-            or abs(source_integral - domain_measure)
-            > 2.0e-9 * max(1.0, abs(domain_measure))
-            or abs(source_content_integral) > source_content_rounding_bound
-            or source_minimum <= 0.0
-            or not np.isfinite(source_content_minimum)
-            or not np.isfinite(source_content_maximum)
-            or source_content_maximum - source_content_minimum <= 1.0e-8
-        ):
+        source_checks = {
+            "owned_placement": not np.any(source_placement[:2, 0] <= 0),
+            "empty_rank_dofs": source_placement[2, 0] == 0,
+            "p1_integral": abs(source_integral - domain_measure)
+            <= 2.0e-9 * max(1.0, abs(domain_measure)),
+            "p0_integral": abs(source_content_integral) <= source_content_rounding_bound,
+            "p1_positive": source_minimum > 0.0,
+            "p0_finite": np.isfinite(source_content_minimum)
+            and np.isfinite(source_content_maximum),
+            "p0_nonconstant": source_content_maximum - source_content_minimum > 1.0e-8,
+        }
+        failed_source_checks = sorted(
+            name for name, passed in source_checks.items() if not passed
+        )
+        if failed_source_checks:
             raise RuntimeError(
-                "Native source FE state failed its placement or P1/P0 physical oracle."
+                "Native source FE state failed its placement or P1/P0 physical "
+                f"oracle: {', '.join(failed_source_checks)} (placement="
+                f"{source_placement.tolist()}, p1_integral={source_integral!r}, "
+                f"domain_measure={domain_measure!r}, "
+                f"p0_integral={source_content_integral!r}, "
+                f"p0_bound={source_content_rounding_bound!r})."
             )
         return {
             "phase": phase,
@@ -2411,7 +2479,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
             )
         )
     )
-    source_physical = solve_record(source_compiled, source_discretization)
+    source_physical = solve_record(source_compiled, source_discretization, source_view)
     expected_source_values, _ = source_u_identity.shard_values(source_physical["values"])
     expected_source_content_reference = _periodic_p0_content_values(
         source_view, source_discretization
@@ -2858,7 +2926,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         raise RuntimeError(
             "FE commit lost accepted clock, target solver authority, or material state."
         )
-    target_physical = solve_record(target_compiled, target_discretization)
+    target_physical = solve_record(target_compiled, target_discretization, target_view)
     target_integral = float(np.sum(gather_scalar(target_physical["physical_integral"])))
     target_minimum = float(
         np.min(
@@ -3140,7 +3208,9 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         content_reanalysis_error = float("inf")
         try:
             law_value = float(np.asarray(time_law.value(end_time, args)))
-            physical_next = solve_record(target_compiled, target_discretization)
+            physical_next = solve_record(
+                target_compiled, target_discretization, target_view
+            )
             candidate_values, _ = target_u_identity.shard_values(physical_next["values"])
             candidate_content_values, _ = target_content_identity.shard_values(
                 physical_next["content_values"]
