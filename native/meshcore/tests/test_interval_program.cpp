@@ -31,6 +31,8 @@ constexpr std::int64_t kCosine = 9;
 constexpr std::int64_t kSqrt = 10;
 constexpr std::int64_t kReciprocal = 11;
 constexpr std::int64_t kSquare = 12;
+constexpr std::int64_t kCompare = 13;
+constexpr std::int64_t kSelect = 14;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -383,6 +385,49 @@ void unary_interval_enclosures() {
   PHX_CHECK(program.upper[reciprocal + 1] >= 1.0 / 4.0);
 }
 
+// Shared vectors with tests/unit/geometry (host interpreter): comparisons
+// decide only on certain endpoint order; select returns a decided branch's
+// enclosure exactly and the hull of both when undecided, infinite endpoints
+// included.
+void compare_and_select() {
+  Program program;
+  const std::int64_t left = program.values(
+      {{2.0, 3.0}, {0.0, 1.0}, {0.0, 1.0}, {1.0, 1.0}, {-kInfinity, 0.0}, {-1.0, 1.0}});
+  const std::int64_t right = program.values(
+      {{0.0, 1.0}, {1.0, 2.0}, {0.5, 0.5}, {1.0, 1.0}, {0.0, kInfinity}, {0.0, 0.0}});
+  const std::int64_t greater = program.slots(6);
+  program.row(kCompare, greater, 6, left, -1, right, -1, 0);
+  const std::int64_t at_least = program.slots(6);
+  program.row(kCompare, at_least, 6, left, -1, right, -1, 1);
+  const std::int64_t select = program.slots(6);
+  program.row(kSelect, select, 6, greater, -1, left, -1, right - left);
+  PHX_CHECK(execute(program) == PHX_MC_OK);
+  const double expected_greater[6][2] = {{1, 1}, {0, 0}, {0, 1}, {0, 0}, {0, 0}, {0, 1}};
+  const double expected_at_least[6][2] = {{1, 1}, {0, 1}, {0, 1}, {1, 1}, {0, 1}, {0, 1}};
+  // case0 = left, case1 = right.
+  const double expected_select[6][2] = {{0.0, 1.0}, {0.0, 1.0},       {0.0, 1.0},
+                                        {1.0, 1.0}, {-kInfinity, 0.0}, {-1.0, 1.0}};
+  for (int k = 0; k < 6; ++k) {
+    PHX_CHECK(program.lower[greater + k] == expected_greater[k][0]);
+    PHX_CHECK(program.upper[greater + k] == expected_greater[k][1]);
+    PHX_CHECK(program.lower[at_least + k] == expected_at_least[k][0]);
+    PHX_CHECK(program.upper[at_least + k] == expected_at_least[k][1]);
+    PHX_CHECK(program.lower[select + k] == expected_select[k][0]);
+    PHX_CHECK(program.upper[select + k] == expected_select[k][1]);
+  }
+  // Invalid strictness flags and case blocks reaching the output are refused.
+  Program invalid;
+  const std::int64_t value = invalid.values({{0.0, 1.0}, {1.0, 2.0}});
+  const std::int64_t out = invalid.slots(1);
+  invalid.row(kCompare, out, 1, value, -1, value + 1, -1, 2);
+  PHX_CHECK(execute(invalid) == PHX_MC_INVALID_INPUT);
+  Program reaching;
+  const std::int64_t cases = reaching.values({{0.0, 1.0}, {1.0, 2.0}});
+  const std::int64_t target = reaching.slots(2);
+  reaching.row(kSelect, target, 2, cases, -1, cases, -1, 1);
+  PHX_CHECK(execute(reaching) == PHX_MC_INVALID_INPUT);
+}
+
 void interval_capability_query() {
   std::uint64_t opcodes = 0;
   const std::uint64_t expected =
@@ -391,7 +436,8 @@ void interval_capability_query() {
       (std::uint64_t{1} << kMultiply) | (std::uint64_t{1} << kNegate) |
       (std::uint64_t{1} << kReduceSum) | (std::uint64_t{1} << kSine) |
       (std::uint64_t{1} << kCosine) | (std::uint64_t{1} << kSqrt) |
-      (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare);
+      (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
+      (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -566,6 +612,7 @@ int main() {
   trigonometric_enclosures();
   unary_interval_enclosures();
   interval_capability_query();
+  compare_and_select();
   deterministic_random_programs();
   validation_and_empty_programs();
   floating_point_modes();

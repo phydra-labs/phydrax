@@ -399,6 +399,40 @@ class _SurfaceEnvelopeCreateRequest(ctypes.Structure):
     )
 
 
+class _IntervalBoxProgram(ctypes.Structure):
+    _fields_ = (
+        ("instructions", _P),
+        ("instruction_count", _I64),
+        ("indices", _P),
+        ("index_count", _I64),
+        ("parameters", _P),
+        ("parameter_count", _I64),
+        ("workspace_lower", _P),
+        ("workspace_upper", _P),
+        ("workspace_size", _I64),
+        ("outputs", _P),
+        ("output_count", _I64),
+    )
+
+
+class _ZeroSetRemeshRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("value", _IntervalBoxProgram),
+        ("gradient", _IntervalBoxProgram),
+        ("tolerance", _F64),
+        ("carrier_distance", _F64),
+        ("edge_length", _F64),
+        ("minimum_angle_degrees", _F64),
+        ("result", _P),
+        ("counters", _P),
+        ("distance", _P),
+    )
+
+
 class _LevelSetSplit3DRequest(ctypes.Structure):
     _fields_ = (
         ("point_count", _I64),
@@ -977,6 +1011,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_surface_envelope_free": (None, (_P,)),
     "phx_mc_surface_envelope_remesh": (_I32, (_P, _P, _P)),
+    "phx_mc_zero_set_remesh": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
+    "phx_mc_zero_set_remesh_sizes": (_I32, (_P, _P)),
+    "phx_mc_zero_set_remesh_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
+    "phx_mc_zero_set_remesh_free": (None, (_P,)),
     "phx_mc_level_set_split_3d": (_I32, (ctypes.POINTER(_LevelSetSplit3DRequest),)),
     "phx_mc_mixed_template_counts": (_I32, (_I32, _I32, _I32, _P)),
     "phx_mc_mixed_template": (_I32, (_I32, _I32, _I32, _I64, _P)),
@@ -3343,6 +3381,182 @@ def surface_envelope(
         )
     finally:
         library["phx_mc_surface_envelope_free"](handle)
+
+
+class IntervalBoxProgram(NamedTuple):
+    """A native interval program over one three-dimensional box.
+
+    The workspace template carries the program's constant seeds; entries
+    ``[0, 3)`` receive the box and ``outputs`` name the result entries.
+    """
+
+    instructions: np.ndarray
+    indices: np.ndarray
+    parameters: np.ndarray
+    workspace_lower: np.ndarray
+    workspace_upper: np.ndarray
+    outputs: np.ndarray
+
+
+class ZeroSetRemeshResult(NamedTuple):
+    vertices: np.ndarray
+    triangles: np.ndarray
+    distance: float
+    counters: np.ndarray
+    """Splits, collapses, flips, relocations, unmet triangles, orientation."""
+
+
+def _interval_box_program(
+    program: IntervalBoxProgram, outputs: int, name: str, /
+) -> tuple[_IntervalBoxProgram, tuple[np.ndarray, ...]]:
+    instructions = _native_integer_array(
+        program.instructions, f"{name}.instructions", np.dtype(np.int64)
+    )
+    indices = _native_integer_array(
+        program.indices, f"{name}.indices", np.dtype(np.int64)
+    )
+    locations = _native_integer_array(
+        program.outputs, f"{name}.outputs", np.dtype(np.int64)
+    )
+    parameters = np.ascontiguousarray(program.parameters, dtype=np.float64)
+    lower = np.ascontiguousarray(program.workspace_lower, dtype=np.float64)
+    upper = np.ascontiguousarray(program.workspace_upper, dtype=np.float64)
+    if (
+        instructions.ndim != 2
+        or instructions.shape[1] != 8
+        or indices.ndim != 1
+        or parameters.ndim != 1
+        or lower.ndim != 1
+        or upper.shape != lower.shape
+        or locations.shape != (outputs,)
+    ):
+        raise ValueError(
+            f"{name} must be an interval program with (rows, 8) instructions, "
+            f"aligned one-dimensional workspaces, and {outputs} output locations."
+        )
+    view = _IntervalBoxProgram(
+        instructions.ctypes.data,
+        instructions.shape[0],
+        indices.ctypes.data,
+        indices.shape[0],
+        parameters.ctypes.data,
+        parameters.shape[0],
+        lower.ctypes.data,
+        upper.ctypes.data,
+        lower.shape[0],
+        locations.ctypes.data,
+        locations.shape[0],
+    )
+    return view, (instructions, indices, locations, parameters, lower, upper)
+
+
+def zero_set_remesh(
+    vertices: object,
+    triangles: object,
+    value: IntervalBoxProgram,
+    gradient: IntervalBoxProgram,
+    tolerance: float,
+    carrier_distance: float,
+    edge_length: float,
+    minimum_angle_degrees: float,
+    /,
+) -> ZeroSetRemeshResult:
+    """Remesh a closed oriented carrier of ``{f = 0}`` under the zero-set band admission.
+
+    Every created triangle has a certified distance to the zero set of at most
+    ``tolerance`` and a normal certified transversal to ``grad f`` with the
+    carrier's orientation. ``carrier_distance`` is the input carrier's declared
+    distance bound, retained by untouched input triangles; ``distance`` is the
+    maximum certified bound over the result.
+    """
+    points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
+    faces = np.ascontiguousarray(
+        _native_integer_array(triangles, "triangles", np.dtype(np.int64)),
+        dtype=np.int64,
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
+        raise ValueError("triangles must be a nonempty (N, 3) integer array.")
+    controls = (tolerance, carrier_distance, edge_length, minimum_angle_degrees)
+    if any(not np.isfinite(value_) for value_ in controls) or not (
+        tolerance > 0.0
+        and carrier_distance >= 0.0
+        and edge_length > 0.0
+        and 0.0 < minimum_angle_degrees < 60.0
+    ):
+        raise ValueError(
+            "tolerance and edge_length must be positive, carrier_distance nonnegative, "
+            "and minimum_angle_degrees in (0, 60)."
+        )
+    value_view, value_arrays = _interval_box_program(value, 1, "value")
+    gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
+    handle = ctypes.c_void_p()
+    counters = np.zeros((6,), dtype=np.int64)
+    distance = np.zeros((1,), dtype=np.float64)
+    request = _ZeroSetRemeshRequest(
+        points.ctypes.data,
+        points.shape[0],
+        faces.ctypes.data,
+        faces.shape[0],
+        value_view,
+        gradient_view,
+        float(tolerance),
+        float(carrier_distance),
+        float(edge_length),
+        float(minimum_angle_degrees),
+        ctypes.addressof(handle),
+        counters.ctypes.data,
+        distance.ctypes.data,
+    )
+    library = load_meshcore()
+    status = library["phx_mc_zero_set_remesh"](ctypes.byref(request))
+    del value_arrays, gradient_arrays  # kept alive through the native call
+    _raise_for_call(status, "zero_set_remesh")
+    if not handle.value:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "zero_set_remesh returned no owned result handle.",
+        )
+    try:
+        sizes = np.empty((2,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_zero_set_remesh_sizes"](handle, sizes.ctypes.data),
+            "zero_set_remesh_sizes",
+        )
+        vertex_count, triangle_count = (int(size) for size in sizes.tolist())
+        if vertex_count < 3 or triangle_count < 1:
+            raise MeshcoreError(
+                MeshcoreStatus.INTERNAL_ERROR,
+                "zero_set_remesh returned an empty surface.",
+            )
+        out_vertices = np.empty((vertex_count, 3), dtype=np.float64)
+        out_triangles = np.empty((triangle_count, 3), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_zero_set_remesh_arrays"](
+                handle,
+                vertex_count,
+                triangle_count,
+                out_vertices.ctypes.data,
+                out_triangles.ctypes.data,
+            ),
+            "zero_set_remesh_arrays",
+        )
+    finally:
+        library["phx_mc_zero_set_remesh_free"](handle)
+    certified = float(distance[0])
+    if (
+        not np.all(np.isfinite(out_vertices))
+        or np.any(out_triangles < 0)
+        or np.any(out_triangles >= vertex_count)
+        or not np.isfinite(certified)
+        or certified < 0.0
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "zero_set_remesh returned invalid geometry or distance evidence.",
+        )
+    for output in (out_vertices, out_triangles, counters):
+        output.setflags(write=False)
+    return ZeroSetRemeshResult(out_vertices, out_triangles, certified, counters)
 
 
 class LevelSetSplitResult(NamedTuple):
@@ -8163,4 +8377,7 @@ __all__ = [
     "triangle_intersections",
     "SurfaceEnvelopeResult",
     "surface_envelope",
+    "IntervalBoxProgram",
+    "ZeroSetRemeshResult",
+    "zero_set_remesh",
 ]

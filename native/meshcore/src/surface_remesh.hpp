@@ -29,8 +29,8 @@
 //  * kZeroSetBand (implicit surface): the triangle's certified distance to the
 //    zero set of f is at most the declared surface tolerance, from an interval
 //    enclosure of |f| and a lower bound on |grad f| over the triangle's
-//    neighborhood (native interval program). Reserved; implemented by its
-//    owner as a further TriangleAdmission.
+//    neighborhood (native interval program), plus a certified transversal
+//    normal; evidence = point enclosure of f. See zero_set_admission.hpp.
 //
 // Every admitted edit also keeps the surface an embedded, consistently
 // oriented closed 2-manifold: link condition for collapses, no duplicate edge

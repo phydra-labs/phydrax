@@ -38,7 +38,10 @@ from .implicit._adaptive_discovery import (
 if TYPE_CHECKING:
     from ._meshing_domain import PatchCurveUse
     from ._planar_coverage import OrientedFacet
-    from .implicit._source_charts import AdaptiveImplicitSourceQuery
+    from .implicit._source_charts import (
+        AdaptiveImplicitRootChartMap,
+        AdaptiveImplicitSourceQuery,
+    )
 
 _Point2 = tuple[Fraction, Fraction]
 _Triangle2 = tuple[_Point2, _Point2, _Point2]
@@ -2189,7 +2192,16 @@ def _adaptive_implicit_root_chart_degree(
     witness: SourceBoundaryChartWitness,
     /,
 ) -> tuple[str, int, int]:
-    """Recompute complete one-to-one whole-face charts and their degree one."""
+    """Recompute complete whole-face charts and their degree one.
+
+    A witness naming every scaffold triangle exactly once keeps the one-to-one
+    scaffold argument. Any other target (a remeshed carrier) proves degree one
+    from its certified charts: every face is an orientation-preserving local
+    homeomorphism onto the zero set and adjacent charts agree on shared edges,
+    so the lift is a covering of degree equal to the preimage count of any
+    regular value; one certified lifted point per target component has exactly
+    one preimage (``_single_sheet_preimages``).
+    """
     from ..discretization._cell_geometry_validity import cell_geometry_id
     from .implicit._source_charts import prepare_adaptive_implicit_root_charts
 
@@ -2241,7 +2253,6 @@ def _adaptive_implicit_root_chart_degree(
         or regions.size != sum(block.cell_count for block in mesh.blocks)
         or np.any(regions != 0)
         or source_count == 0
-        or target_count != source_count
         or target_count != witness_count
     ):
         raise SourceCoverageUnavailable(
@@ -2376,9 +2387,30 @@ def _adaptive_implicit_root_chart_degree(
                 chart.source_normal_deviation_bounds,
             )
         )
+    if _names_each_scaffold_triangle_once(domain, witness):
+        degree = canonical_fingerprint(
+            {
+                "kind": "adaptive-implicit-oriented-material-boundary-degree-one",
+                "domain": domain.domain_id,
+                "source": (source.source_id, source.source_revision, root_map.frame_id),
+                "region": region_ids[0],
+                "chart_witness": witness.witness_id,
+                "root_chart_map": root_map.witness_id,
+                "tolerance": fidelity.tolerance,
+                "maximum_normal_deviation": fidelity.maximum_normal_deviation,
+                "scaffold_triangle_count": source_count,
+                "target_chart_count": target_count,
+                "target_regions": array_tree_fingerprint(regions),
+                "embedding": embedding.certificate_id,
+                "charts": tuple(chart_rows),
+                "degree": 1,
+            }
+        )
+        return degree, source_count, target_count
+    preimages = _single_sheet_preimages(mesh, geometry, regions, root_map, witness)
     degree = canonical_fingerprint(
         {
-            "kind": "adaptive-implicit-oriented-material-boundary-degree-one",
+            "kind": "adaptive-implicit-oriented-material-boundary-covering-degree-one",
             "domain": domain.domain_id,
             "source": (source.source_id, source.source_revision, root_map.frame_id),
             "region": region_ids[0],
@@ -2391,10 +2423,202 @@ def _adaptive_implicit_root_chart_degree(
             "target_regions": array_tree_fingerprint(regions),
             "embedding": embedding.certificate_id,
             "charts": tuple(chart_rows),
+            "single_preimages": preimages,
             "degree": 1,
         }
     )
     return degree, source_count, target_count
+
+
+def _names_each_scaffold_triangle_once(
+    domain: AdaptiveImplicitSurface, witness: SourceBoundaryChartWitness, /
+) -> bool:
+    """Whether the witness rows name every scaffold triangle exactly once."""
+    scaffold = domain.scaffold
+    cells = np.asarray(scaffold.cell_indices, dtype=np.int64)
+    root_keys = np.asarray(scaffold.root_edge_ids, dtype=np.int64)
+
+    def key(cell: np.ndarray, edges: np.ndarray, /) -> tuple[object, ...]:
+        canonical = sorted(
+            tuple(sorted(tuple(int(value) for value in endpoint) for endpoint in edge))
+            for edge in edges.reshape((3, 2, 3))
+        )
+        return (tuple(int(value) for value in cell), tuple(canonical))
+
+    scaffold_keys = [
+        key(cells[int(cell_row)], root_keys[np.asarray(edge_rows, dtype=np.int64)])
+        for cell_row, edge_rows in zip(
+            np.asarray(scaffold.triangle_cell_rows, dtype=np.int64),
+            np.asarray(scaffold.triangle_root_edge_rows, dtype=np.int64),
+            strict=True,
+        )
+    ]
+    witness_cells = np.asarray(witness.implicit_cell_keys, dtype=np.int64)
+    witness_edges = np.asarray(witness.implicit_root_edge_keys, dtype=np.int64)
+    witness_keys = [
+        key(witness_cells[row], witness_edges[row])
+        for row in range(witness_cells.shape[0])
+    ]
+    return (
+        len(witness_keys) == len(scaffold_keys)
+        and len(set(witness_keys)) == len(witness_keys)
+        and set(witness_keys) == set(scaffold_keys)
+    )
+
+
+# Relative rounding slack of the binary64 face-distance lower bound.
+_DISTANCE_SLACK = 2.0**-30
+
+
+def _face_distance_lower(point: np.ndarray, triangle: np.ndarray, /) -> float:
+    """Lower bound on dist(point, triangle) from its plane and edge half-planes.
+
+    The triangle lies in its plane P and in each in-plane half-plane H_k behind
+    edge k, so dist^2 >= dist(point, P)^2 + max_k dist(point, H_k)^2 (the edge
+    normals are orthogonal to the plane normal). Rounding is absorbed by a
+    relative slack.
+    """
+    first, second, third = triangle
+    normal = np.cross(second - first, third - first)
+    length = float(np.linalg.norm(normal))
+    if not length > 0.0:
+        return 0.0
+    normal = normal / length
+    plane = abs(float(np.dot(point - first, normal)))
+    outside = 0.0
+    for start, end in ((first, second), (second, third), (third, first)):
+        edge_normal = np.cross(end - start, normal)
+        edge_length = float(np.linalg.norm(edge_normal))
+        if edge_length > 0.0:
+            outside = max(
+                outside, float(np.dot(point - start, edge_normal)) / edge_length
+            )
+    scale = float(np.max(np.abs(triangle))) + float(np.max(np.abs(point)))
+    return max(0.0, math.hypot(plane, outside) - _DISTANCE_SLACK * scale)
+
+
+def _single_sheet_preimages(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    regions: np.ndarray,
+    root_map: AdaptiveImplicitRootChartMap,
+    witness: SourceBoundaryChartWitness,
+    /,
+) -> tuple[tuple[int, tuple[float, float, float], float], ...]:
+    """Certify exactly one preimage of one lifted point per target component.
+
+    Per connected target component, the face with the largest inradius lifts
+    its reference centroid to a certified zero-set point q (within its root
+    error). Every lift moves a face point by at most the face's certified
+    target-to-root bound, so a face whose distance lower bound to q exceeds
+    that bound plus q's error has no preimage of q; the lifting face itself
+    is injective. Any other face that cannot be excluded (a folded or
+    duplicated sheet) leaves the degree unresolved.
+    """
+    from ..discretization._coordinate_enclosure import affine_map
+    from ._domain_numerics import cell_coordinate_expressions
+
+    if not all(
+        expressions is not None and affine_map(expressions, 3) is not None
+        for expressions in cell_coordinate_expressions(mesh, geometry)
+    ):
+        raise SourceCoverageUnavailable(
+            "A non-scaffold implicit boundary degree requires affine target faces.",
+            status="unresolved",
+        )
+    face_owners, face_by_cell, _signs = _volume_face_owners(mesh, regions)
+    vertex_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        )
+    }
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    keys: list[tuple[int, ...]] = []
+    for cell_id, local_face in zip(
+        witness.cell_global_ids, witness.local_entity_indices, strict=True
+    ):
+        face_key = face_by_cell.get((int(cell_id), int(local_face)))
+        if face_key is None or len(face_key) != 3:
+            raise SourceCoverageUnavailable(
+                "Implicit witness names a target face outside the volume boundary.",
+                status="violated",
+            )
+        keys.append(face_key)
+    triangles = coordinates[
+        np.asarray(
+            [[vertex_rows[vertex] for vertex in key] for key in keys], dtype=np.int64
+        )
+    ]
+    required = {
+        key
+        for key, adjacent in face_owners.items()
+        if len(adjacent) == 1 or adjacent[0][1] != adjacent[1][1]
+    }
+    if len(set(keys)) != len(keys) or set(keys) != required:
+        raise SourceCoverageUnavailable(
+            "Implicit witness repeats or omits a target boundary facet.",
+            status="violated",
+        )
+    parent = list(range(len(keys)))
+
+    def root(row: int, /) -> int:
+        while parent[row] != row:
+            parent[row] = parent[parent[row]]
+            row = parent[row]
+        return row
+
+    edge_owner: dict[tuple[int, int], int] = {}
+    for row, key in enumerate(keys):
+        for edge in ((key[0], key[1]), (key[1], key[2]), (key[0], key[2])):
+            other = edge_owner.setdefault(edge, row)
+            parent[root(other)] = root(row)
+    sides = np.linalg.norm(triangles - np.roll(triangles, 1, axis=1), axis=2)
+    twice_area = np.linalg.norm(
+        np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
+        axis=1,
+    )
+    inradius = twice_area / np.sum(sides, axis=1)
+    bounds = tuple(chart.target_to_root_bound for chart in root_map.chart_evidence)
+    components: dict[int, int] = {}
+    for row in range(len(keys)):
+        component = root(row)
+        best = components.get(component)
+        if best is None or inradius[row] > inradius[best]:
+            components[component] = row
+    preimages: list[tuple[int, tuple[float, float, float], float]] = []
+    for lifting_row in sorted(components.values()):
+        corners = np.asarray(witness.target_reference_vertices[lifting_row])
+        centroid = tuple(
+            sum((Fraction(float(value)) for value in corners[:, axis]), Fraction(0)) / 3
+            for axis in range(corners.shape[1])
+        )
+        lifted = root_map.project_target(lifting_row, centroid)
+        point = np.asarray(lifted.point, dtype=np.float64)
+        if not np.all(np.isfinite(point)) or not math.isfinite(lifted.root_error):
+            raise SourceCoverageUnavailable(
+                "An implicit target component has no certified lifted point.",
+                status="unresolved",
+            )
+        for row in range(len(keys)):
+            if row == lifting_row:
+                continue
+            if _face_distance_lower(point, triangles[row]) <= math.nextafter(
+                bounds[row] + lifted.root_error, math.inf
+            ):
+                raise SourceCoverageUnavailable(
+                    "A second implicit target sheet may cover the zero-set point lifted "
+                    f"from target face row {lifting_row}; the boundary degree is not one.",
+                    status="unresolved",
+                )
+        preimages.append(
+            (
+                lifting_row,
+                (float(point[0]), float(point[1]), float(point[2])),
+                float(lifted.root_error),
+            )
+        )
+    return tuple(preimages)
 
 
 def _cross3(points: _Triangle3, /) -> _Point3:
@@ -2825,18 +3049,18 @@ def approximate_source_coverage(
                         raise
                     raise chart_error from exact_error
                 target_count = witness.cell_global_ids.size
+                if target_count != source_count:
+                    return fail(
+                        "implicit_chart_coverage",
+                        "Implicit witness rows do not cover every root scaffold triangle.",
+                        "violated",
+                    )
                 degree = canonical_fingerprint(
                     {
                         "kind": "frame-bound-exact-implicit-degree",
                         "base_degree": degree,
                         "frame_id": frame_id,
                     }
-                )
-            if target_count != source_count:
-                return fail(
-                    "implicit_chart_coverage",
-                    "Implicit witness rows do not cover every root scaffold triangle.",
-                    "violated",
                 )
             degrees = (degree,)
     except SourceCoverageUnavailable as error:

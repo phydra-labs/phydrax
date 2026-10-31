@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
 from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
@@ -88,7 +88,10 @@ if TYPE_CHECKING:
         RationalBSplineSurfaceSpan,
     )
     from ..meshing._scope import _SourceEntityScopes
-    from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
+    from .implicit._adaptive_discovery import (
+        AdaptiveImplicitBoundarySource,
+        AdaptiveImplicitSurface,
+    )
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
 
@@ -1814,6 +1817,45 @@ def _implicit_chart_id(
     )
 
 
+def _rows_are_scaffold_triangles(
+    mesh: CellMesh,
+    witness: SourceBoundaryChartWitness,
+    surface: AdaptiveImplicitSurface,
+    scaffold_rows: Sequence[int],
+    /,
+) -> bool:
+    """Whether every witnessed target face has exactly its scaffold triangle's corners."""
+    scaffold = surface.mesh
+    if scaffold is None:
+        return False
+    scaffold_points = np.asarray(scaffold.vertices, dtype=np.float64)
+    scaffold_faces = np.asarray(scaffold.faces, dtype=np.int64)
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    cells = _cell_global_rows(mesh)
+    references = np.asarray(witness.target_reference_vertices, dtype=np.float64)
+    for row, scaffold_row in enumerate(scaffold_rows):
+        located = cells.get(int(witness.cell_global_ids[row]))
+        if located is None or not isinstance(located[2], CellBlock):
+            return False
+        _block_index, cell_row, block = located
+        reference = np.asarray(
+            reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
+        )
+        cell_vertices = np.asarray(block.vertices, dtype=np.int64)[cell_row]
+        corners: set[bytes] = set()
+        for corner in references[row]:
+            matches = np.flatnonzero(np.all(reference == corner[None, :], axis=1))
+            if matches.size != 1:
+                return False
+            corners.add(coordinates[cell_vertices[int(matches[0])]].tobytes())
+        expected = {
+            scaffold_points[vertex].tobytes() for vertex in scaffold_faces[scaffold_row]
+        }
+        if corners != expected:
+            return False
+    return True
+
+
 def _validate_implicit_source_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1972,7 +2014,12 @@ def _validate_implicit_source_witness(
         raise ValueError(
             "Implicit chart witness omits or changes retained root-cell/piece ancestry."
         )
-    seen: set[_ImplicitTriangleKey] = set()
+    # A scaffold-carrier witness (every target face is its named scaffold
+    # triangle) names every scaffold triangle exactly once. A remeshed
+    # carrier's rows each name the existing scaffold triangle whose cell and
+    # root edges seed their chart; repeats and omissions are then legitimate
+    # and its boundary degree is proved by source coverage instead.
+    row_keys: list[_ImplicitTriangleKey] = []
     for row in range(witness_cell_keys.shape[0]):
         cell_key_raw = witness_cell_keys[row]
         edge_array = witness_root_edges[row]
@@ -1988,22 +2035,28 @@ def _validate_implicit_source_witness(
             _root_edge_key(edge_array[2]),
         )
         key: _ImplicitTriangleKey = (cell_key, edge_keys)
-        candidates = triangle_keys.get(key, ())
-        if len(candidates) != 1 or key in seen:
+        if len(triangle_keys.get(key, ())) != 1:
             raise ValueError(
                 "Implicit chart witness changes or duplicates an exact scaffold triangle."
             )
-        seen.add(key)
         if witness.source_chart_ids[row] != _implicit_chart_id(
             adaptive.source_id, adaptive.source_revision, cell_key, edge_keys
         ):
             raise ValueError(
                 "Implicit source chart ID does not bind its root-triangle keys."
             )
-    if seen != set(triangle_keys):
-        raise ValueError(
-            "Implicit chart witness omits possible source scaffold triangles."
-        )
+        row_keys.append(key)
+    if _rows_are_scaffold_triangles(
+        mesh, witness, surface, [triangle_keys[key][0] for key in row_keys]
+    ):
+        if len(set(row_keys)) != len(row_keys):
+            raise ValueError(
+                "Implicit chart witness changes or duplicates an exact scaffold triangle."
+            )
+        if set(row_keys) != set(triangle_keys):
+            raise ValueError(
+                "Implicit chart witness omits possible source scaffold triangles."
+            )
     target_entities = np.asarray(witness.entity_global_ids, dtype=np.int64)
     if np.unique(target_entities).size != target_entities.size:
         raise ValueError("Implicit source chart rows must bind distinct target entities.")

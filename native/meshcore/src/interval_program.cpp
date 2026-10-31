@@ -28,6 +28,13 @@ constexpr std::int64_t kCosine = 9;
 constexpr std::int64_t kSqrt = 10;
 constexpr std::int64_t kReciprocal = 11;
 constexpr std::int64_t kSquare = 12;
+// Three-valued comparison a > b (aux 0) or a >= b (aux 1) as an indicator
+// interval: [1, 1] certainly true, [0, 0] certainly false, [0, 1] undecided.
+constexpr std::int64_t kCompare = 13;
+// select_n(p, case0, case1): case1 when p is certainly true (p.lower > 0),
+// case0 when certainly false (p.upper <= 0), else the hull of both. p is
+// operand a; case0 is the contiguous block at b and case1 the block at b + aux.
+constexpr std::int64_t kSelect = 14;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -35,7 +42,8 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kMultiply) | (std::uint64_t{1} << kNegate) |
     (std::uint64_t{1} << kReduceSum) | (std::uint64_t{1} << kSine) |
     (std::uint64_t{1} << kCosine) | (std::uint64_t{1} << kSqrt) |
-    (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare);
+    (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
+    (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect);
 
 constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 constexpr double kPi = 3.141592653589793;  // binary64 pi, Python math.pi.
@@ -146,7 +154,7 @@ bool operand_valid(const std::int64_t* indices, std::int64_t index_count, std::i
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kSquare) return false;
+  if (row.opcode < kGather || row.opcode > kSelect) return false;
   if (row.size < 0 || row.out < previous_end || row.out > workspace_size - row.size) return false;
   const auto operand = [&](std::int64_t offset, std::int64_t index) {
     return operand_valid(indices, index_count, offset, index, row.size, row.out);
@@ -166,6 +174,14 @@ bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* in
     case kSubtractSame:
     case kMultiply:
       return row.aux == 0 && operand(row.a, row.a_index) && operand(row.b, row.b_index);
+    case kCompare:
+      return (row.aux == 0 || row.aux == 1) && operand(row.a, row.a_index) &&
+             operand(row.b, row.b_index);
+    case kSelect:
+      // Both case blocks are contiguous and precede the output.
+      return row.b_index == -1 && row.aux >= 0 && row.b >= 0 && row.b <= row.out &&
+             row.aux <= row.out - row.b && row.size <= row.out - row.b - row.aux &&
+             operand(row.a, row.a_index);
     default:
       return row.b == -1 && row.b_index == -1 && row.aux == 0 && operand(row.a, row.a_index);
   }
@@ -249,6 +265,34 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
         const double high = upper[input];
         lower[out + k] = -high;
         upper[out + k] = -low;
+      }
+      return;
+    case kSelect:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t predicate = address(indices, row.a, row.a_index, k);
+        const std::int64_t first = row.b + k;
+        const std::int64_t second = row.b + row.aux + k;
+        if (lower[predicate] > 0.0) {
+          lower[out + k] = lower[second];
+          upper[out + k] = upper[second];
+        } else if (upper[predicate] <= 0.0) {
+          lower[out + k] = lower[first];
+          upper[out + k] = upper[first];
+        } else {
+          lower[out + k] = minimum(lower[first], lower[second]);
+          upper[out + k] = maximum(upper[first], upper[second]);
+        }
+      }
+      return;
+    case kCompare:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t a = address(indices, row.a, row.a_index, k);
+        const std::int64_t b = address(indices, row.b, row.b_index, k);
+        const bool strict = row.aux == 0;
+        const bool certainly_true = strict ? lower[a] > upper[b] : lower[a] >= upper[b];
+        const bool certainly_false = strict ? upper[a] <= lower[b] : upper[a] < lower[b];
+        lower[out + k] = certainly_true ? 1.0 : 0.0;
+        upper[out + k] = certainly_false ? 0.0 : 1.0;
       }
       return;
     case kSquare:
