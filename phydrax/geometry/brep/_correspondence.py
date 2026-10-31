@@ -620,10 +620,39 @@ def _same_cylinder_generator_line_lift(
     return source == (expected_origin, expected_direction)
 
 
+def _affine_bspline_space_line(
+    curve: BSplineCurve, first: float, last: float, /
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
+    """Return the exact affine map of a clamped two-control linear B-spline on a range."""
+    knots, weights = curve.exact_knots, curve.exact_weights
+    controls = curve.exact_control_points
+    if curve.degree != 1 or len(controls) != 2 or weights[0] != weights[1]:
+        return None
+    lower, upper = knots[1], knots[2]
+    if (
+        not isinstance(lower, Fraction)
+        or not isinstance(upper, Fraction)
+        or not lower < upper
+        or not lower <= Fraction.from_float(first) <= Fraction.from_float(last) <= upper
+        or any(not isinstance(value, Fraction) for point in controls for value in point)
+    ):
+        return None
+    direction = tuple(
+        (end - start) / (upper - lower)
+        for start, end in zip(controls[0], controls[1], strict=True)
+    )
+    origin = tuple(
+        start - lower * slope for start, slope in zip(controls[0], direction, strict=True)
+    )
+    return origin, direction
+
+
 def _same_extrusion_profile_line_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
     patch: ExtrusionSurface,
+    first: float,
+    last: float,
     /,
 ) -> bool:
     chart = _affine_curve_coefficients(pcurve, (Fraction(0),) * pcurve.ambient_dimension)
@@ -635,11 +664,15 @@ def _same_extrusion_profile_line_lift(
     )
     base = patch.curve
     if isinstance(curve, (LineCurve, ExactLineCurve)) and isinstance(
-        base, (LineCurve, ExactLineCurve)
+        base, (LineCurve, ExactLineCurve, BSplineCurve)
     ):
-        source, origin = (
-            _affine_curve_coefficients(curve, (Fraction(0),) * curve.ambient_dimension),
-            _affine_curve_coefficients(base, (Fraction(0),) * base.ambient_dimension),
+        source = _affine_curve_coefficients(
+            curve, (Fraction(0),) * curve.ambient_dimension
+        )
+        origin = (
+            _affine_bspline_space_line(base, first, last)
+            if isinstance(base, BSplineCurve)
+            else _affine_curve_coefficients(base, (Fraction(0),) * base.ambient_dimension)
         )
         if source is None or origin is None:
             return False
@@ -2690,7 +2723,7 @@ def exact_source_lift(
         isinstance(region.patch, ExtrusionSurface)
         and isinstance(pcurve, (LineCurve, ExactLineCurve))
         and (
-            _same_extrusion_profile_line_lift(curve, pcurve, region.patch)
+            _same_extrusion_profile_line_lift(curve, pcurve, region.patch, first, last)
             or _same_extrusion_generator_line_lift(curve, pcurve, region.patch)
         )
     ):

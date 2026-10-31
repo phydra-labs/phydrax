@@ -2051,6 +2051,26 @@ class ExtrusionSurface(AbstractSurfacePatch):
         super().is_c1_along(fixed_axis, fixed_value, first, last)
         return fixed_axis == 0 or self.curve.is_c1_on(first, last)
 
+    def derivative_bounds(
+        self, parameter_box: ConvertibleToArray, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Enclose ``(curve'(u), direction)``; the generator column is the exact vector."""
+        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        if isinstance(order, bool) or not isinstance(order, int) or order != 1:
+            raise ValueError("ExtrusionSurface derivative bounds support order=1 only.")
+        if not self.curve.is_c1_on(float(box[0, 0]), float(box[1, 0])):
+            raise NotImplementedError(
+                "ExtrusionSurface profile is not C1 on the requested interval."
+            )
+        profile_lower, profile_upper = self.curve.derivative_bounds(
+            float(box[0, 0]), float(box[1, 0])
+        )
+        direction = np.asarray(self.direction, dtype=np.float64)
+        return (
+            np.stack((np.asarray(profile_lower, dtype=np.float64), direction), axis=1),
+            np.stack((np.asarray(profile_upper, dtype=np.float64), direction), axis=1),
+        )
+
 
 class RevolutionSurface(AbstractSurfacePatch):
     """Surface of revolution of a space curve around an authored axis."""
