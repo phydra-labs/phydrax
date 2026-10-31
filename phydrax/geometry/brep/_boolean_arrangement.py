@@ -1579,14 +1579,22 @@ def _edge_key(
 
 
 def _endpoint_on_carrier(
-    endpoint: RootEndpoint | None, carrier: AbstractCurve
+    endpoint: RootEndpoint | None, carrier: AbstractCurve, parameter: Fraction
 ) -> RootEndpoint | None:
-    """Bind an authored native scalar to the retained source lift.
+    """Bind an authored native scalar or conic root to the retained source lift.
 
     Coincident chart transport changes the UV carrier, not its raw parameter.
-    The new carrier retains the source source expression and chart map.
+    The new carrier retains the source source expression and chart map. A conic
+    root reached on a coincident carrier binds that carrier at the retained raw
+    edge parameter; the model's exact conic endpoint check proves the point.
     Isolated roots remain with their existing certified support definitions.
     """
+    if isinstance(endpoint, ConicParameterEndpoint):
+        if carrier_payload(endpoint.carrier) == carrier_payload(carrier):
+            return endpoint
+        return ConicParameterEndpoint(
+            endpoint.root, carrier, parameter, endpoint.point_exact
+        )
     if not isinstance(endpoint, NativePeriodEndpoint) or (
         canonical_fingerprint(carrier_payload(endpoint.curve))
         == canonical_fingerprint(carrier_payload(carrier))
@@ -1753,6 +1761,10 @@ class _BoundaryTopology(StrictModule):
             ids.append(vertex)
         source = None if overlay_sources is None else overlay_sources.get(arc.token)
         key = _edge_key(piece, source)
+        raw = tuple(
+            Fraction(arc.offset) + Fraction(arc.scale) * Fraction(cut.parameter)
+            for cut in endpoints
+        )
         if key not in self.edge_ids:
             edge = len(self.edge_vertices)
             self.edge_ids[key] = edge
@@ -1773,10 +1785,10 @@ class _BoundaryTopology(StrictModule):
                 (
                     endpoints[0].endpoint
                     if arc.curve is None
-                    else _endpoint_on_carrier(endpoints[0].endpoint, arc.curve),
+                    else _endpoint_on_carrier(endpoints[0].endpoint, arc.curve, raw[0]),
                     endpoints[1].endpoint
                     if arc.curve is None
-                    else _endpoint_on_carrier(endpoints[1].endpoint, arc.curve),
+                    else _endpoint_on_carrier(endpoints[1].endpoint, arc.curve, raw[1]),
                 )
             )
         edge = self.edge_ids[key]
@@ -1838,8 +1850,8 @@ class _BoundaryTopology(StrictModule):
         self.coedge_senses.append(piece.sense * (1 if arc.scale > 0.0 else -1))
         self.coedge_roots.append(
             (
-                _endpoint_on_carrier(endpoints[0].endpoint, pcurve),
-                _endpoint_on_carrier(endpoints[1].endpoint, pcurve),
+                _endpoint_on_carrier(endpoints[0].endpoint, pcurve, raw[0]),
+                _endpoint_on_carrier(endpoints[1].endpoint, pcurve, raw[1]),
             )
         )
         return coedge

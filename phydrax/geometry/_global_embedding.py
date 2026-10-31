@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
-from itertools import chain, combinations, islice, product
+from functools import cache
+from itertools import chain, combinations, product
+from math import lcm
 from typing import cast, Literal
 
 import numpy as np
@@ -117,6 +119,16 @@ from ._reference_chain_embedding import (
     ReferenceChainEmbeddingCertificate,
 )
 from ._restricted_embedding import _trace_arguments, restriction_trace_equal
+from ._separating_normals import (
+    admit_all,
+    CellShadow,
+    NormalScreen,
+    orthogonal_screen,
+    screened_candidate_planes,
+    shadow_bound,
+    strict_separation_planes,
+    unique_projective_normals,
+)
 
 
 class _SingularReferenceFactorMap(ValueError):
@@ -1827,60 +1839,6 @@ def _root_chart_contact(
     return "unresolved" if unresolved else "declared"
 
 
-def _candidate_normals(
-    first: EmbeddingCell, second: EmbeddingCell, /
-) -> Iterator[tuple[ExactScalar, ...]]:
-    ambient = len(first.corner_images[0])
-    for axis in range(ambient):
-        yield tuple(Fraction(int(index == axis)) for index in range(ambient))
-    if ambient not in (2, 3):
-        return
-    first_points = first.corner_images
-    second_points = second.corner_images
-    edge_directions = tuple(
-        tuple(right[axis] - left[axis] for axis in range(ambient))
-        for points in (first_points, second_points)
-        for left, right in combinations(points, 2)
-    )
-    if ambient == 2:
-        for direction in edge_directions:
-            yield -direction[1], direction[0]
-        return
-    for left, right in combinations(edge_directions, 2):
-        normal = (
-            left[1] * right[2] - left[2] * right[1],
-            left[2] * right[0] - left[0] * right[2],
-            left[0] * right[1] - left[1] * right[0],
-        )
-        if any(_sign(value) for value in normal):
-            yield normal
-    for left in first_points:
-        for right in second_points:
-            direction = tuple(right[axis] - left[axis] for axis in range(ambient))
-            if any(_sign(value) for value in direction):
-                yield direction
-
-
-def _unique_projective_normals(
-    normals: Iterator[tuple[ExactScalar, ...]], /
-) -> Iterator[tuple[ExactScalar, ...]]:
-    """Yield one exactly normalized representative of each candidate plane.
-
-    Exact scalars hash consistently with equality, so the seen set gives the
-    same representatives as a pairwise scan in linear rather than quadratic time.
-    """
-    seen: set[tuple[ExactScalar, ...]] = set()
-    for normal in normals:
-        leading = next((value for value in normal if _sign(value)), None)
-        if leading is None:
-            continue
-        normalized = tuple(value / leading for value in normal)
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        yield normalized
-
-
 def _projected_expression(
     cell: EmbeddingCell,
     normal: tuple[ExactScalar, ...],
@@ -1893,14 +1851,22 @@ def _projected_expression(
     )
 
 
-def _strict_image_separation(first: EmbeddingCell, second: EmbeddingCell, /) -> bool:
+def _strict_image_separation(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shadows: dict[int, CellShadow | None],
+    /,
+) -> bool:
     if (
         not first.coordinates
         or not second.coordinates
         or len(first.corner_images[0]) != len(second.corner_images[0])
     ):
         return False
-    for normal in _unique_projective_normals(_candidate_normals(first, second)):
+    # Screened planes have provably overlapping outward projections; the
+    # outcome is whether any candidate plane separates, so neither screening
+    # nor the order of the surviving planes changes it.
+    for normal in strict_separation_planes(first, second, shadows):
         if not any(_sign(value) for value in normal):
             continue
         try:
@@ -1994,11 +1960,23 @@ def _reference_facet_factor(
     )
     if face_indices is None:
         return None
+    items = _reference_face_factor(cell.reference_vertices, face_indices, dimension)
+    return None if items is None else dict(items)
+
+
+@cache
+def _reference_face_factor(
+    reference_vertices: tuple[tuple[Fraction, ...], ...],
+    face_indices: tuple[int, ...],
+    dimension: int,
+    /,
+) -> tuple[tuple[tuple[int, ...], Fraction], ...] | None:
+    """Return the affine reference factor vanishing on one face, once per face."""
     values = tuple(
         Fraction(0 if index in face_indices else 1)
-        for index in range(len(cell.reference_vertices))
+        for index in range(len(reference_vertices))
     )
-    coefficients = _solve_affine_values(cell.reference_vertices, values)
+    coefficients = _solve_affine_values(reference_vertices, values)
     if coefficients is None:
         return None
     factor: dict[tuple[int, ...], Fraction] = {}
@@ -2009,7 +1987,7 @@ def _reference_facet_factor(
         if coefficient:
             exponent = tuple(int(index == axis) for index in range(dimension))
             factor[exponent] = coefficient
-    return factor or None
+    return tuple(factor.items()) or None
 
 
 def _reference_edge_factors(
@@ -2143,10 +2121,18 @@ def _nonnegative_control_sign(
     /,
 ) -> tuple[int, bool] | None:
     """Prove a weak polynomial sign and whether its exact controls are strict."""
-    controls = bernstein_coefficients(polynomial, domain, dimension)
-    if not controls:
+    return _nonnegative_signs(
+        tuple(
+            _sign(value)
+            for value in bernstein_coefficients(polynomial, domain, dimension)
+        )
+    )
+
+
+def _nonnegative_signs(signs: tuple[int, ...], /) -> tuple[int, bool] | None:
+    """Return the weak sign of exact controls and whether every one is strict."""
+    if not signs:
         return None
-    signs = tuple(_sign(value) for value in controls)
     if all(value >= 0 for value in signs):
         if not any(signs):
             return 0, False
@@ -2353,6 +2339,88 @@ def _factor_quotients(
 
 
 @dataclass(frozen=True, slots=True)
+class _VertexLinearResidual:
+    """Exact residual quotients of one cell corner as linear maps of a normal.
+
+    For the residual ``n . x - n . corner`` every step of the corner side
+    proof before Bernstein conversion is linear in ``n``: ``constants`` are the
+    coordinate components' constant terms in facet factor coordinates, and
+    ``rows[axis][component]`` their reference quotients. ``controls`` holds the
+    exact Bernstein controls of each row at the per-axis common ``degrees``;
+    the controls of ``n @ rows`` at that degree are ``n @ controls``.
+
+    ``scaled`` holds, per axis for rational rows, the monomial exponents and
+    the row coefficients and controls times one positive common denominator.
+    Signs of their integer combinations with a positive integer multiple of a
+    rational normal are the signs of the exact combinations.
+    """
+
+    constants: tuple[ExactScalar, ...]
+    rows: tuple[tuple[dict[tuple[int, ...], ExactScalar], ...], ...]
+    degrees: tuple[tuple[int, ...], ...]
+    controls: tuple[tuple[tuple[ExactScalar, ...], ...], ...]
+    scaled: (
+        tuple[
+            tuple[
+                tuple[tuple[int, ...], ...],
+                tuple[tuple[int, ...], ...],
+                tuple[tuple[int, ...], ...],
+            ],
+            ...,
+        ]
+        | None
+    )
+
+
+_ONE = Fraction(1)
+
+
+def _scaled_axis(
+    rows: tuple[dict[tuple[int, ...], ExactScalar], ...],
+    controls: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> (
+    tuple[
+        tuple[tuple[int, ...], ...],
+        tuple[tuple[int, ...], ...],
+        tuple[tuple[int, ...], ...],
+    ]
+    | None
+):
+    coefficients = _rationals(tuple(value for row in rows for value in row.values()))
+    scaled_controls = tuple(_rationals(row) for row in controls)
+    if coefficients is None or any(row is None for row in scaled_controls):
+        return None
+    scale_ = lcm(
+        *(value.denominator for value in coefficients),
+        *(value.denominator for row in scaled_controls if row for value in row),
+    )
+    exponents = tuple(sorted({exponent for row in rows for exponent in row}))
+
+    def integer(value: ExactScalar, /) -> int:
+        return (cast(Fraction, value) * scale_).numerator
+
+    return (
+        exponents,
+        tuple(
+            tuple(integer(row.get(exponent, Fraction(0))) for exponent in exponents)
+            for row in rows
+        ),
+        tuple(tuple(integer(value) for value in row) for row in controls),
+    )
+
+
+def _rationals(values: tuple[ExactScalar, ...], /) -> tuple[Fraction, ...] | None:
+    """Return the values when every one is rational."""
+    result: list[Fraction] = []
+    for value in values:
+        if not isinstance(value, Fraction):
+            return None
+        result.append(value)
+    return tuple(result)
+
+
+@dataclass(frozen=True, slots=True)
 class _VertexResidualFrame:
     """Coordinates of one cell corner given by its three incident facet factors.
 
@@ -2370,19 +2438,27 @@ class _VertexResidualFrame:
     exact proof uses. A normal whose shadow controls have a sign beyond a
     rigorous rounding bound therefore fails the exact strict proof and is
     skipped without changing which normal the exact proof accepts first.
+    ``linear`` holds the same quotients exactly for polynomial coordinates.
     """
 
     to_factor_coordinates: _ComposedMonomials
     to_reference: _ComposedMonomials
     screen: tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...] | None
+    linear: _VertexLinearResidual | None
 
 
-def _vertex_residual_screen(
+def _vertex_residual_rows(
     cell: EmbeddingCell,
     to_factor_coordinates: _ComposedMonomials,
     to_reference: _ComposedMonomials,
     /,
-) -> tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...] | None:
+) -> (
+    tuple[
+        tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...] | None,
+        _VertexLinearResidual,
+    ]
+    | None
+):
     dimension = cell.dimension
     components = cell.coordinates
     if (
@@ -2393,96 +2469,210 @@ def _vertex_residual_screen(
     ):
         return None
     domain = cell.proof_domain
+    zero = (0,) * dimension
+    constants: list[ExactScalar] = []
     rows_by_axis: list[list[dict[tuple[int, ...], ExactScalar]]] = [
         [] for _ in range(dimension)
     ]
     for component in components:
-        quotients = _factor_quotients(
-            to_factor_coordinates.compose(cast(dict, component)), dimension
-        )
+        transformed = to_factor_coordinates.compose(cast(dict, component))
+        constants.append(transformed.get(zero, Fraction(0)))
+        quotients = _factor_quotients(transformed, dimension)
         for axis, quotient in enumerate(quotients):
             rows_by_axis[axis].append(to_reference.compose(quotient))
-    screen = []
+    screen: list[tuple[NDArray[np.float64], NDArray[np.float64]]] | None = []
+    common_degrees: list[tuple[int, ...]] = []
+    exact_controls: list[tuple[tuple[ExactScalar, ...], ...]] = []
     for rows in rows_by_axis:
         degrees = tuple(bernstein_degree(row, domain, dimension) for row in rows)
         degree = tuple(max(values) for values in zip(*degrees, strict=True))
+        controls = tuple(
+            bernstein_coefficients(row, domain, dimension, degree=degree) for row in rows
+        )
+        common_degrees.append(degree)
+        exact_controls.append(controls)
+        if screen is None:
+            continue
         shadows = np.asarray(
-            tuple(
-                tuple(
-                    float(value)
-                    for value in bernstein_coefficients(
-                        row, domain, dimension, degree=degree
-                    )
-                )
-                for row in rows
-            ),
+            tuple(tuple(float(value) for value in row) for row in controls),
             dtype=np.float64,
         )
         if not np.all(np.isfinite(shadows)):
-            return None
+            screen = None
+            continue
         screen.append((shadows, np.abs(shadows)))
-    return tuple(screen)
+    axis_rows = tuple(tuple(rows) for rows in rows_by_axis)
+    axis_controls = tuple(exact_controls)
+    scaled_axes = tuple(
+        _scaled_axis(rows, controls)
+        for rows, controls in zip(axis_rows, axis_controls, strict=True)
+    )
+    linear = _VertexLinearResidual(
+        tuple(constants),
+        axis_rows,
+        tuple(common_degrees),
+        axis_controls,
+        None
+        if any(axis is None for axis in scaled_axes)
+        else tuple(axis for axis in scaled_axes if axis is not None),
+    )
+    return None if screen is None else tuple(screen), linear
+
+
+def _integer_direction(normal: tuple[ExactScalar, ...], /) -> tuple[int, ...] | None:
+    """Return a positive integer multiple of a rational vector."""
+    values = _rationals(normal)
+    if values is None:
+        return None
+    scale_ = lcm(*(value.denominator for value in values))
+    return tuple((value * scale_).numerator for value in values)
+
+
+def _linear_axis_controls(
+    normal: tuple[ExactScalar, ...],
+    rows: tuple[dict[tuple[int, ...], ExactScalar], ...],
+    degree: tuple[int, ...],
+    controls: tuple[tuple[ExactScalar, ...], ...],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[ExactScalar, ...]:
+    combined: dict[tuple[int, ...], ExactScalar] = {}
+    for value, row in zip(normal, rows, strict=True):
+        if not _sign(value):
+            continue
+        for exponent, coefficient in row.items():
+            combined[exponent] = combined.get(exponent, Fraction(0)) + value * coefficient
+    polynomial = {
+        exponent: coefficient
+        for exponent, coefficient in combined.items()
+        if _sign(coefficient)
+    }
+    if bernstein_degree(polynomial, domain, dimension) != degree:
+        return bernstein_coefficients(polynomial, domain, dimension)
+    return tuple(
+        sum(
+            (
+                value * row[index]
+                for value, row in zip(normal, controls, strict=True)
+                if _sign(value)
+            ),
+            Fraction(0),
+        )
+        for index in range(len(controls[0]))
+    )
+
+
+def _vertex_linear_side_sign(
+    linear: _VertexLinearResidual,
+    normal: tuple[ExactScalar, ...],
+    offset: ExactScalar,
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[int, bool] | None:
+    """Decide `_vertex_residual_side_sign` of ``n . x - offset`` from linear rows.
+
+    The quotient polynomials and, at the common degree, their controls are the
+    exact linear images of the cached rows, so every sign equals the one the
+    composed residual yields; a lower least degree recomputes its controls.
+    Rational normals combine the integer-scaled rows, which preserves signs.
+    """
+    constant_term = (
+        sum(
+            (value * term for value, term in zip(normal, linear.constants, strict=True)),
+            Fraction(0),
+        )
+        - offset
+    )
+    if _sign(constant_term):
+        return None
+    direction = None if linear.scaled is None else _integer_direction(normal)
+    verified: list[tuple[int, bool]] = []
+    for axis, (rows, degree, controls) in enumerate(
+        zip(linear.rows, linear.degrees, linear.controls, strict=True)
+    ):
+        signs: tuple[int, ...] | None = None
+        if direction is not None and linear.scaled is not None:
+            exponents, coefficients, scaled_controls = linear.scaled[axis]
+            support = {
+                exponent: _ONE
+                for index, exponent in enumerate(exponents)
+                if sum(
+                    weight * row[index]
+                    for weight, row in zip(direction, coefficients, strict=True)
+                )
+            }
+            if bernstein_degree(support, domain, dimension) == degree:
+                totals = (
+                    sum(
+                        weight * row[index]
+                        for weight, row in zip(direction, scaled_controls, strict=True)
+                    )
+                    for index in range(len(scaled_controls[0]))
+                )
+                signs = tuple((total > 0) - (total < 0) for total in totals)
+        if signs is None:
+            signs = tuple(
+                _sign(value)
+                for value in _linear_axis_controls(
+                    normal, rows, degree, controls, domain, dimension
+                )
+            )
+        result = _nonnegative_signs(signs)
+        if result is None:
+            return None
+        verified.append(result)
+    directions = tuple(result[0] for result in verified if result[0])
+    if not directions or any(value != directions[0] for value in directions[1:]):
+        return None
+    return directions[0], all(result[1] for result in verified)
 
 
 def _screened_sides(
     screen: tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...],
     normals: NDArray[np.float64],
+    magnitude: NDArray[np.float64],
     /,
 ) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
     """Return, per normal row, whether a strict positive/negative side survives.
 
     A side is excluded only when some shadow control has the opposite sign
-    beyond a rigorous bound on the rounding of the normal, the controls and
-    the three-term dot product; nonfinite rows exclude nothing.
+    beyond a rigorous bound on the rounding of the normal (its envelope
+    ``magnitude``), the controls and the three-term dot product; nonfinite
+    rows exclude nothing.
     """
     positive = np.ones((normals.shape[0],), dtype=np.bool_)
     negative = np.ones((normals.shape[0],), dtype=np.bool_)
-    magnitude = np.abs(normals)
     for shadows, absolute in screen:
         values = normals @ shadows
-        # Far above the binary64 rounding error; the absolute term covers underflow.
-        bound = 1e-9 * (magnitude @ absolute) + 1e-300
-        undecided = ~(
-            np.all(np.isfinite(values), axis=1) & np.all(np.isfinite(bound), axis=1)
-        )
-        positive &= undecided | np.all(values > -bound, axis=1)
-        negative &= undecided | np.all(values < bound, axis=1)
+        bound = shadow_bound(magnitude, absolute)
+        undecided = ~(np.isfinite(values) & np.isfinite(bound)).all(axis=1)
+        positive &= undecided | (values > -bound).all(axis=1)
+        negative &= undecided | (values < bound).all(axis=1)
     return positive, negative
 
 
-def _screened_normals(
-    first: _VertexResidualFrame,
-    second: _VertexResidualFrame,
-    normals: tuple[tuple[ExactScalar, ...], ...],
-    /,
-) -> tuple[bool, ...]:
+def _vertex_side_screen(
+    first: _VertexResidualFrame, second: _VertexResidualFrame, /
+) -> NormalScreen:
     """Admit every normal for which opposite strict sides are not excluded."""
-    if first.screen is None or second.screen is None:
-        return (True,) * len(normals)
-    rows: list[tuple[float, float, float]] = []
-    convertible: list[int] = []
-    for index, normal in enumerate(normals):
-        if len(normal) != 3:
-            continue
-        try:
-            rows.append((float(normal[0]), float(normal[1]), float(normal[2])))
-        except (OverflowError, TypeError, ValueError):
-            continue
-        convertible.append(index)
-    admitted = [True] * len(normals)
-    if rows:
-        shadows = np.asarray(rows, dtype=np.float64)
-        finite = np.all(np.isfinite(shadows), axis=1)
-        first_positive, first_negative = _screened_sides(first.screen, shadows)
-        second_positive, second_negative = _screened_sides(second.screen, shadows)
-        keep = (
-            ~finite
-            | (first_positive & second_negative)
-            | (first_negative & second_positive)
+    first_screen, second_screen = first.screen, second.screen
+    if first_screen is None or second_screen is None:
+        return admit_all
+
+    def screen(
+        normals: NDArray[np.float64], magnitude: NDArray[np.float64], /
+    ) -> NDArray[np.bool_]:
+        if normals.shape[1] != 3:
+            return np.ones(normals.shape[0], dtype=np.bool_)
+        first_positive, first_negative = _screened_sides(first_screen, normals, magnitude)
+        second_positive, second_negative = _screened_sides(
+            second_screen, normals, magnitude
         )
-        for index, value in zip(convertible, keep.tolist(), strict=True):
-            admitted[index] = bool(value)
-    return tuple(admitted)
+        return (first_positive & second_negative) | (first_negative & second_positive)
+
+    return screen
 
 
 def _vertex_residual_frame(
@@ -2491,7 +2681,32 @@ def _vertex_residual_frame(
     factors = _reference_vertex_factors(cell, vertex_id)
     if factors is None:
         return None
-    dimension = cell.dimension
+    maps = _vertex_factor_maps(
+        tuple(tuple(factor.items()) for factor in factors), cell.dimension
+    )
+    if maps is None:
+        return None
+    to_factor_coordinates, to_reference = maps
+    try:
+        prepared = _vertex_residual_rows(cell, to_factor_coordinates, to_reference)
+    except (ArithmeticError, OverflowError, TypeError, ValueError):
+        prepared = None
+    screen, linear = (None, None) if prepared is None else prepared
+    return _VertexResidualFrame(to_factor_coordinates, to_reference, screen, linear)
+
+
+@cache
+def _vertex_factor_maps(
+    factor_items: tuple[tuple[tuple[tuple[int, ...], Fraction], ...], ...],
+    dimension: int,
+    /,
+) -> tuple[_ComposedMonomials, _ComposedMonomials] | None:
+    """Return the exact facet-factor coordinate maps of one reference corner.
+
+    The maps depend only on the reference factors, so every cell corner with
+    the same factors shares them and their memoized monomial images.
+    """
+    factors = tuple(dict(items) for items in factor_items)
     factor_expressions: tuple[Expression, ...] = tuple(
         scale(factor, Fraction(1)) for factor in factors
     )
@@ -2516,13 +2731,7 @@ def _vertex_residual_frame(
         for variable, offset in zip(axes(dimension), offsets, strict=True)
     )
     inverse_arguments = linear_combinations(shifted_variables, inverse)
-    to_factor_coordinates = _ComposedMonomials(inverse_arguments)
-    to_reference = _ComposedMonomials(factors)
-    try:
-        screen = _vertex_residual_screen(cell, to_factor_coordinates, to_reference)
-    except (ArithmeticError, OverflowError, TypeError, ValueError):
-        screen = None
-    return _VertexResidualFrame(to_factor_coordinates, to_reference, screen)
+    return _ComposedMonomials(inverse_arguments), _ComposedMonomials(factors)
 
 
 def _vertex_residual_side_sign(
@@ -2766,10 +2975,33 @@ def _shared_curved_facet_separation(
     return relation, first_sign[0], second_sign[0]
 
 
+def _facet_plane_normal(
+    directions: tuple[tuple[ExactScalar, ...], ...], ambient: int, /
+) -> tuple[ExactScalar, ...] | None:
+    """Return a normal of the hyperplane spanned by corner directions, if any."""
+    if ambient == 2:
+        return next(
+            ((-value[1], value[0]) for value in directions if any(map(_sign, value))),
+            None,
+        )
+    if ambient != 3:
+        return None
+    for left, right in combinations(directions, 2):
+        normal = (
+            left[1] * right[2] - left[2] * right[1],
+            left[2] * right[0] - left[0] * right[2],
+            left[0] * right[1] - left[1] * right[0],
+        )
+        if any(_sign(value) for value in normal):
+            return normal
+    return None
+
+
 def _shared_facet_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
     shared_ids: tuple[int, ...],
+    shadows: dict[int, CellShadow | None],
     /,
 ) -> bool:
     if not shared_ids or not first.coordinates or not second.coordinates:
@@ -2796,17 +3028,40 @@ def _shared_facet_separation(
         return False
     common_point = first.corner_images[first.vertex_ids.index(min(shared_ids))]
     ambient = len(common_point)
-    for normal in _unique_projective_normals(_candidate_normals(first, second)):
+    first_args = _trace_arguments(first, ordered_ids)
+    second_args = _trace_arguments(second, ordered_ids)
+    if first_args is None or second_args is None:
+        return False
+    # A separating plane must contain the exact facet trace, hence every facet
+    # corner. Corners spanning a hyperplane fix the only such plane, which is
+    # among the candidates as the normal of two corner differences; otherwise
+    # candidates that cannot contain every corner are screened out.
+    directions = tuple(
+        tuple(point[axis] - common_point[axis] for axis in range(ambient))
+        for point in (
+            first.corner_images[first.vertex_ids.index(identifier)]
+            for identifier in ordered_ids
+        )
+    )
+    plane = _facet_plane_normal(directions, ambient)
+    if plane is None:
+        planes = screened_candidate_planes(
+            first, second, shadows, orthogonal_screen(directions)
+        )
+    elif any(
+        _sign(sum((plane[axis] * value[axis] for axis in range(ambient)), Fraction(0)))
+        for value in directions
+    ):
+        return False
+    else:
+        planes = unique_projective_normals((plane,))
+    for normal in planes:
         if len(normal) != ambient or not any(_sign(value) for value in normal):
             continue
         offset = sum(
             (normal[axis] * common_point[axis] for axis in range(ambient)),
             Fraction(0),
         )
-        first_args = _trace_arguments(first, ordered_ids)
-        second_args = _trace_arguments(second, ordered_ids)
-        if first_args is None or second_args is None:
-            continue
         try:
             first_trace = compose_expression(
                 _projected_expression(first, normal, offset), first_args
@@ -2839,6 +3094,7 @@ def _shared_edge_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
     shared_ids: tuple[int, ...],
+    shadows: dict[int, CellShadow | None],
     /,
 ) -> tuple[tuple[ExactScalar, ...], int, int, bool, bool] | None:
     if (
@@ -2893,8 +3149,13 @@ def _shared_edge_separation(
         )
         if any(_sign(value) for value in normal):
             trace_normals.append(normal)
-    normals = _unique_projective_normals(
-        chain(_candidate_normals(first, second), trace_normals)
+    # Candidates that cannot contain the shared edge direction are screened.
+    seen: set[tuple[ExactScalar, ...]] = set()
+    normals = chain(
+        screened_candidate_planes(
+            first, second, shadows, orthogonal_screen((edge_direction,)), seen
+        ),
+        unique_projective_normals(trace_normals, seen),
     )
     # Normals only propose a plane; exact traces and full-polynomial signs prove it.
     for normal in normals:
@@ -3429,6 +3690,7 @@ def _shared_vertex_separation(
     second: EmbeddingCell,
     shared_ids: tuple[int, ...],
     frames: dict[tuple[int, int], _VertexResidualFrame | None],
+    shadows: dict[int, CellShadow | None],
     /,
 ) -> tuple[tuple[ExactScalar, ...], int, int, bool, bool] | None:
     """Find a plane through one shared corner with the two cells on opposite sides.
@@ -3469,20 +3731,16 @@ def _shared_vertex_separation(
     second_frame = frame(second)
     if first_frame is None or second_frame is None:
         return None
-    candidates = _unique_projective_normals(_candidate_normals(first, second))
-    # Normals are screened in order-preserving chunks; a screened-out normal
-    # fails the exact strict proof, so the first accepted normal is unchanged.
-    while chunk := tuple(islice(candidates, 256)):
-        for normal, admitted in zip(
-            chunk, _screened_normals(first_frame, second_frame, chunk), strict=True
-        ):
-            if not admitted:
-                continue
-            witness = _vertex_normal_witness(
-                first, second, normal, common_point, first_frame, second_frame
-            )
-            if witness is not None:
-                return witness
+    # A screened-out plane fails the exact strict proof, so the first accepted
+    # plane is unchanged.
+    for normal in screened_candidate_planes(
+        first, second, shadows, _vertex_side_screen(first_frame, second_frame)
+    ):
+        witness = _vertex_normal_witness(
+            first, second, normal, common_point, first_frame, second_frame
+        )
+        if witness is not None:
+            return witness
     return None
 
 
@@ -3501,19 +3759,23 @@ def _vertex_normal_witness(
         (normal[axis] * common_point[axis] for axis in range(3)),
         Fraction(0),
     )
-    try:
-        first_sign = _vertex_residual_side_sign(
-            first,
-            _projected_expression(first, normal, offset),
-            first_frame,
+
+    def side(
+        cell: EmbeddingCell, frame: _VertexResidualFrame, /
+    ) -> tuple[int, bool] | None:
+        if frame.linear is not None:
+            return _vertex_linear_side_sign(
+                frame.linear, normal, offset, cell.proof_domain, cell.dimension
+            )
+        return _vertex_residual_side_sign(
+            cell, _projected_expression(cell, normal, offset), frame
         )
+
+    try:
+        first_sign = side(first, first_frame)
         if first_sign is None or not first_sign[1]:
             return None
-        second_sign = _vertex_residual_side_sign(
-            second,
-            _projected_expression(second, normal, offset),
-            second_frame,
-        )
+        second_sign = side(second, second_frame)
     except (ValueError, ZeroDivisionError):
         return None
     if second_sign is None:
@@ -3577,6 +3839,7 @@ def _nonperiodic_contacts(
     simplices: list[tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None] = []
     findings: list[MeshCertificateFinding] = []
     vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
+    shadows: dict[int, CellShadow | None] = {}
     for cell in cells:
         if not cell.affine and cell.coordinates:
             simplices.append(None)
@@ -3686,7 +3949,7 @@ def _nonperiodic_contacts(
                     )
                     continue
                 if trace is True and _shared_facet_separation(
-                    first_cell, second_cell, shared
+                    first_cell, second_cell, shared, shadows
                 ):
                     if proof_values is not None:
                         proof_values.append(
@@ -3717,7 +3980,7 @@ def _nonperiodic_contacts(
                         continue
                 if trace is True:
                     edge_witness = _shared_edge_separation(
-                        first_cell, second_cell, shared
+                        first_cell, second_cell, shared, shadows
                     )
                     if edge_witness is not None:
                         (
@@ -3749,7 +4012,7 @@ def _nonperiodic_contacts(
                         continue
                 if trace is True and len(shared) == 1:
                     vertex_witness = _shared_vertex_separation(
-                        first_cell, second_cell, shared, vertex_frames
+                        first_cell, second_cell, shared, vertex_frames, shadows
                     )
                     if vertex_witness is not None:
                         (
@@ -3775,7 +4038,9 @@ def _nonperiodic_contacts(
                     == second_cell.corner_images[second_cell.vertex_ids.index(identifier)]
                     for identifier in shared
                 )
-                if not touching and _strict_image_separation(first_cell, second_cell):
+                if not touching and _strict_image_separation(
+                    first_cell, second_cell, shadows
+                ):
                     if proof_values is not None:
                         proof_values.append(
                             f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:outward-bernstein-projection-separation"

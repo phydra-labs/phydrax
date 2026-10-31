@@ -699,11 +699,21 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
         assert refinement.edit_status is TetMeshEditStatus.APPLIED
         assert refinement.status is MeshcoreStatus.UNRESOLVED
         assert refinement.unmet_cells > 0
+        assert refinement.score_quantum is None
         refinement_unmet = state.unmet()
         assert refinement_unmet.cell_ids.size > 0
         assert np.all(np.isfinite(refinement_unmet.values))
+        with pytest.raises(ValueError, match="one value per current mesh vertex"):
+            state.improve(
+                radius_edge_bound=10.0,
+                min_dihedral_degrees=0.0,
+                sizes=np.full((state.arrays().points.shape[0] + 1,), 0.1),
+            )
+        # No `sizes`: refinement's retained size field gates every edit.
         improvement = state.improve(radius_edge_bound=10.0, min_dihedral_degrees=0.0)
         assert improvement.edit_status is TetMeshEditStatus.APPLIED
+        # The acceptance grid of the improvement scores is reported as evidence.
+        assert improvement.score_quantum == 2.0**-20
         # Success exactly when no cell remains unmet; records describe each residual.
         assert (improvement.status is MeshcoreStatus.OK) == (improvement.unmet_cells == 0)
         if improvement.status is not MeshcoreStatus.OK:
@@ -717,8 +727,11 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
             == unmet.values.shape
         )
         assert (unmet.cell_ids.size == 0) == (improvement.unmet_cells == 0)
-        assert np.all(unmet.criteria == 0)  # PHX_MC_TET_UNMET_RADIUS_EDGE
-        assert np.all(unmet.values > 10.0)
+        radius_edge = unmet.criteria == 0  # PHX_MC_TET_UNMET_RADIUS_EDGE
+        size = unmet.criteria == 1  # PHX_MC_TET_UNMET_SIZE: circumradius / target
+        assert np.all(radius_edge | size)
+        assert np.all(unmet.values[radius_edge] > 10.0)
+        assert np.all(unmet.values[size] > 1.0)
         assert np.all(np.isfinite(unmet.values))
 
     finally:
