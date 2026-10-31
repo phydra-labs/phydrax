@@ -48,6 +48,14 @@ near-axis-corrected volumes for shape orders 1–3.
 
 ::: phydrax.discretization.CellLocationResult
 
+---
+
+::: phydrax.discretization.CellInverseRefusal
+
+---
+
+::: phydrax.discretization.InverseRefusalReason
+
 
 ## Compatible electrostatic and PIC runtimes
 
