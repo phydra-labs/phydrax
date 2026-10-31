@@ -2044,6 +2044,49 @@ distance of the envelope surface) and `source_envelope_envelope_to_input_lower`
 authored sheet). Original-source witnesses query the authored sheet itself, not
 the envelope.
 
+### Envelope remeshing certificate
+
+The envelope surface is extracted by marching tetrahedra on the sampled
+distance grid, which certifies that every point of every extracted triangle
+lies in the band `bounds[2] <= d_source <= bounds[1]`; its triangles are grid
+cuts, mostly needles and caps. `SurfaceEnvelopeSource` (and
+`surface_envelope(..., remesh=True)`) then remeshes that surface inside the same
+band toward edge length `h = 2 * spacing` and a 30 degree minimum angle, and
+drops the tetrahedral carrier.
+
+Every remeshing edit (edge split, flip, collapse, vertex relocation) is admitted
+only when each created triangle provably stays in the band and the surface stays
+an embedded, consistently oriented closed 2-manifold:
+
+- band: the source distance is 1-Lipschitz. Vertex values are enclosed through
+  the covering cloud exactly as in the extraction certificate
+  (`d_cloud - covering - arithmetic <= d_source <= d_cloud + arithmetic`), and
+  a triangle whose every point lies within its certified free radius `R` of a
+  corner has `d_source` in `[min L_i - R, max U_i + R]`, which must lie in the
+  band;
+- topology and embedding: link condition for collapses, no duplicate edge or
+  face, orientation agreeing with the replaced patch, and exact
+  triangle-triangle contact classification against every nearby triangle (only
+  shared vertices and shared edges are legal contacts).
+
+The passes run quality, regularization, quality. A quality edit must raise every
+created quantized score above the replaced patch's worst score, so the multiset
+of scores decreases. A regularization edit collapses an edge shorter than
+`4/5 h` or flips an edge to strictly lower the squared valence deviation from
+six, and never lowers the patch's worst score; (vertex count, valence energy)
+decreases lexicographically. Every pass therefore terminates without iteration
+caps. The band bounds and the interpolation error are unchanged; the
+input-to-envelope bound (`bounds[0]`) is recomputed on the remeshed vertices.
+`remesh_counters` reports splits, collapses, flips, relocations, and the
+surviving triangles still below the quality target.
+
+The remesher is a source-agnostic native substrate: the topology operations,
+quality acceptance, and manifold and self-intersection checks are shared, and
+the certified admission is a declared predicate kind. The offset band above is
+the envelope's kind; another surface carrier supplies its own sound triangle
+admission (for an implicit zero set, a certified distance to the zero set within
+the declared surface tolerance).
+
 ## Additional optional backends
 
 | Provider | Dependency | Supported execution boundary |
