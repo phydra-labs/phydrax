@@ -4853,10 +4853,16 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         self.assembly = MeshAssembly(
             connectivity.assembly.parts, couplings=(*retained, *couplings)
         )
+        # Receptor parts of the transfer are the parts that receive values;
+        # the connectivity's evidence also records parts with no receptors.
         self.connectivity, self.packets, self.receptors = (
             connectivity,
             connectivity.packets,
-            connectivity.receptors,
+            tuple(
+                evidence
+                for evidence in connectivity.receptors
+                if evidence.receptor_ids.size
+            ),
         )
         self.routes = tuple(routes)
         self.donor_names = donor_names

@@ -754,6 +754,21 @@ def _box_weight_column(
     )
 
 
+@cache
+def _prism_weight_column(
+    alpha: tuple[int, ...], triangle_degree: int, line_degree: int, /
+) -> _WeightColumn:
+    """Exact prism Bernstein weights of one monomial, formed once per degree."""
+    return _weight_column(
+        tuple(
+            _simplex_weight(beta, (0, alpha[0], alpha[1]), triangle_degree)
+            * _box_weight((line_control,), (alpha[2],), (line_degree,))
+            for beta in _compositions(triangle_degree, 3)
+            for line_control in range(line_degree + 1)
+        )
+    )
+
+
 def _accumulate_controls(
     controls: list[ExactScalar], coefficient: ExactScalar, column: _WeightColumn, /
 ) -> None:
@@ -844,20 +859,16 @@ def bernstein_coefficients(
             return tuple(controls)
         case "prism":
             triangle_degree, line_degree = degree
-            triangle_indices = _compositions(triangle_degree, 3)
             controls = [
-                Fraction(0) for _ in range(len(triangle_indices) * (line_degree + 1))
+                Fraction(0)
+                for _ in range(len(_compositions(triangle_degree, 3)) * (line_degree + 1))
             ]
             for index, coefficient in value.items():
-                alpha = (0, index[0], index[1])
-                for triangle_row, beta in enumerate(triangle_indices):
-                    triangle_weight = _simplex_weight(beta, alpha, triangle_degree)
-                    for line_control in range(line_degree + 1):
-                        line_weight = _box_weight(
-                            (line_control,), (index[2],), (line_degree,)
-                        )
-                        row = triangle_row * (line_degree + 1) + line_control
-                        controls[row] += coefficient * triangle_weight * line_weight
+                _accumulate_controls(
+                    controls,
+                    coefficient,
+                    _prism_weight_column(index, triangle_degree, line_degree),
+                )
             return tuple(controls)
     raise ValueError(f"Unsupported Bernstein domain {domain!r}.")
 

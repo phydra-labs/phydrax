@@ -31,6 +31,7 @@ from ._model import BRepModel, BRepTessellation
 
 if TYPE_CHECKING:
     from ...discretization._surface_chart_records import SurfaceChartWitness
+    from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ...meshing._native_construction import NativeMeshConstruction
     from ._patches import AbstractSurfacePatch
 
@@ -382,10 +383,15 @@ def _construction_arrays(
 def _certify_construction(
     construction: NativeMeshConstruction,
     policy: BRepTessellationPolicy,
-    linear_target: float,
     witness: SurfaceChartWitness,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, SourceFidelityCertificate]:
+    """Certify one construction against the policy the tessellation must meet.
+
+    The proof answers exactly the model's acceptance question (policy linear
+    and angular deflection, this witness), so the accepted certificate is the
+    one a ``BRepModel`` binds instead of recomputing it.
+    """
     from ...geometry._source_fidelity import certify_source_fidelity
 
     organization = construction.organization
@@ -399,7 +405,7 @@ def _certify_construction(
             construction.mesh,
             construction.geometry,
             surface_source.boundary_source,
-            tolerance=linear_target,
+            tolerance=policy.linear_deflection,
             maximum_normal_deviation=policy.angular_deflection,
             witness=witness,
         )
@@ -483,7 +489,7 @@ def _certify_construction(
         raise _TessellationUnresolved(
             "canonical continuous normal bounds remain unresolved without a refinable chart finding"
         )
-    return deviations, normals
+    return deviations, normals, certificate
 
 
 def _build_request(
@@ -522,8 +528,13 @@ def tessellate_brep_model(
     model: BRepModel,
     policy: BRepTessellationPolicy,
     /,
-) -> BRepTessellation:
-    """Realize native source charts as conforming linear triangles with enclosures."""
+) -> tuple[BRepTessellation, SourceFidelityCertificate]:
+    """Realize native source charts as conforming linear triangles with enclosures.
+
+    Returns the tessellation with the source-fidelity certificate that proved
+    it; pass both to ``BRepModel`` so the model binds that proof instead of
+    recomputing it.
+    """
     from ._model import BRepModel, BRepTessellation
 
     if not isinstance(model, BRepModel):
@@ -558,13 +569,17 @@ def tessellate_brep_model(
             triangle_global_ids,
             source_chart_witness,
         ) = arrays
-        deviation_bounds, normal_bounds = _certify_construction(
-            construction, policy, linear_target, source_chart_witness
+        deviation_bounds, normal_bounds, certificate = _certify_construction(
+            construction, policy, source_chart_witness
         )
         if np.all(deviation_bounds <= policy.linear_deflection) and np.all(
             normal_bounds <= policy.angular_deflection
         ):
-            return BRepTessellation(
+            if certificate.status != "certified":
+                raise _TessellationUnresolved(
+                    "accepted tessellation bounds lack a certified source-fidelity proof"
+                )
+            tessellation = BRepTessellation(
                 linear_deflection=policy.linear_deflection,
                 angular_deflection=policy.angular_deflection,
                 source_revision=model.source_revision,
@@ -584,6 +599,7 @@ def tessellate_brep_model(
                 triangle_global_ids=triangle_global_ids,
                 source_chart_witness=source_chart_witness,
             )
+            return tessellation, certificate
         # Halving the linear target must contract every violated bound: a
         # maximum chord or normal bound that is violated in two consecutive
         # attempts and does not strictly decrease between them has no

@@ -51,6 +51,7 @@ from ._intersection import (
     CurveIntersectionResult,
     CurveRange,
     CurveSurfaceIntersectionRoot,
+    ExactLineCylinderTangency,
     intersect_curve_region,
     intersect_trim_curves,
     IntersectionCurvePointRoot,
@@ -125,6 +126,8 @@ class Arc:
     source_edge: int | None
     branch: IntersectionCurve | None
     parent_token: str | None = None
+    # A source edge of another face lying on this face: ``(model, edge)``.
+    lifted_edge: tuple[int, int] | None = None
 
 
 def _arc_parameter_interval(arc: Arc, /) -> tuple[float, float]:
@@ -546,7 +549,14 @@ def branch_arc(
     last: int,
     *,
     owners: tuple[FaceOwner, FaceOwner],
+    source_vertices: Mapping[int, tuple[str, str]] | None = None,
 ) -> None:
+    """Add one branch span to ``owner``.
+
+    ``source_vertices`` maps an end node proved to be a source vertex to that
+    vertex's face-graph node and global vertex, so the span ends on it.
+    """
+    vertices = {} if source_vertices is None else source_vertices
     local = IntersectionPCurve(curve, side, first=float(first), last=float(last))
     # A span between periodic transitions owns its source sheet; the whole
     # branch p-curve would evaluate a terminal node in the next span's sheet.
@@ -560,6 +570,10 @@ def branch_arc(
     last_sheet = "before" if last_seam else "common"
     first_node = f"{first_vertex}:face:{owner}:sheet:{first_sheet}"
     last_node = f"{last_vertex}:face:{owner}:sheet:{last_sheet}"
+    if first in vertices:
+        first_node, first_vertex = vertices[first]
+    if last in vertices:
+        last_node, last_vertex = vertices[last]
     token = f"branch:{curve.branch_id}:owners:{owners}:face:{owner}:span:{first}:{last}"
     state.branch_owners[token] = owners
     arc = Arc(
@@ -578,8 +592,6 @@ def branch_arc(
         curve,
     )
     state.arcs[owner].append(arc)
-    state.vertex_branch_points[first_vertex] = curve, float(first)
-    state.vertex_branch_points[last_vertex] = curve, float(final)
     first_binding = BRepVertexRoot.from_curve_point(curve, float(first))
     last_binding = BRepVertexRoot.from_curve_point(curve, float(final))
     if not isinstance(
@@ -604,8 +616,13 @@ def branch_arc(
         "first",
         affine_parameter_offset=float(last - final),
     )
-    state.vertex_bindings.setdefault(first_vertex, first_binding)
-    state.vertex_bindings.setdefault(last_vertex, last_binding)
+    for node, vertex, parameter, binding in (
+        (first, first_vertex, float(first), first_binding),
+        (final, last_vertex, float(final), last_binding),
+    ):
+        if node not in vertices:
+            state.vertex_branch_points[vertex] = curve, parameter
+            state.vertex_bindings.setdefault(vertex, binding)
     state.cuts[token] = [
         Cut(
             float(first),
@@ -613,8 +630,10 @@ def branch_arc(
             float(first),
             first_node,
             first_vertex,
-            first_endpoint,
-            first_binding,
+            # A source-vertex end is that exact vertex; the node parameter is
+            # exact on the branch, so no root stands in for it.
+            None if first in vertices else first_endpoint,
+            None if first in vertices else first_binding,
             np.asarray(
                 curve.evaluate(jnp.asarray(first, dtype=jnp.float64)), dtype=np.float64
             ),
@@ -625,13 +644,89 @@ def branch_arc(
             float(last),
             last_node,
             last_vertex,
-            last_endpoint,
-            last_binding,
+            None if last in vertices else last_endpoint,
+            None if last in vertices else last_binding,
             np.asarray(
                 curve.evaluate(jnp.asarray(last, dtype=jnp.float64)), dtype=np.float64
             ),
         ),
     ]
+
+
+def source_vertex_node(
+    state: Arrangement, owner: FaceOwner, vertex: tuple[int, int], /
+) -> tuple[str, str]:
+    """The face-graph node and global vertex of a source vertex on ``owner``."""
+    model_index, index = vertex
+    name = f"source:{model_index}:vertex:{index}"
+    geometry = state.models[owner[0]].geometry
+    if owner[0] == model_index and geometry is not None:
+        for loop_index, loop in enumerate(geometry.face_loops[owner[1]]):
+            for ordinal, coedge in enumerate(loop):
+                start, end = geometry.edge_vertices[geometry.coedge_edges[coedge]]
+                if (start if geometry.coedge_senses[coedge] > 0 else end) == index:
+                    return (
+                        f"face:{model_index}:{owner[1]}:loop:{loop_index}:corner:{ordinal}",
+                        name,
+                    )
+    return f"{name}:face:{owner}", name
+
+
+def lift_source_edge_arc(
+    state: Arrangement,
+    owner: FaceOwner,
+    edge: tuple[int, int],
+    pcurve: AbstractCurve,
+    /,
+) -> bool:
+    """Add a source edge lying on ``owner`` as one arc of ``owner``'s graph.
+
+    ``pcurve`` is the edge's proved exact lift onto ``owner``. The arc ends on
+    the edge's source vertices and publishes that same edge, so every face of
+    the edge and ``owner`` share it. Edges with root-defined ends keep their
+    branch instead. Returns whether the edge is (now) an arc of ``owner``.
+    """
+    model_index, index = edge
+    token = f"lift:{model_index}:edge:{index}:face:{owner}"
+    if token in state.cuts:
+        return True
+    geometry = state.models[model_index].geometry
+    if geometry is None or geometry.edge_curves[index] < 0:
+        return False
+    start, end = geometry.edge_vertices[index]
+    if (
+        any(root is not None for root in geometry.edge_endpoint_roots[index])
+        or geometry.vertex_roots[start] is not None
+        or geometry.vertex_roots[end] is not None
+    ):
+        return False
+    first, last = (float(value) for value in np.asarray(geometry.edge_ranges)[index])
+    first_node, first_vertex = source_vertex_node(state, owner, (model_index, start))
+    last_node, last_vertex = source_vertex_node(state, owner, (model_index, end))
+    state.arcs[owner].append(
+        Arc(
+            token,
+            owner,
+            CurveTrimSegment(pcurve, first, last),
+            geometry.curves[geometry.edge_curves[index]],
+            pcurve,
+            first,
+            last - first,
+            first_node,
+            last_node,
+            first_vertex,
+            last_vertex,
+            None,
+            None,
+            lifted_edge=edge,
+        )
+    )
+    points = np.asarray(geometry.vertex_points)
+    state.cuts[token] = [
+        Cut(0.0, 0.0, 0.0, first_node, first_vertex, None, None, points[start]),
+        Cut(1.0, 1.0, 1.0, last_node, last_vertex, None, None, points[end]),
+    ]
+    return True
 
 
 def arc_area_bounds(
@@ -1126,7 +1221,15 @@ def _edge_spatial_roots(
                 _face_id(state.models[opposite[0]], opposite[1]),
             ),
         )
-    if any(point.kind != "crossing" for point in result.points):
+    # A crossing is a Krawczyk root; an analytic tangent point is an exact
+    # double root whose multiplicity witness replaces the contraction proof.
+    if any(
+        point.kind != "crossing"
+        and not (
+            point.kind == "tangent_point" and point.certificate == "analytic-contact"
+        )
+        for point in result.points
+    ):
         raise BRepBooleanFailure(
             "BRepBoolean.source_edge.junction must be transversal; got a singular contact",
             (
@@ -1134,16 +1237,18 @@ def _edge_spatial_roots(
                 _face_id(state.models[opposite[0]], opposite[1]),
             ),
         )
-    points = sorted(
-        (point for point in result.points if point.kind == "crossing"),
-        key=lambda point: float(point.parameters[0]),
-    )
+    points = sorted(result.points, key=lambda point: float(point.parameters[0]))
     roots = tuple(
         CurveSurfaceIntersectionRoot(
             curve,
             region,
             parameter_lower=point.parameter_lower,
             parameter_upper=point.parameter_upper,
+            tangent_witness=(
+                None
+                if point.kind == "crossing"
+                else ExactLineCylinderTangency(curve, region)
+            ),
         )
         for point in points
     )
@@ -1726,7 +1831,14 @@ def _certify_boundary_vertex(
         )
     exact_point = exact_points[0] if exact_points else None
     if binding is None:
-        return _BoundVertex(cut.point, binding, exact_point)
+        # A branch end proved to be a source vertex realizes the vertex's own
+        # exact point, not the branch's numerical evaluation there.
+        point = (
+            cut.point
+            if exact_point is None
+            else np.asarray([float(value) for value in exact_point], dtype=np.float64)
+        )
+        return _BoundVertex(point, binding, exact_point)
     box = binding.point_enclosure()
     if box.shape != (2, 3) or not np.all(np.isfinite(box)) or np.any(box[0] > box[1]):
         raise BRepBooleanFailure(
@@ -2660,7 +2772,8 @@ def _append_spatial_root_cuts(
         source_endpoint, 1.0 / source_arc.scale, -source_arc.offset / source_arc.scale
     )
     source_lower, source_upper = source_local.parameter_enclosure()
-    if not 0.0 < source_lower < source_upper < 1.0:
+    # An exact double root encloses its edge parameter as one float.
+    if not 0.0 < source_lower <= source_upper < 1.0:
         raise BRepBooleanFailure(
             "BRepBoolean.source_root.interval must lie strictly inside the source edge; got a corner root without a vertex alias",
             (source_arc.token,),

@@ -169,9 +169,8 @@ def test_fem_l2_projection_transfer_scenario_1() -> None:
         )
 
 
-
 def test_l2_overlap_respects_axisymmetric_measure() -> None:
-    measure = CoordinateMeasurePlan("cylindrical-radial", radial_axis=0)
+    measure = CoordinateMeasurePlan("axisymmetric-rz", radial_axis=0)
     source_mesh, target_mesh = _triangles(3), _triangles(2)
     source = _space(source_mesh, "triangle", coordinate_measure=measure)
     target = _space(target_mesh, "triangle", coordinate_measure=measure)
@@ -186,6 +185,7 @@ def test_l2_overlap_respects_axisymmetric_measure() -> None:
         atol=2.0e-11,
         rtol=2.0e-11,
     )
+
 
 def test_target_space_fields_are_reproduced_and_claims_are_certified(planar: Any) -> None:
     source, target, transfer = planar

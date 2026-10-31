@@ -735,6 +735,67 @@ above the bound is a typed `QUALITY_REJECTED` refusal; carriers already within
 the bound keep the scaffold triangles and their one-to-one certificate. The
 compliance report records the carrier ratio and minimum angle before and after.
 
+Without an explicit `implicit_policy`, a native implicit route resolves its
+adaptive discovery from the request: the relative cell diameter is the smallest
+of half the `maximum_deviation`, every hard `UniformSizeControl` allowance and
+every soft uniform size target, each relative to the discovery-domain diagonal,
+and the root tolerance is at most a quarter of `maximum_deviation`. The policy
+default applies only when the request declares none of these. An explicit policy
+is only tightened by the deviation and hard size allowances. An analytic profile
+given to an adaptive route is discovered once at that resolution and the route
+reuses the discovery. Discovery re-anchors its
+lattice only when a lattice vertex lies on a sign crossing (its point enclosure
+contains zero while its neighbour stencil takes both certified signs): it
+restarts on a deterministic shifted lattice at the declared resolution. Touching
+or degenerate vertex zeros and other singular cells refuse on the current
+lattice. A `NativeImplicitSource` republishes the discovery under its own
+revision; fidelity and domain coverage bind it through the discovery's adaptive
+boundary query and the source ID, and its zero-set scope is the one canonical
+surface entity.
+
+Root charts map each target face (P1–P3) to the zero set along gradient lines.
+A face is certified piece by piece: undecided pieces split and siblings share
+one batched interval evaluation. The field and gradient use mean-value forms
+about the piece center, and the residual also uses a second-order Taylor form.
+The normal-line root interval is one-sided and narrowed by an interval Newton
+step. Its endpoint signs are also bounded by the residual plus the interval
+times the certified normal-line derivative. A bracket that misses a sign widens
+until it is signed, its tube leaves the certified domain, or that derivative
+loses strict positivity; no attempt count caps it. The chart Jacobian is
+`det[B P_u, B P_v, g_p] |g_q|^2 / (g_q . g_p)`, and a certainly non-positive
+Jacobian refuses. Needle faces (centroid tangent condition number above 8) use
+tangents conditioned by the inverse QR factor of their centroid tangents. Each
+conditioned column is enclosed from its own exact polynomial, so a nearly
+parallel tangent pair does not cancel.
+
+Whole-face injectivity is first proved transversally. Two target points with
+the same root satisfy `det[(I + t H) A_u, (I + t H) A_v, g] = 0`, where `A` is
+the chord mean of `DP`, `H` is the mean Hessian on the chord, `t` is the first
+point's root parameter and `g` is the gradient at the second point. A map of
+degree at most three has `A = DP(m) + D^2(DP)[d, d] / 24`. The P3 chord error
+`D^3 P[d, d, B e_j] / 24` is formed exactly along the conditioned basis `B`,
+and the chord is bounded by `B^-1`. The determinant, a quadratic in `t`, must
+be strictly signed in one of four forms. Three are whole-face forms, using the
+face's gradient and Hessian, with or without expanding `(I + t H)^-1`. The
+fourth is local. Two pieces can only collide when their root boxes meet, so
+for each piece it uses the Hessian over the pieces whose root boxes meet its
+own, their root parameters, and the chord means of the pieces around them. The
+local form tightens as pieces shrink, so large faces of coarse carriers
+certify; the pieces that block it are refined. Strong monotonicity under the
+inverse or the transposed mean projected Jacobian is checked alongside, and
+its undecided pieces are refined too. The transposed form pairs each chord
+image with its mean image, which keeps rotating thin faces positive.
+
+A field that is not smooth needs an exact `AnalyticImplicitProfile` whose
+singular set is disjoint from the certified zero-set cover. Point lifts double a
+bracket from the coordinate spacing, independently of the face, so faces
+sharing a node lift it to the same root. A remeshed carrier proves that each
+lifted point has one preimage by excluding it from every other face. Only the
+pieces whose interval-Newton root boxes still reach the point are refined,
+without a depth cap. Certification takes the prepared root charts explicitly
+(`root_charts=`) and checks them against its operands. Interval products take an
+exact zero times an unbounded side as zero (IEEE 1788).
+
 Native curve meshing binds each `SegmentMesh` edge to a `SegmentChartCurve`: the
 exact affine map of the edge onto its declared chart parameter range. Its rational
 coefficients make chart fidelity an exact polynomial bound per target edge, and its
@@ -2174,6 +2235,33 @@ caps. The band bounds and the interpolation error are unchanged; the
 input-to-envelope bound (`bounds[0]`) is recomputed on the remeshed vertices.
 `remesh_counters` reports splits, collapses, flips, relocations, and the
 surviving triangles still below the quality target.
+
+A triangle's quantized score is its shape (minimum angle over 30 degrees,
+capped at 1) times its size (`4/3 h` over its longest edge, capped at 1) times a
+source-relative fold factor. Each admission reports a certified source normal
+cone per triangle: for the envelope, the directions from every source point
+that can be nearest to some point of the triangle; for an implicit zero set,
+the gradient enclosure over the triangle widened by the tilt the surface
+tolerance allows. Two triangles sharing an edge may turn against each other by
+up to the largest angle between normals of their two cones (the angle between
+the axes plus both half-angles). A turn within that separation scores full, so
+genuine creases the source has (an implicit CSG lens edge, an offset's concave
+ridge) are kept; a turn beyond it is a fold the source does not have and lowers
+the score by `(pi - turn) / (pi - allowed)`, so the quality pass removes it.
+Without this factor a folded cluster of well-shaped envelope triangles scores
+full, and two boundary triangles meeting at turn `t` bound every tetrahedron on
+their edge to a dihedral angle of at most `pi - t`. Cones are computed only for
+edges turning beyond the cheap lower bound of both cones' half-angles.
+
+A quality edit for one triangle tries, in order: a split of an over-long longest
+edge, flips of its edges, a collapse of its shortest edge, relocation of each
+corner to its star centroid or its projection, relocation of each corner part
+of the way toward its star centroid (1/2 down to 2^-10 of the move) or toward
+its equilateral apex over the opposite edge (the full move down to 2^-10), and
+a midpoint split. A full move that lifts the triangle can push another star
+triangle below it where a shorter one does not; the reconstruction profiles'
+last sub-target envelope triangles, inside a band with about `0.7 h` of slack,
+were such local limits of the edit list, not limits of the source.
 
 The remesher is a source-agnostic native substrate: the topology operations,
 quality acceptance, and manifold and self-intersection checks are shared, and

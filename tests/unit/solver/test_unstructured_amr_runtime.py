@@ -226,6 +226,39 @@ def test_amr_constant_free_stream_and_exact_two_substeps() -> None:
     assert bool(continued.accepted)
 
 
+def test_reprepare_binds_realized_topology_over_fixed_geometry() -> None:
+    system = phx.equations.EulerSystem(2)
+    _, runtime = _level_runtime(_grid_plan(system, 4, 2), system, "realized")
+    current = runtime.initial_topology_epoch
+    realized = phx.discretization.TopologyEpoch(
+        current.index + 1,
+        current.geometry_id,
+        "realized-amr-selection",
+        current.partition_id,
+    )
+    reprepared = runtime.reprepare_for_epoch(
+        realized,
+        phx.solver.FiniteVolumeTopologyArtifacts(
+            realized, runtime.dynamics.discretization.prepared_id
+        ),
+    )
+    assert reprepared.initial_topology_epoch.topology_id == "realized-amr-selection"
+    assert reprepared.topology_epoch_id == realized.epoch_id
+    foreign = phx.discretization.TopologyEpoch(
+        current.index + 1,
+        "foreign-geometry",
+        "realized-amr-selection",
+        current.partition_id,
+    )
+    with pytest.raises(ValueError, match="does not match runtime geometry"):
+        runtime.reprepare_for_epoch(
+            foreign,
+            phx.solver.FiniteVolumeTopologyArtifacts(
+                foreign, runtime.dynamics.discretization.prepared_id
+            ),
+        )
+
+
 def test_amr_runtime_rejects_mismatched_level_event_policies_at_construction() -> None:
     with pytest.raises(ValueError, match="both use accepted-step topology events"):
         _runtime("accepted_step", fine_topology_event_policy="disabled")

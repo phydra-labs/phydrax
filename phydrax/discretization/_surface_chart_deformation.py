@@ -18,10 +18,8 @@ from ..geometry._global_embedding import (
     GlobalEmbeddingCertificate,
 )
 from ..geometry._meshing_domain import MeshingDomain
-from ..geometry._source_fidelity import (
-    certify_source_fidelity,
-    SourceFidelityCertificate,
-)
+from ..geometry._source_fidelity import certify_source_fidelity
+from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 from ..typing import checked
 from . import _coordinate_enclosure as algebra
 from ._cell_geometry import CellGeometrySpec

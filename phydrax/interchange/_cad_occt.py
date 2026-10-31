@@ -337,7 +337,7 @@ def model_from_occt_shape(
     if tessellation is None or not model.patches:
         return model
     try:
-        realization = tessellate_brep_model(model, tessellation)
+        realization, certificate = tessellate_brep_model(model, tessellation)
         return BRepModel(
             geometry=model.geometry,
             patches=model.patches,
@@ -348,6 +348,7 @@ def model_from_occt_shape(
             report=report,
             trim_domains=model.trim_domains,
             tessellation=realization,
+            tessellation_certificate=certificate,
         )
     except ValueError as error:
         raise refuse("inconsistent-geometry", identifier, str(error)) from error

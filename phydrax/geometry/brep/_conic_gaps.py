@@ -1117,6 +1117,13 @@ def native_face_gap_squared(
         )
         if spline_gap is not None:
             return spline_gap
+        from ._spline_face_gap import rational_spline_face_gap_squared
+
+        composed_gap = rational_spline_face_gap_squared(
+            curve, pcurve, source_region, first, last
+        )
+        if composed_gap is not None:
+            return composed_gap
     revolution_gap = (
         _revolution_circle_gap_squared(curve, pcurve, source_region, first, last)
         if isinstance(curve, CircleCurve)
@@ -1215,6 +1222,10 @@ def native_face_gap_squared(
             _vector_difference(source[2], lifted[2]),
         )
         return _harmonic_squared_upper(difference, first, last)
+    if isinstance(patch, PlanePatch):
+        from ._spline_face_gap import rational_spline_face_gap_squared
+
+        return rational_spline_face_gap_squared(curve, pcurve, source_region, first, last)
     return None
 
 

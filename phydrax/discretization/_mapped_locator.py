@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from enum import Enum
 from fractions import Fraction
 from itertools import combinations
-from typing import cast, final, NamedTuple, TYPE_CHECKING
+from typing import assert_never, cast, final, Literal, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -42,6 +43,7 @@ from ._coordinate_enclosure import (
     CoordinateCoefficients,
     CoordinateSourceBank,
     derivative,
+    evaluate_polynomial,
     ExactScalar,
     Expression,
     polynomial_bounds,
@@ -70,14 +72,18 @@ class _MappedAmbientDim(Dim):
     """Physical coordinate axes shared by locator arrays."""
 
 
-
 def reference_domain(cell_kind: str, /) -> BernsteinDomain:
     topology = reference_cell_topology(cell_kind)
     if cell_kind in ("triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
         return "simplex"
     if cell_kind == "prism":
         return "prism"
-    if topology.dimension == 1 or cell_kind in ("quadrilateral", "hexahedron") or cell_kind.startswith("tensor:") or cell_kind == "pyramid":
+    if (
+        topology.dimension == 1
+        or cell_kind in ("quadrilateral", "hexahedron")
+        or cell_kind.startswith("tensor:")
+        or cell_kind == "pyramid"
+    ):
         return "box"
     raise ValueError(f"Mapped location does not support reference cell {cell_kind!r}.")
 
@@ -86,13 +92,24 @@ def reference_margin(cell_kind: str, reference: np.ndarray, /) -> float:
     if cell_kind in ("triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
         return min(float(np.min(reference)), 1.0 - float(np.sum(reference)))
     if cell_kind == "prism":
-        return min(float(np.min(reference[:2])), 1.0 - float(np.sum(reference[:2])), float(reference[2]), 1.0 - float(reference[2]))
+        return min(
+            float(np.min(reference[:2])),
+            1.0 - float(np.sum(reference[:2])),
+            float(reference[2]),
+            1.0 - float(reference[2]),
+        )
     if cell_kind == "pyramid":
         height = float(reference[2])
         lower = 0.5 * height
         upper = 1.0 - lower
-        return min(height, 1.0 - height, float(np.min(reference[:2] - lower)), float(np.min(upper - reference[:2])))
+        return min(
+            height,
+            1.0 - height,
+            float(np.min(reference[:2] - lower)),
+            float(np.min(upper - reference[:2])),
+        )
     return float(np.min(np.minimum(reference, 1.0 - reference)))
+
 
 @final
 class MappedLocationPolicy(StrictModule, NonTrainableState):
@@ -117,7 +134,9 @@ class MappedLocationPolicy(StrictModule, NonTrainableState):
             parameter_resolution,
         )
         if any(isinstance(value, (bool, np.bool_)) for value in values):
-            raise TypeError("Mapped location tolerances must be real scalars excluding bool.")
+            raise TypeError(
+                "Mapped location tolerances must be real scalars excluding bool."
+            )
         residual, reference, resolution = (float(value) for value in values)
         if (
             not np.all(np.isfinite((residual, reference, resolution)))
@@ -141,7 +160,6 @@ class MappedLocationPolicy(StrictModule, NonTrainableState):
         )
 
 
-
 def _reference_weights(cell_kind: str, reference: np.ndarray, /) -> np.ndarray:
     vertices = np.asarray(reference_cell_topology(cell_kind).vertices, dtype=np.float64)
     if cell_kind in ("triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
@@ -153,9 +171,14 @@ def _reference_weights(cell_kind: str, reference: np.ndarray, /) -> np.ndarray:
         height = reference[2]
         collapse = 1.0 - height
         chart = (reference[:2] - 0.5 * height) / collapse if collapse else np.zeros((2,))
-        base = np.prod(np.where(vertices[:4] == 1.0, chart[None], 1.0 - chart[None]), axis=1) * collapse
+        base = (
+            np.prod(np.where(vertices[:4] == 1.0, chart[None], 1.0 - chart[None]), axis=1)
+            * collapse
+        )
         return np.concatenate((base, np.asarray((height,))))
-    return np.prod(np.where(vertices == 1.0, reference[None], 1.0 - reference[None]), axis=1)
+    return np.prod(
+        np.where(vertices == 1.0, reference[None], 1.0 - reference[None]), axis=1
+    )
 
 
 def _polynomial_value(
@@ -179,8 +202,6 @@ def _expression_value(expression: Expression, point: np.ndarray, /) -> float:
     if denominator == 0.0 or not np.isfinite(denominator):
         return float("nan")
     return numerator / denominator
-
-
 
 
 def _map_values(
@@ -214,6 +235,7 @@ def _cell_expressions(
         (value, tuple(derivative(value, axis) for axis in range(dimension)))
         for value in values
     )
+
 
 type _InverseBox = tuple[tuple[Fraction, ...], tuple[Fraction, ...]]
 type _Interval = tuple[float, float]
@@ -255,18 +277,15 @@ def _interval_multiply(first: _Interval, second: _Interval, /) -> _Interval:
         float(np.nextafter(max(products), np.inf)),
     )
 
-def _interval_residual_lower_bound(
-    bounds: tuple[_Interval, ...], /
-) -> float:
+
+def _interval_residual_lower_bound(bounds: tuple[_Interval, ...], /) -> float:
     squared_lower = 0.0
     for lower, upper in bounds:
         if lower <= 0.0 <= upper:
             continue
         distance = min(abs(lower), abs(upper))
         square_lower = float(np.nextafter(distance * distance, -np.inf))
-        squared_lower = float(
-            np.nextafter(squared_lower + square_lower, -np.inf)
-        )
+        squared_lower = float(np.nextafter(squared_lower + square_lower, -np.inf))
     return float(np.nextafter(np.sqrt(max(squared_lower, 0.0)), -np.inf))
 
 
@@ -290,10 +309,13 @@ def _box_expression_bounds(
     lower: tuple[Fraction, ...],
     upper: tuple[Fraction, ...],
     /,
-) -> tuple[
-    tuple[_Interval, ...],
-    tuple[tuple[_Interval, ...], ...],
-] | None:
+) -> (
+    tuple[
+        tuple[_Interval, ...],
+        tuple[tuple[_Interval, ...], ...],
+    ]
+    | None
+):
     dimension = len(lower)
     arguments = _box_arguments(lower, upper)
     target_exact = tuple(Fraction(float(value)) for value in target)
@@ -312,14 +334,10 @@ def _box_expression_bounds(
             row = []
             for gradient in gradients:
                 local_gradient = compose_expression(gradient, arguments)
-                derivative_bounds = polynomial_bounds(
-                    local_gradient, "box", dimension
-                )
+                derivative_bounds = polynomial_bounds(local_gradient, "box", dimension)
                 if not np.all(np.isfinite(derivative_bounds)):
                     return None
-                row.append(
-                    (float(derivative_bounds[0]), float(derivative_bounds[1]))
-                )
+                row.append((float(derivative_bounds[0]), float(derivative_bounds[1])))
             jacobian_bounds.append(tuple(row))
     except (ArithmeticError, TypeError, ValueError, ZeroDivisionError):
         return None
@@ -358,9 +376,7 @@ def _reference_margin_bounds(
                 z_lower, z_upper = lower[2], upper[2]
                 for coordinate in (0, 1):
                     x_lower, x_upper = lower[coordinate], upper[coordinate]
-                    constraints.append(
-                        (x_lower - z_upper / 2, x_upper - z_lower / 2)
-                    )
+                    constraints.append((x_lower - z_upper / 2, x_upper - z_lower / 2))
                     constraints.append(
                         (
                             1 - z_upper / 2 - x_upper,
@@ -369,9 +385,7 @@ def _reference_margin_bounds(
                     )
         case _:
             raise ValueError(f"Unsupported mapped reference domain for {cell_kind!r}.")
-    return min(value[0] for value in constraints), min(
-        value[1] for value in constraints
-    )
+    return min(value[0] for value in constraints), min(value[1] for value in constraints)
 
 
 def _exact_determinant_nonzero(matrix: np.ndarray, /) -> bool:
@@ -386,6 +400,20 @@ def _exact_determinant_nonzero(matrix: np.ndarray, /) -> bool:
     return determinant_exact(exact) != 0
 
 
+class _KrawczykOutcome(NamedTuple):
+    """One Krawczyk decision with the interval Jacobian it was decided on.
+
+    ``rootless`` certifies that the box holds no exact inverse root while its
+    residual enclosure still reaches the physical tolerance.
+    """
+
+    status: Literal["excluded", "isolated", "rootless", "unresolved"]
+    lower: tuple[Fraction, ...] | None
+    upper: tuple[Fraction, ...] | None
+    rows: tuple[int, ...] | None
+    jacobian: tuple[tuple[_Interval, ...], ...] | None
+
+
 def _krawczyk_box(
     target: np.ndarray,
     expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
@@ -395,24 +423,16 @@ def _krawczyk_box(
     /,
     *,
     selected_rows: tuple[int, ...] | None = None,
-) -> tuple[
-    str,
-    tuple[Fraction, ...] | None,
-    tuple[Fraction, ...] | None,
-    tuple[int, ...] | None,
-]:
+) -> _KrawczykOutcome:
     dimension = len(lower)
     ambient_dimension = len(expressions)
     bounds = _box_expression_bounds(expressions, target, lower, upper)
     if bounds is None:
-        return "unresolved", None, None, None
+        return _KrawczykOutcome("unresolved", None, None, None, None)
     function_bounds, jacobian_bounds = bounds
     residual = policy.residual_tolerance
-    if any(
-        value[0] > residual or value[1] < -residual
-        for value in function_bounds
-    ):
-        return "excluded", None, None, None
+    if any(value[0] > residual or value[1] < -residual for value in function_bounds):
+        return _KrawczykOutcome("excluded", None, None, None, jacobian_bounds)
     center = np.asarray(
         [float((first + last) / 2) for first, last in zip(lower, upper, strict=True)],
         dtype=np.float64,
@@ -420,17 +440,15 @@ def _krawczyk_box(
     center_exact = tuple(Fraction.from_float(float(value)) for value in center)
     _, center_jacobian = _map_values(expressions, center)
     if not np.all(np.isfinite(center_jacobian)):
-        return "unresolved", None, None, None
+        return _KrawczykOutcome("unresolved", None, None, None, jacobian_bounds)
     row_choices = (
         (selected_rows,)
         if selected_rows is not None
         else tuple(combinations(range(ambient_dimension), dimension))
     )
-    point_bounds = _box_expression_bounds(
-        expressions, target, center_exact, center_exact
-    )
+    point_bounds = _box_expression_bounds(expressions, target, center_exact, center_exact)
     if point_bounds is None:
-        return "unresolved", None, None, None
+        return _KrawczykOutcome("unresolved", None, None, None, jacobian_bounds)
     point_functions, _ = point_bounds
     for rows in row_choices:
         if len(rows) != dimension:
@@ -458,12 +476,8 @@ def _krawczyk_box(
                             jacobian_bounds[physical_row][column],
                         ),
                     )
-                identity: _Interval = (
-                    (1.0, 1.0) if row == column else (0.0, 0.0)
-                )
-                matrix_row.append(
-                    _interval_subtract(identity, product_interval)
-                )
+                identity: _Interval = (1.0, 1.0) if row == column else (0.0, 0.0)
+                matrix_row.append(_interval_subtract(identity, product_interval))
             krawczyk_matrix.append(matrix_row)
         contraction = max(
             float(
@@ -506,16 +520,14 @@ def _krawczyk_box(
                 )
             image.append(total)
         if any(
-            interval[1] < float(lower[index])
-            or interval[0] > float(upper[index])
+            interval[1] < float(lower[index]) or interval[0] > float(upper[index])
             for index, interval in enumerate(image)
         ):
             if _interval_residual_lower_bound(function_bounds) > residual:
-                return "excluded", None, None, None
-            return "unresolved", None, None, None
+                return _KrawczykOutcome("excluded", None, None, None, jacobian_bounds)
+            return _KrawczykOutcome("rootless", None, None, None, jacobian_bounds)
         contained = all(
-            interval[0] >= float(lower[index])
-            and interval[1] <= float(upper[index])
+            interval[0] >= float(lower[index]) and interval[1] <= float(upper[index])
             for index, interval in enumerate(image)
         )
         if contained and contraction < 1.0:
@@ -527,8 +539,10 @@ def _krawczyk_box(
                 min(upper[index], Fraction.from_float(interval[1]))
                 for index, interval in enumerate(image)
             )
-            return "isolated", image_lower, image_upper, tuple(rows)
-    return "unresolved", None, None, None
+            return _KrawczykOutcome(
+                "isolated", image_lower, image_upper, tuple(rows), jacobian_bounds
+            )
+    return _KrawczykOutcome("unresolved", None, None, None, jacobian_bounds)
 
 
 def _split_reference_box(
@@ -557,147 +571,401 @@ def _split_reference_box(
     return (lower, tuple(left_upper)), (tuple(right_lower), upper)
 
 
-def _isolate_inverse_roots(
+class _InverseRefusal(Enum):
+    """Why a mapped inverse search left part of the reference cell undecided."""
+
+    SINGULAR_TOLERANCE_ROOT = "singular-tolerance-root"
+    ROOTLESS_TOLERANCE_ROOT = "rootless-tolerance-root"
+    PARAMETER_RESOLUTION = "parameter-resolution"
+    UNBOUNDED_ENCLOSURE = "unbounded-enclosure"
+    ROOT_REFINEMENT_STALLED = "root-refinement-stalled"
+    DUPLICATE_ROOT_UNMERGED = "duplicate-root-unmerged"
+
+
+class _UnresolvedInverseBox(NamedTuple):
+    """Reference-box evidence for one undecided inverse-map region.
+
+    ``witness`` is empty, one exact tolerance root, or the two ends of a segment
+    of tolerance roots across which the Jacobian determinant changes sign.
+    """
+
+    refusal: _InverseRefusal
+    lower: tuple[Fraction, ...]
+    upper: tuple[Fraction, ...]
+    witness: tuple[tuple[Fraction, ...], ...]
+
+
+class _InverseIsolation(NamedTuple):
+    """Certified inverse roots of one cell and every region left undecided."""
+
+    roots: tuple[_InverseRoot, ...]
+    unresolved: tuple[_UnresolvedInverseBox, ...]
+    ambiguous: bool
+
+
+def _exact_expression_value(
+    expression: Expression, point: tuple[Fraction, ...], /
+) -> ExactScalar | None:
+    if not isinstance(expression, RationalPolynomial):
+        return evaluate_polynomial(expression, point)
+    denominator = evaluate_polynomial(expression.denominator, point)
+    if not denominator:
+        return None
+    return evaluate_polynomial(expression.numerator, point) / denominator
+
+
+def _is_tolerance_root(
+    target_exact: tuple[Fraction, ...],
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    cell_kind: str,
+    point: tuple[Fraction, ...],
+    policy: MappedLocationPolicy,
+    /,
+) -> bool:
+    """Exactly decide that ``point`` lies in the reference margin within residual tolerance."""
+    margin, _ = _reference_margin_bounds(cell_kind, point, point)
+    if margin < -Fraction.from_float(policy.reference_tolerance):
+        return False
+    squared: ExactScalar = Fraction(0)
+    for (value, _), coordinate in zip(expressions, target_exact, strict=True):
+        image = _exact_expression_value(value, point)
+        if image is None:
+            return False
+        difference = image - coordinate
+        squared = squared + difference * difference
+    tolerance = Fraction.from_float(policy.residual_tolerance)
+    return squared <= tolerance * tolerance
+
+
+def _exact_determinant_sign(
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    point: tuple[Fraction, ...],
+    /,
+) -> int | None:
+    rows: list[tuple[ExactScalar, ...]] = []
+    for _, gradients in expressions:
+        row: list[ExactScalar] = []
+        for gradient in gradients:
+            value = _exact_expression_value(gradient, point)
+            if value is None:
+                return None
+            row.append(value)
+        rows.append(tuple(row))
+    determinant = determinant_exact(tuple(rows))
+    zero = Fraction(0)
+    if determinant > zero:
+        return 1
+    if determinant < zero:
+        return -1
+    return 0
+
+
+def _interval_determinant(matrix: tuple[tuple[_Interval, ...], ...], /) -> _Interval:
+    if len(matrix) == 1:
+        return matrix[0][0]
+    total: _Interval = (0.0, 0.0)
+    for column, entry in enumerate(matrix[0]):
+        minor = tuple(row[:column] + row[column + 1 :] for row in matrix[1:])
+        term = _interval_multiply(entry, _interval_determinant(minor))
+        total = (
+            _interval_add(total, term)
+            if column % 2 == 0
+            else _interval_subtract(total, term)
+        )
+    return total
+
+
+def _clamped_exact_point(
+    point: np.ndarray, lower: tuple[Fraction, ...], upper: tuple[Fraction, ...], /
+) -> tuple[Fraction, ...]:
+    return tuple(
+        min(max(Fraction.from_float(float(value)), first), last)
+        for value, first, last in zip(point, lower, upper, strict=True)
+    )
+
+
+def _tolerance_root_witness(
+    target: np.ndarray,
+    target_exact: tuple[Fraction, ...],
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    cell_kind: str,
+    lower: tuple[Fraction, ...],
+    upper: tuple[Fraction, ...],
+    policy: MappedLocationPolicy,
+    /,
+) -> tuple[Fraction, ...] | None:
+    """Return an exact tolerance root inside the box, or ``None`` when none is certified.
+
+    Box-projected Gauss-Newton proposes the point in binary64 while its residual
+    strictly decreases; only the exact check of the final iterate certifies it.
+    """
+    lower_float = np.asarray([float(value) for value in lower], dtype=np.float64)
+    upper_float = np.asarray([float(value) for value in upper], dtype=np.float64)
+    point = np.clip(0.5 * (lower_float + upper_float), lower_float, upper_float)
+    physical, jacobian = _map_values(expressions, point)
+    residual = float(np.linalg.norm(physical - target))
+    while np.isfinite(residual) and np.all(np.isfinite(jacobian)):
+        step = np.linalg.lstsq(jacobian, physical - target, rcond=None)[0]
+        candidate = np.clip(point - step, lower_float, upper_float)
+        candidate_physical, candidate_jacobian = _map_values(expressions, candidate)
+        candidate_residual = float(np.linalg.norm(candidate_physical - target))
+        if not candidate_residual < residual:
+            break
+        point, physical, jacobian = candidate, candidate_physical, candidate_jacobian
+        residual = candidate_residual
+    witness = _clamped_exact_point(point, lower, upper)
+    if _is_tolerance_root(target_exact, expressions, cell_kind, witness, policy):
+        return witness
+    return None
+
+
+def _segment_residual_upper_bound(
+    target_exact: tuple[Fraction, ...],
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    first: tuple[Fraction, ...],
+    last: tuple[Fraction, ...],
+    /,
+) -> float:
+    """Bound the physical residual norm over a whole reference segment from above."""
+    variable = axes(1)[0]
+    arguments = tuple(
+        add(constant(start, 1), scale(variable, end - start))
+        for start, end in zip(first, last, strict=True)
+    )
+    squared = 0.0
+    for (value, _), coordinate in zip(expressions, target_exact, strict=True):
+        local = subtract(compose_expression(value, arguments), constant(coordinate, 1))
+        bound_lower, bound_upper = polynomial_bounds(local, "box", 1)
+        magnitude = max(abs(bound_lower), abs(bound_upper))
+        squared = float(
+            np.nextafter(
+                squared + float(np.nextafter(magnitude * magnitude, np.inf)), np.inf
+            )
+        )
+    return float(np.nextafter(np.sqrt(squared), np.inf))
+
+
+def _singular_tolerance_segment(
+    target_exact: tuple[Fraction, ...],
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    cell_kind: str,
+    lower: tuple[Fraction, ...],
+    upper: tuple[Fraction, ...],
+    witness: tuple[Fraction, ...],
+    policy: MappedLocationPolicy,
+    /,
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
+    """Bracket a tolerance root with a singular Jacobian by an exact determinant sign change.
+
+    Every point of the returned segment is a tolerance root (an enclosure bound of
+    the whole segment) and the determinant vanishes or changes sign between its
+    exact ends, so by continuity the segment holds a tolerance root with a singular
+    Jacobian. The bracket walks the binary64 null direction of the Jacobian at the
+    witness with doubling steps until the sign changes, an end leaves the
+    tolerance, or both ends are pinned to the box.
+    """
+    sign = _exact_determinant_sign(expressions, witness)
+    if sign is None:
+        return None
+    if sign == 0:
+        return witness, witness
+    base = np.asarray([float(value) for value in witness], dtype=np.float64)
+    _, jacobian = _map_values(expressions, base)
+    if not np.all(np.isfinite(jacobian)):
+        return None
+    direction = np.linalg.svd(jacobian)[2][-1]
+    lower_float = np.asarray([float(value) for value in lower], dtype=np.float64)
+    upper_float = np.asarray([float(value) for value in upper], dtype=np.float64)
+    step = float(np.finfo(np.float64).eps)
+    previous: tuple[tuple[Fraction, ...], ...] = ()
+    while True:
+        ends = tuple(
+            _clamped_exact_point(
+                np.clip(base + orientation * step * direction, lower_float, upper_float),
+                lower,
+                upper,
+            )
+            for orientation in (-1.0, 1.0)
+        )
+        if ends == previous:
+            return None
+        previous = ends
+        for end in ends:
+            if not _is_tolerance_root(target_exact, expressions, cell_kind, end, policy):
+                return None
+            end_sign = _exact_determinant_sign(expressions, end)
+            if end_sign is None:
+                return None
+            if end_sign != sign:
+                bound = _segment_residual_upper_bound(
+                    target_exact, expressions, witness, end
+                )
+                return (witness, end) if bound <= policy.residual_tolerance else None
+        step *= 2.0
+
+
+def _tolerance_refusal(
+    target: np.ndarray,
+    target_exact: tuple[Fraction, ...],
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    cell_kind: str,
+    lower: tuple[Fraction, ...],
+    upper: tuple[Fraction, ...],
+    outcome: _KrawczykOutcome,
+    policy: MappedLocationPolicy,
+    /,
+) -> _UnresolvedInverseBox | None:
+    """Refuse an undecided box now when bisection provably cannot decide it.
+
+    A tolerance root inside the reference margin keeps every box containing it
+    from exclusion. Such a box is never isolated either when it is certified
+    rootless, or when the tolerance root has a singular Jacobian: a Krawczyk
+    contraction below one makes every enclosed Jacobian invertible. Bisection
+    would refine the region to the parameter resolution only to refuse there.
+    A non-square map has no determinant sign certificate for rank deficiency and
+    keeps bisecting.
+    """
+    if outcome.status == "rootless":
+        witness = _tolerance_root_witness(
+            target, target_exact, expressions, cell_kind, lower, upper, policy
+        )
+        if witness is None:
+            return None
+        return _UnresolvedInverseBox(
+            _InverseRefusal.ROOTLESS_TOLERANCE_ROOT, lower, upper, (witness,)
+        )
+    jacobian = outcome.jacobian
+    if jacobian is None or len(jacobian) != len(lower):
+        return None
+    determinant = _interval_determinant(jacobian)
+    if not determinant[0] <= 0.0 <= determinant[1]:
+        return None
+    witness = _tolerance_root_witness(
+        target, target_exact, expressions, cell_kind, lower, upper, policy
+    )
+    if witness is None:
+        return None
+    segment = _singular_tolerance_segment(
+        target_exact, expressions, cell_kind, lower, upper, witness, policy
+    )
+    if segment is None:
+        return None
+    return _UnresolvedInverseBox(
+        _InverseRefusal.SINGULAR_TOLERANCE_ROOT, lower, upper, segment
+    )
+
+
+def _refine_isolated_root(
     target: np.ndarray,
     expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
     cell_kind: str,
     policy: MappedLocationPolicy,
+    lower: tuple[Fraction, ...],
+    upper: tuple[Fraction, ...],
+    rows: tuple[int, ...],
+    depth: int,
     /,
-) -> tuple[list[_InverseRoot], bool, bool]:
-    dimension = len(expressions[0][1])
-    padding = max(policy.reference_tolerance, policy.parameter_resolution)
-    lower = tuple(Fraction.from_float(-padding) for _ in range(dimension))
-    upper = tuple(Fraction.from_float(1.0 + padding) for _ in range(dimension))
+) -> _InverseRoot | _UnresolvedInverseBox | None:
+    """Contract one isolated root to the parameter resolution.
+
+    ``None`` means the unique root of the box lies outside the reference cell or
+    off the non-selected physical rows.
+    """
     reference_tolerance = Fraction.from_float(policy.reference_tolerance)
-    stack: list[tuple[_InverseBox, int]] = [((lower, upper), 0)]
-    roots: list[_InverseRoot] = []
-    unresolved = False
-    while stack:
-        (lower, upper), depth = stack.pop()
-        margin_lower, margin_upper = _reference_margin_bounds(
-            cell_kind, lower, upper
+    nonselected = tuple(row for row in range(len(expressions)) if row not in rows)
+    refinement_steps = 1
+    while True:
+        root_bounds = _box_expression_bounds(expressions, target, lower, upper)
+        if root_bounds is None:
+            return _UnresolvedInverseBox(
+                _InverseRefusal.UNBOUNDED_ENCLOSURE, lower, upper, ()
+            )
+        residual_bounds, _ = root_bounds
+        margin_lower, margin_upper = _reference_margin_bounds(cell_kind, lower, upper)
+        margin_inside = margin_lower >= -reference_tolerance
+        margin_outside = margin_upper < -reference_tolerance
+        residual_outside = any(
+            residual_bounds[row][0] > policy.residual_tolerance
+            or residual_bounds[row][1] < -policy.residual_tolerance
+            for row in nonselected
         )
-        if margin_upper < -reference_tolerance:
-            continue
-        status, root_lower, root_upper, rows = _krawczyk_box(
-            target, expressions, lower, upper, policy
+        residual_inside = all(
+            residual_bounds[row][0] >= -policy.residual_tolerance
+            and residual_bounds[row][1] <= policy.residual_tolerance
+            for row in nonselected
         )
-        if status == "excluded":
-            continue
-        if status == "isolated":
-            if root_lower is None or root_upper is None or rows is None:
-                unresolved = True
-                continue
-            root_box_lower, root_box_upper = root_lower, root_upper
-            refinement_steps = 1
-            while True:
-                root_bounds = _box_expression_bounds(
-                    expressions, target, root_box_lower, root_box_upper
-                )
-                if root_bounds is None:
-                    unresolved = True
-                    break
-                residual_bounds, _ = root_bounds
-                margin_lower, margin_upper = _reference_margin_bounds(
-                    cell_kind, root_box_lower, root_box_upper
-                )
-                margin_inside = margin_lower >= -reference_tolerance
-                margin_outside = margin_upper < -reference_tolerance
-                nonselected = tuple(
-                    row for row in range(len(expressions)) if row not in rows
-                )
-                residual_outside = any(
-                    residual_bounds[row][0] > policy.residual_tolerance
-                    or residual_bounds[row][1] < -policy.residual_tolerance
-                    for row in nonselected
-                )
-                residual_inside = all(
-                    residual_bounds[row][0] >= -policy.residual_tolerance
-                    and residual_bounds[row][1] <= policy.residual_tolerance
-                    for row in nonselected
-                )
-                width = max(
-                    float(last - first)
-                    for first, last in zip(
-                        root_box_lower, root_box_upper, strict=True
-                    )
-                )
-                center_fraction = tuple(
-                    (first + last) / 2
-                    for first, last in zip(
-                        root_box_lower, root_box_upper, strict=True
-                    )
-                )
-                reference = np.asarray(
-                    [float(value) for value in center_fraction],
-                    dtype=np.float64,
-                )
-                physical, jacobian = _map_values(expressions, reference)
-                residual = float(np.linalg.norm(physical - target))
-                if margin_inside and residual_inside and (
-                    width <= policy.parameter_resolution
-                    and np.isfinite(residual)
-                    and residual <= policy.residual_tolerance
-                ):
-                    singular_values = np.linalg.svd(jacobian, compute_uv=False)
-                    condition = (
-                        float(singular_values[0] / singular_values[-1])
-                        if singular_values.size
-                        and singular_values[-1] > np.finfo(np.float64).tiny
-                        else float("inf")
-                    )
-                    roots.append(
-                        _InverseRoot(
-                            reference,
-                            residual,
-                            depth + refinement_steps,
-                            condition,
-                            rows != tuple(range(dimension)),
-                            root_box_lower,
-                            root_box_upper,
-                            rows,
-                        )
-                    )
-                    break
-                if margin_outside or residual_outside:
-                    break
-                if width <= policy.parameter_resolution:
-                    unresolved = True
-                    break
-                refined, refined_lower, refined_upper, refined_rows = _krawczyk_box(
-                    target,
-                    expressions,
-                    root_box_lower,
-                    root_box_upper,
-                    policy,
-                    selected_rows=rows,
-                )
-                if (
-                    refined != "isolated"
-                    or refined_lower is None
-                    or refined_upper is None
-                    or refined_rows != rows
-                ):
-                    unresolved = True
-                    break
-                if refined_lower == root_box_lower and refined_upper == root_box_upper:
-                    unresolved = True
-                    break
-                root_box_lower, root_box_upper = refined_lower, refined_upper
-                refinement_steps += 1
-            continue
-        split = _split_reference_box(lower, upper, policy)
-        if split is None:
-            unresolved = True
-            continue
-        left, right = split
-        stack.extend(((right, depth + 1), (left, depth + 1)))
-    roots.sort(key=lambda root: tuple(float(value) for value in root.reference))
-    unique_roots: list[_InverseRoot] = []
-    duplicate_resolution = (
-        4.0 * np.sqrt(float(dimension)) * policy.parameter_resolution
+        width = max(float(last - first) for first, last in zip(lower, upper, strict=True))
+        reference = np.asarray(
+            [float((first + last) / 2) for first, last in zip(lower, upper, strict=True)],
+            dtype=np.float64,
+        )
+        physical, jacobian = _map_values(expressions, reference)
+        residual = float(np.linalg.norm(physical - target))
+        if (
+            margin_inside
+            and residual_inside
+            and (
+                width <= policy.parameter_resolution
+                and np.isfinite(residual)
+                and residual <= policy.residual_tolerance
+            )
+        ):
+            singular_values = np.linalg.svd(jacobian, compute_uv=False)
+            condition = (
+                float(singular_values[0] / singular_values[-1])
+                if singular_values.size
+                and singular_values[-1] > np.finfo(np.float64).tiny
+                else float("inf")
+            )
+            return _InverseRoot(
+                reference,
+                residual,
+                depth + refinement_steps,
+                condition,
+                rows != tuple(range(len(lower))),
+                lower,
+                upper,
+                rows,
+            )
+        if margin_outside or residual_outside:
+            return None
+        if width <= policy.parameter_resolution:
+            return _UnresolvedInverseBox(
+                _InverseRefusal.PARAMETER_RESOLUTION, lower, upper, ()
+            )
+        refined = _krawczyk_box(
+            target, expressions, lower, upper, policy, selected_rows=rows
+        )
+        if (
+            refined.status != "isolated"
+            or refined.lower is None
+            or refined.upper is None
+            or refined.rows != rows
+            or (refined.lower == lower and refined.upper == upper)
+        ):
+            return _UnresolvedInverseBox(
+                _InverseRefusal.ROOT_REFINEMENT_STALLED, lower, upper, ()
+            )
+        lower, upper = refined.lower, refined.upper
+        refinement_steps += 1
+
+
+def _merge_duplicate_roots(
+    target: np.ndarray,
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    policy: MappedLocationPolicy,
+    roots: list[_InverseRoot],
+    /,
+) -> tuple[list[_InverseRoot], list[_UnresolvedInverseBox]]:
+    """Merge roots found from adjacent boxes when one Krawczyk hull isolates them."""
+    dimension = len(expressions[0][1])
+    ordered = sorted(
+        roots, key=lambda root: tuple(float(value) for value in root.reference)
     )
-    for root in roots:
+    unique_roots: list[_InverseRoot] = []
+    unresolved: list[_UnresolvedInverseBox] = []
+    duplicate_resolution = 4.0 * np.sqrt(float(dimension)) * policy.parameter_resolution
+    for root in ordered:
         duplicate_index = next(
             (
                 index
@@ -711,9 +979,6 @@ def _isolate_inverse_roots(
             unique_roots.append(root)
             continue
         previous = unique_roots[duplicate_index]
-        if root.selected_rows != previous.selected_rows:
-            unresolved = True
-            continue
         hull_lower = tuple(
             min(first, second)
             for first, second in zip(
@@ -726,7 +991,14 @@ def _isolate_inverse_roots(
                 root.enclosure_upper, previous.enclosure_upper, strict=True
             )
         )
-        merged, merged_lower, merged_upper, merged_rows = _krawczyk_box(
+        if root.selected_rows != previous.selected_rows:
+            unresolved.append(
+                _UnresolvedInverseBox(
+                    _InverseRefusal.DUPLICATE_ROOT_UNMERGED, hull_lower, hull_upper, ()
+                )
+            )
+            continue
+        merged = _krawczyk_box(
             target,
             expressions,
             hull_lower,
@@ -735,12 +1007,17 @@ def _isolate_inverse_roots(
             selected_rows=root.selected_rows,
         )
         if (
-            merged != "isolated"
-            or merged_lower is None
-            or merged_upper is None
-            or merged_rows != root.selected_rows
+            merged.status != "isolated"
+            or merged.lower is None
+            or merged.upper is None
+            or merged.rows is None
+            or merged.rows != root.selected_rows
         ):
-            unresolved = True
+            unresolved.append(
+                _UnresolvedInverseBox(
+                    _InverseRefusal.DUPLICATE_ROOT_UNMERGED, hull_lower, hull_upper, ()
+                )
+            )
             continue
         chosen = root if root.residual < previous.residual else previous
         unique_roots[duplicate_index] = _InverseRoot(
@@ -749,12 +1026,91 @@ def _isolate_inverse_roots(
             chosen.steps,
             chosen.condition,
             chosen.fallback,
-            merged_lower,
-            merged_upper,
-            merged_rows,
+            merged.lower,
+            merged.upper,
+            merged.rows,
         )
-    ambiguous = len(unique_roots) > 1 and not unresolved
-    return unique_roots, not unresolved, ambiguous
+    return unique_roots, unresolved
+
+
+def _isolate_inverse_roots(
+    target: np.ndarray,
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    cell_kind: str,
+    policy: MappedLocationPolicy,
+    /,
+) -> _InverseIsolation:
+    """Isolate every exact inverse root of one cell or refuse with box evidence."""
+    dimension = len(expressions[0][1])
+    target_exact = tuple(Fraction.from_float(float(value)) for value in target)
+    padding = max(policy.reference_tolerance, policy.parameter_resolution)
+    lower = tuple(Fraction.from_float(-padding) for _ in range(dimension))
+    upper = tuple(Fraction.from_float(1.0 + padding) for _ in range(dimension))
+    reference_tolerance = Fraction.from_float(policy.reference_tolerance)
+    stack: list[tuple[_InverseBox, int]] = [((lower, upper), 0)]
+    roots: list[_InverseRoot] = []
+    unresolved: list[_UnresolvedInverseBox] = []
+    while stack:
+        (lower, upper), depth = stack.pop()
+        _, margin_upper = _reference_margin_bounds(cell_kind, lower, upper)
+        if margin_upper < -reference_tolerance:
+            continue
+        outcome = _krawczyk_box(target, expressions, lower, upper, policy)
+        match outcome.status:
+            case "excluded":
+                continue
+            case "isolated":
+                if outcome.lower is None or outcome.upper is None or outcome.rows is None:
+                    raise RuntimeError("Krawczyk isolation returned no root enclosure.")
+                refined = _refine_isolated_root(
+                    target,
+                    expressions,
+                    cell_kind,
+                    policy,
+                    outcome.lower,
+                    outcome.upper,
+                    outcome.rows,
+                    depth,
+                )
+                if isinstance(refined, _InverseRoot):
+                    roots.append(refined)
+                elif refined is not None:
+                    unresolved.append(refined)
+                continue
+            case "rootless" | "unresolved":
+                refusal = _tolerance_refusal(
+                    target,
+                    target_exact,
+                    expressions,
+                    cell_kind,
+                    lower,
+                    upper,
+                    outcome,
+                    policy,
+                )
+                if refusal is not None:
+                    unresolved.append(refusal)
+                    continue
+            case _:
+                assert_never(outcome.status)
+        split = _split_reference_box(lower, upper, policy)
+        if split is None:
+            unresolved.append(
+                _UnresolvedInverseBox(
+                    _InverseRefusal.PARAMETER_RESOLUTION, lower, upper, ()
+                )
+            )
+            continue
+        left, right = split
+        stack.extend(((right, depth + 1), (left, depth + 1)))
+    unique_roots, unmerged = _merge_duplicate_roots(target, expressions, policy, roots)
+    unresolved.extend(unmerged)
+    return _InverseIsolation(
+        tuple(unique_roots),
+        tuple(unresolved),
+        len(unique_roots) > 1 and not unresolved,
+    )
+
 
 @final
 class PreparedMappedCellMap(StrictModule, NonTrainableState):
@@ -790,7 +1146,9 @@ class PreparedMappedCellMap(StrictModule, NonTrainableState):
         block = mesh.blocks[block_index]
         element = elements[block_index]
         if not isinstance(element, ScalarCoordinateElement):
-            raise TypeError("Mapped cell maps require a supported scalar coordinate element.")
+            raise TypeError(
+                "Mapped cell maps require a supported scalar coordinate element."
+            )
         route = np.asarray(routes[block_index])
         if (
             route.ndim != 2
@@ -802,7 +1160,9 @@ class PreparedMappedCellMap(StrictModule, NonTrainableState):
             or np.any(route < 0)
             or np.any(route >= coordinates.shape[0])
         ):
-            raise ValueError("Mapped coordinate block does not match its mesh realization.")
+            raise ValueError(
+                "Mapped coordinate block does not match its mesh realization."
+            )
         self.coordinate_element = element
         self.coordinate_dofs = jnp.asarray(route)
         self.cell_count = block.cell_count
@@ -823,7 +1183,6 @@ class PreparedMappedCellMap(StrictModule, NonTrainableState):
                 "routes": array_tree_fingerprint(np.asarray(route)),
             }
         )
-
 
 
 @final
@@ -864,15 +1223,21 @@ class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
             if block.name == name
         )
         if len(matches) != 1:
-            raise ValueError("Owner-local mapped block name must identify one source block.")
+            raise ValueError(
+                "Owner-local mapped block name must identify one source block."
+            )
         block_index, block = matches[0]
         element = block.element
         if not isinstance(element, ScalarCoordinateElement):
-            raise TypeError("Owner-local mapped blocks require a scalar coordinate element.")
+            raise TypeError(
+                "Owner-local mapped blocks require a scalar coordinate element."
+            )
         base_routes = np.asarray(block.coordinate_routes, dtype=np.int32)
         identifiers = np.asarray(block.cell_ids, dtype=np.int64)
         base_coordinates = np.asarray(view.coordinates, dtype=np.float64)
-        base_exact = tuple(tuple(value for value in row) for row in view.exact_coordinates)
+        base_exact = tuple(
+            tuple(value for value in row) for row in view.exact_coordinates
+        )
         if (
             base_routes.ndim != 2
             or base_routes.shape != (identifiers.size, element.local_dof_count)
@@ -881,13 +1246,19 @@ class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
             or np.any(base_routes >= base_coordinates.shape[0])
             or element.cell_kind != block.cell_kind
         ):
-            raise ValueError("Owner-local mapped cell routes do not match their source block.")
+            raise ValueError(
+                "Owner-local mapped cell routes do not match their source block."
+            )
         if isinstance(element, PerCellRestrictedCellGeometryElement) and (
             element.target_cell_ids != tuple(int(value) for value in identifiers)
         ):
-            raise ValueError("Owner-local restricted charts must retain their stable target IDs.")
+            raise ValueError(
+                "Owner-local restricted charts must retain their stable target IDs."
+            )
         if not np.array_equal(np.asarray(base_exact, dtype=np.float64), base_coordinates):
-            raise ValueError("Owner-local exact source coefficients differ from their execution shadows.")
+            raise ValueError(
+                "Owner-local exact source coefficients differ from their execution shadows."
+            )
         routes = base_routes
         coordinates = base_coordinates
         exact = base_exact
@@ -898,10 +1269,18 @@ class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
             and identifiers.size
             and shifts is None
         ):
-            raise ValueError("Unlifted periodic mapped cells require absolute vertex shifts.")
-        if not view.coordinates_are_lifted and shifts is not None and shifts.shape[-1] > 0:
+            raise ValueError(
+                "Unlifted periodic mapped cells require absolute vertex shifts."
+            )
+        if (
+            not view.coordinates_are_lifted
+            and shifts is not None
+            and shifts.shape[-1] > 0
+        ):
             if view.periodic_lift_matrix is None:
-                raise ValueError("Unlifted periodic cell maps require the exact source lattice.")
+                raise ValueError(
+                    "Unlifted periodic cell maps require the exact source lattice."
+                )
             lattice = np.asarray(view.periodic_lift_matrix, dtype=np.float64)
             shifts_ = np.asarray(shifts, dtype=np.int64)
             vertex_count = len(reference_cell_topology(element.cell_kind).vertices)
@@ -959,7 +1338,9 @@ class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
             )
             exact = tuple(lifted_exact)
             if not np.array_equal(np.asarray(exact, dtype=np.float64), coordinates):
-                raise ValueError("Lifted exact source coefficients differ from their binary64 shadows.")
+                raise ValueError(
+                    "Lifted exact source coefficients differ from their binary64 shadows."
+                )
         reference_dimension = reference_cell_topology(element.cell_kind).dimension
         self.coordinate_element = element
         self.coordinate_dofs = jnp.asarray(routes)
@@ -1008,9 +1389,7 @@ class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
 
 
 type _MappedCellMap = (
-    PreparedFiniteElementCellMap
-    | PreparedMappedCellMap
-    | PreparedOwnerLocalMappedCellMap
+    PreparedFiniteElementCellMap | PreparedMappedCellMap | PreparedOwnerLocalMappedCellMap
 )
 
 
@@ -1036,7 +1415,9 @@ def _source_coefficients(
         if source_geometry is not None or not np.array_equal(
             np.asarray(cell_map.exact_coordinates, dtype=np.float64), coordinates
         ):
-            raise ValueError("Owner-local source coefficients do not match their compact map.")
+            raise ValueError(
+                "Owner-local source coefficients do not match their compact map."
+            )
         return cell_map.exact_coordinates, routes
     if source_geometry is None:
         return coordinates, routes
@@ -1044,31 +1425,47 @@ def _source_coefficients(
         source_geometry.geometry_layout_id != cell_map.geometry_layout_id
         or not np.array_equal(np.asarray(source_geometry.coordinates), coordinates)
     ):
-        raise ValueError("Mapped locator source geometry does not match its prepared cell map.")
-    if isinstance(cell_map, PreparedFiniteElementCellMap) and cell_map.block_index is None:
+        raise ValueError(
+            "Mapped locator source geometry does not match its prepared cell map."
+        )
+    if (
+        isinstance(cell_map, PreparedFiniteElementCellMap)
+        and cell_map.block_index is None
+    ):
         if cell_map.block_name != "whole-mesh" or any(
             element.element_id != cell_map.coordinate_element.element_id
             for element in source_geometry.elements
         ):
-            raise ValueError("Whole-mesh mapped locators require one source coordinate element identity.")
+            raise ValueError(
+                "Whole-mesh mapped locators require one source coordinate element identity."
+            )
         source_routes = np.concatenate(
-            tuple(np.asarray(route, dtype=np.int64) for route in source_geometry.geometry_dofs),
+            tuple(
+                np.asarray(route, dtype=np.int64)
+                for route in source_geometry.geometry_dofs
+            ),
             axis=0,
         )
     else:
         if source_geometry.block_names.count(cell_map.block_name) != 1:
-            raise ValueError("Mapped locator source geometry does not name its exact cell block.")
+            raise ValueError(
+                "Mapped locator source geometry does not name its exact cell block."
+            )
         index = source_geometry.block_names.index(cell_map.block_name)
-        if source_geometry.elements[index].element_id != cell_map.coordinate_element.element_id:
-            raise ValueError("Mapped locator source coordinate element differs from the prepared cell map.")
+        if (
+            source_geometry.elements[index].element_id
+            != cell_map.coordinate_element.element_id
+        ):
+            raise ValueError(
+                "Mapped locator source coordinate element differs from the prepared cell map."
+            )
         source_routes = np.asarray(source_geometry.geometry_dofs[index], dtype=np.int64)
     if not np.array_equal(source_routes, routes):
-        raise ValueError("Mapped locator source DOF routes differ from the prepared cell map.")
+        raise ValueError(
+            "Mapped locator source DOF routes differ from the prepared cell map."
+        )
     source_values = source_geometry.source_coordinates()
     return source_values, routes
-
-
-
 
 
 @final
@@ -1083,9 +1480,9 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
     cell_upper: Float[_MappedCellDim, _MappedAmbientDim]
     bvh: PackedBVH
     policy: MappedLocationPolicy
-    map_expressions: tuple[
-        tuple[tuple[Expression, tuple[Expression, ...]], ...], ...
-    ] = eqx.field(static=True)
+    map_expressions: tuple[tuple[tuple[Expression, tuple[Expression, ...]], ...], ...] = (
+        eqx.field(static=True)
+    )
     locator_id: str = eqx.field(static=True)
     source_binding_id: str = eqx.field(static=True)
 
@@ -1136,7 +1533,9 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
         element = cell_map.coordinate_element
         domain = reference_domain(element.cell_kind)
         source_values, routes = _source_coefficients(cell_map, values, source_geometry)
-        lower = np.empty((cell_map.cell_count, cell_map.ambient_dimension), dtype=np.float64)
+        lower = np.empty(
+            (cell_map.cell_count, cell_map.ambient_dimension), dtype=np.float64
+        )
         upper = np.empty_like(lower)
         expressions = []
         for cell, route in enumerate(routes):
@@ -1145,7 +1544,11 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
                 if isinstance(source_values, tuple)
                 else np.asarray(source_values, dtype=np.float64)[route]
             )
-            row = cell if isinstance(element, PerCellRestrictedCellGeometryElement) else None
+            row = (
+                cell
+                if isinstance(element, PerCellRestrictedCellGeometryElement)
+                else None
+            )
             cell_map_expression = _cell_expressions(
                 element, local, row, cell_map.reference_dimension
             )
@@ -1153,11 +1556,17 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
                 coordinate_map_bounds(element, local, domain, cell_row=row),
                 dtype=np.float64,
             )
-            if bounds.shape != (cell_map.ambient_dimension, 2) or np.any(~np.isfinite(bounds)):
-                raise ValueError("Mapped locator requires finite whole-cell source enclosures.")
+            if bounds.shape != (cell_map.ambient_dimension, 2) or np.any(
+                ~np.isfinite(bounds)
+            ):
+                raise ValueError(
+                    "Mapped locator requires finite whole-cell source enclosures."
+                )
             lower[cell], upper[cell] = bounds[:, 0], bounds[:, 1]
             expressions.append(cell_map_expression)
-        padding = policy_.residual_tolerance * np.maximum(1.0, np.maximum(np.abs(lower), np.abs(upper)))
+        padding = policy_.residual_tolerance * np.maximum(
+            1.0, np.maximum(np.abs(lower), np.abs(upper))
+        )
         lower = np.nextafter(lower - padding, -np.inf)
         upper = np.nextafter(upper + padding, np.inf)
         if np.any(lower > upper):
@@ -1183,7 +1592,11 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
             }
         )
         self.locator_id = canonical_fingerprint(
-            {"kind": "prepared-mapped-cell-locator", "source": self.source_binding_id, "policy": policy_.policy_id}
+            {
+                "kind": "prepared-mapped-cell-locator",
+                "source": self.source_binding_id,
+                "policy": policy_.policy_id,
+            }
         )
 
     def inverse_jacobian(
@@ -1205,9 +1618,15 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
             or np.any(cells >= self.cell_map.cell_count)
             or np.any(~np.isfinite(references))
         ):
-            raise ValueError("Mapped inverse Jacobian routes do not match their cell map.")
+            raise ValueError(
+                "Mapped inverse Jacobian routes do not match their cell map."
+            )
         inverse = np.empty(
-            (cells.size, self.cell_map.reference_dimension, self.cell_map.ambient_dimension),
+            (
+                cells.size,
+                self.cell_map.reference_dimension,
+                self.cell_map.ambient_dimension,
+            ),
             dtype=np.float64,
         )
         for row, cell in enumerate(cells):
@@ -1230,10 +1649,16 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
         return jnp.asarray(inverse, dtype=self.coordinates.dtype)
 
     def locate(
-        self, points: ConvertibleToArray, /, *, cell_mask: ConvertibleToArray | None = None
+        self,
+        points: ConvertibleToArray,
+        /,
+        *,
+        cell_mask: ConvertibleToArray | None = None,
     ) -> CellLocationResult:
         if isinstance(points, Tracer):
-            raise TypeError("Mapped cell location is a host preparation query, not a traced operation.")
+            raise TypeError(
+                "Mapped cell location is a host preparation query, not a traced operation."
+            )
         values = np.asarray(points, dtype=np.float64)
         if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
             raise ValueError("Locator points have incompatible physical dimensions.")
@@ -1241,7 +1666,9 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
             mask = np.ones((self.cell_map.cell_count,), dtype=np.bool_)
         else:
             mask = np.asarray(cell_mask)
-            if mask.shape != (self.cell_map.cell_count,) or mask.dtype != np.dtype(np.bool_):
+            if mask.shape != (self.cell_map.cell_count,) or mask.dtype != np.dtype(
+                np.bool_
+            ):
                 raise ValueError("cell_mask must contain one boolean per mapped cell.")
         count = values.shape[0]
         finite = np.all(np.isfinite(values), axis=1)
@@ -1269,19 +1696,28 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
             for cell in candidate_rows[candidate_valid]:
                 if not mask[cell]:
                     continue
-                roots, resolved, multi_root = _isolate_inverse_roots(
+                isolation = _isolate_inverse_roots(
                     target,
                     self.map_expressions[int(cell)],
                     self.cell_map.coordinate_element.cell_kind,
                     self.policy,
                 )
-                if not resolved:
+                # Undecided regions keep their box evidence in the isolation outcome; the
+                # location contract reports them as an exhausted inverse map.
+                if isolation.unresolved:
                     complete[point_index] = False
-                ambiguous[point_index] |= multi_root
-                hits.extend((int(cell), root) for root in roots)
-            hits.sort(key=lambda item: (item[0], tuple(float(value) for value in item[1].reference)))
+                ambiguous[point_index] |= isolation.ambiguous
+                hits.extend((int(cell), root) for root in isolation.roots)
+            hits.sort(
+                key=lambda item: (
+                    item[0],
+                    tuple(float(value) for value in item[1].reference),
+                )
+            )
             if len(hits) > np.iinfo(np.int32).max:
-                raise OverflowError("Mapped inverse candidates exceed the CellLocationResult int32 row index.")
+                raise OverflowError(
+                    "Mapped inverse candidates exceed the CellLocationResult int32 row index."
+                )
             located_rows.append(hits)
         width = max((len(rows) for rows in located_rows), default=0)
         candidate_cells = np.full((count, width), -1, dtype=np.int32)
@@ -1310,21 +1746,15 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
                     iterations[point_index] = root.steps
                     condition[point_index] = root.condition
                     used_fallback[point_index] = root.fallback
-        candidate_count = np.asarray(
-            [len(rows) for rows in located_rows], dtype=np.int32
-        )
+        candidate_count = np.asarray([len(rows) for rows in located_rows], dtype=np.int32)
         inside = (
-            (candidate_count > 0)
-            & complete
-            & search_complete_all
-            & finite
-            & ~ambiguous
+            (candidate_count > 0) & complete & search_complete_all & finite & ~ambiguous
         )
         resolved_ambiguous = ambiguous & complete & search_complete_all & finite
-        cell_ids = np.where(
-            inside, candidate_cells[:, 0] if width else -1, -1
+        cell_ids = np.where(inside, candidate_cells[:, 0] if width else -1, -1)
+        references = np.zeros(
+            (count, self.cell_map.reference_dimension), dtype=np.float64
         )
-        references = np.zeros((count, self.cell_map.reference_dimension), dtype=np.float64)
         barycentric = np.zeros((count, reference_vertex_count), dtype=np.float64)
         if width:
             references[inside] = candidate_reference[inside, 0]

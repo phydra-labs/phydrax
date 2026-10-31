@@ -2765,10 +2765,20 @@ def _finite_element_execution_basis(
         raise ValueError("Finite-element spec has no implemented native tabulator.")
 
 
+# Root execution bases keyed by element type and content identity, like
+# `_SOURCE_BASES`; each is formed once per process.
+_EXECUTION_BASES: dict[tuple[str, str], tuple[Expression, ...]] = {}
+
+
 def coordinate_execution_source_basis(
     element: ScalarCoordinateElement, /, *, cell_row: int | None = None
 ) -> tuple[Expression, ...]:
-    """Return the native coefficient-shadow basis before reference composition."""
+    """Return the native coefficient-shadow basis before reference composition.
+
+    The root basis depends only on the element's content identity, so it is
+    formed once per element; every caller receives its own polynomial
+    dictionaries.
+    """
     if isinstance(
         element,
         PerCellRestrictedCellGeometryElement
@@ -2778,6 +2788,18 @@ def coordinate_execution_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_execution_source_basis(element.source_element)
+    identity = getattr(element, "element_id", None)
+    if not isinstance(identity, str):
+        return _root_execution_basis(element)
+    key = (type(element).__name__, identity)
+    basis = _EXECUTION_BASES.get(key)
+    if basis is None:
+        basis = _root_execution_basis(element)
+        _EXECUTION_BASES[key] = basis
+    return tuple(dict(value) if isinstance(value, dict) else value for value in basis)
+
+
+def _root_execution_basis(element: ScalarCoordinateElement, /) -> tuple[Expression, ...]:
     if isinstance(element, SplineCellGeometryElement):
         variables = axes(2)
         one = constant(1, 2)

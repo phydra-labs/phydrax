@@ -309,11 +309,39 @@ coordinates) into interior faces. A periodic part therefore has no physical
 boundary faces: `__physical_boundary__` is empty, and only artificial halo cuts
 stay open. `periodic_face_translations` records, per FV face, the translation
 from the owner's frame to the neighbour's lifted frame (zero off the seams).
-`face_topology_ids` maps FV faces back to the lifted connectivity. Owner/neighbour
-fluxes are exact across seams. Operators that need both sides of a face in one
-embedding refuse a joined seam explicitly. These are cell-polynomial and WENO
-stencils, unstructured viscous terms, continuous ALE stage geometry, and side
-traces on seam facets.
+`face_topology_ids` maps FV faces back to the lifted connectivity, and
+`neighbor_face_topology_ids` names the unwelded twin face the neighbour holds.
+Every operator works in the frame of the cell it evaluates:
+
+- Cell-polynomial and WENO stencils are built from cell images. A stencil
+  member is a `(cell, lattice image)` pair, and `stencil_images` translates
+  each member beside its centre cell. A periodic cell reached at two images is
+  two members, exactly as in the periodic tiling. Within each ring, members
+  are ordered by image (the identity first), then by cell index.
+  Neighbour-side traces, both static (`reconstruct_at`) and stage-evaluated
+  (moving reconstruction), are taken at the face points translated into the
+  neighbour's frame (`neighbor_side_points`).
+- Unstructured viscous gradients and the viscous stability bound take a seam
+  neighbour's centre at its lattice image beside the owner.
+- Side traces publish shared facet sites in the owner's frame. A seam
+  neighbour's trace reads its twin facet, oriented by the twin's vertex
+  parity, and evaluates at those sites translated into its own frame.
+- Continuous ALE (`FixedConnectivityMotionPlan`) evaluates the geometry on
+  every lifted face and reduces it to the joined faces. The prescribed motion
+  must be translation equivariant: each seam twin vertex stays its partner's
+  lattice translate and moves with the same velocity. Otherwise the stage
+  geometry is invalid, and a host epoch
+  (`UnstructuredFiniteVolumePlan.with_periodic_seam_vertices`) refuses it.
+  Routed interior motion (`motion_policy` with a non-`PRESCRIBED` route) is
+  solved on the periodic quotient: the FE extension
+  (`FiniteElementMotionExtension(periodic_vertex_pairs=...)`) gives each seam
+  twin class one displacement unknown, keeps the lifted cell geometry in its
+  element tensors, and counts lattice copies of a seam edge once. Moved twins
+  stay exact lattice copies, so a moving obstacle inside a periodic box drives
+  the whole quotient mesh and the ALE GCL holds by construction.
+
+Each operator is regression-tested against the same serial operator on a
+5×5 tiling of the single-owner periodic patch, comparing the central rows.
 
 ```python
 plan = phx.discretization.finite_volume.prepare_owner_local_conservative_remap(
