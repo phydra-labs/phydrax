@@ -5104,13 +5104,17 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
     manifest, arrays = read_array_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     manifest.pop("arrays")
     _register_model_archive_types()
+    # Tamper a transfer-map coefficient: the entry evidence binds it. Space
+    # pairings also carry coefficient leaves, so select the map path exactly.
     coefficient_leaf = next(
         (
             entry
             for entry in model_recipe_array_inventory(
                 manifest["model_recipe"], prefix="model/leaves", limits=None
             )
-            if "coefficients" in entry.path and arrays[entry.name].size
+            if entry.path.startswith(".complex_map.maps[")
+            and entry.path.endswith("].coefficients")
+            and arrays[entry.name].size
         ),
         None,
     )
