@@ -15,7 +15,10 @@ from jax import Array
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import TensorGridPlan, UniformAxisSpec
+from phydrax.discretization._cell_geometry import CellGeometrySpec
+from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import (
+    CellMesh,
     SimplicialConnectivity,
     TetrahedralConnectivity,
 )
@@ -41,6 +44,9 @@ from phydrax.geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayCoverageUnavailable,
     validate_restricted_delaunay_boundary_witness,
 )
+from phydrax.geometry.implicit._source_charts import (
+    prepare_adaptive_implicit_root_charts,
+)
 from phydrax.meshing._association import GeometryAssociationKind
 from phydrax.meshing._audit import _boundary_issues
 from phydrax.meshing._contracts import (
@@ -60,11 +66,15 @@ from phydrax.meshing._implicit_volume import (
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
-from phydrax.meshing.providers._native_implicit import prepare_native_implicit
+from phydrax.meshing.providers._native_implicit import (
+    _NativeImplicitBoundaryQuery,
+    prepare_native_implicit,
+)
 from phydrax.meshing.providers._native_options import (
     NativeMeshingOptions,
     NativeMeshingRoute,
 )
+from phydrax.meshing.providers._native_plc_geometry import volume_cell_entity_rows
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
 
 
@@ -624,6 +634,171 @@ def test_native_implicit_volume_route_builds_region_mesh(
         for association in construction.organization.associations
     )
     assert construction.compliance.passed
+
+
+def _adaptive_volume_construction(
+    schedule: NativeVolumeSchedule, /
+) -> tuple[NativeMeshConstruction, AdaptiveImplicitSurface]:
+    geometry, grid = _geometry_and_grid()
+    policy = AdaptiveImplicitSurfacePolicy(
+        relative_cell_diameter=0.08, root_tolerance=1.0e-8
+    )
+    discovery = discover_adaptive_implicit_surface(
+        geometry, domain=_grid_domain(grid), policy=policy, source_id="sheet-sphere"
+    )
+    # The sphere distance field is singular at its centre; the exact profile
+    # proves that singular set lies away from the zero-set cover.
+    profile = AnalyticImplicitProfile(
+        geometry,
+        SpatialCoordinateContract.si(),
+        source_id="sheet-sphere",
+        source_revision="r1",
+    )
+    source = NativeImplicitSource(
+        geometry, "sheet-sphere", "r1", discovery=discovery, authoring_profile=profile
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        MeshingScope(
+            source.source_id,
+            source.source_revision,
+            MeshingEntityKind.GEOMETRY,
+            2,
+            source.scope_entity_set_id(2),
+            source.scope_entity_ids(2),
+        ),
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=0.8,
+    )
+    options = NativeMeshingOptions(
+        "implicit_adaptive_tetrahedral", implicit_policy=policy, volume_schedule=schedule
+    )
+    construction = prepare_native_implicit(
+        source, specification, options, SpatialCoordinateContract.si()
+    ).execute()
+    return construction, discovery
+
+
+def test_native_implicit_carrier_remesh_reports_fixed_fill_quality() -> None:
+    construction, _ = _adaptive_volume_construction(NativeVolumeSchedule())
+    achieved = dict(construction.compliance.achieved)
+
+    # The scaffold carrier cannot meet the FIXED-fill bound; the remesh can.
+    assert achieved["carrier_remeshed"] == 1.0
+    assert achieved["carrier_maximum_radius_edge_ratio_before"] > 2.0
+    assert achieved["carrier_maximum_radius_edge_ratio_after"] <= 2.0
+    assert (
+        achieved["carrier_minimum_angle_degrees_after"]
+        > achieved["carrier_minimum_angle_degrees_before"]
+    )
+    assert achieved["source_fidelity_bound"] <= 0.8
+    assert construction.compliance.passed
+
+
+def _duplicated_sheet(
+    construction: NativeMeshConstruction, /
+) -> tuple[CellMesh, CellGeometrySpec, SourceBoundaryChartWitness]:
+    """The volume twice over (disjoint coincident copies) and its doubled witness."""
+    mesh = construction.mesh
+    witness = construction.certification.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    block = mesh.blocks[0]
+    cells = np.asarray(block.vertices, dtype=np.int64)
+    doubled = CellMesh.from_tetrahedra(
+        np.concatenate((coordinates, coordinates)),
+        np.concatenate((cells, cells + coordinates.shape[0])),
+    )
+    doubled_geometry = CellGeometrySpec.affine(doubled)
+    reference = reference_cell_topology(block.cell_kind)
+    target = reference_cell_topology(doubled.blocks[0].cell_kind)
+    target_vertices = np.asarray(target.vertices, dtype=np.float64)
+    target_faces = tuple(tuple(int(v) for v in face) for face in target.entities[2])
+    row_of_cell = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64))
+    }
+    doubled_ids = np.asarray(doubled.blocks[0].global_ids, dtype=np.int64)
+    _, cell_faces = volume_cell_entity_rows(doubled, doubled_ids)
+    face_ids = np.asarray(doubled.entity_set(2).entity_ids, dtype=np.int64)
+    columns: dict[str, list[object]] = {
+        "cells": [],
+        "entities": [],
+        "locals": [],
+        "references": [],
+    }
+    for copy in range(2):
+        for row in range(witness.cell_global_ids.size):
+            cell_row = row_of_cell[int(witness.cell_global_ids[row])]
+            # Cell-local vertex slots of the witnessed face corners, in order.
+            slots = tuple(
+                int(
+                    np.flatnonzero(
+                        np.all(
+                            np.asarray(reference.vertices, dtype=np.float64)
+                            == corner[None, :],
+                            axis=1,
+                        )
+                    )[0]
+                )
+                for corner in np.asarray(witness.target_reference_vertices[row])
+            )
+            local = next(
+                index
+                for index, face in enumerate(target_faces)
+                if set(face) == set(slots)
+            )
+            doubled_row = cell_row + copy * cells.shape[0]
+            columns["cells"].append(int(doubled_ids[doubled_row]))
+            columns["entities"].append(int(face_ids[cell_faces[doubled_row, local]]))
+            columns["locals"].append(local)
+            columns["references"].append(target_vertices[list(slots)])
+    doubled_witness = SourceBoundaryChartWitness(
+        mesh_id=doubled.mesh_id,
+        geometry_id=cell_geometry_id(doubled_geometry),
+        topology_id=doubled.topology_id,
+        source_id=witness.source_id,
+        source_revision=witness.source_revision,
+        source_query_id=witness.source_query_id,
+        chart_dimension=2,
+        reference_dimension=3,
+        cell_global_ids=np.asarray(columns["cells"], dtype=np.int64),
+        entity_global_ids=np.asarray(columns["entities"], dtype=np.int64),
+        local_entity_indices=np.asarray(columns["locals"], dtype=np.int32),
+        target_reference_vertices=np.asarray(columns["references"], dtype=np.float64),
+        source_chart_ids=witness.source_chart_ids * 2,
+        source_entity_ids=witness.source_entity_ids * 2,
+        occurrence_paths=witness.occurrence_paths * 2,
+        source_parameters=np.concatenate((np.asarray(witness.source_parameters),) * 2),
+        orientations=np.concatenate((np.asarray(witness.orientations),) * 2),
+        implicit_cell_keys=np.concatenate((np.asarray(witness.implicit_cell_keys),) * 2),
+        implicit_root_edge_keys=np.concatenate(
+            (np.asarray(witness.implicit_root_edge_keys),) * 2
+        ),
+    )
+    return doubled, doubled_geometry, doubled_witness
+
+
+def test_implicit_boundary_degree_refuses_a_duplicated_sheet() -> None:
+    # A scaffold carrier within the bound keeps its one-to-one charts; its
+    # coincident copy turns every witnessed face into a second sheet.
+    construction, _ = _adaptive_volume_construction(
+        NativeVolumeSchedule(radius_edge_bound=8.0, minimum_dihedral_degrees=0.0)
+    )
+    source = construction.certification.fidelity_source
+    assert isinstance(source, _NativeImplicitBoundaryQuery)
+
+    doubled, doubled_geometry, doubled_witness = _duplicated_sheet(construction)
+    with pytest.raises(ValueError, match="duplicates an exact scaffold triangle"):
+        prepare_adaptive_implicit_root_charts(
+            doubled,
+            doubled_geometry,
+            source,
+            doubled_witness,
+            tolerance=0.8,
+            maximum_normal_deviation=np.pi,
+        )
 
 
 def _octahedral_surface(
