@@ -18,6 +18,7 @@ from phydrax._model._structure import (
     model_from_structure_recipe,
     model_recipe_array_inventory,
     model_structure_recipe,
+    ParametricCurveBoundarySourceArchiveRecipe,
 )
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.exterior import FormType, FormValueSpec
@@ -34,6 +35,7 @@ from phydrax.meshing._model_codec import (
     read_model_archive,
     write_model_archive,
 )
+from phydrax.meshing._quality import CellQualityReportArchiveRecipe
 
 
 _WORKER = Path(__file__).with_name("_native_cad_archive_worker.py")
@@ -1459,7 +1461,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
             sys.executable,
             str(_WORKER),
             "read-mapped-reference-boundary-query",
-            str(source),
+            str(tmp_path),
             json.dumps(expected),
         ],
         cwd=_REPOSITORY_ROOT,
@@ -1494,7 +1496,9 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
     assert recipe is not None
     stored_query_id = recipe["items"][3]["value"]
     recipe["items"][3]["value"] = "0" * 64 if stored_query_id != "0" * 64 else "1" * 64
-    corrupted = tmp_path / "changed-mapped-reference-boundary-query.phx"
+    corrupted_directory = tmp_path / "changed-mapped-reference-boundary-query"
+    corrupted_directory.mkdir()
+    corrupted = corrupted_directory / "mapped-reference-boundary-query.phx"
     write_model_archive(
         corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
     )
@@ -1503,7 +1507,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
             sys.executable,
             str(_WORKER),
             "read-mapped-reference-boundary-query",
-            str(corrupted),
+            str(corrupted_directory),
             json.dumps(expected),
         ],
         cwd=_REPOSITORY_ROOT,
@@ -1540,7 +1544,9 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
     authority["items"][6]["value"] = (
         "0" * 64 if stored_relation_id != "0" * 64 else "1" * 64
     )
-    changed_relation = tmp_path / "changed-mapped-reference-root-relation.phx"
+    relation_directory = tmp_path / "changed-mapped-reference-root-relation"
+    relation_directory.mkdir()
+    changed_relation = relation_directory / "mapped-reference-boundary-query.phx"
     write_model_archive(
         changed_relation, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
     )
@@ -1549,7 +1555,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
             sys.executable,
             str(_WORKER),
             "read-mapped-reference-boundary-query",
-            str(changed_relation),
+            str(relation_directory),
             json.dumps(expected),
         ],
         cwd=_REPOSITORY_ROOT,
@@ -2642,10 +2648,12 @@ def test_parametric_curve_query_archive_rebuilds_source_in_a_cold_process(
         if entry["fields"]["entry_id"]["value"] == "geometry/curve-query"
     )
     query_recipe = query_entry["fields"]["value"]
-    revision = query_recipe["fields"]["source_revision"]["value"]
-    query_recipe["fields"]["source_revision"]["value"] = (
-        "0" * 64 if revision != "0" * 64 else "1" * 64
-    )
+    assert query_recipe["kind"] == "namedtuple"
+    revision_node = query_recipe["items"][
+        ParametricCurveBoundarySourceArchiveRecipe._fields.index("source_revision")
+    ]
+    revision = revision_node["value"]
+    revision_node["value"] = "0" * 64 if revision != "0" * 64 else "1" * 64
     corrupted = corrupt_directory / "parametric-curve-query.phx"
     write_model_archive(
         corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
@@ -3166,7 +3174,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
         while pending:
             current = pending.pop()
             if isinstance(current, dict):
-                if current.get("kind") == "dataclass" and str(
+                if current.get("kind") == "namedtuple" and str(
                     current.get("type", "")
                 ).endswith(":CellQualityReportArchiveRecipe"):
                     found.append(current)
@@ -3181,8 +3189,9 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
 
     stored_quality_recipes = quality_recipes(quality_manifest["model_recipe"])
     assert stored_quality_recipes
+    minimum_index = CellQualityReportArchiveRecipe._fields.index("minimum_measure")
     for quality_recipe in stored_quality_recipes:
-        minimum_measure = quality_recipe["fields"]["minimum_measure"]
+        minimum_measure = quality_recipe["items"][minimum_index]
         assert minimum_measure["kind"] == "literal"
         assert type(minimum_measure["value"]) in (int, float)
         assert np.isfinite(minimum_measure["value"])
@@ -4988,7 +4997,9 @@ def test_reference_chart_rational_archive_rejects_tampered_expression(
     )
     expected = json.loads(written.stdout)
     source = tmp_path / "reference-chart-arguments.phx"
-    corrupted = tmp_path / "changed-reference-chart-arguments.phx"
+    corrupted_directory = tmp_path / "changed-reference-chart-arguments"
+    corrupted_directory.mkdir()
+    corrupted = corrupted_directory / "reference-chart-arguments.phx"
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
     def find_rational(node: object) -> dict[str, Any] | None:
@@ -5019,7 +5030,7 @@ def test_reference_chart_rational_archive_rejects_tampered_expression(
             sys.executable,
             str(_WORKER),
             "read-reference-chart-arguments",
-            str(corrupted),
+            str(corrupted_directory),
             json.dumps(expected),
         ],
         cwd=_REPOSITORY_ROOT,
