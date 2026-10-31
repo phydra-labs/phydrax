@@ -80,7 +80,10 @@ double numpy_maximum(double first, double second) {
   return first > second ? first : second;
 }
 
-double endpoint_product(double first, double second) { return first * second; }
+double endpoint_product(double first, double second) {
+  if ((first == 0.0 && std::isinf(second)) || (std::isinf(first) && second == 0.0)) return 0.0;
+  return first * second;
+}
 
 bool phase_inside(double lower, double upper, double phase) {
   const double slack = 8.0 * kEpsilon * numpy_maximum(1.0, std::fabs(lower));
@@ -300,6 +303,23 @@ void arithmetic_and_reductions() {
   PHX_CHECK(same(same_subtract.lower[result], 0.0) && same(same_subtract.upper[result], 0.0));
   PHX_CHECK(same(same_subtract.lower[result + 1], -kInfinity));
   PHX_CHECK(same(same_subtract.upper[result + 1], kInfinity));
+}
+
+// An exact zero endpoint times an unbounded side contributes 0 (IEEE 1788),
+// matching the host interval multiply: [0, 0] * [1, inf] stays a tight
+// enclosure of 0 and [0, 1] * [1, inf] = [0, inf] up to outward rounding,
+// instead of the whole line from 0 * inf = NaN.
+void zero_times_unbounded_multiply() {
+  Program program;
+  const std::int64_t a = program.values({{0.0, 0.0}, {0.0, 1.0}, {-kInfinity, 0.0}, {kNaN, kNaN}});
+  const std::int64_t b = program.values({{1.0, kInfinity}, {1.0, kInfinity}, {0.0, 0.0}, {0.0, kInfinity}});
+  const std::int64_t out = program.slots(4);
+  program.row(kMultiply, out, 4, a, -1, b, -1, 0);
+  check_reference(program);
+  PHX_CHECK(same(program.lower[out], -kSmallest) && same(program.upper[out], kSmallest));
+  PHX_CHECK(same(program.lower[out + 1], -kSmallest) && same(program.upper[out + 1], kInfinity));
+  PHX_CHECK(same(program.lower[out + 2], -kSmallest) && same(program.upper[out + 2], kSmallest));
+  PHX_CHECK(same(program.lower[out + 3], -kInfinity) && same(program.upper[out + 3], kInfinity));
 }
 
 void trigonometric_enclosures() {
@@ -542,6 +562,7 @@ void floating_point_modes() {
 
 int main() {
   arithmetic_and_reductions();
+  zero_times_unbounded_multiply();
   trigonometric_enclosures();
   unary_interval_enclosures();
   interval_capability_query();
