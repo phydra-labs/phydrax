@@ -848,6 +848,16 @@ edge orbits flip across the seam. When the route stalls it refuses with
 `MeshingFailureEvidence` holds each remaining edge's metric length and refusal
 reasons.
 
+Exact periodic proofs use the quotient chart: a lifted vertex's exact position
+is its root's exact position translated exactly by its deck winding, and the
+binary64 carrier holds the canonical rounding of that translate. Orbit-locked
+bisection on a non-dyadic lattice can create midpoints that are not binary64;
+its target is then published on the lifted vertex-indexed P1 carrier with an
+`ExactPlcCellGeometrySource` bank of the exact midpoints, which the target's
+`PeriodicMeshTopology` accepts as its exact coordinate witness. Certify or
+distribute the adaptation result itself: re-certifying the bare target mesh
+drops that bank.
+
 Every owner-local periodic view retains the exact `specification_id`, including
 nonadaptive periodic-power views. Cold reattachment requires the archived typed
 surface/volume request to match; a map/context fingerprint cannot substitute for
