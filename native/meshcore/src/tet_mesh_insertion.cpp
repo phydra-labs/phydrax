@@ -1981,6 +1981,28 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   }
 
 
+  // Relocations of lifted periodic orbits revalidate cover facets modulo the
+  // lattice action: a seam facet stays valid when its deck partner does.
+  const PeriodicMemberIndex seam_members =
+      relocation ? mesh.periodic_member_index() : PeriodicMemberIndex{};
+  // A boundary vertex without a source witness may move only as a whole orbit
+  // member that lies on no constrained segment and only on periodic seams; in
+  // the quotient it is interior.
+  const auto periodic_seam_vertex = [&](std::uint64_t id) {
+    if (!seam_members.contains(id)) return false;
+    for (const TetSnapshotSegment& segment : mesh.segments_) {
+      if (segment.vertices[0] == id || segment.vertices[1] == id) return false;
+    }
+    bool incident = false;
+    for (const TetSnapshotFacet& facet : mesh.facets_) {
+      if (std::find(facet.vertices.begin(), facet.vertices.end(), id) == facet.vertices.end()) {
+        continue;
+      }
+      if (!mesh.periodic_seam_facet(facet, seam_members)) return false;
+      incident = true;
+    }
+    return incident;
+  };
   std::unordered_set<std::uint64_t> changed_vertex_ids;
   std::vector<std::int32_t> moved_vertex_slots;
   std::size_t new_count = 0;
@@ -2000,7 +2022,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         return TetEditStatus::kRejectedProtected;
       }
       if (mesh.vertex_dimension(current_slot) < 3 &&
-          mesh.witness(current_slot).stratum == SourceStratum::kNone) {
+          mesh.witness(current_slot).stratum == SourceStratum::kNone &&
+          !periodic_seam_vertex(vertex.id)) {
         return TetEditStatus::kUncertainPredicate;
       }
       if (vertex.protected_vertex != mesh.protected_vertex(current_slot) ||
@@ -2314,7 +2337,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       check.vertices = facet.vertices;
       check.source = facet.source;
       check.orientation = facet.orientation;
-      if (!mesh.source_face_valid(check)) return TetEditStatus::kUncertainPredicate;
+      if (!mesh.periodic_seam_facet(facet, seam_members) && !mesh.source_face_valid(check)) {
+        return TetEditStatus::kUncertainPredicate;
+      }
     }
     for (const TetSnapshotSegment& segment : mesh.segments_) {
       const bool affected = std::any_of(

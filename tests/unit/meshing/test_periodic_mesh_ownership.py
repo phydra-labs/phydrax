@@ -1551,6 +1551,10 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
             [coordinate_row_by_id[int(identifier)] for identifier in member_ids],
             dtype=np.int64,
         )
+        # A relocation names its star: every lifted cell incident to the orbit.
+        star_ids = np.asarray(block.global_ids, dtype=np.int64)[
+            np.isin(cell_vertices, changed_rows).any(axis=1)
+        ]
         native_operation = TetMeshEdit(
             TetMeshEditKind.RELOCATE,
             native.generation,
@@ -1558,6 +1562,7 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
             source_revision=native.source_revision,
             source_map_id=native.source_map_id,
             frame_id=native.frame_id,
+            removed_cell_ids=star_ids,
             changed_vertex_ids=member_ids,
             changed_vertex_points=target_coordinates[changed_rows],
             periodic=native_edit,
