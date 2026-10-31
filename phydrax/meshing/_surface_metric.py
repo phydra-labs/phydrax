@@ -1235,9 +1235,35 @@ def _edge_counts(cells: np.ndarray, /) -> dict[tuple[int, int], int]:
     return counts
 
 
+def _edge_projection_stencil(
+    source: SurfaceMetricSource,
+    edge: tuple[int, ...],
+    shadow: np.ndarray,
+    /,
+) -> _WorkStencil:
+    """Exact convex weights of a shadow's orthogonal projection onto one chart edge."""
+    first = source.work_vertex_charts[edge[0]]
+    second = source.work_vertex_charts[edge[1]]
+    point = (
+        Fraction.from_float(float(shadow[0])),
+        Fraction.from_float(float(shadow[1])),
+    )
+    direction = (second[0] - first[0], second[1] - first[1])
+    parameter = (
+        (point[0] - first[0]) * direction[0] + (point[1] - first[1]) * direction[1]
+    ) / (direction[0] * direction[0] + direction[1] * direction[1])
+    parameter = min(max(parameter, Fraction(0)), Fraction(1))
+    return tuple(
+        (row, weight)
+        for row, weight in zip(edge, (1 - parameter, parameter), strict=True)
+        if weight
+    )
+
+
 def _parent_face_stencils(
     source: SurfaceMetricSource,
     stencils: list[_WorkStencil],
+    coordinates: np.ndarray,
     target_cells: np.ndarray,
     cell_parents: tuple[tuple[int, ...], ...],
     /,
@@ -1248,9 +1274,11 @@ def _parent_face_stencils(
     split point of a source interface or chart-boundary edge can round off that
     edge. Its exact point must lie in the closure of every incident target
     cell's parent source cell, and on a source boundary edge when it bounds the
-    target carrier. The stencil is restricted to that face and renormalized; the
-    dropped mass is the shadow's rounding residue, which the caller bounds by
-    binary64 shadow resolution.
+    target carrier. An edge face takes the exact orthogonal projection of the
+    shadow onto that edge: renormalizing dropped barycentric mass would move the
+    point along the edge by that mass times the cell aspect ratio. Larger faces
+    are restricted and renormalized; the caller bounds either snap by binary64
+    shadow resolution.
     """
     work_cells = np.concatenate(
         tuple(
@@ -1306,11 +1334,16 @@ def _parent_face_stencils(
             )
         face_row = max(range(len(faces)), key=lambda row: masses[row])
         face, retained = faces[face_row], masses[face_row]
-        restricted[vertex] = tuple(
-            (work_row, weight / retained)
-            for work_row, weight in stencil
-            if work_row in face and weight
-        )
+        if len(face) == 2:
+            restricted[vertex] = _edge_projection_stencil(
+                source, tuple(sorted(face)), coordinates[vertex]
+            )
+        else:
+            restricted[vertex] = tuple(
+                (work_row, weight / retained)
+                for work_row, weight in stencil
+                if work_row in face and weight
+            )
         snapped[vertex] = True
     return restricted, snapped
 
@@ -1839,6 +1872,7 @@ def _physical_edit(
     work_stencils, snapped = _parent_face_stencils(
         prepared,
         _work_stencils(local_edit, prepared),
+        np.asarray(local_edit.coordinates, dtype=np.float64),
         local_cells,
         cell_parents,
     )
