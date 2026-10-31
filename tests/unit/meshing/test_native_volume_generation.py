@@ -36,6 +36,7 @@ from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._plc_source import PiecewiseLinearComplex, PlcBoundaryPolicy
 from phydrax.meshing._result import _validated_source_evidence
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing._volume_generation import (
     _source_face_ids,
     _source_tables,
@@ -112,7 +113,9 @@ def _source(boundary: PlcBoundaryPolicy = "fixed") -> NativePlcSource:
     return NativePlcSource(complex_, "bipyramid", "revision-1")
 
 
-def _grouped_cube_source() -> NativePlcSource:
+def _grouped_cube_source(
+    boundary: PlcBoundaryPolicy = "fixed", angle: float | None = None
+) -> NativePlcSource:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -126,6 +129,12 @@ def _grouped_cube_source() -> NativePlcSource:
         ),
         dtype=np.float64,
     )
+    if angle is not None:
+        # A cube of side 1/3 centred at the origin, rotated so that the two
+        # authored triangles of a face are not exactly coplanar for angle != 0.
+        c, s = np.cos(angle), np.sin(angle)
+        rotation = np.asarray(((c, -s, 0.0), (s * c, c * c, -s), (s * s, s * c, c)))
+        points = (points - 0.5) @ rotation.T / 3.0
     triangles = np.asarray(
         (
             (0, 2, 3),
@@ -157,7 +166,7 @@ def _grouped_cube_source() -> NativePlcSource:
         segment_ids=(),
         segment_occurrence_paths=(),
         region_occurrence_paths=((),),
-        boundary="fixed",
+        boundary=boundary,
     )
     return NativePlcSource(complex_, "grouped-cube", "revision-1")
 
@@ -840,6 +849,131 @@ def test_conforming_plc_fill_retains_source_ancestry_and_region_coverage() -> No
     assert len(construction.face_source_ids) == construction.boundary_faces.shape[0]
     assert len(construction.segment_source_ids) == construction.segments.shape[0]
     assert construction.region_ids == tuple(construction.domain.region_ids)
+
+
+def _conforming_refinement(
+    source: NativePlcSource, seeds: tuple[RegionSeed, ...], size: float
+) -> VolumeConstruction:
+    base = _request(source, region_seeds=seeds)
+    specification = VolumeMeshingSpec(
+        base.target,
+        base.boundary_scope,
+        base.fill_strategy,
+        size_controls=(UniformSizeControl(base.boundary_scope, size),),
+        region_seeds=base.region_seeds,
+    )
+    return generate_plc_volume(
+        source.complex,
+        specification,
+        NativeVolumeSchedule(radius_edge_bound=2.0, minimum_dihedral_degrees=0.0),
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_map_id="",
+        frame_id=SpatialCoordinateContract.si().spatial_id,
+    )
+
+
+def _assert_refined_with_boundary_splits(construction: VolumeConstruction) -> None:
+    assert construction.boundary_policy == "conforming"
+    assert construction.refinement_status is MeshcoreStatus.OK
+    assert construction.improvement_status is MeshcoreStatus.OK
+    assert construction.refinement_unmet == ()
+    assert construction.improvement_unmet == ()
+    strata = np.asarray(construction.witness_strata)
+    # Facet and segment points were inserted by boundary splits, each on an
+    # exact source row.
+    assert np.count_nonzero(strata == 1) > 0
+    assert np.count_nonzero(strata == 2) > 0
+
+
+_CUBE_SEED = (
+    RegionSeed(
+        np.zeros(3, dtype=np.float64), "solid", "solid-material", RegionRole.SOLID
+    ),
+)
+
+
+def test_conforming_refinement_splits_grouped_cube_faces_across_source_triangles() -> (
+    None
+):
+    # Facet splits land in whichever source triangle of a face group holds
+    # them, and a size-split midpoint that encroaches a subsegment splits the
+    # subsegment first, so the size field is met with every cell within bound.
+    source = _grouped_cube_source("conforming", 0.0)
+    construction = _conforming_refinement(source, _CUBE_SEED, 0.05)
+    _assert_refined_with_boundary_splits(construction)
+    rows = np.asarray(construction.witness_entities)[
+        np.asarray(construction.witness_strata) == 2
+    ]
+    # Both source triangles of the face groups receive facet points.
+    assert np.unique(rows).size == construction.source_faces.shape[0]
+    complex_ = source.complex
+    diagonal_ids = {
+        complex_.plc_edge_ids[row]
+        for row, facets in enumerate(complex_.plc_edge_facets)
+        if len(facets) != 2
+    }
+    assert not set(construction.segment_source_ids) & diagonal_ids
+
+
+def test_conforming_refinement_keeps_undeclared_rotated_cube_triangles_as_authored() -> (
+    None
+):
+    # Without a declared exact plane, the rotated cube's two rounded triangles
+    # per face are not coplanar: they are the geometry, and their diagonals
+    # stay segments.
+    source = _grouped_cube_source("conforming", 0.3)
+    construction = _conforming_refinement(source, _CUBE_SEED, 0.05)
+    _assert_refined_with_boundary_splits(construction)
+    complex_ = source.complex
+    diagonal_ids = {
+        complex_.plc_edge_ids[row]
+        for row, facets in enumerate(complex_.plc_edge_facets)
+        if len(facets) != 2
+    }
+    assert len(diagonal_ids) == 6
+    assert diagonal_ids <= set(construction.segment_source_ids)
+
+
+def test_conforming_refinement_meets_bound_in_rotated_bipyramid() -> None:
+    # Acute input dihedral angles (54.7 degrees) and segment angles (45
+    # degrees) next to boundary splits of every facet.
+    angle = 0.3
+    rotation = np.asarray(
+        (
+            (np.cos(angle), -np.sin(angle), 0.0),
+            (np.sin(angle), np.cos(angle), 0.0),
+            (0.0, 0.0, 1.0),
+        )
+    )
+    base = _source("conforming")
+    complex_ = PiecewiseLinearComplex(
+        _POINTS @ rotation.T / 3.0,
+        _POLYGONS,
+        np.arange(_POLYGONS.shape[0], dtype=np.int64),
+        _FACET_REGIONS,
+        ("upper", "lower"),
+        segments=np.empty((0, 2), dtype=np.int64),
+        vertex_ids=base.complex.vertex_ids,
+        vertex_occurrence_paths=base.complex.vertex_occurrence_paths,
+        facet_ids=base.complex.facet_ids,
+        facet_occurrence_paths=base.complex.facet_occurrence_paths,
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((), ()),
+        boundary="conforming",
+    )
+    source = NativePlcSource(complex_, "rotated-bipyramid", "revision-1")
+    seeds = tuple(
+        RegionSeed(
+            np.asarray(seed.point) @ rotation.T / 3.0,
+            seed.region_name,
+            seed.material_id,
+            seed.role,
+        )
+        for seed in _request(source).region_seeds
+    )
+    _assert_refined_with_boundary_splits(_conforming_refinement(source, seeds, 0.1))
 
 
 def test_mapped_carrier_classification_uses_plc_incidence_and_witnesses() -> None:

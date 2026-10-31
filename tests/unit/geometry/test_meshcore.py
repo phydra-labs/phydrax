@@ -698,12 +698,13 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
 
         refinement = state.refine(radius_edge_bound=10.0, sizes=np.full((4,), 0.1))
         assert refinement.edit_status is TetMeshEditStatus.APPLIED
-        assert refinement.status is MeshcoreStatus.UNRESOLVED
-        assert refinement.unmet_cells > 0
+        # The size field is met with every cell within bound: facet and segment
+        # splits refine the conforming boundary despite the acute input angles.
+        assert refinement.status is MeshcoreStatus.OK
+        assert refinement.inserted_vertices > 0
+        assert refinement.unmet_cells == 0
         assert refinement.score_quantum is None
-        refinement_unmet = state.unmet()
-        assert refinement_unmet.cell_ids.size > 0
-        assert np.all(np.isfinite(refinement_unmet.values))
+        assert state.unmet().cell_ids.size == 0
         with pytest.raises(ValueError, match="one value per current mesh vertex"):
             state.improve(
                 radius_edge_bound=10.0,
@@ -1008,9 +1009,9 @@ state = TetMesh3D(
 try:
     run = state.refine(radius_edge_bound=10.0, sizes=np.full((4,), 0.1))
     assert run.edit_status is TetMeshEditStatus.APPLIED
-    assert run.status is MeshcoreStatus.UNRESOLVED
-    assert run.inserted_vertices >= 0
-    assert run.unmet_cells > 0
+    assert run.status is MeshcoreStatus.OK
+    assert run.inserted_vertices > 0
+    assert run.unmet_cells == 0
     print(f"refine-result:{run.status.name}:{run.inserted_vertices}:{run.unmet_cells}")
 finally:
     state.close()
@@ -1024,7 +1025,7 @@ finally:
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "refine-result:UNRESOLVED:" in completed.stdout
+    assert "refine-result:OK:" in completed.stdout
 
 
 def test_fixed_refinement_next_to_thin_pole_fans_is_bounded() -> None:
