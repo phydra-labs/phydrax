@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -450,6 +451,22 @@ def test_envelope_source_scopes_are_the_derived_plc_entity_banks() -> None:
             assert source.source_entity_key_for_mesh_row(dimension, row) == (
                 source.plc_source.source_entity_key_for_scope(dimension, int(identifier))
             )
+
+
+def test_envelope_currentness_refuses_a_retained_surface_the_kernel_does_not_reproduce() -> (
+    None
+):
+    _, source, *_ = _request()
+    source.require_current()
+    moved = np.array(source.result.surface_vertices, dtype=np.float64)
+    moved[0, 0] = np.nextafter(moved[0, 0], np.inf)
+    tampered = eqx.tree_at(
+        lambda envelope: envelope.result,
+        source,
+        source.result._replace(surface_vertices=moved, volume_vertices=moved),
+    )
+    with pytest.raises(ValueError, match="does not reproduce"):
+        tampered.require_current()
 
 
 def test_surface_envelope_source_refuses_an_insufficient_distance_bound() -> None:
