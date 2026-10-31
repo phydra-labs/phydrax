@@ -34,6 +34,10 @@ from ..geometry._source_boundary_records import (
 )
 from ..geometry.reconstruction._boundary import ReconstructedTriangleBoundarySource
 from ..geometry.reconstruction._core import ReconstructedGeometrySource
+from ..geometry.reconstruction._envelope import (
+    envelope_reproduces,
+    record_envelope_reproduction,
+)
 from ..geometry.reconstruction._sheet import AuthoredTriangleSheet
 from ..geometry.simplicial._regions import MeshRegion
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
@@ -153,35 +157,6 @@ def _original_triangles(source: _EnvelopeOriginal, /) -> tuple[np.ndarray, np.nd
     return (
         np.asarray(region.vertices, dtype=np.float64),
         np.asarray(region.faces, dtype=np.int64),
-    )
-
-
-# Envelope reproductions proved in this process, addressed by content. The native
-# kernel is a deterministic function of its inputs and controls, so a retained
-# result whose (input, controls, result) content was already produced or
-# reproduced here reproduces again without rerunning the kernel.
-_REPRODUCED_ENVELOPES: set[str] = set()
-
-
-def _reproduction_key(
-    vertices: np.ndarray,
-    triangles: np.ndarray,
-    controls: tuple[float, ...],
-    result: SurfaceEnvelopeResult,
-    /,
-) -> str:
-    return canonical_fingerprint(
-        (
-            "surface-envelope-reproduction",
-            vertices,
-            triangles,
-            controls,
-            result.bounds,
-            result.surface_vertices,
-            result.surface_triangles,
-            result.volume_vertices,
-            result.tetrahedra,
-        )
     )
 
 
@@ -513,8 +488,13 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="surface_envelope_execution",
             ) from error
-        _REPRODUCED_ENVELOPES.add(
-            _reproduction_key(source_vertices, source_triangles, controls[:3], result)
+        record_envelope_reproduction(
+            source_vertices,
+            source_triangles,
+            controls[:3],
+            result.bounds,
+            result.surface_vertices,
+            result.surface_triangles,
         )
         if max(float(result.bounds[0]), float(result.bounds[1])) > controls[3]:
             raise _failure(
@@ -667,43 +647,35 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         fresh_original = _fresh_original(self.original)
         source_vertices, source_triangles = _original_triangles(fresh_original)
         original_domain_query = _original_domain_query(fresh_original)
-        controls = (self.offset, self.spacing, self.certificate_spacing)
-        reproduction = _reproduction_key(
-            source_vertices, source_triangles, controls, self.result
-        )
-        if reproduction in _REPRODUCED_ENVELOPES:
-            fresh_result = self.result
-        else:
-            try:
-                fresh_result = surface_envelope(
-                    source_vertices, source_triangles, *controls, remesh=True
-                )
-            except MeshcoreError as error:
-                raise ValueError(
-                    f"The retained native envelope no longer reproduces: {error}"
-                ) from error
+        result = self.result
+        try:
+            reproduces = envelope_reproduces(
+                source_vertices,
+                source_triangles,
+                (self.offset, self.spacing, self.certificate_spacing),
+                result.bounds,
+                result.surface_vertices,
+                result.surface_triangles,
+            )
+        except MeshcoreError as error:
+            raise ValueError(
+                f"The retained native envelope no longer reproduces: {error}"
+            ) from error
+        # The remeshed envelope drops the marching-tetrahedra carrier: its volume
+        # vertices are the surface vertices and it has no tetrahedra.
         if (
-            not np.array_equal(fresh_result.bounds, self.result.bounds)
-            or not np.array_equal(
-                fresh_result.surface_vertices, self.result.surface_vertices
-            )
-            or not np.array_equal(
-                fresh_result.surface_triangles, self.result.surface_triangles
-            )
-            or not np.array_equal(
-                fresh_result.volume_vertices, self.result.volume_vertices
-            )
-            or not np.array_equal(fresh_result.tetrahedra, self.result.tetrahedra)
+            not reproduces
+            or not np.array_equal(result.volume_vertices, result.surface_vertices)
+            or result.tetrahedra.shape[0] != 0
             or original_domain_query.source_scope_id != self.original_query_id
         ):
             raise ValueError(
                 "The retained unsigned-distance envelope does not reproduce from its current source."
             )
-        _REPRODUCED_ENVELOPES.add(reproduction)
         domain, domain_vertex_ids, domain_facet_ids = _envelope_domain(
             self.source_id,
             fresh_original,
-            fresh_result,
+            result,
             self.native_vertex_rows,
             self.native_facet_rows,
             self.native_vertex_entity_ids,
