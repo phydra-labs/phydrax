@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
-from math import comb, nextafter
+from math import comb, nextafter, prod
 from numbers import Integral
 from typing import TYPE_CHECKING
 
@@ -559,25 +559,6 @@ def _bernstein_restrict(
     return restricted
 
 
-def _bernstein_bounds(
-    coefficients: Sequence[ExactScalar],
-    lower: ExactScalar,
-    upper: ExactScalar,
-    /,
-    *,
-    positive_lower: bool = False,
-) -> tuple[Fraction, Fraction]:
-    restricted = _bernstein_restrict(coefficients, lower, upper)
-    exact_lower, exact_upper = min(restricted), max(restricted)
-    lower_bound = (
-        _positive_rational_lower_bound(exact_lower)
-        if positive_lower
-        else _exact_scalar_interval(exact_lower)[0]
-    )
-    upper_bound = _exact_scalar_interval(exact_upper)[1]
-    return lower_bound, upper_bound
-
-
 def _positive_quotient_bounds(
     numerator: tuple[Fraction, Fraction],
     denominator: tuple[Fraction, Fraction],
@@ -697,8 +678,33 @@ class RationalBSplineCurveSpan:
     positive_denominator_lower_bound: Fraction
     _first_derivative_numerators: tuple[tuple[ExactScalar, ...], ...] = field(repr=False)
     _second_derivative_numerators: tuple[tuple[ExactScalar, ...], ...] = field(repr=False)
-    _denominator_squared: tuple[ExactScalar, ...] = field(repr=False)
-    _denominator_cubed: tuple[ExactScalar, ...] = field(repr=False)
+    # Outward binary64 enclosures of the exact rows, prepared once per span and
+    # stacked per group so one restriction serves every component.
+    _interval_nets: dict[str, tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    def _bounds(
+        self, name: str, lower: ExactScalar, upper: ExactScalar, /
+    ) -> tuple[tuple[Fraction, Fraction], ...]:
+        """Outward-rounded bounds of one prepared row group on a relative interval."""
+        net = self._interval_nets.get(name)
+        if net is None:
+            if name == "homogeneous":
+                homogeneous = self.homogeneous_bernstein_coefficients
+                rows = tuple(
+                    tuple(row[component] for row in homogeneous)
+                    for component in range(len(homogeneous[0]))
+                )
+            elif name == "first":
+                rows = self._first_derivative_numerators
+            else:
+                rows = self._second_derivative_numerators
+            net = _interval_curve_stack(rows)
+            self._interval_nets[name] = net
+        return _interval_component_bounds(
+            *_interval_restrict_axis0(net[0], net[1], lower, upper)
+        )
 
     def enclose(
         self,
@@ -718,47 +724,31 @@ class RationalBSplineCurveSpan:
         span_width = span_upper - span_lower
         relative_lower = (lower - span_lower) / span_width
         relative_upper = (upper - span_lower) / span_width
-        homogeneous = self.homogeneous_bernstein_coefficients
-        denominator = tuple(row[-1] for row in homogeneous)
-        denominator_bounds = _bernstein_bounds(
-            denominator, relative_lower, relative_upper, positive_lower=True
+        homogeneous_bounds = self._bounds("homogeneous", relative_lower, relative_upper)
+        # Every restricted weight is a convex combination of the span weights.
+        denominator_bounds = (
+            max(homogeneous_bounds[-1][0], self.positive_denominator_lower_bound),
+            homogeneous_bounds[-1][1],
         )
         value_bounds = tuple(
-            _positive_quotient_bounds(
-                _bernstein_bounds(
-                    tuple(row[component] for row in homogeneous),
-                    relative_lower,
-                    relative_upper,
-                ),
-                denominator_bounds,
-            )
-            for component in range(len(homogeneous[0]) - 1)
+            _positive_quotient_bounds(bounds, denominator_bounds)
+            for bounds in homogeneous_bounds[:-1]
         )
-        denominator_squared_bounds = _bernstein_bounds(
-            self._denominator_squared,
-            relative_lower,
-            relative_upper,
-            positive_lower=True,
+        denominator_squared_bounds = (
+            denominator_bounds[0] ** 2,
+            denominator_bounds[1] ** 2,
         )
-        denominator_cubed_bounds = _bernstein_bounds(
-            self._denominator_cubed,
-            relative_lower,
-            relative_upper,
-            positive_lower=True,
+        denominator_cubed_bounds = (
+            denominator_bounds[0] ** 3,
+            denominator_bounds[1] ** 3,
         )
         first_derivative_bounds = tuple(
-            _positive_quotient_bounds(
-                _bernstein_bounds(values, relative_lower, relative_upper),
-                denominator_squared_bounds,
-            )
-            for values in self._first_derivative_numerators
+            _positive_quotient_bounds(bounds, denominator_squared_bounds)
+            for bounds in self._bounds("first", relative_lower, relative_upper)
         )
         second_derivative_bounds = tuple(
-            _positive_quotient_bounds(
-                _bernstein_bounds(values, relative_lower, relative_upper),
-                denominator_cubed_bounds,
-            )
-            for values in self._second_derivative_numerators
+            _positive_quotient_bounds(bounds, denominator_cubed_bounds)
+            for bounds in self._bounds("second", relative_lower, relative_upper)
         )
         return RationalBSplineCurveSpanEnclosure(
             self.source_id,
@@ -900,7 +890,6 @@ def rational_bspline_curve_spans(
         denominator_first = _bernstein_derivative(denominator, span_bounds)
         denominator_second = _bernstein_derivative(denominator_first, span_bounds)
         denominator_squared = _bernstein_product(denominator, denominator)
-        denominator_cubed = _bernstein_product(denominator_squared, denominator)
         first_numerators: list[tuple[ExactScalar, ...]] = []
         second_numerators: list[tuple[ExactScalar, ...]] = []
         for component in range(len(points[0])):
@@ -991,8 +980,6 @@ def rational_bspline_curve_spans(
                 denominator_lower,
                 tuple(first_numerators),
                 tuple(second_numerators),
-                denominator_squared,
-                denominator_cubed,
             )
         )
     if not spans:
@@ -1236,52 +1223,201 @@ def _tensor_bernstein_derivative(
     raise ValueError("Tensor Bernstein differentiation axis must be zero or one.")
 
 
-def _tensor_bernstein_restrict(
-    coefficients: Sequence[Sequence[ExactScalar]],
-    lower_u: ExactScalar,
-    upper_u: ExactScalar,
-    lower_v: ExactScalar,
-    upper_v: ExactScalar,
+# One de Casteljau step ``(1 - t) * a + t * b`` rounds ``1 - t``, two products
+# and one sum; four units of roundoff per magnitude bound all of them, and the
+# smallest subnormal covers gradual underflow.
+_INTERVAL_ROUNDING = 4.0 * float(np.finfo(np.float64).eps)
+_INTERVAL_UNDERFLOW = float(np.finfo(np.float64).smallest_subnormal)
+
+
+def _binary64_down(value: Fraction, /) -> float:
+    result = float(value)
+    return result if Fraction(result) <= value else nextafter(result, -np.inf)
+
+
+def _binary64_up(value: Fraction, /) -> float:
+    result = float(value)
+    return result if Fraction(result) >= value else nextafter(result, np.inf)
+
+
+def _interval_stack(
+    values: Sequence[ExactScalar], shape: tuple[int, ...], /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Outward binary64 enclosure of exact Bernstein coefficients in C order."""
+    if len(values) != prod(shape):
+        raise ValueError("Bernstein interval nets must fill their declared shape.")
+    intervals = tuple(_exact_scalar_interval(value) for value in values)
+    lower = np.asarray(
+        tuple(_binary64_down(low) for low, _ in intervals), dtype=np.float64
+    ).reshape(shape)
+    upper = np.asarray(
+        tuple(_binary64_up(high) for _, high in intervals), dtype=np.float64
+    ).reshape(shape)
+    if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
+        raise ValueError("Bernstein interval nets require finite binary64 enclosures.")
+    return lower, upper
+
+
+def _interval_tensor_stack(
+    nets: Sequence[Sequence[Sequence[ExactScalar]]], /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose equally shaped tensor nets as one ``(u, v, component)`` stack."""
+    shape = _tensor_bernstein_shape(nets[0])
+    if any(_tensor_bernstein_shape(net) != shape for net in nets[1:]):
+        raise ValueError("Stacked tensor Bernstein nets must share one shape.")
+    return _interval_stack(
+        tuple(
+            net[u_index][v_index]
+            for u_index in range(shape[0] + 1)
+            for v_index in range(shape[1] + 1)
+            for net in nets
+        ),
+        (shape[0] + 1, shape[1] + 1, len(nets)),
+    )
+
+
+def _interval_curve_stack(
+    nets: Sequence[Sequence[ExactScalar]], /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose equally long Bernstein coefficient rows as one ``(index, component)`` stack."""
+    length = len(nets[0])
+    if length == 0 or any(len(net) != length for net in nets[1:]):
+        raise ValueError("Stacked Bernstein rows must share one nonzero length.")
+    return _interval_stack(
+        tuple(net[index] for index in range(length) for net in nets),
+        (length, len(nets)),
+    )
+
+
+def _interval_casteljau_step(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    parameter: tuple[float, float],
     /,
-) -> tuple[tuple[ExactScalar, ...], ...]:
-    degree_u, degree_v = _tensor_bernstein_shape(coefficients)
-    restricted_columns = tuple(
-        _bernstein_restrict(
-            tuple(coefficients[u_index][v_index] for u_index in range(degree_u + 1)),
-            lower_u,
-            upper_u,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose ``(1 - t) x_i + t x_{i+1}`` along axis 0 for every ``t`` in range.
+
+    The combination is increasing in both coefficients and affine in ``t``, so
+    its extremes over the boxes occur at coefficient and parameter endpoints;
+    each endpoint value is then widened by a rounding bound on the coefficient
+    magnitudes, which dominate both endpoint magnitudes.
+    """
+    # At t = 0 or t = 1 the step selects one coefficient exactly.
+    if parameter == (0.0, 0.0):
+        return lower[:-1], upper[:-1]
+    if parameter == (1.0, 1.0):
+        return lower[1:], upper[1:]
+    magnitude = np.maximum(np.abs(lower), np.abs(upper))
+    result_lower: np.ndarray | None = None
+    result_upper: np.ndarray | None = None
+    for t in parameter[:1] if parameter[0] == parameter[1] else parameter:
+        complement = 1.0 - t
+        error = (
+            _INTERVAL_ROUNDING * (complement * magnitude[:-1] + t * magnitude[1:])
+            + _INTERVAL_UNDERFLOW
         )
-        for v_index in range(degree_v + 1)
-    )
-    restricted_u = tuple(
-        tuple(column[u_index] for column in restricted_columns)
-        for u_index in range(len(restricted_columns[0]))
-    )
-    return tuple(_bernstein_restrict(row, lower_v, upper_v) for row in restricted_u)
+        low = np.nextafter(complement * lower[:-1] + t * lower[1:] - error, -np.inf)
+        high = np.nextafter(complement * upper[:-1] + t * upper[1:] + error, np.inf)
+        result_lower = low if result_lower is None else np.minimum(result_lower, low)
+        result_upper = high if result_upper is None else np.maximum(result_upper, high)
+    if result_lower is None or result_upper is None:
+        raise ValueError("A de Casteljau step requires a parameter enclosure.")
+    return result_lower, result_upper
 
 
-def _tensor_bernstein_bounds(
-    coefficients: Sequence[Sequence[ExactScalar]],
+def _interval_parameter(value: ExactScalar, /) -> tuple[float, float]:
+    low, high = _exact_scalar_interval(value)
+    return max(0.0, _binary64_down(low)), min(1.0, _binary64_up(high))
+
+
+def _interval_ratio(
+    numerator: ExactScalar, denominator: ExactScalar, /
+) -> tuple[float, float]:
+    """Enclose ``numerator / denominator`` in ``[0, 1]`` for ``0 < numerator <= denominator``."""
+    if isinstance(numerator, Fraction) and isinstance(denominator, Fraction):
+        return _interval_parameter(numerator / denominator)
+    numerator_low, numerator_high = _exact_scalar_interval(numerator)
+    denominator_low, denominator_high = _exact_scalar_interval(denominator)
+    if numerator_low < 0 or denominator_low <= 0:
+        return 0.0, 1.0
+    return (
+        max(0.0, _binary64_down(numerator_low / denominator_high)),
+        min(1.0, _binary64_up(numerator_high / denominator_low)),
+    )
+
+
+def _interval_restrict_axis0(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    first: ExactScalar,
+    last: ExactScalar,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Restrict a Bernstein interval net to ``[first, last]`` of ``[0, 1]`` on axis 0."""
+    if not 0 <= first <= last <= 1:
+        raise ValueError(
+            "Bernstein restriction bounds must satisfy 0 <= lower <= upper <= 1."
+        )
+    if last < 1:
+        parameter = _interval_parameter(last)
+        left_lower, left_upper = [lower[0]], [upper[0]]
+        row_lower, row_upper = lower, upper
+        while row_lower.shape[0] > 1:
+            row_lower, row_upper = _interval_casteljau_step(
+                row_lower, row_upper, parameter
+            )
+            left_lower.append(row_lower[0])
+            left_upper.append(row_upper[0])
+        lower, upper = np.stack(left_lower), np.stack(left_upper)
+    if first > 0:
+        parameter = _interval_ratio(first, last)
+        right_lower, right_upper = [lower[-1]], [upper[-1]]
+        row_lower, row_upper = lower, upper
+        while row_lower.shape[0] > 1:
+            row_lower, row_upper = _interval_casteljau_step(
+                row_lower, row_upper, parameter
+            )
+            right_lower.append(row_lower[-1])
+            right_upper.append(row_upper[-1])
+        lower, upper = np.stack(right_lower[::-1]), np.stack(right_upper[::-1])
+    return lower, upper
+
+
+def _interval_tensor_restrict(
+    net: tuple[np.ndarray, np.ndarray],
     lower_u: ExactScalar,
     upper_u: ExactScalar,
     lower_v: ExactScalar,
     upper_v: ExactScalar,
     /,
-    *,
-    positive_lower: bool = False,
-) -> tuple[Fraction, Fraction]:
-    restricted = _tensor_bernstein_restrict(
-        coefficients, lower_u, upper_u, lower_v, upper_v
+) -> tuple[np.ndarray, np.ndarray]:
+    """Outward enclosure of exact tensor nets restricted to a relative sub-box.
+
+    Axes 0 and 1 are the tensor axes; trailing axes stack components that
+    share them. Every restricted coefficient is a convex combination of the
+    source coefficients; each binary64 step is rounded outward, so the
+    returned interval net contains the exact restricted net coefficientwise.
+    """
+    lower, upper = _interval_restrict_axis0(net[0], net[1], lower_u, upper_u)
+    lower, upper = _interval_restrict_axis0(
+        np.swapaxes(lower, 0, 1), np.swapaxes(upper, 0, 1), lower_v, upper_v
     )
-    values = tuple(value for row in restricted for value in row)
-    exact_lower, exact_upper = min(values), max(values)
-    lower_bound = (
-        _positive_rational_lower_bound(exact_lower)
-        if positive_lower
-        else _exact_scalar_interval(exact_lower)[0]
+    return np.swapaxes(lower, 0, 1), np.swapaxes(upper, 0, 1)
+
+
+def _interval_component_bounds(
+    lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[tuple[Fraction, Fraction], ...]:
+    """Rational hull per trailing component of a restricted interval net."""
+    axes = tuple(range(lower.ndim - 1))
+    minimum = np.min(lower, axis=axes)
+    maximum = np.max(upper, axis=axes)
+    if not (np.all(np.isfinite(minimum)) and np.all(np.isfinite(maximum))):
+        raise ValueError("Bernstein interval restriction overflowed binary64.")
+    return tuple(
+        (Fraction(float(low)), Fraction(float(high)))
+        for low, high in zip(minimum, maximum, strict=True)
     )
-    upper_bound = _exact_scalar_interval(exact_upper)[1]
-    return lower_bound, upper_bound
 
 
 @dataclass(frozen=True, slots=True)
@@ -1363,6 +1499,7 @@ class _RationalSurfaceDerivativeData:
     duv_bounds: tuple[tuple[Fraction, Fraction], ...] | None
     dvv_bounds: tuple[tuple[Fraction, Fraction], ...] | None
     denominator_bounds: tuple[Fraction, Fraction]
+    homogeneous_bounds: tuple[tuple[Fraction, Fraction], ...]
 
     @property
     def positive_denominator(self) -> bool:
@@ -1384,7 +1521,6 @@ class RationalBSplineSurfaceSpan:
     positive_denominator_lower_bound: Fraction
     _du_numerators: tuple[tuple[tuple[ExactScalar, ...], ...], ...] = field(repr=False)
     _dv_numerators: tuple[tuple[tuple[ExactScalar, ...], ...], ...] = field(repr=False)
-    _denominator_squared: tuple[tuple[ExactScalar, ...], ...] = field(repr=False)
     _duu_numerators: tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None = field(
         repr=False
     )
@@ -1394,6 +1530,11 @@ class RationalBSplineSurfaceSpan:
     _dvv_numerators: tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None = field(
         repr=False
     )
+    # Outward binary64 enclosures of the exact nets, prepared once per span and
+    # stacked per group so one restriction serves every component.
+    _interval_nets: dict[str, tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     @property
     def has_hessian(self) -> bool:
@@ -1401,6 +1542,41 @@ class RationalBSplineSurfaceSpan:
             self._duu_numerators is not None
             and self._duv_numerators is not None
             and self._dvv_numerators is not None
+        )
+
+    def _exact_group(
+        self, name: str, /
+    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], ...]:
+        if name == "homogeneous":
+            homogeneous = self.homogeneous_bernstein_coefficients
+            return tuple(
+                tuple(tuple(point[component] for point in row) for row in homogeneous)
+                for component in range(len(homogeneous[0][0]))
+            )
+        nets = {
+            "du": self._du_numerators,
+            "dv": self._dv_numerators,
+            "duu": self._duu_numerators,
+            "duv": self._duv_numerators,
+            "dvv": self._dvv_numerators,
+        }[name]
+        if nets is None:
+            raise RuntimeError("Rational Bernstein Hessian numerators are absent.")
+        return nets
+
+    def _bounds(
+        self,
+        name: str,
+        relative_bounds: tuple[ExactScalar, ExactScalar, ExactScalar, ExactScalar],
+        /,
+    ) -> tuple[tuple[Fraction, Fraction], ...]:
+        """Outward-rounded bounds of one prepared net group on a relative sub-box."""
+        net = self._interval_nets.get(name)
+        if net is None:
+            net = _interval_tensor_stack(self._exact_group(name))
+            self._interval_nets[name] = net
+        return _interval_component_bounds(
+            *_interval_tensor_restrict(net, *relative_bounds)
         )
 
     def _derivative_data(
@@ -1438,49 +1614,23 @@ class RationalBSplineSurfaceSpan:
             relative_lower_v,
             relative_upper_v,
         )
-        homogeneous = self.homogeneous_bernstein_coefficients
-        denominator = tuple(tuple(row[-1] for row in line) for line in homogeneous)
-        denominator_bounds = _tensor_bernstein_bounds(
-            denominator,
-            relative_lower_u,
-            relative_upper_u,
-            relative_lower_v,
-            relative_upper_v,
-            positive_lower=True,
+        homogeneous_bounds = self._bounds("homogeneous", relative_bounds)
+        # Every restricted weight is a convex combination of the span weights.
+        denominator_bounds = (
+            max(homogeneous_bounds[-1][0], self.positive_denominator_lower_bound),
+            homogeneous_bounds[-1][1],
         )
-        denominator_squared_bounds = _tensor_bernstein_bounds(
-            self._denominator_squared,
-            relative_lower_u,
-            relative_upper_u,
-            relative_lower_v,
-            relative_upper_v,
-            positive_lower=True,
+        denominator_squared_bounds = (
+            denominator_bounds[0] ** 2,
+            denominator_bounds[1] ** 2,
         )
         du_bounds = tuple(
-            _positive_quotient_bounds(
-                _tensor_bernstein_bounds(
-                    numerator,
-                    relative_lower_u,
-                    relative_upper_u,
-                    relative_lower_v,
-                    relative_upper_v,
-                ),
-                denominator_squared_bounds,
-            )
-            for numerator in self._du_numerators
+            _positive_quotient_bounds(bounds, denominator_squared_bounds)
+            for bounds in self._bounds("du", relative_bounds)
         )
         dv_bounds = tuple(
-            _positive_quotient_bounds(
-                _tensor_bernstein_bounds(
-                    numerator,
-                    relative_lower_u,
-                    relative_upper_u,
-                    relative_lower_v,
-                    relative_upper_v,
-                ),
-                denominator_squared_bounds,
-            )
-            for numerator in self._dv_numerators
+            _positive_quotient_bounds(bounds, denominator_squared_bounds)
+            for bounds in self._bounds("dv", relative_bounds)
         )
         duu_bounds = None
         duv_bounds = None
@@ -1494,49 +1644,12 @@ class RationalBSplineSurfaceSpan:
                 denominator_bounds[0] ** 3,
                 denominator_bounds[1] ** 3,
             )
-            duu_numerators = self._duu_numerators
-            duv_numerators = self._duv_numerators
-            dvv_numerators = self._dvv_numerators
-            if duu_numerators is None or duv_numerators is None or dvv_numerators is None:
-                raise RuntimeError("Rational Bernstein Hessian numerators are absent.")
-            duu_bounds = tuple(
-                _positive_quotient_bounds(
-                    _tensor_bernstein_bounds(
-                        numerator,
-                        relative_lower_u,
-                        relative_upper_u,
-                        relative_lower_v,
-                        relative_upper_v,
-                    ),
-                    denominator_cubed_bounds,
+            duu_bounds, duv_bounds, dvv_bounds = (
+                tuple(
+                    _positive_quotient_bounds(bounds, denominator_cubed_bounds)
+                    for bounds in self._bounds(name, relative_bounds)
                 )
-                for numerator in duu_numerators
-            )
-            duv_bounds = tuple(
-                _positive_quotient_bounds(
-                    _tensor_bernstein_bounds(
-                        numerator,
-                        relative_lower_u,
-                        relative_upper_u,
-                        relative_lower_v,
-                        relative_upper_v,
-                    ),
-                    denominator_cubed_bounds,
-                )
-                for numerator in duv_numerators
-            )
-            dvv_bounds = tuple(
-                _positive_quotient_bounds(
-                    _tensor_bernstein_bounds(
-                        numerator,
-                        relative_lower_u,
-                        relative_upper_u,
-                        relative_lower_v,
-                        relative_upper_v,
-                    ),
-                    denominator_cubed_bounds,
-                )
-                for numerator in dvv_numerators
+                for name in ("duu", "duv", "dvv")
             )
         return _RationalSurfaceDerivativeData(
             bounds,
@@ -1547,6 +1660,7 @@ class RationalBSplineSurfaceSpan:
             duv_bounds,
             dvv_bounds,
             denominator_bounds,
+            homogeneous_bounds,
         )
 
     def enclose_derivatives(
@@ -1594,26 +1708,9 @@ class RationalBSplineSurfaceSpan:
         /,
     ) -> RationalBSplineSurfaceSpanEnclosure:
         data = self._derivative_data(parameter_bounds, include_hessian=False)
-        relative_lower_u, relative_upper_u, relative_lower_v, relative_upper_v = (
-            data.relative_bounds
-        )
-        homogeneous = self.homogeneous_bernstein_coefficients
-        component_count = len(homogeneous[0][0]) - 1
         value_bounds = tuple(
-            _positive_quotient_bounds(
-                _tensor_bernstein_bounds(
-                    tuple(
-                        tuple(row[v_index][component] for v_index in range(len(row)))
-                        for row in homogeneous
-                    ),
-                    relative_lower_u,
-                    relative_upper_u,
-                    relative_lower_v,
-                    relative_upper_v,
-                ),
-                data.denominator_bounds,
-            )
-            for component in range(component_count)
+            _positive_quotient_bounds(bounds, data.denominator_bounds)
+            for bounds in data.homogeneous_bounds[:-1]
         )
         return RationalBSplineSurfaceSpanEnclosure(
             self.source_id,
@@ -1712,7 +1809,6 @@ def _rational_bernstein_surface_span(
     denominator_lower = _positive_rational_lower_bound(denominator_minimum)
     denominator_u = _tensor_bernstein_derivative(denominator, 0, parameter_bounds_)
     denominator_v = _tensor_bernstein_derivative(denominator, 1, parameter_bounds_)
-    denominator_squared = _tensor_bernstein_product(denominator, denominator)
     du_numerators: list[tuple[tuple[ExactScalar, ...], ...]] = []
     dv_numerators: list[tuple[tuple[ExactScalar, ...], ...]] = []
     duu_numerators: list[tuple[tuple[ExactScalar, ...], ...]] = []
@@ -1810,7 +1906,6 @@ def _rational_bernstein_surface_span(
         denominator_lower,
         tuple(du_numerators),
         tuple(dv_numerators),
-        denominator_squared,
         tuple(duu_numerators) if include_hessian else None,
         tuple(duv_numerators) if include_hessian else None,
         tuple(dvv_numerators) if include_hessian else None,

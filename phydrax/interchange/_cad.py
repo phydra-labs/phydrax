@@ -454,6 +454,90 @@ class CadCoverage:
                 )
 
 
+@dataclass(frozen=True, slots=True)
+class _ChartClosureRepair:
+    """One clamped p-curve end pole moved onto its predecessor's chart end."""
+
+    coedge: int
+    label: str
+    pole: int
+    previous: tuple[Fraction, ...]
+    moved: tuple[Fraction, ...]
+
+    @property
+    def displacement(self) -> Fraction:
+        """The exact max-norm chart distance the pole moved."""
+        return max(
+            abs(moved - previous)
+            for moved, previous in zip(self.moved, self.previous, strict=True)
+        )
+
+    def loss(self, gap_bound: float, tolerance: float, /) -> AdapterLoss:
+        """Declare the repair with the face-gap proof that admitted it."""
+        previous = ", ".join(float(value).hex() for value in self.previous)
+        moved = ", ".join(float(value).hex() for value in self.moved)
+        return AdapterLoss(
+            f"geometry.chart-closure:{self.label}",
+            "import",
+            "transformed",
+            f"coedge={self.coedge}, pole={self.pole}, previous=({previous}), "
+            f"moved=({moved}), chart-displacement={float(self.displacement):.17g}, "
+            f"certified-face-gap={gap_bound:.17g}, import-tolerance={tolerance:.17g}; "
+            "a clamped p-curve end pole was moved onto its predecessor's exact "
+            "chart end so the trim loop closes, and the edge's face gap was "
+            "re-certified against the import tolerance.",
+            changes_interpretation=False,
+        )
+
+
+def _clamped_pole_moved_to(
+    curve: AbstractCurve,
+    parameter: float,
+    target: tuple[ExactScalar, ...],
+    /,
+) -> tuple[BSplineCurve, int, tuple[Fraction, ...], tuple[Fraction, ...]] | None:
+    """The clamped B-spline with its end pole at ``parameter`` moved onto ``target``.
+
+    Returns the curve, the moved pole index and its previous and moved exact
+    coordinates. ``None`` unless ``parameter`` is a clamped end of ``curve``
+    and both poles have distinct binary64-representable rational coordinates.
+    """
+    if not isinstance(curve, BSplineCurve) or len(target) != curve.ambient_dimension:
+        return None
+    knots = curve.exact_knots
+    controls = curve.exact_control_points
+    degree, count = curve.degree, len(controls)
+    exact = Fraction.from_float(parameter)
+    if all(knot == exact for knot in knots[: degree + 1]):
+        index = 0
+    elif all(knot == exact for knot in knots[count:]):
+        index = count - 1
+    else:
+        return None
+    pole = tuple(value for value in target if isinstance(value, Fraction))
+    previous = tuple(value for value in controls[index] if isinstance(value, Fraction))
+    if (
+        len(pole) != len(target)
+        or len(previous) != len(target)
+        or any(Fraction(float(value)) != value for value in pole)
+        or pole == previous
+    ):
+        return None
+    exact_controls = (*controls[:index], pole, *controls[index + 1 :])
+    numeric = np.array(curve.control_points, dtype=np.float64)
+    numeric[index] = [float(value) for value in pole]
+    closed = BSplineCurve(
+        numeric,
+        curve.weights,
+        curve.knots,
+        degree,
+        exact_control_points=exact_controls,
+        exact_weights=curve.exact_weights,
+        exact_knots=knots,
+    )
+    return closed, index, previous, pole
+
+
 def _bind_stage_face_gap_bounds(
     geometry: BRepGeometry,
     patches: tuple[AbstractSurfacePatch, ...],
@@ -1956,6 +2040,7 @@ class CadStage:
         default_factory=dict
     )
     split_period_surfaces: dict[int, AbstractSurfacePatch] = field(default_factory=dict)
+    chart_closure_repairs: list[AdapterLoss] = field(default_factory=list)
 
     @property
     def tolerance(self) -> float:
@@ -3788,6 +3873,61 @@ class CadStage:
                 raise refuse("inconsistent-geometry", label, str(error)) from error
         return tuple(vertices), tuple(edges), tuple(uses)
 
+    def _close_literal_chart_junctions(
+        self,
+        pcurves: list[AbstractCurve],
+        coedge_edges: Sequence[int],
+        coedge_senses: Sequence[int],
+        coedge_labels: Sequence[str],
+        face_loops: Sequence[tuple[tuple[int, ...], ...]],
+        coedge_roots: tuple[tuple[RootEndpoint | None, RootEndpoint | None], ...],
+        /,
+    ) -> tuple[_ChartClosureRepair, ...]:
+        """Close binary64 chart misses at literal tolerance vertices.
+
+        A junction without shared source roots keeps its authored vertex, and
+        its two p-curve ends may miss each other by binary64 rounding. When the
+        successor is a clamped B-spline whose junction end is its end pole,
+        that pole moves onto the predecessor's exact chart endpoint so the trim
+        closes exactly. The edge carrier is unchanged; the stage's face-gap
+        proof then certifies the modified chart against it, so the move is
+        admitted only within the declared import tolerance. Every move is
+        returned so publication declares it as import repair evidence.
+        """
+        repairs: list[_ChartClosureRepair] = []
+        for loops in face_loops:
+            for loop in loops:
+                for first, second in zip(loop, (*loop[1:], loop[0]), strict=True):
+                    end = 1 if coedge_senses[first] > 0 else 0
+                    start = 0 if coedge_senses[second] > 0 else 1
+                    if (
+                        coedge_roots[first][end] is not None
+                        and coedge_roots[second][start] is not None
+                    ):
+                        continue
+                    target = exact_curve_parameter_point(
+                        pcurves[first],
+                        Fraction.from_float(
+                            float(self.edge_ranges[coedge_edges[first]][end])
+                        ),
+                    )
+                    if target is None:
+                        continue
+                    closed = _clamped_pole_moved_to(
+                        pcurves[second],
+                        float(self.edge_ranges[coedge_edges[second]][start]),
+                        target,
+                    )
+                    if closed is None:
+                        continue
+                    pcurves[second], pole, previous, moved = closed
+                    repairs.append(
+                        _ChartClosureRepair(
+                            second, coedge_labels[second], pole, previous, moved
+                        )
+                    )
+        return tuple(repairs)
+
     def publish(
         self,
         *,
@@ -3852,6 +3992,14 @@ class CadStage:
             edge_roots,
             coedge_roots,
         )
+        repairs = self._close_literal_chart_junctions(
+            pcurves,
+            coedge_edges,
+            coedge_senses,
+            coedge_labels,
+            face_loops,
+            coedge_roots,
+        )
         vertex_points = np.asarray(self.vertices, dtype=np.float64).reshape(-1, 3)
         # A collapsed pole edge is proved against its authored vertex; the
         # binary file coordinates are that vertex's exact source value, except
@@ -3906,12 +4054,17 @@ class CadStage:
             parameter_bounds = np.asarray(
                 [box for _, box in resolved], dtype=np.float64
             ).reshape(-1, 2, 2)
+            tolerance = self.relative_geometric_tolerance * self.scale
             geometry = _bind_stage_face_gap_bounds(
-                geometry,
-                patches,
-                parameter_bounds,
-                self.relative_geometric_tolerance * self.scale,
+                geometry, patches, parameter_bounds, tolerance
             )
+            gap_bounds = geometry.edge_face_gap_bounds
+            self.chart_closure_repairs = [
+                repair.loss(
+                    0.0 if gap_bounds is None else gap_bounds[repair.coedge], tolerance
+                )
+                for repair in repairs
+            ]
             return assemble_brep_model(
                 geometry,
                 patches,
@@ -3945,19 +4098,26 @@ class CadStage:
         )
 
 
-def cad_import_synthesis_losses(stage: CadStage, /) -> tuple[AdapterLoss, ...]:
-    """Report natural face boundaries reconstructed from source surface domains."""
-    if not stage.natural_boundaries:
-        return ()
-    return (
-        AdapterLoss(
-            "geometry.natural-boundaries",
-            "import",
-            "synthesized",
-            f"{stage.natural_boundaries} natural closed-surface boundaries were derived from source surface domains.",
-            changes_interpretation=False,
-        ),
+def cad_import_stage_losses(stage: CadStage, /) -> tuple[AdapterLoss, ...]:
+    """Report source semantics staging synthesized or repaired.
+
+    Natural face boundaries are reconstructed from source surface domains;
+    chart-closure repairs carry the moved pole and its certified face gap.
+    """
+    synthesized = (
+        (
+            AdapterLoss(
+                "geometry.natural-boundaries",
+                "import",
+                "synthesized",
+                f"{stage.natural_boundaries} natural closed-surface boundaries were derived from source surface domains.",
+                changes_interpretation=False,
+            ),
+        )
+        if stage.natural_boundaries
+        else ()
     )
+    return (*synthesized, *stage.chart_closure_repairs)
 
 
 # ------------------------------------------------------ trim validation

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
-from ..._interpolation import rational_bspline_curve_spans, rational_bspline_surface_spans
+from ..._interpolation import rational_bspline_curve_spans
 from ...algebraic._exact_univariate import isolate_real_roots
 from ...discretization._coordinate_enclosure import (
     ExactScalar,
@@ -609,18 +609,7 @@ def _surface_pieces(model: BRepModel, face: int, /) -> tuple[_SplinePiece, ...]:
         full_u = (domain[0], domain[1])
         full_v = (domain[2], domain[3])
     elif isinstance(patch, BSplineSurfacePatch):
-        spans = rational_bspline_surface_spans(
-            np.asarray(patch.control_points, dtype=np.float64).tolist(),
-            np.asarray(patch.weights, dtype=np.float64).tolist(),
-            np.asarray(patch.u_knots, dtype=np.float64).tolist(),
-            np.asarray(patch.v_knots, dtype=np.float64).tolist(),
-            patch.u_degree,
-            patch.v_degree,
-            exact_control_points=patch.exact_control_points,
-            exact_weights=patch.exact_weights,
-            exact_u_knots=patch.exact_u_knots,
-            exact_v_knots=patch.exact_v_knots,
-        )
+        spans = patch.rational_spans()
         for span in spans:
             u_lower, u_upper = span.parameter_bounds[0]
             v_lower, v_upper = span.parameter_bounds[1]

@@ -45,9 +45,11 @@ from ..geometry._source_boundary_records import (
 )
 from ..geometry._source_fidelity import (
     certify_source_fidelity,
+    validate_source_entity_scope,
+)
+from ..geometry._source_fidelity_certificate import (
     SourceFidelityCertificate,
     SourceFidelityWitness,
-    validate_source_entity_scope,
 )
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
