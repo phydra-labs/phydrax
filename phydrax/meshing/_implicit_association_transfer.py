@@ -602,13 +602,16 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             record = lineage.entity_lineage(2)
             old_ids = np.asarray(record.source_global_ids, dtype=np.int64)
             new_ids = np.asarray(record.target_global_ids, dtype=np.int64)
+            # Lineage parents of each target cell, in lineage-row order.
+            lineage_parents: dict[int, list[int]] = {}
+            for parent, child in zip(old_ids.tolist(), new_ids.tolist(), strict=True):
+                lineage_parents.setdefault(child, []).append(parent)
             tags_by_id: dict[int, str] = {}
             for identifier in target_ids.tolist():
-                parents = old_ids[new_ids == identifier]
                 rows = tuple(
-                    parent_rows[int(parent)]
-                    for parent in parents.tolist()
-                    if int(parent) in parent_rows
+                    parent_rows[parent]
+                    for parent in lineage_parents.get(identifier, ())
+                    if parent in parent_rows
                 )
                 if not rows and identifier in parent_rows:
                     rows = (parent_rows[identifier],)
