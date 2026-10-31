@@ -64,8 +64,12 @@ from ._boolean_core import (
     side_payload,
     trim_source_join,
 )
-from ._carrier_pieces import child_coefficient_enclosures, SurfacePiece
-from ._intersection import SurfaceIntersectionResult
+from ._carrier_pieces import (
+    carrier_payload,
+    child_coefficient_enclosures,
+    SurfacePiece,
+)
+from ._intersection import ConicParameterEndpoint, SurfaceIntersectionResult
 from ._intersection_curve import CurveTrimSegment
 from ._interval_source import evaluate_interval
 from ._model import BRepEntityId, BRepModel
@@ -1034,17 +1038,33 @@ def classify_face_material_cells(
     return FaceMaterialClassification(cells, tuple(labels), completeness, certificate)
 
 
+def _exact_cut_parameter(piece: Piece, start: bool) -> Fraction | None:
+    """Return the exact arc parameter of a piece end, if its binding proves one.
+
+    Unbound cuts carry an exact binary parameter; a conic root bound to the
+    arc's own p-curve carries its exact carrier parameter. Other roots refuse.
+    """
+    cut = piece.first if start else piece.last
+    endpoint = cut.endpoint
+    if endpoint is None:
+        return Fraction(cut.parameter)
+    arc = piece.arc
+    if (
+        not isinstance(endpoint, ConicParameterEndpoint)
+        or endpoint.parameter_exact is None
+        or carrier_payload(endpoint.carrier) != carrier_payload(arc.pcurve)
+        or arc.scale == 0.0
+    ):
+        return None
+    return (endpoint.parameter_exact - Fraction(arc.offset)) / Fraction(arc.scale)
+
+
 def _fixed_phase_piece(
     first: Piece,
     second: Piece,
     proof: CoincidentSurfaceCorrespondence,
 ) -> bool:
 
-    if any(
-        cut.endpoint is not None
-        for cut in (first.first, first.last, second.first, second.last)
-    ):
-        return False
     transported = replace(
         first.arc,
         pcurve=transport_coincident_pcurve(proof, first.arc.pcurve),
@@ -1057,12 +1077,27 @@ def _fixed_phase_piece(
     phase = scalar_phase(transported, second.arc)
     if phase is None:
         return False
-    a = (first.first, first.last) if first.sense > 0 else (first.last, first.first)
-    b = (second.first, second.last) if second.sense > 0 else (second.last, second.first)
-    return all(
-        phase[0] * Fraction(left.parameter) + phase[1] == Fraction(right.parameter)
-        for left, right in zip(a, b, strict=True)
-    )
+    a = (True, False) if first.sense > 0 else (False, True)
+    b = (True, False) if second.sense > 0 else (False, True)
+    for left_start, right_start in zip(a, b, strict=True):
+        left_cut = first.first if left_start else first.last
+        right_cut = second.first if right_start else second.last
+        left_root, right_root = left_cut.endpoint, right_cut.endpoint
+        # Root-bound ends must name one exact point; the phase then proves the
+        # exact carrier parameters correspond.
+        if (left_root is None) != (right_root is None):
+            return False
+        if left_root is not None and (
+            not isinstance(left_root, ConicParameterEndpoint)
+            or not isinstance(right_root, ConicParameterEndpoint)
+            or left_root.point_exact != right_root.point_exact
+        ):
+            return False
+        left = _exact_cut_parameter(first, left_start)
+        right = _exact_cut_parameter(second, right_start)
+        if left is None or right is None or phase[0] * left + phase[1] != right:
+            return False
+    return True
 
 
 def _equivalent_piece(

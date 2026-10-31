@@ -2306,6 +2306,43 @@ def _affine_bspline_pcurve(
     return _affine_pcurve_carrier(pcurve, chart[0], chart[1])
 
 
+def _affine_transport_line_pcurve(pcurve: AbstractCurve, /) -> AbstractCurve | None:
+    """Compose an exact chart transport of a line p-curve into one exact line.
+
+    Coincident-surface transport keeps the source parameter, so the composed
+    line is the same p-curve in the receiving chart, never a refit.
+    """
+    from ._boolean_core import _pcurve_execution_shadows_match, AffinePCurve
+
+    if not isinstance(pcurve, AffinePCurve) or not _pcurve_execution_shadows_match(
+        pcurve
+    ):
+        return None
+    inner = pcurve.curve
+    if isinstance(inner, AffinePCurve):
+        inner = _affine_transport_line_pcurve(inner)
+        if inner is None:
+            return None
+    if not isinstance(inner, (LineCurve, ExactLineCurve)):
+        return None
+    coefficients = _affine_curve_coefficients(inner, (Fraction(0), Fraction(0)))
+    if coefficients is None:
+        return None
+    origin, direction = coefficients
+    matrix, offset = pcurve.matrix, pcurve.offset
+    return _affine_pcurve_carrier(
+        inner,
+        (
+            offset[0] + matrix[0][0] * origin[0] + matrix[0][1] * origin[1],
+            offset[1] + matrix[1][0] * origin[0] + matrix[1][1] * origin[1],
+        ),
+        (
+            matrix[0][0] * direction[0] + matrix[0][1] * direction[1],
+            matrix[1][0] * direction[0] + matrix[1][1] * direction[1],
+        ),
+    )
+
+
 def _exact_spline_boundary_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
@@ -2578,6 +2615,8 @@ def exact_source_lift(
     if not (np.isfinite(first) and np.isfinite(last) and first <= last):
         return False
     affine_pcurve = _affine_bspline_pcurve(pcurve, first, last)
+    if affine_pcurve is None:
+        affine_pcurve = _affine_transport_line_pcurve(pcurve)
     if affine_pcurve is not None and exact_source_lift(
         curve, affine_pcurve, region, first, last
     ):
