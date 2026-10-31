@@ -2961,6 +2961,66 @@ def _target_boundary_triangles(
     return facet_ids, tuple(points_by_facet[facet_id] for facet_id in facet_ids)
 
 
+def _triangle_centroid_balls(
+    triangles: tuple[Triangle3, ...], /
+) -> tuple[list[Point3], list[Fraction]]:
+    """Exact centroids and rational upper radii of balls containing each triangle."""
+    centers: list[Point3] = []
+    radii: list[Fraction] = []
+    for triangle in triangles:
+        center = (
+            sum((point[0] for point in triangle), Fraction(0)) / 3,
+            sum((point[1] for point in triangle), Fraction(0)) / 3,
+            sum((point[2] for point in triangle), Fraction(0)) / 3,
+        )
+        centers.append(center)
+        radii.append(
+            max(
+                fraction_sqrt_interval(
+                    sum(
+                        ((point[axis] - center[axis]) ** 2 for axis in range(3)),
+                        Fraction(0),
+                    )
+                )[1]
+                for point in triangle
+            )
+        )
+    return centers, radii
+
+
+def _nearest_triangle_distance_upper(
+    point: Point3,
+    point_value: np.ndarray,
+    triangles: tuple[Triangle3, ...],
+    center_values: np.ndarray,
+    radius_values: np.ndarray,
+    /,
+) -> Fraction:
+    """Return ``min_T sqrt_up(d_T^2)`` over every triangle, pruning provable losers.
+
+    Each triangle contains its exact centroid ``c_T`` and lies within its
+    rational radius ``r_T`` of it, so ``|p - c_T| - r_T <= d_T <= |p - c_T|``
+    and ``m = min_T |p - c_T|`` bounds the minimum distance above. A triangle
+    whose float lower bound exceeds the float ``m`` by ``slack`` has
+    ``d_T > m + slack / 2``: ``slack`` is a billion times the binary64 error
+    of the centroid rounding, the offsets, the radius rounding and the
+    nearest-offset, and also of the few-ulp gap between ``sqrt_up`` and the
+    exact minimum. A pruned triangle's ``sqrt_up`` therefore exceeds the
+    survivors' minimum, which is the minimum over all triangles exactly.
+    """
+    from ..geometry._domain_boundary import _point_triangle_squared
+
+    offsets = np.linalg.norm(center_values - point_value, axis=1)
+    nearest = float(np.min(offsets))
+    scale = float(np.max(np.abs(center_values))) + float(np.max(np.abs(point_value)))
+    slack = 1.0e-9 * (nearest + float(np.max(radius_values)) + scale)
+    candidates = np.flatnonzero(offsets - radius_values <= nearest + slack)
+    return min(
+        fraction_sqrt_interval(_point_triangle_squared(point, triangles[row]))[1]
+        for row in candidates.tolist()
+    )
+
+
 def _analytic_profile_distance_evidence(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -2968,7 +3028,6 @@ def _analytic_profile_distance_evidence(
     witness: SourceBoundaryDistanceWitness,
     /,
 ) -> tuple[Fraction, Fraction, Fraction]:
-    from ..geometry._domain_boundary import _point_triangle_squared
     from .implicit._analytic_profile import AnalyticImplicitProfile
 
     if not isinstance(source, AnalyticImplicitProfile):
@@ -3008,26 +3067,7 @@ def _analytic_profile_distance_evidence(
             "Analytic distance witness must bind every target exterior facet exactly once."
         )
 
-    centers: list[tuple[Fraction, Fraction, Fraction]] = []
-    radii: list[Fraction] = []
-    for triangle in target_triangles:
-        center = (
-            sum((point[0] for point in triangle), Fraction(0)) / 3,
-            sum((point[1] for point in triangle), Fraction(0)) / 3,
-            sum((point[2] for point in triangle), Fraction(0)) / 3,
-        )
-        centers.append(center)
-        radii.append(
-            max(
-                fraction_sqrt_interval(
-                    sum(
-                        ((point[axis] - center[axis]) ** 2 for axis in range(3)),
-                        Fraction(0),
-                    )
-                )[1]
-                for point in triangle
-            )
-        )
+    centers, radii = _triangle_centroid_balls(target_triangles)
     center_values = np.asarray(
         [[float(value) for value in center] for center in centers], dtype=np.float64
     )
@@ -3087,6 +3127,7 @@ def _analytic_profile_distance_evidence(
         raise ValueError(
             "Analytic profile source samples do not reproduce a complete certified boundary cover."
         )
+    radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
     reverse_upper = Fraction(0)
     for sample_row in range(sample_points.shape[0]):
         point = (
@@ -3096,9 +3137,12 @@ def _analytic_profile_distance_evidence(
         )
         cover_radius = covering_radii[sample_row]
         point_error = point_errors[sample_row]
-        distance_upper = min(
-            fraction_sqrt_interval(_point_triangle_squared(point, triangle))[1]
-            for triangle in target_triangles
+        distance_upper = _nearest_triangle_distance_upper(
+            point,
+            sample_points[sample_row],
+            target_triangles,
+            center_values,
+            radius_values,
         )
         reverse_upper = max(
             reverse_upper,
