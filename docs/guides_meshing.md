@@ -676,6 +676,27 @@ contracts:
   within the feature's protected radius is not inserted, and a cell left for
   that reason is reported as `INPUT_ANGLE` with the feature's apex vertex and
   angle (`TetMeshUnmet.apex_vertex_ids`, `apex_angles`).
+- **Declared exact planes.** A PLC facet may declare an exact plane
+  (`facet_planes`: origin, first axis, second axis in binary64, with
+  `facet_plane_tolerances`); the TetMesh source carries it per face row
+  (`TetMeshSourceComplex.face_planes`, `face_plane_tolerances`). Its
+  triangles then form one face group whatever their rounding, and the shared
+  edges between them are not segments. A boundary vertex of the group is
+  admitted on the plane if and only if the plane meets the closed box of reals
+  that round to its carrier, or the carrier lies within the declared
+  tolerance of the plane; both tests are exact. Creation refuses the
+  declaration otherwise, raising `TetMeshPlaneRefusal` with the first refused
+  vertex, the plane's face row, the rounded parameters of the carrier's
+  projection onto the plane, its outward distance bound and the tolerance;
+  nothing is created. `TetMesh3D.plane_records()` lists every admitted
+  (vertex, plane) incidence with the same record. Boundary split points of a
+  declared group are placed on the plane itself (witness stratum 3: the point
+  `origin + s * first_axis + t * second_axis` of the face row's plane, carrier
+  its correctly rounded realization), a subfacet is valid when every corner
+  is admitted and its projection onto the plane keeps the facet's orientation
+  inside the group's triangles, and acute input angles use the plane normals.
+  Downstream, a stratum-3 vertex is a facet point of that face row's facet.
+  Without a declaration a rotated facet keeps its authored triangles, as above.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
