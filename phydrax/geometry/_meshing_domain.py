@@ -1355,15 +1355,6 @@ class MeshingDomain(StrictModule, NonTrainableState):
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
     source_entity_slot_index: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...]
 
-    if not TYPE_CHECKING:
-
-        def __getattribute__(self, name: str, /) -> object:
-            # Equinox binds each method as a BoundMethod pytree whose construction
-            # flattens the whole receiver. A domain is host-side source data with
-            # one patch per source face, so per-entity loops over its methods
-            # became quadratic. Its methods bind as plain Python methods.
-            return object.__getattribute__(self, name)
-
     @checked
     def __init__(
         self,
@@ -1838,8 +1829,8 @@ class MeshingDomain(StrictModule, NonTrainableState):
     def stratum_entity_ids(self, dimension: int, /) -> tuple[str, ...]:
         """Return every canonical source key of one stratum in slot order.
 
-        Loops over many slots should call this once: each method call on the
-        domain rebuilds a bound-method pytree over the whole domain.
+        Loops over many slots should call this once: each `entity_id` call reads
+        the stratum's source-entity table again.
         """
         kind, source_indices, source_paths = self._source_entity_table(dimension)
         source_id, source_revision = self.source_id, self.source_revision

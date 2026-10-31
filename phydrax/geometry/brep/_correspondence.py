@@ -1029,7 +1029,9 @@ def _periodic_pcurve_source(
     shifts = [0, 0]
     source: AbstractCurve = curve
     while isinstance(source, PeriodicPCurve):
-        if source.patch is not patch or any(
+        # Cold-restored models do not share object identity between a p-curve's
+        # chart and its face patch; the source definition is the binding.
+        if not (source.patch is patch or _same_patch(source.patch, patch)) or any(
             shift and symbols[axis] != "two_pi"
             for axis, shift in enumerate(source.period_shifts)
         ):
@@ -1131,7 +1133,7 @@ def _composed_period_line(
         return (u0, v0), (du, dv)
     if isinstance(curve, PeriodicPCurve):
         symbols = patch.native_period_symbols()
-        if curve.patch is not patch or any(
+        if not (curve.patch is patch or _same_patch(curve.patch, patch)) or any(
             shift and symbols[axis] != "two_pi"
             for axis, shift in enumerate(curve.period_shifts)
         ):

@@ -41,6 +41,7 @@ from .._mapped_locator import (
     MappedLocationPolicy,
     PreparedMappedCellLocator,
     PreparedMappedCellMap,
+    PreparedOwnerLocalMappedCellMap,
 )
 from .._reference_cell import FacetShape, reference_cell_topology, ReferenceCellTopology
 from .._side_actions import (
@@ -681,6 +682,7 @@ def prepare_finite_element_field_reconstruction(
     from ...geometry import CompiledGeometry
     from ...geometry._contracts import compiled_geometry_identity
     from ...geometry._domain_certification import DomainCoverageCertificate
+    from .._view_support import OwnerLocalFieldSupport
 
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
@@ -697,6 +699,32 @@ def prepare_finite_element_field_reconstruction(
     realized = _realized_runtime(discretization, runtime)
     mapped_coverage = isinstance(support_geometry, DomainCoverageCertificate)
     mapped_support = isinstance(support_geometry, MappedFieldSupport)
+    owner_local_support = isinstance(support_geometry, OwnerLocalFieldSupport)
+    owner_local_map: PreparedOwnerLocalMappedCellMap | None = None
+    if owner_local_support:
+        # An owner-local field is located by the source-bound compact map of
+        # exactly this FE block; its cell rows must be the FE block rows.
+        if whole_mesh:
+            raise ValueError("Owner-local FE support binds exactly one cell block.")
+        if (
+            not isinstance(locator, PreparedMappedCellLocator)
+            or not isinstance(locator.cell_map, PreparedOwnerLocalMappedCellMap)
+            or locator.locator_id != support_geometry.locator_id
+            or support_geometry.block_name != dof_map.block_names[block_index]
+        ):
+            raise ValueError(
+                "Owner-local FE support requires its own source-bound locator and block."
+            )
+        owner_local_map = locator.cell_map
+        if not np.array_equal(
+            np.asarray(owner_local_map.cell_global_ids, dtype=np.int64),
+            np.asarray(
+                discretization.mesh.blocks[block_index].global_ids, dtype=np.int64
+            ),
+        ):
+            raise ValueError(
+                "Owner-local FE support cell rows differ from the FE block rows."
+            )
     exact_mesh = None
     exact_geometry = None
     if mapped_coverage:
@@ -745,6 +773,8 @@ def prepare_finite_element_field_reconstruction(
     else:
         if mapped_support:
             cell_map = support_geometry.locator.cell_map
+        elif owner_local_map is not None:
+            cell_map = owner_local_map
         elif mapped_coverage:
             if exact_geometry is None:
                 raise ValueError(
@@ -865,6 +895,8 @@ def prepare_finite_element_field_reconstruction(
     elif isinstance(support_geometry, MappedFieldSupport):
         support_geometry.require_locator(locator)
         geometry = support_geometry
+    elif isinstance(support_geometry, OwnerLocalFieldSupport):
+        geometry = support_geometry
     elif isinstance(support_geometry, DomainCoverageCertificate):
         if exact_mesh is None or exact_geometry is None:
             raise ValueError("Mapped field support must retain its exact mesh geometry.")
@@ -888,7 +920,7 @@ def prepare_finite_element_field_reconstruction(
             "mesh_support": support_id,
             "authority": (
                 geometry.support_id
-                if isinstance(geometry, MappedFieldSupport)
+                if isinstance(geometry, (MappedFieldSupport, OwnerLocalFieldSupport))
                 else compiled_geometry_identity(geometry)
             ),
         }

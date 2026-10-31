@@ -12,6 +12,7 @@ from numbers import Integral
 from typing import (
     assert_never,
     Literal,
+    NamedTuple,
     NoReturn,
     Protocol,
     runtime_checkable,
@@ -20,7 +21,6 @@ from typing import (
 )
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -160,9 +160,13 @@ class ReconstructionFailure(ValueError):
         self.report = report
 
 
-@dataclass(frozen=True, slots=True)
-class ReconstructedGeometrySourceArchiveRecipe:
-    """Portable source inputs and persistent topology IDs for a reconstruction."""
+class ReconstructedGeometrySourceArchiveRecipe(NamedTuple):
+    """Portable source inputs and persistent topology IDs for a reconstruction.
+
+    As a NamedTuple the recipe is a PyTree, so archives inventory its mesh and ID
+    arrays as dynamic leaves. Restores validate the IDs by rebuilding the owning
+    ``ReconstructedGeometrySource`` and comparing its expected identity.
+    """
 
     source: GeometrySource
     report: ReconstructionReport
@@ -172,61 +176,6 @@ class ReconstructedGeometrySourceArchiveRecipe:
     persistent_region_id: int | None
     expected_source_id: str
     expected_source_revision: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.source, GeometrySource) or not isinstance(
-            self.report, ReconstructionReport
-        ):
-            raise TypeError(
-                "A reconstruction archive recipe requires its source and report."
-            )
-        for name in (
-            "persistent_vertex_ids",
-            "persistent_edge_ids",
-            "persistent_facet_ids",
-        ):
-            raw = np.asarray(getattr(self, name))
-            if raw.ndim != 1 or raw.dtype.kind not in "iu":
-                raise TypeError(f"{name} must be a one-dimensional integer vector.")
-            if raw.dtype.kind == "u" and np.any(raw > np.iinfo(np.int64).max):
-                raise ValueError(f"{name} contains an ID outside signed int64.")
-            values = np.array(raw, dtype=np.int64, copy=True)
-            if np.any(values < 0) or np.unique(values).size != values.size:
-                raise ValueError(f"{name} must contain unique nonnegative IDs.")
-            values.setflags(write=False)
-            object.__setattr__(self, name, values)
-        if self.persistent_region_id is not None and (
-            isinstance(self.persistent_region_id, (bool, np.bool_))
-            or not isinstance(self.persistent_region_id, (int, np.integer))
-            or int(self.persistent_region_id) < 0
-            or int(self.persistent_region_id) > np.iinfo(np.int64).max
-        ):
-            raise ValueError(
-                "persistent_region_id must be a nonnegative signed int64 ID."
-            )
-        if not self.expected_source_id or not self.expected_source_revision:
-            raise ValueError(
-                "A reconstruction archive recipe requires its source identity."
-            )
-
-
-# Archive packing flattens the recipe to find its arrays; an unregistered
-# dataclass would be one opaque leaf and its mesh and ID arrays would be dropped.
-jax.tree_util.register_dataclass(
-    ReconstructedGeometrySourceArchiveRecipe,
-    data_fields=(
-        "source",
-        "report",
-        "persistent_vertex_ids",
-        "persistent_edge_ids",
-        "persistent_facet_ids",
-    ),
-    meta_fields=(
-        "persistent_region_id",
-        "expected_source_id",
-        "expected_source_revision",
-    ),
-)
 
 
 def _persistent_int64_id(payload: object, /) -> int:
@@ -648,15 +597,6 @@ class ReconstructedGeometrySource(GeometrySource):
     scope_entity_key_banks: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...]
     scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
-
-    if not TYPE_CHECKING:
-
-        def __getattribute__(self, name: str, /) -> object:
-            # Equinox binds each method as a BoundMethod pytree whose construction
-            # flattens the whole receiver, including its MeshingDomain. Meshing
-            # routes resolve source keys once per row, so those loops became
-            # quadratic. Methods bind as plain Python methods.
-            return object.__getattribute__(self, name)
 
     @checked
     def __init__(

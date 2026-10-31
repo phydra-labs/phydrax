@@ -223,9 +223,12 @@ def _nonapplicable_quality_summary(
     return value
 
 
-@dataclass(frozen=True, slots=True)
-class CellQualityReportArchiveRecipe:
-    """Quality summaries with None reserved for all-NaN non-applicable samples."""
+class CellQualityReportArchiveRecipe(NamedTuple):
+    """Quality summaries with None reserved for all-NaN non-applicable samples.
+
+    As a NamedTuple the recipe is a PyTree, so archives inventory and restore
+    the evaluation arrays as dynamic leaves.
+    """
 
     evaluation: CellQualityEvaluation
     minimum_measure: float

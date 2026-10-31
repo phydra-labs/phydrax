@@ -1,4 +1,3 @@
-import types
 from fractions import Fraction
 
 import equinox as eqx
@@ -1182,9 +1181,6 @@ def test_meshing_domain_prepares_scope_banks_once_per_stratum(
                     domain.resolve_entity_id(dimension, key, occurrence_path=paths[slot])
                     == slot
                 )
-    # Domain methods bind as plain methods: an Equinox bound-method pytree would
-    # flatten the whole domain on every call.
-    assert type(domain.entity_id) is types.MethodType
     with pytest.raises(ValueError, match="resolve uniquely"):
         domain.resolve_entity_id(2, "absent-source-entity")
     with pytest.raises(ValueError, match="outside its source stratum"):

@@ -2924,6 +2924,24 @@ def _rebuild_reference_cell_map_witnesses(value: object, /) -> ReferenceCellMapW
     return witness
 
 
+def _decode_finite_element_projections[T](value: T, /) -> T:
+    """Restore nested FiniteElementSpec archive projections inside a raw record.
+
+    Raw coordinate maps keep these projections, so their recomputed IDs and tree
+    content differ from the live maps; the owner's restore then re-proves the
+    decoded record against its stored IDs.
+    """
+    from phydrax._model._structure import _FiniteElementSpecArchiveProjection
+
+    return jax.tree_util.tree_map(
+        lambda node: (
+            node.rebuild() if type(node) is _FiniteElementSpecArchiveProjection else node
+        ),
+        value,
+        is_leaf=lambda node: type(node) is _FiniteElementSpecArchiveProjection,
+    )
+
+
 def _rebuild_domain_coverage_certificate(
     value: object,
     mesh: CellMesh,
@@ -2939,6 +2957,7 @@ def _rebuild_domain_coverage_certificate(
         or type(value) is not DomainCoverageCertificate
     ):
         raise TypeError("Stored material coverage has an unexpected concrete type.")
+    value = _decode_finite_element_projections(value)
     domain = _rebuild_continuation_value(value.domain)
     if not isinstance(
         domain,
@@ -6563,6 +6582,13 @@ def _rebuild_finite_volume_runtime_state_archive_recipe(
     return restored
 
 
+def _canonical_dependencies(
+    dependencies: tuple[CompositionDependency, ...], /
+) -> tuple[CompositionDependency, ...]:
+    """Authored bindings in the canonical (entry_id, facet) order an entry stores."""
+    return tuple(sorted(dependencies, key=lambda item: (item.entry_id, item.facet)))
+
+
 def _rebuild_composition(value: object, /) -> Composition:
     if not isinstance(value, Composition):
         raise TypeError("value must be the Composition root type.")
@@ -7057,7 +7083,7 @@ def _rebuild_composition(value: object, /) -> Composition:
         ),
     )
     if any(
-        entries[entry_id].dependencies != dependencies
+        entries[entry_id].dependencies != _canonical_dependencies(dependencies)
         for entry_id, dependencies in expected_material_dependencies
     ):
         raise ValueError(
@@ -7169,7 +7195,8 @@ def _rebuild_layer_curving_composition(value: object, /) -> Composition:
         ),
     )
     if any(
-        entries[entry_id].dependencies != expected for entry_id, expected in dependencies
+        entries[entry_id].dependencies != _canonical_dependencies(expected)
+        for entry_id, expected in dependencies
     ):
         raise ValueError("Layer-curving result dependencies differ from endpoint owners.")
     values = {
@@ -13883,9 +13910,7 @@ def _read(directory: Path, expected: dict[str, object], /) -> None:
     assert array_tree_fingerprint(mapped_curve.pcurve) == array_tree_fingerprint(
         mapped.geometry.pcurves[0]
     )
-    mapped_point = np.asarray(
-        mapped_curve.evaluate(jnp.asarray((0.5,), dtype=jnp.float64))
-    )
+    mapped_point = np.asarray(mapped_curve.evaluate(jnp.asarray(0.5, dtype=jnp.float64)))
     np.testing.assert_array_equal(mapped_point, (0.5, 0.0, 0.0))
     boolean_carriers = load_brep_archive(directory / "boolean-carriers.phx")
     assert boolean_carriers.source_revision == expected["boolean_carrier_revision"]
@@ -14137,8 +14162,8 @@ def _read(directory: Path, expected: dict[str, object], /) -> None:
         np.asarray(
             [
                 [
-                    float(anchor.parameter[0]),
-                    float(anchor.parameter[1]),
+                    float(sum(anchor.local_knots.u[1:4], Fraction(0)) / 3),
+                    float(sum(anchor.local_knots.v[1:4], Fraction(0)) / 3),
                     float(tiny) if index == 0 else 0.0,
                 ]
                 for index, anchor in enumerate(patch.source_mesh.anchors)
