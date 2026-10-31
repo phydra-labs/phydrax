@@ -39,7 +39,10 @@ from ._mesh_certificates import (
 from ._meshing_domain import MeshingDomain
 from ._planar_coverage import FacetOverlap
 from ._source_boundary_records import SourceBoundaryDistanceWitness, SourceBoundaryQuery
-from ._source_fidelity import SourceFidelityCertificate
+from ._source_fidelity import (
+    _AdaptiveImplicitBoundaryCarrier,
+    SourceFidelityCertificate,
+)
 from .implicit._adaptive_discovery import AdaptiveImplicitSurface
 from .implicit._analytic_profile import AnalyticImplicitProfile
 from .implicit._restricted_delaunay_coverage import (
@@ -124,6 +127,19 @@ def _coverage_source_revision(
                 "Adaptive implicit coverage requires its revision-bound source boundary query."
             )
         expected = domain.boundary_source
+        if isinstance(source, _AdaptiveImplicitBoundaryCarrier):
+            # A source carrier republishes the discovery under its own revision;
+            # it binds this domain only through the discovery's boundary query.
+            source.require_current()
+            adaptive = source.adaptive_source
+            if (adaptive.source_id, adaptive.source_revision) != (
+                expected.source_id,
+                expected.source_revision,
+            ) or source.source_id != expected.source_id:
+                raise ValueError(
+                    "Implicit source query does not bind the current discovery revision."
+                )
+            return source.source_revision
         if (source.source_id, source.source_revision) != (
             expected.source_id,
             expected.source_revision,

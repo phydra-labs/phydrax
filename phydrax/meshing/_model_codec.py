@@ -585,6 +585,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", PeriodicCell),
         ("phydrax.discretization", PeriodicIsometryGroup),
         ("phydrax.discretization", PeriodicMeshTopology),
+        ("phydrax.discretization", HexahedralConnectivity),
         ("phydrax.meshing", PeriodicPointOrbits),
         ("phydrax.discretization", PolygonalConnectivity),
         ("phydrax.discretization", PolyhedralBlock),

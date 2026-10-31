@@ -2611,12 +2611,13 @@ def approximate_source_coverage(
         expected_source = domain.boundary_source
         from ._mesh_certificates import _same_tree_content
 
+        # A native carrier republishes the discovery under its own revision; it
+        # binds the domain through the discovery's adaptive boundary query.
         if (
             (adaptive_source.source_id, adaptive_source.source_revision)
             != (expected_source.source_id, expected_source.source_revision)
             or not _same_tree_content(adaptive_source.surface, domain)
-            or (source.source_id, source.source_revision)
-            != (adaptive_source.source_id, adaptive_source.source_revision)
+            or source.source_id != adaptive_source.source_id
         ):
             return fail(
                 "implicit_source_identity",
