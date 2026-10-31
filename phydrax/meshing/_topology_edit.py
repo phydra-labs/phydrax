@@ -995,6 +995,10 @@ def _build_mesh(
         cell_ids.append(ids)
     if not blocks:
         raise ValueError("A topology edit must retain at least one target cell block.")
+    if source.topological_dimension == 2:
+        # Polygonal meshes order blocks by increasing arity; the stable sort keeps
+        # the edit's block order among equal arities.
+        blocks.sort(key=lambda block: block.arity)
     packed = (
         polyhedral_connectivity(
             entries,
