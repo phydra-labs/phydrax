@@ -480,6 +480,44 @@ def _intersection_area(
     return abs(_area2(polygon))
 
 
+_Box2 = tuple[Fraction, Fraction, Fraction, Fraction]
+
+
+def _triangle_box(triangle: _Triangle2, /) -> _Box2:
+    """Exact ``(x_min, x_max, y_min, y_max)`` of a chart triangle."""
+    xs = tuple(point[0] for point in triangle)
+    ys = tuple(point[1] for point in triangle)
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def _boxes_overlap(first: _Box2, second: _Box2, /) -> bool:
+    """Whether two boxes share positive area; otherwise their triangles meet in area 0."""
+    return (
+        first[0] < second[1]
+        and second[0] < first[1]
+        and first[2] < second[3]
+        and second[2] < first[3]
+    )
+
+
+def _overlapping_box_pairs(boxes: tuple[_Box2, ...], /) -> list[tuple[int, int]]:
+    """Index pairs ``i < j`` of boxes sharing positive area (sweep over ``x_min``)."""
+    order = sorted(range(len(boxes)), key=lambda index: boxes[index][0])
+    pairs: list[tuple[int, int]] = []
+    active: list[int] = []
+    for index in order:
+        box = boxes[index]
+        active = [other for other in active if boxes[other][1] > box[0]]
+        pairs.extend(
+            (min(index, other), max(index, other))
+            for other in active
+            if _boxes_overlap(box, boxes[other])
+        )
+        active.append(index)
+    pairs.sort()
+    return pairs
+
+
 def _volume_face_owners(
     mesh: CellMesh, cell_regions: np.ndarray, /
 ) -> tuple[
@@ -1399,39 +1437,35 @@ def _cad_chart_partition(
             raise SourceCoverageUnavailable(
                 f"CAD source chart area differs on patch {patch}.", status="violated"
             )
-        for index, first in enumerate(target):
-            if abs(_area2(first)) == 0:
+        declared_boxes = tuple(_triangle_box(triangle) for triangle in declared)
+        target_boxes = tuple(_triangle_box(triangle) for triangle in target)
+        covered = Fraction(0)
+        for first, box in zip(target, target_boxes, strict=True):
+            area = abs(_area2(first))
+            if area == 0:
                 raise SourceCoverageUnavailable(
                     f"CAD source chart is degenerate on patch {patch}.", status="violated"
                 )
-            if sum(
-                (_intersection_area(first, value) for value in declared), Fraction(0)
-            ) != abs(_area2(first)):
+            inside = sum(
+                (
+                    _intersection_area(first, value)
+                    for value, value_box in zip(declared, declared_boxes, strict=True)
+                    if _boxes_overlap(box, value_box)
+                ),
+                Fraction(0),
+            )
+            if inside != area:
                 raise SourceCoverageUnavailable(
                     f"CAD target chart leaves the authored trim on patch {patch}.",
                     status="violated",
                 )
-            for second in target[index + 1 :]:
-                if _intersection_area(first, second) > 0:
-                    raise SourceCoverageUnavailable(
-                        f"CAD target charts overlap on patch {patch}.", status="violated"
-                    )
-        if (
-            sum(
-                (
-                    sum(
-                        (
-                            _intersection_area(chart, source_triangle)
-                            for source_triangle in declared
-                        ),
-                        Fraction(0),
-                    )
-                    for chart in target
-                ),
-                Fraction(0),
-            )
-            != source_area
-        ):
+            covered += inside
+        for index, other in _overlapping_box_pairs(target_boxes):
+            if _intersection_area(target[index], target[other]) > 0:
+                raise SourceCoverageUnavailable(
+                    f"CAD target charts overlap on patch {patch}.", status="violated"
+                )
+        if covered != source_area:
             raise SourceCoverageUnavailable(
                 f"CAD chart partition does not cover patch {patch}.", status="violated"
             )

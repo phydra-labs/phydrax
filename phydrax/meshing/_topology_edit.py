@@ -20,7 +20,7 @@ import numpy as np
 
 from ..discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from ..discretization._cell_complex import polyhedral_connectivity
-from ..discretization._cell_mesh import PolyhedralBlock
+from ..discretization._cell_mesh import PolyhedralBlock, SimplicialConnectivity
 from ..discretization._nested_reference_types import (
     exact_reference_vertices,
     NestedReferenceWitnesses,
@@ -231,6 +231,10 @@ def source_family_blocks(
 
 def _face_rows(connectivity: object, dimension: int) -> tuple[np.ndarray, ...]:
     """Return each intermediate entity's ordered vertex row."""
+    if isinstance(connectivity, SimplicialConnectivity):
+        if not 0 < dimension < connectivity.dimension:
+            raise ValueError(f"Vertex rows of dimension {dimension} are unavailable.")
+        return tuple(np.asarray(connectivity.entities[dimension], dtype=np.int64))
     if dimension == 1:
         edges = getattr(connectivity, "edges", None)
         if edges is None:
