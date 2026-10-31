@@ -158,6 +158,7 @@ from ._mixed_adaptation import (
 )
 from ._organization import MeshLabel, MeshPatch, MeshZone, RegionBoundaryEvidence
 from ._periodic import (
+    periodic_quotient_facet_cell_classes,
     periodic_topology_after_edit,
     PeriodicRefinementEdgeLock,
     stage_periodic_refinement_candidate,
@@ -751,18 +752,23 @@ def _edge_classes(
 
     Boundary edges, region interfaces, and edges of any edge organization are
     features; distinct incident region pairs or memberships are distinct classes.
+    Periodic meshes decide boundary and interface status on the quotient: the
+    outer boundary of a lifted cover is a representation artifact.
     """
 
     count = mesh.entity_set(1).count
-    relation = mesh.topology.incidences[1].relation
-    valid = np.asarray(relation.valid, dtype=np.bool_)
-    edges = np.asarray(relation.source_indices)[valid]
-    cells = cell_classes[np.asarray(relation.target_indices)[valid]]
-    incident = np.bincount(edges, minlength=count)
-    low = np.full((count,), np.iinfo(np.int64).max, dtype=np.int64)
-    high = np.full((count,), -1, dtype=np.int64)
-    np.minimum.at(low, edges, cells)
-    np.maximum.at(high, edges, cells)
+    if mesh.periodic_topology is not None:
+        incident, low, high = periodic_quotient_facet_cell_classes(mesh, cell_classes)
+    else:
+        relation = mesh.topology.incidences[1].relation
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        edges = np.asarray(relation.source_indices)[valid]
+        cells = cell_classes[np.asarray(relation.target_indices)[valid]]
+        incident = np.bincount(edges, minlength=count)
+        low = np.full((count,), np.iinfo(np.int64).max, dtype=np.int64)
+        high = np.full((count,), -1, dtype=np.int64)
+        np.minimum.at(low, edges, cells)
+        np.maximum.at(high, edges, cells)
     member = _membership(mesh, scopes, 1)
     feature = (incident != 2) | (low != high) | np.any(member, axis=1)
     classes = np.zeros((count,), dtype=np.int64)

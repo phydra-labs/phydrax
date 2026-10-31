@@ -825,6 +825,7 @@ def restore_model_archive_value(
     import jax
     import numpy as np
 
+    from .._model._structure import _FiniteElementSpecArchiveProjection
     from ..discretization._cell_mesh import CellMesh
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..discretization.fem._de_rham import (
@@ -943,6 +944,8 @@ def restore_model_archive_value(
             ):
                 raise ValueError("Stored sparse operator differs from its owner fields.")
             return operator
+        if type(item) is _FiniteElementSpecArchiveProjection:
+            return item.rebuild()
         if type(item) is ArraySpaceArchiveRecipe:
             pairing = restore(item.pairing)
             return item.rebuild(pairing)
