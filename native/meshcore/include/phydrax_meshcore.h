@@ -598,11 +598,13 @@ PHX_MC_API int32_t phx_mc_tet_mesh_refine(
  * collapses, relocations, and interior vertex insertions are accepted by one
  * sorted-score order; each cell's score is floored to multiples of
  * `*score_quantum` (reported, 2^-20). The determinant floor gates every edit.
- * The circumradius size target gates every edit except one removing a
- * degenerate cell (below the determinant floor or scoring 0), whose repair
- * takes precedence. `sizes` follows refine (empty keeps the retained field,
- * e.g. refine's). The run status is UNRESOLVED while the radius-edge or
- * dihedral target, or the determinant floor, remains unmet;
+ * No edit creates a cell whose circumradius exceeds its size target by more
+ * than the largest excess among the cells it removes (none where they were
+ * within target), except one removing a degenerate cell (below the
+ * determinant floor or scoring 0), whose repair takes precedence. `sizes`
+ * follows refine (empty keeps the retained field, e.g. refine's). The run
+ * status is UNRESOLVED while the radius-edge or dihedral target, or the
+ * determinant floor, remains unmet;
  * `phx_mc_tet_mesh_unmet` reports each residual criterion. The size field is
  * a constraint on improvement, not one of its targets. */
 PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(

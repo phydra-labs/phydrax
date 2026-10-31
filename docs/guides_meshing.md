@@ -655,16 +655,27 @@ contracts:
   interior vertex insertion, collapse, and relocation is accepted only if the
   cells it creates pass the hard gates (relative determinant above its floor,
   source constraints preserved) and the size gate, and the affected cells'
-  worst-first sorted scores strictly improve.
-- **Precedence.** The size gate (circumradius within the size target) binds
-  every edit except one that removes a degenerate cell: a cell below the
-  determinant floor or scoring 0 (a ratio beyond 2^20 times its target).
-  Repairing degeneracy takes precedence over size; any other edit, collapses
-  included, can never grow a cell beyond its size target. The whole-mesh
-  fixed-boundary retessellation never takes this exemption.
+  worst-first sorted scores strictly improve. An interior insertion either
+  cones a circumsphere cavity to a candidate point or, for a cell whose edits
+  are otherwise exhausted, cones the closed ring of one of its unconstrained
+  edges to a point in the ring's kernel. The latter removes a flat cell whose
+  four vertices lie on a fixed boundary (two constrained faces splitting a
+  planar quad) without moving the boundary: no flip can remove such a cell and
+  no circumsphere cavity contains it.
+- **Precedence.** The determinant floor binds every edit. The size gate is
+  relative to the cells an edit removes: no created cell may exceed its target
+  by more than the largest excess (circumradius over target) among them, or at
+  all where they were all within target. Edits therefore never create a size
+  violation where none existed and never grow the mesh's largest excess, while
+  cells refinement left beyond size (at a fixed boundary, or refused by the
+  separation guard) can still be repaired. An edit that removes a degenerate
+  cell (below the determinant floor or scoring 0, a ratio beyond 2^20 times
+  its target) is not size-bound: repairing degeneracy takes precedence. The
+  whole-mesh fixed-boundary retessellation must keep every cell within target.
 - **Termination.** Every accepted edit strictly improves the whole mesh's
   sorted score vector, and over the finite score alphabet that order admits no
-  infinite improving sequence. Improvement therefore ends without pass,
+  infinite improving sequence. The gates above only discard edits, so they do
+  not affect this argument. Improvement therefore ends without pass,
   candidate, or time limits, although insertion and collapse change the vertex
   set; no complexity bound is claimed.
 - **Unmet evidence.** Targets the edits cannot reach end valid but unmet: the
