@@ -505,6 +505,28 @@ def test_native_interval_dot_general_matches_host() -> None:
     np.testing.assert_allclose(native_bounds[1], host_bounds[1], rtol=0.0, atol=1e-12)
 
 
+def test_native_interval_keeps_an_exact_derived_integer_exponent() -> None:
+    # 0.5 * blockiness is exactly 1: the power stays an integer power, so the
+    # gradient of (v^2)^(0.5 b) is finite on a box through v = 0 (natively and
+    # on the host) instead of exp((k - 1) log 0) blowing up.
+    blockiness = jnp.asarray(2.0, dtype=jnp.float64)
+
+    def field(point: jax.Array) -> jax.Array:
+        return jnp.square(point[0]) ** (0.5 * blockiness) + point[1]
+
+    lower = np.asarray(((-0.1, 0.0),), dtype=np.float64)
+    upper = np.asarray(((0.1, 1.0),), dtype=np.float64)
+    for function in (field, jax.grad(field)):
+        native = prepare_interval_function(function, 2, execution="native")
+        host = prepare_interval_function(function, 2, execution="host")
+        native_bounds = native.evaluate(lower, upper)
+        host_bounds = host.evaluate(lower, upper)
+        assert np.all(np.isfinite(native_bounds[0])) and np.all(
+            np.isfinite(native_bounds[1])
+        )
+        _assert_nested_enclosures(native_bounds, host_bounds)
+
+
 def test_native_interval_lowers_the_superquadric_field_and_gradient() -> None:
     geometry = Superquadric((0.0, 0.0, 0.0), (0.45, 0.50, 0.55)).compile()
     kernel, state = geometry.kernel, geometry.state
