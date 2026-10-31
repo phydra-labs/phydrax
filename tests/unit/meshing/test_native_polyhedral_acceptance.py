@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import copy
+from fractions import Fraction
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
+from phydrax.discretization._mapped_power_geometry import MappedPowerCellGeometrySource
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import lagrange_element
@@ -28,6 +34,11 @@ from phydrax.meshing import (
     RegionSeed,
     VolumeFillStrategy,
     VolumeMeshingSpec,
+)
+from phydrax.meshing._model_codec import (
+    read_model_artifact,
+    restore_model_archive_value,
+    write_model_artifact,
 )
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
 from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
@@ -212,6 +223,58 @@ def test_mapped_stretched_polyhedral_provider_preserves_features_and_fv_measure(
     assert {block.cell_kind for block in result.mesh.blocks} == {"polyhedron"}
     np.testing.assert_allclose(geometry.cell_volumes, independent, rtol=0.0, atol=1e-12)
     np.testing.assert_allclose(np.sum(independent), 1.0 / 3.0, rtol=0.0, atol=1e-12)
+
+
+def test_mapped_power_geometry_source_round_trips_through_the_model_archive(
+    tmp_path: Path,
+) -> None:
+    source, specification = _mapped_stretched_polyhedral_source()
+    result = (
+        NativeMeshingProvider(
+            NativeMeshingOptions(
+                "plc_restricted_power",
+                polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+            )
+        )
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+    source_map = result.geometry.source_map
+    assert isinstance(source_map, MappedPowerCellGeometrySource)
+
+    path = write_model_artifact(tmp_path / "mapped-power.phx", source_map, limits=None)
+    restored = read_model_artifact(
+        path,
+        expected_type=MappedPowerCellGeometrySource,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+
+    assert type(restored) is MappedPowerCellGeometrySource
+    assert restored is not source_map
+    assert restored.source_map_id == source_map.source_map_id
+    assert restored.exact_vertices == source_map.exact_vertices
+    assert restored.cell_piece_tetrahedra() == source_map.cell_piece_tetrahedra()
+    np.testing.assert_array_equal(
+        np.asarray(restored.runtime_vertices), np.asarray(source_map.runtime_vertices)
+    )
+
+    first = source_map.exact_vertices[0]
+    tampered = copy.copy(source_map)
+    object.__setattr__(
+        tampered,
+        "exact_vertices",
+        (
+            (first[0] + Fraction(1, 7), first[1], first[2]),
+            *source_map.exact_vertices[1:],
+        ),
+    )
+    with pytest.raises(ValueError, match="differs from its renewed root-chart images"):
+        MappedPowerCellGeometrySource.from_stored_fields(tampered)
 
 
 def test_periodic_polyhedral_source_reaches_fv_measure_consumer() -> None:

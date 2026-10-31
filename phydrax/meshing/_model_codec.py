@@ -109,6 +109,7 @@ def _register_model_archive_types() -> None:
         ExactPowerCellGeometrySource,
     )
     from ..discretization._fv_precision import FiniteVolumePrecisionPolicy
+    from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..discretization._measure import DiscreteMeasure
     from ..discretization._nested_reference_types import (
         NestedReferenceWitnesses,
@@ -535,6 +536,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", ExactPlcCellGeometrySource),
         ("phydrax.discretization", ExactPowerCellGeometrySource),
         ("phydrax.discretization", ExactPeriodicPowerSourceContext),
+        ("phydrax.discretization", MappedPowerCellGeometrySource),
         ("phydrax.discretization", CellGeometrySpec),
         ("phydrax.discretization", OwnerLocalCellBlock),
         ("phydrax.discretization", OwnerLocalCellGeometry),
@@ -819,6 +821,7 @@ def restore_model_archive_value(
     import numpy as np
 
     from ..discretization._cell_mesh import CellMesh
+    from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..discretization.fem._de_rham import (
         _distribute_transfer_result,
         DistributedFiniteElementTransfer,
@@ -991,6 +994,8 @@ def restore_model_archive_value(
             return rebuild_policy(item)
         if type(item) is CellMesh:
             return CellMesh.from_stored_fields(item)
+        if type(item) is MappedPowerCellGeometrySource:
+            return MappedPowerCellGeometrySource.from_stored_fields(item)
         if type(item) is HilbertComplex:
             spaces = tuple(restore(space) for space in item.spaces)
             differentials = tuple(restore(value) for value in item.differentials)
