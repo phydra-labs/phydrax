@@ -196,6 +196,16 @@ prescribed) and accepted only when provider, route solve, displacement, finitene
 and signed corner-Jacobian evidence pass. An invalid trial returns the base runtime
 but remains inadmissible.
 
+Every route solves for the interior displacement divided by the largest prescribed
+boundary displacement; `FiniteElementMotionExtensionResult.displacement_scale` reports
+that scale, and `residual_norm` is the route residual in unnormalized units. The
+solve's relative tolerance and absolute floor (and the nonlinear step criteria)
+therefore act on an O(1) problem: a 1e-9 move converges like a unit move on the
+linear routes, and a 1e-5 move on every route, instead of failing against a fixed
+absolute floor. At moves of order 1e-10 of the coordinate scale, the Winslow
+residual, which is evaluated in absolute coordinates, reaches rounding first and
+reports a failed status.
+
 `FiniteElementMotionExtension(..., periodic_vertex_pairs=(kept, twin, translation))`
 solves every route on the quotient of a lifted periodic patch, where `twin[i]` is
 `kept[i]` at a lattice image. Each twin class has one displacement unknown, the

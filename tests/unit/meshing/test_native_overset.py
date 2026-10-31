@@ -373,6 +373,87 @@ def test_overset_receptor_evidence_carries_donor_inverse_refusals() -> None:
     )
 
 
+def test_owner_local_fv_donor_request_refuses_an_undecided_inverse_map() -> None:
+    """A donor owner refuses a request whose point has no decided preimage.
+
+    The owner-local FV overset serves donor-cell requests by locating the
+    requester's point in the requested cell. On the 1e-5-thin quadratic donor
+    the point just below its edge has an undecided exact inverse; the owner
+    refuses with the locator's box evidence re-indexed to the request row
+    instead of reading the incomplete candidate list as "not contained".
+    """
+    from phydrax.discretization._cell_geometry import CellGeometrySpec
+    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+    from phydrax.meshing._curving import _exact_coordinate_bank_source_map
+    from phydrax.meshing._overset_finite_volume import _bits, _serve_requests
+    from tests.unit.meshing.test_owner_local_conservative_remap import (
+        _curved_distributed_owner_view,
+    )
+
+    if jax.process_count() != 1:
+        pytest.skip("The single donor owner runs outside a process group.")
+    corners = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0e-5)), dtype=np.float64)
+    nodes = np.concatenate(
+        (corners, 0.5 * (corners[[0, 1, 0]] + corners[[1, 2, 2]])), axis=0
+    )
+    mesh = phx.discretization.CellMesh.from_triangles(
+        corners, np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    contract = phx.SpatialCoordinateContract.si()
+    elements = {"triangles": phx.discretization.lagrange_element("triangle", 2)}
+    routes = {"triangles": np.arange(6, dtype=np.int32)[None, :]}
+    bank_geometry = CellGeometrySpec(elements, routes, nodes)
+    bank = MeshPart(
+        "thin-bank", phx.meshing.certify_cell_mesh(mesh, contract, geometry=bank_geometry)
+    )
+    source_map = _exact_coordinate_bank_source_map(
+        mesh,
+        bank.name,
+        bank.part_id,
+        ("thin-donor-coordinate-bank", bank.part_id, cell_geometry_id(bank_geometry)),
+        tuple(tuple(Fraction.from_float(float(value)) for value in row) for row in nodes),
+        nodes,
+    )
+    result = phx.meshing.certify_cell_mesh(
+        mesh,
+        contract,
+        geometry=CellGeometrySpec(
+            elements, routes, nodes, source_map=source_map, source_mesh=mesh
+        ),
+    )
+    device = jax.local_devices()[0]
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "thin-donor-owner",
+            (jax.process_index(),),
+            ((device.process_index, device.id),),
+            mesh_axes=(("thin_donor_owner", 1),),
+        ),
+        (device,),
+    )
+    view = _curved_distributed_owner_view(
+        "thin-donor",
+        result,
+        np.zeros((1,), dtype=np.int32),
+        group,
+        0,
+        source_map,
+        mesh.mesh_id,
+    )
+    cell_id = int(np.asarray(view.cell_ids)[0])
+    request = {"cell": cell_id, "point": _bits(np.asarray((0.5, -2.0e-15)))}
+
+    with pytest.raises(phx.discretization.CellLocationRefusalError) as refused:
+        _serve_requests(view, {}, {cell_id: ("triangle", corners)}, [request], 0)
+
+    (refusal,) = refused.value.inverse_refusals
+    assert (refusal.point, refusal.cell, refusal.reason) == (
+        0,
+        0,
+        "rootless-tolerance-root",
+    )
+
+
 def test_polyhedral_locator_uses_authored_planar_faces() -> None:
     coordinates = np.asarray(
         (
