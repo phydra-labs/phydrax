@@ -497,6 +497,8 @@ struct FlipQuality {
   // Circumradius over the cell's size target (0 without a target, +inf for
   // an unrepresentable circumsphere); above 1 the cell is beyond its size.
   double size_excess = 0.0;
+  // The score before its downward resolution to the kTetScoreQuantum grid.
+  double unresolved = 0.0;
 };
 using QualityVector = std::vector<FlipQuality>;
 void sort_quality_vector(QualityVector& quality);
@@ -522,8 +524,8 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
       measure.radius_edge_ratio <= request.radius_edge_bound
           ? 1.0
           : request.radius_edge_bound / measure.radius_edge_ratio;
-  const double quality_score =
-      std::floor(std::min(angle_score, radius_score) / kTetScoreQuantum) * kTetScoreQuantum;
+  const double unresolved = std::min(angle_score, radius_score);
+  const double quality_score = std::floor(unresolved / kTetScoreQuantum) * kTetScoreQuantum;
   const std::int8_t validity =
       !(measure.relative_determinant > request.minimum_relative_determinant)
           ? kBelowDeterminantFloor
@@ -531,7 +533,7 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
   const double size_excess = std::isinf(measure.size_target)
                                  ? 0.0
                                  : measure.circumradius / measure.size_target;
-  return {validity, quality_score, size_excess};
+  return {validity, quality_score, size_excess, unresolved};
 }
 
 double vertex_size(const TetQualityRequest& request, std::int32_t slot) {
@@ -697,8 +699,15 @@ bool prepare_relocation_plan(const TetMesh& mesh,
   return true;
 }
 
+bool admissible_cell(const FlipQuality& quality, double size_excess_bound) noexcept;
+
+// Scores the star with `candidate` in place of its moved vertex. Stops at the
+// first cell that is not measurable, not admissible under `size_excess_bound`
+// or scores below `score_floor`: no relocation creating such a cell can be
+// accepted against a sorted vector that starts at `score_floor`.
 bool relocated_quality(std::span<const PreparedRelocationCell> plan,
                        const double* candidate, const TetQualityRequest& request,
+                       double score_floor, double size_excess_bound,
                        QualityVector& quality) {
   quality.clear();
   quality.reserve(plan.size());
@@ -710,7 +719,12 @@ bool relocated_quality(std::span<const PreparedRelocationCell> plan,
     if (!measure_relocated_cell(points, cell.metric_cache, cell.size_target, measure)) {
       return false;
     }
-    quality.push_back(quality_from_measure(measure, request));
+    const FlipQuality quality_of_cell = quality_from_measure(measure, request);
+    if (quality_of_cell.primary < score_floor ||
+        !admissible_cell(quality_of_cell, size_excess_bound)) {
+      return false;
+    }
+    quality.push_back(quality_of_cell);
   }
   sort_quality_vector(quality);
   return true;
@@ -821,6 +835,26 @@ bool improves_quality_vector(std::span<const FlipQuality> before,
 bool improves_quality_vector(std::span<const FlipQuality> before,
                              std::span<const FlipQuality> after) {
   return improves_quality_vector(before, after, admissible_size_excess(before));
+}
+
+// A relocation is continuous: an arbitrarily small move can carry a score
+// across a grid line, so relocations alone could step through the score
+// alphabet one quantum at a time while the geometry barely changes. A
+// relocation must therefore gain a whole quantum of unresolved score: with
+// every before score resolved upward instead (raise_scores) and every after
+// score downward, the sorted vectors must still strictly increase in
+// quality_vector_less, with every relocated cell admissible. No earlier
+// position then loses unresolved score and the first changed one gains at
+// least one quantum. Resolving the before scores upward only strengthens the
+// acceptance rule, so an accepted relocation also improves the resolved scores
+// (the termination argument is unchanged).
+void raise_scores(std::span<const FlipQuality> before, QualityVector& raised) {
+  raised.assign(before.begin(), before.end());
+  for (FlipQuality& quality : raised) {
+    quality.primary =
+        std::min(1.0, std::ceil(quality.unresolved / kTetScoreQuantum) * kTetScoreQuantum);
+  }
+  sort_quality_vector(raised);
 }
 
 // Improvement's targets are the score and the determinant floor; the size
@@ -2264,6 +2298,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   std::vector<PreparedRelocationCell> relocation_plan;
   QualityVector before_quality;
   QualityVector after_quality;
+  QualityVector raised_quality;
   std::vector<TetEditCell> replacement_cells;
   const auto vertex_step = [&](std::uint64_t vertex_id) -> std::int32_t {
     const std::int32_t removed = mesh.vertex_slot(vertex_id);
@@ -2324,8 +2359,15 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     }
 
     // Relocation targets: the neighbor centroid, then the minimum-radius apex
-    // of every constrained face opposite this vertex in its star; each is
-    // searched by halving the step from the current position.
+    // of every constrained face opposite this vertex in its star. Each is
+    // searched by backtracking from the target toward the current position
+    // over the fractions 1, 1/2, ..., kTetScoreQuantum, so a vertex costs at
+    // most 21 star evaluations per target, and a candidate is accepted only if
+    // it gains a whole quantum over the raised scores (raise_scores). A star
+    // whose raised scores are all 1 cannot gain one and is not searched.
+    raise_scores(before_quality, raised_quality);
+    if (raised_quality.front().primary >= 1.0) return PHX_MC_OK;
+    const double size_excess_bound = admissible_size_excess(before_quality);
     std::vector<std::array<double, 3>> targets(1, std::array<double, 3>{});
     for (std::int32_t neighbor : neighbors) {
       const double* point = mesh.point(neighbor);
@@ -2348,8 +2390,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     }
     const double* original = mesh.point(removed);
     for (const std::array<double, 3>& target : targets) {
-      double fraction = 1.0;
-      while (fraction > 0.0) {
+      for (double fraction = 1.0; fraction >= kTetScoreQuantum; fraction *= 0.5) {
         double candidate[3];
         bool distinct = false;
         for (int axis = 0; axis < 3; ++axis) {
@@ -2357,8 +2398,10 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
           distinct = distinct || candidate[axis] != original[axis];
         }
         if (!distinct) break;
-        if (relocated_quality(relocation_plan, candidate, request, after_quality) &&
-            improves_quality_vector(before_quality, after_quality)) {
+        if (relocated_quality(relocation_plan, candidate, request,
+                              raised_quality.front().primary, size_excess_bound,
+                              after_quality) &&
+            quality_vector_less(raised_quality, after_quality)) {
           TetEditVertex moved;
           moved.id = vertex_id;
           std::copy_n(candidate, 3, moved.carrier.begin());
@@ -2380,9 +2423,6 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
             return PHX_MC_OK;
           }
         }
-        const double next = fraction * 0.5;
-        if (next == fraction) break;
-        fraction = next;
       }
     }
     return PHX_MC_OK;
@@ -2410,8 +2450,11 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // bound) only discard edits, so they leave this argument intact; the size
   // bound also keeps the largest size excess created by a non-degenerate
   // repair at most the largest one it removed. Edge-ring and point insertions
-  // are accepted by the same rule. No complexity bound is claimed; unmet
-  // targets are reported per cell below.
+  // are accepted by the same rule; relocations by the stricter whole-quantum
+  // gain over raised scores (raise_scores), which implies it. Each vertex step evaluates a
+  // bounded number of candidates (its star's collapses and at most 21 per
+  // relocation target). No complexity bound on the number of accepted edits
+  // is claimed; unmet targets are reported per cell below.
   while (!pending_cells.empty() || !pending_vertices.empty()) {
     while (!pending_cells.empty()) {
       const std::uint64_t logical_id = *pending_cells.begin();
