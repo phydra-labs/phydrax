@@ -194,7 +194,9 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> 
     selected = geometry.boundary_atlas.select(entity_ids=(0,))
     assert selected.source_id == model.source_id
     assert np.array_equal(np.asarray(selected.source_entity_ids), [0])
-    face_point = jnp.asarray([0.5, 0.0, 0.0])
+    # Interior point of the y=0 face: on the box edge y=z=0 two faces tie at
+    # distance zero and the exact source normal is ambiguous.
+    face_point = jnp.asarray([0.5, 0.0, 1.5])
     direct_gradient = jax.grad(geometry.boundary_field)(face_point)
     assert np.all(np.isfinite(np.asarray(direct_gradient)))
     assert float(jnp.linalg.norm(direct_gradient)) == pytest.approx(1.0)

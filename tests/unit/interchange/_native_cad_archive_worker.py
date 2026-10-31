@@ -1462,7 +1462,7 @@ def _offset_sphere(source: BRepModel, /) -> BRepOffsetResult:
         1.0 / 3.0,
         source_id="archive-offset-sphere",
     )
-    if result.source_model_id != source.model_id:
+    if result.source_model_id != source.source_revision:
         raise ValueError("The sphere offset result lost its exact source model identity.")
     model = result.model
     patch = model.patches[0]
