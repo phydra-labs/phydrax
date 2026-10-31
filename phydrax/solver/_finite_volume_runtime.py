@@ -4966,6 +4966,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         successor runtime only after the event commits; a rejected event keeps
         the accepted predecessor state runnable.
         """
+        from ..geometry._supermesh import CommonRefinementPolicy
         from ..meshing import CellMeshTransition
         from ._finite_volume_topology_events import (
             FiniteVolumeRemeshArtifact,
@@ -5138,24 +5139,30 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 precision=successor_runtime.precision,
             )
 
-        # The transferred totals round once per moved product and compensated
-        # accumulation; bound the admitted content defect accordingly.
-        source_total = np.asarray(
-            accepted_state.content_state.conservative_content, dtype=np.float64
-        )
-        cell_rows = source_geometry.cell_count + target_geometry.cell_count
-        map_count = (
-            1
-            if transition.volume_material_chain is None
-            else len(transition.volume_material_chain.maps)
-        )
-        conservation_tolerance = float(
-            8.0
-            * np.finfo(np.float64).eps
-            * cell_rows
-            * map_count
-            * max(float(np.max(np.sum(np.abs(source_total), axis=0))), 1.0)
-        )
+        if content_semantics == "material_following_content":
+            # Material transfer rounds once per moved product and compensated
+            # accumulation; bound the admitted content defect accordingly.
+            source_total = np.asarray(
+                accepted_state.content_state.conservative_content, dtype=np.float64
+            )
+            cell_rows = source_geometry.cell_count + target_geometry.cell_count
+            map_count = (
+                1
+                if transition.volume_material_chain is None
+                else len(transition.volume_material_chain.maps)
+            )
+            transfer_tolerance = float(
+                8.0
+                * np.finfo(np.float64).eps
+                * cell_rows
+                * map_count
+                * max(float(np.max(np.sum(np.abs(source_total), axis=0))), 1.0)
+            )
+            remap_policy = None
+        else:
+            # The Eulerian overlap is certified to its common-refinement policy.
+            remap_policy = CommonRefinementPolicy()
+            transfer_tolerance = float(remap_policy.coverage_tolerance)
         scheduler = FiniteVolumeTopologyEventScheduler(accepted_state.topology_journal)
         scheduler.submit(request, accepted_step, event_time)
         transaction = scheduler.transact(
@@ -5164,7 +5171,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             artifact=artifact,
             source_geometry=source_geometry,
             target_geometry=target_geometry,
-            coverage_tolerance=conservation_tolerance,
+            coverage_tolerance=transfer_tolerance,
+            remap_policy=remap_policy,
             active_cell_mask=successor_runtime.active_cell_mask,
             admissibility=lambda content: jnp.all(
                 successor_dynamics.system.admissible(content.cell_average())
