@@ -196,6 +196,14 @@ prescribed) and accepted only when provider, route solve, displacement, finitene
 and signed corner-Jacobian evidence pass. An invalid trial returns the base runtime
 but remains inadmissible.
 
+`FiniteElementMotionExtension(..., periodic_vertex_pairs=(kept, twin, translation))`
+solves every route on the quotient of a lifted periodic patch, where `twin[i]` is
+`kept[i]` at a lattice image. Each twin class has one displacement unknown, the
+element tensors keep their lifted cell geometry, and lattice copies of a seam edge
+enter the harmonic graph once. Moved twins therefore stay exact lattice copies.
+Pairs that are not lattice translates are refused at preparation. Boundary
+displacements that disagree within one class make `extend` report failure.
+
 PDE-constrained workflows must recompute the realization from the same design in
 the residual, objective, `state_admissibility`, and `state_realization` callables.
 Connectivity changes terminate the current topology epoch. See

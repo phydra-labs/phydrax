@@ -1285,7 +1285,10 @@ def _node_residuals(
     projectors[face] = normals[face, :, None] * normals[face, None, :]
     vertex = classes.dimensions[rows] == 0
     projectors[vertex] = identity
-    projectors = np.where(np.isfinite(projectors), projectors, 0.0)
+    # A resolved foot without a finite frame (singular or frameless hit) pins the
+    # node to its foot; a zero projector would leave a constrained node free.
+    unframed = ~np.all(np.isfinite(projectors), axis=(1, 2))
+    projectors[unframed] = identity
     feet = np.where(np.isfinite(feet), feet, coordinates[rows])
     return rows, feet, residuals, projectors
 

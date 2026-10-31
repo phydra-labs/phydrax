@@ -332,8 +332,13 @@ Every operator works in the frame of the cell it evaluates:
   lattice translate and moves with the same velocity. Otherwise the stage
   geometry is invalid, and a host epoch
   (`UnstructuredFiniteVolumePlan.with_periodic_seam_vertices`) refuses it.
-  Routed interior motion is not coupled across seams, so it is refused on
-  periodic plans.
+  Routed interior motion (`motion_policy` with a non-`PRESCRIBED` route) is
+  solved on the periodic quotient: the FE extension
+  (`FiniteElementMotionExtension(periodic_vertex_pairs=...)`) gives each seam
+  twin class one displacement unknown, keeps the lifted cell geometry in its
+  element tensors, and counts lattice copies of a seam edge once. Moved twins
+  stay exact lattice copies, so a moving obstacle inside a periodic box drives
+  the whole quotient mesh and the ALE GCL holds by construction.
 
 Each operator is regression-tested against the same serial operator on a
 5×5 tiling of the single-owner periodic patch, comparing the central rows.
