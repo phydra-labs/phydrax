@@ -59,6 +59,7 @@ from ._trim_helpers import period_offset, period_scalar_bounds, PeriodOffset
 
 if TYPE_CHECKING:
     from ..._interpolation import RationalBSplineSurfaceSpan
+    from ._tspline import TSplineSurfacePatch
 
 
 BRepPrimaryVertexRoot: TypeAlias = Union[
@@ -348,6 +349,32 @@ def _exact_span_surface_box(
     return np.asarray((lower_values, upper_values), dtype=np.float64)
 
 
+_TSPLINE_SPAN_CAPACITY = 16
+_TSPLINE_SPANS: dict[str, tuple[RationalBSplineSurfaceSpan, ...]] = {}
+
+
+def _tspline_spans(
+    patch: TSplineSurfacePatch, /
+) -> tuple[RationalBSplineSurfaceSpan, ...]:
+    """Exact Bernstein spans of one T-spline definition, extracted once per definition.
+
+    Source certification encloses every chart corner; re-extracting the
+    rational pieces per query dominated whole-mesh certification time.
+    """
+    from .._meshing_domain import _exact_rational_surface_spans
+
+    key = patch.source_definition_id
+    spans = _TSPLINE_SPANS.get(key)
+    if spans is None:
+        spans = _exact_rational_surface_spans(patch)
+        if not spans:
+            raise ValueError("A T-spline source has no exact rational Bernstein spans.")
+        if len(_TSPLINE_SPANS) >= _TSPLINE_SPAN_CAPACITY:
+            del _TSPLINE_SPANS[next(iter(_TSPLINE_SPANS))]
+        _TSPLINE_SPANS[key] = spans
+    return spans
+
+
 def _patch_box(
     patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
@@ -372,12 +399,7 @@ def _patch_box(
     if isinstance(patch, BSplineSurfacePatch):
         return _exact_bspline_surface_box(patch, lower, upper)
     if isinstance(patch, TSplineSurfacePatch):
-        from .._meshing_domain import _exact_rational_surface_spans
-
-        spans = _exact_rational_surface_spans(patch)
-        if not spans:
-            raise ValueError("A T-spline source has no exact rational Bernstein spans.")
-        return _exact_span_surface_box(spans, lower, upper)
+        return _exact_span_surface_box(_tspline_spans(patch), lower, upper)
     if isinstance(patch, CylinderPatch) and not _source_coefficients_are_binary(patch):
         return _exact_cylinder_patch_box(patch, lower, upper)
     from ._model import _bspline_revolution_box

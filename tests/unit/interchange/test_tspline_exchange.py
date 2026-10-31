@@ -7,16 +7,16 @@ import numpy as np
 from phydrax._interpolation import TMesh2D
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep._constructors import (
+    brep_planar_face,
     PlanarProfile,
     ProfileLoop,
     ProfilePlane,
-    brep_planar_face,
 )
-from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import BSplineSurfacePatch
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
 from phydrax.interchange._cad import CadImportPolicy
+from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
 from phydrax.interchange._step import read_step, write_step
 
 
@@ -28,9 +28,7 @@ def _model() -> BRepModel:
     source = brep_planar_face(
         PlanarProfile(
             ProfilePlane(),
-            ProfileLoop.polygon(
-                ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-            ),
+            ProfileLoop.polygon(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         ),
         coordinate_contract=_CONTRACT,
     )
@@ -57,7 +55,9 @@ def _model() -> BRepModel:
     )
 
 
-def test_single_piece_t_spline_step_exchange_reports_structure_loss(tmp_path: Path) -> None:
+def test_single_piece_t_spline_step_exchange_reports_structure_loss(
+    tmp_path: Path,
+) -> None:
     model = _model()
     archive_path = tmp_path / "native-tspline.brepz"
     save_brep_archive(model, archive_path)
@@ -71,8 +71,7 @@ def test_single_piece_t_spline_step_exchange_reports_structure_loss(tmp_path: Pa
 
     assert exported.report.valid and restored.report.valid
     assert any(
-        loss.path == "face:0.tspline-refinement"
-        and loss.changes_interpretation
+        loss.path == "face:0.tspline-refinement" and loss.changes_interpretation
         for loss in exported.report.losses
     )
     patch = restored.model.patches[0]
