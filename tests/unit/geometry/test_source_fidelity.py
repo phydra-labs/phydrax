@@ -38,6 +38,7 @@ from phydrax.geometry._source_boundary_records import (
 )
 from phydrax.geometry._source_fidelity import (
     _box_gap_upper,
+    _centroid_candidate_rows,
     _DerivativeCache,
     _exact_triangle2,
     _nearest_triangle_distance_upper,
@@ -1196,14 +1197,39 @@ def test_pruned_reverse_distance_equals_the_exact_minimum_over_every_triangle(
         [[float(value) for value in center] for center in centers], dtype=np.float64
     )
     radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
-    for sample in origin + generator.uniform(-1.5, 1.5, size=(25, 3)):
+    center_scale = float(np.max(np.abs(center_values)))
+    radius_bound = float(np.max(radius_values))
+    vertex_values = np.asarray(
+        [
+            [[float(value) for value in vertex] for vertex in triangle]
+            for triangle in triangles
+        ],
+        dtype=np.float64,
+    )
+    box_lower = np.nextafter(np.min(vertex_values, axis=1), -np.inf)
+    box_upper = np.nextafter(np.max(vertex_values, axis=1), np.inf)
+    samples = origin + generator.uniform(-1.5, 1.5, size=(25, 3))
+    for row, rows in _centroid_candidate_rows(
+        samples, center_values, center_scale, radius_bound
+    ):
+        sample = samples[row]
         point = exact(sample)
         unpruned = min(
             fraction_sqrt_interval(_point_triangle_squared(point, triangle))[1]
             for triangle in triangles
         )
         pruned = _nearest_triangle_distance_upper(
-            point, sample, triangles, center_values, radius_values
+            point,
+            sample,
+            triangles,
+            center_values,
+            radius_values,
+            rows,
+            center_scale,
+            radius_bound,
+            box_lower,
+            box_upper,
+            vertex_values,
         )
         assert pruned == unpruned
 
