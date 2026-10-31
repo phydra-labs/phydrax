@@ -3637,10 +3637,13 @@ class BRepModel(StrictModule):
         )
         # A face shared by occurrences with one exact placement is one placed copy,
         # tessellated once under the first such occurrence (`MeshingDomain` slots).
-        copy_index: dict[tuple[tuple[Fraction, ...], ...], int] = {}
+        from .._meshing_domain import _placed_copy_keys
+
+        copy_keys = _placed_copy_keys(occurrences)
+        copy_index: dict[tuple[tuple[tuple[Fraction, ...], ...], int], int] = {}
         occurrence_copies = np.asarray(
             [
-                copy_index.setdefault(value.placement.matrix, index)
+                copy_index.setdefault(copy_keys[value.path], index)
                 for index, value in enumerate(occurrences)
             ]
             + [-1],
