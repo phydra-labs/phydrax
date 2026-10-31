@@ -335,6 +335,30 @@ class AffinePCurve(AbstractCurve):
             upper[row] = fraction_up(upper_exact)
         return np.stack((lower, upper))
 
+    def derivative_bounds(
+        self, first: float, last: float, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # The exact rational linear part maps every source derivative enclosure.
+        source_lower, source_upper = self.curve.derivative_bounds(
+            first, last, order=order
+        )
+        if not (np.all(np.isfinite(source_lower)) and np.all(np.isfinite(source_upper))):
+            return np.full(2, -np.inf), np.full(2, np.inf)
+        lower, upper = np.zeros(2, dtype=np.float64), np.zeros(2, dtype=np.float64)
+        for row in range(2):
+            lower_exact, upper_exact = Fraction(0), Fraction(0)
+            for column in range(2):
+                coefficient = self.matrix[row][column]
+                products = (
+                    coefficient * Fraction.from_float(float(source_lower[column])),
+                    coefficient * Fraction.from_float(float(source_upper[column])),
+                )
+                lower_exact += min(products)
+                upper_exact += max(products)
+            lower[row] = fraction_down(lower_exact)
+            upper[row] = fraction_up(upper_exact)
+        return lower, upper
+
     def identity_payload(self, /) -> dict[str, object]:
         return {
             "kind": "boolean-affine-pcurve",
@@ -344,6 +368,13 @@ class AffinePCurve(AbstractCurve):
             ),
             "offset": tuple(coefficient_payload(value) for value in self.offset),
         }
+
+
+def affine_transport_source(curve: AbstractCurve, /) -> AbstractCurve:
+    """Return the source p-curve whose parameter and roots a transport keeps."""
+    while isinstance(curve, AffinePCurve):
+        curve = curve.curve
+    return curve
 
 
 class PeriodicPCurve(AbstractCurve):

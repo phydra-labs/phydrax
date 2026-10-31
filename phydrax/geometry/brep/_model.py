@@ -2645,6 +2645,12 @@ class BRepGeometry(StrictModule):
         self.geometry_id = _brep_geometry_identity(self)
 
     def require_current(self, /) -> None:
+        # Stale content is diagnosed by identity before the rebuild re-runs
+        # constructor invariants that edited content may also violate.
+        if _brep_geometry_identity(self) != self.geometry_id:
+            raise ValueError(
+                "BRepGeometry content has changed since its source identity was recorded."
+            )
         rebuilt = BRepGeometry(
             vertex_points=self.vertex_points,
             vertex_exact_points=self.vertex_exact_points,
@@ -2666,11 +2672,7 @@ class BRepGeometry(StrictModule):
             solid_shells=self.solid_shells,
             assembly_graph=self.assembly_graph,
         )
-        current_identity = _brep_geometry_identity(self)
-        if (
-            current_identity != self.geometry_id
-            or rebuilt.geometry_id != self.geometry_id
-        ):
+        if rebuilt.geometry_id != self.geometry_id:
             raise ValueError(
                 "BRepGeometry content has changed since its source identity was recorded."
             )

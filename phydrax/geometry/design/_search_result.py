@@ -19,6 +19,8 @@ from ._sketch import SketchSolution
 class SketchSearchResult(StrictModule):
     """Global search evidence kept distinct from the final local sketch root."""
 
+    __strict_contract__ = True
+
     solution: SketchSolution | None
     population_vectors: Array
     population_objectives: Array
@@ -63,9 +65,7 @@ class SketchSearchResult(StrictModule):
         )
         self.solution = solution
         self.population_vectors = jnp.asarray(population_vectors, dtype=jnp.float64)
-        self.population_objectives = jnp.asarray(
-            population_objectives, dtype=jnp.float64
-        )
+        self.population_objectives = jnp.asarray(population_objectives, dtype=jnp.float64)
         self.best_objective_history = jnp.asarray(
             best_objective_history, dtype=jnp.float64
         )

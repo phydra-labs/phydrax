@@ -1092,6 +1092,39 @@ def test_planar_segments_sharing_one_vertex_certify_their_exact_corner() -> None
     assert "exact_cell_contacts" in certificate.evaluated_checks
 
 
+def test_bent_spatial_triangles_meet_only_on_their_shared_edge() -> None:
+    mesh, geometry, validity = _embedded_triangles(
+        np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+        ((0, 1, 2), (0, 3, 1)),
+    )
+
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert certificate.status == "certified", certificate.findings
+
+
+def test_spatial_triangle_piercing_a_vertex_neighbor_is_violated() -> None:
+    # The second triangle shares only the origin, but its other corners lie on
+    # both sides of the first plane, and the crossing segment enters the first.
+    mesh, geometry, validity = _embedded_triangles(
+        np.asarray(
+            (
+                (0.0, 0.0, 0.0),
+                (2.0, 0.0, 0.0),
+                (0.0, 2.0, 0.0),
+                (1.0, 1.0, -1.0),
+                (1.0, 1.0, 1.0),
+            )
+        ),
+        ((0, 1, 2), (0, 3, 4)),
+    )
+
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert certificate.status == "violated"
+    assert any(finding.check == "cell_contact" for finding in certificate.findings)
+
+
 def test_positive_local_jacobians_do_not_hide_overlapping_planar_cells() -> None:
     mesh, geometry, validity = _embedded_triangles(
         np.asarray(
