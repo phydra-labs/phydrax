@@ -122,22 +122,27 @@ target mesh's vertex table. Restricted maps may retain parent coefficients and
 bind exact target-vertex images separately; those images are checked through
 the retained maps rather than inferred from rounded coordinate equality.
 
-`CellValidityPolicy`'s default `relative_determinant_floor` is 2^-18 (3.8e-6),
-derived so that no certified cell is refused by finite-element geometry
-preparation. That preparation evaluates the signed determinant `det(J)` of a
-full-dimensional cell, whose binary64 sign holds down to a few units of
-roundoff relative to the product of the Jacobian's column norms, and the Gram
-determinant `det(J^T J)` only for embedded cells. Each Jacobian is solved after
-scaling its columns to unit length, so the solve's condition number is at most
-`d^2 / r` (full-dimensional) or `d^2 / r^2` (embedded) for relative determinant
-`r` and reference dimension `d`. With the small-solve limits (condition `1e12`,
-scaled-determinant tolerance `1e-12`), every cell with `r` above
-`max(16 / 1e12, 3 / 1e6, 1e-6)` is evaluable; the floor is the next power of
-two.
+A cell's Jacobian is certified only above `CellValidityPolicy.determinant_floor()`:
+the requested `relative_determinant_floor` (default 2^-35), but never below what
+finite-element geometry preparation can evaluate, so no certified cell is
+refused there. The policy measures a full-dimensional map by its relative
+determinant `r = |det J| / prod |c_j|` (`c_j` the Jacobian's columns) and an
+embedded map by its Gram-relative determinant `r^2`. Preparation evaluates the
+signed `det(J)` of a full-dimensional cell, whose binary64 sign holds down to a
+few units of roundoff relative to `prod |c_j|`, and the Gram determinant
+`det(J^T J)` only for embedded cells. Each Jacobian is solved after scaling its
+columns to unit length, so the solve's condition number is at most `d^2 / r`
+(full-dimensional) or `d^2 / r^2` (embedded) for reference dimension `d`. With
+the small-solve limits (condition `1e12`, scaled-determinant tolerance `1e-12`),
+full-dimensional cells are evaluable for `r > 16 / 1e12` and embedded cells for
+`r^2 > 9 / 1e12`; 2^-35 is the next power of two above both. Both measures are
+angles, so the floor does not limit thin (high-aspect-ratio) cells.
 
 Polygon cells are certified without assuming star-shapedness. A planar polygon
-is `CERTIFIED_VALID` iff its vertices are finite and distinct, every edge clears
-`relative_determinant_floor` times the polygon diameter, its boundary is simple
+is `CERTIFIED_VALID` iff its vertices are finite and distinct, every edge is at
+least 2^-30 times the polygon diameter (binary64 resolves the direction of such
+an edge, and so its normal, to 2^-20: the edge vector's rounding is at most
+`8 u` times the diameter), its boundary is simple
 (`polygon_simplicity_2d`: non-adjacent edges are disjoint and adjacent edges meet
 only at their shared vertex), it is counterclockwise, and twice its signed area
 exceeds the policy floor. An embedded polygon must instead lie within
