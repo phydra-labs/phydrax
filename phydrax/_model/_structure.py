@@ -1376,6 +1376,7 @@ def model_archive_projection(value: Any, /) -> Any:
             model_archive_projection(recipe.solve_policy),
             recipe.pairing_id,
             recipe.operator_id,
+            recipe.operator_content_fingerprint,
             recipe.solve_policy_fingerprint,
         )
     if (

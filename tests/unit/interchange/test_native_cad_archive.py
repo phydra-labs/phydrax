@@ -5143,6 +5143,47 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
 
+    # Space-pairing mass coefficients sit outside every sparse operator ID; the
+    # archived pairing binds its operator content, so tampering one is refused.
+    pairing_leaf = next(
+        (
+            entry
+            for entry in model_recipe_array_inventory(
+                manifest["model_recipe"], prefix="model/leaves", limits=None
+            )
+            if entry.path.startswith(".complex_map.target.spaces[")
+            and entry.path.endswith("].pairing.operator.coefficients")
+            and arrays[entry.name].size
+        ),
+        None,
+    )
+    assert pairing_leaf is not None
+    pairing_corrupted = tmp_path / "changed-finite-element-space-pairing"
+    pairing_corrupted.mkdir()
+    pairing_arrays = {name: array.copy() for name, array in arrays.items()}
+    pairing_arrays[pairing_leaf.name].flat[0] *= 2.0
+    write_array_archive(
+        pairing_corrupted / "finite-element-transfer.phx",
+        manifest=manifest,
+        arrays=pairing_arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    pairing_refused = subprocess.run(
+        [
+            sys.executable,
+            str(_WORKER),
+            "read-finite-element-transfer",
+            str(pairing_corrupted),
+            json.dumps(expected),
+        ],
+        cwd=_REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert pairing_refused.returncode != 0
+    assert "Stored Riesz operator content changed." in pairing_refused.stderr
+
 
 def test_vertex_interpolation_stencil_archive_preserves_exact_fraction_weights_cold(
     tmp_path: Path,
