@@ -1656,31 +1656,6 @@ def _owner_local_motion_mesh(
     )
 
 
-class _OwnerLocalMotionCoordinateMap(NamedTuple):
-    source_id: str
-    source_revision: str
-    source_map_id: str
-    coordinate_rows: tuple[int, ...]
-    exact_coordinates: tuple[tuple[Any, ...], ...]
-
-    def source_coordinates(self, rows: ArrayLike, /) -> tuple[tuple[Any, ...], ...]:
-        identifiers = np.asarray(rows)
-        if (
-            identifiers.ndim != 1
-            or identifiers.dtype.kind not in "iu"
-            or len(self.coordinate_rows) != len(self.exact_coordinates)
-            or len(set(self.coordinate_rows)) != len(self.coordinate_rows)
-        ):
-            raise ValueError("Owner-local motion coordinate-map rows are malformed.")
-        row_values = dict(zip(self.coordinate_rows, self.exact_coordinates, strict=True))
-        try:
-            return tuple(row_values[int(row)] for row in identifiers)
-        except KeyError as error:
-            raise ValueError(
-                "Owner-local motion coordinate map omits a requested source row."
-            ) from error
-
-
 class _OwnerLocalPeriodicMotionRefresh(NamedTuple):
     source_entry: Any
     source_composition: Any
@@ -2315,11 +2290,12 @@ def _owner_local_motion_view(
     from fractions import Fraction
 
     from ..discretization._view_support import OwnerLocalCellGeometry
+    from ..lifecycle import Composition, CompositionEntry
     from ._assembly import MeshPartManifest
     from ._distribution import (
         _owner_group_allgather,
         _owner_local_multiset_identity,
-        ShardedOwnerDirectoryData,
+        OwnerLocalCoordinateMap,
         ShardedOwnerDirectoryWitness,
     )
 
@@ -2414,7 +2390,10 @@ def _owner_local_motion_view(
         (
             int(target_coordinate_ids[row]),
             tuple(
-                Fraction.from_float(float(value)) for value in target_coordinate_bank[row]
+                int(bits)
+                for bits in np.asarray(target_coordinate_bank[row], np.float64).view(
+                    np.uint64
+                )
             ),
         )
         for row in np.flatnonzero(target_coordinate_owners == local_rank)
@@ -2452,7 +2431,7 @@ def _owner_local_motion_view(
             "geometry": target_geometry_id,
         }
     )
-    target_map = _OwnerLocalMotionCoordinateMap(
+    target_map = OwnerLocalCoordinateMap(
         source.source_id,
         target_source_revision,
         target_map_id,
@@ -2468,7 +2447,7 @@ def _owner_local_motion_view(
         source_topology_id=source.source_topology_id,
         source_geometry_id=target_geometry_id,
     )
-    target_directory = ShardedOwnerDirectoryWitness(
+    unbound_directory = ShardedOwnerDirectoryWitness(
         execution_group,
         local_rank,
         source_manifest.manifest_id,
@@ -2484,7 +2463,41 @@ def _owner_local_motion_view(
         source_context_id=None,
         axis_name=f"{axis_name}_target_directory",
     )
-    target_directory_data = ShardedOwnerDirectoryData.from_witness(target_directory)
+    # The moved coordinate map is the accepted scientific source and part
+    # authority of the successor view; its directory binds that authority.
+    source_entry = CompositionEntry(
+        target_map,
+        entry_id=f"{source.part_name}/motion-source",
+        role="topology",
+        owner_id="phydrax.meshing.motion.owner_local",
+        structure_id=source.source_mesh_id,
+        revision_id=target_source_revision,
+        semantics_id=target_map_id,
+    )
+    part_authority = CompositionEntry(
+        target_map,
+        entry_id=f"{source.part_name}/motion-part",
+        role="topology",
+        owner_id="phydrax.meshing.motion.owner_local",
+        structure_id=source.source_topology_id,
+        revision_id=target_part_id,
+        semantics_id=target_geometry_id,
+        dependencies=(
+            source_entry.binding("structure"),
+            source_entry.binding("revision"),
+            source_entry.binding("semantics"),
+            unbound_directory.composition_entry().binding("structure"),
+        ),
+    )
+    target_directory = unbound_directory.bind_source_authority(
+        part_authority.record_id,
+        execution_group,
+        axis_name=f"{axis_name}_target_directory_binding",
+    )
+    accepted_composition = Composition(
+        (source_entry, target_directory.composition_entry(), part_authority),
+        boundary_id=target_part_id,
+    )
     block_records = []
     for block in source.blocks:
         block_cell_ids = np.asarray(block.cell_ids, dtype=np.int64)
@@ -2646,9 +2659,9 @@ def _owner_local_motion_view(
         "blocks": tuple(block_records),
         "rank": local_rank,
         "serial_source_view": False,
-        "source_value": target_map,
-        "source_geometry_authority": target_map,
-        "owner_directory_data": target_directory_data,
+        "part_authority": part_authority,
+        "accepted_composition": accepted_composition,
+        "owner_directory_witness": target_directory,
         "owned_cell_ids": np.asarray(source.owned_cell_ids, dtype=np.int64),
         "owned_cell_owner_ranks": np.asarray(
             source.owned_cell_owner_ranks, dtype=np.int32
