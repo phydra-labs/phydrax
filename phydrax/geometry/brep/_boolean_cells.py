@@ -787,7 +787,13 @@ def _holes(
 def _seed_box(
     domain: TrimDomain,
     outer: tuple[CurveTrimSegment, ...],
+    weight: float = 0.5,
 ) -> np.ndarray:
+    """Find a certified strict-interior probe box of one cell.
+
+    Probes sit at ``weight`` along each search box; an off-centre weight
+    avoids symmetric points of the loop such as a tangent contact line.
+    """
     boxes = [source_pcurve_image(curve, 0.0, 1.0) for curve in outer]
     if not boxes:
         raise BRepBooleanFailure(
@@ -802,7 +808,7 @@ def _seed_box(
     pending = deque((bounds,))
     while pending:
         box = pending.popleft()
-        center = 0.5 * (box[0] + box[1])
+        center = box[0] + weight * (box[1] - box[0])
         probe = np.stack((np.nextafter(center, -np.inf), np.nextafter(center, np.inf)))
         if _box_status(domain, probe) > 0:
             return probe
