@@ -5150,10 +5150,21 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             curve_ids,
             self.schedule,
         )
+        # Patches separating two regions make a non-manifold multiregion surface:
+        # each is triangulated once, and the region-labeled topology admits its
+        # junction edges and certifies every region boundary closed.
+        multiregion_surface = domain.multiregion_surface(
+            refined.coordinates,
+            refined.triangles,
+            refined.triangle_patches,
+            vertex_global_ids=np.arange(refined.coordinates.shape[0], dtype=np.int64),
+            cell_global_ids=np.arange(refined.triangles.shape[0], dtype=np.int64),
+        )
         mesh = cell_mesh_owner.CellMesh.from_triangles(
             refined.coordinates,
             refined.triangles,
             numeric_version=domain.source_revision,
+            multiregion_surface=multiregion_surface,
         )
         geometry = CellGeometrySpec.affine(mesh)
         association_values = surface_associations(domain, mesh, construction)
@@ -5202,13 +5213,20 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             provenance=("native_parametric_surface", domain.domain_id),
             cell_tags=cell_tags,
         )
-        boundary = SurfaceModel.from_triangles(
-            refined.coordinates,
-            refined.triangles,
-            metadata,
-            vertex_global_ids=np.asarray(mesh.vertex_global_ids, dtype=np.int64),
-            cell_global_ids=cell_ids,
-            numeric_version=domain.source_revision,
+        # A manifold `SurfaceModel` boundary exists only for manifold surfaces; a
+        # multiregion surface publishes its region-labeled topology instead, from
+        # which each region's closed boundary is selected by side.
+        boundary = (
+            SurfaceModel.from_triangles(
+                refined.coordinates,
+                refined.triangles,
+                metadata,
+                vertex_global_ids=np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+                cell_global_ids=cell_ids,
+                numeric_version=domain.source_revision,
+            )
+            if multiregion_surface is None
+            else None
         )
         organization = NativeMeshOrganization(
             boundary=boundary,
@@ -5219,6 +5237,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             associations=association_values,
             region_boundary_evidence=organization.region_boundary_evidence,
             surface_source=surface_source,
+            multiregion_surface=multiregion_surface,
         )
         compliance = _compliance(
             self.specification,
