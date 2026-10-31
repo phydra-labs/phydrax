@@ -1016,7 +1016,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _P),
     ),
     "phx_mc_tet_mesh_unmet_count": (_I32, (_P, _P)),
-    "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_plane_record_count": (_I32, (_P, _P)),
     "phx_mc_tet_mesh_plane_records": (_I32, (_P, _I64, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_snapshot": (
@@ -2825,6 +2825,8 @@ class TetMeshUnmetReason(IntEnum):
 
 # Apex vertex ID of an unmet row without INPUT_ANGLE evidence.
 TET_MESH_UNMET_NO_APEX = np.iinfo(np.uint64).max
+# Facet ID of an unmet row without a forcing constrained facet.
+TET_MESH_UNMET_NO_FACET = np.iinfo(np.uint64).max
 
 
 class TetMeshUnmet(NamedTuple):
@@ -2836,6 +2838,11 @@ class TetMeshUnmet(NamedTuple):
     # endpoint) and angle in degrees; TET_MESH_UNMET_NO_APEX and NaN otherwise.
     apex_vertex_ids: np.ndarray
     apex_angles: np.ndarray
+    # Improvement FIXED_BOUNDARY radius-edge rows: the constrained facet whose
+    # own triangle radius-edge ratio (at most the cell's) exceeds the bound;
+    # TET_MESH_UNMET_NO_FACET and NaN otherwise.
+    facet_ids: np.ndarray
+    facet_ratios: np.ndarray
 
 
 class TetMeshRun(NamedTuple):
@@ -7316,6 +7323,8 @@ class TetMesh3D:
             values = np.empty((row_count,), dtype=np.float64)
             apex_vertex_ids = np.empty((row_count,), dtype=np.uint64)
             apex_angles = np.empty((row_count,), dtype=np.float64)
+            facet_ids = np.empty((row_count,), dtype=np.uint64)
+            facet_ratios = np.empty((row_count,), dtype=np.float64)
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_unmet"](
                     self._live(),
@@ -7326,11 +7335,20 @@ class TetMesh3D:
                     _tet_mesh_pointer(values),
                     _tet_mesh_pointer(apex_vertex_ids),
                     _tet_mesh_pointer(apex_angles),
+                    _tet_mesh_pointer(facet_ids),
+                    _tet_mesh_pointer(facet_ratios),
                 ),
                 "tet_mesh_unmet",
             )
             return TetMeshUnmet(
-                tetrahedra, criteria, reasons, values, apex_vertex_ids, apex_angles
+                tetrahedra,
+                criteria,
+                reasons,
+                values,
+                apex_vertex_ids,
+                apex_angles,
+                facet_ids,
+                facet_ratios,
             )
 
     def plane_records(self) -> TetMeshPlaneRecords:
@@ -8094,6 +8112,7 @@ __all__ = [
     "TetMeshUnmet",
     "TetMeshUnmetReason",
     "TET_MESH_UNMET_NO_APEX",
+    "TET_MESH_UNMET_NO_FACET",
     "QuadraticValidityDecision",
     "RestrictedPowerCells",
     "RestrictedDual3D",

@@ -746,6 +746,18 @@ void fixed_needle_face_reports_fixed_boundary_radius_edge() {
   const std::uint64_t first = before.vertices[0].id;
   const std::uint64_t second = before.vertices[1].id;
   const std::uint64_t third = before.vertices[2].id;
+  std::uint64_t needle_facet = kNoUnmetFacet;
+  for (const TetSnapshotFacet& facet : after.constrained_facets) {
+    const auto has = [&](std::uint64_t id) {
+      return std::find(facet.vertices.begin(), facet.vertices.end(), id) != facet.vertices.end();
+    };
+    if (has(first) && has(second) && has(third)) needle_facet = facet.id;
+  }
+  PHX_CHECK(needle_facet != kNoUnmetFacet);
+  // Independent reference: R = abc / (4 area) over the shortest side, sides
+  // 1 and sqrt(0.2525) twice, area 0.025.
+  const double half_side = std::sqrt(0.2525);
+  const double needle_ratio = half_side * half_side / (4.0 * 0.025) / half_side;
   std::size_t needle_cells = 0;
   std::size_t needle_records = 0;
   for (const TetSnapshotCell& cell : after.cells) {
@@ -761,9 +773,12 @@ void fixed_needle_face_reports_fixed_boundary_radius_edge() {
       if (on_needle) {
         ++needle_records;
         PHX_CHECK(record.reason == PHX_MC_TET_UNMET_FIXED_BOUNDARY);
-        PHX_CHECK(record.value > 5.0);
+        PHX_CHECK(record.facet_id == needle_facet);
+        PHX_CHECK(std::abs(record.facet_ratio - needle_ratio) <= 1.0e-12 * needle_ratio);
+        PHX_CHECK(record.value >= record.facet_ratio);
       } else {
         PHX_CHECK(record.reason == PHX_MC_TET_UNMET_NO_IMPROVEMENT);
+        PHX_CHECK(record.facet_id == kNoUnmetFacet && std::isnan(record.facet_ratio));
       }
     }
   }

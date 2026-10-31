@@ -2630,8 +2630,14 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // contains each face's circumcircle and its shortest edge is at most the
   // face's, so its radius-edge ratio is at least that of each of its faces:
   // a cell on a constrained face whose own triangle exceeds the bound cannot
-  // meet it, and its residual is FIXED_BOUNDARY rather than NO_IMPROVEMENT.
-  std::set<std::array<std::uint64_t, 3>> unmeetable_faces;
+  // meet it, and its residual is FIXED_BOUNDARY rather than NO_IMPROVEMENT,
+  // recording that facet (the one with the largest ratio, the tightest lower
+  // bound, when several force it).
+  struct ForcingFacet {
+    std::uint64_t id = kNoUnmetFacet;
+    double ratio = std::numeric_limits<double>::quiet_NaN();
+  };
+  std::map<std::array<std::uint64_t, 3>, ForcingFacet> unmeetable_faces;
   for (const TetSnapshotFacet& facet : final_state.constrained_facets) {
     std::array<const double*, 3> corners{};
     for (int corner = 0; corner < 3; ++corner) {
@@ -2639,23 +2645,28 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       if (!mesh.live_vertex(slot)) return PHX_MC_INTERNAL_ERROR;
       corners[corner] = mesh.point(slot);
     }
-    if (triangle_radius_edge_ratio(corners[0], corners[1], corners[2]) >
-        request.radius_edge_bound) {
+    const double ratio = triangle_radius_edge_ratio(corners[0], corners[1], corners[2]);
+    if (ratio > request.radius_edge_bound) {
       std::array<std::uint64_t, 3> key = facet.vertices;
       std::sort(key.begin(), key.end());
-      unmeetable_faces.insert(key);
+      unmeetable_faces.emplace(key, ForcingFacet{facet.id, ratio});
     }
   }
-  const auto radius_edge_reason = [&](const TetSnapshotCell& cell) -> std::int32_t {
+  const auto forcing_facet = [&](const TetSnapshotCell& cell) {
+    ForcingFacet forcing;
     for (int omitted = 0; omitted < 4; ++omitted) {
       std::array<std::uint64_t, 3> key{};
       for (int corner = 0, next = 0; corner < 4; ++corner) {
         if (corner != omitted) key[next++] = cell.vertices[corner];
       }
       std::sort(key.begin(), key.end());
-      if (unmeetable_faces.contains(key)) return PHX_MC_TET_UNMET_FIXED_BOUNDARY;
+      const auto found = unmeetable_faces.find(key);
+      if (found != unmeetable_faces.end() &&
+          (forcing.id == kNoUnmetFacet || found->second.ratio > forcing.ratio)) {
+        forcing = found->second;
+      }
     }
-    return PHX_MC_TET_UNMET_NO_IMPROVEMENT;
+    return forcing;
   };
   for (const TetSnapshotCell& cell : final_state.cells) {
     std::array<std::int32_t, 4> slots{};
@@ -2685,8 +2696,15 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
                          std::numeric_limits<double>::infinity()});
       cell_unmet = true;
     } else if (shape.radius_edge_ratio > request.radius_edge_bound) {
-      records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE, radius_edge_reason(cell),
-                         shape.radius_edge_ratio});
+      const ForcingFacet forcing = forcing_facet(cell);
+      TetUnmetRecord record{cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
+                            static_cast<std::int32_t>(forcing.id == kNoUnmetFacet
+                                                          ? PHX_MC_TET_UNMET_NO_IMPROVEMENT
+                                                          : PHX_MC_TET_UNMET_FIXED_BOUNDARY),
+                            shape.radius_edge_ratio};
+      record.facet_id = forcing.id;
+      record.facet_ratio = forcing.ratio;
+      records.push_back(record);
       cell_unmet = true;
     }
     const double angle = geometry::minimum_dihedral_degrees(points.data());
