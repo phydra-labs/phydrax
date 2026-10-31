@@ -51,7 +51,7 @@ from ._constructors import (
 from ._correspondence import native_edge_pcurve
 from ._edge_classification import brep_edge_classification
 from ._exact import exact_frame_orientation, square_root_interval
-from ._intersection import NativePeriodEndpoint, RootEndpoint
+from ._intersection import _exact_cylinder_axis, NativePeriodEndpoint, RootEndpoint
 from ._intersection_curve import SurfaceRegion
 from ._measure import brep_mass_properties
 from ._model import BRepCurve, BRepEntityId, BRepGeometry, BRepModel
@@ -98,9 +98,7 @@ def _fraction_vector3(value: object, /) -> _Vector3 | None:
     return first, second, third
 
 
-def _line_vector3(
-    curve: AbstractCurve, /
-) -> tuple[_Vector3, _Vector3] | None:
+def _line_vector3(curve: AbstractCurve, /) -> tuple[_Vector3, _Vector3] | None:
     if isinstance(curve, LineCurve):
         origin = _fraction_vector3(curve.origin_exact)
         direction = _fraction_vector3(curve.direction_exact)
@@ -200,6 +198,8 @@ class _HoleWallData:
     slope: Fraction
     family: Literal["cylinder", "cone", "revolved-cylinder", "revolved-cone"]
     orientation_sign: int
+
+
 type _Shells = tuple[
     tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...]
 ]
@@ -1011,14 +1011,10 @@ def _plane(model: BRepModel, face: int, /) -> PlanePatch:
                 + "revolved planar host coefficients lack rational straight source coefficients"
             )
         curve_origin, direction = line
-        axis_origin = _fraction_vector3(
-            rational_vector(np.asarray(source.axis_origin))
-        )
+        axis_origin = _fraction_vector3(rational_vector(np.asarray(source.axis_origin)))
         axis = _fraction_vector3(rational_vector(np.asarray(source.axis_direction)))
         if axis_origin is None or axis is None:
-            raise _Refusal(
-                "brep_defeature.family must have a rational revolution frame"
-            )
+            raise _Refusal("brep_defeature.family must have a rational revolution frame")
         delta = _offset(axis_origin, curve_origin)
         height = _dot(delta, axis)
         if (
@@ -1398,9 +1394,9 @@ def _certify_strip(
         return
     planar = planar_carrier(patch)
     if planar is None:
-        if isinstance(patch, CylinderPatch) and _cylinder_extension_contact(
-            model, face, cap, strip[0], strip[3]
-        ):
+        if isinstance(
+            patch, (CylinderPatch, RevolutionSurface)
+        ) and _cylinder_extension_contact(model, face, cap, strip[0], strip[3]):
             raise _Collision(
                 "brep_defeature.extension must avoid unrelated faces; got a certified native line/circle intersection"
             )
@@ -1418,6 +1414,13 @@ def _certify_strip(
 def _cylinder_extension_contact(
     model: BRepModel, face: int, cap: int, first: _Vector, last: _Vector, /
 ) -> bool:
+    """Prove contact of a cap-plane strip edge with a cylindrical wall's cap circle.
+
+    The wall boundary on the cap is either an authored circle p-curve or a
+    closed one-coedge loop on the plane normal to an exact circular cylinder,
+    which is then the full section circle. A line/circle contact is a point of
+    the wall boundary on the extension.
+    """
     geometry = model.geometry
     patch = _plane(model, cap)
     a, b = (_coordinate(patch, first), _coordinate(patch, last))
@@ -1426,24 +1429,76 @@ def _cylinder_extension_contact(
     line = _profile_edge(
         (float(a[0]), float(a[1])), (float(b[0]), float(b[1])), ProfileLine()
     )
+    section = _cap_section_circle(model, face, patch)
     for loop in geometry.face_loops[cap]:
         for coedge in loop:
             edge = geometry.coedge_edges[coedge]
             if face not in model.topology.edge_faces[edge]:
                 continue
             pcurve = geometry.pcurves[coedge]
-            if not isinstance(pcurve, CircleCurve):
+            if isinstance(pcurve, CircleCurve):
+                _full_turn(geometry, edge)
+                center = tuple((float(value) for value in pcurve.center))
+                radius = float(pcurve.radius)
+            elif (
+                section is not None
+                and len(loop) == 1
+                and geometry.edge_vertices[edge][0] == geometry.edge_vertices[edge][1]
+            ):
+                center = (float(section[0][0]), float(section[0][1]))
+                radius = float(section[1])
+            else:
                 continue
-            _full_turn(geometry, edge)
-            center = tuple((float(value) for value in pcurve.center))
             arc = _profile_edge(
-                (center[0] + float(pcurve.radius), center[1]),
-                (center[0] + float(pcurve.radius), center[1]),
+                (center[0] + radius, center[1]),
+                (center[0] + radius, center[1]),
                 ProfileArc((center[0], center[1])),
             )
             if _line_arc_contact(line, arc, frozenset()):
                 return True
     return False
+
+
+def _cap_section_circle(
+    model: BRepModel, face: int, cap: PlanePatch, /
+) -> tuple[Point, Fraction] | None:
+    """Return the exact cap-chart section circle of a cylinder normal to the cap.
+
+    Only float-representable centers and radii are returned, so the planar
+    contact predicate consumes the exact circle.
+    """
+    data = _exact_cylinder_axis(
+        SurfaceRegion(
+            model.patches[face],
+            np.asarray(model.parameter_bounds[face], dtype=np.float64),
+        )
+    )
+    first = _fraction_vector3(rational_vector(np.asarray(cap.first_axis)))
+    second = _fraction_vector3(rational_vector(np.asarray(cap.second_axis)))
+    cap_origin = _fraction_vector3(rational_vector(np.asarray(cap.origin)))
+    if data is None or first is None or second is None or cap_origin is None:
+        return None
+    axis_origin, axis, radius = data
+    normal = rational_cross(first, second)
+    if (
+        _dot(first, first) != 1
+        or _dot(second, second) != 1
+        or _dot(first, second) != 0
+        or any(rational_cross(normal, axis))
+    ):
+        return None
+    height = _dot(normal, _offset(axis_origin, cap_origin)) / _dot(normal, axis)
+    center = _coordinate(
+        cap,
+        (
+            axis_origin[0] + height * axis[0],
+            axis_origin[1] + height * axis[1],
+            axis_origin[2] + height * axis[2],
+        ),
+    )
+    if any(Fraction(float(value)) != value for value in (*center, radius)):
+        return None
+    return center, radius
 
 
 def _affine_edge(curve: BRepCurve, /) -> tuple[_Vector, _Vector] | None:
@@ -1513,9 +1568,7 @@ def _exact_vertex(geometry: BRepGeometry, vertex: int, /) -> _Vector:
     return result
 
 
-def _exact_source_vertex(
-    geometry: BRepGeometry, vertex: int, /
-) -> _Vector | None:
+def _exact_source_vertex(geometry: BRepGeometry, vertex: int, /) -> _Vector | None:
     exact = geometry.vertex_exact_points[vertex]
     if exact is None:
         return None
@@ -2091,9 +2144,7 @@ def _reparameterize_revolved_cap(
         if geometry.coedge_edges[coedge] not in wall_edges
         and geometry.edge_curves[geometry.coedge_edges[coedge]] >= 0
         and isinstance(
-            geometry.curves[
-                geometry.edge_curves[geometry.coedge_edges[coedge]]
-            ],
+            geometry.curves[geometry.edge_curves[geometry.coedge_edges[coedge]]],
             CircleCurve,
         )
     }
@@ -2131,15 +2182,11 @@ def _reparameterize_revolved_cap(
             "brep_defeature.family must have a rational circular boundary frame"
         )
     plane_normal = rational_cross(circle_first, circle_second)
-    if (
-        exact_frame_orientation(
-            source_circle.first_axis,
-            source_circle.second_axis,
-            patch.axis_direction,
-        )
-        is None
-        or any(rational_cross(plane_normal, axis))
-    ):
+    if exact_frame_orientation(
+        source_circle.first_axis,
+        source_circle.second_axis,
+        patch.axis_direction,
+    ) is None or any(rational_cross(plane_normal, axis)):
         raise _Refusal(
             "brep_defeature.family must have a supported analytic certificate; got "
             + "a revolved host circle without an exact plane frame"
@@ -2159,20 +2206,18 @@ def _reparameterize_revolved_cap(
         )
     curve_origin, curve_direction = coefficients
     parameter_bounds = np.asarray(model.parameter_bounds[cap_face], dtype=np.float64)
-    parameter = sum(
-        (
-            Fraction.from_float(float(value))
-            for value in parameter_bounds[:, 1]
-        ),
-        Fraction(0),
-    ) / 2
+    parameter = (
+        sum(
+            (Fraction.from_float(float(value)) for value in parameter_bounds[:, 1]),
+            Fraction(0),
+        )
+        / 2
+    )
     point = _vector3_affine(curve_origin, parameter, curve_direction)
     delta = _offset(axis_origin, point)
     height = _dot(delta, axis)
     radial = _vector3_remove_projection(delta, axis, height)
-    parameter_normal = rational_cross(
-        rational_cross(axis, radial), curve_direction
-    )
+    parameter_normal = rational_cross(rational_cross(axis, radial), curve_direction)
     alignment = rational_dot(parameter_normal, plane_normal)
     if alignment == 0:
         raise _Refusal(
@@ -2191,14 +2236,9 @@ def _reparameterize_revolved_cap(
     )
     target_edge = edge_map[source_edge]
     coedges = tuple(
-        coedge
-        for loop in builder.faces[target_face].loops
-        for coedge in loop
+        coedge for loop in builder.faces[target_face].loops for coedge in loop
     )
-    if (
-        len(coedges) != 1
-        or builder.coedge_edges[coedges[0]] != target_edge
-    ):
+    if len(coedges) != 1 or builder.coedge_edges[coedges[0]] != target_edge:
         raise _Refusal(
             "brep_defeature.family must retain one complete revolved host circle after removing its hole boundary"
         )
@@ -2214,16 +2254,12 @@ def _reparameterize_revolved_cap(
     )
     roots = builder.edge_endpoint_roots[target_edge]
 
-    def bind(
-        curve: AbstractCurve, root: object, /
-    ) -> NativePeriodEndpoint:
+    def bind(curve: AbstractCurve, root: object, /) -> NativePeriodEndpoint:
         if not isinstance(root, NativePeriodEndpoint):
             raise _Refusal(
                 "brep_defeature.family must have native full-turn roots on each retained host circle"
             )
-        return NativePeriodEndpoint(
-            curve, rational=root.rational, turns=root.turns
-        )
+        return NativePeriodEndpoint(curve, rational=root.rational, turns=root.turns)
 
     first_root, last_root = roots
     edge_roots = (
@@ -2271,9 +2307,7 @@ def _hole_boundary(
         if not neighbors:
             continue
         curve_index = geometry.edge_curves[edge]
-        if curve_index < 0 or not isinstance(
-            geometry.curves[curve_index], CircleCurve
-        ):
+        if curve_index < 0 or not isinstance(geometry.curves[curve_index], CircleCurve):
             continue
         _full_turn(geometry, edge)
         if len(neighbors) != 1:
@@ -2346,7 +2380,10 @@ def _fraction_square_root(value: Fraction, /) -> Fraction | None:
     if value < 0:
         return None
     numerator, denominator = isqrt(value.numerator), isqrt(value.denominator)
-    if numerator * numerator != value.numerator or denominator * denominator != value.denominator:
+    if (
+        numerator * numerator != value.numerator
+        or denominator * denominator != value.denominator
+    ):
         return None
     return Fraction(numerator, denominator)
 
@@ -2381,9 +2418,7 @@ def _revolved_hole_wall(model: BRepModel, face: int, /) -> _HoleWallData | None:
     axial_rate = rational_dot(curve_direction, axis)
     if radius is None or radius == 0 or axial_rate == 0:
         return None
-    radial_rate = _vector3_remove_projection(
-        curve_direction, axis, axial_rate
-    )
+    radial_rate = _vector3_remove_projection(curve_direction, axis, axial_rate)
     if any(rational_cross(radial, radial_rate)):
         return None
     slope = rational_dot(radial, radial_rate) / (radius * axial_rate)
@@ -2407,8 +2442,7 @@ def _revolved_hole_wall(model: BRepModel, face: int, /) -> _HoleWallData | None:
         rational_vector(realized_first) != first_axis
         or rational_vector(realized_second) != second_axis
         or rational_vector(realized_axis) != axis
-        or exact_frame_orientation(realized_first, realized_second, realized_axis)
-        is None
+        or exact_frame_orientation(realized_first, realized_second, realized_axis) is None
     ):
         return None
     wall_origin = _vector3_affine(axis_origin, height, axis)
@@ -2503,9 +2537,7 @@ def _cap_hole(model: BRepModel, face: int, /) -> _HoleRemoval:
             )
         coefficients = (Fraction(), wall.reference_radius**2 * height, Fraction())
     elif wall.family == "revolved-cone":
-        expected = tuple(
-            wall.reference_radius + wall.slope * value for value in heights
-        )
+        expected = tuple(wall.reference_radius + wall.slope * value for value in heights)
         if radii != expected:
             raise _Unresolved(
                 "brep_defeature.certificate must decide the requested operation; got "
@@ -2514,9 +2546,7 @@ def _cap_hole(model: BRepModel, face: int, /) -> _HoleRemoval:
     container_bound = _hole_clearance(model, face, caps, wall)
     retained = _retained_hole_faces(geometry, face, caps)
     builder, edge_images = _copy_retained(model, retained)
-    face_map = {
-        source: target for target, (source, _) in enumerate(retained)
-    }
+    face_map = {source: target for target, (source, _) in enumerate(retained)}
     edge_map = dict(edge_images)
     for cap in caps:
         if isinstance(model.patches[cap], RevolutionSurface):
@@ -2633,9 +2663,7 @@ def _hole_clearance(
         ):
             continue
         candidate = _box_corners(bounds)
-        if _box_inside_cylindrical_fill(
-            patch, candidate, origin, axis, heights
-        ):
+        if _box_inside_cylindrical_fill(patch, candidate, origin, axis, heights):
             raise _Collision(
                 "brep_defeature.capping must avoid unrelated faces; got a face enclosed by the cylindrical fill"
             )
@@ -2737,12 +2765,8 @@ def _coaxial_cylinder_separate(
     )
     if overlap[0] > overlap[1]:
         return True
-    local_heights = tuple(
-        alignment * (value - center_height) for value in overlap
-    )
-    radii = tuple(
-        wall.reference_radius + wall.slope * value for value in local_heights
-    )
+    local_heights = tuple(alignment * (value - center_height) for value in overlap)
+    radii = tuple(wall.reference_radius + wall.slope * value for value in local_heights)
     return min(radii) > radius
 
 
@@ -2766,9 +2790,7 @@ def _hole_sections(
             )
         plane_origin = _fraction_vector3(rational_vector(np.asarray(plane.origin)))
         if plane_origin is None:
-            raise _Refusal(
-                "brep_defeature.family must have a rational host-plane origin"
-            )
+            raise _Refusal("brep_defeature.family must have a rational host-plane origin")
         z = _dot(normal, _offset(origin, plane_origin)) / _dot(normal, axis)
         heights.append(z)
         curve = geometry.curves[geometry.edge_curves[edge]]
@@ -2778,9 +2800,10 @@ def _hole_sections(
                 + "hole capping requires native circle carriers on its hosts"
             )
         axis_array = np.asarray(tuple(float(value) for value in axis))
-        if exact_frame_orientation(
-            curve.first_axis, curve.second_axis, axis_array
-        ) is None:
+        if (
+            exact_frame_orientation(curve.first_axis, curve.second_axis, axis_array)
+            is None
+        ):
             raise _Refusal(
                 "brep_defeature.hole must have circular host loops; got a non-orthonormal circle frame"
             )
@@ -2986,9 +3009,7 @@ def _prepare_torus(model: BRepModel, face: int, /) -> _TorusIntent:
         raise _Refusal(
             "brep_defeature.family must have rational cylinder and plane origins"
         )
-    z = _dot(_normal(plane), _offset(origin, plane_origin)) / _dot(
-        _normal(plane), axis
-    )
+    z = _dot(_normal(plane), _offset(origin, plane_origin)) / _dot(_normal(plane), axis)
     center = _vector3_affine(origin, z, axis)
     r = patch.minor_radius_exact
     radius = cylinder.radius_exact
@@ -3003,9 +3024,7 @@ def _prepare_torus(model: BRepModel, face: int, /) -> _TorusIntent:
         )
     torus_center = _fraction_vector3(patch.center_exact)
     if torus_center is None:
-        raise _Refusal(
-            "brep_defeature.family must have a rational torus center."
-        )
+        raise _Refusal("brep_defeature.family must have a rational torus center.")
     delta = _offset(center, torus_center)
     if (
         any(rational_cross(delta, axis))
@@ -3238,7 +3257,9 @@ def _remove_revolved_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
         or not isinstance(wall, RevolutionSurface)
         or wall_data is None
     ):
-        raise RuntimeError("brep_defeature.certificate lost the revolved torus neighbors.")
+        raise RuntimeError(
+            "brep_defeature.certificate lost the revolved torus neighbors."
+        )
     axis = wall_data.axis
     axis_origin = _fraction_vector3(rational_vector(np.asarray(wall.axis_origin)))
     torus_axis = _fraction_vector3(torus.axis_exact)
@@ -3283,9 +3304,13 @@ def _remove_revolved_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
         )
     height = _dot(axis, _offset(axis_origin, corner))
     center = _vector3_affine(axis_origin, height, axis)
-    rings = tuple(geometry.curves[geometry.edge_curves[edge]] for edge in (cap_ring, wall_ring))
+    rings = tuple(
+        geometry.curves[geometry.edge_curves[edge]] for edge in (cap_ring, wall_ring)
+    )
     cap_circle, wall_circle = rings
-    if not isinstance(cap_circle, CircleCurve) or not isinstance(wall_circle, CircleCurve):
+    if not isinstance(cap_circle, CircleCurve) or not isinstance(
+        wall_circle, CircleCurve
+    ):
         raise _Refusal(
             "brep_defeature.family must have a supported analytic certificate; got "
             + "torus contact boundaries without native circle carriers"
@@ -3485,7 +3510,7 @@ def _remove_revolved_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
             if old_level is None
             else tuple(abs(float(box[row, 1]) - old_level) for row in (0, 1))
         )
-        if distances is None or distances[0] == distances[1]:
+        if old_level is None or distances is None or distances[0] == distances[1]:
             raise _Refusal(
                 "brep_defeature.family must have a supported analytic certificate; got "
                 + "a revolved torus neighbor chart not bounded by its contact isoline"
@@ -3498,7 +3523,9 @@ def _remove_revolved_torus(model: BRepModel, face: int, /) -> _BlendRemoval:
                 + "circular extension makes a revolved neighbor vanish"
             )
         bound = float(level)
-        if (row == 1 and Fraction(bound) < level) or (row == 0 and Fraction(bound) > level):
+        if (row == 1 and Fraction(bound) < level) or (
+            row == 0 and Fraction(bound) > level
+        ):
             bound = float(np.nextafter(bound, np.inf if row == 1 else -np.inf))
         box[row, 1] = bound
         target_face.bounds = box
