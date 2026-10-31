@@ -1653,12 +1653,15 @@ class PlcRecoveryBuilder {
       // Checked insertion refuses, leaving the complex unchanged, when the
       // conflict cavity is not star-shaped from the vertex (the complex is no
       // longer Delaunay after local recovery edits) or crosses a constrained
-      // facet; only these typed refusals rebuild at the next restart.
-      if (insert_status == PHX_MC_UNRESOLVED ||
-          insert_status == PHX_MC_CONSTRAINT_INTERSECTION) {
-        return PHX_MC_OK;
+      // facet. The vertex then goes into a shrunk star-shaped cavity; only
+      // when that is refused too does the next restart rebuild.
+      if (insert_status != PHX_MC_UNRESOLVED &&
+          insert_status != PHX_MC_CONSTRAINT_INTERSECTION) {
+        return fail(insert_status, kPlcNonrepresentable, kPlcPoint, vertex);
       }
-      return fail(insert_status, kPlcNonrepresentable, kPlcPoint, vertex);
+      bool applied = false;
+      const int32_t star_status = insert_into_star_shaped_cavity(vertex, applied);
+      if (star_status != PHX_MC_OK || !applied) return star_status;
     }
     bool inserted = false;
     for (std::size_t row = 0; row < complex.tets.size(); ++row) {
@@ -1674,6 +1677,175 @@ class PlcRecoveryBuilder {
     star_marks_.resize(complex.tets.size(), 0U);
     star_.clear();
     incremental_triangulation_ready_ = true;
+    return PHX_MC_OK;
+  }
+
+  // Inserts `vertex` into a star-shaped part of its conflict cavity. The core
+  // is the set of cells whose closure holds the vertex (one cell, the two
+  // cells of a face, or the ring of an edge): it is star-shaped from the
+  // vertex and keeps every one of its vertices on its boundary. The cavity
+  // grows from the core through unconstrained faces into finite cells whose
+  // circumsphere strictly holds the vertex (symbolically perturbed, as in
+  // the Delaunay construction), then non-core cells are dropped until the
+  // connected part around the core has every boundary face strictly
+  // visible from the vertex and every cavity vertex on its boundary. Each
+  // round drops a cell and the core always qualifies, so the loop ends and
+  // the cone from the vertex over the boundary is a valid edit; it need not
+  // be Delaunay, which local_edits_ records. A cavity whose cone breaks a
+  // constrained face is refused (not applied) and left to the rebuild.
+  int32_t insert_into_star_shaped_cavity(int32_t vertex, bool& applied) {
+    applied = false;
+    TetrahedralComplex& complex = triangulation_->complex();
+    const auto cell = [&](int32_t id) -> const Tetrahedron& {
+      return complex.tets[static_cast<std::size_t>(id)];
+    };
+    const ExactPointRef position = ref(vertex);
+    const int32_t origin = triangulation_->locate(position);
+    if (!triangulation_->valid_live_cell(origin) || is_ghost(cell(origin))) return PHX_MC_OK;
+    int zero_slots[4];
+    int zeros = 0;
+    for (int slot = 0; slot < 4; ++slot) {
+      if (triangulation_->orient_with(cell(origin), slot, position) == 0) {
+        zero_slots[zeros++] = slot;
+      }
+    }
+    std::vector<int32_t> core;
+    if (zeros == 0) {
+      core.push_back(origin);
+    } else if (zeros == 1) {
+      core = {origin, cell(origin).n[zero_slots[0]]};
+    } else if (zeros == 2) {
+      int32_t ends[2];
+      int count = 0;
+      for (int slot = 0; slot < 4; ++slot) {
+        if (slot != zero_slots[0] && slot != zero_slots[1]) ends[count++] = cell(origin).v[slot];
+      }
+      const int32_t status = edge_cells(ends[0], ends[1], core);
+      if (status != PHX_MC_OK) return status;
+    } else {
+      return PHX_MC_OK;
+    }
+    for (int32_t id : core) {
+      if (!complex.live(id) || is_ghost(cell(id))) return PHX_MC_OK;
+    }
+    const std::unordered_set<int32_t> core_cells(core.begin(), core.end());
+    std::unordered_set<int32_t> candidates(core.begin(), core.end());
+    std::vector<int32_t> grown(core.begin(), core.end());
+    for (std::size_t at = 0; at < grown.size(); ++at) {
+      const Tetrahedron& current = cell(grown[at]);
+      for (int slot = 0; slot < 4; ++slot) {
+        const int32_t next = current.n[slot];
+        if (complex.constraint(grown[at], slot) != kNoConstraint || candidates.contains(next) ||
+            !complex.live(next) || is_ghost(cell(next))) {
+          continue;
+        }
+        const int32_t* v = cell(next).v;
+        if (insphere_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), position, v[0], v[1], v[2],
+                         v[3], vertex) > 0) {
+          candidates.insert(next);
+          grown.push_back(next);
+        }
+      }
+    }
+    std::vector<int32_t> cavity;
+    std::vector<BoundaryFacet> boundary;
+    std::unordered_set<int32_t> reached;
+    std::unordered_set<int32_t> kept;
+    // Drops a non-core cell from the candidates; refuses (false) for the core.
+    const auto drop = [&](int32_t id) {
+      if (core_cells.contains(id)) return false;
+      candidates.erase(id);
+      return true;
+    };
+    for (;;) {
+      // The connected part of the candidates around the core, through
+      // unconstrained faces.
+      cavity.assign(core.begin(), core.end());
+      reached.clear();
+      reached.insert(core.begin(), core.end());
+      for (std::size_t at = 0; at < cavity.size(); ++at) {
+        const int32_t id = cavity[at];
+        for (int slot = 0; slot < 4; ++slot) {
+          const int32_t next = cell(id).n[slot];
+          if (complex.constraint(id, slot) == kNoConstraint && candidates.contains(next) &&
+              reached.insert(next).second) {
+            cavity.push_back(next);
+          }
+        }
+      }
+      // A constrained face inside the cavity would be split by the cone; a
+      // boundary face must see the vertex strictly on its inner side.
+      boundary.clear();
+      bool dropped = false;
+      for (std::size_t at = 0; at < cavity.size() && !dropped; ++at) {
+        const int32_t id = cavity[at];
+        for (int slot = 0; slot < 4 && !dropped; ++slot) {
+          const int32_t next = cell(id).n[slot];
+          if (reached.contains(next)) {
+            if (complex.constraint(id, slot) == kNoConstraint) continue;
+            if (!drop(id) && !drop(next)) return PHX_MC_OK;
+            dropped = true;
+            continue;
+          }
+          std::array<int32_t, 4> cone{};
+          std::copy(cell(id).v, cell(id).v + 4, cone.begin());
+          cone[static_cast<std::size_t>(slot)] = vertex;
+          if (orient(cone[0], cone[1], cone[2], cone[3]) <= 0) {
+            if (!drop(id)) return PHX_MC_OK;
+            dropped = true;
+            continue;
+          }
+          const int back = neighbor_slot(cell(next), id);
+          if (back < 0) {
+            return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, vertex);
+          }
+          boundary.push_back({id, slot, next, back});
+        }
+      }
+      if (dropped) continue;
+      // Every cavity vertex must stay on the cavity boundary.
+      kept.clear();
+      for (const BoundaryFacet& face : boundary) {
+        for (int slot = 0; slot < 4; ++slot) {
+          if (slot != face.slot) kept.insert(cell(face.tet).v[slot]);
+        }
+      }
+      for (int32_t id : cavity) {
+        for (int32_t corner : cell(id).v) {
+          if (kept.contains(corner)) continue;
+          if (!drop(id)) return PHX_MC_OK;
+          dropped = true;
+          break;
+        }
+      }
+      if (!dropped) break;
+    }
+    CavityEdit edit(complex);
+    edit.begin();
+    for (int32_t id : cavity) {
+      if (edit.remove(id) != EditStatus::kOk) {
+        edit.rollback();
+        return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, vertex);
+      }
+    }
+    for (const BoundaryFacet& face : boundary) {
+      std::array<int32_t, 4> cone{};
+      std::copy(cell(face.tet).v, cell(face.tet).v + 4, cone.begin());
+      cone[static_cast<std::size_t>(face.slot)] = vertex;
+      edit.add(cone.data(), nullptr, kNoRegion);
+    }
+    EditStatus status = edit.validate(
+        [&](const int32_t* v) { return orient(v[0], v[1], v[2], v[3]) > 0; });
+    if (status == EditStatus::kOk) status = edit.commit();
+    if (status != EditStatus::kOk) {
+      edit.rollback();
+      return status == EditStatus::kSlotLimit ? PHX_MC_INDEX_RANGE_ERROR : PHX_MC_OK;
+    }
+    local_edits_ = true;
+    for (int32_t id : edit.created()) {
+      if (!is_ghost(cell(id)) && triangulation_->set_hint(id)) break;
+    }
+    applied = true;
     return PHX_MC_OK;
   }
 
