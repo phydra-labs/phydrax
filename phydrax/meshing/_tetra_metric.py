@@ -3526,11 +3526,9 @@ def _relocation_proposals(
     protected_vertices = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
     cells = np.asarray(snapshot.tetrahedra, dtype=np.int64)
     regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
-    current_cells = vertex_ids[cells]
     current_cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
-    current_records = _source_tetra_inverse(
-        points, current_cells, vertex_ids, current_cell_ids
-    )
+    # Cells hold snapshot rows; the inverse reads points and vertex IDs by row.
+    current_records = _source_tetra_inverse(points, cells, vertex_ids, current_cell_ids)
     current_vertex_rows = {
         int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
     }
