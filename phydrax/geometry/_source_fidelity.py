@@ -4249,11 +4249,16 @@ def _revolution_normal_direction(
     return direction
 
 
+# Halvings of a closed-form chart cell whose normal bound straddles the limit.
+_CLOSED_FORM_NORMAL_SPLITS = 4
+
+
 def _closed_form_normal_deviation(
     surface: AbstractSurfacePatch,
     orientation: int,
     uv_triangle: Triangle2,
     target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    limit: Fraction | None,
     /,
 ) -> tuple[Fraction, Fraction] | None:
     """Normal deviation from a closed-form normal direction of a revolution chart.
@@ -4261,6 +4266,12 @@ def _closed_form_normal_deviation(
     The Jacobian cross product of sphere and revolution charts vanishes on the
     axis, so its interval enclosure loses the normal direction near a pole; the
     closed-form direction stays regular there. Other carriers return ``None``.
+
+    A cell's bounding box encloses up to twice its area, and the box enclosure
+    of the direction widens with it. While a bound straddles ``limit`` the cell
+    is split at its edge midpoints into four exact chart triangles: their union
+    is the cell, so the largest child bounds still enclose its deviation, with a
+    box overestimate halved per split.
     """
     from ._meshing_domain import _PlacedSurfacePatch
 
@@ -4281,48 +4292,93 @@ def _closed_form_normal_deviation(
         surface = surface.source
     if not isinstance(surface, (SpherePatch, RevolutionSurface)):
         return None
-    lower = np.asarray(
-        tuple(
-            fraction_endpoint(min(point[axis] for point in uv_triangle), upper=False)
-            for axis in range(2)
-        ),
-        dtype=np.float64,
-    )
-    upper = np.asarray(
-        tuple(
-            fraction_endpoint(max(point[axis] for point in uv_triangle), upper=True)
-            for axis in range(2)
-        ),
-        dtype=np.float64,
-    )
-    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
-        return None
-    direction = (
-        _sphere_normal_direction(surface, lower, upper)
-        if isinstance(surface, SpherePatch)
-        else _revolution_normal_direction(surface, lower, upper)
-    )
-    if direction is None:
-        return None
-    for cofactor in reversed(cofactors):
-        direction = tuple(
-            _interval_sum(
-                *(
-                    _interval_scale(cofactor[row][column], direction[column])
-                    for column in range(3)
-                )
-            )
-            for row in range(3)
+    carrier = surface
+
+    def bound(triangle: Triangle2, /) -> tuple[Fraction, Fraction] | None:
+        lower = np.asarray(
+            tuple(
+                fraction_endpoint(min(point[axis] for point in triangle), upper=False)
+                for axis in range(2)
+            ),
+            dtype=np.float64,
         )
-    source_cross = (
-        direction if orientation > 0 else tuple((-high, -low) for low, high in direction)
-    )
-    cosine = _normal_cosine_bounds(source_cross, target_cross)
-    if cosine is None:
-        return None
-    return _acos_lower(cosine[1]), _normal_angle_upper(
-        source_cross, target_cross, cosine[0]
-    )
+        upper = np.asarray(
+            tuple(
+                fraction_endpoint(max(point[axis] for point in triangle), upper=True)
+                for axis in range(2)
+            ),
+            dtype=np.float64,
+        )
+        if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+            return None
+        direction = (
+            _sphere_normal_direction(carrier, lower, upper)
+            if isinstance(carrier, SpherePatch)
+            else _revolution_normal_direction(carrier, lower, upper)
+        )
+        if direction is None:
+            return None
+        for cofactor in reversed(cofactors):
+            direction = tuple(
+                _interval_sum(
+                    *(
+                        _interval_scale(cofactor[row][column], direction[column])
+                        for column in range(3)
+                    )
+                )
+                for row in range(3)
+            )
+        source_cross = (
+            direction
+            if orientation > 0
+            else tuple((-high, -low) for low, high in direction)
+        )
+        cosine = _normal_cosine_bounds(source_cross, target_cross)
+        if cosine is None:
+            return None
+        return _acos_lower(cosine[1]), _normal_angle_upper(
+            source_cross, target_cross, cosine[0]
+        )
+
+    def refine(triangle: Triangle2, splits: int, /) -> tuple[Fraction, Fraction] | None:
+        evidence = bound(triangle)
+        if (
+            evidence is None
+            or limit is None
+            or splits == 0
+            or evidence[1] <= limit
+            or evidence[0] > limit
+        ):
+            return evidence
+        first, second, third = triangle
+
+        def midpoint(start: Point2, end: Point2, /) -> Point2:
+            return (start[0] + end[0]) / 2, (start[1] + end[1]) / 2
+
+        near, middle, far = (
+            midpoint(first, second),
+            midpoint(second, third),
+            midpoint(third, first),
+        )
+        children = tuple(
+            refine(child, splits - 1)
+            for child in (
+                (first, near, far),
+                (near, second, middle),
+                (far, middle, third),
+                (near, middle, far),
+            )
+        )
+        if any(child is None for child in children):
+            return evidence
+        resolved = tuple(child for child in children if child is not None)
+        # Each child's lower bound is attained inside the cell.
+        return (
+            max(evidence[0], max(child[0] for child in resolved)),
+            min(evidence[1], max(child[1] for child in resolved)),
+        )
+
+    return refine(uv_triangle, _CLOSED_FORM_NORMAL_SPLITS)
 
 
 def _normal_deviation_for_cell(
@@ -4331,13 +4387,15 @@ def _normal_deviation_for_cell(
     uv_triangle: Triangle2,
     target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
     derivatives: _DerivativeCache,
+    limit: Fraction | None = None,
     /,
 ) -> tuple[Fraction, Fraction] | None:
     """Enclose one cell's normal deviation; sources are cached per patch.
 
     Spline carriers use exact Bernstein Jacobian bounds of their extracted
     spans: a naive interval extension of the basis recursion does not shrink
-    to the cell's actual tangent range.
+    to the cell's actual tangent range. Closed-form revolution charts split a
+    cell whose bound straddles ``limit`` until the bound decides it.
     """
     surface_patch = domain.patches[patch]
     exact_plane = _plane_normal_deviation(
@@ -4346,7 +4404,11 @@ def _normal_deviation_for_cell(
     if exact_plane is not None:
         return exact_plane
     closed_form = _closed_form_normal_deviation(
-        surface_patch.surface, surface_patch.orientation, uv_triangle, target_cross
+        surface_patch.surface,
+        surface_patch.orientation,
+        uv_triangle,
+        target_cross,
+        limit,
     )
     if closed_form is not None:
         return closed_form
@@ -4890,6 +4952,7 @@ def _certify_domain_surface_chart_fidelity(
                     chart,
                     target_cross,
                     derivatives,
+                    normal_limit,
                 )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None
@@ -5929,6 +5992,7 @@ def certify_source_fidelity(
                     chart,
                     target_cross,
                     derivatives,
+                    Fraction.from_float(normal_limit),
                 )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None
