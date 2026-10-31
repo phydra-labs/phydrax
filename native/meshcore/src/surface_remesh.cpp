@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -25,6 +26,8 @@ using phx::mc::geometry::next_up;
 using phx::mc::geometry::point_in_domain;
 
 constexpr uint32_t kScoreLevels = 1u << 20;
+constexpr double kPi = 3.141592653589793;
+constexpr double kTurnSlack = 1.0e-9;  // radians
 
 V add(const V& a, const V& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 V mul(const V& a, double t) { return {a[0] * t, a[1] * t, a[2] * t}; }
@@ -49,8 +52,12 @@ class Remesher {
   std::vector<F> triangles;
   std::vector<uint8_t> alive, stuck;
   std::vector<uint32_t> scores;
+  std::vector<double> floors;                     // source normal cone floor per triangle
+  std::vector<std::optional<NormalCone>> cones;  // source normal cone, once needed
   std::vector<std::vector<int64_t>> star;
   std::unordered_map<uint64_t, std::vector<int64_t>> buckets;
+  std::vector<uint32_t> visited;  // candidate-gathering stamps per triangle
+  uint32_t epoch = 0;
   std::set<std::pair<uint32_t, int64_t>> queue;
   int64_t splits = 0, collapses = 0, flips = 0, relocations = 0;
 
@@ -60,7 +67,8 @@ class Remesher {
     return predicate.admits(points[a], points[b], points[c],
                             {evidence[a], evidence[b], evidence[c]});
   }
-  uint32_t score(const V& a, const V& b, const V& c) const {
+  // Shape and size factor of a triangle in [0, 1].
+  double shape_size(const V& a, const V& b, const V& c) const {
     std::array<double, 3> lengths{length(difference(b, c)), length(difference(c, a)),
                                   length(difference(a, b))};
     std::sort(lengths.begin(), lengths.end());
@@ -70,13 +78,113 @@ class Remesher {
     const double minimum_angle = std::asin(sine) * 180.0 / std::acos(-1.0);
     const double shape = std::min(1.0, minimum_angle / targets.minimum_angle_degrees);
     const double size = std::min(1.0, (4.0 / 3.0) * h / lengths[2]);
-    const double value = std::floor(shape * size * kScoreLevels);
-    return static_cast<uint32_t>(std::clamp(value, 0.0, static_cast<double>(kScoreLevels)));
+    return shape * size;
   }
-  uint32_t score(const F& t) const {
-    return score(points[static_cast<size_t>(t[0])], points[static_cast<size_t>(t[1])],
-                 points[static_cast<size_t>(t[2])]);
+  V normal(const F& t) const {
+    const V& a = points[static_cast<size_t>(t[0])];
+    return cross(difference(points[static_cast<size_t>(t[1])], a),
+                 difference(points[static_cast<size_t>(t[2])], a));
   }
+  std::array<VertexEvidence, 3> corner_evidence(const F& t) const {
+    return {evidence[static_cast<size_t>(t[0])], evidence[static_cast<size_t>(t[1])],
+            evidence[static_cast<size_t>(t[2])]};
+  }
+  NormalCone cone_of(const F& t) const {
+    return predicate.normal_cone(points[static_cast<size_t>(t[0])],
+                                 points[static_cast<size_t>(t[1])],
+                                 points[static_cast<size_t>(t[2])], corner_evidence(t));
+  }
+  double floor_of(const F& t) const {
+    return predicate.normal_cone_floor(points[static_cast<size_t>(t[0])],
+                                       points[static_cast<size_t>(t[1])],
+                                       points[static_cast<size_t>(t[2])], corner_evidence(t));
+  }
+  // The created triangles of a staged edit, their cone floors, and their
+  // cones, computed only when an edge turns beyond both floors.
+  struct Staged {
+    const std::vector<F>* created = nullptr;
+    std::vector<double> floors;
+    std::vector<std::optional<NormalCone>> cones;
+  };
+  // A triangle of a staged state: a live ID, or (id < 0) a created row.
+  struct Ref {
+    int64_t id = -1;
+    size_t row = 0;
+  };
+  const F& triangle(const Ref& ref, const Staged& staged) const {
+    return ref.id >= 0 ? triangles[static_cast<size_t>(ref.id)] : (*staged.created)[ref.row];
+  }
+  double cone_floor(const Ref& ref, const Staged& staged) const {
+    return ref.id >= 0 ? floors[static_cast<size_t>(ref.id)] : staged.floors[ref.row];
+  }
+  const NormalCone& cone(const Ref& ref, Staged& staged) {
+    std::optional<NormalCone>& slot =
+        ref.id >= 0 ? cones[static_cast<size_t>(ref.id)] : staged.cones[ref.row];
+    if (!slot) slot = cone_of(triangle(ref, staged));
+    return *slot;
+  }
+  // The triangle holding directed edge q -> p (the neighbor across p -> q) in
+  // the state where `removed` (sorted IDs) are dead and the staged triangles
+  // are live.
+  std::optional<Ref> across(int64_t p, int64_t q, const Staged& staged,
+                            const std::vector<int64_t>& removed) {
+    const auto holds = [&](const F& t) {
+      for (int k = 0; k < 3; ++k)
+        if (t[k] == q && t[(k + 1) % 3] == p) return true;
+      return false;
+    };
+    if (staged.created != nullptr)
+      for (size_t row = 0; row < staged.created->size(); ++row)
+        if (holds((*staged.created)[row])) return Ref{-1, row};
+    for (int64_t id : live_star(p)) {
+      if (std::binary_search(removed.begin(), removed.end(), id)) continue;
+      if (holds(triangles[static_cast<size_t>(id)])) return Ref{id, 0};
+    }
+    return std::nullopt;
+  }
+  // Quantized score of a triangle in that state: shape and size times the
+  // fold factor (see surface_remesh.hpp); a degenerate normal on either side
+  // leaves the edge to the degenerate triangle's own score. A turn within the
+  // two cone floors is within the cones' separation, so cones are computed
+  // only for edges turning beyond the floors.
+  uint32_t score(const Ref& self, Staged& staged, const std::vector<int64_t>& removed) {
+    const F t = triangle(self, staged);
+    const double value = shape_size(points[static_cast<size_t>(t[0])],
+                                    points[static_cast<size_t>(t[1])],
+                                    points[static_cast<size_t>(t[2])]);
+    if (!(value > 0)) return 0;
+    const V own = normal(t);
+    double fold = 1;
+    for (int k = 0; k < 3; ++k) {
+      const auto neighbor = across(t[k], t[(k + 1) % 3], staged, removed);
+      if (!neighbor) continue;
+      const V other = normal(triangle(*neighbor, staged));
+      if (!(length(other) > 0)) continue;
+      const double turn = std::atan2(length(cross(own, other)), dot(own.data(), other.data()));
+      // The slack absorbs the rounding of the angle evaluations.
+      if (turn <= cone_floor(self, staged) + cone_floor(*neighbor, staged) + kTurnSlack) continue;
+      const NormalCone first = cone(self, staged);
+      const double allowed = cone_separation(first, cone(*neighbor, staged));
+      if (!(allowed < kPi)) continue;
+      if (turn > allowed + kTurnSlack) fold = std::min(fold, (kPi - turn) / (kPi - allowed));
+    }
+    return quantize(value * std::max(fold, 0.0));
+  }
+  static uint32_t quantize(double value) {
+    return static_cast<uint32_t>(
+        std::clamp(std::floor(value * kScoreLevels), 0.0, static_cast<double>(kScoreLevels)));
+  }
+  // Rescores a live triangle in the current state and requeues it.
+  void rescore(int64_t id) {
+    const auto slot = static_cast<size_t>(id);
+    queue.erase({scores[slot], id});
+    Staged none;
+    scores[slot] = score(Ref{id, 0}, none, {});
+    if (scores[slot] < kScoreLevels && !stuck[slot]) queue.emplace(scores[slot], id);
+  }
+  // Grid cells met by the triangle's bounding box. Two triangles in contact
+  // have overlapping boxes, and a point of the overlap lies in a cell of both
+  // ranges (floor is monotone), so exact ranges find every contact pair.
   std::array<int64_t, 6> bucket_range(const F& t) const {
     V lo = points[static_cast<size_t>(t[0])], hi = lo;
     for (int64_t v : t)
@@ -86,11 +194,41 @@ class Remesher {
       }
     std::array<int64_t, 6> range{};
     for (int d = 0; d < 3; ++d) {
-      range[d] = static_cast<int64_t>(std::floor(lo[d] / h)) - 1;
-      range[3 + d] = static_cast<int64_t>(std::floor(hi[d] / h)) + 1;
+      range[d] = static_cast<int64_t>(std::floor(lo[d] / h));
+      range[3 + d] = static_cast<int64_t>(std::floor(hi[d] / h));
     }
     return range;
   }
+  // Live triangles other than `removed` (sorted IDs) registered in a cell of
+  // `t`'s range, each once; dead entries met on the way are dropped from
+  // their cells.
+  void gather_candidates(const F& t, const std::vector<int64_t>& removed,
+                         std::vector<int64_t>& out) {
+    out.clear();
+    if (++epoch == 0) {
+      std::fill(visited.begin(), visited.end(), 0);
+      epoch = 1;
+    }
+    visited.resize(triangles.size(), 0);
+    const auto range = bucket_range(t);
+    for (int64_t i = range[0]; i <= range[3]; ++i)
+      for (int64_t j = range[1]; j <= range[4]; ++j)
+        for (int64_t k = range[2]; k <= range[5]; ++k) {
+          const auto found = buckets.find(cell_key(i, j, k));
+          if (found == buckets.end()) continue;
+          auto& cell = found->second;
+          cell.erase(std::remove_if(cell.begin(), cell.end(),
+                                    [&](int64_t id) { return !alive[static_cast<size_t>(id)]; }),
+                     cell.end());
+          for (int64_t id : cell) {
+            if (visited[static_cast<size_t>(id)] == epoch) continue;
+            visited[static_cast<size_t>(id)] = epoch;
+            if (!std::binary_search(removed.begin(), removed.end(), id)) out.push_back(id);
+          }
+        }
+  }
+  // Registers a triangle in the buckets and stars; its score depends on its
+  // edge neighbors, so callers rescore once the edit's triangles are all in.
   void insert(int64_t id) {
     const F& t = triangles[static_cast<size_t>(id)];
     const auto range = bucket_range(t);
@@ -98,16 +236,15 @@ class Remesher {
       for (int64_t j = range[1]; j <= range[4]; ++j)
         for (int64_t k = range[2]; k <= range[5]; ++k) buckets[cell_key(i, j, k)].push_back(id);
     for (int64_t v : t) star[static_cast<size_t>(v)].push_back(id);
-    scores[static_cast<size_t>(id)] = score(t);
-    if (scores[static_cast<size_t>(id)] < kScoreLevels)
-      queue.emplace(scores[static_cast<size_t>(id)], id);
   }
-  int64_t add_triangle(const F& t) {
+  int64_t add_triangle(const F& t, double floor, const std::optional<NormalCone>& cone) {
     const int64_t id = static_cast<int64_t>(triangles.size());
     triangles.push_back(t);
     alive.push_back(1);
     stuck.push_back(0);
     scores.push_back(0);
+    floors.push_back(floor);
+    cones.push_back(cone);
     insert(id);
     return id;
   }
@@ -212,15 +349,17 @@ class Remesher {
       if (!point_in_domain(edit.added)) return restore();
     }
     std::vector<std::array<int64_t, 3>> created_keys;
-    for (const F& t : edit.created) {
+    for (size_t row = 0; row < edit.created.size(); ++row) {
+      const F& t = edit.created[row];
       if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) return restore();
       const V& a = points[static_cast<size_t>(t[0])];
       const V& b = points[static_cast<size_t>(t[1])];
       const V& c = points[static_cast<size_t>(t[2])];
       if (phx::mc::geometry::collinear(a, b, c, 0)) return restore();
-      const uint32_t created_score = score(t);
-      if (admission == Admission::kImprove ? created_score <= removed_minimum
-                                           : created_score < removed_minimum)
+      // Shape and size alone bound the score from above (fold <= 1): a
+      // cheap refusal before the band, contact and source-cone checks.
+      const uint32_t bound = quantize(shape_size(a, b, c));
+      if (admission == Admission::kImprove ? bound <= removed_minimum : bound < removed_minimum)
         return restore();
       const V normal = cross(difference(b, a), difference(c, a));
       if (!(dot(normal.data(), reference.data()) > 0)) return restore();
@@ -257,20 +396,7 @@ class Remesher {
             !legal(contact))
           return restore();
       }
-      candidates.clear();
-      const auto range = bucket_range(t);
-      for (int64_t i = range[0]; i <= range[3]; ++i)
-        for (int64_t j = range[1]; j <= range[4]; ++j)
-          for (int64_t k = range[2]; k <= range[5]; ++k) {
-            const auto found = buckets.find(cell_key(i, j, k));
-            if (found == buckets.end()) continue;
-            for (int64_t id : found->second)
-              if (alive[static_cast<size_t>(id)] &&
-                  !std::binary_search(removed_ids.begin(), removed_ids.end(), id))
-                candidates.push_back(id);
-          }
-      std::sort(candidates.begin(), candidates.end());
-      candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+      gather_candidates(t, removed_ids, candidates);
       for (int64_t id : candidates) {
         const F& u = triangles[static_cast<size_t>(id)];
         const double* u_points[3] = {points[static_cast<size_t>(u[0])].data(),
@@ -283,13 +409,52 @@ class Remesher {
           return restore();
       }
     }
+    // Full scores last: they may need the created triangles' source cones.
+    Staged staged;
+    staged.created = &edit.created;
+    staged.cones.resize(edit.created.size());
+    for (const F& t : edit.created) staged.floors.push_back(floor_of(t));
+    for (size_t row = 0; row < edit.created.size(); ++row) {
+      const uint32_t created_score = score(Ref{-1, row}, staged, removed_ids);
+      if (admission == Admission::kImprove ? created_score <= removed_minimum
+                                           : created_score < removed_minimum)
+        return restore();
+    }
+    // Surviving edge neighbors of the created patch change only their fold
+    // factor. One that does not keep its score is held to the created
+    // triangles' bound, so in the multiset argument it is a replaced element
+    // whose successor still exceeds the patch's worst score.
+    std::vector<int64_t> ring;
+    for (const F& t : edit.created)
+      for (int k = 0; k < 3; ++k) {
+        const int64_t p = t[k], q = t[(k + 1) % 3];
+        for (int64_t id : live_star(p)) {
+          if (std::binary_search(removed_ids.begin(), removed_ids.end(), id)) continue;
+          const F& u = triangles[static_cast<size_t>(id)];
+          for (int j = 0; j < 3; ++j)
+            if (u[j] == q && u[(j + 1) % 3] == p) ring.push_back(id);
+        }
+      }
+    std::sort(ring.begin(), ring.end());
+    ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+    for (int64_t id : ring) {
+      const uint32_t ring_score = score(Ref{id, 0}, staged, removed_ids);
+      if (ring_score >= scores[static_cast<size_t>(id)]) continue;
+      if (admission == Admission::kImprove ? ring_score <= removed_minimum
+                                           : ring_score < removed_minimum)
+        return restore();
+    }
     for (int64_t id : edit.removed) kill(id);
     if (edit.dropped >= 0) star[static_cast<size_t>(edit.dropped)].clear();
     std::vector<int64_t> touched;
-    for (const F& t : edit.created) {
-      add_triangle(t);
+    std::vector<int64_t> created_ids;
+    for (size_t row = 0; row < edit.created.size(); ++row) {
+      const F& t = edit.created[row];
+      created_ids.push_back(add_triangle(t, staged.floors[row], staged.cones[row]));
       touched.insert(touched.end(), t.begin(), t.end());
     }
+    for (int64_t id : created_ids) rescore(id);
+    for (int64_t id : ring) rescore(id);
     std::sort(touched.begin(), touched.end());
     touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
     for (int64_t v : touched)
@@ -423,6 +588,43 @@ class Remesher {
     return weight > 0 ? mul(sum, 1 / weight) : points[static_cast<size_t>(v)];
   }
 
+  // The equilateral position of t's corner k over the opposite edge, in t's
+  // plane on the corner's side; nullopt for a degenerate t.
+  std::optional<V> ideal_apex(const F& t, int k) const {
+    const V& p = points[static_cast<size_t>(t[k])];
+    const V& a = points[static_cast<size_t>(t[(k + 1) % 3])];
+    const V& b = points[static_cast<size_t>(t[(k + 2) % 3])];
+    const V edge = difference(b, a);
+    const V middle = mul(add(a, b), 0.5);
+    V up = cross(cross(edge, difference(p, a)), edge);
+    const double norm = length(up);
+    if (!(norm > 0) || !std::isfinite(norm)) return std::nullopt;
+    if (dot(up.data(), difference(p, middle).data()) < 0) up = mul(up, -1);
+    return add(middle, mul(up, 0.5 * std::sqrt(3.0) * length(edge) / norm));
+  }
+
+  // Relocations of t's corners part of the way toward the star centroid
+  // (fractions 1/2, ..., 2^-10) and toward the corner's ideal apex (1, ...,
+  // 2^-10), projected and as is. A full move that lifts t can push another
+  // star triangle below t's score where a shorter one does not. The list is
+  // finite and every admitted relocation is an ordinary improving edit.
+  bool relocate_partially(const F& t) {
+    for (int k = 0; k < 3; ++k) {
+      const int64_t v = t[k];
+      const V origin = points[static_cast<size_t>(v)];
+      std::vector<std::pair<V, double>> goals{{star_centroid(v), 0.5}};
+      if (const auto apex = ideal_apex(t, k)) goals.emplace_back(*apex, 1.0);
+      for (const auto& [goal, first] : goals) {
+        const V step = difference(goal, origin);
+        for (double fraction = first; fraction >= 0x1p-10; fraction *= 0.5) {
+          const V position = add(origin, mul(step, fraction));
+          if (relocate(v, project(position)) || relocate(v, position)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   bool improve(int64_t id) {
     const F t = triangles[static_cast<size_t>(id)];
     std::array<std::pair<double, int>, 3> edges;  // (length, local edge opposite corner k)
@@ -458,6 +660,7 @@ class Remesher {
           relocate(v, project(points[static_cast<size_t>(v)])))
         return true;
     }
+    if (relocate_partially(t)) return true;
     const V middle = midpoint(la, lb);
     return split(la, lb, project(middle)) || split(la, lb, middle);
   }
@@ -521,7 +724,8 @@ class Remesher {
     evidence.resize(points.size());
     for (size_t v = 0; v < points.size(); ++v) evidence[v] = predicate.evaluate(points[v]);
     star.assign(points.size(), {});
-    for (const F& t : input_triangles) add_triangle(t);
+    for (const F& t : input_triangles) add_triangle(t, floor_of(t), std::nullopt);
+    for (size_t id = 0; id < triangles.size(); ++id) rescore(static_cast<int64_t>(id));
     improve_worst_first();
     regularize();
     improve_worst_first();
@@ -554,6 +758,17 @@ class Remesher {
   }
 };
 }  // namespace
+
+double cone_separation(const NormalCone& first, const NormalCone& second) {
+  const double first_length = length(first.axis), second_length = length(second.axis);
+  if (!(first.half_angle < kPi) || !(second.half_angle < kPi) || !(first_length > 0) ||
+      !(second_length > 0) || !std::isfinite(first_length) || !std::isfinite(second_length))
+    return kPi;
+  const double between = std::atan2(length(cross(first.axis, second.axis)),
+                                    dot(first.axis.data(), second.axis.data()));
+  return std::min(kPi, between + std::max(first.half_angle, 0.0) +
+                           std::max(second.half_angle, 0.0));
+}
 
 double certified_free_radius(const Point& a, const Point& b, const Point& c,
                            double roundoff) {

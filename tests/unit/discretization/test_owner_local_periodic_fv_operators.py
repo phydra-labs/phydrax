@@ -695,3 +695,262 @@ def test_owner_local_periodic_moving_runtime_conserves_and_preserves_free_stream
             )
         else:
             assert float(np.max(np.abs(after - before))) > 1e-5
+
+
+def _periodic_box_with_obstacle(component_names: tuple[str, ...], /) -> Any:
+    """One serial owner holding a lifted unit periodic box with a square hole.
+
+    The x = 1 and y = 1 seam faces are unwelded lattice copies of the x = 0
+    and y = 0 faces; joining them leaves the obstacle as the only boundary.
+    """
+    from phydrax.discretization.finite_volume._unstructured import (
+        _PERIODIC_SEAM_PATCH,
+    )
+
+    n = 6
+    grid = np.asarray(
+        [(i / n, j / n) for j in range(n + 1) for i in range(n + 1)], dtype=np.float64
+    )
+
+    def vertex(i: int, j: int, /) -> int:
+        return j * (n + 1) + i
+
+    def hole(i: int, j: int, /) -> bool:
+        return 2 <= i < 4 and 2 <= j < 4
+
+    triangles = []
+    for j in range(n):
+        for i in range(n):
+            if hole(i, j):
+                continue
+            ll, lr = vertex(i, j), vertex(i + 1, j)
+            ul, ur = vertex(i, j + 1), vertex(i + 1, j + 1)
+            triangles.extend(((ll, lr, ur), (ll, ur, ul)))
+    used = np.unique(np.asarray(triangles))
+    rows = np.full((grid.shape[0],), -1, dtype=np.int64)
+    rows[used] = np.arange(used.size)
+    cells = rows[np.asarray(triangles)]
+    seams = [
+        (
+            rows[[vertex(0, j), vertex(0, j + 1)]],
+            rows[[vertex(n, j), vertex(n, j + 1)]],
+            (1.0, 0.0),
+        )
+        for j in range(n)
+    ] + [
+        (
+            rows[[vertex(i, 0), vertex(i + 1, 0)]],
+            rows[[vertex(i, n), vertex(i + 1, n)]],
+            (0.0, 1.0),
+        )
+        for i in range(n)
+    ]
+    obstacle = [
+        rows[[vertex(*a), vertex(*b)]]
+        for a, b in (((2, 2 + k), (2, 3 + k)) for k in range(2))
+    ]
+    obstacle += [rows[[vertex(4, 2 + k), vertex(4, 3 + k)]] for k in range(2)]
+    obstacle += [rows[[vertex(2 + k, 2), vertex(3 + k, 2)]] for k in range(2)]
+    obstacle += [rows[[vertex(2 + k, 4), vertex(3 + k, 4)]] for k in range(2)]
+    lifted = phx.discretization.UnstructuredFiniteVolumePlan(
+        grid[used],
+        triangles=cells,
+        # Seam faces are labelled last, as the owner-local lowering does, so a
+        # host epoch rebuilds the same topology.
+        boundary_patches={
+            "obstacle": np.asarray(obstacle),
+            _PERIODIC_SEAM_PATCH: np.concatenate(
+                [np.stack((kept, twin)) for kept, twin, _ in seams]
+            ),
+        },
+        component_names=component_names,
+    )
+    connectivity: Any = lifted.prepare().connectivity
+    edges = np.sort(np.asarray(connectivity.edges, dtype=np.int64), axis=1)
+    edge_ids = {tuple(edge): face for face, edge in enumerate(edges.tolist())}
+    joins = np.asarray(
+        [
+            (
+                edge_ids[tuple(sorted(kept.tolist()))],
+                edge_ids[tuple(sorted(twin.tolist()))],
+            )
+            for kept, twin, _ in seams
+        ],
+        dtype=np.int32,
+    )
+    translations = np.asarray([shift for _, _, shift in seams], dtype=np.float64)
+    # Relabel with the canonical face rows a host epoch rebuilds them from.
+    face_vertices = np.asarray(connectivity.edges, dtype=np.int64)
+    lifted = phx.discretization.UnstructuredFiniteVolumePlan(
+        grid[used],
+        triangles=cells,
+        boundary_patches={
+            "obstacle": face_vertices[
+                np.asarray(lifted.patch_faces[lifted.patch_names.index("obstacle")])
+            ],
+            _PERIODIC_SEAM_PATCH: face_vertices[np.sort(joins.reshape(-1))],
+        },
+        component_names=component_names,
+    )
+    plan = phx.discretization.UnstructuredFiniteVolumePlan._with_owner_local_joins(
+        lifted, None, joins, translations
+    )
+    assert plan.prepare().boundary_patch_names == ("obstacle",)
+    return plan
+
+
+_OBSTACLE_CENTER = np.asarray((0.5, 0.5))
+_OBSTACLE_VELOCITY = np.asarray((0.04, -0.03))
+# Nilpotent shear rate: ``det(I + t S) == 1``, so the obstacle keeps its area.
+_OBSTACLE_SHEAR = np.asarray(((0.0, 0.6), (0.0, 0.0)))
+
+
+def _sheared_obstacle(time: Any, vertices: Any, args: Any) -> Any:
+    """Obstacle boundary: area-preserving shear about its centre plus a drift.
+
+    The motion is affine in time, as fixed-connectivity SSPRK geometry needs
+    for its stage volumes to match the coordinates.
+    """
+    del args
+    center = jnp.asarray(_OBSTACLE_CENTER)
+    rate = (
+        jnp.asarray(_OBSTACLE_VELOCITY)
+        + (vertices - center) @ jnp.asarray(_OBSTACLE_SHEAR).T
+    )
+    return vertices + time * rate
+
+
+def _obstacle_wall_velocity(time: Any, points: Any, normal: Any, args: Any) -> Any:
+    """Wall velocity at current points (``S @ S == 0`` inverts the shear)."""
+    del normal, args
+    relative = (
+        points - jnp.asarray(_OBSTACLE_CENTER) - jnp.asarray(_OBSTACLE_VELOCITY) * time
+    )
+    return jnp.asarray(_OBSTACLE_VELOCITY) + relative @ jnp.asarray(_OBSTACLE_SHEAR).T
+
+
+def test_periodic_fe_extension_moves_seam_twins_as_lattice_copies() -> None:
+    """Interior motion around a moving obstacle is solved on the periodic quotient.
+
+    The harmonic route is used here; the other routes' quotient coupling is
+    covered in `test_mesh_motion_routes.py`.
+    """
+    system = phx.equations.EulerSystem(2)
+    plan = _periodic_box_with_obstacle(system.component_names)
+    geometry = plan.prepare()
+    motion = phx.discretization.FixedConnectivityMotionPlan(
+        plan,
+        _sheared_obstacle,
+        mapping_id="periodic-obstacle-harmonic",
+        motion_policy=phx.discretization.FiniteElementMeshMotionPolicy(),
+    )
+    assert motion.interior_motion is not None and motion.seam_vertex_pairs is not None
+    kept, twin, translations = (np.asarray(part) for part in motion.seam_vertex_pairs)
+    reference = np.asarray(plan.vertices)
+    for time in (0.05, 0.2):
+        vertices, successful = motion._vertices(jnp.asarray(time), None)
+        vertices = np.asarray(vertices)
+        assert bool(successful)
+        # Twins share one quotient unknown: exact lattice copies after motion.
+        np.testing.assert_allclose(
+            vertices[twin] - vertices[kept], translations, rtol=0.0, atol=1e-15
+        )
+        # The seams really move: the coupling is not a trivial rigid shift.
+        displacement = vertices - reference
+        assert float(np.max(np.abs(displacement[twin]))) > 1.0e-4
+        assert float(np.ptp(displacement[twin], axis=0).max()) > 1.0e-4
+        # The host epoch rejoins the moved seams.
+        moved = motion.evaluate_plan(jnp.asarray(time)).prepare()
+        np.testing.assert_allclose(
+            float(np.sum(np.asarray(moved.cell_volumes))),
+            float(np.sum(np.asarray(geometry.cell_volumes))),
+            rtol=1e-12,
+        )
+    step = motion.prepare_ssprk33_step(
+        0.0,
+        2.0e-3,
+        "periodic-obstacle-epoch",
+        0,
+        0,
+        prior_effective_cell_volumes=geometry.cell_volumes,
+    )
+    assert bool(step.passed)
+    for name in ("stage_1", "stage_2", "stage_3", "accepted_geometry"):
+        metrics = getattr(step, name)
+        # Discrete GCL: rate-advanced volumes are the coordinate volumes (to the
+        # extension's Krylov tolerance).
+        np.testing.assert_allclose(
+            np.asarray(metrics.effective_cell_volumes),
+            np.asarray(metrics.coordinate_effective_cell_volumes),
+            rtol=0.0,
+            atol=1e-12,
+        )
+    for name in ("g1", "g2", "g3"):
+        rates = np.asarray(getattr(step, name))
+        assert float(np.max(np.abs(rates))) > 1.0e-4
+        # An area-preserving obstacle in a closed periodic box keeps the fluid
+        # volume: the seam faces carry no net volume.
+        np.testing.assert_allclose(np.sum(rates), 0.0, atol=1e-13)
+
+
+def test_periodic_obstacle_runtime_holds_gcl_and_conserves_mass() -> None:
+    """The ALE runtime advances the quotient motion with seams as interior faces.
+
+    The runtime's effective volumes are the coordinate volumes of the moved
+    periodic plan (the discrete GCL), and Euler with a moving slip wall keeps
+    its mass in the closed periodic box.
+    """
+    system = phx.equations.EulerSystem(2)
+    plan = _periodic_box_with_obstacle(system.component_names)
+    geometry = plan.prepare()
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        geometry.boundary_patch_names,
+        {
+            "obstacle": phx.discretization.MovingSlipWallBoundary(
+                _obstacle_wall_velocity,
+                wall_velocity_provider_id="periodic-obstacle-wall",
+            )
+        },
+    )
+    motion = phx.discretization.FixedConnectivityMotionPlan(
+        plan,
+        _sheared_obstacle,
+        mapping_id="periodic-obstacle-runtime",
+        motion_policy=phx.discretization.FiniteElementMeshMotionPolicy(),
+    )
+    dynamics: Any = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR(
+            "periodic-obstacle-runtime", "state", system, boundaries
+        ),
+        geometry,
+        phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+        coupling=phx.discretization.UnstructuredFiniteVolumeCouplingPlan(motion=motion),
+    ).dynamics
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics, phx.discretization.FluxPositivityPlan()
+    )
+    state = _euler_state(system, np.asarray(geometry.cell_centers), np.eye(2))
+    current = runtime.initialize_state(jnp.asarray(state), 0.0, 2.0e-3)
+    before = np.asarray(current.content_state.conservative_content)
+    for _ in range(2):
+        result = runtime.advance(current)
+        assert bool(result.accepted)
+        current = result.runtime_state
+    content = current.content_state
+    after = np.asarray(content.conservative_content)
+    volumes = np.asarray(content.effective_cell_volumes)
+    assert float(np.max(np.abs(volumes - np.asarray(geometry.cell_volumes)))) > 1e-6
+    # Discrete GCL: rate-advanced volumes are the moved plan's coordinate volumes.
+    moved = motion.evaluate_plan(jnp.asarray(content.time)).prepare()
+    np.testing.assert_allclose(
+        volumes, np.asarray(moved.cell_volumes), rtol=0.0, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        np.sum(volumes), np.sum(np.asarray(geometry.cell_volumes)), rtol=1e-13
+    )
+    # Every seam is an interior face and the slip wall carries no mass.
+    np.testing.assert_allclose(np.sum(after[:, 0]), np.sum(before[:, 0]), rtol=1e-13)
+    assert float(np.max(np.abs(after - before))) > 1e-5

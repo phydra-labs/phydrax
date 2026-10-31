@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Any
 
 import jax
@@ -206,6 +207,7 @@ def test_mapped_locator_reports_complete_multiple_inverse_roots_as_ambiguous() -
         ((0.1, 0.3), (0.1, 0.6)),
         atol=1.0e-8,
     )
+    assert result.inverse_refusals == ()
 
 
 def test_mapped_locator_keeps_tangent_root_finitely_unresolved() -> None:
@@ -233,6 +235,83 @@ def test_mapped_locator_keeps_tangent_root_finitely_unresolved() -> None:
     assert np.asarray(result.status).tolist() == [
         int(phx.discretization.CellLocationStatus.INVERSE_MAP_EXHAUSTED)
     ]
+    (refusal,) = result.inverse_refusals
+    assert (refusal.point, refusal.cell, refusal.reason) == (
+        0,
+        0,
+        "singular-tolerance-root",
+    )
+    # The witness segment brackets the fold through the tangent root.
+    assert len(refusal.witness) == 2
+    np.testing.assert_allclose(
+        np.asarray(refusal.witness, dtype=np.float64),
+        ((0.2, 0.45), (0.2, 0.45)),
+        atol=1.0e-6,
+    )
+
+
+def test_mapped_locator_refuses_rootless_tolerance_band_finitely() -> None:
+    # A thin cell: every reference point within 1e-5 of the lower edge maps within
+    # the residual tolerance of a target just below the edge, which has no exact root.
+    coordinates = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0e-5)), dtype=np.float64)
+    mesh = phx.discretization.CellMesh.from_triangles(
+        coordinates, np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    geometry = phx.discretization.CellGeometrySpec(
+        {"triangles": phx.discretization.lagrange_element("triangle", 1)},
+        {"triangles": np.arange(3, dtype=np.int64)[None, :]},
+        coordinates,
+    )
+    locator = PreparedMappedCellLocator.from_cell_geometry(mesh, geometry, 0)
+
+    result = locator.locate(
+        np.asarray(((0.5, -2.0e-15), (0.5, 2.0e-6)), dtype=np.float64)
+    )
+
+    assert np.asarray(result.status).tolist() == [
+        int(phx.discretization.CellLocationStatus.INVERSE_MAP_EXHAUSTED),
+        int(phx.discretization.CellLocationStatus.LOCATED),
+    ]
+    assert result.candidates_complete.tolist() == [False, True]
+    np.testing.assert_allclose(
+        np.asarray(result.reference_coordinates)[1], (0.5, 0.2), atol=1.0e-10
+    )
+    (refusal,) = result.inverse_refusals
+    assert (refusal.point, refusal.cell, refusal.reason) == (
+        0,
+        0,
+        "rootless-tolerance-root",
+    )
+    (witness,) = refusal.witness
+    np.testing.assert_allclose(
+        np.asarray(witness, dtype=np.float64), (0.5, 0.0), atol=1.0e-9
+    )
+
+
+def test_cell_inverse_refusal_is_static_validated_box_evidence() -> None:
+    refusal = phx.discretization.CellInverseRefusal(
+        0,
+        1,
+        "parameter-resolution",
+        (Fraction(0),),
+        (Fraction(1),),
+        ((Fraction(1, 2),),),
+    )
+
+    assert jax.tree.leaves(refusal) == []
+    with pytest.raises(ValueError, match="reason"):
+        phx.discretization.CellInverseRefusal(
+            0, 1, "converged", (Fraction(0),), (Fraction(1),), ()
+        )
+    with pytest.raises(ValueError, match="ordered box"):
+        phx.discretization.CellInverseRefusal(
+            0,
+            1,
+            "parameter-resolution",
+            (Fraction(0),),
+            (Fraction(1),),
+            ((Fraction(2),),),
+        )
 
 
 def test_polyhedral_locator_uses_authored_planar_faces() -> None:
