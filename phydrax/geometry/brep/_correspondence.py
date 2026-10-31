@@ -414,7 +414,12 @@ def native_edge_pcurve(
             frame, tuple(coefficients[0][i] - plane_origin[i] for i in range(3))
         )
         uv_direction = _plane_parameter_vector(frame, coefficients[1])
-        if uv_origin is None or uv_direction is None:
+        if (
+            uv_origin is None
+            or uv_direction is None
+            # A line normal to the plane projects to a point and has no lift.
+            or all(value == 0 for value in uv_direction)
+        ):
             return None
         candidate = _affine_pcurve_carrier(curve, uv_origin, uv_direction)
         return candidate if _same_plane_line_lift(curve, candidate, frame) else None

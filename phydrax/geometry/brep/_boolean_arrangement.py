@@ -473,7 +473,7 @@ def source_arcs(
                         ),
                     ]
             state.arcs[owner] = arcs
-            domain = model.trim_domains[face]
+            domain = native_chart_trim_domain(model, face)
             if domain is None:
                 raise BRepBooleanFailure(
                     "BRepBoolean.source_face.trim_domain must be present for every bounded source face",
@@ -1996,30 +1996,50 @@ class _BoundaryTopology(StrictModule):
         return geometry
 
 
-def _trim_domains_from_geometry(geometry: BRepGeometry) -> tuple[TrimDomain, ...]:
+def _face_curve_trim_domain(geometry: BRepGeometry, face: int, /) -> TrimDomain:
     ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
-    domains = []
-    for loops in geometry.face_loops:
-        curve_loops = []
-        for loop in loops:
-            segments = []
-            for coedge in loop:
-                edge = geometry.coedge_edges[coedge]
-                first, last = (float(value) for value in ranges[edge])
-                first_root, last_root = geometry.coedge_endpoint_roots[coedge]
-                segments.append(
-                    CurveTrimSegment(
-                        geometry.pcurves[coedge],
-                        first,
-                        last,
-                        reversed=geometry.coedge_senses[coedge] < 0,
-                        first_root=first_root,
-                        last_root=last_root,
-                    )
+    curve_loops = []
+    for loop in geometry.face_loops[face]:
+        segments = []
+        for coedge in loop:
+            edge = geometry.coedge_edges[coedge]
+            first, last = (float(value) for value in ranges[edge])
+            first_root, last_root = geometry.coedge_endpoint_roots[coedge]
+            segments.append(
+                CurveTrimSegment(
+                    geometry.pcurves[coedge],
+                    first,
+                    last,
+                    reversed=geometry.coedge_senses[coedge] < 0,
+                    first_root=first_root,
+                    last_root=last_root,
                 )
-            curve_loops.append(tuple(segments))
-        domains.append(TrimDomain.from_curve_loops(tuple(curve_loops)))
-    return tuple(domains)
+            )
+        curve_loops.append(tuple(segments))
+    return TrimDomain.from_curve_loops(tuple(curve_loops))
+
+
+def _trim_domains_from_geometry(geometry: BRepGeometry) -> tuple[TrimDomain, ...]:
+    return tuple(
+        _face_curve_trim_domain(geometry, face)
+        for face in range(len(geometry.face_loops))
+    )
+
+
+def native_chart_trim_domain(model: BRepModel, face: int, /) -> TrimDomain | None:
+    """Return the face trim in native patch-chart coordinates.
+
+    Polygon trims are published normalized to the face parameter bounds;
+    arrangement and classification boxes live in the native chart, so those
+    faces are re-expressed by their exact source p-curve loops.
+    """
+    domain = model.trim_domains[face]
+    if domain is None or domain.curve_loops:
+        return domain
+    geometry = model.geometry
+    if geometry is None:
+        return None
+    return _face_curve_trim_domain(geometry, face)
 
 
 @checked
