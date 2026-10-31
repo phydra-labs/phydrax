@@ -512,6 +512,36 @@ class _PlacedSurfacePatch(AbstractSurfacePatch):
         points = self.source.evaluate(parameters)
         return points @ self.linear.T + self.offset
 
+    def bounding_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
+        """Place the source's own enclosure through the exact affine placement."""
+        from ..discretization._exact_algebraic_geometry import coefficient_interval
+
+        source_box = np.asarray(self.source.bounding_box(parameter_box), np.float64)
+        if source_box.shape != (2, 3) or not np.all(np.isfinite(source_box)):
+            raise ValueError("Placed source patch needs a finite source enclosure.")
+        source_bounds = tuple(
+            (
+                Fraction.from_float(float(source_box[0, axis])),
+                Fraction.from_float(float(source_box[1, axis])),
+            )
+            for axis in range(3)
+        )
+        matrix = self.placement.matrix
+        lower: list[float] = []
+        upper: list[float] = []
+        for row in range(3):
+            row_lower, row_upper = coefficient_interval(matrix[row][3])
+            for column in range(3):
+                entry = coefficient_interval(matrix[row][column])
+                products = tuple(
+                    factor * bound for factor in entry for bound in source_bounds[column]
+                )
+                row_lower += min(products)
+                row_upper += max(products)
+            lower.append(fraction_endpoint(row_lower, upper=False))
+            upper.append(fraction_endpoint(row_upper, upper=True))
+        return np.asarray((lower, upper), dtype=np.float64)
+
 
 def _placed_homogeneous_surface_coefficients(
     coefficients: tuple[tuple[tuple[ExactScalar, ...], ...], ...],

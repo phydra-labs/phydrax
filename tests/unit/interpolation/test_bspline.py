@@ -603,9 +603,7 @@ def test_exact_bezier_refinement_is_enclosed_by_boehm_bounds() -> None:
     )
     lower = np.nextafter(controls, -np.inf)
     upper = np.nextafter(controls, np.inf)
-    bounded_refinement = bezier_refinement(
-        lower, knots, 3, 0, control_upper=upper
-    )
+    bounded_refinement = bezier_refinement(lower, knots, 3, 0, control_upper=upper)
     assert len(bounded_refinement) == 3
     lower_pieces, upper_pieces, bounds = bounded_refinement
     assert exact_pieces.shape == lower_pieces.shape == upper_pieces.shape == (2, 4)
@@ -756,6 +754,7 @@ def test_rational_curve_span_continuity_retains_knot_sides_and_closed_seam() -> 
     assert knot.left_endpoint.value_bounds == ((Fraction(1), Fraction(1)),)
     assert knot.right_endpoint.value_bounds == ((Fraction(4), Fraction(4)),)
 
+
 def test_algebraic_rational_curve_spans_preserve_exact_source_banks() -> None:
     from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 
@@ -795,16 +794,8 @@ def test_algebraic_rational_curve_spans_preserve_exact_source_banks() -> None:
     left_knot = spans[0].enclose((interior_knot, interior_knot))
     right_knot = spans[1].enclose((interior_knot, interior_knot))
     knot_value = exact_control_points[1][0]
-    assert (
-        left_knot.value_bounds[0][0]
-        <= knot_value
-        <= left_knot.value_bounds[0][1]
-    )
-    assert (
-        right_knot.value_bounds[0][0]
-        <= knot_value
-        <= right_knot.value_bounds[0][1]
-    )
+    assert left_knot.value_bounds[0][0] <= knot_value <= left_knot.value_bounds[0][1]
+    assert right_knot.value_bounds[0][0] <= knot_value <= right_knot.value_bounds[0][1]
     continuity = rational_bspline_curve_continuity(spans)
     assert continuity.junctions[0].observed_continuity_order >= 0
     tiny = Fraction(1, 10**80)
@@ -847,9 +838,7 @@ def test_exact_rational_surface_spans_enclose_position_and_jacobian() -> None:
         ),
     )
     weights = ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4)))
-    spans = rational_bspline_surface_spans(
-        control_points, weights, knots, knots, 1, 1
-    )
+    spans = rational_bspline_surface_spans(control_points, weights, knots, knots, 1, 1)
 
     assert len(spans) == 1
     span = spans[0]
@@ -865,19 +854,13 @@ def test_exact_rational_surface_spans_enclose_position_and_jacobian() -> None:
 
     def evaluate(
         u: Fraction, v: Fraction
-    ) -> tuple[
-        tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]
-    ]:
+    ) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]]:
         basis_u = (1 - u, u)
         basis_v = (1 - v, v)
         derivative_u = (Fraction(-1), Fraction(1))
         derivative_v = (Fraction(-1), Fraction(1))
         denominator = sum(
-            (
-                weights[i][j] * basis_u[i] * basis_v[j]
-                for i in range(2)
-                for j in range(2)
-            ),
+            (weights[i][j] * basis_u[i] * basis_v[j] for i in range(2) for j in range(2)),
             Fraction(0),
         )
         denominator_u = sum(
@@ -935,12 +918,10 @@ def test_exact_rational_surface_spans_enclose_position_and_jacobian() -> None:
             )
             value.append(numerator / denominator)
             du.append(
-                (numerator_u * denominator - numerator * denominator_u)
-                / denominator**2
+                (numerator_u * denominator - numerator * denominator_u) / denominator**2
             )
             dv.append(
-                (numerator_v * denominator - numerator * denominator_v)
-                / denominator**2
+                (numerator_v * denominator - numerator * denominator_v) / denominator**2
             )
         return tuple(value), tuple(du), tuple(dv)
 
@@ -956,6 +937,7 @@ def test_exact_rational_surface_spans_enclose_position_and_jacobian() -> None:
                     lower <= value <= upper
                     for value, (lower, upper) in zip(observed, bounds, strict=True)
                 )
+
 
 def test_surface_span_enclosures_keep_internal_knot_pieces_separate() -> None:
     u_knots = (
@@ -983,16 +965,24 @@ def test_surface_span_enclosures_keep_internal_knot_pieces_separate() -> None:
         (Fraction(0), Fraction(1, 2)),
         (Fraction(1, 2), Fraction(1)),
     )
+    resolution = Fraction(1, 2**40)
     for span in spans:
         enclosure = span.enclose(span.parameter_bounds)
-        assert enclosure.du_bounds == ((Fraction(1), Fraction(1)),) + (
-            (Fraction(0), Fraction(0)),
-        ) * 2
-        assert enclosure.dv_bounds == (
-            (Fraction(0), Fraction(0)),
-            (Fraction(1), Fraction(1)),
-            (Fraction(0), Fraction(0)),
-        )
+        # One span is affine in u, so each enclosure tightly contains its slope.
+        for bounds, expected in zip(
+            (*enclosure.du_bounds, *enclosure.dv_bounds),
+            (
+                Fraction(1),
+                Fraction(0),
+                Fraction(0),
+                Fraction(0),
+                Fraction(1),
+                Fraction(0),
+            ),
+            strict=True,
+        ):
+            assert bounds[0] <= expected <= bounds[1]
+            assert bounds[1] - bounds[0] < resolution
 
 
 def test_exact_surface_spans_preserve_subfloat_source_coefficients() -> None:
@@ -1057,3 +1047,97 @@ def test_exact_surface_spans_preserve_subfloat_source_coefficients() -> None:
         ((Fraction(0), Fraction(1)), (Fraction(0), Fraction(1)))
     )
     assert full_enclosure.value_bounds[2][1] > 0
+
+
+def test_interval_span_restriction_contains_exact_restricted_nets() -> None:
+    from phydrax._interpolation._bspline_extraction import (
+        _bernstein_restrict,
+        _interval_net,
+        _interval_tensor_restrict,
+    )
+
+    generator = np.random.default_rng(20261031)
+    degree_u, degree_v = 5, 3
+    knots_u = (Fraction(0),) * (degree_u + 1) + (Fraction(1),) * (degree_u + 1)
+    knots_v = (Fraction(0),) * (degree_v + 1) + (Fraction(1),) * (degree_v + 1)
+    control_points = tuple(
+        tuple(
+            tuple(Fraction(float(value)) for value in generator.normal(size=3))
+            for _ in range(degree_v + 1)
+        )
+        for _ in range(degree_u + 1)
+    )
+    weights = tuple(
+        tuple(
+            Fraction(float(value)) for value in generator.uniform(0.5, 2.0, degree_v + 1)
+        )
+        for _ in range(degree_u + 1)
+    )
+    (span,) = rational_bspline_surface_spans(
+        control_points, weights, knots_u, knots_v, degree_u, degree_v
+    )
+    nets = (*span._du_numerators, *span._dv_numerators)
+
+    def exact_restrict(
+        net: Any,
+        lower_u: Fraction,
+        upper_u: Fraction,
+        lower_v: Fraction,
+        upper_v: Fraction,
+    ) -> tuple[tuple[Any, ...], ...]:
+        columns = tuple(
+            _bernstein_restrict(tuple(row[column] for row in net), lower_u, upper_u)
+            for column in range(len(net[0]))
+        )
+        rows = tuple(
+            tuple(column[row] for column in columns) for row in range(len(columns[0]))
+        )
+        return tuple(_bernstein_restrict(row, lower_v, upper_v) for row in rows)
+
+    for _ in range(12):
+        lower_u, upper_u = sorted(
+            Fraction(float(value)) for value in generator.uniform(size=2)
+        )
+        lower_v, upper_v = sorted(
+            Fraction(float(value)) for value in generator.uniform(size=2)
+        )
+        for net in nets:
+            exact = exact_restrict(net, lower_u, upper_u, lower_v, upper_v)
+            lower, upper = _interval_tensor_restrict(
+                _interval_net(net), lower_u, upper_u, lower_v, upper_v
+            )
+            assert lower.shape == upper.shape == (len(exact), len(exact[0]))
+            for row, exact_row in enumerate(exact):
+                for column, value in enumerate(exact_row):
+                    assert Fraction(float(lower[row, column])) <= value
+                    assert value <= Fraction(float(upper[row, column]))
+                    assert float(upper[row, column] - lower[row, column]) < 1e-9 * (
+                        1.0 + abs(float(value))
+                    )
+        enclosure = span.enclose_derivatives(((lower_u, upper_u), (lower_v, upper_v)))
+        hull = tuple(
+            (
+                min(
+                    value
+                    for row in exact_restrict(net, lower_u, upper_u, lower_v, upper_v)
+                    for value in row
+                ),
+                max(
+                    value
+                    for row in exact_restrict(net, lower_u, upper_u, lower_v, upper_v)
+                    for value in row
+                ),
+            )
+            for net in nets
+        )
+        assert enclosure.positive_denominator
+        for (low, high), exact_hull in zip(
+            (*enclosure.du_bounds, *enclosure.dv_bounds), hull, strict=True
+        ):
+            denominator_squared = (
+                enclosure.denominator_bounds[0] ** 2,
+                enclosure.denominator_bounds[1] ** 2,
+            )
+            for numerator in exact_hull:
+                for denominator in denominator_squared:
+                    assert low <= numerator / denominator <= high

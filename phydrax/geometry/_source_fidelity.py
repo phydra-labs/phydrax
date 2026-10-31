@@ -4072,6 +4072,7 @@ type _PatchDerivativeSource = (
 
 
 type _TensorNet = tuple[tuple[ExactScalar, ...], ...]
+type _IntervalNet = tuple[np.ndarray, np.ndarray]
 
 
 class _DerivativeCache:
@@ -4090,7 +4091,7 @@ class _DerivativeCache:
             tuple[int, Triangle2], tuple[RationalBSplineSurfaceHessianEnclosure, ...]
         ] = {}
         self.normal_nets: dict[
-            tuple[int, tuple[int, int]], tuple[_TensorNet, _TensorNet, _TensorNet]
+            tuple[int, tuple[int, int]], tuple[_IntervalNet, _IntervalNet, _IntervalNet]
         ] = {}
 
     def patch_spans(
@@ -4136,8 +4137,8 @@ class _DerivativeCache:
         spans: tuple[RationalBSplineSurfaceSpan, ...],
         span_indices: tuple[int, int],
         /,
-    ) -> tuple[_TensorNet, _TensorNet, _TensorNet]:
-        """Bernstein nets of ``N_u x N_v``, positively parallel to ``S_u x S_v``.
+    ) -> tuple[_IntervalNet, _IntervalNet, _IntervalNet]:
+        """Interval Bernstein nets of ``N_u x N_v``, positively parallel to ``S_u x S_v``.
 
         A rational span's first derivatives are ``N_u / W**2`` and ``N_v / W**2``
         with ``W > 0``, so the polynomial cross product of the derivative
@@ -4147,6 +4148,7 @@ class _DerivativeCache:
         nets = self.normal_nets.get(key)
         if nets is None:
             from .._interpolation._bspline_extraction import (
+                _interval_net,
                 _tensor_bernstein_linear_combination,
                 _tensor_bernstein_product,
             )
@@ -4170,7 +4172,11 @@ class _DerivativeCache:
                     )
                 )
 
-            nets = (component(1, 2), component(2, 0), component(0, 1))
+            nets = (
+                _interval_net(component(1, 2)),
+                _interval_net(component(2, 0)),
+                _interval_net(component(0, 1)),
+            )
             self.normal_nets[key] = nets
         return nets
 
@@ -4190,7 +4196,7 @@ class _DerivativeCache:
         an acute angle at most ``theta`` with the target, so does each convex
         combination: the set of such vectors is a convex cone.
         """
-        from .._interpolation._bspline_extraction import _tensor_bernstein_restrict
+        from .._interpolation._bspline_extraction import _interval_tensor_restrict
 
         cosine_lower: Fraction | None = None
         for enclosure in enclosures:
@@ -4202,7 +4208,7 @@ class _DerivativeCache:
             width_u = span_upper_u - span_lower_u
             width_v = span_upper_v - span_lower_v
             restricted = tuple(
-                _tensor_bernstein_restrict(
+                _interval_tensor_restrict(
                     net,
                     (lower_u - span_lower_u) / width_u,
                     (upper_u - span_lower_u) / width_u,
@@ -4211,19 +4217,18 @@ class _DerivativeCache:
                 )
                 for net in nets
             )
-            for row in zip(*restricted, strict=True):
-                for vector in zip(*row, strict=True):
+            # Each restricted control vector lies in its outward interval box.
+            lowers = np.stack([net[0] for net in restricted], axis=-1)
+            uppers = np.stack([net[1] for net in restricted], axis=-1)
+            if orientation < 0:
+                lowers, uppers = -uppers, -lowers
+            if not (np.all(np.isfinite(lowers)) and np.all(np.isfinite(uppers))):
+                return None
+            for lower_row, upper_row in zip(lowers, uppers, strict=True):
+                for lower_vector, upper_vector in zip(lower_row, upper_row, strict=True):
                     intervals = tuple(
-                        (
-                            Fraction(coefficient_endpoint(value, upper=False)),
-                            Fraction(coefficient_endpoint(value, upper=True)),
-                        )
-                        if orientation > 0
-                        else (
-                            Fraction(-coefficient_endpoint(value, upper=True)),
-                            Fraction(-coefficient_endpoint(value, upper=False)),
-                        )
-                        for value in vector
+                        (Fraction(float(low)), Fraction(float(high)))
+                        for low, high in zip(lower_vector, upper_vector, strict=True)
                     )
                     cosine = _normal_cosine_interval_bounds(intervals, target)
                     if cosine is None or cosine[0] <= 0:
