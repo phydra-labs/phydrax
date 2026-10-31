@@ -3096,7 +3096,6 @@ def _rebuild_boundary_layer_evidence(value: object, /) -> BoundaryLayerEvidence:
         rim_vertex_count=value.rim_vertex_count,
         minimum_visibility=value.minimum_visibility,
         maximum_stretch=value.maximum_stretch,
-        unconverged_visibility_count=value.unconverged_visibility_count,
         collision_policy=policy,
         predicted_collision_vertex_count=value.predicted_collision_vertex_count,
         detected_collision_count=value.detected_collision_count,

@@ -437,11 +437,14 @@ outward. `BoundaryLayerControl` binds a schedule to a wall scope and one explici
 
 Native advancing layers classify wall edges by dihedral angle, split columns at
 convex ridges into fan columns and corner patches (`BoundaryLayerCornerPolicy.FAN`),
-and point every column along the visibility-optimal direction (the minimum-norm
-point of the convex hull of its face normals, a simplex QP solved by
-`phydrax.optim`). Concave corners are accepted only while a visible direction
-exists and the height stretch stays within `maximum_corner_stretch`; otherwise
-they are rejected with the offending wall vertices. Heights are limited by the
+and point every column along the visibility-optimal direction, the unit `d`
+maximizing `min_i n_i·d` over its face normals: the normalized minimum-norm point
+of their convex hull, found exactly by enumerating hull faces of at most three
+normals and certified by a closed weak-duality gap. Columns whose normals enclose
+the origin have no visible direction and are rejected with their wall vertices.
+Concave corners are accepted only while the height stretch stays within
+`maximum_corner_stretch`; otherwise they are rejected with the offending wall
+vertices. Heights are limited by the
 smooth concave radius and by BVH-nearest medial-crossing probes; every layer is
 certified by Bernstein validity and exact-predicate intersection against earlier
 layers, the wall, adjacent surfaces, and obstacles. Collisions resolve only by
