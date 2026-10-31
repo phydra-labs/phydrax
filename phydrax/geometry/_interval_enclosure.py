@@ -49,6 +49,75 @@ def _round_out(lower: HostArray, upper: HostArray, /) -> Interval:
     return np.nextafter(low, -np.inf), np.nextafter(high, np.inf)
 
 
+# Veltkamp splitter 2**27 + 1 and the magnitude window of an error-free product:
+# the split must not overflow, and the product error must not underflow.
+_VELTKAMP_SPLITTER = 134217729.0
+_SPLIT_MAGNITUDE_LIMIT = 2.0**996
+_PRODUCT_MAGNITUDE_FLOOR = 2.0**-969
+
+
+def _sum_is_exact(first: HostArray, second: HostArray, total: HostArray, /) -> NDArray:
+    """Whether binary64 ``total = first + second`` has no rounding error (TwoSum)."""
+    if np.asarray(total).dtype.kind not in "fc":
+        return np.ones(np.shape(total), dtype=np.bool_)
+    with np.errstate(invalid="ignore", over="ignore"):
+        partner = np.subtract(total, first)
+        error = np.add(
+            np.subtract(first, np.subtract(total, partner)), np.subtract(second, partner)
+        )
+    return np.isfinite(total) & (error == 0.0)
+
+
+def _product_is_exact(
+    first: HostArray, second: HostArray, product: HostArray, /
+) -> NDArray:
+    """Whether binary64 ``product = first * second`` has no rounding error (TwoProduct).
+
+    The Veltkamp/Dekker error is exact only without split overflow and without
+    product underflow; outside that window the product is treated as inexact,
+    except an exact zero factor.
+    """
+    first_, second_, product_ = (
+        np.asarray(first, dtype=np.float64),
+        np.asarray(second, dtype=np.float64),
+        np.asarray(product, dtype=np.float64),
+    )
+    with np.errstate(invalid="ignore", over="ignore", under="ignore"):
+        first_scaled = _VELTKAMP_SPLITTER * first_
+        first_high = first_scaled - (first_scaled - first_)
+        first_low = first_ - first_high
+        second_scaled = _VELTKAMP_SPLITTER * second_
+        second_high = second_scaled - (second_scaled - second_)
+        second_low = second_ - second_high
+        error = (
+            (first_high * second_high - product_)
+            + first_high * second_low
+            + first_low * second_high
+        ) + first_low * second_low
+    magnitude = np.abs(product_)
+    window = (
+        np.isfinite(product_)
+        & (np.abs(first_) < _SPLIT_MAGNITUDE_LIMIT)
+        & (np.abs(second_) < _SPLIT_MAGNITUDE_LIMIT)
+        & (magnitude >= _PRODUCT_MAGNITUDE_FLOOR)
+    )
+    zero_factor = ((first_ == 0.0) & np.isfinite(second_)) | (
+        (second_ == 0.0) & np.isfinite(first_)
+    )
+    return zero_factor | (window & (error == 0.0))
+
+
+def _round_out_inexact(
+    lower: HostArray, upper: HostArray, lower_exact: HostArray, upper_exact: HostArray, /
+) -> Interval:
+    """Round out only endpoints whose binary64 operation was not exact."""
+    widened = _round_out(lower, upper)
+    return (
+        np.where(lower_exact, lower, widened[0]),
+        np.where(upper_exact, upper, widened[1]),
+    )
+
+
 def _hull(values: Sequence[Interval], /) -> Interval:
     if not values:
         raise ValueError("interval hull requires at least one value.")
@@ -76,7 +145,14 @@ def interval_add(first: Interval, second: Interval, /) -> Interval:
     if np.all(np.asarray(first[0]) == 0) and np.all(np.asarray(first[1]) == 0):
         return np.broadcast_to(second[0], shape), np.broadcast_to(second[1], shape)
     with np.errstate(invalid="ignore", over="ignore"):
-        result = _round_out(np.add(first[0], second[0]), np.add(first[1], second[1]))
+        lower = np.add(first[0], second[0])
+        upper = np.add(first[1], second[1])
+        result = _round_out_inexact(
+            lower,
+            upper,
+            _sum_is_exact(first[0], second[0], lower),
+            _sum_is_exact(first[1], second[1], upper),
+        )
     return _sign_clamped(
         result,
         (np.asarray(first[0]) >= 0.0) & (np.asarray(second[0]) >= 0.0),
@@ -86,8 +162,13 @@ def interval_add(first: Interval, second: Interval, /) -> Interval:
 
 def interval_subtract(first: Interval, second: Interval, /) -> Interval:
     with np.errstate(invalid="ignore", over="ignore"):
-        return _round_out(
-            np.subtract(first[0], second[1]), np.subtract(first[1], second[0])
+        lower = np.subtract(first[0], second[1])
+        upper = np.subtract(first[1], second[0])
+        return _round_out_inexact(
+            lower,
+            upper,
+            _sum_is_exact(first[0], np.negative(second[1]), lower),
+            _sum_is_exact(first[1], np.negative(second[0]), upper),
         )
 
 
@@ -102,8 +183,36 @@ def interval_multiply(first: Interval, second: Interval, /) -> Interval:
         lower = np.minimum.reduce(products)
         upper = np.maximum.reduce(products)
     invalid = np.logical_or.reduce(tuple(np.isnan(value) for value in products))
-    result = _round_out(
-        np.where(invalid, -np.inf, lower), np.where(invalid, np.inf, upper)
+    exact = tuple(
+        _product_is_exact(left, right, product)
+        for (left, right), product in zip(
+            (
+                (first[0], second[0]),
+                (first[0], second[1]),
+                (first[1], second[0]),
+                (first[1], second[1]),
+            ),
+            products,
+            strict=True,
+        )
+    )
+    lower_exact = ~invalid & np.logical_or.reduce(
+        tuple(
+            flag & (product == lower)
+            for flag, product in zip(exact, products, strict=True)
+        )
+    )
+    upper_exact = ~invalid & np.logical_or.reduce(
+        tuple(
+            flag & (product == upper)
+            for flag, product in zip(exact, products, strict=True)
+        )
+    )
+    result = _round_out_inexact(
+        np.where(invalid, -np.inf, lower),
+        np.where(invalid, np.inf, upper),
+        lower_exact,
+        upper_exact,
     )
     first_nonnegative = np.asarray(first[0]) >= 0.0
     first_nonpositive = np.asarray(first[1]) <= 0.0
@@ -118,6 +227,23 @@ def interval_multiply(first: Interval, second: Interval, /) -> Interval:
     )
 
 
+def _quotient_is_exact(
+    numerator: HostArray | float, denominator: HostArray, quotient: HostArray, /
+) -> NDArray:
+    """Whether binary64 ``quotient = numerator / denominator`` is exact."""
+    numerator_ = np.asarray(numerator, dtype=np.float64)
+    denominator_ = np.asarray(denominator, dtype=np.float64)
+    quotient_ = np.asarray(quotient, dtype=np.float64)
+    with np.errstate(invalid="ignore", over="ignore", under="ignore"):
+        product = np.multiply(quotient_, denominator_)
+    return (
+        np.isfinite(quotient_)
+        & (denominator_ != 0.0)
+        & (product == numerator_)
+        & _product_is_exact(quotient_, denominator_, product)
+    )
+
+
 def interval_divide(first: Interval, second: Interval, /) -> Interval:
     denominator_lower = np.asarray(second[0])
     denominator_upper = np.asarray(second[1])
@@ -125,8 +251,24 @@ def interval_divide(first: Interval, second: Interval, /) -> Interval:
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         reciprocal_lower = np.divide(1.0, denominator_upper)
         reciprocal_upper = np.divide(1.0, denominator_lower)
-        reciprocal = _round_out(reciprocal_lower, reciprocal_upper)
+        reciprocal = _round_out_inexact(
+            reciprocal_lower,
+            reciprocal_upper,
+            _quotient_is_exact(1.0, denominator_upper, reciprocal_lower),
+            _quotient_is_exact(1.0, denominator_lower, reciprocal_upper),
+        )
         result = interval_multiply(first, reciprocal)
+        # A point quotient that binary64 division represents exactly is a point.
+        quotient = np.divide(first[0], second[0])
+        point = (
+            (np.asarray(first[0]) == np.asarray(first[1]))
+            & (denominator_lower == denominator_upper)
+            & _quotient_is_exact(first[0], second[0], quotient)
+        )
+        result = (
+            np.where(point, quotient, result[0]),
+            np.where(point, quotient, result[1]),
+        )
     return (
         np.where(singular, -np.inf, result[0]),
         np.where(singular, np.inf, result[1]),
@@ -959,12 +1101,22 @@ def _primitive(
             return (interval_multiply(previous, values[0]),)
         case "pow":
             exponent = values[1]
-            if np.array_equal(exponent[0], exponent[1]) and np.all(
-                np.equal(exponent[0], np.floor(exponent[0]))
+            selected = np.asarray(exponent[0], dtype=np.float64).reshape((-1,))
+            # An integer exponent that arrives as one value broadcast per box
+            # (e.g. ``blockiness / 2 - 1`` of a traced parameter) is an integer
+            # power, so ``0 ** 0`` stays 1 instead of ``exp(0 * log 0)``.
+            if (
+                selected.size
+                and np.array_equal(exponent[0], exponent[1])
+                and np.all(selected == selected[0])
+                and float(selected[0]).is_integer()
             ):
-                selected = np.asarray(exponent[0])
-                if selected.ndim == 0:
-                    return _primitive("integer_pow", (values[0],), {"y": int(selected)})
+                shape = np.broadcast_shapes(np.shape(values[0][0]), np.shape(exponent[0]))
+                base = (
+                    np.broadcast_to(values[0][0], shape),
+                    np.broadcast_to(values[0][1], shape),
+                )
+                return _primitive("integer_pow", (base,), {"y": int(selected[0])})
             if np.any(np.asarray(values[0][0]) < 0.0):
                 raise IntervalExtensionError(
                     "noninteger power requires a nonnegative base interval."
