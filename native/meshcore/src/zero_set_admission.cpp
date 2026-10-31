@@ -75,23 +75,28 @@ int32_t IntervalBoxProgram::bind(const int64_t* instructions, int64_t instructio
                                  const double* parameters, int64_t parameter_count,
                                  const double* workspace_lower, const double* workspace_upper,
                                  int64_t workspace_size, const int64_t* outputs,
-                                 int64_t output_count) {
+                                 int64_t output_count, const int64_t* guards,
+                                 int64_t guard_count) {
   if (instruction_count < 0 || index_count < 0 || parameter_count < 0 || workspace_size < 3 ||
-      output_count < 1 || (instruction_count > 0 && instructions == nullptr) ||
+      output_count < 1 || guard_count < 0 || (instruction_count > 0 && instructions == nullptr) ||
       (index_count > 0 && indices == nullptr) || (parameter_count > 0 && parameters == nullptr) ||
-      workspace_lower == nullptr || workspace_upper == nullptr || outputs == nullptr)
+      (guard_count > 0 && guards == nullptr) || workspace_lower == nullptr ||
+      workspace_upper == nullptr || outputs == nullptr)
     return PHX_MC_INVALID_ARGUMENT;
   if (!phx::mc::addressable(instruction_count, 8, sizeof(int64_t)) ||
       !phx::mc::addressable(workspace_size, 1, sizeof(double)))
     return PHX_MC_INVALID_ARGUMENT;
   for (int64_t k = 0; k < output_count; ++k)
     if (outputs[k] < 3 || outputs[k] >= workspace_size) return PHX_MC_INVALID_ARGUMENT;
+  for (int64_t k = 0; k < guard_count; ++k)
+    if (guards[k] < 0 || guards[k] >= workspace_size) return PHX_MC_INVALID_ARGUMENT;
   instructions_.assign(instructions, instructions + 8 * instruction_count);
   indices_.assign(indices, indices + index_count);
   parameters_.assign(parameters, parameters + parameter_count);
   template_lower_.assign(workspace_lower, workspace_lower + workspace_size);
   template_upper_.assign(workspace_upper, workspace_upper + workspace_size);
   outputs_.assign(outputs, outputs + output_count);
+  guards_.assign(guards, guards + guard_count);
   lower_.resize(static_cast<size_t>(workspace_size));
   upper_.resize(static_cast<size_t>(workspace_size));
   // One dry execution over the origin validates the whole program once.
@@ -121,6 +126,9 @@ bool IntervalBoxProgram::evaluate(const Point& lower, const Point& upper,
       static_cast<int64_t>(parameters_.size()), lower_.data(), upper_.data(),
       static_cast<int64_t>(lower_.size()));
   if (status != PHX_MC_OK) return false;
+  // A real-power base outside its nonnegative domain leaves f undefined there.
+  for (int64_t guard : guards_)
+    if (lower_[static_cast<size_t>(guard)] < 0.0) return false;
   for (size_t k = 0; k < outputs_.size(); ++k) {
     const size_t at = static_cast<size_t>(outputs_[k]);
     result[k] = {lower_[at], upper_[at]};
@@ -374,7 +382,8 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
     return program.bind(source.instructions, source.instruction_count, source.indices,
                         source.index_count, source.parameters, source.parameter_count,
                         source.workspace_lower, source.workspace_upper, source.workspace_size,
-                        source.outputs, source.output_count);
+                        source.outputs, source.output_count, source.guards,
+                        source.guard_count);
   };
   int32_t status = bind(value, request.value, 1);
   if (status != PHX_MC_OK) return status;
