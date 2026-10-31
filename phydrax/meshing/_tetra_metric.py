@@ -895,7 +895,9 @@ def _prepare_native_state(
         mesh.topological_dimension != 3
         or mesh.ambient_dimension != 3
         or not mesh.blocks
-        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+        or any(
+            block.cell_kind not in ("tetrahedron", "simplex:3") for block in mesh.blocks
+        )
     ):
         raise ValueError("Native tetra metric adaptation requires 3D tetrahedron blocks.")
     from ._adaptation import _piecewise_linear_geometry
