@@ -654,7 +654,14 @@ different mesh family or a simpler route. `planar_dual_quad` solves a
 source-feature-guided cross field and uses it to drive constrained triangle
 recombination, including field alignment, interior valence, boundary parity,
 and quad quality. This field-guided layout changes connectivity; it is distinct
-from explicit triangle-dual conversion.
+from explicit triangle-dual conversion. When the scaffold has no complete
+positive pairing (for example a four-triangle star), the route keeps the
+largest positive pairing. Unpaired triangles split into three quads at their
+edge midpoints and centroid. Each split edge forces the opposite edge of the
+adjacent paired quad to split too, so the splits run along whole quad strips
+and the mesh stays conforming. Every new vertex keeps its exact source-vertex
+support. Calling `extract_surface_quads` directly keeps the refusal unless it
+passes `unpaired_triangles="subdivide"`.
 
 `plc_dual_hex` is the explicit tetrahedral dual conversion. It retains parent
 cell, source-vertex, material-block, and exact coordinate-map ancestry, but is
@@ -668,6 +675,11 @@ PLC input also requires the independent mapped-root authority described below.
 intersections, then closes their conforming face arrangements with an
 all-hexahedron transition. It supports nonsimple shared interfaces and cavity
 domains while retaining source-cell regions and exact reference coverage.
+The lattice knots stay a fixed fraction of the spacing away from every source
+vertex. They also stay that far from every crossing of a source edge with a
+grid plane and every crossing of a source face with a grid line. Cut cells
+therefore never collapse to a numerically zero volume because of binary64
+coincidences.
 The public PLC cut route never infers curved geometry from vertex positions.
 Curved sources require both an authored `complex.geometry` and an independent
 `MappedReferenceDomain` binding the root geometry, reference carrier, frame,

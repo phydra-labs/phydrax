@@ -1949,6 +1949,7 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
             scaffold.mesh,
             cross_field=field,
             source_geometry=scaffold.geometry,
+            unpaired_triangles="subdivide",
         )
         geometry = extraction.geometry
         if geometry is None:
@@ -2111,10 +2112,8 @@ def hex_dominant_support_issues(
         is not VolumeFillStrategy.HEX_DOMINANT_SIMPLEX_TRANSITION
     ):
         issues.append("the declared hex-dominant simplex-transition fill strategy")
-    if source.complex.geometry is not None or source.mapped_domain is not None:
-        issues.append(
-            "affine PLC tetrahedral source maps for the mixed transition template"
-        )
+    if source.mapped_domain is not None and source.complex.geometry is None:
+        issues.append("a source-coordinate map for the mapped PLC tetrahedral scaffold")
     if options.hex_core_fraction is None or not 0.0 < options.hex_core_fraction < 1.0:
         issues.append("a hex-core fraction strictly between zero and one")
     if options.volume_schedule is None:
@@ -2282,8 +2281,8 @@ def balanced_hex_support_issues(
         or families.allowed_transitions
     ):
         issues.append("a conforming affine pure-hexahedral target")
-    if source.complex.geometry is not None or source.mapped_domain is not None:
-        issues.append("a piecewise-linear PLC source map")
+    if source.mapped_domain is not None and source.complex.geometry is None:
+        issues.append("a source-coordinate map for the mapped PLC tetrahedral scaffold")
     if options.volume_schedule is None:
         issues.append("a native tetrahedral scaffold schedule")
     if options.grid_schedule is None or options.grid_schedule.route != "balanced_grid":

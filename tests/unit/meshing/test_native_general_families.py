@@ -400,10 +400,10 @@ def test_public_planar_dual_quad_route_executes_feature_guided_acceptance() -> N
             CellFamilyPolicy(required=("quadrilateral",)),
         ),
         scope,
-        # The unit-square diagonal (sqrt 2) must not force a central Steiner
-        # point: a four-triangle star has no positive-quality quad pairing.
+        # The unit-square diagonal forces a central Steiner point; the
+        # four-triangle star has no positive quad pairing and is subdivided.
         size_controls=(
-            UniformSizeControl(scope, 1.5, strength=SizeControlStrength.SOFT),
+            UniformSizeControl(scope, 1.0, strength=SizeControlStrength.SOFT),
         ),
     )
     plan = NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad")).plan(
@@ -415,6 +415,7 @@ def test_public_planar_dual_quad_route_executes_feature_guided_acceptance() -> N
 
     _accepted_public_result(result, source)
     assert {block.cell_kind for block in result.mesh.blocks} == {"quadrilateral"}
+    assert result.mesh.connectivity.cell_count >= 12
 
 
 def test_public_plc_dual_hex_route_keeps_material_and_facet_ancestry() -> None:

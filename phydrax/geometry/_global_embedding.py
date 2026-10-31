@@ -884,6 +884,9 @@ class _RootChart:
     reference_cell: EmbeddingCell
     chart_cell: EmbeddingCell | None
     injective: bool
+    # Root-cell vertex IDs in root reference order, when the restriction
+    # source declares the parent cell's complete vertex support.
+    source_vertex_ids: tuple[int, ...] | None = None
 
 
 def _reference_domain(kind: str) -> BernsteinDomain | None:
@@ -1228,10 +1231,17 @@ def _block_root_chart_rows(
                 element_arguments = element.chart_arguments(row)
             except (IndexError, TypeError, ValueError):
                 continue
-            if len(arguments) != len(element_arguments) or not all(
-                expression_equal(first, second)
-                for first, second in zip(arguments, element_arguments, strict=True)
-            ):
+            # A witness into the root cell's own (possibly curved) reference
+            # may differ from the element's flattened chart. An invertible
+            # affine witness is still authoritative: the root map is then
+            # recovered as the cell map composed with its inverse.
+            if (
+                len(arguments) != len(element_arguments)
+                or not all(
+                    expression_equal(first, second)
+                    for first, second in zip(arguments, element_arguments, strict=True)
+                )
+            ) and _inverse_affine_arguments(arguments, len(arguments)) is None:
                 continue
         rows.append((row, chart.source_cell_id, chart.source_cell_kind, arguments))
     return tuple(rows)
@@ -1259,6 +1269,7 @@ def _retained_root_charts(
             strict=True,
         )
     )
+    parent_vertices = dict(zip(source.block_names, source.parent_vertex_ids, strict=True))
     cells_by_row = {
         (cell.block_name, cell.local_index): index for index, cell in enumerate(cells)
     }
@@ -1316,6 +1327,12 @@ def _retained_root_charts(
             )
             if root_cell is None:
                 continue
+            root_vertex_ids = tuple(
+                int(value)
+                for value in np.asarray(parent_vertices[block.name], dtype=np.int64)[
+                    row
+                ].tolist()
+            )
             result[cell_index] = _RootChart(
                 source.source_geometry_id,
                 source.source_topology_id,
@@ -1328,6 +1345,10 @@ def _retained_root_charts(
                 if inverse is not None
                 else _planar_faced_chart_cell(cell, arguments),
                 _root_map_injective(root_cell),
+                root_vertex_ids
+                if len(root_vertex_ids) == len(root_cell.reference_vertices)
+                and min(root_vertex_ids) >= 0
+                else None,
             )
     return tuple(result)
 
@@ -1837,6 +1858,165 @@ def _root_chart_contact(
             elif not declared:
                 return "outside"
     return "unresolved" if unresolved else "declared"
+
+
+def _root_facet_trace(
+    root: _RootChart, shared_roots: tuple[int, ...], /
+) -> dict[int, Point3] | None:
+    """Map an affine simplex chart's corners on a shared root facet.
+
+    Points are barycentric weights over ``shared_roots``, a coordinate on the
+    facet common to both incident roots. ``None`` means a corner leaves the
+    root reference simplex, so the restriction premise fails.
+    """
+    cell = root.chart_cell
+    vertex_ids = root.source_vertex_ids
+    if cell is None or vertex_ids is None:
+        return None
+    opposite = next(
+        local for local, vertex in enumerate(vertex_ids) if vertex not in shared_roots
+    )
+    trace: dict[int, Point3] = {}
+    for vertex_id, corner in zip(cell.vertex_ids, cell.corner_images, strict=True):
+        if not all(isinstance(value, Fraction) for value in corner):
+            return None
+        coordinates = cast(tuple[Fraction, ...], corner)
+        weights = (1 - sum(coordinates, Fraction(0)), *coordinates)
+        if any(weight < 0 for weight in weights):
+            return None
+        if weights[opposite] == 0:
+            by_root = dict(zip(vertex_ids, weights, strict=True))
+            trace[vertex_id] = (
+                by_root[shared_roots[0]],
+                by_root[shared_roots[1]],
+                by_root[shared_roots[2]],
+            )
+    return trace
+
+
+def _coplanar_hull_contacts(
+    first: tuple[Point3, ...], second: tuple[Point3, ...], /
+) -> tuple[Point3, ...]:
+    """Exact vertices of the intersection of two coplanar point/segment/triangle hulls."""
+    if len(first) > len(second):
+        first, second = second, first
+    if len(first) == 1:
+        point = first[0]
+        inside = (
+            point == second[0]
+            if len(second) == 1
+            else point_on_segment3(point, second[0], second[1])
+            if len(second) == 2
+            else point_in_triangle3(point, (second[0], second[1], second[2]))
+        )
+        return (point,) if inside else ()
+    if len(first) == 2 and len(second) == 2:
+        return segment_contact_points3(first[0], first[1], second[0], second[1])
+    if len(first) == 2:
+        triangle = (second[0], second[1], second[2])
+        points = {point for point in first if point_in_triangle3(point, triangle)}
+        for start, end in ((0, 1), (1, 2), (2, 0)):
+            points.update(
+                segment_contact_points3(
+                    first[0], first[1], triangle[start], triangle[end]
+                )
+            )
+        return tuple(points)
+    return triangle_contact_points3(
+        (first[0], first[1], first[2]), (second[0], second[1], second[2])
+    )
+
+
+def _adjacent_root_contact(
+    first: _RootChart,
+    second: _RootChart,
+    separated_roots: dict[tuple[int, int], bool],
+    /,
+) -> Literal["declared", "outside"] | None:
+    """Decide contact of affine restrictions of two facet-adjacent simplex roots.
+
+    Injective roots proved to lie strictly on opposite sides of their shared
+    facet, with equal exact facet traces, meet only in that facet's image. An
+    affine chart inside its root simplex meets the facet exactly in the hull of
+    its corners on it, so the physical contact is the injective facet image of
+    the intersection of the two corner hulls in shared facet coordinates.
+    """
+    if (
+        first.source_cell_id == second.source_cell_id
+        or first.source_geometry_id != second.source_geometry_id
+        or first.source_topology_id != second.source_topology_id
+        or not (first.injective and second.injective)
+        or first.source_vertex_ids is None
+        or second.source_vertex_ids is None
+        or first.chart_cell is None
+        or second.chart_cell is None
+        or first.chart_cell.affine_matrix is None
+        or second.chart_cell.affine_matrix is None
+        or first.reference_cell.dimension != 3
+        or second.reference_cell.dimension != 3
+        or _reference_domain(first.source_cell_kind) != "simplex"
+        or _reference_domain(second.source_cell_kind) != "simplex"
+    ):
+        return None
+    shared_roots = tuple(
+        sorted(set(first.source_vertex_ids) & set(second.source_vertex_ids))
+    )
+    if len(shared_roots) != 3:
+        return None
+    pair = (
+        min(first.source_cell_id, second.source_cell_id),
+        max(first.source_cell_id, second.source_cell_id),
+    )
+    separated = separated_roots.get(pair)
+    if separated is None:
+        try:
+            separated = (
+                _shared_curved_facet_separation(
+                    replace(first.reference_cell, vertex_ids=first.source_vertex_ids),
+                    replace(second.reference_cell, vertex_ids=second.source_vertex_ids),
+                    shared_roots,
+                )
+                is not None
+            )
+        except (ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
+            separated = False
+        separated_roots[pair] = separated
+    if not separated:
+        return None
+    first_trace = _root_facet_trace(first, shared_roots)
+    second_trace = _root_facet_trace(second, shared_roots)
+    if first_trace is None or second_trace is None:
+        return None
+    shared_targets = tuple(
+        sorted(set(first.chart_cell.vertex_ids) & set(second.chart_cell.vertex_ids))
+    )
+    if any(
+        vertex not in first_trace
+        or vertex not in second_trace
+        or first_trace[vertex] != second_trace[vertex]
+        for vertex in shared_targets
+    ):
+        return "outside"
+    if not first_trace or not second_trace:
+        return "declared"
+    try:
+        contacts = _coplanar_hull_contacts(
+            tuple(first_trace.values()), tuple(second_trace.values())
+        )
+        if not contacts:
+            return "declared"
+        if not shared_targets:
+            return "outside"
+        points_by_id: dict[int, tuple[ExactScalar, ...]] = {
+            vertex: first_trace[vertex] for vertex in shared_targets
+        }
+        declared = all(
+            _point_in_declared_stratum(point, shared_targets, points_by_id)
+            for point in contacts
+        )
+    except (ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
+        return None
+    return "declared" if declared else "outside"
 
 
 def _projected_expression(
@@ -3817,6 +3997,47 @@ def _shared_vertex_findings(
     return findings
 
 
+def _straight_planar_polygon(
+    cell: EmbeddingCell,
+    pieces: tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None,
+    /,
+) -> tuple[EmbeddingCell, tuple[tuple[tuple[ExactScalar, ...], ...], ...]] | None:
+    """Represent an injective planar cell with straight edges by its corner polygon.
+
+    An injective map of a planar reference polygon whose every edge trace is
+    affine maps the cell onto the region bounded by its corner polygon, so its
+    exact contacts are those of the polygon's triangles.
+    """
+    if cell.affine or not cell.coordinates:
+        return None if pieces is None else (cell, pieces)
+    if (
+        cell.dimension != 2
+        or not cell.corner_images
+        or len(cell.corner_images[0]) != 2
+        or not cell.facet_routes
+    ):
+        return None
+    try:
+        for edge in cell.facet_routes:
+            arguments = _trace_arguments(
+                cell, tuple(cell.vertex_ids[index] for index in edge)
+            )
+            if arguments is None:
+                return None
+            trace = tuple(
+                compose_expression(expression, arguments)
+                for expression in cell.coordinates
+            )
+            if affine_map(trace, 1) is None:
+                return None
+        if prove_mapped_cell_injective(cell) is None:
+            return None
+        polygon = replace(cell, coordinates=())
+        return polygon, _cell_simplices(polygon)
+    except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
+        return None
+
+
 def _nonperiodic_contacts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -3836,6 +4057,7 @@ def _nonperiodic_contacts(
     upper = np.asarray([cell.image_upper for cell in cells], dtype=np.float64)
     tree = prepare_bvh(lower, upper)
     root_charts = _retained_root_charts(mesh, geometry, cells)
+    separated_roots: dict[tuple[int, int], bool] = {}
     simplices: list[tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None] = []
     findings: list[MeshCertificateFinding] = []
     vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
@@ -3862,6 +4084,20 @@ def _nonperiodic_contacts(
                     detail=str(error),
                 )
             )
+    straight_polygons: dict[
+        int,
+        tuple[EmbeddingCell, tuple[tuple[tuple[ExactScalar, ...], ...], ...]] | None,
+    ] = {}
+
+    def straight_polygon(
+        index: int, /
+    ) -> tuple[EmbeddingCell, tuple[tuple[tuple[ExactScalar, ...], ...], ...]] | None:
+        if index not in straight_polygons:
+            straight_polygons[index] = _straight_planar_polygon(
+                cells[index], simplices[index]
+            )
+        return straight_polygons[index]
+
     for first_block, second_block in bvh_overlap_pair_blocks(
         tree, tree, include_touching=True
     ):
@@ -3906,6 +4142,15 @@ def _nonperiodic_contacts(
                 (first_cell.affine or not first_cell.coordinates)
                 and (second_cell.affine or not second_cell.coordinates)
             )
+            if curved and mesh.ambient_dimension == 2:
+                first_polygon = straight_polygon(first_index)
+                second_polygon = (
+                    None if first_polygon is None else straight_polygon(second_index)
+                )
+                if first_polygon is not None and second_polygon is not None:
+                    first_cell, first_pieces = first_polygon
+                    second_cell, second_pieces = second_polygon
+                    curved = False
             if curved:
                 first_root = root_charts[first_index]
                 second_root = root_charts[second_index]
@@ -3928,6 +4173,27 @@ def _nonperiodic_contacts(
                             )
                         )
                         continue
+                    if root_contact is None:
+                        adjacent_contact = _adjacent_root_contact(
+                            first_root, second_root, separated_roots
+                        )
+                        if adjacent_contact == "declared":
+                            if proof_values is not None:
+                                proof_values.append(
+                                    f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:adjacent-roots:{first_root.source_geometry_id}:{first_root.source_cell_id}:{second_root.source_cell_id}:separated-facet-trace-contact"
+                                )
+                            continue
+                        if adjacent_contact == "outside":
+                            findings.append(
+                                MeshCertificateFinding(
+                                    "mapped_cell_contact",
+                                    "violated",
+                                    "cell",
+                                    (first_cell.global_id, second_cell.global_id),
+                                    detail="An exact adjacent-root restriction contact lies outside the declared shared facet stratum.",
+                                )
+                            )
+                            continue
                 shared_corner_contact = any(
                     left_point == right_point and left_id != right_id
                     for left_id, left_point in zip(
