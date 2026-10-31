@@ -17,7 +17,11 @@ from phydrax.geometry._cad_revision import (
     CADSelectionSet,
     CADSelector,
 )
-from phydrax.geometry.brep._constructors import brep_box, brep_cylinder
+from phydrax.geometry.brep._constructors import (
+    brep_box,
+    brep_cylinder,
+    BRepTessellationPolicy,
+)
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._model import BRepEntityId
 from phydrax.geometry.brep._partition import (
@@ -314,6 +318,92 @@ def test_split_and_deleted_histories_map_exact_selection_sets() -> None:
         == ()
     )
     assert result.report.deleted_source_occurrences > 0
+
+
+def _l_shaped_partition(tessellation: Any = None) -> Any:
+    first = brep_box((0.0, 0.0, 0.0), (2.0, 1.0, 1.0), coordinate_contract=_COORDINATES)
+    second = brep_box((1.0, 0.0, 0.0), (3.0, 2.0, 1.0), coordinate_contract=_COORDINATES)
+    return partition_brep(
+        _plan((_operand("a", first), _operand("b", second)), ("a", "b")),
+        tessellation=tessellation,
+    )
+
+
+def test_region_solids_are_exact_unions_of_grid_atoms_with_maximal_faces() -> None:
+    result = _l_shaped_partition()
+    model = result.model
+    geometry = model.geometry
+
+    assert model.topology.num_solids == 2
+    assert [len(region.entity_ids) for region in result.regions] == [1, 1]
+    # Box ``a`` keeps 5 own faces, the L-shaped remainder of ``b`` 6, and the two
+    # interface faces are shared once by both region solids.
+    assert model.topology.num_faces == 13
+    interfaces = [
+        patch for patch in result.patches if patch.adjacent_region_ids == ("a", "b")
+    ]
+    assert len(interfaces) == 1
+    assert len(interfaces[0].entity_ids) == 2
+    assert sum(len(solids) == 2 for solids in model.topology.face_solids) == 2
+    assert all(len(loops) == 1 for loops in geometry.face_loops)
+    assert sorted(len(loops[0]) for loops in geometry.face_loops).count(6) == 2
+    edges = {
+        tuple(sorted(geometry.vertex_exact_points[vertex] for vertex in vertices))
+        for vertices in geometry.edge_vertices
+    }
+    zero, two = Fraction(0), Fraction(2)
+    assert ((zero, zero, zero), (two, zero, zero)) in edges
+
+    graph = result.association_graph
+    first = graph.resolve_target(graph.source_revision.select("operand:a:solid:0"))
+    second = graph.resolve_target(graph.source_revision.select("operand:b:solid:0"))
+    # Region ``a`` absorbs the atom of ``b`` it outranks: ``a`` merges into one
+    # solid while ``b`` splits across both region solids.
+    assert first.relation == "merge"
+    assert len(first.candidate_selectors) == 1
+    assert second.relation == "split-merge"
+    assert len(second.candidate_selectors) == 2
+    transaction = graph.transaction
+    assert {value.occurrence_id for value in graph.target_revision.occurrences} == {
+        value.target_occurrence_id for value in transaction.correspondences
+    }
+
+
+def test_region_interface_is_tessellated_once_with_both_region_sides() -> None:
+    result = _l_shaped_partition(
+        BRepTessellationPolicy(
+            linear_deflection=0.5, angular_deflection=0.2, trim_samples_per_edge=3
+        )
+    )
+    tessellation = result.model.tessellation
+    topology = result.model.tessellation_multiregion_surface()
+    assert tessellation is not None and topology is not None
+
+    active = np.asarray(topology.face_active, dtype=bool)
+    labels = np.asarray(topology.face_labels, dtype=np.int64)[active]
+    rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(tessellation.triangle_global_ids, dtype=np.int64).tolist()
+        )
+    }
+    triangles = np.asarray(tessellation.triangles, dtype=np.int64)[
+        [
+            rows[int(identifier)]
+            for identifier in np.asarray(topology.face_global_ids)[active].tolist()
+        ]
+    ]
+    corners = np.asarray(tessellation.vertices, dtype=np.float64)[triangles]
+    areas = 0.5 * np.linalg.norm(
+        np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1
+    )
+    exterior = len(topology.region_ids) - 1
+    interface = np.all(labels != exterior, axis=1)
+
+    assert len({tuple(sorted(row)) for row in triangles.tolist()}) == len(triangles)
+    assert {tuple(sorted(row)) for row in labels[interface].tolist()} == {(0, 1)}
+    assert float(np.sum(areas[interface])) == pytest.approx(2.0)
+    assert float(np.sum(areas[~interface])) == pytest.approx(20.0)
 
 
 def test_curved_cylinder_partition_publishes_exact_notch_and_preserves_sources() -> None:
