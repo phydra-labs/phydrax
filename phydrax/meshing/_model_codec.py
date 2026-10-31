@@ -57,6 +57,18 @@ from .._typing_plan import validate_tree
 _MODEL_KIND = "phydrax-native-model-artifact"
 _MODEL_ARRAYS = "model/leaves"
 
+# Admission limits for untrusted model-recipe archives. Every recipe node costs at
+# most two manifest JSON levels (the node object and its ``fields``/``items``
+# container), so this admits 31 nested native objects. The deepest exact CAD chain
+# in the schema (model, trim domain, curve loop, segment, root endpoint, carrier,
+# surface patch, profile curve, exact rational coordinate, with their tuple
+# containers) uses 12 recipe nodes and 25 manifest levels; placements and offsets
+# add one node each. Model recipes store one archive member per dynamic array leaf,
+# so composite models admit 4,096 leaves (plus the manifest); the central-directory,
+# member, and aggregate byte limits still bound every allocation. Every other
+# admission bound keeps its conservative default.
+MODEL_ARCHIVE_LIMITS = ArrayArchiveLimits(max_manifest_nesting=64, max_members=4097)
+
 
 def _register_model_archive_types() -> None:
     """Register built-in scientific models supported by the generic recipe codec."""
@@ -109,6 +121,7 @@ def _register_model_archive_types() -> None:
         ExactPowerCellGeometrySource,
     )
     from ..discretization._fv_precision import FiniteVolumePrecisionPolicy
+    from ..discretization._hexahedral import HexahedralConnectivity
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..discretization._measure import DiscreteMeasure
     from ..discretization._nested_reference_types import (
@@ -312,7 +325,7 @@ def _register_model_archive_types() -> None:
         JacobiPreconditionerBuilder,
         PreconditioningPolicy,
     )
-    from ..linalg._properties import OperatorProperties
+    from ..linalg._properties import OperatorCapabilities, OperatorProperties
     from ..linalg._spaces import ArraySpace, ArraySpaceArchiveRecipe
     from ..meshing._association import (
         GeometryAssociation,
@@ -584,9 +597,11 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", PeriodicCell),
         ("phydrax.discretization", PeriodicIsometryGroup),
         ("phydrax.discretization", PeriodicMeshTopology),
+        ("phydrax.discretization", HexahedralConnectivity),
         ("phydrax.meshing", PeriodicPointOrbits),
         ("phydrax.discretization", PolygonalConnectivity),
         ("phydrax.discretization", PolyhedralBlock),
+        ("phydrax.discretization", HexahedralConnectivity),
         ("phydrax.discretization", PolyhedralConnectivity),
         ("phydrax.discretization", PreparedTensorGrid),
         ("phydrax.discretization", SimplicialConnectivity),
@@ -611,6 +626,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.linalg", HilbertComplex),
         ("phydrax.linalg", EuclideanPairing),
         ("phydrax.linalg", DiagonalPairing),
+        ("phydrax.linalg", OperatorCapabilities),
         ("phydrax.linalg", OperatorProperties),
         ("phydrax.linalg", OperatorPairing),
         ("phydrax.linalg._operator_pairing", OperatorPairingArchiveRecipe),
@@ -818,8 +834,10 @@ def restore_model_archive_value(
     import inspect
     from collections.abc import Mapping
 
+    import jax
     import numpy as np
 
+    from .._model._structure import _FiniteElementSpecArchiveProjection
     from ..discretization._cell_mesh import CellMesh
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..discretization.fem._de_rham import (
@@ -938,6 +956,8 @@ def restore_model_archive_value(
             ):
                 raise ValueError("Stored sparse operator differs from its owner fields.")
             return operator
+        if type(item) is _FiniteElementSpecArchiveProjection:
+            return item.rebuild()
         if type(item) is ArraySpaceArchiveRecipe:
             pairing = restore(item.pairing)
             return item.rebuild(pairing)
@@ -1251,6 +1271,21 @@ def restore_model_archive_value(
                     raise TypeError(
                         "Owner-local adaptive archive lost its compact source view."
                     )
+                # The compact replay evidence (adaptive result vertex transfer)
+                # stores its sparse maps' spaces and operators as archive
+                # projections; decode them before the view replays them.
+                nested_recipe_types = (
+                    ArraySpaceArchiveRecipe,
+                    OperatorPairingArchiveRecipe,
+                    SparseCoordinateOperatorArchiveRecipe,
+                )
+                stored_view = jax.tree_util.tree_map(
+                    lambda node: (
+                        restore(node) if type(node) in nested_recipe_types else node
+                    ),
+                    stored_view,
+                    is_leaf=lambda node: type(node) in nested_recipe_types,
+                )
                 view = OwnerLocalCellGeometry.from_stored_fields(
                     stored_view,
                     execution_group,
@@ -1400,30 +1435,30 @@ def _require_periodic_distributed_transfer_current(composition: Any, /) -> None:
         or settings_entry.structure_id != settings_id
         or settings_entry.revision_id != settings_id
         or settings_entry.semantics_id != "periodic-finite-element-transfer-settings"
-        or settings_entry.dependencies
-        != (mesh_entry.binding("structure"), mesh_entry.binding("revision"))
+        or frozenset(settings_entry.dependencies)
+        != {mesh_entry.binding("structure"), mesh_entry.binding("revision")}
         or periodic_entry.role != "transfer"
         or periodic_entry.owner_id != "phydrax.discretization.fem"
         or periodic_entry.structure_id != periodic.complex_map.map_id
         or periodic_entry.revision_id != periodic.transfer_id
         or periodic_entry.semantics_id != "periodic-finite-element-quotient-transfer"
-        or periodic_entry.dependencies
-        != (
+        or frozenset(periodic_entry.dependencies)
+        != {
             mesh_entry.binding("structure"),
             mesh_entry.binding("revision"),
             settings_entry.binding("semantics"),
-        )
+        }
         or distributed_entry.role != "transfer"
         or distributed_entry.owner_id != "phydrax.discretization.fem"
         or distributed_entry.structure_id != distributed.complex_map.map_id
         or distributed_entry.revision_id != distributed.transfer_id
         or distributed_entry.semantics_id
         != "distributed-finite-element-quotient-transfer"
-        or distributed_entry.dependencies
-        != (
+        or frozenset(distributed_entry.dependencies)
+        != {
             periodic_entry.binding("revision"),
             settings_entry.binding("semantics"),
-        )
+        }
         or composition.boundary_id != "periodic-distributed-fe-transfer:archive"
     ):
         raise ValueError("Periodic FE source-context bindings changed.")

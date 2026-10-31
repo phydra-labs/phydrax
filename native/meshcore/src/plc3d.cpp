@@ -4031,9 +4031,11 @@ class PlcRecoveryBuilder {
 
   // Points are tried newest first (undoing later splits before the earlier
   // ones they refined), in passes: a point none of whose replacements
-  // applies is retried after the others have been removed, and the pass that
-  // removes nothing refuses its first remaining point. Each pass removes at
-  // least one point, so there are at most as many passes as points.
+  // applies is retried after the others have been removed. A pass that
+  // removes nothing is repeated once with grown wedge cavities (see
+  // remove_witnessed_vertex), and a grown pass that removes nothing refuses
+  // its first remaining point. Every other pass removes at least one point,
+  // so there are at most twice as many passes as points.
   int32_t suppress_witnessed_vertices() {
     const int32_t count = static_cast<int32_t>(candidate_.points.size() / 3);
     suppressed_.assign(static_cast<std::size_t>(count), 0);
@@ -4044,15 +4046,21 @@ class PlcRecoveryBuilder {
       }
       pending.push_back(vertex);
     }
+    bool grow = false;
     while (!pending.empty()) {
       std::vector<int32_t> remaining;
       for (int32_t vertex : pending) {
         bool removed = false;
-        const int32_t status = suppress_vertex(vertex, removed);
+        const int32_t status = suppress_vertex(vertex, grow, removed);
         if (status != PHX_MC_OK) return status;
         if (!removed) remaining.push_back(vertex);
       }
-      if (remaining.size() == pending.size()) return refuse_suppression(remaining.front());
+      if (remaining.size() == pending.size()) {
+        if (grow) return refuse_suppression(remaining.front());
+        grow = true;
+        continue;
+      }
+      grow = false;
       pending = std::move(remaining);
     }
     return PHX_MC_OK;
@@ -4549,11 +4557,25 @@ class PlcRecoveryBuilder {
   // y = s + l d (d the sum of the inner unit normals of its subface planes,
   // l halving) over the walls, and the exhaustive Steiner-free search of
   // wrap_cavity; the polynomial options come first, the search (counted in
-  // PlcRecovery::suppression_search) only when they all fail. Every finite
-  // proposed cell is exactly positive on exact positions and the cavity edit
-  // checks that the proposal's boundary is the link of s with its marks, so
-  // the proposal tiles the star. Otherwise nothing changes.
-  int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, bool& removed) {
+  // PlcRecovery::suppression_search) only when they all fail. With `grow`
+  // (a pass in which no point could be removed), a finite wedge that none
+  // of these fill is merged with up to kSuppressionGrowthLayers layers of
+  // the cells around it, crossing only unconstrained faces, and the merged
+  // cavity is filled by the same options except the centroid points. The
+  // star alone can have no fill: on nearly flat offset faces a sliver cell
+  // (four nearly coplanar vertices, s on one diagonal) lies over a subface,
+  // some open side (a new subface or a link face) is seen by no cavity
+  // vertex, so no Steiner-free fill exists, and the kernel of the cavity is
+  // pinched to the plane of the sliver, so no binary64 cone point exists;
+  // merging past the link faces removes those sides. Merging removes no
+  // vertex but s (a layer that would enclose a vertex is not taken) and
+  // moves no subface, so the termination argument of the pass is unchanged.
+  // Every finite proposed cell is exactly positive on exact positions and
+  // the cavity edit checks that the proposal's boundary is the link of the
+  // removed cells with its marks, so the proposal tiles them. Otherwise
+  // nothing changes.
+  int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, bool grow,
+                                  bool& removed) {
     removed = false;
     TetrahedralComplex& complex = triangulation_->complex();
     if (t >= 0) {
@@ -4640,6 +4662,8 @@ class PlcRecoveryBuilder {
 
     using Proposal = SuppressionCell;
     constexpr int32_t kPlaceholder = std::numeric_limits<int32_t>::min() / 2;
+    // Layers of cells a wedge may absorb when its own cavity has no fill.
+    constexpr int kSuppressionGrowthLayers = 3;
     const auto positive = [&](const std::array<int32_t, 4>& v, const ExactPointRef* center) {
       if (std::find(v.begin(), v.end(), kGhostVertex) != v.end()) return true;
       ExactPointRef corners[4];
@@ -4679,6 +4703,220 @@ class PlcRecoveryBuilder {
     const auto abandon = [&]() {
       for (int32_t vertex : added) alive_[static_cast<std::size_t>(vertex)] = 0;
       return PHX_MC_OK;
+    };
+    // Fills one finite cavity (walls with the placeholder) by the first
+    // option that applies; appends the fill to the proposals and sets
+    // `done`, else leaves them unchanged. `blocked` are the star rows whose
+    // centroids may serve as Steiner apices; `size` is the cell count
+    // reported as search evidence.
+    const auto fill_wedge = [&](std::vector<Proposal> cavity,
+                                const std::vector<std::size_t>& blocked,
+                                const std::vector<std::array<double, 3>>& normals, double reach,
+                                std::size_t size, bool& done) -> int32_t {
+      done = false;
+      // 1. The constrained Delaunay fill.
+      std::vector<Proposal> wrapped;
+      std::size_t nodes = 0;
+      if (wrap_cavity(cavity, kPlaceholder, {}, false, wrapped, nodes)) {
+        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+        done = true;
+        return PHX_MC_OK;
+      }
+      // 2. Cones from one cavity vertex v over every wall not through v: a
+      // tiling when the cavity is strictly star-shaped from v. A cone face
+      // through v that is a wall carries that wall's mark.
+      std::set<int32_t> on_walls;
+      for (const Proposal& wall : cavity) {
+        for (int32_t vertex : wall.v) {
+          if (vertex != kPlaceholder) on_walls.insert(vertex);
+        }
+      }
+      const auto slot_of = [](const std::array<int32_t, 4>& v, int32_t vertex) {
+        return static_cast<int>(std::find(v.begin(), v.end(), vertex) - v.begin());
+      };
+      for (int32_t apex : on_walls) {
+        std::vector<Proposal> cones;
+        std::map<Triple, int32_t> through;
+        bool visible = true;
+        for (const Proposal& wall : cavity) {
+          if (std::find(wall.v.begin(), wall.v.end(), apex) == wall.v.end()) continue;
+          const int slot = slot_of(wall.v, kPlaceholder);
+          Triple face{};
+          oriented_facet(wall.v.data(), slot, face.data());
+          through.emplace(sorted_triple(face.data()),
+                          wall.constraints[static_cast<std::size_t>(slot)]);
+        }
+        for (const Proposal& wall : cavity) {
+          if (std::find(wall.v.begin(), wall.v.end(), apex) != wall.v.end()) continue;
+          Proposal cone = wall;
+          std::replace(cone.v.begin(), cone.v.end(), kPlaceholder, apex);
+          if (!positive(cone.v, nullptr)) {
+            visible = false;
+            break;
+          }
+          const int own = slot_of(cone.v, apex);
+          for (int slot = 0; slot < 4; ++slot) {
+            if (slot == own) continue;
+            Triple face{};
+            oriented_facet(cone.v.data(), slot, face.data());
+            const auto wall = through.find(sorted_triple(face.data()));
+            if (wall != through.end()) cone.constraints[static_cast<std::size_t>(slot)] = wall->second;
+          }
+          cones.push_back(cone);
+        }
+        if (!visible) continue;
+        proposals.insert(proposals.end(), cones.begin(), cones.end());
+        done = true;
+        return PHX_MC_OK;
+      }
+      // 3. Steiner-assisted fill: interior points of the cells that block
+      // the contraction (every cell without a target) join the apices.
+      std::vector<int32_t> extra;
+      for (std::size_t row : blocked) {
+        if (extra.size() == 8) break;
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[row])];
+        double centroid[3] = {0.0, 0.0, 0.0};
+        for (int32_t vertex : tet.v) {
+          for (int axis = 0; axis < 3; ++axis) centroid[axis] += 0.25 * point(vertex)[axis];
+        }
+        if (!geometry::point_in_domain(centroid)) continue;
+        int32_t vertex = -1;
+        const int32_t status = add_volume_point(centroid, vertex);
+        if (status != PHX_MC_OK) return status;
+        added.push_back(vertex);
+        extra.push_back(vertex);
+      }
+      if (!extra.empty() && wrap_cavity(cavity, kPlaceholder, extra, false, wrapped, nodes)) {
+        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+        done = true;
+        return PHX_MC_OK;
+      }
+      // 4. Cones from one binary64 point y = s + l d over the walls.
+      double direction[3] = {0.0, 0.0, 0.0};
+      for (const auto& unit : normals) {
+        for (int axis = 0; axis < 3; ++axis) direction[axis] += unit[static_cast<std::size_t>(axis)];
+      }
+      const double norm = std::sqrt(geometry::dot(direction, direction));
+      bool found = false;
+      double location[3];
+      if (!normals.empty() && norm > 0.0 && std::isfinite(reach) && reach > 0.0) {
+        for (double step = 0.25 * reach; step > 0x1p-40 * reach && !found; step *= 0.5) {
+          for (int axis = 0; axis < 3; ++axis) {
+            location[axis] = point(s)[axis] + step * direction[axis] / norm;
+          }
+          if (!geometry::point_in_domain(location)) continue;
+          const ExactPointRef center{location, nullptr};
+          found = std::all_of(cavity.begin(), cavity.end(), [&](const Proposal& cone) {
+            return positive(cone.v, &center);
+          });
+        }
+      }
+      if (found) {
+        // Placeholder ids of later centers stay distinct until appended.
+        for (Proposal& cone : cavity) {
+          std::replace(cone.v.begin(), cone.v.end(), kPlaceholder,
+                       kPlaceholder + 1 + static_cast<int32_t>(centers.size()));
+        }
+        centers.push_back({location[0], location[1], location[2]});
+        proposals.insert(proposals.end(), cavity.begin(), cavity.end());
+        done = true;
+        return PHX_MC_OK;
+      }
+      // 5. The exact exhaustive Steiner-free search (wrap_cavity), reached
+      // only after every polynomial option has failed.
+      nodes = 0;
+      const bool searched = wrap_cavity(cavity, kPlaceholder, {}, true, wrapped, nodes);
+      PlcSuppressionSearch& evidence = candidate_.suppression_search;
+      ++evidence.searches;
+      evidence.nodes += static_cast<int64_t>(nodes);
+      evidence.max_nodes = std::max(evidence.max_nodes, static_cast<int64_t>(nodes));
+      evidence.max_wedge_cells = std::max(evidence.max_wedge_cells, static_cast<int64_t>(size));
+      if (!searched) return PHX_MC_OK;
+      ++evidence.fills;
+      proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+      done = true;
+      return PHX_MC_OK;
+    };
+    // Cells outside the star absorbed into a wedge's grown cavity.
+    std::vector<int32_t> absorbed;
+    std::unordered_set<int32_t> absorbed_set;
+    const auto wall_of = [&](int32_t cell, int slot) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      Proposal wall{{tet.v[0], tet.v[1], tet.v[2], tet.v[3]},
+                    {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+      wall.v[static_cast<std::size_t>(slot)] = kPlaceholder;
+      wall.constraints[static_cast<std::size_t>(slot)] = complex.constraint(cell, slot);
+      return wall;
+    };
+    // The cavity of a wedge grown by `layers` layers of finite cells across
+    // unconstrained faces (never across a subface, so it stays on the same
+    // side of every constraint), excluding the star and cells absorbed by
+    // other wedges: its walls are the new subfaces and every face of the
+    // grown region not shared by two of its cells. False when nothing is
+    // grown, when two grown cells share a subface, or when a vertex of a
+    // grown cell would be enclosed (it must stay on the walls, so the fill
+    // keeps every vertex but s).
+    const auto grow_wedge = [&](const std::vector<std::size_t>& rows, int layers,
+                                std::vector<int32_t>& grown, std::vector<Proposal>& walls) {
+      grown.clear();
+      walls.clear();
+      std::unordered_set<int32_t> inside;
+      std::vector<int32_t> frontier;
+      for (std::size_t row : rows) frontier.push_back(cells[row]);
+      for (int layer = 0; layer < layers && !frontier.empty(); ++layer) {
+        std::vector<int32_t> next;
+        for (int32_t cell : frontier) {
+          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+          const bool star = row_of.contains(cell);
+          for (int slot = 0; slot < 4; ++slot) {
+            if (star && tet.v[slot] != s) continue;
+            const int32_t neighbor = tet.n[slot];
+            if (neighbor < 0 || complex.constraint(cell, slot) != kNoConstraint) continue;
+            if (row_of.contains(neighbor) || absorbed_set.contains(neighbor) ||
+                inside.contains(neighbor) ||
+                is_ghost(complex.tets[static_cast<std::size_t>(neighbor)])) {
+              continue;
+            }
+            inside.insert(neighbor);
+            grown.push_back(neighbor);
+            next.push_back(neighbor);
+          }
+        }
+        frontier = std::move(next);
+      }
+      if (grown.empty()) return false;
+      walls = subface_cells(rows);
+      const std::size_t wedge = root(rows.front());
+      for (std::size_t row : rows) {
+        const int32_t cell = cells[row];
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+        const int own = vertex_slot(tet, s);
+        if (!inside.contains(tet.n[own])) walls.push_back(wall_of(cell, own));
+      }
+      for (int32_t cell : grown) {
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+        for (int slot = 0; slot < 4; ++slot) {
+          const int32_t neighbor = tet.n[slot];
+          const auto row = row_of.find(neighbor);
+          const bool interior = inside.contains(neighbor) ||
+              (row != row_of.end() && root(row->second) == wedge);
+          if (!interior) {
+            walls.push_back(wall_of(cell, slot));
+          } else if (complex.constraint(cell, slot) != kNoConstraint) {
+            return false;
+          }
+        }
+      }
+      std::unordered_set<int32_t> boundary;
+      for (const Proposal& wall : walls) {
+        for (int32_t vertex : wall.v) boundary.insert(vertex);
+      }
+      for (int32_t cell : grown) {
+        for (int32_t vertex : complex.tets[static_cast<std::size_t>(cell)].v) {
+          if (!boundary.contains(vertex)) return false;
+        }
+      }
+      return true;
     };
     for (const auto& [unused, rows] : wedges) {
       (void)unused;
@@ -4766,126 +5004,26 @@ class PlcRecoveryBuilder {
           normals.push_back(unit);
         }
       }
-      // 1. The constrained Delaunay fill.
-      std::vector<Proposal> wrapped;
-      std::size_t nodes = 0;
-      if (wrap_cavity(cavity, kPlaceholder, {}, false, wrapped, nodes)) {
-        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
-        continue;
-      }
-      // 2. Cones from one cavity vertex v over every wall not through v: a
-      // tiling when the cavity is strictly star-shaped from v. A cone face
-      // through v that is a wall carries that wall's mark.
-      std::set<int32_t> on_walls;
-      for (const Proposal& wall : cavity) {
-        for (int32_t vertex : wall.v) {
-          if (vertex != kPlaceholder) on_walls.insert(vertex);
-        }
-      }
-      const auto slot_of = [](const std::array<int32_t, 4>& v, int32_t vertex) {
-        return static_cast<int>(std::find(v.begin(), v.end(), vertex) - v.begin());
-      };
-      bool coned = false;
-      for (int32_t apex : on_walls) {
-        std::vector<Proposal> cones;
-        std::map<Triple, int32_t> through;
-        bool visible = true;
-        for (const Proposal& wall : cavity) {
-          if (std::find(wall.v.begin(), wall.v.end(), apex) == wall.v.end()) continue;
-          const int slot = slot_of(wall.v, kPlaceholder);
-          Triple face{};
-          oriented_facet(wall.v.data(), slot, face.data());
-          through.emplace(sorted_triple(face.data()),
-                          wall.constraints[static_cast<std::size_t>(slot)]);
-        }
-        for (const Proposal& wall : cavity) {
-          if (std::find(wall.v.begin(), wall.v.end(), apex) != wall.v.end()) continue;
-          Proposal cone = wall;
-          std::replace(cone.v.begin(), cone.v.end(), kPlaceholder, apex);
-          if (!positive(cone.v, nullptr)) {
-            visible = false;
-            break;
-          }
-          const int own = slot_of(cone.v, apex);
-          for (int slot = 0; slot < 4; ++slot) {
-            if (slot == own) continue;
-            Triple face{};
-            oriented_facet(cone.v.data(), slot, face.data());
-            const auto wall = through.find(sorted_triple(face.data()));
-            if (wall != through.end()) cone.constraints[static_cast<std::size_t>(slot)] = wall->second;
-          }
-          cones.push_back(cone);
-        }
-        if (!visible) continue;
-        proposals.insert(proposals.end(), cones.begin(), cones.end());
-        coned = true;
-        break;
-      }
-      if (coned) continue;
-      // 3. Steiner-assisted fill: interior points of the cells that block
-      // the contraction (every cell without a target) join the apices.
-      std::vector<int32_t> extra;
-      for (std::size_t row : blocked) {
-        if (root(row) != root(rows.front()) || extra.size() == 8) continue;
-        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[row])];
-        double centroid[3] = {0.0, 0.0, 0.0};
-        for (int32_t vertex : tet.v) {
-          for (int axis = 0; axis < 3; ++axis) centroid[axis] += 0.25 * point(vertex)[axis];
-        }
-        if (!geometry::point_in_domain(centroid)) continue;
-        int32_t vertex = -1;
-        const int32_t status = add_volume_point(centroid, vertex);
+      bool done = false;
+      int32_t status = fill_wedge(cavity, blocked, normals, reach, rows.size(), done);
+      if (status != PHX_MC_OK) return status;
+      // 6. In a grown pass, the wedge merged with the cells around it on the
+      // same side of every constraint, one more layer at a time, filled by
+      // options 1, 2, 4 and 5.
+      std::vector<int32_t> grown;
+      std::size_t previous = 0;
+      for (int layers = 1; grow && !done && layers <= kSuppressionGrowthLayers; ++layers) {
+        std::vector<Proposal> walls;
+        if (!grow_wedge(rows, layers, grown, walls) || grown.size() == previous) break;
+        previous = grown.size();
+        status = fill_wedge(walls, {}, normals, reach, rows.size() + grown.size(), done);
         if (status != PHX_MC_OK) return status;
-        added.push_back(vertex);
-        extra.push_back(vertex);
       }
-      if (!extra.empty() && wrap_cavity(cavity, kPlaceholder, extra, false, wrapped, nodes)) {
-        proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
-        continue;
+      if (!done) return abandon();
+      for (int32_t cell : grown) {
+        absorbed.push_back(cell);
+        absorbed_set.insert(cell);
       }
-      // 4. Cones from one binary64 point y = s + l d over the walls.
-      double direction[3] = {0.0, 0.0, 0.0};
-      for (const auto& unit : normals) {
-        for (int axis = 0; axis < 3; ++axis) direction[axis] += unit[static_cast<std::size_t>(axis)];
-      }
-      const double norm = std::sqrt(geometry::dot(direction, direction));
-      bool found = false;
-      double location[3];
-      if (!normals.empty() && norm > 0.0 && std::isfinite(reach) && reach > 0.0) {
-        for (double step = 0.25 * reach; step > 0x1p-40 * reach && !found; step *= 0.5) {
-          for (int axis = 0; axis < 3; ++axis) {
-            location[axis] = point(s)[axis] + step * direction[axis] / norm;
-          }
-          if (!geometry::point_in_domain(location)) continue;
-          const ExactPointRef center{location, nullptr};
-          found = std::all_of(cavity.begin(), cavity.end(), [&](const Proposal& cone) {
-            return positive(cone.v, &center);
-          });
-        }
-      }
-      if (found) {
-        // Placeholder ids of later centers stay distinct until appended.
-        for (Proposal& cone : cavity) {
-          std::replace(cone.v.begin(), cone.v.end(), kPlaceholder,
-                       kPlaceholder + 1 + static_cast<int32_t>(centers.size()));
-        }
-        centers.push_back({location[0], location[1], location[2]});
-        proposals.insert(proposals.end(), cavity.begin(), cavity.end());
-        continue;
-      }
-      // 5. The exact exhaustive Steiner-free search (wrap_cavity), reached
-      // only after every polynomial option has failed.
-      nodes = 0;
-      const bool searched = wrap_cavity(cavity, kPlaceholder, {}, true, wrapped, nodes);
-      PlcSuppressionSearch& evidence = candidate_.suppression_search;
-      ++evidence.searches;
-      evidence.nodes += static_cast<int64_t>(nodes);
-      evidence.max_nodes = std::max(evidence.max_nodes, static_cast<int64_t>(nodes));
-      evidence.max_wedge_cells =
-          std::max(evidence.max_wedge_cells, static_cast<int64_t>(rows.size()));
-      if (!searched) return abandon();
-      ++evidence.fills;
-      proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
     }
 
     for (std::size_t row = 0; row < centers.size(); ++row) {
@@ -4913,7 +5051,9 @@ class PlcRecoveryBuilder {
     }
     CavityEdit edit(complex);
     edit.begin();
-    for (int32_t cell : cells) {
+    std::vector<int32_t> removed_cells = cells;
+    removed_cells.insert(removed_cells.end(), absorbed.begin(), absorbed.end());
+    for (int32_t cell : removed_cells) {
       if (edit.remove(cell) != EditStatus::kOk) {
         for (const auto& [mark_cell, slot, constraint] : released) {
           complex.set_facet_constraint(mark_cell, slot, constraint);
@@ -4996,7 +5136,7 @@ class PlcRecoveryBuilder {
   // Suppresses one witnessed vertex if it can: contraction onto a chain
   // neighbour (a segment point) or a disk neighbour (a facet point), else
   // the ear-clipped half-fans.
-  int32_t suppress_vertex(int32_t s, bool& removed) {
+  int32_t suppress_vertex(int32_t s, bool grow, bool& removed) {
     removed = false;
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
     const bool segment = witness.stratum == SourceStratum::kSegment;
@@ -5027,7 +5167,7 @@ class PlcRecoveryBuilder {
     }
     targets.push_back(-1);
     for (int32_t target : targets) {
-      const int32_t status = remove_witnessed_vertex(s, target, p, q, removed);
+      const int32_t status = remove_witnessed_vertex(s, target, p, q, grow, removed);
       if (status != PHX_MC_OK) return status;
       if (!removed) continue;
       if (segment) {

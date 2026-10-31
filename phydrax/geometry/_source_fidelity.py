@@ -445,6 +445,8 @@ def _partition_findings(
     /,
 ) -> tuple[MeshCertificateFinding, ...]:
 
+    # Currentness fingerprints the whole domain: check once, not per patch.
+    source.require_current()
     domain = source.domain
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
@@ -505,7 +507,7 @@ def _partition_findings(
                 *target,
                 *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
             )
-        declared, _ = source.trim_partition_reference(patch, target)
+        declared, _ = source._trim_partition_reference_unchecked(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -1719,6 +1721,20 @@ def validate_source_entity_scope(
                 "Meshing-domain queries validate only point or face feature scopes."
             )
         query.require_current()
+        return
+    if isinstance(query, _AdaptiveImplicitBoundaryCarrier):
+        if dimension != 2:
+            raise ValueError(
+                "Adaptive implicit source queries validate only their zero-set surface scope."
+            )
+        query.require_current()
+        surface_key = source_entity_id(
+            query.source_id, query.source_revision, "implicit-surface", "zero-set"
+        )
+        if set(keys) != {(surface_key, ())}:
+            raise ValueError(
+                "Adaptive implicit query scope must name exactly its zero-set entity."
+            )
         return
     raise TypeError("No source-scope validator supports this query authority.")
 
@@ -5431,7 +5447,8 @@ def certify_source_fidelity(
             # Target charts follow a curved trim by chords. A chart point between a
             # chord and its arc is within the lens bound of both, so the directed
             # distances of every cell meeting the lens box grow by its surface image.
-            _, lenses = domain_source.trim_partition_reference(
+            # Currentness was validated once above, before the per-patch loop.
+            _, lenses = domain_source._trim_partition_reference_unchecked(
                 patch, (*target_charts, *(sliver for _, sliver in slivers))
             )
             lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses)

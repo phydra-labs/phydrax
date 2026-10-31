@@ -21,6 +21,7 @@ from ..sparse import EdgeRelation
 from ..typing import checked
 from ._cell_geometry import CellGeometrySpec
 from ._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
+from ._exact_plc_geometry import ExactPlcCellGeometrySource
 from ._exact_power_geometry import ExactPowerCellGeometrySource
 from ._periodic_cell import PeriodicCell
 from ._periodic_exact import (
@@ -35,6 +36,8 @@ from ._topology import CellComplexTopology, EntitySet, EntitySubset, OrientedInc
 
 
 _INT32_MAX = np.iinfo(np.int32).max
+# Exact vertex banks that can witness a quotient's deck action on lifted rows.
+ExactPeriodicCoordinateSource = ExactPowerCellGeometrySource | ExactPlcCellGeometrySource
 
 
 def _integer_rows(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> np.ndarray:
@@ -440,7 +443,7 @@ def _validate_vertex_orbits(
     shifts: ArrayLike,
     /,
     *,
-    exact_coordinate_source: ExactPowerCellGeometrySource | None = None,
+    exact_coordinate_source: ExactPeriodicCoordinateSource | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(coordinates, dtype=np.float64)
     if (
@@ -471,9 +474,7 @@ def _validate_vertex_orbits(
             )
     else:
         if not isinstance(cell, PeriodicCell):
-            raise TypeError(
-                "Exact periodic power coordinate witnesses require PeriodicCell."
-            )
+            raise TypeError("Exact periodic coordinate witnesses require PeriodicCell.")
         exact_coordinate_source.require_periodic_lift(points, cell, reps, exponents)
     return reps.astype(np.int32), exponents.astype(np.int32)
 
@@ -591,26 +592,30 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         entity_global_ids: Mapping[int, ArrayLike] | None = None,
         entity_allocator_next_ids: Mapping[int, int] | None = None,
         actual_geometry: CellGeometrySpec | None = None,
-        exact_coordinate_source: ExactPowerCellGeometrySource | None = None,
+        exact_coordinate_source: ExactPeriodicCoordinateSource | None = None,
     ) -> None:
         if lifted.topological_dimension != cell.ambient_dimension:
             raise ValueError("Periodic quotient requires a full-dimensional lifted mesh.")
         if lifted.periodic_topology is not None:
             raise ValueError("lifted must be a nonperiodic fundamental-cover carrier.")
         if exact_coordinate_source is not None and not isinstance(
-            exact_coordinate_source, ExactPowerCellGeometrySource
+            exact_coordinate_source,
+            (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource),
         ):
             raise TypeError(
-                "exact_coordinate_source must be ExactPowerCellGeometrySource or None."
+                "exact_coordinate_source must be an exact power or PLC coordinate bank."
             )
         if actual_geometry is not None:
             source_map = actual_geometry.source_map
             if source_map is None:
                 _, routes, geometry_coordinates = actual_geometry.resolve(lifted)
             else:
-                if type(source_map) is not ExactPowerCellGeometrySource:
+                if not isinstance(
+                    source_map,
+                    (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource),
+                ):
                     raise ValueError(
-                        "Periodic mapped geometry requires its exact power source witness."
+                        "Periodic mapped geometry requires its exact coordinate witness."
                     )
                 if (
                     exact_coordinate_source is not None
@@ -635,6 +640,15 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 raise ValueError(
                     "actual_geometry must resolve to the lifted vertex-indexed carrier."
                 )
+        if isinstance(exact_coordinate_source, ExactPlcCellGeometrySource) and (
+            not np.array_equal(
+                np.asarray(exact_coordinate_source.vertex_global_ids, dtype=np.int64),
+                np.asarray(lifted.vertex_global_ids, dtype=np.int64),
+            )
+        ):
+            raise ValueError(
+                "Exact PLC coordinate rows must follow the lifted vertex order."
+            )
         representatives, shifts = _validate_vertex_orbits(
             lifted.coordinates,
             cell,
@@ -1054,17 +1068,17 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             )
         exact_coordinate_source = None
         if stored.coordinate_source_map_id is not None:
-            if (
-                actual_geometry is None
-                or type(actual_geometry.source_map) is not ExactPowerCellGeometrySource
+            source_map = None if actual_geometry is None else actual_geometry.source_map
+            if not isinstance(
+                source_map, (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource)
             ):
                 raise ValueError(
-                    "Periodic power topology restore requires its current exact source map."
+                    "Exact-witness periodic topology restore requires its current exact source map."
                 )
-            exact_coordinate_source = actual_geometry.source_map
+            exact_coordinate_source = source_map
             if exact_coordinate_source.source_map_id != stored.coordinate_source_map_id:
                 raise ValueError(
-                    "Periodic power topology restore has another exact coordinate source."
+                    "Exact-witness periodic topology restore has another exact coordinate source."
                 )
         elif actual_geometry is not None and actual_geometry.source_map is not None:
             raise ValueError(
@@ -1082,6 +1096,8 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             degree: int(next_id)
             for degree, next_id in enumerate(stored.allocator_next_ids)
         }
+        # A witness-only topology (exact coordinate bank, no bound mapped geometry)
+        # takes its bank from the current geometry but stays unbound to it.
         renewed = cls(
             lifted_mesh,
             stored.cell,
@@ -1089,7 +1105,9 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             stored.vertex_shifts,
             entity_global_ids=quotient_ids,
             entity_allocator_next_ids=allocator,
-            actual_geometry=actual_geometry,
+            actual_geometry=(
+                None if stored._actual_geometry is None else actual_geometry
+            ),
             exact_coordinate_source=exact_coordinate_source,
         )
         array_fields = (

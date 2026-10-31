@@ -648,11 +648,16 @@ contracts:
 - **Refinement.** Circumcenters of cells violating the radius-edge bound or
   their size target are inserted through a checked cavity; an encroached
   splittable boundary face is split instead. No point is inserted closer than
-  min(shortest initial edge, h(x)/2) to an existing vertex, h(x) the target
-  interpolated at the point. Since refinement removes no vertex, the inserted
-  points are packed at a positive spacing in a bounded domain, so finitely
-  many are inserted. A cell the guard blocks is reported as `REFUSED`; one
-  whose circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
+  min(lfs(x), h(x))/2 to an existing vertex, h(x) the target interpolated at
+  the point and lfs(x) the local feature size: each vertex entering the pass
+  measures its distance to the nearest constrained vertex, segment, facet edge
+  or facet not incident to it, and lfs grows from the point's neighbors by the
+  distance to them. Next to a thin fixed face the spacing floor is that face's
+  own scale, not the shortest edge anywhere in the mesh. Since refinement
+  removes no vertex, the inserted points are packed at a positive spacing in a
+  bounded domain, so finitely many are inserted, and densely only near small
+  features. A cell the guard blocks is reported as `REFUSED`; one whose
+  circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
@@ -847,6 +852,16 @@ edge orbits flip across the seam. When the route stalls it refuses with
 `COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
 `MeshingFailureEvidence` holds each remaining edge's metric length and refusal
 reasons.
+
+Exact periodic proofs use the quotient chart: a lifted vertex's exact position
+is its root's exact position translated exactly by its deck winding, and the
+binary64 carrier holds the canonical rounding of that translate. Orbit-locked
+bisection on a non-dyadic lattice can create midpoints that are not binary64;
+its target is then published on the lifted vertex-indexed P1 carrier with an
+`ExactPlcCellGeometrySource` bank of the exact midpoints, which the target's
+`PeriodicMeshTopology` accepts as its exact coordinate witness. Certify or
+distribute the adaptation result itself: re-certifying the bare target mesh
+drops that bank.
 
 Every owner-local periodic view retains the exact `specification_id`, including
 nonadaptive periodic-power views. Cold reattachment requires the archived typed

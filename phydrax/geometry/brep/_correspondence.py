@@ -852,7 +852,9 @@ def _same_extrusion_generator_line_lift(
         return False
     domain = patch.curve.parameter_domain
     if domain is not None and not (
-        Fraction.from_float(domain[0]) <= profile_parameter <= Fraction.from_float(domain[1])
+        Fraction.from_float(domain[0])
+        <= profile_parameter
+        <= Fraction.from_float(domain[1])
     ):
         return False
     base = exact_curve_parameter_point(patch.curve, profile_parameter)
@@ -1949,6 +1951,63 @@ def _same_ruled_rail_surface_lift(
     )
 
 
+def _bilinear_ruled_line_lift(
+    curve: AbstractCurve,
+    pcurve: AbstractCurve,
+    region: SurfaceRegion,
+    first: float,
+    last: float,
+    /,
+) -> bool:
+    """Prove an affine chart line on a ruled surface between two affine rails.
+
+    With rails ``o_k + u d_k`` the surface is the bilinear map
+    ``o1 + u d1 + v (o2 - o1) + u v (d2 - d1)``. Composed with the chart line
+    ``(a + b t, c + e t)`` it is a quadratic in ``t`` whose exact coefficients
+    must equal the affine source curve's.
+    """
+    patch = region.patch
+    if not isinstance(patch, RuledSurface) or curve.ambient_dimension != 3:
+        return False
+    first_rail = _affine_curve_coefficients(patch.first, (Fraction(0),) * 3)
+    second_rail = _affine_curve_coefficients(patch.second, (Fraction(0),) * 3)
+    chart = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
+    source = _affine_curve_coefficients(curve, (Fraction(0),) * 3)
+    if first_rail is None or second_rail is None or chart is None or source is None:
+        return False
+    first_origin, first_direction = first_rail
+    second_origin, second_direction = second_rail
+    (a, c), (b, e) = chart
+    source_origin, source_direction = source
+    for axis in range(3):
+        rung = second_origin[axis] - first_origin[axis]
+        twist = second_direction[axis] - first_direction[axis]
+        constant = (
+            first_origin[axis] + a * first_direction[axis] + c * rung + a * c * twist
+        )
+        linear = b * first_direction[axis] + e * rung + (a * e + b * c) * twist
+        if (
+            b * e * twist != 0
+            or constant != source_origin[axis]
+            or linear != source_direction[axis]
+        ):
+            return False
+    domain = curve.parameter_domain
+    if domain is not None and (first < domain[0] or last > domain[1]):
+        return False
+    box = np.asarray(region.parameter_box, dtype=np.float64)
+    lower = tuple(Fraction.from_float(float(value)) for value in box[0])
+    upper = tuple(Fraction.from_float(float(value)) for value in box[1])
+    origin, direction = (a, c), (b, e)
+    return all(
+        lower[axis]
+        <= origin[axis] + Fraction.from_float(parameter) * direction[axis]
+        <= upper[axis]
+        for axis in range(2)
+        for parameter in (first, last)
+    )
+
+
 def _rational_bernstein_line_matches(
     coefficients: tuple[tuple[ExactScalar, ...], ...],
     degree: int,
@@ -3007,8 +3066,9 @@ def exact_source_lift(
         return True
     if _exact_spline_boundary_lift(curve, pcurve, region, first, last):
         return True
-    if isinstance(region.patch, RuledSurface) and _same_ruled_rail_surface_lift(
-        curve, pcurve, region, first, last
+    if isinstance(region.patch, RuledSurface) and (
+        _same_ruled_rail_surface_lift(curve, pcurve, region, first, last)
+        or _bilinear_ruled_line_lift(curve, pcurve, region, first, last)
     ):
         return True
 
@@ -3046,8 +3106,16 @@ def exact_source_lift(
             return _ruled_first_circle_rail_lift(curve, pcurve, region, first, last)
 
     frame = _affine_surface_frame(region.patch)
-    if frame is not None and _same_plane_line_lift(curve, pcurve, frame):
-        return True
+    if frame is not None:
+        # Zero native-period shifts leave the wrapped chart line unchanged.
+        periodic_source = _periodic_pcurve_source(pcurve, region.patch)
+        chart_line = (
+            periodic_source[0]
+            if periodic_source is not None and periodic_source[1] == (0, 0)
+            else pcurve
+        )
+        if _same_plane_line_lift(curve, chart_line, frame):
+            return True
     if isinstance(curve, SurfaceIsoparametricCurve):
         if not _same_patch(curve.surface, region.patch) or pcurve.ambient_dimension != 2:
             return False

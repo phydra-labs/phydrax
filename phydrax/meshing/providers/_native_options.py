@@ -102,8 +102,6 @@ def _resolve_schedules(
     grid: NativeHexGridSchedule | None,
 ) -> _ResolvedSchedules:
     fields = _ROUTE_SCHEDULE_FIELDS[route]
-    if "implicit_policy" in fields and implicit is None:
-        implicit = AdaptiveImplicitSurfacePolicy()
     if "curve_schedule" in fields and curve is None:
         curve = schedules_owner.NativeCurveSchedule()
     if "surface_schedule" in fields and surface is None:

@@ -208,14 +208,18 @@ class SurfaceEnvelopeSourceArchiveRecipe(NamedTuple):
 
 
 class PiecewiseLinearBoundarySourceArchiveRecipe(NamedTuple):
+    """Owner recipe plus the selected source scope of one PWL boundary stratum.
+
+    Source rows, entity keys, occurrence paths, and chart IDs are recomputed by
+    the owner from this selection; ``expected_source_query_id`` fingerprints the
+    selection and its entity keys, so restores compare one canonical ID instead
+    of storing per-entity ancestry text in the manifest.
+    """
+
     owner: SurfaceEnvelopeSourceArchiveRecipe
     entity_dimension: int
     entity_ids: object
     expected_source_query_id: str
-    source_rows: object
-    source_entity_keys: tuple[str, ...]
-    source_occurrence_paths: tuple[tuple[str, ...], ...]
-    chart_ids: tuple[str, ...]
 
 
 class AnalyticImplicitProfileArchiveRecipe(NamedTuple):
@@ -786,10 +790,6 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.entity_dimension,
             value.entity_ids,
             value.source_query_id,
-            value.source_rows,
-            value.source_entity_keys,
-            value.source_occurrence_paths,
-            value.chart_ids,
         )
     if type(value) is NativePlcSource:
         complex_ = PiecewiseLinearComplex.from_stored_fields(value.complex)

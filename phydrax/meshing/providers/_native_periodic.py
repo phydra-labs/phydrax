@@ -66,6 +66,7 @@ from .._distribution import _owner_local_multiset_identity
 from .._periodic import (
     periodic_delaunay_mesh,
     periodic_entity_orbit_map,
+    periodic_quotient_facet_cell_classes,
     PeriodicPointOrbits,
     stage_periodic_topology_edit,
 )
@@ -938,30 +939,14 @@ def _periodic_metric_controls(
                 "Periodic fixed-vertex controls must agree over every vertex orbit."
             )
     if dimension == 2:
-        # The lifted mesh cuts the quotient along a fundamental-domain seam, so a
-        # seam edge has one incident lifted cell per orbit member. That seam is a
-        # representation artifact: boundary and material-interface edges are
-        # decided by the cell orbits incident to each quotient edge orbit.
-        incidence = mesh.topology.incidences[1].relation
-        valid = np.asarray(incidence.valid, dtype=np.bool_)
-        edge_rows = np.asarray(incidence.source_indices, dtype=np.int64)[valid]
-        cell_rows = np.asarray(incidence.target_indices, dtype=np.int64)[valid]
-        edge_orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)
-        cell_orbits = np.asarray(
-            periodic_entity_orbit_map(mesh, 2).lifted_to_quotient, dtype=np.int64
+        # The lifted mesh cuts the quotient along a fundamental-domain seam (and
+        # a multi-period cover along its outer boundary), so such edges have one
+        # incident lifted cell per orbit member. Boundary and material-interface
+        # edges are decided by the quotient cell incidences of each edge orbit.
+        incident, lowest, highest = periodic_quotient_facet_cell_classes(
+            mesh, cell_classes
         )
-        incident = np.unique(
-            np.stack((edge_orbits[edge_rows], cell_orbits[cell_rows]), axis=1), axis=0
-        )
-        class_by_cell_orbit = np.zeros((int(np.max(cell_orbits)) + 1,), dtype=np.int64)
-        class_by_cell_orbit[cell_orbits] = cell_classes
-        orbit_count = edge_map.quotient_entity_ids.size
-        incident_counts = np.bincount(incident[:, 0], minlength=orbit_count)
-        lowest = np.full((orbit_count,), np.iinfo(np.int64).max, dtype=np.int64)
-        highest = np.full((orbit_count,), -1, dtype=np.int64)
-        np.minimum.at(lowest, incident[:, 0], class_by_cell_orbit[incident[:, 1]])
-        np.maximum.at(highest, incident[:, 0], class_by_cell_orbit[incident[:, 1]])
-        required_class = ((incident_counts == 1) | (lowest != highest))[edge_orbits]
+        required_class = (incident != 2) | (lowest != highest)
         reserved_class = len(specification.protected_features) + 1
         edge_classes[required_class & (edge_classes == 0)] = reserved_class
     return cell_classes, edge_classes, protected_edges, fixed_vertices, region_by_code
@@ -6528,12 +6513,34 @@ def _require_owner_local_periodic_adaptive_target_current(
         "stored adaptive periodic source content",
     )
     mesh_error = None
+    candidate: dict[str, Any] = {}
     try:
         mesh_data = _owner_local_periodic_delaunay_view_mesh_data(
             view,
             source_authority,
             source.domain.cell,
         )
+        # The view stores its resident source-site rows by identifier; their
+        # coordinates are the rows of the current bound source bank.
+        bank_ids = np.asarray(source_authority.domain.point_ids, dtype=np.int64)
+        bank_points = np.asarray(source_authority.domain.points, dtype=np.float64)
+        view_point_ids = np.asarray(view.source_point_ids, dtype=np.int64)
+        bank_order = np.argsort(bank_ids, kind="stable")
+        positions = np.searchsorted(bank_ids, view_point_ids, sorter=bank_order)
+        if np.any(positions >= bank_ids.size) or not np.array_equal(
+            bank_ids[bank_order[np.minimum(positions, bank_ids.size - 1)]],
+            view_point_ids,
+        ):
+            raise ValueError(
+                "Adaptive periodic view source sites are absent from the current "
+                "bound source bank."
+            )
+        candidate = {
+            "points": np.ascontiguousarray(bank_points[bank_order[positions]]),
+            "point_ids": view_point_ids,
+            "point_owner_ranks": np.asarray(view.source_owner_ranks, dtype=np.int32),
+            "source_owned": np.asarray(view.source_owned, dtype=np.bool_),
+        }
     except Exception as error:
         mesh_error = f"{type(error).__name__}: {error}"
         mesh_data = {}
@@ -6543,11 +6550,6 @@ def _require_owner_local_periodic_adaptive_target_current(
         axis_name,
         "stored adaptive target exact mesh",
     )
-    candidate = {
-        "point_ids": np.asarray(view.source_point_ids, dtype=np.int64),
-        "point_owner_ranks": np.asarray(view.source_owner_ranks, dtype=np.int32),
-        "source_owned": np.asarray(view.source_owned, dtype=np.bool_),
-    }
     mesh_authority = _owner_local_periodic_mesh_authority(
         mesh_data,
         source,
@@ -6759,6 +6761,34 @@ def _owner_local_require_periodic_volume(
             "Owner-local periodic cells do not exactly cover one fundamental cell."
         )
     return total, expected
+
+
+def _canonical_periodic_vertex_orbits(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
+    """Representative-free vertex orbits of a bound periodic mesh.
+
+    Each lifted vertex row maps to the global ID of its minimum-ID orbit member and
+    its reduced deck exponent relative to that member, so two quotients of one
+    lifted carrier that differ only in their representative choice agree.
+    """
+    from ...discretization._periodic_exact import (
+        identification_orders,
+        reduce_periodic_exponents,
+    )
+
+    topology = mesh.periodic_topology
+    if topology is None:
+        raise ValueError("Canonical periodic vertex orbits require a bound quotient.")
+    representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    identifiers = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    anchors = np.empty_like(representatives)
+    for representative in np.unique(representatives):
+        rows = np.flatnonzero(representatives == representative)
+        anchors[rows] = rows[np.argmin(identifiers[rows])]
+    relative = reduce_periodic_exponents(
+        shifts - shifts[anchors], identification_orders(topology.cell)
+    )
+    return identifiers[anchors], np.asarray(relative, dtype=np.int64)
 
 
 def _canonical_periodic_face_key(
@@ -7912,6 +7942,21 @@ def _require_owner_local_periodic_view_current(
             f"{axis_name}_faces",
         )
     )
+    exact_volume, expected_volume = _owner_local_require_periodic_volume(
+        tuple(mesh_data["exact_cell_measures"]),
+        np.asarray(mesh_data["owned"], dtype=np.bool_),
+        periodic_cell,
+        execution_group,
+        f"{axis_name}_volume",
+    )
+    shell_certificate["exact_fundamental_volume"] = (
+        exact_volume.numerator,
+        exact_volume.denominator,
+    )
+    shell_certificate["expected_fundamental_volume"] = (
+        expected_volume.numerator,
+        expected_volume.denominator,
+    )
     shell_certificate["quotient_face_coverage_id"] = face_coverage_id
     cell_ids = np.asarray(mesh_data["cell_ids"], dtype=np.int64)
     cell_key_offsets = np.asarray(mesh_data["cell_key_offsets"], dtype=np.int64)
@@ -8148,16 +8193,36 @@ def _require_owner_local_periodic_view_current(
                 "stored periodic adaptive source candidate",
             )
             return replayed_candidate
-    local_error = None
-    if (
-        topology_id != view.source_topology_id
-        or geometry_id != view.source_geometry_id
-        or periodic_topology_id != view.periodic_topology_id
-        or face_coverage_id != view.periodic_face_coverage_id
-        or canonical_fingerprint(shell_certificate)
-        != canonical_fingerprint(view.periodic_shell_certificate)
-    ):
-        local_error = "Replayed periodic topology, geometry, or shell evidence changed."
+    stored_shell = dict(view.periodic_shell_certificate or {})
+    changed_shell_keys = sorted(
+        key
+        for key in set(shell_certificate) | set(stored_shell)
+        if key not in shell_certificate
+        or key not in stored_shell
+        or canonical_fingerprint(shell_certificate[key])
+        != canonical_fingerprint(stored_shell[key])
+    )
+    changed_components = tuple(
+        name
+        for name, unchanged in (
+            ("topology", topology_id == view.source_topology_id),
+            ("geometry", geometry_id == view.source_geometry_id),
+            ("periodic topology", periodic_topology_id == view.periodic_topology_id),
+            ("face coverage", face_coverage_id == view.periodic_face_coverage_id),
+            (
+                f"shell certificate {changed_shell_keys}",
+                not changed_shell_keys,
+            ),
+        )
+        if not unchanged
+    )
+    local_error = (
+        None
+        if not changed_components
+        else "Replayed periodic topology, geometry, or shell evidence changed: "
+        + ", ".join(changed_components)
+        + "."
+    )
     array_pairs = (
         ("cell_rows", "cell_rows"),
         ("cell_ids", "cell_ids"),
@@ -8388,18 +8453,34 @@ def _require_owner_local_periodic_view_current(
                     )
                 ):
                     raise ValueError("Replayed owner-local mesh connectivity changed.")
-                replay_geometry = (
-                    CellGeometrySpec.power(replay_mesh, source_map)
-                    if source_map is not None
-                    else CellGeometrySpec.affine(replay_mesh)
-                )
-                if (
-                    local_geometry is None
-                    or cell_geometry_id(local_geometry)
-                    != cell_geometry_id(replay_geometry)
-                    or cell_geometry_id(local_geometry) != view.local_geometry_id
+                if local_mesh.periodic_topology is not None and any(
+                    not np.array_equal(stored, replayed)
+                    for stored, replayed in zip(
+                        _canonical_periodic_vertex_orbits(local_mesh),
+                        _canonical_periodic_vertex_orbits(replay_mesh),
+                        strict=True,
+                    )
                 ):
-                    raise ValueError("Replayed owner-local coordinate map changed.")
+                    raise ValueError("Replayed owner-local vertex orbits changed.")
+                # The view's canonical carrier fixes the orbit representatives; the
+                # replayed coordinate map must reproduce its geometry exactly.
+                replay_geometry = (
+                    CellGeometrySpec.power(local_mesh, source_map)
+                    if source_map is not None
+                    else CellGeometrySpec.affine(local_mesh)
+                )
+                if local_geometry is None:
+                    raise ValueError("Replayed owner-local shard lost its geometry.")
+                if cell_geometry_id(local_geometry) != cell_geometry_id(replay_geometry):
+                    raise ValueError(
+                        "Reconstructed owner-local coordinate map differs from its "
+                        "native replay."
+                    )
+                if cell_geometry_id(local_geometry) != view.local_geometry_id:
+                    raise ValueError(
+                        "Reconstructed owner-local coordinate map differs from its "
+                        "stored geometry identity."
+                    )
         except Exception as error:
             local_error = str(error)
     if local_error is None:

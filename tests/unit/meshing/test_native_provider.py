@@ -41,6 +41,7 @@ from phydrax.meshing import (
     VolumeMeshingSpec,
 )
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
 from phydrax.meshing.providers._native_sources import (
     NativeCurveSource,
     NativeImplicitSource,
@@ -150,10 +151,7 @@ def test_native_provider_keeps_analytic_volume_algorithms_distinct() -> None:
 
     restricted = NativeMeshingProvider().plan(source, specification)
     adaptive = NativeMeshingProvider(
-        NativeMeshingOptions(
-            "implicit_adaptive_tetrahedral",
-            implicit_policy=AdaptiveImplicitSurfacePolicy(),
-        )
+        NativeMeshingOptions("implicit_adaptive_tetrahedral")
     ).plan(source, specification)
 
     assert restricted.route == "implicit_restricted_delaunay"
@@ -224,8 +222,17 @@ def test_native_provider_accepts_bounded_implicit_volume_region_and_patch() -> N
         policy=policy,
         source_id=source_id,
     )
+    # The sphere distance field is singular at its centre; the exact profile
+    # proves that singular set lies away from the zero-set cover.
+    profile = AnalyticImplicitProfile(
+        geometry, contract, source_id=source_id, source_revision=source_revision
+    )
     source = NativeImplicitSource(
-        geometry, source_id, source_revision, discovery=discovery
+        geometry,
+        source_id,
+        source_revision,
+        discovery=discovery,
+        authoring_profile=profile,
     )
     boundary_scope = MeshingScope.whole(source, 2)
     region_scope = MeshingScope.whole(source, 3)
@@ -278,7 +285,13 @@ def test_native_provider_accepts_bounded_implicit_volume_region_and_patch() -> N
 
     assert result.certification is not None and result.certification.passed
     assert result.certification.inputs.domain is discovery
-    assert result.certification.inputs.source is source
+    fidelity_source = result.certification.inputs.source
+    assert isinstance(fidelity_source, _NativeImplicitBoundaryQuery)
+    assert (fidelity_source.source_id, fidelity_source.source_revision) == (
+        source_id,
+        source_revision,
+    )
+    assert fidelity_source.adaptive_source.surface is discovery
     assert len(result.zones) == 1
     assert result.zones[0].name == "interior"
     assert result.zones[0].material_id == "fluid"
