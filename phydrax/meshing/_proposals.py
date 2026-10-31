@@ -1362,10 +1362,17 @@ def prepare_mesh_proposal(
         quality_coordinates = candidate.mesh.coordinates
     else:
         restriction = candidate.geometry.restriction_source
+        # Adaptation binds restrictions to the source's retained root, if any.
+        root = source.geometry.restriction_source
+        root_geometry_id, root_topology_id = (
+            (cell_geometry_id(source.geometry), source.mesh.topology_id)
+            if root is None
+            else (root.source_geometry_id, root.source_topology_id)
+        )
         if (
             restriction is None
-            or restriction.source_geometry_id != cell_geometry_id(source.geometry)
-            or restriction.source_topology_id != source.mesh.topology_id
+            or restriction.source_geometry_id != root_geometry_id
+            or restriction.source_topology_id != root_topology_id
             or len(candidate.geometry.elements) != len(candidate.mesh.blocks)
             or any(
                 not isinstance(element, PerCellRestrictedCellGeometryElement)
