@@ -508,9 +508,13 @@ refused with the colliding wall vertices and their locations, so choose
 thicknesses that are small relative to the surface size. Source fidelity covers
 every exterior facet: the grown cells keep their charts, and fixed cells and
 layer side strips take the closest-point charts of their source face. A column
-shared by two faces lies exactly on their common trim. Refinement that cannot
-reach its targets because of the fixed boundary is reported as evidence;
-improvement that leaves unmet quality criteria fails compliance.
+shared by two faces lies exactly on their common trim. The `wall` patch is only
+the exterior layer faces that lie on the wall. A side strip rising from rim edge
+`(a, b)` joins the `facet:` patch of the fixed core polygon holding the tops of
+the columns of `a` and `b`. Strips without such a unique polygon form the
+`layer-side` patch. Refinement that cannot reach its targets because of the fixed
+boundary is reported as evidence; improvement that leaves unmet quality criteria
+fails compliance.
 
 `prepare_periodic_layer_core_source(source, core_vertex_representatives,
 core_vertex_shifts, core_seam_polygon_pairs)` binds source-authored PLC orbits
