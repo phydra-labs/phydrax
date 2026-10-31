@@ -395,11 +395,14 @@ def prepare_compartment_plc(
                         interface_id, first_region, second_region = interface
                         interface_key = interface_id
                         facet_interface_id = interface_id
+                    # Row (positive, negative): the right-hand normal of the
+                    # unreversed loop points from `own` to `other`, so the
+                    # loop turns when `own` is the positive (second) region.
                     sides = (
                         region_index[second_region],
                         region_index[first_region],
                     )
-                    reverse = (first_region == region_ids[own]) ^ reflected
+                    reverse = (second_region == region_ids[own]) ^ reflected
                     facet_name = source_entity_id(
                         source.source_id,
                         source.source_revision,

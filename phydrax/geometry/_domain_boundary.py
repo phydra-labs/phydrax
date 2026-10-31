@@ -81,63 +81,29 @@ def _has_exact_rational_surface_span_source(surface: AbstractSurfacePatch, /) ->
     return _exact_rational_surface_spans(surface) is not None
 
 
-def _source_box_point_gap_upper(
+def _exact_span_point_gap_upper(
     surface: AbstractSurfacePatch,
     parameters: _Point2,
     realized: np.ndarray,
     /,
 ) -> Fraction:
-    domain = surface.parameter_domain
-    lower_values: list[float] = []
-    upper_values: list[float] = []
-    for axis, parameter in enumerate(parameters):
-        lower = fraction_down(parameter)
-        upper = fraction_up(parameter)
-        if lower == upper:
-            lower = float(np.nextafter(lower, -np.inf))
-            upper = float(np.nextafter(upper, np.inf))
-        if domain is not None:
-            domain_lower, domain_upper = domain[0][axis], domain[1][axis]
-            if np.isfinite(domain_lower):
-                exact_lower = Fraction.from_float(float(domain_lower))
-                if parameter < exact_lower:
-                    raise ValueError(
-                        "An exact source point lies below its source domain."
-                    )
-                lower = max(lower, float(domain_lower))
-            if np.isfinite(domain_upper):
-                exact_upper = Fraction.from_float(float(domain_upper))
-                if parameter > exact_upper:
-                    raise ValueError(
-                        "An exact source point lies above its source domain."
-                    )
-                upper = min(upper, float(domain_upper))
-        if (
-            not lower < upper
-            or Fraction.from_float(lower) > parameter
-            or Fraction.from_float(upper) < parameter
-        ):
-            raise ValueError("An exact source point has no finite parameter enclosure.")
-        lower_values.append(lower)
-        upper_values.append(upper)
-    parameter_box = np.asarray((lower_values, upper_values), dtype=np.float64)
-    source_box = np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
+    """Bound a realized corner's distance to its exact rational span source point."""
+    from ._source_interpolation import _exact_rational_surface_point_bounds
+
+    source = _exact_rational_surface_point_bounds(surface, parameters)
     target = np.asarray(realized, dtype=np.float64)
     if (
-        source_box.shape != (2, 3)
-        or not np.all(np.isfinite(source_box))
-        or np.any(source_box[0] > source_box[1])
+        source is None
+        or len(source) != 3
         or target.shape != (3,)
         or not np.all(np.isfinite(target))
     ):
         raise ValueError(
-            "An exact surface source point has no finite ordered source box."
+            "An exact surface source point has no exact rational span enclosure."
         )
     squared = Fraction(0)
-    for axis in range(3):
-        lower = Fraction.from_float(float(source_box[0, axis]))
-        upper = Fraction.from_float(float(source_box[1, axis]))
-        represented = Fraction.from_float(float(target[axis]))
+    for (lower, upper), value in zip(source, target, strict=True):
+        represented = Fraction.from_float(float(value))
         coordinate_error = max(abs(lower - represented), abs(upper - represented))
         squared += coordinate_error * coordinate_error
     return fraction_sqrt_interval(squared)[1]
@@ -251,10 +217,10 @@ def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Poi
                 "Source p-curve endpoints are not exactly represented in binary64."
             )
     else:
-        # One whole native turn returns to its start chart point exactly.
+        # A closed chart loop returns to its start chart point exactly.
         last = (
             use.first
-            if isinstance(use, PatchCurveUse) and use.closes_native_turn()
+            if isinstance(use, PatchCurveUse) and use.closes_chart_loop()
             else use.last
         )
         values = np.asarray(
@@ -1536,7 +1502,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                             )
                         for row, exact_chart in enumerate(exact_charts):
                             endpoint_error = max(
-                                _source_box_point_gap_upper(
+                                _exact_span_point_gap_upper(
                                     surface, exact_point, physical[row, corner]
                                 )
                                 for corner, exact_point in enumerate(exact_chart)

@@ -411,8 +411,10 @@ _DEFERRED_EXPORTS = {
     "SideTraceProvider": "._side_actions",
     "SideTraceQuantity": "._side_actions",
     "AbstractCellLocator": "._cell_locator",
+    "CellInverseRefusal": "._cell_locator",
     "CellLocationResult": "._cell_locator",
     "CellLocationStatus": "._cell_locator",
+    "InverseRefusalReason": "._cell_locator",
     "LocatedCellMap": "._cell_locator",
     "MappedLocationPolicy": "._mapped_locator",
     "PreparedMappedCellMap": "._mapped_locator",
@@ -2666,8 +2668,10 @@ if TYPE_CHECKING:
     )
     from ._cell_locator import (
         AbstractCellLocator,
+        CellInverseRefusal,
         CellLocationResult,
         CellLocationStatus,
+        InverseRefusalReason,
         LocatedCellMap,
     )
     from ._cell_mesh import (
@@ -7119,6 +7123,8 @@ __all__ = [
     "PrescribedGridVelocityPlan",
     "PrescribedGridVelocityResult",
     "CellLocationResult",
+    "CellInverseRefusal",
+    "InverseRefusalReason",
     "AbstractCellLocator",
     "CellLocationStatus",
     "LocatedCellMap",

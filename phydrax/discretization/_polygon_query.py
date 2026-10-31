@@ -6,7 +6,9 @@
 
 Polygon cells are located through deterministic ear-clipped triangulations.
 Exact binary-rational orientation tests establish simple loops and avoid
-star-kernel assumptions; bounded BVH candidates and fixed-size point batches
+star-kernel assumptions; a family whose basis is piecewise linear on the fan
+of a star-kernel witness locates in that fan instead. Bounded BVH candidates
+and fixed-size point batches
 keep the query workspace independent of the number of mesh cells. A family
 supplies local weights through `AbstractPolygonLocalBasis`, while
 `PolygonFieldReconstructionKernel` owns side resolution, pointwise evidence,
@@ -211,9 +213,9 @@ class PolygonMeshLocation(StrictModule):
     """Every containing candidate cell of each located point.
 
     `candidate_cells` is `-1` for a bounded candidate that does not contain the
-    point; `candidate_triangles` is the first containing ear-clipped triangle
-    of each candidate with its `candidate_barycentric` coordinates; and
-    `candidate_triangle_vertices` records that triangle's local polygon slots.
+    point; `candidate_triangles` is the first containing triangle of each
+    candidate with its `candidate_barycentric` coordinates; and
+    `candidate_triangle_vertices` records that triangle's local node slots.
     `candidate_triangle_shared` marks points on an internal triangulation edge.
     """
 
@@ -231,10 +233,14 @@ class PolygonMeshLocation(StrictModule):
 class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
     """Bounded point location in arbitrary simple polygon cells.
 
-    Every boundary loop is validated and triangulated with exact predicates
-    over the binary-rational input coordinates. Point queries use those
-    nonoverlapping triangles and bounded BVH candidates; no star-kernel
-    witness or guessed polygon diagonal is used.
+    Without `witness`, every boundary loop is validated and triangulated with
+    exact predicates over the binary-rational input coordinates; no star-kernel
+    witness or guessed polygon diagonal is used. With `witness` (one point per
+    cell), each cell is subdivided into its fan triangles `(w, v_i, v_{i+1})`,
+    the piecewise-linear pieces of a witness-fan basis; local node slot
+    `width` denotes the witness. A fan cell with a singular, inverted, or
+    ill-conditioned fan triangle is degenerate. Point queries use the
+    nonoverlapping triangles and bounded BVH candidates.
     """
 
     triangle_vertices: Array
@@ -264,6 +270,7 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         maximum_condition: float,
         maximum_candidates: int = 32,
         batch_size: int = 64,
+        witness: ArrayLike | None = None,
     ) -> None:
         points = np.asarray(coordinates)
         cells = np.asarray(cell_vertices, dtype=np.int32)
@@ -276,21 +283,22 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         _validate_locator_inputs(points, cells, arity_, valid)
         if limit <= 0.0 or condition <= 1.0:
             raise ValueError("Polygon location tolerances are invalid.")
-        maximum_triangles = cells.shape[1] - 2
-        triangle_vertices = np.zeros(
-            (cells.shape[0], maximum_triangles, 3), dtype=np.int32
-        )
-        triangle_active = np.zeros((cells.shape[0], maximum_triangles), dtype=np.bool_)
-        for cell in range(cells.shape[0]):
-            if not valid[cell]:
-                continue
-            triangulation = _triangulate_simple_polygon(
-                points, cells[cell, : int(arity_[cell])]
+        width = cells.shape[1]
+        if witness is None:
+            apex = np.zeros((cells.shape[0], 2), dtype=points.dtype)
+            triangle_vertices, triangle_active = _ear_triangles(
+                points, cells, arity_, valid
             )
-            triangle_vertices[cell, : len(triangulation)] = triangulation
-            triangle_active[cell, : len(triangulation)] = True
-        triangle_points = points[
-            cells[np.arange(cells.shape[0])[:, None, None], triangle_vertices]
+        else:
+            apex = np.asarray(witness)
+            if apex.shape != (cells.shape[0], 2) or not np.all(np.isfinite(apex)):
+                raise ValueError(
+                    "Polygon fan witnesses must be finite with shape (cells, 2)."
+                )
+            triangle_vertices, triangle_active = _fan_triangles(arity_, width)
+        nodes = np.concatenate((points[cells], apex[:, None, :]), axis=1)
+        triangle_points = nodes[
+            np.arange(cells.shape[0])[:, None, None], triangle_vertices
         ]
         triangle_origin = triangle_points[:, :, 0, :]
         jacobians = np.stack(
@@ -342,6 +350,7 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
                 "cells": array_tree_fingerprint(cells),
                 "arity": array_tree_fingerprint(arity_),
                 "triangles": array_tree_fingerprint(triangle_vertices),
+                "witness": None if witness is None else array_tree_fingerprint(apex),
                 "cell_valid": array_tree_fingerprint(valid),
                 "tolerance": limit,
                 "maximum_condition": condition,
@@ -450,6 +459,40 @@ class PreparedPolygonMeshLocator(StrictModule, NonTrainableState):
         )
 
 
+def _ear_triangles(
+    points: np.ndarray, cells: np.ndarray, arity: np.ndarray, valid: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Host `(triangle slots, active)` of the exact ear clipping of valid cells."""
+    maximum_triangles = cells.shape[1] - 2
+    triangle_vertices = np.zeros((cells.shape[0], maximum_triangles, 3), dtype=np.int32)
+    triangle_active = np.zeros((cells.shape[0], maximum_triangles), dtype=np.bool_)
+    for cell in range(cells.shape[0]):
+        if not valid[cell]:
+            continue
+        triangulation = _triangulate_simple_polygon(
+            points, cells[cell, : int(arity[cell])]
+        )
+        triangle_vertices[cell, : len(triangulation)] = triangulation
+        triangle_active[cell, : len(triangulation)] = True
+    return triangle_vertices, triangle_active
+
+
+def _fan_triangles(arity: np.ndarray, width: int, /) -> tuple[np.ndarray, np.ndarray]:
+    """Host `(triangle slots, active)` of the witness fans `(width, i, i + 1)`."""
+    slots = np.arange(width, dtype=np.int32)[None, :]
+    active = slots < arity[:, None]
+    following = np.where(slots + 1 < arity[:, None], slots + 1, 0).astype(np.int32)
+    triangle_vertices = np.stack(
+        (
+            np.full_like(following, width),
+            np.broadcast_to(slots, following.shape),
+            following,
+        ),
+        axis=-1,
+    )
+    return triangle_vertices, active
+
+
 def _validate_locator_inputs(
     points: np.ndarray,
     cells: np.ndarray,
@@ -476,7 +519,7 @@ def _validate_locator_inputs(
 
 
 class LocatedPolygonPoints(StrictModule):
-    """Located points with their cell, selected triangle, and local vertex slots.
+    """Located points with their cell, selected triangle, and local node slots.
 
     `barycentric` are the coordinates of `points` in `triangle_vertices` of
     `triangles`; `triangle_inverse` is the selected triangle's inverse
@@ -545,7 +588,7 @@ class PolygonFieldReconstructionKernel(
 ):
     """Located evaluation of one polygon-mesh field through a family basis.
 
-    Every query point is located in ear-clipped triangles of bounded BVH
+    Every query point is located in the locator triangles of bounded BVH
     candidate cells. Values and first derivatives come from the family's local
     basis and padded cell DOF routes. Derivatives across an internal
     triangulation edge are unresolved when that basis lacks continuity.

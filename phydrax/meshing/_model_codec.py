@@ -232,7 +232,7 @@ def _register_model_archive_types() -> None:
         SourceBoundarySamples,
         SurfaceEnvelopeDistanceWitness,
     )
-    from ..geometry._source_fidelity import SourceFidelityCertificate
+    from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ..geometry._sphere_material_atlas import (
         _SphereMaterialFidelityBinding,
         SphereMaterialCellAtlas,
@@ -290,6 +290,7 @@ def _register_model_archive_types() -> None:
         ReconstructedGeometrySourceArchiveRecipe,
         ReconstructionReport,
     )
+    from ..geometry.reconstruction._envelope import SurfaceEnvelopeReproduction
     from ..geometry.reconstruction._normals import NormalEstimationEvidence
     from ..geometry.reconstruction._poisson import (
         PoissonSolveEvidence,
@@ -495,6 +496,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.reconstruction", ReconstructionReport),
         ("phydrax.geometry.reconstruction", ReconstructedGeometrySourceArchiveRecipe),
         ("phydrax.geometry.reconstruction.internal", _ReconstructedTrianglePatch),
+        ("phydrax.geometry.reconstruction.internal", SurfaceEnvelopeReproduction),
         ("phydrax.model.archive", AdaptiveImplicitBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", MeshingDomainArchiveRecipe),
         ("phydrax.model.archive", MeshingDomainBoundarySourceArchiveRecipe),

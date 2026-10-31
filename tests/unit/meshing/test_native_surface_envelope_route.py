@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -467,6 +469,109 @@ def test_envelope_currentness_refuses_a_retained_surface_the_kernel_does_not_rep
     )
     with pytest.raises(ValueError, match="does not reproduce"):
         tampered.require_current()
+
+
+def test_envelope_currentness_trusts_only_a_reproduction_record_of_its_own_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.reconstruction import _envelope
+
+    _, source, *_ = _request()
+    runs: list[int] = []
+    kernel = _envelope.surface_envelope
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        runs.append(1)
+        return kernel(*args, **kwargs)
+
+    monkeypatch.setattr(_envelope, "surface_envelope", counted)
+    # The record the source retained binds its input and output: no kernel run.
+    source.require_current()
+    assert runs == []
+    # A record of other content proves nothing here: the kernel reruns and the
+    # genuine result still reproduces.
+    foreign = _envelope.SurfaceEnvelopeReproduction(
+        input_id=source.reproduction.input_id,
+        output_id=source.reproduction.input_id,
+    )
+    mismatched = eqx.tree_at(lambda envelope: envelope.reproduction, source, foreign)
+    mismatched.require_current()
+    assert runs == [1]
+    # A retained output the record does not bind is refused even though the
+    # record itself is genuine.
+    moved = np.array(source.result.surface_vertices, dtype=np.float64)
+    moved[0, 0] = np.nextafter(moved[0, 0], np.inf)
+    tampered = eqx.tree_at(
+        lambda envelope: envelope.result,
+        source,
+        source.result._replace(surface_vertices=moved, volume_vertices=moved),
+    )
+    with pytest.raises(ValueError, match="does not reproduce"):
+        tampered.require_current()
+    assert runs == [1, 1]
+
+
+def test_envelope_witness_trusts_only_a_reproduction_record_of_its_own_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.reconstruction import _envelope
+
+    _, source, specification, options, contract = _request()
+    construction = prepare_native_surface_envelope(
+        source, specification, options, contract
+    ).execute()
+    mesh, geometry = construction.mesh, construction.geometry
+    query, witness, _ = construction.certification.scoped_fidelity[0]
+    assert isinstance(witness, SurfaceEnvelopeDistanceWitness)
+    assert witness.reproduction is source.reproduction
+    runs: list[int] = []
+    kernel = _envelope.surface_envelope
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        runs.append(1)
+        return kernel(*args, **kwargs)
+
+    monkeypatch.setattr(_envelope, "surface_envelope", counted)
+
+    def rebuilt(
+        record: _envelope.SurfaceEnvelopeReproduction | None,
+        envelope_vertices: np.ndarray,
+    ) -> SurfaceEnvelopeDistanceWitness:
+        return SurfaceEnvelopeDistanceWitness(
+            mesh_id=witness.mesh_id,
+            geometry_id=witness.geometry_id,
+            topology_id=witness.topology_id,
+            source_id=witness.source_id,
+            source_revision=witness.source_revision,
+            source_query_id=witness.source_query_id,
+            offset=witness.offset,
+            spacing=witness.spacing,
+            certificate_spacing=witness.certificate_spacing,
+            bounds=witness.bounds,
+            envelope_vertices=envelope_vertices,
+            envelope_triangles=witness.envelope_triangles,
+            target_vertex_global_ids=witness.target_vertex_global_ids,
+            target_facet_global_ids=witness.target_facet_global_ids,
+            reproduction=record,
+        )
+
+    # The retained record binds the witnessed content: no kernel run.
+    witness.require_current(mesh, geometry, query)
+    assert runs == []
+    # A record of other content proves nothing: the kernel reruns and the
+    # genuine envelope still reproduces.
+    foreign = _envelope.SurfaceEnvelopeReproduction(
+        input_id=source.reproduction.input_id,
+        output_id=source.reproduction.input_id,
+    )
+    rebuilt(foreign, witness.envelope_vertices).require_current(mesh, geometry, query)
+    assert runs == [1]
+    # A witnessed envelope the genuine record does not bind is refused.
+    moved = np.array(witness.envelope_vertices, dtype=np.float64)
+    moved[0, 0] = np.nextafter(moved[0, 0], np.inf)
+    with pytest.raises(ValueError, match="do not reproduce"):
+        rebuilt(source.reproduction, moved).require_current(mesh, geometry, query)
+    assert runs == [1, 1]
 
 
 def test_surface_envelope_source_refuses_an_insufficient_distance_bound() -> None:

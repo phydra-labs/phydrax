@@ -597,11 +597,11 @@ def _use_chart_point(
     parameter: Fraction,
     /,
 ) -> tuple[Fraction, Fraction]:
-    # One whole native turn returns to its start chart point exactly.
+    # A use closing its chart loop returns to its start chart point exactly.
     if (
         parameter == 1
         and isinstance(use, domain_owner.PatchCurveUse)
-        and use.closes_native_turn()
+        and use.closes_chart_loop()
     ):
         parameter = Fraction(0)
     native = float(_use_source_parameter(use, parameter))
@@ -739,11 +739,11 @@ def _chart_inputs(
                     row = point_row(uv)
                     rows.append(row)
                     uv_values.append(uv)
-                    # The end of one whole native turn is its start point; the
+                    # The end of a closed chart loop is its start point; the
                     # shared row records the start parameter.
                     recorded = (
                         Fraction(0)
-                        if parameter == 1 and use.closes_native_turn()
+                        if parameter == 1 and use.closes_chart_loop()
                         else parameter
                     )
                     previous_parameter = point_curve_parameters.get((row, use.curve))
@@ -1498,7 +1498,7 @@ def _make_chart_mesh(
         use.curve
         for loop in domain.patches[patch].loops
         for use in loop
-        if isinstance(use, domain_owner.PatchCurveUse) and use.closes_native_turn()
+        if isinstance(use, domain_owner.PatchCurveUse) and use.closes_chart_loop()
     }
     return _ChartMesh(
         patch,

@@ -95,7 +95,7 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryPointWitness,
     SurfaceEnvelopeDistanceWitness,
 )
-from ..geometry._source_fidelity import SourceFidelityWitness
+from ..geometry._source_fidelity_certificate import SourceFidelityWitness
 from ..geometry._volume_material_deformation import (
     MaterialReferenceDeclaration,
     VolumeMaterialDeformation,
@@ -4465,6 +4465,7 @@ def _retarget_fidelity_witness(
             envelope_triangles=np.asarray(witness.envelope_triangles),
             target_vertex_global_ids=np.asarray(witness.target_vertex_global_ids),
             target_facet_global_ids=np.asarray(witness.target_facet_global_ids),
+            reproduction=witness.reproduction,
         )
     raise TypeError("No transition ancestry rule accepts this source fidelity witness.")
 

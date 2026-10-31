@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from ..geometry._global_embedding import GlobalEmbeddingCertificate
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import SourceBoundaryQuery
-    from ..geometry._source_fidelity import SourceFidelityWitness
+    from ..geometry._source_fidelity_certificate import SourceFidelityWitness
     from ..geometry._surface_source_support import SurfaceSourceCharts
     from ..geometry.multiregion_surface import MultiRegionSurfaceTopology
     from ..geometry.surface import SurfaceModel

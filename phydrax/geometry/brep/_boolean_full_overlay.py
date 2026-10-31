@@ -45,6 +45,7 @@ from ._boolean_arrangement import (
     FaceOwner,
     intersect_arc_pair,
     joint_root_parameter_image,
+    lift_source_edge_arc,
     overlap,
     periodic_transition,
     propagate_branch_cuts,
@@ -52,6 +53,8 @@ from ._boolean_arrangement import (
     reconstruct_region_solids,
     reconstruct_solids,
     source_arcs,
+    source_pcurve_image,
+    source_vertex_node,
 )
 from ._boolean_cells import (
     extract_face_arrangement_cells,
@@ -90,6 +93,8 @@ from ._boolean_material import (
 from ._carrier_pieces import carrier_payload
 from ._correspondence import exact_source_lift, native_edge_pcurve
 from ._intersection import (
+    _straight_revolution,
+    exact_surface_point_parameters,
     intersect_surface_regions,
     SurfaceIntersectionResult,
     TrimIntersectionRoot,
@@ -106,6 +111,7 @@ from ._patches import AbstractCurve, AbstractSurfacePatch, PlanePatch
 from ._projection import prepare_brep_projection
 from ._projection_contracts import brep_entity_id
 from ._root_bindings import BRepCurveSurfaceLift, BRepRootSupport, BRepVertexRoot
+from ._source_correspondence import _affine_curve_coefficients
 
 
 type JointOwners = tuple[FaceOwner, FaceOwner, FaceOwner]
@@ -262,6 +268,84 @@ def _source_region(
     return state.face_region(owner)
 
 
+def _exact_vertex_point(
+    model: BRepModel, vertex: int, /
+) -> tuple[Fraction, Fraction, Fraction] | None:
+    """A source vertex as the exact end point of an incident straight edge."""
+    geometry = model.geometry
+    if geometry is None:
+        return None
+    ranges = np.asarray(geometry.edge_ranges)
+    for edge, ends in enumerate(geometry.edge_vertices):
+        if vertex not in ends or geometry.edge_curves[edge] < 0:
+            continue
+        curve = geometry.curves[geometry.edge_curves[edge]]
+        if not isinstance(curve, AbstractCurve) or curve.ambient_dimension != 3:
+            continue
+        coefficients = _affine_curve_coefficients(curve, (Fraction(0),) * 3)
+        if coefficients is None or not all(
+            isinstance(value, Fraction) for vector in coefficients for value in vector
+        ):
+            continue
+        origin, direction = cast(tuple[tuple[Fraction, ...], ...], coefficients)
+        parameter = Fraction.from_float(
+            float(ranges[edge][0 if ends[0] == vertex else 1])
+        )
+        return cast(
+            tuple[Fraction, Fraction, Fraction],
+            tuple(a + parameter * b for a, b in zip(origin, direction, strict=True)),
+        )
+    return None
+
+
+def _branch_end_vertices(
+    state: Arrangement, curve: IntersectionCurve, pair: FacePair, /
+) -> dict[int, tuple[int, int]]:
+    """Branch end nodes proved to be source vertices of a generating face.
+
+    A node box certifies the unique branch point on its fixed coordinate slice.
+    A source vertex whose exact point lies on both surfaces, whose exact fixed
+    coordinate is the node value, and whose parameters lie in the node box is
+    therefore that branch point.
+    """
+    ends: dict[int, tuple[int, int]] = {}
+    if curve.closed:
+        return ends
+    for node in (0, curve.num_charts):
+        axis = int(curve.node_axes[node])
+        value = Fraction.from_float(float(curve.node_values[node]))
+        lower = np.asarray(curve.node_lower[node], dtype=np.float64)
+        upper = np.asarray(curve.node_upper[node], dtype=np.float64)
+        for owner in pair:
+            model = state.models[owner[0]]
+            for vertex in sorted(
+                {
+                    end
+                    for edge in model.topology.face_edges[owner[1]]
+                    for end in model.geometry.edge_vertices[edge]
+                }
+                if model.geometry is not None
+                else ()
+            ):
+                point = _exact_vertex_point(model, vertex)
+                if point is None:
+                    continue
+                sides = [
+                    exact_surface_point_parameters(region, point)
+                    for region in (curve.first, curve.second)
+                ]
+                if sides[0] is None or sides[1] is None:
+                    continue
+                box = np.concatenate((sides[0][0], sides[1][0]), axis=1)
+                fixed = (*sides[0][1], *sides[1][1])[axis]
+                if fixed == value and np.all(lower <= box[0]) and np.all(box[1] <= upper):
+                    ends[node] = owner[0], vertex
+                    break
+            if node in ends:
+                break
+    return ends
+
+
 def _register_branches(
     state: Arrangement,
     result: SurfaceIntersectionResult,
@@ -272,6 +356,7 @@ def _register_branches(
         # On a side where the branch is a proved source edge, that edge's
         # existing arc is the branch; no duplicate branch arc is created.
         edges = state.branch_source_edges.get(curve.branch_id, {})
+        ends = _branch_end_vertices(state, curve, pair)
         boundaries = (
             0,
             *(
@@ -282,10 +367,23 @@ def _register_branches(
             curve.num_charts,
         )
         for first, last in zip(boundaries[:-1], boundaries[1:], strict=True):
-            if pair[0] not in edges:
-                branch_arc(state, curve, pair[0], "first", first, last, owners=pair)
-            if pair[1] not in edges:
-                branch_arc(state, curve, pair[1], "second", first, last, owners=pair)
+            for owner, side in ((pair[0], "first"), (pair[1], "second")):
+                if owner in edges:
+                    continue
+                branch_arc(
+                    state,
+                    curve,
+                    owner,
+                    side,
+                    first,
+                    last,
+                    owners=pair,
+                    source_vertices={
+                        node: source_vertex_node(state, owner, vertex)
+                        for node, vertex in ends.items()
+                        if node in (first, last)
+                    },
+                )
 
 
 class _EdgeLift(StrictModule):
@@ -418,13 +516,18 @@ def _subarc_in_box(
     relative_resolution: float,
     /,
 ) -> bool:
-    """Find a source-edge subarc inside a chart box or refuse at resolution."""
+    """Find a source-edge subarc inside a chart box or refuse at resolution.
+
+    A piece that only touches a box at its boundary may stay undecided down to
+    resolution while another piece lies inside; one contained piece decides.
+    """
     pending = [(first, last)]
     scale = max(1.0, abs(last - first))
     resolution = max(
         relative_resolution * scale,
         64.0 * np.finfo(np.float64).eps * max(1.0, abs(first), abs(last)),
     )
+    undecided = False
     while pending:
         lower, upper = pending.pop()
         image = np.concatenate(
@@ -443,10 +546,13 @@ def _subarc_in_box(
             continue
         middle = lower + 0.5 * (upper - lower)
         if upper - lower <= resolution or not lower < middle < upper:
-            raise BRepBooleanFailure(
-                "BRepBoolean.source_edge_branch remains unresolved at parameter resolution"
-            )
+            undecided = True
+            continue
         pending.extend(((lower, middle), (middle, upper)))
+    if undecided:
+        raise BRepBooleanFailure(
+            "BRepBoolean.source_edge_branch remains unresolved at parameter resolution"
+        )
     return False
 
 
@@ -540,9 +646,9 @@ def _without_source_edge_branches(
     )
     kept = []
     for curve in result.curves:
-        on_first = next(
+        first_lift = next(
             (
-                lift.edge
+                lift
                 for lift in first_edges
                 if _branch_is_edge(
                     curve, lift, state.policy.intersection.relative_resolution
@@ -550,9 +656,9 @@ def _without_source_edge_branches(
             ),
             None,
         )
-        on_second = next(
+        second_lift = next(
             (
-                lift.edge
+                lift
                 for lift in second_edges
                 if _branch_is_edge(
                     curve, lift, state.policy.intersection.relative_resolution
@@ -560,7 +666,20 @@ def _without_source_edge_branches(
             ),
             None,
         )
+        on_first = None if first_lift is None else first_lift.edge
+        on_second = None if second_lift is None else second_lift.edge
         if on_first is not None and on_second is not None:
+            continue
+        # A source edge of one face lying on the other surface (an edge on a
+        # cylinder generator) is that face pair's whole branch: its exact lift
+        # becomes the other face's arc, shared by every face of the edge.
+        if first_lift is not None and lift_source_edge_arc(
+            state, b, first_lift.edge, first_lift.second_pcurve
+        ):
+            continue
+        if second_lift is not None and lift_source_edge_arc(
+            state, a, second_lift.edge, second_lift.first_pcurve
+        ):
             continue
         kept.append(curve)
         for owner, edge in ((a, on_first), (b, on_second)):
@@ -840,6 +959,123 @@ def _plane_rectangle_line_segment(
     return min(projections), max(projections)
 
 
+def _coaxial_faces_meet_on_shared_circle(
+    model: BRepModel,
+    faces: tuple[int, int],
+    regions: tuple[SurfaceRegion, SurfaceRegion],
+    /,
+) -> bool:
+    """Prove two coaxial straight revolution faces meet only on their shared circles.
+
+    Along the common axis each face has a squared radius quadratic in the
+    axial height, so their surfaces meet exactly at the real roots of the
+    difference. Every root inside both faces' height ranges must be the exact
+    height and radius of a circle edge the two faces share; branches on a
+    third face then meet only at that edge's roots with it, which spatial
+    events already cut into each branch at one vertex.
+    """
+    from ...discretization._exact_algebraic_geometry import (
+        coefficient_interval,
+        RadicalElement,
+        rational_coefficient,
+    )
+    from .._rational import rational_cross, rational_dot
+    from ._patches import CircleCurve
+
+    frames = [_straight_revolution(region.patch) for region in regions]
+    if frames[0] is None or frames[1] is None:
+        return False
+    first, second = frames[0], frames[1]
+    offset = tuple(second.origin[i] - first.origin[i] for i in range(3))
+    if any(rational_cross(first.axis, second.axis)) or any(
+        rational_cross(offset, first.axis)
+    ):
+        return False
+    quadratics = []
+    ranges = []
+    for frame, region in zip(frames, regions, strict=True):
+        assert frame is not None
+        # Height h along the first axis: h = c + e (a0 + a1 v), so the scale
+        # s = 1 + slope v is affine in h: s = p + q h.
+        shift = rational_dot(
+            tuple(frame.origin[i] - first.origin[i] for i in range(3)), first.axis
+        )
+        sense = rational_dot(frame.axis, first.axis)
+        rate = frame.slope / (sense * frame.axial_rate)
+        constant = 1 - rate * (shift + sense * frame.axial_origin)
+        squared = rational_dot(frame.radial, frame.radial)
+        quadratics.append(
+            (squared * rate * rate, 2 * squared * constant * rate, squared * constant**2)
+        )
+        heights = [
+            shift + sense * (frame.axial_origin + frame.axial_rate * v)
+            for v in (
+                Fraction.from_float(float(region.parameter_box[edge, 1]))
+                for edge in range(2)
+            )
+        ]
+        ranges.append((min(heights), max(heights)))
+    difference = tuple(a - b for a, b in zip(quadratics[0], quadratics[1], strict=True))
+    if all(value == 0 for value in difference):
+        return False
+    lower = max(ranges[0][0], ranges[1][0])
+    upper = min(ranges[0][1], ranges[1][1])
+    geometry = model.geometry
+    assert geometry is not None
+    circles = []
+    for edge, edge_faces in enumerate(geometry.topology.edge_faces):
+        if set(edge_faces) != set(faces) or geometry.edge_curves[edge] < 0:
+            continue
+        curve = geometry.curves[geometry.edge_curves[edge]]
+        if not isinstance(curve, CircleCurve) or not all(
+            isinstance(value, Fraction)
+            for value in (*curve.center_exact, curve.radius_exact)
+        ):
+            continue
+        center = cast(tuple[Fraction, ...], curve.center_exact)
+        relative = tuple(center[i] - first.origin[i] for i in range(3))
+        if any(rational_cross(relative, first.axis)):
+            continue
+        circles.append(
+            (rational_dot(relative, first.axis), cast(Fraction, curve.radius_exact) ** 2)
+        )
+
+    def shared(height: Fraction, /) -> bool:
+        squared = (
+            quadratics[0][0] * height * height
+            + quadratics[0][1] * height
+            + quadratics[0][2]
+        )
+        return any(height == h and squared == r for h, r in circles)
+
+    a, b, c = difference
+    if a == 0:
+        root = -c / b
+        return not (lower <= root <= upper) or shared(root)
+    discriminant = b * b - 4 * a * c
+    if discriminant < 0:
+        return True
+    if discriminant == 0:
+        root = -b / (2 * a)
+        return not (lower <= root <= upper) or shared(root)
+    radical = RadicalElement.sqrt(discriminant)
+    for side in (-1, 1):
+        root_value = (-b + side * radical) / (2 * a)
+        try:
+            rational = rational_coefficient(root_value, role="common height")
+        except ValueError:
+            rational = None
+        if rational is not None:
+            if lower <= rational <= upper and not shared(rational):
+                return False
+            continue
+        root_lower, root_upper = coefficient_interval(root_value, bits=128)
+        if not (root_upper < lower or root_lower > upper):
+            # An irrational common height is no rational shared circle.
+            return False
+    return True
+
+
 def _branches_meet_on_shared_edge(
     state: Arrangement, owner: FaceOwner, first: Arc, second: Arc, /
 ) -> bool:
@@ -869,6 +1105,10 @@ def _branches_meet_on_shared_edge(
     regions = state.face_region(other_a), state.face_region(other_b)
     if geometry is None:
         return False
+    if all(_straight_revolution(region.patch) is not None for region in regions):
+        return _coaxial_faces_meet_on_shared_circle(
+            model, (other_a[1], other_b[1]), regions
+        )
     normals = []
     offsets = []
     for region in regions:
@@ -935,6 +1175,69 @@ def _branches_meet_on_shared_edge(
     return False
 
 
+def _lifted_arc_meets_only_at_vertices(
+    state: Arrangement, owner: FaceOwner, first: Arc, second: Arc, /
+) -> bool:
+    """Prove a lifted source edge meets another arc of its face only at shared ends.
+
+    Against a branch of ``owner`` with a plane partner face, the edge lies on
+    ``owner``'s surface, so it meets the branch exactly where its line meets
+    that plane: the exact rational solution must be absent or an edge end the
+    branch also ends on. Any other pair must have disjoint chart boxes.
+    """
+    from .._rational import rational_cross, rational_dot, rational_vector
+
+    lifted, other = (first, second) if first.lifted_edge is not None else (second, first)
+    if other.branch is None:
+        boxes = [
+            source_pcurve_image(arc.trim, *_arc_interval(arc)) for arc in (lifted, other)
+        ]
+        return bool(
+            np.any(boxes[0][1] < boxes[1][0]) or np.any(boxes[1][1] < boxes[0][0])
+        )
+    partners = [face for face in state.branch_owners[other.token] if face != owner]
+    if len(partners) != 1 or lifted.curve is None or lifted.lifted_edge is None:
+        return False
+    plane = state.models[partners[0][0]].patches[partners[0][1]]
+    line = _affine_curve_coefficients(lifted.curve, (Fraction(0),) * 3)
+    if not isinstance(plane, PlanePatch) or line is None:
+        return False
+    origin = rational_vector(np.asarray(plane.origin))
+    normal = rational_cross(
+        rational_vector(np.asarray(plane.first_axis)),
+        rational_vector(np.asarray(plane.second_axis)),
+    )
+    if not all(isinstance(value, Fraction) for vector in line for value in vector):
+        return False
+    base, direction = cast(tuple[tuple[Fraction, ...], ...], line)
+    rate = rational_dot(normal, direction)
+    gap = rational_dot(normal, tuple(o - b for o, b in zip(origin, base, strict=True)))
+    if rate == 0:
+        # Parallel to the plane: disjoint unless the edge lies in it.
+        return gap != 0
+    parameter = gap / rate
+    model_index, edge = lifted.lifted_edge
+    geometry = state.models[model_index].geometry
+    assert geometry is not None
+    bounds = [Fraction.from_float(float(value)) for value in geometry.edge_ranges[edge]]
+    if parameter < bounds[0] or parameter > bounds[1]:
+        return True
+    if parameter not in bounds:
+        return False
+    vertex = geometry.edge_vertices[edge][bounds.index(parameter)]
+    shared = f"source:{model_index}:vertex:{vertex}"
+    return any(cut.vertex == shared for cut in state.cuts[other.token])
+
+
+def _arc_interval(arc: Arc, /) -> tuple[float, float]:
+    domain = arc.trim.parameter_domain
+    if domain is None:
+        raise BRepBooleanFailure(
+            "BRepBoolean.arc.trim must retain a finite parameter domain", (arc.token,)
+        )
+    return float(domain[0]), float(domain[1])
+
+
 def _full_trim_events(
     state: Arrangement,
 ) -> None:
@@ -954,6 +1257,13 @@ def _full_trim_events(
                 if _branches_meet_on_shared_edge(state, owner, first, second):
                     continue
             if tuple(sorted((first.token, second.token))) in state.spatial_pairs:
+                continue
+            if first.lifted_edge is not None or second.lifted_edge is not None:
+                if not _lifted_arc_meets_only_at_vertices(state, owner, first, second):
+                    raise BRepBooleanFailure(
+                        "BRepBoolean.lifted_edge must meet other arcs only at its source vertices",
+                        (first.token, second.token),
+                    )
                 continue
             result = intersect_arc_pair(
                 first,
@@ -1145,6 +1455,33 @@ def _boundary_facts(
                     source.vertex_ids, source.vertex_roots, strict=True
                 ):
                     add_source_vertex(owner[0], entity, binding)
+        for arc in state.arcs[owner]:
+            if arc.lifted_edge is None:
+                continue
+            # A lifted source edge publishes that same edge: its lineage is the
+            # authored coedge of a face carrying the edge.
+            model_index, edge = arc.lifted_edge
+            source_model = state.models[model_index]
+            source_geometry = source_model.geometry
+            assert source_geometry is not None
+            face = source_model.topology.edge_faces[edge][0]
+            coedge = next(
+                coedge
+                for loop in source_geometry.face_loops[face]
+                for coedge in loop
+                if source_geometry.coedge_edges[coedge] == edge
+            )
+            face_identity = prove_surface_correspondence(
+                source_model.patches[face], source_model.patches[face]
+            )
+            if face_identity is None:
+                raise BRepBooleanFailure(
+                    "BRepBoolean.source_chart must have an identity chart correspondence; got no correspondence",
+                    (str((model_index, face)),),
+                )
+            sources[arc.token] = CoincidentFaceArc(
+                source_model, face, coedge, face_identity
+            )
     for coverage in coverages:
         sources.update(coverage.overlay_sources)
         for source in coverage.overlay_sources.values():
