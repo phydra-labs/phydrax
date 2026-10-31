@@ -20,6 +20,7 @@ from typing import (
 )
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -207,6 +208,25 @@ class ReconstructedGeometrySourceArchiveRecipe:
             raise ValueError(
                 "A reconstruction archive recipe requires its source identity."
             )
+
+
+# Archive packing flattens the recipe to find its arrays; an unregistered
+# dataclass would be one opaque leaf and its mesh and ID arrays would be dropped.
+jax.tree_util.register_dataclass(
+    ReconstructedGeometrySourceArchiveRecipe,
+    data_fields=(
+        "source",
+        "report",
+        "persistent_vertex_ids",
+        "persistent_edge_ids",
+        "persistent_facet_ids",
+    ),
+    meta_fields=(
+        "persistent_region_id",
+        "expected_source_id",
+        "expected_source_revision",
+    ),
+)
 
 
 def _persistent_int64_id(payload: object, /) -> int:
@@ -1479,7 +1499,12 @@ def _terrain_points(
         x_grid, y_grid = np.meshgrid(x_values, y_values)
         points = np.column_stack((x_grid.ravel(), y_grid.ravel(), values.ravel()))
     else:
-        points = _validated_points(values, 3)
+        if values.ndim != 2:
+            raise ValueError("Terrain points must have shape (num_points, 3).")
+        # Terrain triangulates in the plane: one triangle needs three samples.
+        points = values
+        if points.shape[0] < 3:
+            raise ValueError("A terrain needs at least three samples to triangulate.")
     if not np.all(np.isfinite(points)):
         raise ValueError("Terrain samples must all be finite.")
     return points

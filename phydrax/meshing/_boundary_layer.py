@@ -7,9 +7,11 @@
 The front is a column complex. Every wall vertex carries one column per smooth
 sector (sectors split at convex ridges under the FAN corner policy), fan columns
 interpolate across convex ridges, and corner patches close vertices where three
-or more ridges meet. Columns point along the visibility-optimal direction, the
-normalized minimum-norm point of the convex hull of the sector's face normals,
-solved as a simplex-constrained QP by ``phydrax.optim``. Column heights follow
+or more ridges meet. Columns point along the visibility-optimal direction
+``argmax_{|d|=1} min_i n_i.d`` over the sector's face normals: the normalized
+minimum-norm point of their convex hull, found exactly by enumerating the hull
+faces of at most three normals and certified by a closed weak-duality gap.
+Column heights follow
 the explicit schedule, scaled by smooth concave curvature and by BVH-nearest
 medial-crossing probes. Every layer is certified by Bernstein validity and by
 exact-predicate intersection of its cell faces against earlier layers, the wall,
@@ -21,11 +23,11 @@ wall vertices and locations.
 from __future__ import annotations
 
 import functools
+import itertools
 from dataclasses import dataclass
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -48,13 +50,6 @@ from ..discretization import (
     point_triangle_distance,
 )
 from ..geometry._source_identity import source_entity_id
-from ..optim import (
-    AcceleratedProximalGradient,
-    OptimizationStatus,
-    OptimizationTermination,
-    proximal_minimize,
-    SimplexIndicator,
-)
 from ..typing import checked
 from ._association import _incidence_pairs, GeometryAssociation
 from ._audit_topology import _orient3d, _triangle_pairs_intersect
@@ -117,7 +112,6 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
     the cap is a triangle surface for simplex core fill.
     """
 
-    visibility_iterations: int = eqx.field(static=True)
     proximity_samples: int = eqx.field(static=True)
     proximity_fraction: float = eqx.field(static=True)
     curvature_fraction: float = eqx.field(static=True)
@@ -130,7 +124,6 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        visibility_iterations: int = 2000,
         proximity_samples: int = 16,
         proximity_fraction: float = 0.8,
         curvature_fraction: float = 0.8,
@@ -139,15 +132,10 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
         simplex_cap: bool = True,
         validity: CellValidityPolicy | None = None,
     ) -> None:
-        counts = (
-            ("visibility_iterations", visibility_iterations),
-            ("proximity_samples", proximity_samples),
-        )
-        for name, value in counts:
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise TypeError(f"{name} must be an integer.")
-            if value < 1:
-                raise ValueError(f"{name} must be positive.")
+        if isinstance(proximity_samples, bool) or not isinstance(proximity_samples, int):
+            raise TypeError("proximity_samples must be an integer.")
+        if proximity_samples < 1:
+            raise ValueError("proximity_samples must be positive.")
         fractions = {
             name: finite_real_scalar(value, name)
             for name, value in (
@@ -168,7 +156,6 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
         validity_ = CellValidityPolicy() if validity is None else validity
         if not isinstance(validity_, CellValidityPolicy):
             raise TypeError("validity must be CellValidityPolicy or None.")
-        self.visibility_iterations = visibility_iterations
         self.proximity_samples = proximity_samples
         self.proximity_fraction = fractions["proximity_fraction"]
         self.curvature_fraction = fractions["curvature_fraction"]
@@ -179,7 +166,6 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "boundary-layer-policy",
-                "visibility_iterations": visibility_iterations,
                 "proximity_samples": proximity_samples,
                 **fractions,
                 "medial_tolerance": tolerance,
@@ -219,7 +205,6 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     rim_vertex_count: int = eqx.field(static=True)
     minimum_visibility: float = eqx.field(static=True)
     maximum_stretch: float = eqx.field(static=True)
-    unconverged_visibility_count: int = eqx.field(static=True)
     collision_policy: BoundaryLayerCollisionPolicy = eqx.field(static=True)
     predicted_collision_vertex_count: int = eqx.field(static=True)
     detected_collision_count: int = eqx.field(static=True)
@@ -290,7 +275,6 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             "convex_ridge_count",
             "concave_ridge_count",
             "rim_vertex_count",
-            "unconverged_visibility_count",
             "predicted_collision_vertex_count",
             "detected_collision_count",
             "resolution_iterations",
@@ -349,7 +333,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     column_vertex_sources: Array
     column_vertex_ids: Array
     column_vertex_identity: tuple[str, ...] = eqx.field(static=True)
-    column_source_geometry_entity_ids: tuple[tuple[str, ...], ...] = eqx.field(static=True)
+    column_source_geometry_entity_ids: tuple[tuple[str, ...], ...] = eqx.field(
+        static=True
+    )
     column_source_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     column_source_face_offsets: Array
     column_source_face_ids: Array
@@ -363,7 +349,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     front_row_ids: Array
     front_row_identity: tuple[str, ...] = eqx.field(static=True)
     front_row_source_piece_indices: Array
-    front_row_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...] = eqx.field(static=True)
+    front_row_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...] = (
+        eqx.field(static=True)
+    )
     front_row_column_ids: Array
     front_row_source_entity_ids: tuple[str, ...] = eqx.field(static=True)
     front_row_source_entity_kinds: tuple[str, ...] = eqx.field(static=True)
@@ -375,7 +363,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     vertex_column_parent_ids: Array
     vertex_column_parent_weights: Array
     vertex_column_ids: Array
-    vertex_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...] = eqx.field(static=True)
+    vertex_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...] = eqx.field(
+        static=True
+    )
     source_wall: CellMesh
     wall_association: GeometryAssociation | None
     validity: CellValidityCertificate
@@ -443,7 +433,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
         )
         if not np.array_equal(cell_global_ids, np.sort(cell_global_ids)):
-            raise ValueError("Boundary-layer cell banks must be stored in global-cell-ID order.")
+            raise ValueError(
+                "Boundary-layer cell banks must be stored in global-cell-ID order."
+            )
         if wall_association is not None:
             if not isinstance(wall_association, GeometryAssociation):
                 raise TypeError("wall_association must be GeometryAssociation or None.")
@@ -451,18 +443,24 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             if (
                 wall_association.target_entity_set_id != vertex_set.entity_set_id
                 or not np.array_equal(
-                    np.sort(np.asarray(wall_association.target_global_ids, dtype=np.int64)),
+                    np.sort(
+                        np.asarray(wall_association.target_global_ids, dtype=np.int64)
+                    ),
                     np.sort(np.asarray(vertex_set.entity_ids, dtype=np.int64)),
                 )
             ):
-                raise ValueError("wall_association must bind the exact source wall vertices.")
+                raise ValueError(
+                    "wall_association must bind the exact source wall vertices."
+                )
         raw_columns = np.asarray(column_index)
         if (
             raw_columns.shape != (cell_count,)
             or not np.issubdtype(raw_columns.dtype, np.integer)
             or np.any(raw_columns < 0)
         ):
-            raise ValueError("column_index must give every layer cell a nonnegative column ID.")
+            raise ValueError(
+                "column_index must give every layer cell a nonnegative column ID."
+            )
         columns = raw_columns.astype(np.int64, copy=False)
         source_vertex_ids = np.asarray(source_wall.vertex_global_ids, dtype=np.int64)
         column_sources = np.asarray(column_vertex_sources)
@@ -476,11 +474,15 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or np.unique(column_ids).size != column_ids.size
             or np.any(~np.isin(column_sources, source_vertex_ids))
         ):
-            raise ValueError("Column roots and identities must name unique source-wall columns.")
+            raise ValueError(
+                "Column roots and identities must name unique source-wall columns."
+            )
         column_sources = column_sources.astype(np.int64, copy=False)
         column_ids = column_ids.astype(np.int64, copy=False)
         if not np.array_equal(np.sort(column_ids), np.arange(column_ids.size)):
-            raise ValueError("Column IDs must be canonical dense ranks of source identities.")
+            raise ValueError(
+                "Column IDs must be canonical dense ranks of source identities."
+            )
         column_keys = tuple(column_vertex_identity)
         column_geometry_ids = tuple(
             tuple(str(value) for value in row)
@@ -498,7 +500,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or len(column_kinds) != column_ids.size
             or any(value not in ("sector", "fan", "corner") for value in column_kinds)
         ):
-            raise ValueError("Column source descriptors must align with the column ID bank.")
+            raise ValueError(
+                "Column source descriptors must align with the column ID bank."
+            )
         face_offsets = np.asarray(column_source_face_offsets)
         face_ids = np.asarray(column_source_face_ids)
         face_orientations = np.asarray(column_source_face_orientations)
@@ -543,7 +547,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         parent_sums = np.asarray(
             [
                 np.sum(parent_weights[start:stop])
-                for start, stop in zip(parent_offsets[:-1], parent_offsets[1:], strict=True)
+                for start, stop in zip(
+                    parent_offsets[:-1], parent_offsets[1:], strict=True
+                )
             ],
             dtype=np.float64,
         )
@@ -557,7 +563,10 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         row_kinds = tuple(str(value) for value in front_row_source_entity_kinds)
         row_global_ids = np.asarray(front_row_source_global_ids)
         row_orientations = np.asarray(front_row_orientations)
-        row_occurrences = tuple(tuple(tuple(path) for path in row) for row in front_row_source_occurrence_paths)
+        row_occurrences = tuple(
+            tuple(tuple(path) for path in row)
+            for row in front_row_source_occurrence_paths
+        )
         row_count = row_ids.size
         if (
             row_ids.ndim != 1
@@ -587,7 +596,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         ):
             raise ValueError("Front-row ancestry must bind every oriented source row.")
         if not np.array_equal(np.sort(row_ids), np.arange(row_count)):
-            raise ValueError("Front-row IDs must be canonical dense ranks of source identities.")
+            raise ValueError(
+                "Front-row IDs must be canonical dense ranks of source identities."
+            )
         entity_ids_by_kind = {
             "face": np.asarray(source_wall.entity_set(2).entity_ids, dtype=np.int64),
             "edge": np.asarray(source_wall.entity_set(1).entity_ids, dtype=np.int64),
@@ -597,7 +608,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             row_kinds, row_global_ids, row_source_ids, row_orientations, strict=True
         ):
             if int(identifier) not in entity_ids_by_kind[kind]:
-                raise ValueError("Front-row source IDs must resolve in the exact source-wall entity set.")
+                raise ValueError(
+                    "Front-row source IDs must resolve in the exact source-wall entity set."
+                )
             expected_key = source_entity_id(
                 source_wall.mesh_id,
                 str(source_wall.numeric_version),
@@ -605,22 +618,31 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
                 int(identifier),
             )
             if entity_key != expected_key:
-                raise ValueError("Front-row source entity IDs must bind the exact source-wall entity.")
+                raise ValueError(
+                    "Front-row source entity IDs must bind the exact source-wall entity."
+                )
             if (kind == "vertex") != (int(orientation) == 0):
-                raise ValueError("Front-row orientations must be defined only for face/edge sources.")
+                raise ValueError(
+                    "Front-row orientations must be defined only for face/edge sources."
+                )
         if any(
             any(not isinstance(part, str) or not part for part in path)
             for row in row_occurrences
             for path in row
         ):
-            raise ValueError("Front-row occurrence paths must be exact identifier tuples.")
+            raise ValueError(
+                "Front-row occurrence paths must be exact identifier tuples."
+            )
         if np.any(~np.isin(columns, row_ids)):
             raise ValueError("Every layer-cell column ID must name a front-row source.")
         vertex_sources = np.asarray(vertex_source_vertex_ids)
         vertex_columns = np.asarray(vertex_column_ids)
-        vertex_entities = tuple(tuple(str(value) for value in row) for row in vertex_source_entity_ids)
+        vertex_entities = tuple(
+            tuple(str(value) for value in row) for row in vertex_source_entity_ids
+        )
         vertex_occurrences = tuple(
-            tuple(tuple(path) for path in paths) for paths in vertex_source_occurrence_paths
+            tuple(tuple(path) for path in paths)
+            for paths in vertex_source_occurrence_paths
         )
         vertex_parent_offsets = np.asarray(vertex_column_parent_offsets)
         vertex_parent_ids = np.asarray(vertex_column_parent_ids)
@@ -648,7 +670,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         ):
             raise ValueError("Layer-vertex source and column ancestry is invalid.")
         if np.any((vertex_columns < 0) & (vertex_sources < 0)):
-            raise ValueError("Uncurved wall vertices must retain their source-wall identity.")
+            raise ValueError(
+                "Uncurved wall vertices must retain their source-wall identity."
+            )
         wall_map = np.asarray(wall_vertices)
         if (
             wall_map.shape != (source_wall.coordinates.shape[0],)
@@ -657,24 +681,38 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or np.any(wall_map >= mesh.coordinates.shape[0])
             or np.unique(wall_map[wall_map >= 0]).size != np.count_nonzero(wall_map >= 0)
         ):
-            raise ValueError("wall_vertices must preserve unique source-wall vertex rows.")
+            raise ValueError(
+                "wall_vertices must preserve unique source-wall vertex rows."
+            )
         retained_rows = np.flatnonzero(wall_map >= 0)
         retained_vertices = wall_map[retained_rows].astype(np.int64, copy=False)
         if not np.array_equal(
-            np.asarray(mesh.coordinates, dtype=np.float64)[retained_vertices].view(np.uint64),
-            np.asarray(source_wall.coordinates, dtype=np.float64)[retained_rows].view(np.uint64),
+            np.asarray(mesh.coordinates, dtype=np.float64)[retained_vertices].view(
+                np.uint64
+            ),
+            np.asarray(source_wall.coordinates, dtype=np.float64)[retained_rows].view(
+                np.uint64
+            ),
         ):
-            raise ValueError("Retained wall vertices must preserve exact source coordinates.")
+            raise ValueError(
+                "Retained wall vertices must preserve exact source coordinates."
+            )
         if (
-            not np.array_equal(vertex_sources[retained_vertices], source_vertex_ids[retained_rows])
+            not np.array_equal(
+                vertex_sources[retained_vertices], source_vertex_ids[retained_rows]
+            )
             or np.any(vertex_columns[retained_vertices] != -1)
             or np.any(np.diff(vertex_parent_offsets)[retained_vertices] != 0)
         ):
-            raise ValueError("Retained wall vertices must preserve identity without a layer column.")
+            raise ValueError(
+                "Retained wall vertices must preserve identity without a layer column."
+            )
         retained_mask = np.zeros((vertex_count,), dtype=np.bool_)
         retained_mask[retained_vertices] = True
         if not np.array_equal(vertex_columns == -1, retained_mask):
-            raise ValueError("Only unchanged retained wall vertices may omit a column ID.")
+            raise ValueError(
+                "Only unchanged retained wall vertices may omit a column ID."
+            )
         vertex_parent_counts = np.diff(vertex_parent_offsets)
         if np.any((vertex_columns >= 0) & (vertex_parent_counts == 0)):
             raise ValueError("Every generated layer vertex must name its source columns.")
@@ -723,7 +761,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         self.column_source_occurrence_paths = column_occurrences
         self.column_source_face_offsets = jnp.asarray(face_offsets, dtype=jnp.int64)
         self.column_source_face_ids = jnp.asarray(face_ids, dtype=jnp.int64)
-        self.column_source_face_orientations = jnp.asarray(face_orientations, dtype=jnp.int8)
+        self.column_source_face_orientations = jnp.asarray(
+            face_orientations, dtype=jnp.int8
+        )
         self.column_source_face_weights = jnp.asarray(face_weights, dtype=jnp.float64)
         self.column_source_face_roles = jnp.asarray(face_roles, dtype=jnp.int8)
         self.column_parent_offsets = jnp.asarray(parent_offsets, dtype=jnp.int64)
@@ -743,9 +783,13 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         self.vertex_source_entity_ids = vertex_entities
         self.vertex_column_ids = jnp.asarray(vertex_columns, dtype=jnp.int64)
         self.vertex_source_occurrence_paths = vertex_occurrences
-        self.vertex_column_parent_offsets = jnp.asarray(vertex_parent_offsets, dtype=jnp.int64)
+        self.vertex_column_parent_offsets = jnp.asarray(
+            vertex_parent_offsets, dtype=jnp.int64
+        )
         self.vertex_column_parent_ids = jnp.asarray(vertex_parent_ids, dtype=jnp.int64)
-        self.vertex_column_parent_weights = jnp.asarray(vertex_parent_weights, dtype=jnp.float64)
+        self.vertex_column_parent_weights = jnp.asarray(
+            vertex_parent_weights, dtype=jnp.float64
+        )
         self.column_index = jnp.asarray(columns)
         self.source_wall = source_wall
         self.wall_association = wall_association
@@ -924,39 +968,108 @@ def _newell_normals(points: np.ndarray, faces: np.ndarray, arity: np.ndarray, /)
     return _unit(normal)
 
 
-# ---------------------------------------------------------------- visibility QP
+# ---------------------------------------------------------------- visibility optimum
 
 
-def _hull_norm(weights: Any, normals: Any) -> Any:
-    point = weights @ normals
-    return 0.5 * jnp.sum(point * point)
+# Duality-gap tolerance of the certified visibility optimum (unit normals).
+_VISIBILITY_GAP = 1.0e-9
+# Candidate rows evaluated per chunk (bounds host memory for wide sectors).
+_VISIBILITY_CHUNK = 1 << 21
 
 
-_VISIBILITY_METHOD = AcceleratedProximalGradient()
-
-
-@functools.partial(jax.jit, static_argnames=("maximum_steps",))
-def _visibility_weights(normals: Any, *, maximum_steps: int) -> Any:
-    """Minimum-norm convex combination of each column's padded face normals."""
-    termination = OptimizationTermination(
-        absolute_optimality=1.0e-13,
-        relative_optimality=1.0e-13,
-        maximum_steps=maximum_steps,
+@functools.cache
+def _hull_face_subsets(width: int, /) -> tuple[np.ndarray, ...]:
+    """Index subsets of one, two, and three padded normal slots."""
+    return tuple(
+        np.asarray(
+            tuple(itertools.combinations(range(width), size)), dtype=np.int64
+        ).reshape(-1, size)
+        for size in (1, 2, 3)
     )
 
-    def solve(block: Any) -> Any:
-        count = block.shape[0]
-        result = proximal_minimize(
-            _hull_norm,
-            jnp.full((count,), 1.0 / count, dtype=block.dtype),
-            nonsmooth=SimplexIndicator(1.0),
-            method=_VISIBILITY_METHOD,
-            termination=termination,
-            args=block,
-        )
-        return result.parameters, result.status
 
-    return jax.vmap(solve)(normals)
+def _affine_minimum_norm(points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Barycentric weights of the minimum-norm point of each subset's affine hull.
+
+    ``points`` has shape ``(..., k, 3)`` with ``k`` in 1..3. Affinely dependent
+    subsets are invalid; a smaller subset spans the same affine hull.
+    """
+    size = points.shape[-2]
+    if size == 1:
+        return np.ones(points.shape[:-1]), np.ones(points.shape[:-2], dtype=np.bool_)
+    base = points[..., 0, :]
+    edges = points[..., 1:, :] - base[..., None, :]
+    gram = np.einsum("...id,...jd->...ij", edges, edges)
+    rhs = -np.einsum("...id,...d->...i", edges, base)
+    if size == 2:
+        scale = gram[..., 0, 0]
+        valid = scale > 1.0e-24
+        step = rhs[..., 0] / np.where(valid, scale, 1.0)
+        return np.stack((1.0 - step, step), axis=-1), valid
+    determinant = gram[..., 0, 0] * gram[..., 1, 1] - gram[..., 0, 1] * gram[..., 1, 0]
+    valid = determinant > 1.0e-12 * gram[..., 0, 0] * gram[..., 1, 1]
+    safe = np.where(valid, determinant, 1.0)
+    first = (gram[..., 1, 1] * rhs[..., 0] - gram[..., 0, 1] * rhs[..., 1]) / safe
+    second = (gram[..., 0, 0] * rhs[..., 1] - gram[..., 1, 0] * rhs[..., 0]) / safe
+    return np.stack((1.0 - first - second, first, second), axis=-1), valid
+
+
+def _visibility_optimum(
+    normals: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact visibility-optimal direction of each column's padded unit normals.
+
+    ``max_{|d|=1} min_i n_i.d`` equals the norm of the minimum-norm point ``p``
+    of ``conv{n_i}`` and is attained at ``d = p / |p|`` whenever the origin lies
+    outside the hull. ``p`` lies in the relative interior of a hull face spanned
+    by at most three normals (Caratheodory in R^3), so enumerating the affine
+    minimum-norm points of every one-, two-, and three-normal subset finds it
+    exactly. Every convex candidate ``q`` bounds the optimum from above by
+    ``|q|``; every candidate direction bounds it from below by its own
+    ``min_i n_i.(q / |q|)``. A column is certified when the best direction
+    closes this duality gap to ``_VISIBILITY_GAP``. An open gap with a
+    non-positive lower bound proves the origin lies in the hull: no visible
+    direction exists.
+
+    Returns per-slot convex weights, the best direction's visibility, and the
+    duality gap of each column.
+    """
+    count, width, _ = normals.shape
+    best_lower = np.full((count,), -np.inf)
+    best_upper = np.full((count,), np.inf)
+    weights = np.zeros((count, width))
+    rows = np.arange(count)
+    for subsets in _hull_face_subsets(width):
+        if not subsets.size:
+            continue
+        chunk = max(1, _VISIBILITY_CHUNK // (subsets.shape[0] * width))
+        for start in range(0, count, chunk):
+            block = normals[start : start + chunk]
+            local = rows[: block.shape[0]]
+            points = block[:, subsets]
+            barycentric, valid = _affine_minimum_norm(points)
+            convex = valid & np.all(barycentric >= -1.0e-12, axis=-1)
+            candidate = np.einsum("csk,cskd->csd", barycentric, points)
+            upper = np.linalg.norm(candidate, axis=-1)
+            convex &= upper > 0.0
+            direction = candidate / np.where(upper > 0.0, upper, 1.0)[..., None]
+            lower = np.min(np.einsum("csd,cwd->csw", direction, block), axis=-1)
+            lower = np.where(convex, lower, -np.inf)
+            upper = np.where(convex, upper, np.inf)
+            pick = np.argmax(lower, axis=1)
+            chosen = lower[local, pick]
+            target = slice(start, start + block.shape[0])
+            improve = chosen > best_lower[target]
+            best_upper[target] = np.minimum(best_upper[target], np.min(upper, axis=1))
+            best_lower[target] = np.where(improve, chosen, best_lower[target])
+            slot = np.zeros((block.shape[0], width))
+            np.add.at(
+                slot,
+                (np.repeat(local, subsets.shape[1]), subsets[pick].reshape(-1)),
+                np.maximum(barycentric[local, pick], 0.0).reshape(-1),
+            )
+            weights[target] = np.where(improve[:, None], slot, weights[target])
+    return weights, best_lower, best_upper - best_lower
 
 
 def _padded_groups(groups: np.ndarray, members: np.ndarray, count: int, /) -> Any:
@@ -1179,7 +1292,6 @@ class _Directions:
     constraint_face_offsets: np.ndarray
     constraint_face_rows: np.ndarray
     constraint_face_orientations: np.ndarray
-    unconverged: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -1217,6 +1329,8 @@ def _constraint_normals(wall: _Wall, sectors: _Sectors, count: int, /) -> _Const
     first[columns[rank == 0]] = canonical[rank == 0]
     second[columns[rank == 1]] = canonical[rank == 1]
     return _Constraints(counts, first, second)
+
+
 def _constraint_face_ancestry(
     wall: _Wall, sectors: _Sectors, count: int, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1232,9 +1346,7 @@ def _constraint_face_ancestry(
     wall_face = np.where(grow_first, faces[:, 0], faces[:, 1])
     side_face = np.where(grow_first, faces[:, 1], faces[:, 0])
     ends = wall.edges[wall.attached]
-    columns = np.concatenate(
-        [sectors.at(ends[:, side], wall_face) for side in (0, 1)]
-    )
+    columns = np.concatenate([sectors.at(ends[:, side], wall_face) for side in (0, 1)])
     source_faces = np.tile(side_face, 2)
     normals = wall.normals[source_faces]
     lead = np.argmax(np.abs(normals) > 0.0, axis=1)
@@ -1249,8 +1361,6 @@ def _constraint_face_ancestry(
     counts = np.bincount(pairs[:, 0], minlength=count)
     offsets = np.concatenate(([0], np.cumsum(counts))).astype(np.int64)
     return offsets, pairs[:, 1].astype(np.int64), orientation
-
-
 
 
 def _apply_constraints(direction: np.ndarray, constraints: _Constraints, /) -> np.ndarray:
@@ -1275,20 +1385,33 @@ def _sector_directions(
     wall: _Wall,
     sectors: _Sectors,
     control: BoundaryLayerControl,
-    policy: BoundaryLayerPolicy,
     /,
 ) -> _Directions:
     count = sectors.sector_vertex.size
     faces = sectors.incidence_keys % sectors.face_count
     padded, face_counts = _padded_groups(sectors.incidence_sector, faces, count)
     normals = wall.normals[padded]
-    weights, status = _visibility_weights(
-        jnp.asarray(normals), maximum_steps=policy.visibility_iterations
-    )
-    weights = np.asarray(weights, dtype=np.float64)
-    unconverged = int(
-        np.count_nonzero(np.asarray(status) != int(OptimizationStatus.SUCCESS))
-    )
+    weights, optimum, gap = _visibility_optimum(normals)
+    hidden = ~(optimum > 0.0)
+    if np.any(hidden):
+        raise _failure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "No visible column direction exists: the incident face normals of "
+            f"{int(np.count_nonzero(hidden))} column(s) enclose the origin "
+            f"(best visibility {float(np.min(optimum)):.6g}).",
+            sectors.sector_vertex[hidden],
+            wall.points,
+        )
+    uncertified = gap > _VISIBILITY_GAP
+    if np.any(uncertified):
+        raise _failure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "The visibility optimum of "
+            f"{int(np.count_nonzero(uncertified))} column(s) is not certified "
+            f"(largest duality gap {float(np.max(gap)):.3g}).",
+            sectors.sector_vertex[uncertified],
+            wall.points,
+        )
     hull = np.sum(weights[..., None] * normals, axis=1)
     direction, _ = _unit(hull)
     constraints = _constraint_normals(wall, sectors, count)
@@ -1326,7 +1449,6 @@ def _sector_directions(
         constraint_offsets,
         constraint_faces,
         constraint_orientations,
-        unconverged,
     )
 
 
@@ -1385,7 +1507,10 @@ def _slerp(first: np.ndarray, second: np.ndarray, fraction: np.ndarray, /) -> np
     value, _ = _unit(left[..., None] * first + right[..., None] * second)
     return value
 
-def _slerp_weights(first: np.ndarray, second: np.ndarray, fraction: float, /) -> tuple[float, float]:
+
+def _slerp_weights(
+    first: np.ndarray, second: np.ndarray, fraction: float, /
+) -> tuple[float, float]:
     cosine = float(np.clip(np.dot(first, second), -1.0, 1.0))
     angle = float(np.arccos(cosine))
     if angle < 1.0e-9:
@@ -1414,7 +1539,9 @@ def _source_edge_global_id_map(source_wall: CellMesh, /) -> dict[tuple[int, int]
     for pair, identifier in zip(endpoints, identifiers, strict=True):
         key = (int(min(pair[0], pair[1])), int(max(pair[0], pair[1])))
         if key in result:
-            raise ValueError("Source-wall edge endpoint IDs must identify unique authored edges.")
+            raise ValueError(
+                "Source-wall edge endpoint IDs must identify unique authored edges."
+            )
         result[key] = int(identifier)
     return result
 
@@ -1434,6 +1561,7 @@ class _Front:
     fan_column_count: int
     corner_patch_count: int
     ancestry: _FrontAncestry
+
 
 @dataclass(frozen=True, slots=True)
 class _FrontAncestry:
@@ -1672,7 +1800,9 @@ def _build_front(
     )
     source_vertex_ids = np.asarray(source_wall.vertex_global_ids, dtype=np.int64)
     source_face_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in source_wall.blocks)
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in source_wall.blocks
+        )
     )
     source_face_ids = source_face_ids[np.argsort(source_face_ids, kind="stable")]
     edge_ids = _source_edge_global_id_map(source_wall)
@@ -1781,6 +1911,7 @@ def _corner_patches(
         corners.append((int(vertex), cycle))
     return corners
 
+
 def _front_source_ancestry(
     source_wall: CellMesh,
     wall_association: GeometryAssociation | None,
@@ -1800,7 +1931,9 @@ def _front_source_ancestry(
     """Bind each front/column to exact source topology, not output coordinates."""
     source_vertex_ids = np.asarray(source_wall.vertex_global_ids, dtype=np.int64)
     source_face_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in source_wall.blocks)
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in source_wall.blocks
+        )
     )
     source_face_ids = source_face_ids[np.argsort(source_face_ids, kind="stable")]
     column_count = column_vertex.size
@@ -1834,10 +1967,10 @@ def _front_source_ancestry(
                     key = (face_id, orientation, role)
                     records[key] = records.get(key, 0.0) + float(fraction) * weight
         if not records:
-            raise ValueError("Every generated front column must retain incident source faces.")
-        face_records.append(
-            [(*key, weight) for key, weight in sorted(records.items())]
-        )
+            raise ValueError(
+                "Every generated front column must retain incident source faces."
+            )
+        face_records.append([(*key, weight) for key, weight in sorted(records.items())])
 
     association_rows: dict[int, int] = {}
     if wall_association is not None:
@@ -1874,7 +2007,9 @@ def _front_source_ancestry(
         elif column_kind[column] == _FAN:
             fan_fraction = fan_fractions[column]
             if fan_fraction is None:
-                raise ValueError("Boundary-layer fan ancestry lost its exact rational fraction.")
+                raise ValueError(
+                    "Boundary-layer fan ancestry lost its exact rational fraction."
+                )
             numerator, denominator = fan_fraction
             first, second = parents
             if column_identities[first] <= column_identities[second]:
@@ -2010,7 +2145,11 @@ def _front_source_ancestry(
         np.asarray(flat_parent_ids, dtype=np.int64),
         np.asarray(flat_parent_weights, dtype=np.float64),
         tuple(
-            "sector" if column_kind[column] == _SECTOR else "fan" if column_kind[column] == _FAN else "corner"
+            "sector"
+            if column_kind[column] == _SECTOR
+            else "fan"
+            if column_kind[column] == _FAN
+            else "corner"
             for column in column_order
         ),
         row_ids,
@@ -2293,9 +2432,7 @@ def _layer_cells(
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Create mixed cells and carry each exact front-row column into its cells."""
     cell_rows: dict[str, list[np.ndarray]] = {name: [] for name in _VOLUME_KINDS}
-    cell_columns: dict[str, list[np.ndarray]] = {
-        name: [] for name in _VOLUME_KINDS
-    }
+    cell_columns: dict[str, list[np.ndarray]] = {name: [] for name in _VOLUME_KINDS}
 
     def append(
         name: str, values: np.ndarray, mask: np.ndarray, owners: np.ndarray, /
@@ -2638,6 +2775,7 @@ class _Resolution:
     points: np.ndarray
     detected: int
     iterations: int
+
 
 def _initial_columns(
     wall: _Wall,
@@ -3007,7 +3145,7 @@ def _grow_boundary_layers(
     wall = _analyze_wall(points, faces, arity, grow, control.feature_angle)
     split = _split_ridges(wall, control.corner)
     sectors = _sectors(wall, split)
-    directions = _sector_directions(wall, sectors, control, policy)
+    directions = _sector_directions(wall, sectors, control)
     front = _build_front(
         wall, sectors, split, directions, control, source_wall, wall_association
     )
@@ -3088,6 +3226,7 @@ def _cap_mesh(points: np.ndarray, cap: np.ndarray, arity: np.ndarray, /) -> Any:
             cursor += rows.shape[0]
     return CellMesh(points[vertices], tuple(blocks)), vertices
 
+
 def _output_vertex_ancestry(
     source_wall: CellMesh,
     wall_association: GeometryAssociation | None,
@@ -3130,10 +3269,14 @@ def _output_vertex_ancestry(
             )
             member_ids = sorted(int(column_ids[member]) for member in members)
             source_ids = {int(roots[member]) for member in members}
-            point_source_ids[point] = next(iter(source_ids)) if len(source_ids) == 1 else -1
+            point_source_ids[point] = (
+                next(iter(source_ids)) if len(source_ids) == 1 else -1
+            )
             point_column_ids[point] = member_ids[0]
             weight = 1.0 / len(member_ids)
-            point_parents[point] = tuple((identifier, weight) for identifier in member_ids)
+            point_parents[point] = tuple(
+                (identifier, weight) for identifier in member_ids
+            )
     for apex, front_row in enumerate(pyramid_front_rows):
         point = base_count + layer_count * column_count + apex
         parent_ids = tuple(
@@ -3163,7 +3306,9 @@ def _output_vertex_ancestry(
             )
         }
 
-    def source_entities(source_ids: set[int]) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    def source_entities(
+        source_ids: set[int],
+    ) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
         entities: set[str] = set()
         occurrences: set[tuple[str, ...]] = set()
         if wall_association is not None:
@@ -3293,7 +3438,6 @@ def _assemble(
         rim_vertex_count=np.count_nonzero(wall.rim_vertex),
         minimum_visibility=np.min(directions.visibility),
         maximum_stretch=np.max(stretch),
-        unconverged_visibility_count=directions.unconverged,
         collision_policy=control.collision,
         predicted_collision_vertex_count=predicted,
         detected_collision_count=resolution.detected,

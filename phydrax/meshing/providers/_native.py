@@ -39,6 +39,7 @@ from .._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from .._controls import BoundaryLayerRoute
 from .._native_construction import NativeMeshConstruction
 from .._result import CellMeshingResult
 from .._scope import MeshingEntityKind, MeshingScope
@@ -508,6 +509,26 @@ def _is_brep_domain(domain: MeshingDomain, /) -> bool:
     )
 
 
+def _layer_target_support(specification: VolumeMeshingSpec, /) -> list[str]:
+    """Admit the affine mixed layer/tetrahedral-core targets of a CAD volume."""
+    target = specification.target
+    families = target.cell_families
+    issues: list[str] = []
+    if (
+        target.topological_dimension != 3
+        or target.ambient_dimension != 3
+        or target.geometry_order != 1
+    ):
+        issues.append("an affine layer/core volume in ambient dimension three")
+    if "tetrahedron" not in (*families.required, *families.preferred) or not (
+        families.allow_mixed
+    ):
+        issues.append("a mixed layer target with a tetrahedral core")
+    if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
+        issues.append("the simplex core-fill strategy")
+    return issues
+
+
 def _cad_boundary_specification(
     domain: MeshingDomain,
     specification: VolumeMeshingSpec,
@@ -515,7 +536,10 @@ def _cad_boundary_specification(
 ) -> SurfaceMeshingSpec:
     from ._native_volume import _target_support
 
-    target_issues = _target_support(specification)
+    if specification.layer_controls:
+        target_issues = _layer_target_support(specification)
+    else:
+        target_issues = _target_support(specification)
     if target_issues:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
@@ -569,10 +593,13 @@ def _cad_boundary_specification(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
             "The native CAD tetrahedral route does not support periodic constraints.",
         )
-    if specification.layer_controls:
+    if specification.layer_controls and (
+        len(specification.layer_controls) != 1
+        or specification.layer_controls[0].route is not BoundaryLayerRoute.ADVANCING
+    ):
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "The native CAD tetrahedral route does not support boundary-layer controls.",
+            "The native CAD volume grows one ADVANCING layer control from source faces.",
         )
     target = CellMeshingTarget(
         2,
@@ -652,6 +679,25 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
             self.boundary_plan_id,
             "parametric_surface",
         )
+        if self.specification.layer_controls:
+            from .._layer_core_brep import brep_layer_core_source
+            from ._native_layer import prepare_native_layer
+
+            try:
+                layer_source = brep_layer_core_source(
+                    self.domain, boundary_result, self.specification
+                )
+            except ValueError as error:
+                raise _failure(
+                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    f"The source-face layer control has no native CAD realization: {error}",
+                ) from error
+            return prepare_native_layer(
+                layer_source,
+                self.specification,
+                _options_for_route(self.options, "layer_core", force=True),
+                self.coordinate_contract,
+            ).execute()
         from ._native_cad_volume import NativeCadVolumeSource, prepare_native_cad_volume
 
         cad_source = NativeCadVolumeSource(
@@ -1152,7 +1198,9 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
     ) -> CellMeshingResult | MeshAssembly:
         if graph_partition_plan is not None:
             if not isinstance(graph_partition_plan, GraphPartitionPlan):
-                raise TypeError("graph_partition_plan must be GraphPartitionPlan or None.")
+                raise TypeError(
+                    "graph_partition_plan must be GraphPartitionPlan or None."
+                )
             if execution_group is None:
                 raise ValueError("graph_partition_plan requires an execution_group.")
         if execution_group is not None:

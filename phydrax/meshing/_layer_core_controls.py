@@ -19,8 +19,11 @@ import phydrax.meshing.providers._native_sources as sources_owner
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..typing import checked
 from ._contracts import VolumeMeshingSpec
+from ._controls import BoundaryLayerControl, BoundaryLayerRoute
+from ._scope import MeshingEntityKind, MeshingScope
 
 
 @checked
@@ -465,9 +468,98 @@ def compose_layer_controls(
     return zones, tuple(patches)
 
 
+@checked
+def wall_layer_control(
+    control: BoundaryLayerControl, charts: SurfaceSourceCharts, /
+) -> BoundaryLayerControl:
+    """Resolve a source-face layer control to the cells of one charted wall mesh.
+
+    Each chart binds one wall cell to exactly one source face, so the selected
+    cells are the exact preimage of ``control.wall_scope``. Schedule and policies
+    are unchanged; only the wall scope moves from source faces to mesh cells.
+    """
+    charts.require_current()
+    domain = charts.domain
+    wall = charts.mesh
+    scope = control.wall_scope
+    volume = control.volume_scope
+    if control.route is not BoundaryLayerRoute.ADVANCING:
+        raise ValueError("Charted source walls realize ADVANCING layer controls only.")
+    if (
+        scope.entity_kind is not MeshingEntityKind.GEOMETRY
+        or scope.entity_dimension != 2
+        or (scope.source_id, scope.source_revision)
+        != (domain.source_id, domain.source_revision)
+        or scope.entity_set_id != domain.scope_entity_set_id(2)
+    ):
+        raise ValueError("The layer wall scope must name faces of the charted source.")
+    if (
+        volume is None
+        or volume.entity_set_id != domain.scope_entity_set_id(3)
+        or not np.array_equal(
+            np.asarray(volume.entity_ids, dtype=np.int64),
+            np.sort(np.asarray(domain.scope_entity_ids(3), dtype=np.int64)),
+        )
+    ):
+        raise ValueError(
+            "Charted source walls grow layers into the whole source solid only."
+        )
+    patches = {
+        domain.resolve_entity_id(2, entity_id, occurrence_path=occurrence)
+        for entity_id, occurrence in (
+            domain.source_entity_key_for_scope(2, int(identifier))
+            for identifier in np.asarray(scope.entity_ids, dtype=np.int64).tolist()
+        )
+    }
+    cells = np.asarray(charts.cell_global_ids, dtype=np.int64)
+    selected = cells[
+        np.isin(np.asarray(charts.root_patches, dtype=np.int64), list(patches))
+    ]
+    if not selected.size:
+        raise ValueError("The layer wall faces bind no charted wall cells.")
+    return BoundaryLayerControl(
+        MeshingScope(
+            wall.mesh_id,
+            wall.numeric_version,
+            MeshingEntityKind.MESH,
+            2,
+            wall.entity_set(2).entity_set_id,
+            np.sort(selected),
+        ),
+        control.schedule,
+        route=BoundaryLayerRoute.ADVANCING,
+        collision=control.collision,
+        corner=control.corner,
+        feature_angle=control.feature_angle,
+        minimum_thickness_fraction=control.minimum_thickness_fraction,
+        growth_rate_bounds=control.growth_rate_bounds,
+        maximum_corner_stretch=control.maximum_corner_stretch,
+        smoothing_iterations=control.smoothing_iterations,
+        core_maximum_size=control.core_maximum_size,
+    )
+
+
+@checked
+def realized_layer_control(
+    source: sources_owner.NativeLayerCoreSource, control: BoundaryLayerControl, /
+) -> BoundaryLayerControl:
+    """Return the mesh-scoped control an accepted layer realization must carry."""
+    if control.wall_scope.entity_kind is MeshingEntityKind.MESH:
+        return control
+    charts = source.source_surface_charts
+    if charts is None:
+        raise ValueError(
+            "Source-face layer controls require the retained charted layer wall."
+        )
+    charts.require_root(source.layers.source_wall, charts.geometry)
+    return wall_layer_control(control, charts)
+
+
 __all__ = [
     "compose_layer_controls",
     "core_facet_scope_ids",
     "layer_control_issues",
     "layer_source_face_ancestry",
+    "realized_layer_control",
+    "wall_layer_control",
 ]

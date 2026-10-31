@@ -3096,7 +3096,6 @@ def _rebuild_boundary_layer_evidence(value: object, /) -> BoundaryLayerEvidence:
         rim_vertex_count=value.rim_vertex_count,
         minimum_visibility=value.minimum_visibility,
         maximum_stretch=value.maximum_stretch,
-        unconverged_visibility_count=value.unconverged_visibility_count,
         collision_policy=policy,
         predicted_collision_vertex_count=value.predicted_collision_vertex_count,
         detected_collision_count=value.detected_collision_count,
@@ -8098,6 +8097,8 @@ def _rebuild_reconstructed_source_composition(value: object, /) -> Composition:
         raise ValueError(
             "Cold reconstructed mesh source did not rebuild its MeshingDomain."
         )
+    # Persistent IDs are the domain's authored source indices; numeric scope IDs
+    # are the canonical source-bank IDs that resolve back to the same rows.
     for dimension, identifiers in enumerate(
         (
             source.persistent_vertex_ids,
@@ -8105,10 +8106,15 @@ def _rebuild_reconstructed_source_composition(value: object, /) -> Composition:
             source.persistent_facet_ids,
         )
     ):
-        for row, identifier in enumerate(identifiers):
-            if source.source_row_for_scope(dimension, int(identifier)) != row:
+        if source.meshing_domain.source_indices[dimension] != tuple(
+            int(identifier) for identifier in identifiers
+        ):
+            raise ValueError("Persistent reconstructed entity ID changed its source row.")
+        for row in range(identifiers.size):
+            scope_id = source.scope_entity_id_for_mesh_row(dimension, row)
+            if source.source_row_for_scope(dimension, scope_id) != row:
                 raise ValueError(
-                    "Persistent reconstructed entity ID changed its source row."
+                    "Reconstructed scope ID no longer resolves to its source row."
                 )
     if not isinstance(source.source, MeshRegion):
         raise TypeError("Cold reconstructed source lost its native MeshRegion authority.")

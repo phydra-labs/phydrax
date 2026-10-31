@@ -224,10 +224,11 @@ generic conversion that checks endpoints only and confers no exact source author
 
 `MeshingDomain.stratum_entity_ids(dimension)` returns every canonical source key
 of one stratum in slot order, the same keys `entity_id(dimension, slot)` returns
-one at a time. Code that walks many slots reads the stratum once: each method
-call on an Equinox module rebuilds a bound-method pytree over the whole domain,
-so per-slot calls cost entities times patches. Scope banks are prepared this way,
-and their numeric IDs and the `domain_id` are unchanged.
+one at a time. Domain methods bind as plain Python methods rather than Equinox
+bound-method pytrees, which flatten the whole domain on every call, and
+`resolve_entity_id` bisects a per-stratum key index instead of fingerprinting
+every slot. Per-entity loops over a domain with one patch per source face
+therefore stay linear. Scope-bank numeric IDs and the `domain_id` are unchanged.
 
 BRep material regions bind to their source solid occurrences, and each region's
 full oriented face/sign boundary must match the supplied topology. Missing
@@ -436,11 +437,14 @@ outward. `BoundaryLayerControl` binds a schedule to a wall scope and one explici
 
 Native advancing layers classify wall edges by dihedral angle, split columns at
 convex ridges into fan columns and corner patches (`BoundaryLayerCornerPolicy.FAN`),
-and point every column along the visibility-optimal direction (the minimum-norm
-point of the convex hull of its face normals, a simplex QP solved by
-`phydrax.optim`). Concave corners are accepted only while a visible direction
-exists and the height stretch stays within `maximum_corner_stretch`; otherwise
-they are rejected with the offending wall vertices. Heights are limited by the
+and point every column along the visibility-optimal direction, the unit `d`
+maximizing `min_i n_i·d` over its face normals: the normalized minimum-norm point
+of their convex hull, found exactly by enumerating hull faces of at most three
+normals and certified by a closed weak-duality gap. Columns whose normals enclose
+the origin have no visible direction and are rejected with their wall vertices.
+Concave corners are accepted only while the height stretch stays within
+`maximum_corner_stretch`; otherwise they are rejected with the offending wall
+vertices. Heights are limited by the
 smooth concave radius and by BVH-nearest medial-crossing probes; every layer is
 certified by Bernstein validity and exact-predicate intersection against earlier
 layers, the wall, adjacent surfaces, and obstacles. Collisions resolve only by
@@ -601,16 +605,50 @@ target is compared with measured arc lengths at the `SizeCompliancePolicy`
 tolerances, which default to zero; a target such as 0.2 m that floating-point
 placement cannot reproduce exactly needs an explicit tolerance in the request.
 
-Native tetrahedral quality improvement follows fixed-boundary refinement. Each
-cell scores the worse of its dihedral-angle and radius-edge target fractions,
-1 when both targets hold. Every face flip, edge-ring reconnection, interior
-vertex collapse, and interior relocation is accepted only if the affected cells'
-worst-first sorted scores strictly improve, with relative-determinant validity
-and source constraints as hard requirements. That single order makes
-improvement terminate without pass, candidate, or time limits. Targets the
-edits cannot reach end valid but unmet: the run status is unresolved,
-`TetMesh3D.unmet()` reports each remaining cell and criterion, and volume routes
-refuse such a mesh rather than publish it.
+Native tetrahedral refinement and quality improvement (`TetMesh3D.refine` and
+`TetMesh3D.improve`, run in that order by the native volume routes) have these
+contracts:
+
+- **Size field.** `sizes` holds one circumradius target per current vertex (0:
+  unconstrained). A cell's target is the mean of its corners' targets, and is
+  unconstrained if any corner is. The field is retained on the mesh: refinement
+  installs it, every vertex either pass inserts receives the target interpolated
+  at its position, and a removed vertex's entry is erased. `improve()` without
+  `sizes` uses the retained field, so a route's refinement size field (for
+  example a `UniformSizeControl`) constrains improvement too.
+- **Refinement.** Circumcenters of cells violating the radius-edge bound or
+  their size target are inserted through a checked cavity; an encroached
+  splittable boundary face is split instead. No point is inserted closer than
+  min(shortest initial edge, h(x)/2) to an existing vertex, h(x) the target
+  interpolated at the point. Since refinement removes no vertex, the inserted
+  points are packed at a positive spacing in a bounded domain, so finitely
+  many are inserted. A cell the guard blocks is reported as `REFUSED`; one
+  whose circumcenter lies beyond a fixed face as `FIXED_BOUNDARY`.
+- **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
+  and radius-edge target fractions (1 when both hold), floored to multiples of
+  `TetMeshRun.score_quantum` (2^-20). Every face flip, edge-ring reconnection,
+  interior vertex insertion, collapse, and relocation is accepted only if the
+  cells it creates pass the hard gates (relative determinant above its floor,
+  source constraints preserved) and the size gate, and the affected cells'
+  worst-first sorted scores strictly improve.
+- **Precedence.** The size gate (circumradius within the size target) binds
+  every edit except one that removes a degenerate cell: a cell below the
+  determinant floor or scoring 0 (a ratio beyond 2^20 times its target).
+  Repairing degeneracy takes precedence over size; any other edit, collapses
+  included, can never grow a cell beyond its size target. The whole-mesh
+  fixed-boundary retessellation never takes this exemption.
+- **Termination.** Every accepted edit strictly improves the whole mesh's
+  sorted score vector, and over the finite score alphabet that order admits no
+  infinite improving sequence. Improvement therefore ends without pass,
+  candidate, or time limits, although insertion and collapse change the vertex
+  set; no complexity bound is claimed.
+- **Unmet evidence.** Targets the edits cannot reach end valid but unmet: the
+  run status is unresolved and `TetMesh3D.unmet()` reports each remaining cell
+  per criterion with its reason. Refinement reports the radius-edge ratio and
+  size (circumradius over target); improvement reports the radius-edge ratio,
+  minimum dihedral, and determinant validity, since the size field constrains
+  improvement but is not one of its targets. Volume routes refuse a mesh with
+  improvement residuals rather than publish it.
 
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`
