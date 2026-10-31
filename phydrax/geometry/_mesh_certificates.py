@@ -17,6 +17,7 @@ from .._validation import canonical_identifier
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._coordinate_enclosure import RationalPolynomial
 from ..typing import checked, parse
 from ._embedding_state import (
     CoordinateMapScope,
@@ -77,6 +78,14 @@ def _same_tree_content(first: object, second: object, /) -> bool:
             except TypeError:
                 equal = np.array_equal(left_array, right_array)
             if not equal:
+                return False
+        elif type(left) is RationalPolynomial or type(right) is RationalPolynomial:
+            # Archived quotients round-trip their canonical numerator/denominator.
+            if (
+                type(left) is not type(right)
+                or left.numerator != right.numerator
+                or left.denominator != right.denominator
+            ):
                 return False
         else:
             if (
