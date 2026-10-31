@@ -1584,6 +1584,67 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
     )
 
 
+def test_curved_trim_reference_follows_target_chords_within_certified_lenses() -> None:
+    arc = CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0)
+    angle = 1.0
+    end = np.asarray(arc.evaluate(jnp.asarray((0.0, angle))), dtype=np.float64)[1]
+    uses = (
+        PatchCurveUse(0, LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0),
+        PatchCurveUse(1, arc, 0.0, angle),
+        PatchCurveUse(2, LineCurve(end, -end), 0.0, 1.0),
+    )
+    domain = MeshingDomain(
+        (
+            MeshingSurfacePatch(
+                PlanePatch((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+                (uses,),
+            ),
+        ),
+        (MeshingDomainCurve(0, 1), MeshingDomainCurve(1, 2), MeshingDomainCurve(2, 0)),
+        3,
+        source_id="source-circular-sector",
+        source_revision="source-revision-1",
+        tolerance=1.0e-12,
+    )
+    source = MeshingDomainBoundarySource(domain, (0,))
+    parameters = np.linspace(0.0, angle, 5, dtype=np.float64)
+    chain_points = np.asarray(arc.evaluate(jnp.asarray(parameters)), dtype=np.float64)
+    chain = tuple((Fraction(float(u)), Fraction(float(v))) for u, v in chain_points)
+    origin = (Fraction(0), Fraction(0))
+    fan = tuple((origin, chain[row], chain[row + 1]) for row in range(4))
+
+    declared, lenses = source.trim_partition_reference(0, fan)
+
+    def area(triangle: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
+        (ax, ay), (bx, by), (cx, cy) = triangle
+        return abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / 2
+
+    # The reference keeps the target chords, so the exact measures agree; the
+    # curved trim enters only through the certified lenses.
+    assert sum(map(area, declared), Fraction(0)) == sum(map(area, fan), Fraction(0))
+    assert [lens.chord for lens in lenses] == [
+        (chain[row], chain[row + 1]) for row in range(4)
+    ]
+    for row, lens in enumerate(lenses):
+        samples = np.asarray(
+            arc.evaluate(jnp.linspace(parameters[row], parameters[row + 1], 65)),
+            dtype=np.float64,
+        )
+        first, second = chain_points[row], chain_points[row + 1]
+        chord = second - first
+        along = np.clip((samples - first) @ chord / (chord @ chord), 0.0, 1.0)
+        sagitta = float(
+            np.max(np.linalg.norm(samples - (first + along[:, None] * chord), axis=1))
+        )
+        lower = np.asarray([float(value) for value in lens.lower], dtype=np.float64)
+        upper = np.asarray([float(value) for value in lens.upper], dtype=np.float64)
+        assert sagitta <= float(lens.parameter_bound) < 8.0 * sagitta
+        assert np.all(samples >= lower) and np.all(samples <= upper)
+
+    with pytest.raises(ValueError, match="boundary chain"):
+        source.trim_partition_reference(0, fan[:1] + fan[2:])
+
+
 def test_exact_ruled_surface_map_keeps_offset_and_bilinear_coefficients() -> None:
     from phydrax.geometry._source_interpolation import (
         _exact_surface_interpolation_bound,
