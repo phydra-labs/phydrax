@@ -33,6 +33,7 @@ from ._patches import (
     OffsetSurface,
     PlanePatch,
     RevolutionSurface,
+    SpherePatch,
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
     TorusPatch,
@@ -808,11 +809,12 @@ def _torus_circle_gap_squared(
     ``cos/sin(u0)`` and ``cos/sin(v0)``; outward trigonometric intervals at the
     authored angles bound every harmonic coefficient difference, which bounds
     the gap uniformly in ``t``. An irrational latitude or a quarter-turn phase
-    is therefore a certified (not exact) correspondence.
+    is therefore a certified (not exact) correspondence. A sphere chart is the
+    torus of zero major radius whose minor circle is its meridian.
     """
     patch = source_region.patch
     if (
-        not isinstance(patch, TorusPatch)
+        not isinstance(patch, (TorusPatch, SpherePatch))
         or curve.ambient_dimension != 3
         or curve.native_period_symbol() != "two_pi"
         or not np.isfinite(first)
@@ -839,8 +841,20 @@ def _torus_circle_gap_squared(
         return None
     cos_u, sin_u = _point_trig(u0)
     cos_v, sin_v = _point_trig(v0)
-    major = coefficient_interval(patch.major_radius_exact)
-    minor = coefficient_interval(patch.minor_radius_exact)
+    if isinstance(patch, SpherePatch):
+        major = (Fraction(0), Fraction(0))
+        minor = coefficient_interval(Fraction.from_float(float(patch.radius)))
+        first_axis, second_axis, axis, patch_center = (
+            rational_vector(np.asarray(value, dtype=np.float64))
+            for value in (patch.first_axis, patch.second_axis, patch.axis, patch.center)
+        )
+    else:
+        major = coefficient_interval(patch.major_radius_exact)
+        minor = coefficient_interval(patch.minor_radius_exact)
+        first_axis = patch.first_axis_exact
+        second_axis = patch.second_axis_exact
+        axis = patch.axis_exact
+        patch_center = patch.center_exact
 
     def add(*terms: tuple[Fraction, Fraction]) -> tuple[Fraction, Fraction]:
         return sum((term[0] for term in terms), Fraction(0)), sum(
@@ -864,14 +878,11 @@ def _torus_circle_gap_squared(
             for index in range(3)
         )
 
-    first_axis = patch.first_axis_exact
-    second_axis = patch.second_axis_exact
-    axis = patch.axis_exact
     # w = cos(u0) a1 + sin(u0) a2 and its quarter turn w' = -sin(u0) a1 + cos(u0) a2.
     radial = axis_combination(cos_u, sin_u, first_axis, second_axis)
     tangent = axis_combination(negate(sin_u), cos_u, first_axis, second_axis)
     axial = tuple(coefficient_interval(value) for value in axis)
-    center = tuple(coefficient_interval(value) for value in patch.center_exact)
+    center = tuple(coefficient_interval(value) for value in patch_center)
     if latitude:
         ring = add(major, _interval_product(minor, cos_v))
         height = _interval_product(minor, sin_v)
@@ -1113,7 +1124,7 @@ def native_face_gap_squared(
     )
     if revolution_gap is not None:
         return revolution_gap
-    if isinstance(curve, CircleCurve) and isinstance(patch, TorusPatch):
+    if isinstance(curve, CircleCurve) and isinstance(patch, (TorusPatch, SpherePatch)):
         torus_gap = _torus_circle_gap_squared(curve, pcurve, source_region, first, last)
         if torus_gap is not None:
             return torus_gap
