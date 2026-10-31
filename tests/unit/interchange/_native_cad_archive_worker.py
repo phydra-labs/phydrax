@@ -149,6 +149,7 @@ from phydrax.discretization._exact_algebraic_geometry import (
 )
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from phydrax.discretization._exact_power_geometry import ExactPowerCellGeometrySource
+from phydrax.discretization._mapped_power_geometry import MappedPowerCellGeometrySource
 from phydrax.discretization._partition import CellPartition
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import PeriodicIsometryGroup
@@ -6179,6 +6180,13 @@ def _rebuild_continuation_value(
             domain_source=domain_source,
             target_periodic_cell=target_periodic_cell,
         )
+    if type(value) is MappedPowerCellGeometrySource:
+        reference_source = _rebuild_continuation_value(value.reference_source)
+        if type(reference_source) is not ExactPowerCellGeometrySource:
+            raise TypeError("Mapped power restoration lost its exact reference source.")
+        return MappedPowerCellGeometrySource.from_stored_fields(
+            value, reference_source=reference_source
+        )
     if type(value) is _CutCoordinateMap:
         if not isinstance(source_mesh, CellMesh):
             raise ValueError(
@@ -6223,6 +6231,12 @@ def _rebuild_continuation_value(
                 if type(source_map) is not _CutCoordinateMap:
                     raise TypeError("Stored cut map has a noncanonical owner type.")
                 source_map = _rebuild_cut_coordinate_map(source_map, source_mesh)
+            elif type(source_map) is MappedPowerCellGeometrySource:
+                source_map = _rebuild_continuation_value(source_map)
+                if not isinstance(source_map, CellGeometryCoordinateMap):
+                    raise TypeError(
+                        "Mapped power restoration lost its coordinate-map contract."
+                    )
             elif isinstance(source_map, _RestrictedCoordinateMap):
                 if type(source_map) is not _RestrictedCoordinateMap:
                     raise TypeError(

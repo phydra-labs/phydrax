@@ -198,8 +198,43 @@ def _require_group_identity(
     gathered = _all_gather_local(
         np.asarray(word, dtype=np.int64), mesh, axis, owner_count
     )
-    if not np.all(gathered == gathered[0]):
-        raise ValueError(f"Owner-local {name} differs across execution-group ranks.")
+    if np.all(gathered == gathered[0]):
+        return
+    # Every rank observed the mismatch, so naming the differing components is
+    # itself collective over one fixed-width row per rank.
+    components: dict[str, Any] = {}
+    if isinstance(identity, dict):
+        for key, value in identity.items():
+            if isinstance(value, dict):
+                for inner, inner_value in value.items():
+                    components[f"{key}.{inner}"] = inner_value
+            else:
+                components[str(key)] = value
+    names = tuple(sorted(components))
+    widths = _all_gather_local(
+        np.asarray(len(names), dtype=np.int64), mesh, axis, owner_count
+    )
+    differing: tuple[str, ...] = ()
+    if names and np.all(widths == widths[0]):
+        words = np.asarray(
+            _all_gather_local(
+                np.asarray(
+                    [
+                        _fingerprint_word(canonical_fingerprint(components[key]))
+                        for key in names
+                    ],
+                    dtype=np.int64,
+                ),
+                mesh,
+                axis,
+                owner_count,
+            )
+        ).reshape((owner_count, len(names)))
+        differing = tuple(
+            key for index, key in enumerate(names) if np.unique(words[:, index]).size > 1
+        )
+    detail = f": {', '.join(differing)}" if differing else ""
+    raise ValueError(f"Owner-local {name} differs across execution-group ranks{detail}.")
 
 
 def _resolve_group_cell_kind(
@@ -3151,7 +3186,7 @@ def _root_projected_endpoint(
         PerCellRestrictedCellGeometryElement,
     )
     from .._cell_mesh import CellBlock, CellMesh
-    from .._coordinate_enclosure import evaluate_expression
+    from .._coordinate_enclosure import compose_expression, evaluate_expression
     from .._nested_reference_types import (
         exact_reference_cell_vertices,
         freeze_reference_chart_arguments,
@@ -3266,6 +3301,22 @@ def _root_projected_endpoint(
         dtype=np.int64,
     )
     source_cell_ids = np.full(target_cell_ids.shape, root_id, dtype=np.int64)
+    endpoint_base = root_element
+    element_source_cell_ids = source_cell_ids
+    endpoint_charts = tuple(chart_rows)
+    if isinstance(root_element, PerCellRestrictedCellGeometryElement):
+        # A restricted root carrier composes into one restriction of its base element.
+        root_chart = root_element.chart_arguments(root_cell_row)
+        endpoint_base = root_element.source_element
+        element_source_cell_ids = np.full(
+            target_cell_ids.shape,
+            int(np.asarray(root_element.source_cell_ids, dtype=np.int64)[root_cell_row]),
+            dtype=np.int64,
+        )
+        endpoint_charts = tuple(
+            tuple(compose_expression(argument, chart) for argument in root_chart)
+            for chart in chart_rows
+        )
     map_target_ids = np.arange(target_cell_ids.size, dtype=np.int64)
     endpoint_mesh = CellMesh(
         coordinates,
@@ -3281,11 +3332,11 @@ def _root_projected_endpoint(
         numeric_version=root_mesh.numeric_version,
     )
     endpoint_element = PerCellRestrictedCellGeometryElement(
-        root_element,
+        endpoint_base,
         "tetrahedron",
         target_cell_ids,
-        source_cell_ids,
-        tuple(chart_rows),
+        element_source_cell_ids,
+        endpoint_charts,
     )
     source_map = root_geometry.source_map
     if source_map is not None:
@@ -4592,12 +4643,19 @@ def prepare_owner_local_conservative_remap(
             raise ValueError("Source and target local cell dimensions differ.")
         source_binding = _view_binding(source_view)
         target_binding = _view_binding(target_view)
+        # Exact coordinate maps and their source contexts are bound to each rank's
+        # resident mesh and support set (an empty owner binds its source value), so
+        # their IDs are rank-local evidence checked against the rank's own geometry
+        # authority; the group compares the published source, manifest, and
+        # directory identities.
         rank_local_binding_fields = (
             "local_mesh_id",
             "local_topology_id",
             "local_geometry_id",
             "local_view_id",
             "owner_rank",
+            "source_map_id",
+            "source_context_id",
         )
         source_signature = {
             key: value

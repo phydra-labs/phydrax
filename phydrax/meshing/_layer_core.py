@@ -715,6 +715,44 @@ def _compose_organization(
                 int(value) for value in core_vertex_map[values[first:last]].tolist()
             )
             faces_by_facet[facet_value].add(face_id(loop))
+    cap_keys = {tuple(sorted(mapping[polygons[index]].tolist())) for index in cap_ids}
+    # An open wall also exposes layer side strips. The wall patch is only the
+    # exterior layer faces lying wholly on the wall; a strip rising from rim
+    # edge (a, b) joins the facet of the fixed PLC polygon that holds the tops
+    # of the columns grown from a and b.
+    layer_count = int(np.asarray(layers.layers.mesh.coordinates).shape[0])
+    column_sources = np.asarray(layers.layers.vertex_source_vertex_ids, dtype=np.int64)
+    wall_vertices = np.asarray(layers.layers.wall_vertices, dtype=np.int64)
+    on_wall = frozenset(wall_vertices[wall_vertices >= 0].tolist())
+    cap_polygons = frozenset(np.asarray(cap_ids, dtype=np.int64).tolist())
+    rim_facets: dict[tuple[int, int], set[int]] = {}
+    for index, (polygon, facet_value) in enumerate(
+        zip(polygons, complex_.polygon_facets, strict=True)
+    ):
+        if index in cap_polygons:
+            continue
+        rows = mapping[polygon].tolist()
+        for corner, row in enumerate(rows):
+            following = rows[(corner + 1) % len(rows)]
+            if row >= layer_count or following >= layer_count:
+                continue
+            ends = (int(column_sources[row]), int(column_sources[following]))
+            if min(ends) >= 0 and ends[0] != ends[1]:
+                rim_facets.setdefault((min(ends), max(ends)), set()).add(int(facet_value))
+    wall_rows: list[int] = []
+    side_rows: list[int] = []
+    for key, incidents in layer_faces.items():
+        if len(incidents) != 1 or key in cap_keys:
+            continue
+        if on_wall.issuperset(key):
+            wall_rows.append(face_id(key))
+            continue
+        ends = sorted({int(column_sources[row]) for row in key})
+        facets = rim_facets.get((ends[0], ends[-1]), set()) if len(ends) == 2 else set()
+        if len(facets) == 1 and ends[0] >= 0:
+            faces_by_facet[next(iter(facets))].add(face_id(key))
+        else:
+            side_rows.append(face_id(key))
     patches: list[organization_owner.MeshPatch] = [
         organization_owner.MeshPatch(
             "facet:"
@@ -733,7 +771,6 @@ def _compose_organization(
         for facet, face_rows in sorted(faces_by_facet.items())
         if face_rows
     ]
-    cap_keys = {tuple(sorted(mapping[polygons[index]].tolist())) for index in cap_ids}
     if cap_keys:
         patches.append(
             organization_owner.MeshPatch(
@@ -748,22 +785,17 @@ def _compose_organization(
                 connected=False,
             )
         )
-    wall_ids = np.asarray(
-        [
-            face_id(key)
-            for key, incidents in layer_faces.items()
-            if len(incidents) == 1 and key not in cap_keys
-        ],
-        dtype=np.int64,
-    )
-    if wall_ids.size:
-        patches.append(
-            organization_owner.MeshPatch(
-                "wall",
-                layer_topology.mesh_entity_scope(mesh, 2, wall_ids),
-                connected=False,
+    for name, rows in (("wall", wall_rows), ("layer-side", side_rows)):
+        if rows:
+            patches.append(
+                organization_owner.MeshPatch(
+                    name,
+                    layer_topology.mesh_entity_scope(
+                        mesh, 2, np.asarray(rows, dtype=np.int64)
+                    ),
+                    connected=False,
+                )
             )
-        )
     interface_ids = np.asarray(
         [
             face_id(key)

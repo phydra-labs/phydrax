@@ -38,12 +38,13 @@ from ..discretization._surface_chart_records import (
     SurfaceChartWitness,
 )
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
-from ._domain_boundary import MeshingDomainBoundarySource
+from ._domain_boundary import CurvedTrimLens, MeshingDomainBoundarySource
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import (
     interval_cos,
     IntervalExtensionError,
     prepare_interval_function,
+    PreparedIntervalFunction,
 )
 from ._mesh_certificates import (
     certificate_status,
@@ -72,6 +73,10 @@ from .brep._patches import AbstractSurfacePatch, PlanePatch
 
 
 if TYPE_CHECKING:
+    from .._interpolation._bspline_extraction import (
+        RationalBSplineSurfaceHessianEnclosure,
+        RationalBSplineSurfaceSpan,
+    )
     from ..meshing._scope import _SourceEntityScopes
     from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
@@ -440,7 +445,6 @@ def _partition_findings(
 ) -> tuple[MeshCertificateFinding, ...]:
 
     domain = source.domain
-    source_triangles = dict(source.boundary_parameter_triangles())
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
         charts = tuple(
@@ -464,9 +468,8 @@ def _partition_findings(
         )
         return tuple(findings)
     for patch in source.patches:
-        declared = source_triangles.get(patch)
         target = tuple(target_triangles.get(patch, ()))
-        if not declared or not target:
+        if not target:
             findings.append(
                 MeshCertificateFinding(
                     "source_chart_patch_coverage",
@@ -495,6 +498,13 @@ def _partition_findings(
                 )
             )
             continue
+        if isinstance(witness, SurfaceChartWitness):
+            # Collapsed pole slivers are part of their owner cells' chart preimages.
+            target = (
+                *target,
+                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+            )
+        declared, _ = source.trim_partition_reference(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -3657,20 +3667,10 @@ def _plane_normal_deviation(
     return _acos_lower(cosine[1]), _acos_upper(cosine[0])
 
 
-def _normal_deviation_for_cell(
-    domain: MeshingDomain,
-    patch: int,
-    uv_triangle: Triangle2,
-    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
-    /,
-) -> tuple[Fraction, Fraction] | None:
-    surface_patch = domain.patches[patch]
-    exact_plane = _plane_normal_deviation(
-        surface_patch.surface, surface_patch.orientation, uv_triangle, target_cross
-    )
-    if exact_plane is not None:
-        return exact_plane
-    surface = surface_patch.surface
+def _surface_jacobian_bounds(
+    surface: AbstractSurfacePatch, uv_triangle: Triangle2, /
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Enclose the physical Jacobian columns of a source surface on a chart triangle."""
     from ._source_interpolation import (
         _has_unexpanded_exact_surface_carrier,
         exact_surface_coordinate_expressions,
@@ -3691,11 +3691,7 @@ def _normal_deviation_for_cell(
                     return None
                 lower[physical_axis, parameter] = low
                 upper[physical_axis, parameter] = high
-        source_cross = _normal_cross_interval(lower, upper, surface_patch.orientation)
-        cosine = _normal_cosine_bounds(source_cross, target_cross)
-        if cosine is None:
-            return None
-        return _acos_lower(cosine[1]), _acos_upper(cosine[0])
+        return lower, upper
     if _has_unexpanded_exact_surface_carrier(surface):
         return None
     chart_lower = tuple(min(point[axis] for point in uv_triangle) for axis in range(2))
@@ -3714,11 +3710,368 @@ def _normal_deviation_for_cell(
     low, high = jacobian.evaluate(box_lower.reshape((1, 2)), box_upper.reshape((1, 2)))
     if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
         return None
-    source_cross = _normal_cross_interval(low[0], high[0], surface_patch.orientation)
-    cosine = _normal_cosine_bounds(source_cross, target_cross)
-    if cosine is None:
+    return np.asarray(low[0], dtype=np.float64), np.asarray(high[0], dtype=np.float64)
+
+
+type _PatchDerivativeSource = (
+    tuple[RationalBSplineSurfaceSpan, ...] | PreparedIntervalFunction
+)
+
+
+type _TensorNet = tuple[tuple[ExactScalar, ...], ...]
+
+
+class _DerivativeCache:
+    """Per-certification derivative sources and exact span enclosures.
+
+    A spline cell's Bernstein restriction is the dominant exact cost; its
+    enclosures serve both the interpolation and the normal bound of the cell.
+    """
+
+    __slots__ = ("enclosures", "intervals", "normal_nets", "spans")
+
+    def __init__(self) -> None:
+        self.spans: dict[int, tuple[RationalBSplineSurfaceSpan, ...] | None] = {}
+        self.intervals: dict[int, PreparedIntervalFunction] = {}
+        self.enclosures: dict[
+            tuple[int, Triangle2], tuple[RationalBSplineSurfaceHessianEnclosure, ...]
+        ] = {}
+        self.normal_nets: dict[
+            tuple[int, tuple[int, int]], tuple[_TensorNet, _TensorNet, _TensorNet]
+        ] = {}
+
+    def patch_spans(
+        self, patch: int, surface: AbstractSurfacePatch, /
+    ) -> tuple[RationalBSplineSurfaceSpan, ...] | None:
+        if patch not in self.spans:
+            from ._meshing_domain import _exact_rational_surface_spans
+
+            self.spans[patch] = _exact_rational_surface_spans(surface)
+        return self.spans[patch]
+
+    def source(
+        self, patch: int, surface: AbstractSurfacePatch, /
+    ) -> _PatchDerivativeSource:
+        spans = self.patch_spans(patch, surface)
+        if spans is not None:
+            return spans
+        interval = self.intervals.get(patch)
+        if interval is None:
+            interval = prepare_interval_function(jax.jacfwd(surface.evaluate), 2)
+            self.intervals[patch] = interval
+        return interval
+
+    def span_enclosures(
+        self,
+        patch: int,
+        spans: tuple[RationalBSplineSurfaceSpan, ...],
+        uv_triangle: Triangle2,
+        /,
+    ) -> tuple[RationalBSplineSurfaceHessianEnclosure, ...]:
+        key = (patch, uv_triangle)
+        enclosures = self.enclosures.get(key)
+        if enclosures is None:
+            from ._meshing_domain import _span_enclosures_for_chart
+
+            enclosures = _span_enclosures_for_chart(spans, uv_triangle)
+            self.enclosures[key] = enclosures
+        return enclosures
+
+    def span_normal_nets(
+        self,
+        patch: int,
+        spans: tuple[RationalBSplineSurfaceSpan, ...],
+        span_indices: tuple[int, int],
+        /,
+    ) -> tuple[_TensorNet, _TensorNet, _TensorNet]:
+        """Bernstein nets of ``N_u x N_v``, positively parallel to ``S_u x S_v``.
+
+        A rational span's first derivatives are ``N_u / W**2`` and ``N_v / W**2``
+        with ``W > 0``, so the polynomial cross product of the derivative
+        numerators has the oriented normal direction everywhere on the span.
+        """
+        key = (patch, span_indices)
+        nets = self.normal_nets.get(key)
+        if nets is None:
+            from .._interpolation._bspline_extraction import (
+                _tensor_bernstein_linear_combination,
+                _tensor_bernstein_product,
+            )
+
+            span = next(span for span in spans if span.span_indices == span_indices)
+            first, second = span._du_numerators, span._dv_numerators
+            if len(first) != 3 or len(second) != 3:
+                raise ValueError("Surface spline spans must map into three-space.")
+
+            def component(left: int, right: int) -> _TensorNet:
+                return _tensor_bernstein_linear_combination(
+                    (
+                        (
+                            Fraction(1),
+                            _tensor_bernstein_product(first[left], second[right]),
+                        ),
+                        (
+                            Fraction(-1),
+                            _tensor_bernstein_product(first[right], second[left]),
+                        ),
+                    )
+                )
+
+            nets = (component(1, 2), component(2, 0), component(0, 1))
+            self.normal_nets[key] = nets
+        return nets
+
+    def span_normal_cone_cosine(
+        self,
+        patch: int,
+        spans: tuple[RationalBSplineSurfaceSpan, ...],
+        enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...],
+        orientation: int,
+        target: tuple[tuple[Fraction, Fraction], ...],
+        /,
+    ) -> Fraction | None:
+        """Lower cosine bound between the target normal and every source normal.
+
+        On each span sub-box the normal direction is a convex combination of the
+        restricted Bernstein control vectors. When every control vector makes
+        an acute angle at most ``theta`` with the target, so does each convex
+        combination: the set of such vectors is a convex cone.
+        """
+        from .._interpolation._bspline_extraction import _tensor_bernstein_restrict
+
+        cosine_lower: Fraction | None = None
+        for enclosure in enclosures:
+            nets = self.span_normal_nets(patch, spans, enclosure.span_indices)
+            (span_lower_u, span_upper_u), (span_lower_v, span_upper_v) = (
+                enclosure.span_parameter_bounds
+            )
+            (lower_u, upper_u), (lower_v, upper_v) = enclosure.parameter_bounds
+            width_u = span_upper_u - span_lower_u
+            width_v = span_upper_v - span_lower_v
+            restricted = tuple(
+                _tensor_bernstein_restrict(
+                    net,
+                    (lower_u - span_lower_u) / width_u,
+                    (upper_u - span_lower_u) / width_u,
+                    (lower_v - span_lower_v) / width_v,
+                    (upper_v - span_lower_v) / width_v,
+                )
+                for net in nets
+            )
+            for row in zip(*restricted, strict=True):
+                for vector in zip(*row, strict=True):
+                    intervals = tuple(
+                        (
+                            Fraction(coefficient_endpoint(value, upper=False)),
+                            Fraction(coefficient_endpoint(value, upper=True)),
+                        )
+                        if orientation > 0
+                        else (
+                            Fraction(-coefficient_endpoint(value, upper=True)),
+                            Fraction(-coefficient_endpoint(value, upper=False)),
+                        )
+                        for value in vector
+                    )
+                    cosine = _normal_cosine_interval_bounds(intervals, target)
+                    if cosine is None or cosine[0] <= 0:
+                        return None
+                    if cosine_lower is None or cosine[0] < cosine_lower:
+                        cosine_lower = cosine[0]
+        return cosine_lower
+
+
+def _span_jacobian_bounds(
+    enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...], /
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Hull of exact span Jacobian bounds over every span the cell meets."""
+    if not enclosures:
         return None
-    return _acos_lower(cosine[1]), _acos_upper(cosine[0])
+    lower = np.empty((len(enclosures[0].du_bounds), 2), dtype=np.float64)
+    upper = np.empty_like(lower)
+    for component in range(lower.shape[0]):
+        for parameter in range(2):
+            bounds = [
+                (enclosure.du_bounds if parameter == 0 else enclosure.dv_bounds)[
+                    component
+                ]
+                for enclosure in enclosures
+            ]
+            lower[component, parameter] = fraction_endpoint(
+                min(bound[0] for bound in bounds), upper=False
+            )
+            upper[component, parameter] = fraction_endpoint(
+                max(bound[1] for bound in bounds), upper=True
+            )
+    return lower, upper
+
+
+def _normal_deviation_for_cell(
+    domain: MeshingDomain,
+    patch: int,
+    uv_triangle: Triangle2,
+    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    derivatives: _DerivativeCache,
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    """Enclose one cell's normal deviation; sources are cached per patch.
+
+    Spline carriers use exact Bernstein Jacobian bounds of their extracted
+    spans: a naive interval extension of the basis recursion does not shrink
+    to the cell's actual tangent range.
+    """
+    surface_patch = domain.patches[patch]
+    exact_plane = _plane_normal_deviation(
+        surface_patch.surface, surface_patch.orientation, uv_triangle, target_cross
+    )
+    if exact_plane is not None:
+        return exact_plane
+    surface = surface_patch.surface
+    from ._source_interpolation import (
+        _has_unexpanded_exact_surface_carrier,
+        exact_surface_coordinate_expressions,
+    )
+
+    exact_surface = exact_surface_coordinate_expressions(surface)
+    source: _PatchDerivativeSource | None = None
+    enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...] | None = None
+    if exact_surface is not None:
+        arguments = _affine_triangle_arguments(uv_triangle)
+        low = np.empty((3, 2), dtype=np.float64)
+        high = np.empty_like(low)
+        for physical_axis, expression in enumerate(exact_surface):
+            for parameter in range(2):
+                restricted = compose_expression(
+                    derivative(expression, parameter), arguments
+                )
+                lower, upper = polynomial_bounds(restricted, "simplex", 2)
+                if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
+                    return None
+                low[physical_axis, parameter] = lower
+                high[physical_axis, parameter] = upper
+    else:
+        if _has_unexpanded_exact_surface_carrier(surface):
+            return None
+        chart_lower = tuple(
+            min(point[axis] for point in uv_triangle) for axis in range(2)
+        )
+        chart_upper = tuple(
+            max(point[axis] for point in uv_triangle) for axis in range(2)
+        )
+        box_lower = np.asarray(
+            tuple(fraction_endpoint(value, upper=False) for value in chart_lower),
+            dtype=np.float64,
+        )
+        box_upper = np.asarray(
+            tuple(fraction_endpoint(value, upper=True) for value in chart_upper),
+            dtype=np.float64,
+        )
+        if np.any(~np.isfinite(box_lower)) or np.any(~np.isfinite(box_upper)):
+            return None
+        source = derivatives.source(patch, surface)
+        if isinstance(source, PreparedIntervalFunction):
+            bounds = source.evaluate(box_lower.reshape((1, 2)), box_upper.reshape((1, 2)))
+            low, high = bounds[0][0], bounds[1][0]
+        else:
+            enclosures = derivatives.span_enclosures(patch, source, uv_triangle)
+            jacobian = _span_jacobian_bounds(enclosures)
+            if jacobian is None:
+                return None
+            low, high = jacobian
+    if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
+        return None
+    source_cross = _normal_cross_interval(low, high, surface_patch.orientation)
+    cosine = _normal_cosine_bounds(source_cross, target_cross)
+    if (
+        enclosures is None
+        or source is None
+        or isinstance(source, PreparedIntervalFunction)
+    ):
+        if cosine is None:
+            return None
+        return _acos_lower(cosine[1]), _acos_upper(cosine[0])
+    # The componentwise Jacobian-box cross product decouples the tangent
+    # components; the exact Bernstein normal cone keeps them coupled.
+    cone_cosine = derivatives.span_normal_cone_cosine(
+        patch,
+        source,
+        enclosures,
+        surface_patch.orientation,
+        tuple(
+            (
+                Fraction(coefficient_endpoint(value, upper=False)),
+                Fraction(coefficient_endpoint(value, upper=True)),
+            )
+            for value in target_cross
+        ),
+    )
+    if cosine is None and cone_cosine is None:
+        return None
+    lower = Fraction(0) if cosine is None else _acos_lower(cosine[1])
+    upper = min(
+        bound
+        for bound in (
+            None if cosine is None else _acos_upper(cosine[0]),
+            None if cone_cosine is None else _acos_upper(cone_cosine),
+        )
+        if bound is not None
+    )
+    return lower, upper
+
+
+def _curved_trim_lens_caps(
+    surface: AbstractSurfacePatch,
+    chart_rows: list[tuple[int, Triangle2]],
+    lenses: tuple[CurvedTrimLens, ...],
+    /,
+) -> dict[int, Fraction]:
+    """Bound the physical distance a curved-trim lens adds to each target cell.
+
+    A lens point is within ``parameter_bound`` of its chord and its arc along a
+    chart segment inside the lens box, clipped to the convex source parameter
+    domain that holds both segment ends. The surface image of that segment is no
+    longer than the Jacobian norm bound on the box times the chart distance.
+    """
+    caps: dict[int, Fraction] = {}
+    domain = surface.parameter_domain
+    for lens in lenses:
+        lower = lens.lower
+        upper = lens.upper
+        if domain is not None:
+            lower = (
+                max(lower[0], Fraction.from_float(float(domain[0][0]))),
+                max(lower[1], Fraction.from_float(float(domain[0][1]))),
+            )
+            upper = (
+                min(upper[0], Fraction.from_float(float(domain[1][0]))),
+                min(upper[1], Fraction.from_float(float(domain[1][1]))),
+            )
+        if lower[0] >= upper[0] or lower[1] >= upper[1]:
+            raise ValueError("A curved trim lens leaves the source parameter domain.")
+        norm_squared = Fraction(0)
+        for triangle in (
+            (lower, (upper[0], lower[1]), upper),
+            (lower, upper, (lower[0], upper[1])),
+        ):
+            bounds = _surface_jacobian_bounds(surface, triangle)
+            if bounds is None:
+                raise ValueError("A curved trim lens has no surface Jacobian enclosure.")
+            magnitude = np.maximum(np.abs(bounds[0]), np.abs(bounds[1]))
+            norm_squared = max(
+                norm_squared,
+                sum(
+                    (Fraction.from_float(float(value)) ** 2 for value in magnitude.flat),
+                    Fraction(0),
+                ),
+            )
+        cap = fraction_sqrt_interval(norm_squared)[1] * lens.parameter_bound
+        for cell_id, chart in chart_rows:
+            if all(
+                min(point[axis] for point in chart) <= upper[axis]
+                and max(point[axis] for point in chart) >= lower[axis]
+                for axis in range(2)
+            ):
+                caps[cell_id] = max(caps.get(cell_id, Fraction(0)), cap)
+    return caps
 
 
 def _certify_source_point_fidelity(
@@ -4077,6 +4430,7 @@ def _certify_domain_surface_chart_fidelity(
             (len(evidence.cell_global_ids),), np.inf, dtype=np.float64
         )
         normal_limit = Fraction.from_float(float(maximum_normal_deviation))
+        derivatives = _DerivativeCache()
         for row, (patch, chart) in enumerate(zip(patch_rows, charts, strict=True)):
             if not evidence.target_affine or not evidence.target_affine[row]:
                 findings.append(
@@ -4092,7 +4446,11 @@ def _certify_domain_surface_chart_fidelity(
             target_cross = _triangle_physical_normal(evidence.target_corners[row])
             try:
                 normal_evidence = _normal_deviation_for_cell(
-                    domain_source.domain, int(patch), chart, target_cross
+                    domain_source.domain,
+                    int(patch),
+                    chart,
+                    target_cross,
+                    derivatives,
                 )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None
@@ -4641,12 +4999,14 @@ def certify_source_fidelity(
             )
         if witness.chart_dimension == 2:
             from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
+            from .implicit._source_charts import (
+                _AdaptiveImplicitBoundaryCarrier as _ChartCarrier,
+                certify_adaptive_implicit_charts,
+            )
 
             if isinstance(source, AdaptiveImplicitBoundarySource) or isinstance(
-                source, _AdaptiveImplicitBoundaryCarrier
+                source, _ChartCarrier
             ):
-                from .implicit._source_charts import certify_adaptive_implicit_charts
-
                 return certify_adaptive_implicit_charts(
                     mesh,
                     geometry,
@@ -4833,6 +5193,7 @@ def certify_source_fidelity(
         None if normal_limit is None else np.full((cell_count,), np.inf, dtype=np.float64)
     )
     normal_lower_max = Fraction(0)
+    derivatives = _DerivativeCache()
     mesh_to_source_upper = Fraction(0)
     source_to_mesh_upper = Fraction(0)
     witness_cell_ids = np.asarray(witness.cell_global_ids, dtype=np.int64)
@@ -4900,12 +5261,12 @@ def certify_source_fidelity(
                     if point_0 is None or point_1 is None or point_2 is None
                     else (point_0, point_1, point_2)
                 )
-            if exact_surface_map is None:
-                interpolation = np.asarray(
-                    domain_source.domain.interpolation_bounds(patch, charts_float),
-                    dtype=np.float64,
-                )
-            else:
+            spans = (
+                None
+                if exact_surface_map is not None
+                else derivatives.patch_spans(patch, surface)
+            )
+            if exact_surface_map is not None:
                 interpolation = np.asarray(
                     [
                         _exact_surface_interpolation_bound(exact_surface_map, chart)
@@ -4913,6 +5274,27 @@ def certify_source_fidelity(
                     ],
                     dtype=np.float64,
                 )
+            elif spans is not None:
+                from ._meshing_domain import (
+                    _spline_interpolation_bound_from_enclosures,
+                )
+
+                interpolation = np.asarray(
+                    [
+                        _spline_interpolation_bound_from_enclosures(
+                            chart, derivatives.span_enclosures(patch, spans, chart)
+                        )
+                        for _, chart in chart_rows
+                    ],
+                    dtype=np.float64,
+                )
+            else:
+                interpolation = np.asarray(
+                    domain_source.domain.interpolation_bounds(patch, charts_float),
+                    dtype=np.float64,
+                )
+            # Adjacent cells share corners; each source corner box is computed once.
+            corner_boxes: dict[Point2, np.ndarray] = {}
             source_intervals_by_row: list[tuple[np.ndarray, np.ndarray] | None] = []
             for chart_row, (_, chart) in enumerate(chart_rows):
                 if exact_points_by_row[chart_row] is not None:
@@ -4921,27 +5303,48 @@ def certify_source_fidelity(
                 point_lower = np.empty((3, 3), dtype=np.float64)
                 point_upper = np.empty_like(point_lower)
                 for corner, uv in enumerate(chart):
-                    u_bounds = _fraction_float_interval(uv[0])
-                    v_bounds = _fraction_float_interval(uv[1])
-                    parameter_box = _outward_surface_parameter_box(
-                        surface,
-                        (u_bounds[0], v_bounds[0]),
-                        (u_bounds[1], v_bounds[1]),
-                    )
-                    point_box = np.asarray(
-                        surface.bounding_box(parameter_box), dtype=np.float64
-                    )
-                    if (
-                        point_box.shape != (2, 3)
-                        or np.any(~np.isfinite(point_box))
-                        or np.any(point_box[0] > point_box[1])
-                    ):
-                        raise ValueError(
-                            "Source chart corner has no finite ordered physical point box."
+                    point_box = corner_boxes.get(uv)
+                    if point_box is None:
+                        u_bounds = _fraction_float_interval(uv[0])
+                        v_bounds = _fraction_float_interval(uv[1])
+                        parameter_box = _outward_surface_parameter_box(
+                            surface,
+                            (u_bounds[0], v_bounds[0]),
+                            (u_bounds[1], v_bounds[1]),
                         )
+                        point_box = np.asarray(
+                            surface.bounding_box(parameter_box), dtype=np.float64
+                        )
+                        if (
+                            point_box.shape != (2, 3)
+                            or np.any(~np.isfinite(point_box))
+                            or np.any(point_box[0] > point_box[1])
+                        ):
+                            raise ValueError(
+                                "Source chart corner has no finite ordered physical point box."
+                            )
+                        corner_boxes[uv] = point_box
                     point_lower[corner] = point_box[0]
                     point_upper[corner] = point_box[1]
                 source_intervals_by_row.append((point_lower, point_upper))
+            # A sliver's source image stays within its cap bound of the owner's
+            # pole corner, whose target image is bounded by the endpoint error.
+            sliver_caps: dict[int, Fraction] = {}
+            target_charts = tuple(chart for _, chart in chart_rows)
+            slivers = domain_source.collapsed_pole_slivers(patch, target_charts)
+            for owner_row, sliver in slivers:
+                owner = chart_rows[owner_row][0]
+                sliver_caps[owner] = max(
+                    sliver_caps.get(owner, Fraction(0)),
+                    domain_source.pole_sliver_cap_bound(patch, sliver),
+                )
+            # Target charts follow a curved trim by chords. A chart point between a
+            # chord and its arc is within the lens bound of both, so the directed
+            # distances of every cell meeting the lens box grow by its surface image.
+            _, lenses = domain_source.trim_partition_reference(
+                patch, (*target_charts, *(sliver for _, sliver in slivers))
+            )
+            lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses)
         except (
             ArithmeticError,
             FloatingPointError,
@@ -5057,6 +5460,10 @@ def certify_source_fidelity(
                 )
             interpolation_bound = Fraction(float(interpolation[chart_row]))
             deviation = interpolation_bound + endpoint_error
+            cap = sliver_caps.get(cell_id)
+            if cap is not None:
+                deviation = max(deviation, cap + endpoint_error)
+            deviation += lens_caps.get(cell_id, Fraction(0))
             output_row = row_for_id[cell_id]
             deviation_upper = fraction_endpoint(deviation, upper=True, saturate=True)
             deviation_bounds[output_row] = (0.0, deviation_upper)
@@ -5081,6 +5488,7 @@ def certify_source_fidelity(
                     patch,
                     chart,
                     target_cross,
+                    derivatives,
                 )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None

@@ -893,13 +893,11 @@ void persistent_periodic_state_and_atomic_relocation() {
   edit.removed_cell_count = static_cast<int64_t>(cell_ids.size());
   edit.removed_cell_ids = cell_ids.data();
   int32_t edit_status = -1;
-  constexpr char stale_source_mesh_id[] = "mesh:stale";
-  identity_map.source_mesh_id = stale_source_mesh_id;
-  identity_map.source_mesh_id_length = sizeof(stale_source_mesh_id) - 1;
+  // The target identity names the edited state; the generation guards staleness.
+  edit.expected_generation = 1;
   PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &edit, &edit_status) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_STALE_GENERATION);
-  identity_map.source_mesh_id = source_mesh_id;
-  identity_map.source_mesh_id_length = sizeof(source_mesh_id) - 1;
+  edit.expected_generation = 0;
   PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &edit, &edit_status) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_REJECTED_TOPOLOGY);
   uint64_t generation = 99;
@@ -1154,8 +1152,30 @@ void persistent_periodic_state_and_atomic_relocation() {
       static_cast<int64_t>(cell_ids.size());
   periodic_collapse.replacement_cell_ancestry_offsets = replacement_ancestry_offsets.data();
   periodic_collapse.replacement_cell_ancestor_ids = cell_ids.data();
+  // The collapse produces a new source mesh: its target identity is bound.
+  constexpr char collapsed_source_mesh_id[] = "mesh:collapsed";
+  target_identity_map.source_mesh_id = collapsed_source_mesh_id;
+  target_identity_map.source_mesh_id_length = sizeof(collapsed_source_mesh_id) - 1;
   PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &periodic_collapse, &edit_status) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
+  std::array<int64_t, 6> rebound_lengths{};
+  PHX_CHECK(phx_mc_tet_mesh_periodic_identity_sizes(
+                mesh, &periodic_identity_bound, &rebound_lengths[0], &rebound_lengths[1],
+                &rebound_lengths[2], &rebound_lengths[3], &rebound_lengths[4],
+                &rebound_lengths[5]) == PHX_MC_OK);
+  PHX_CHECK(periodic_identity_bound == 1 &&
+            rebound_lengths[0] == sizeof(collapsed_source_mesh_id) - 1);
+  std::array<char, sizeof(collapsed_source_mesh_id) - 1> rebound_source_mesh_id{};
+  PHX_CHECK(phx_mc_tet_mesh_periodic_identity(
+                mesh, rebound_source_mesh_id.size(), rebound_source_mesh_id.data(),
+                copied_source_topology_id.size(), copied_source_topology_id.data(),
+                copied_lifted_topology_id.size(), copied_lifted_topology_id.data(),
+                copied_periodic_topology_id.size(), copied_periodic_topology_id.data(),
+                copied_cell_entity_set_id.size(), copied_cell_entity_set_id.data(),
+                copied_edge_entity_set_id.size(), copied_edge_entity_set_id.data()) ==
+            PHX_MC_OK);
+  PHX_CHECK(std::string_view(rebound_source_mesh_id.data(), rebound_source_mesh_id.size()) ==
+            std::string_view(collapsed_source_mesh_id, sizeof(collapsed_source_mesh_id) - 1));
   std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> merged_sizes{};
   constexpr std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> expected_merged_sizes{
       4, 1, 4, 0, 5, 4, 0, 4, 4, 1, 1, 4, 15, 15, 15, 32, 15, 0, 4};

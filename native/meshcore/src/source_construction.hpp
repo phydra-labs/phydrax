@@ -76,10 +76,13 @@ void clamp_source_parameters(SourceStratum stratum, double* parameters);
 // coplanarity with every facet through AB) hold exactly.
 //
 // A predicate argument: the carrier, and the exact position when the carrier
-// is only its rounding (null when the carrier is the exact position).
+// is only its rounding (null when the carrier is the exact position), with
+// upper bounds of |exact - carrier| per coordinate when known (null: the
+// predicates derive them).
 struct ExactPointRef {
   const double* carrier = nullptr;
   const Expansion* exact = nullptr;
+  const double* deviation = nullptr;
 };
 
 // Exact positions of the witnessed vertices of one vertex bank, keyed by
@@ -89,15 +92,16 @@ class ExactVertexBank {
   void clear() {
     slots_.clear();
     positions_.clear();
+    deviations_.clear();
   }
   bool empty() const { return positions_.empty(); }
   // Three exact coordinates of `vertex`, or null when its carrier is exact.
   const Expansion* position(int32_t vertex) const {
-    if (vertex < 0 || static_cast<std::size_t>(vertex) >= slots_.size()) return nullptr;
-    const int32_t slot = slots_[static_cast<std::size_t>(vertex)];
+    const int32_t slot = slot_of(vertex);
     return slot < 0 ? nullptr : positions_[static_cast<std::size_t>(slot)].data();
   }
-  void assign(int32_t vertex, const Expansion* position) {
+  // The exact position of `vertex` and the deviation bounds of its carrier.
+  void assign(int32_t vertex, const Expansion* position, const double* carrier) {
     if (static_cast<std::size_t>(vertex) >= slots_.size()) {
       slots_.resize(static_cast<std::size_t>(vertex) + 1, -1);
     }
@@ -105,10 +109,13 @@ class ExactVertexBank {
     if (slot < 0) {
       slot = static_cast<int32_t>(positions_.size());
       positions_.emplace_back();
+      deviations_.emplace_back();
     }
     for (int axis = 0; axis < 3; ++axis) {
       positions_[static_cast<std::size_t>(slot)][static_cast<std::size_t>(axis)] =
           position[axis];
+      deviations_[static_cast<std::size_t>(slot)][static_cast<std::size_t>(axis)] =
+          outward_magnitude(position[axis] - Expansion(carrier[axis]));
     }
   }
   void erase(int32_t vertex) {
@@ -117,13 +124,23 @@ class ExactVertexBank {
     }
   }
   ExactPointRef reference(const double* carriers, int32_t vertex) const {
-    return {carriers + 3 * static_cast<std::ptrdiff_t>(vertex), position(vertex)};
+    const int32_t slot = slot_of(vertex);
+    if (slot < 0) return {carriers + 3 * static_cast<std::ptrdiff_t>(vertex), nullptr, nullptr};
+    return {carriers + 3 * static_cast<std::ptrdiff_t>(vertex),
+            positions_[static_cast<std::size_t>(slot)].data(),
+            deviations_[static_cast<std::size_t>(slot)].data()};
   }
 
  private:
+  int32_t slot_of(int32_t vertex) const {
+    if (vertex < 0 || static_cast<std::size_t>(vertex) >= slots_.size()) return -1;
+    return slots_[static_cast<std::size_t>(vertex)];
+  }
+
   std::vector<int32_t> slots_;
-  // A deque keeps returned coordinate pointers valid while entries are added.
+  // Deques keep returned pointers valid while entries are added.
   std::deque<std::array<Expansion, 3>> positions_;
+  std::deque<std::array<double, 3>> deviations_;
 };
 
 // Exact predicates on references; all-carrier arguments use the filtered

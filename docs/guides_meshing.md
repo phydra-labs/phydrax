@@ -508,9 +508,13 @@ refused with the colliding wall vertices and their locations, so choose
 thicknesses that are small relative to the surface size. Source fidelity covers
 every exterior facet: the grown cells keep their charts, and fixed cells and
 layer side strips take the closest-point charts of their source face. A column
-shared by two faces lies exactly on their common trim. Refinement that cannot
-reach its targets because of the fixed boundary is reported as evidence;
-improvement that leaves unmet quality criteria fails compliance.
+shared by two faces lies exactly on their common trim. The `wall` patch is only
+the exterior layer faces that lie on the wall. A side strip rising from rim edge
+`(a, b)` joins the `facet:` patch of the fixed core polygon holding the tops of
+the columns of `a` and `b`. Strips without such a unique polygon form the
+`layer-side` patch. Refinement that cannot reach its targets because of the fixed
+boundary is reported as evidence; improvement that leaves unmet quality criteria
+fails compliance.
 
 `prepare_periodic_layer_core_source(source, core_vertex_representatives,
 core_vertex_shifts, core_seam_polygon_pairs)` binds source-authored PLC orbits
@@ -776,6 +780,23 @@ Their target geometry is the exact per-cell restriction of the root map, so a
 request without `maximum_deviation` is certified at zero source deviation; an
 explicit bound is honored as requested.
 
+On a curved PLC source, `plc_hex_dominant` and `plc_balanced_grid_hex` both
+restrict one curved tetrahedral fill. Every output cell keeps an exact chart
+into its fill tetrahedron, and that tetrahedron keeps its affine chart into the
+curved root.
+Global embedding reuses the fill's own proof through these child-in-fill maps
+(a forward reference chain) rather than proving curved cell pairs apart one by
+one. Source fidelity carries the fill's boundary chart witness onto the output
+faces. A quadrilateral face that is a twisted bilinear patch of its fill face
+is split into straight pieces until the correspondence error stays within half
+the tolerance; that error is bounded with the fill map's exact Bernstein
+Lipschitz constant. Parallelogram faces keep two pieces. Curved transition
+pyramids are per-cell restrictions with rational charts. Such a chart is
+accepted only when its `1 - z` pole cancels in collapsed-cube form, the
+remaining denominator has a strict sign, and the apex has one image. Evaluating
+the gradient exactly at the apex is still refused when it depends on the
+direction of approach.
+
 Every accepted family still passes the common continuous whole-cell validity,
 embedding, coverage, and source-fidelity checks. Quality samples are
 observations only; they cannot prove those claims or authorize a different
@@ -826,6 +847,16 @@ edge orbits flip across the seam. When the route stalls it refuses with
 `COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
 `MeshingFailureEvidence` holds each remaining edge's metric length and refusal
 reasons.
+
+Exact periodic proofs use the quotient chart: a lifted vertex's exact position
+is its root's exact position translated exactly by its deck winding, and the
+binary64 carrier holds the canonical rounding of that translate. Orbit-locked
+bisection on a non-dyadic lattice can create midpoints that are not binary64;
+its target is then published on the lifted vertex-indexed P1 carrier with an
+`ExactPlcCellGeometrySource` bank of the exact midpoints, which the target's
+`PeriodicMeshTopology` accepts as its exact coordinate witness. Certify or
+distribute the adaptation result itself: re-certifying the bare target mesh
+drops that bank.
 
 Every owner-local periodic view retains the exact `specification_id`, including
 nonadaptive periodic-power views. Cold reattachment requires the archived typed

@@ -52,19 +52,28 @@ def _label_field_failure(message: str, /) -> MeshingFailure:
     )
 
 
-def _source_region_key(
+def _source_region_keys(
     source: CompartmentMeshingSource | NativePlcSource,
+    /,
+) -> dict[str, tuple[tuple[str, tuple[str, ...]], ...]]:
+    """Source-owned region scope keys by region ID, resolved once per source."""
+    # Bound once: an Equinox module method lookup traverses the whole source pytree.
+    key_for_scope = source.source_entity_key_for_scope
+    keys: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {}
+    for identifier in source.scope_entity_ids(3).tolist():
+        key = key_for_scope(3, int(identifier))
+        keys[key[0]] = (*keys.get(key[0], ()), key)
+    return keys
+
+
+def _source_region_key(
+    region_keys: dict[str, tuple[tuple[str, tuple[str, ...]], ...]],
     region_id: str | None,
     /,
 ) -> tuple[str, tuple[str, ...]] | None:
     if region_id is None:
         return None
-    matches = tuple(
-        key
-        for identifier in source.scope_entity_ids(3).tolist()
-        if (key := source.source_entity_key_for_scope(3, int(identifier)))[0]
-        == region_id
-    )
+    matches = region_keys.get(region_id, ())
     if len(matches) != 1:
         raise ValueError(
             "A source-adjacent region must resolve through exactly one source-owned scope key."
@@ -345,6 +354,7 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
             )
             patches = []
             represented_facets: set[str] = set()
+            region_keys = _source_region_keys(self.label_field.source)
             for patch in construction.organization.patches:
                 matches = tuple(
                     (facet_id, source_pair)
@@ -368,10 +378,10 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
                 source_region_keys = (
                     None
                     if left_id == self.label_field.boundary_region_id
-                    else _source_region_key(self.label_field.source, left_id),
+                    else _source_region_key(region_keys, left_id),
                     None
                     if right_id == self.label_field.boundary_region_id
-                    else _source_region_key(self.label_field.source, right_id),
+                    else _source_region_key(region_keys, right_id),
                 )
                 patches.append(
                     type(patch)(
@@ -404,6 +414,7 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
         ):
             raise RuntimeError("Prepared compartment route lost its source preparation.")
         organization = construction.organization
+        region_keys = _source_region_keys(self.source)
         facet_interface_sides = {
             facet_id: (interface_id, source_pair)
             for facet_id, interface_id, source_pair in zip(
@@ -448,8 +459,8 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
                 )
             renamed.add(interface_id)
             source_region_keys = (
-                _source_region_key(self.source, source_pair[0]),
-                _source_region_key(self.source, source_pair[1]),
+                _source_region_key(region_keys, source_pair[0]),
+                _source_region_key(region_keys, source_pair[1]),
             )
             patches.append(
                 type(patch)(

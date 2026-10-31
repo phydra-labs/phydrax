@@ -85,11 +85,23 @@ void reserve_for(std::vector<T, Allocator>& values, std::size_t required) {
   values.reserve(std::max(required, grown));
 }
 
+// One cell replaced by a committed cavity edit: its slot and vertices, as
+// removed (before the edit) or created (after it).
+struct CellEvent {
+  int32_t slot;
+  bool created;
+  std::array<int32_t, 4> v;
+};
+
 class TetrahedralComplex {
  public:
   std::vector<Tetrahedron> tets;
   std::vector<int32_t> free_slots;
   int64_t finite_count = 0;
+  // Optional journal of committed cavity edits, in commit order: every
+  // removed cell, then every created cell, of each edit. Bulk construction
+  // and vertex renumbering are not journaled.
+  std::vector<CellEvent>* journal = nullptr;
 
   bool live(int32_t t) const {
     return t >= 0 && static_cast<std::size_t>(t) < tets.size() &&
@@ -331,9 +343,23 @@ class CavityEdit {
     ids_.clear();
     ids_.reserve(created_.size());
     if (cone_center_ != kNoCone) reserve_star_table(created_.size());
+    std::vector<CellEvent>* journal = complex_.journal;
+    if (journal != nullptr) {
+      reserve_for(*journal, journal->size() + removed_.size() + created_.size());
+      for (int32_t t : removed_) {
+        const int32_t* v = complex_.tets[static_cast<std::size_t>(t)].v;
+        journal->push_back({t, false, {v[0], v[1], v[2], v[3]}});
+      }
+    }
 
     staged_ = false;
     const bool linked = apply(cone_center_ != kNoCone);
+    if (journal != nullptr) {
+      for (int32_t id : ids_) {
+        const int32_t* v = complex_.tets[static_cast<std::size_t>(id)].v;
+        journal->push_back({id, true, {v[0], v[1], v[2], v[3]}});
+      }
+    }
     complex_.finite_count += created_finite - removed_finite;
     cone_center_ = kNoCone;
     return linked ? EditStatus::kOk : EditStatus::kInternal;

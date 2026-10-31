@@ -77,7 +77,12 @@ double point_triangle_distance(const double* p, const double* a, const double* b
 }
 
 // This index encloses the computed closest-point kernels, not only ideal
-// segments: a + t*(b-a) may end at a rounded value distinct from b.
+// segments: a + t*(b-a) may end at a rounded value distinct from b. Rows
+// are points, segments (`arity` 2) or triangles (`arity` 3) of `cells`.
+// Triangle boxes are widened by 2^-20 of their extent plus 2^-40 of their
+// coordinates, enclosing the rounded interior closest points of the
+// Voronoi-region kernel; triangles with a nearly degenerate corner angle
+// have unbounded boxes.
 class ProtectionIndex {
   struct Node {
     double lower[3]{};
@@ -88,9 +93,9 @@ class ProtectionIndex {
   };
 
  public:
-  void build(const double* points, std::size_t count, std::span<const int32_t> edges) {
-    const bool segments = !edges.empty();
-    const std::size_t size = segments ? edges.size() / 2 : count;
+  void build(const double* points, std::size_t count, std::span<const int32_t> cells,
+             std::size_t arity) {
+    const std::size_t size = arity > 1 ? cells.size() / arity : count;
     if (size == 0) return;
     nodes_.reserve(2 * size - 1);
     std::vector<std::size_t> order(size);
@@ -98,11 +103,23 @@ class ProtectionIndex {
     for (std::size_t row = 0; row < size; ++row) {
       Node node;
       node.row = row;
-      const double* a = points + 3 * (segments ? edges[2 * row] : row);
+      const double* a = points + 3 * (arity > 1 ? static_cast<std::size_t>(cells[arity * row]) : row);
+      bool unbounded = false;
+      if (arity == 3) {
+        const double* b = points + 3 * static_cast<std::size_t>(cells[3 * row + 1]);
+        const double* c = points + 3 * static_cast<std::size_t>(cells[3 * row + 2]);
+        const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+        const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        const double normal[3] = {ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
+                                  ab[0] * ac[1] - ab[1] * ac[0]};
+        // Corner angles with sin^2 below 2^-30 make the interior closest
+        // point ill-conditioned; such triangles meet every query.
+        unbounded = !(dot(normal, normal) >= 0x1p-30 * dot(ab, ab) * dot(ac, ac));
+      }
       for (int axis = 0; axis < 3; ++axis) {
         node.lower[axis] = node.upper[axis] = a[axis];
-        if (segments) {
-          const double b = points[3 * static_cast<std::size_t>(edges[2 * row + 1]) + axis];
+        if (arity == 2) {
+          const double b = points[3 * static_cast<std::size_t>(cells[2 * row + 1]) + axis];
           const double reconstructed = a[axis] + (b - a[axis]);
           if (std::isfinite(reconstructed)) {
             node.lower[axis] = std::min({a[axis], b, reconstructed});
@@ -111,6 +128,16 @@ class ProtectionIndex {
             node.lower[axis] = -std::numeric_limits<double>::infinity();
             node.upper[axis] = std::numeric_limits<double>::infinity();
           }
+        } else if (arity == 3) {
+          const double b = points[3 * static_cast<std::size_t>(cells[3 * row + 1]) + axis];
+          const double c = points[3 * static_cast<std::size_t>(cells[3 * row + 2]) + axis];
+          const double lower = std::min({a[axis], b, c});
+          const double upper = std::max({a[axis], b, c});
+          const double margin = 0x1p-20 * (upper - lower) +
+                                0x1p-40 * std::max(std::fabs(lower), std::fabs(upper));
+          const bool finite = !unbounded && std::isfinite(margin);
+          node.lower[axis] = finite ? lower - margin : -std::numeric_limits<double>::infinity();
+          node.upper[axis] = finite ? upper + margin : std::numeric_limits<double>::infinity();
         }
       }
       nodes_.push_back(node);
@@ -227,7 +254,7 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
     incident[static_cast<std::size_t>(edges[e + 1])].push_back(edges[e]);
   }
   std::vector<double> radii(count, 0.0);
-  ProtectionIndex point_index, segment_index;
+  ProtectionIndex point_index, segment_index, triangle_index;
   std::vector<std::size_t> rows;
   bool indexed = false;
   for (std::size_t v = 0; v < count; ++v) {
@@ -245,9 +272,10 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
     }
     if (!acute) continue;
     if (!indexed) {
-      point_index.build(points, count, {});
-      if (!edges.empty()) segment_index.build(points, 0, edges);
-      rows.reserve(std::max(count, edges.size() / 2));
+      point_index.build(points, count, {}, 1);
+      if (!edges.empty()) segment_index.build(points, 0, edges, 2);
+      triangle_index.build(points, 0, triangles, 3);
+      rows.reserve(std::max({count, edges.size() / 2, triangles.size() / 3}));
       indexed = true;
     }
     double reach = std::numeric_limits<double>::infinity();
@@ -268,12 +296,13 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
                                     points + 3 * static_cast<std::size_t>(edges[e + 1])));
       }
     }
-    // The existing Voronoi kernel has no cheap conservative triangle bounds;
-    // retain its original exhaustive, deterministic row order.
-    for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
-      const std::size_t a = static_cast<std::size_t>(triangles[t]);
-      const std::size_t b = static_cast<std::size_t>(triangles[t + 1]);
-      const std::size_t c = static_cast<std::size_t>(triangles[t + 2]);
+    // The minimum is independent of row order, so rows whose boxes are
+    // farther than 2 reach are skipped.
+    triangle_index.candidates(p, reach, rows);
+    for (std::size_t row : rows) {
+      const std::size_t a = static_cast<std::size_t>(triangles[3 * row]);
+      const std::size_t b = static_cast<std::size_t>(triangles[3 * row + 1]);
+      const std::size_t c = static_cast<std::size_t>(triangles[3 * row + 2]);
       if (a != v && b != v && c != v) {
         reach = std::min(reach, 0.5 * point_triangle_distance(
                                     p, points + 3 * a, points + 3 * b, points + 3 * c));
@@ -439,6 +468,126 @@ void exact_point(const ExactPointRef& point, Expansion* coordinates) {
   for (int axis = 0; axis < 3; ++axis) coordinates[axis] = coordinate(point, axis);
 }
 
+// Upper bounds of |exact - carrier|, one per coordinate (0 for exact carriers).
+void carrier_deviation(const ExactPointRef& point, double* deviation) {
+  for (int axis = 0; axis < 3; ++axis) {
+    deviation[axis] =
+        point.exact == nullptr     ? 0.0
+        : point.deviation != nullptr ? point.deviation[axis]
+                                     : outward_magnitude(point.exact[axis] - Expansion(point.carrier[axis]));
+  }
+}
+
+// Bound on |det(exact) - fl(det(carrier differences))| for a determinant of
+// difference rows u (binary64, |u - exact| <= e per entry): `perturbed` and
+// `plain` are the permanents of |u| + e and |u| evaluated in binary64. The
+// permanent difference bounds the perturbation (every term of the
+// multilinear expansion with a perturbed factor is at most its absolute
+// value), 2^-48 plain bounds the evaluation error, and the widenings by
+// 2^-40 absorb the roundings of the bound itself; 2^-1000 covers underflow.
+double determinant_error(double perturbed, double plain) {
+  const double widen = 1.0 + 0x1p-40;
+  return (perturbed * widen - plain * (1.0 - 0x1p-40) + 0x1p-48 * plain) * widen + 0x1p-1000;
+}
+
+// Sign of orient3d(a, b, c, d) on the exact points (the sign of
+// -det[a - d, b - d, c - d], as orient3d_sign) when binary64 evaluation on
+// the carriers decides it, else 0.
+int filtered_orient3d(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                      const ExactPointRef& d) {
+  const ExactPointRef* rows[3] = {&a, &b, &c};
+  double base[3];
+  carrier_deviation(d, base);
+  double u[3][3], magnitude[3][3], widened[3][3];
+  for (int row = 0; row < 3; ++row) {
+    double deviation[3];
+    carrier_deviation(*rows[row], deviation);
+    for (int axis = 0; axis < 3; ++axis) {
+      u[row][axis] = rows[row]->carrier[axis] - d.carrier[axis];
+      magnitude[row][axis] = std::fabs(u[row][axis]);
+      widened[row][axis] =
+          magnitude[row][axis] + (0x1p-52 * magnitude[row][axis] + deviation[axis] + base[axis]);
+    }
+  }
+  const auto permanent = [](const double (*m)[3]) {
+    return m[0][0] * (m[1][1] * m[2][2] + m[1][2] * m[2][1]) +
+           m[0][1] * (m[1][0] * m[2][2] + m[1][2] * m[2][0]) +
+           m[0][2] * (m[1][0] * m[2][1] + m[1][1] * m[2][0]);
+  };
+  const double determinant = u[0][0] * (u[1][1] * u[2][2] - u[1][2] * u[2][1]) -
+                             u[0][1] * (u[1][0] * u[2][2] - u[1][2] * u[2][0]) +
+                             u[0][2] * (u[1][0] * u[2][1] - u[1][1] * u[2][0]);
+  const double bound = determinant_error(permanent(widened), permanent(magnitude));
+  if (!std::isfinite(determinant) || !std::isfinite(bound) || !(std::fabs(determinant) > bound)) {
+    return 0;
+  }
+  return determinant > 0.0 ? -1 : 1;
+}
+
+// Sign of insphere(a, b, c, d, e) on the exact points (the sign of minus
+// the lifted determinant of the rows p - e, |p - e|^2, as insphere_sign)
+// when binary64 evaluation on the carriers decides it, else 0. A lift
+// entry is bounded by the squared widened differences: |L - fl(lift)| is
+// at most their sum minus fl(lift), up to the 2^-40 widening.
+int filtered_insphere(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+                      const ExactPointRef& d, const ExactPointRef& e) {
+  const ExactPointRef* rows[4] = {&a, &b, &c, &d};
+  double base[3];
+  carrier_deviation(e, base);
+  // Columns x, y, z, lift of the values, their magnitudes and widened bounds.
+  double value[4][4], magnitude[4][4], widened[4][4];
+  for (int row = 0; row < 4; ++row) {
+    double deviation[3];
+    carrier_deviation(*rows[row], deviation);
+    double lift = 0.0, lift_bound = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+      const double difference = rows[row]->carrier[axis] - e.carrier[axis];
+      value[axis][row] = difference;
+      magnitude[axis][row] = std::fabs(difference);
+      widened[axis][row] = magnitude[axis][row] + (0x1p-52 * magnitude[axis][row] +
+                                                   deviation[axis] + base[axis]);
+      lift += difference * difference;
+      lift_bound += widened[axis][row] * widened[axis][row];
+    }
+    value[3][row] = lift;
+    magnitude[3][row] = lift;
+    widened[3][row] = lift_bound * (1.0 + 0x1p-40);
+  }
+  const auto permanent = [](const double (*m)[4]) {
+    const double* x = m[0];
+    const double* y = m[1];
+    const double* z = m[2];
+    const double* l = m[3];
+    const double ab = x[0] * y[1] + x[1] * y[0], bc = x[1] * y[2] + x[2] * y[1];
+    const double cd = x[2] * y[3] + x[3] * y[2], da = x[3] * y[0] + x[0] * y[3];
+    const double ac = x[0] * y[2] + x[2] * y[0], bd = x[1] * y[3] + x[3] * y[1];
+    const double abc = z[0] * bc + z[1] * ac + z[2] * ab;
+    const double bcd = z[1] * cd + z[2] * bd + z[3] * bc;
+    const double cda = z[2] * da + z[3] * ac + z[0] * cd;
+    const double dab = z[3] * ab + z[0] * bd + z[1] * da;
+    return l[3] * abc + l[2] * dab + l[1] * cda + l[0] * bcd;
+  };
+  const double* x = value[0];
+  const double* y = value[1];
+  const double* z = value[2];
+  const double* l = value[3];
+  const double ab = x[0] * y[1] - x[1] * y[0], bc = x[1] * y[2] - x[2] * y[1];
+  const double cd = x[2] * y[3] - x[3] * y[2], da = x[3] * y[0] - x[0] * y[3];
+  const double ac = x[0] * y[2] - x[2] * y[0], bd = x[1] * y[3] - x[3] * y[1];
+  const double abc = z[0] * bc - z[1] * ac + z[2] * ab;
+  const double bcd = z[1] * cd - z[2] * bd + z[3] * bc;
+  const double cda = z[2] * da + z[3] * ac + z[0] * cd;
+  const double dab = z[3] * ab + z[0] * bd + z[1] * da;
+  const double determinant = (l[3] * abc - l[2] * dab) + (l[1] * cda - l[0] * bcd);
+  // The 4x4 evaluation error is below 2^-46 of the permanent.
+  const double plain = permanent(magnitude);
+  const double bound = determinant_error(permanent(widened), plain) + 0x1p-46 * plain;
+  if (!std::isfinite(determinant) || !std::isfinite(bound) || !(std::fabs(determinant) > bound)) {
+    return 0;
+  }
+  return determinant > 0.0 ? -1 : 1;
+}
+
 }  // namespace
 
 Expansion coordinate(const ExactPointRef& point, int axis) {
@@ -450,6 +599,7 @@ int orient3d(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef
   if (a.exact == nullptr && b.exact == nullptr && c.exact == nullptr && d.exact == nullptr) {
     return orient3d(a.carrier, b.carrier, c.carrier, d.carrier);
   }
+  if (const int sign = filtered_orient3d(a, b, c, d); sign != 0) return sign;
   Expansion pa[3], pb[3], pc[3], pd[3];
   exact_point(a, pa);
   exact_point(b, pb);
@@ -463,6 +613,7 @@ int orient3d_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPoin
   if (a.exact == nullptr && b.exact == nullptr && c.exact == nullptr && d.exact == nullptr) {
     return orient3d_sos(a.carrier, b.carrier, c.carrier, d.carrier, ia, ib, ic, id);
   }
+  if (const int sign = filtered_orient3d(a, b, c, d); sign != 0) return sign;
   Expansion pa[3], pb[3], pc[3], pd[3];
   exact_point(a, pa);
   exact_point(b, pb);
@@ -479,6 +630,7 @@ int insphere_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPoin
     return insphere_sos(a.carrier, b.carrier, c.carrier, d.carrier, e.carrier, ia, ib, ic, id,
                         ie);
   }
+  if (const int sign = filtered_insphere(a, b, c, d, e); sign != 0) return sign;
   Expansion pa[3], pb[3], pc[3], pd[3], pe[3];
   exact_point(a, pa);
   exact_point(b, pb);
@@ -497,6 +649,32 @@ int orient2d_projected(const ExactPointRef& a, const ExactPointRef& b, const Exa
     const double pb[2] = {b.carrier[x], b.carrier[y]};
     const double pc[2] = {c.carrier[x], c.carrier[y]};
     return orient2d(pa, pb, pc);
+  }
+  // Binary64 evaluation on the carriers decides when it clears the bound
+  // of determinant_error; otherwise the exact positions do.
+  double deviation[3][3];
+  carrier_deviation(a, deviation[0]);
+  carrier_deviation(b, deviation[1]);
+  carrier_deviation(c, deviation[2]);
+  // Rows a - c and b - c of the projected determinant.
+  double u[2][2], magnitude[2][2], widened[2][2];
+  const ExactPointRef* rows[2] = {&a, &b};
+  for (int row = 0; row < 2; ++row) {
+    for (int column = 0; column < 2; ++column) {
+      const int coordinate_axis = column == 0 ? x : y;
+      u[row][column] = rows[row]->carrier[coordinate_axis] - c.carrier[coordinate_axis];
+      magnitude[row][column] = std::fabs(u[row][column]);
+      widened[row][column] =
+          magnitude[row][column] + (0x1p-52 * magnitude[row][column] +
+                                    deviation[row][coordinate_axis] + deviation[2][coordinate_axis]);
+    }
+  }
+  const double determinant = u[0][0] * u[1][1] - u[0][1] * u[1][0];
+  const double bound =
+      determinant_error(widened[0][0] * widened[1][1] + widened[0][1] * widened[1][0],
+                        magnitude[0][0] * magnitude[1][1] + magnitude[0][1] * magnitude[1][0]);
+  if (std::isfinite(determinant) && std::isfinite(bound) && std::fabs(determinant) > bound) {
+    return determinant > 0.0 ? 1 : -1;
   }
   const Expansion pa[2] = {coordinate(a, x), coordinate(a, y)};
   const Expansion pb[2] = {coordinate(b, x), coordinate(b, y)};

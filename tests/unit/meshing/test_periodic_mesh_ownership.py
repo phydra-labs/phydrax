@@ -7,7 +7,13 @@ import pytest
 
 import phydrax as phx
 from phydrax._geometry_predicates import PredicateMode
-from phydrax._meshcore import TetMesh3D, TetMeshEdit, TetMeshEditKind, TetMeshEditStatus
+from phydrax._meshcore import (
+    PlcBoundaryPolicy,
+    TetMesh3D,
+    TetMeshEdit,
+    TetMeshEditKind,
+    TetMeshEditStatus,
+)
 from phydrax.discretization._cell_complex import PolygonalConnectivity
 from phydrax.discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
@@ -1292,9 +1298,12 @@ def test_periodic_native_bisection_uses_one_orbit_locked_edge_plan() -> None:
     source_distribution = prepare_mesh_distribution(
         _periodic_part(mesh), policy=distribution_policy
     )
+    # The target's non-binary64 bisection midpoints are canonical roundings of
+    # exact quotient-chart translates: it is published with its exact vertex bank,
+    # so the certified adaptation result (not a re-certified bare mesh) is the part.
     distribution_transition = prepare_distribution_transition(
         source_distribution,
-        _periodic_part(target),
+        MeshPart("skew-periodic", result.target),
         lineage,
         policy=distribution_policy,
     )
@@ -1502,14 +1511,36 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
     )
 
     block = source.blocks[0]
+    # The native complex declares every carrier boundary facet; the lifted
+    # fundamental cover's open faces are its boundary (outward corner order).
+    cell_vertices = np.asarray(block.vertices, dtype=np.int32)
+    outward_corners = ((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2))
+    oriented_faces = [
+        cell_vertices[row, list(corners)]
+        for row in range(cell_vertices.shape[0])
+        for corners in outward_corners
+    ]
+    face_counts: dict[tuple[int, ...], int] = {}
+    for face in oriented_faces:
+        key = tuple(sorted(int(value) for value in face))
+        face_counts[key] = face_counts.get(key, 0) + 1
+    boundary_faces = np.asarray(
+        [
+            face
+            for face in oriented_faces
+            if face_counts[tuple(sorted(int(value) for value in face))] == 1
+        ],
+        dtype=np.int32,
+    )
     with TetMesh3D(
         source.coordinates,
         block.vertices,
         np.zeros((block.cell_count,), dtype=np.int32),
-        np.empty((0, 3), dtype=np.int32),
-        np.empty((0,), dtype=np.int32),
+        boundary_faces,
+        np.zeros((boundary_faces.shape[0],), dtype=np.int32),
         np.empty((0, 2), dtype=np.int32),
         np.empty((0,), dtype=np.int32),
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
         vertex_ids=source.vertex_global_ids,
         cell_ids=block.global_ids,
         source_id=source.mesh_id,
@@ -1523,6 +1554,10 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
             [coordinate_row_by_id[int(identifier)] for identifier in member_ids],
             dtype=np.int64,
         )
+        # A relocation names its star: every lifted cell incident to the orbit.
+        star_ids = np.asarray(block.global_ids, dtype=np.int64)[
+            np.isin(cell_vertices, changed_rows).any(axis=1)
+        ]
         native_operation = TetMeshEdit(
             TetMeshEditKind.RELOCATE,
             native.generation,
@@ -1530,6 +1565,7 @@ def test_periodic_tetra_stage_rebuilds_a_relocated_vertex_orbit() -> None:
             source_revision=native.source_revision,
             source_map_id=native.source_map_id,
             frame_id=native.frame_id,
+            removed_cell_ids=star_ids,
             changed_vertex_ids=member_ids,
             changed_vertex_points=target_coordinates[changed_rows],
             periodic=native_edit,

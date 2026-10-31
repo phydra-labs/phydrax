@@ -49,6 +49,7 @@ from ..discretization._coordinate_enclosure import (
     sum_polynomials,
 )
 from ..discretization._exact_algebraic_geometry import RadicalElement
+from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization.fem import lagrange_element
 from ..typing import checked, ConvertibleToArray
@@ -796,6 +797,7 @@ class _ComposedCell:
     chart_bounds: tuple[Fraction, Fraction]
     reference_volume: Fraction
     pyramid_vertex_family: bool
+    parent_reference_vertices: tuple[Point3, ...]
 
 
 @final
@@ -1299,6 +1301,7 @@ def _compose_mixed_geometry(
                 chart_bounds,
                 reference_volume,
                 pyramid_vertex_family,
+                parent_vertices,
             )
         )
 
@@ -1363,6 +1366,7 @@ def _compose_mixed_geometry(
     parent_cell_ids: dict[str, np.ndarray] = {}
     parent_vertex_ids: dict[str, np.ndarray] = {}
     source_block_names: dict[str, str] = {}
+    parent_reference_maps: dict[str, ReferenceCellMapWitnesses | None] = {}
     flattened_records: list[_ComposedCell] = []
     source_geometry_coordinates = np.asarray(
         source_geometry.coordinates, dtype=np.float64
@@ -1426,6 +1430,21 @@ def _compose_mixed_geometry(
             dtype=np.int64,
         )
         source_block_names[name] = source.blocks[0].name
+        # Exact charts into the retained fill cell's own reference; curved
+        # roots reach them through the fill's affine restriction.
+        exact_parent_vertices = tuple(
+            tuple(tuple(Fraction(value) for value in point) for point in corners)
+            for corners in (record.parent_reference_vertices for record in group)
+        )
+        parent_reference_maps[name] = ReferenceCellMapWitnesses(
+            np.arange(len(group), dtype=np.int64),
+            parent_cell_ids[name],
+            first.cell_kind,
+            source.blocks[0].cell_kind,
+            np.asarray(exact_parent_vertices, dtype=np.float64),
+            exact_parent_vertices,
+            tuple(record.source_chart for record in group),
+        )
         flattened_records.extend(group)
 
     target_mesh = CellMesh(
@@ -1440,8 +1459,13 @@ def _compose_mixed_geometry(
         parent_cell_ids,
         parent_vertex_ids,
         block_source_blocks=source_block_names,
+        block_parent_reference_maps=parent_reference_maps,
     )
-    if any(record.pyramid_vertex_family for record in records):
+    # The parent binding lets embedding replay the fill's own proof through
+    # the exact child-in-fill reference maps instead of pairwise cell proofs.
+    if source_geometry.source_map is None or any(
+        record.pyramid_vertex_family for record in records
+    ):
         exact_vertex_image_bank = tuple(
             exact_vertex_images[row] for row in range(target_mesh.coordinates.shape[0])
         )
@@ -1452,8 +1476,6 @@ def _compose_mixed_geometry(
             exact_vertex_image_bank,
             tuple(int(row) for row in pyramid_node_rows.tolist()),
         )
-    elif source_geometry.source_map is None:
-        restricted_map = None
     else:
         restricted_map = _RestrictedCoordinateMap(source, source_geometry, target_mesh)
     geometry = CellGeometrySpec(
@@ -1461,7 +1483,7 @@ def _compose_mixed_geometry(
         routes,
         pyramid_geometry_coordinates,
         source_map=restricted_map,
-        source_mesh=target_mesh if restricted_map is not None else None,
+        source_mesh=target_mesh,
         restriction_source=restriction,
     )
 

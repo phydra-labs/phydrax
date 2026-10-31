@@ -35,17 +35,16 @@ from ._patches import (
     RevolutionSurface,
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
+    TorusPatch,
 )
-from ._trim_helpers import PeriodOffset
+from ._trim_helpers import period_scalar_bounds, PeriodOffset
 
 
 type _Vector = tuple[ExactScalar, ...]
 type _Harmonics = tuple[_Vector, _Vector, _Vector]
 
 
-def _affine_coefficients(
-    curve: AbstractCurve, /
-) -> tuple[_Vector, _Vector] | None:
+def _affine_coefficients(curve: AbstractCurve, /) -> tuple[_Vector, _Vector] | None:
     if isinstance(curve, LineCurve):
         return curve.origin_exact, curve.direction_exact
     if isinstance(curve, ExactLineCurve):
@@ -68,12 +67,14 @@ def _conic_coefficients(curve: CircleCurve | EllipseCurve, /) -> _Harmonics:
         tuple(second_radius * value for value in curve.second_axis_exact),
     )
 
+
 def _vector_difference(first: _Vector, second: _Vector, /) -> _Vector:
     return tuple(a - b for a, b in zip(first, second, strict=True))
 
 
-
-def _trig_intervals(first: float, last: float, /) -> tuple[tuple[Fraction, Fraction], ...]:
+def _trig_intervals(
+    first: float, last: float, /
+) -> tuple[tuple[Fraction, Fraction], ...]:
     lower, upper = min(first, last), max(first, last)
     cosine = interval_cos((np.asarray(lower), np.asarray(upper)))
     sine = interval_sin((np.asarray(lower), np.asarray(upper)))
@@ -130,7 +131,6 @@ def _harmonic_squared_upper(
     return squared
 
 
-
 def _periodic_quarter_trig(
     parameter: Fraction | PeriodOffset, /
 ) -> tuple[Fraction, Fraction] | None:
@@ -165,11 +165,7 @@ def _revolution_profile_parameter(
             Fraction(1),
         ):
             if fixed_value == float(period) * float(turns):
-                return (
-                    Fraction(0)
-                    if turns == 0
-                    else PeriodOffset(Fraction(0), turns)
-                )
+                return Fraction(0) if turns == 0 else PeriodOffset(Fraction(0), turns)
         return None
     if isinstance(profile, BSplineCurve):
         endpoint_parameters = (
@@ -203,16 +199,14 @@ def _offset_revolution_isoparametric_point(
     if root.patch is None:
         if root.axis is not None or curve.native_period_symbol() != "two_pi":
             return None
-    elif (
-        root.axis != variable_axis
-        or carrier_payload(root.patch) != carrier_payload(surface)
+    elif root.axis != variable_axis or carrier_payload(root.patch) != carrier_payload(
+        surface
     ):
         return None
 
     if curve.fixed_axis == 0:
-        if (
-            curve.fixed_value != 0.0
-            or not isinstance(profile, (CircleCurve, EllipseCurve))
+        if curve.fixed_value != 0.0 or not isinstance(
+            profile, (CircleCurve, EllipseCurve)
         ):
             return None
         phase = _periodic_quarter_trig(root.exact_parameter)
@@ -281,15 +275,13 @@ def _offset_revolution_isoparametric_point(
         cosine, sine = phase
         return tuple(
             center[index]
-            + radius
-            * (cosine * first_axis[index] + sine * second_axis[index])
+            + radius * (cosine * first_axis[index] + sine * second_axis[index])
             for index in range(3)
         )
     return None
 
-def _offset_sphere_revolution_harmonics(
-    curve: AbstractCurve, /
-) -> _Harmonics | None:
+
+def _offset_sphere_revolution_harmonics(curve: AbstractCurve, /) -> _Harmonics | None:
     if (
         not isinstance(curve, SurfaceIsoparametricCurve)
         or curve.fixed_axis != 0
@@ -392,8 +384,7 @@ def _endpoint_squared(
         origin, direction = affine
         scalar = Fraction.from_float(float(parameter))
         point = tuple(
-            value + scalar * slope
-            for value, slope in zip(origin, direction, strict=True)
+            value + scalar * slope for value, slope in zip(origin, direction, strict=True)
         )
         return _squared_gap_upper(point, target)
     if isinstance(curve, (CircleCurve, EllipseCurve)):
@@ -413,7 +404,66 @@ def _endpoint_squared(
         return squared
     if isinstance(curve, BSplineCurve):
         raise ValueError("The B-spline endpoint has no proved rational source image.")
+    if isinstance(curve, SurfaceIsoparametricCurve) and isinstance(
+        curve.surface, TorusPatch
+    ):
+        angles = [float(parameter), float(parameter)]
+        angles[curve.fixed_axis] = curve.fixed_value
+        return _torus_point_squared(curve.surface, angles[0], angles[1], target)
+    if isinstance(curve, SurfaceIsoparametricCurve) and isinstance(
+        curve.surface, CylinderPatch
+    ):
+        coordinates = [float(parameter), float(parameter)]
+        coordinates[curve.fixed_axis] = curve.fixed_value
+        cylinder = curve.surface
+        cosine, sine = _trig_intervals(coordinates[0], coordinates[0])
+        height = Fraction.from_float(coordinates[1])
+        squared = Fraction(0)
+        for index in range(3):
+            first_term = _scaled_interval(
+                cylinder.radius_exact * cylinder.first_axis_exact[index], cosine
+            )
+            second_term = _scaled_interval(
+                cylinder.radius_exact * cylinder.second_axis_exact[index], sine
+            )
+            base_lower, base_upper = coefficient_interval(
+                cylinder.origin_exact[index]
+                + height * cylinder.axis_exact[index]
+                - target[index]
+            )
+            lower = base_lower + first_term[0] + second_term[0]
+            upper = base_upper + first_term[1] + second_term[1]
+            squared += max(abs(lower), abs(upper)) ** 2
+        return squared
     raise ValueError(f"No exact endpoint-gap proof supports {type(curve).__name__}.")
+
+
+def _torus_point_squared(
+    patch: TorusPatch, longitude: float, tube: float, target: _Vector, /
+) -> Fraction:
+    """Outward squared distance from a torus point at binary64 angles to a target."""
+    cos_u, sin_u = _trig_intervals(longitude, longitude)
+    cos_v, sin_v = _trig_intervals(tube, tube)
+    major = coefficient_interval(patch.major_radius_exact)
+    minor = coefficient_interval(patch.minor_radius_exact)
+    tube_radial = _interval_product(minor, cos_v)
+    ring = (major[0] + tube_radial[0], major[1] + tube_radial[1])
+    height = _interval_product(minor, sin_v)
+    squared = Fraction(0)
+    for index in range(3):
+        first_term = _scaled_interval(patch.first_axis_exact[index], cos_u)
+        second_term = _scaled_interval(patch.second_axis_exact[index], sin_u)
+        radial = (first_term[0] + second_term[0], first_term[1] + second_term[1])
+        products = _interval_product(ring, radial)
+        axial = _scaled_interval(patch.axis_exact[index], height)
+        base_lower, base_upper = coefficient_interval(
+            patch.center_exact[index] - target[index]
+        )
+        lower = base_lower + products[0] + axial[0]
+        upper = base_upper + products[1] + axial[1]
+        magnitude = max(abs(lower), abs(upper))
+        squared += magnitude * magnitude
+    return squared
 
 
 def endpoint_gap_bounds(
@@ -431,7 +481,9 @@ def endpoint_gap_bounds(
         raise ValueError("Endpoint parameters must be two finite binary64 values.")
     points = np.asarray(vertices, dtype=np.float64)
     if points.shape != (2, curve.ambient_dimension) or not np.all(np.isfinite(points)):
-        raise ValueError("Endpoint vertices must be finite points matching the source curve.")
+        raise ValueError(
+            "Endpoint vertices must be finite points matching the source curve."
+        )
     if len(endpoint_roots) != 2:
         raise ValueError("Endpoint roots must contain one source binding per endpoint.")
     values: list[float] = []
@@ -440,9 +492,9 @@ def endpoint_gap_bounds(
         vertex: np.ndarray = points[index]
         root = endpoint_roots[index]
         values.append(
-            square_root_interval(
-                _endpoint_squared(curve, parameter, vertex, root=root)
-            )[1]
+            square_root_interval(_endpoint_squared(curve, parameter, vertex, root=root))[
+                1
+            ]
         )
     if not all(np.isfinite(value) for value in values):
         raise ValueError("Endpoint-gap enclosures must be finite.")
@@ -470,8 +522,7 @@ def _affine_face_coefficients(
                 for axis in range(3)
             ),
             tuple(
-                direction_uv[0] * first_axis[axis]
-                + direction_uv[1] * second_axis[axis]
+                direction_uv[0] * first_axis[axis] + direction_uv[1] * second_axis[axis]
                 for axis in range(3)
             ),
         )
@@ -481,14 +532,11 @@ def _affine_face_coefficients(
     direction = rational_vector(np.asarray(patch.direction))
     return (
         tuple(
-            base[0][axis]
-            + origin_uv[0] * base[1][axis]
-            + origin_uv[1] * direction[axis]
+            base[0][axis] + origin_uv[0] * base[1][axis] + origin_uv[1] * direction[axis]
             for axis in range(3)
         ),
         tuple(
-            direction_uv[0] * base[1][axis]
-            + direction_uv[1] * direction[axis]
+            direction_uv[0] * base[1][axis] + direction_uv[1] * direction[axis]
             for axis in range(3)
         ),
     )
@@ -511,9 +559,7 @@ def _mapped_cylinder_plane_gap_squared(
     if len(uv_origin) != 2 or uv_direction[0] != 0:
         return None
     angle_lower, angle_upper = coefficient_interval(uv_origin[0])
-    cosine, sine = _trig_intervals(
-        fraction_down(angle_lower), fraction_up(angle_upper)
-    )
+    cosine, sine = _trig_intervals(fraction_down(angle_lower), fraction_up(angle_upper))
     radius = source.radius_exact
     origin = source.origin_exact
     first_axis = source.first_axis_exact
@@ -522,12 +568,8 @@ def _mapped_cylinder_plane_gap_squared(
     source_origin: list[tuple[Fraction, Fraction]] = []
     source_slope = tuple(uv_direction[1] * value for value in axis)
     for dimension in range(3):
-        first_term = _scaled_interval(
-            radius * first_axis[dimension], cosine
-        )
-        second_term = _scaled_interval(
-            radius * second_axis[dimension], sine
-        )
+        first_term = _scaled_interval(radius * first_axis[dimension], cosine)
+        second_term = _scaled_interval(radius * second_axis[dimension], sine)
         axial_lower, axial_upper = coefficient_interval(
             origin[dimension] + uv_origin[1] * axis[dimension]
         )
@@ -554,18 +596,12 @@ def _mapped_cylinder_plane_gap_squared(
         for parameter in (first, last):
             point_parameter = Fraction.from_float(float(parameter))
             slope_term = _scaled_interval(slope, (point_parameter, point_parameter))
-            endpoint_intervals.append(
-                (base[0] + slope_term[0], base[1] + slope_term[1])
-            )
+            endpoint_intervals.append((base[0] + slope_term[0], base[1] + slope_term[1]))
         lower = min(interval[0] for interval in endpoint_intervals)
         upper = max(interval[1] for interval in endpoint_intervals)
         magnitude = max(abs(lower), abs(upper))
         squared += magnitude * magnitude
     return squared
-
-
-
-
 
 
 def _revolution_circle_gap_squared(
@@ -612,12 +648,8 @@ def _revolution_circle_gap_squared(
     profile_parameter = origin[1]
     profile_lower = fraction_down(profile_parameter)
     profile_upper = fraction_up(profile_parameter)
-    cosine_raw = interval_cos(
-        (np.asarray(profile_lower), np.asarray(profile_upper))
-    )
-    sine_raw = interval_sin(
-        (np.asarray(profile_lower), np.asarray(profile_upper))
-    )
+    cosine_raw = interval_cos((np.asarray(profile_lower), np.asarray(profile_upper)))
+    sine_raw = interval_sin((np.asarray(profile_lower), np.asarray(profile_upper)))
     cosine = (
         Fraction.from_float(float(cosine_raw[0])),
         Fraction.from_float(float(cosine_raw[1])),
@@ -675,9 +707,7 @@ def _revolution_circle_gap_squared(
         for index in range(3)
     )
     radial = tuple(
-        subtract(
-            relative[index], _scaled_interval(axis[index], axial)
-        )
+        subtract(relative[index], _scaled_interval(axis[index], axial))
         for index in range(3)
     )
     angular = (
@@ -713,6 +743,165 @@ def _revolution_circle_gap_squared(
     return squared
 
 
+def _interval_product(
+    left: tuple[Fraction, Fraction], right: tuple[Fraction, Fraction], /
+) -> tuple[Fraction, Fraction]:
+    products = (
+        left[0] * right[0],
+        left[0] * right[1],
+        left[1] * right[0],
+        left[1] * right[1],
+    )
+    return min(products), max(products)
+
+
+def _point_trig(
+    value: Fraction | PeriodOffset, /
+) -> tuple[tuple[Fraction, Fraction], ...]:
+    """Cosine/sine intervals at an exact ``Q + Q*(2*pi)`` angle.
+
+    Quarter turns are exact; other angles get outward enclosures.
+    """
+    quarter = _periodic_quarter_trig(value)
+    if quarter is not None:
+        cosine, sine = quarter
+        return (cosine, cosine), (sine, sine)
+    lower, upper = period_scalar_bounds(value)
+    return _trig_intervals(float(lower), float(upper))
+
+
+def _torus_circle_gap_squared(
+    curve: CircleCurve,
+    pcurve: AbstractCurve,
+    source_region: SurfaceRegion,
+    first: float,
+    last: float,
+    /,
+) -> Fraction | None:
+    """Bound a circle's distance to a torus coordinate circle ``(u0 + s t, v0)``
+    or ``(u0, v0 + s t)`` with ``s = +-1`` and binary64 angles.
+
+    The torus image of such a line is the exact circle with harmonics in
+    ``cos/sin(u0)`` and ``cos/sin(v0)``; outward trigonometric intervals at the
+    authored angles bound every harmonic coefficient difference, which bounds
+    the gap uniformly in ``t``. An irrational latitude or a quarter-turn phase
+    is therefore a certified (not exact) correspondence.
+    """
+    patch = source_region.patch
+    if (
+        not isinstance(patch, TorusPatch)
+        or curve.ambient_dimension != 3
+        or curve.native_period_symbol() != "two_pi"
+        or not np.isfinite(first)
+        or not np.isfinite(last)
+        or first > last
+    ):
+        return None
+    source_domain = curve.parameter_domain
+    if source_domain is not None and (
+        first < source_domain[0] or last > source_domain[1]
+    ):
+        return None
+    from ._correspondence import periodic_affine_line_chart
+
+    chart = periodic_affine_line_chart(pcurve, source_region, first, last)
+    if chart is None:
+        return None
+    (u0, v0), direction = chart
+    if direction in ((Fraction(1), Fraction(0)), (Fraction(-1), Fraction(0))):
+        latitude, sense = True, direction[0]
+    elif direction in ((Fraction(0), Fraction(1)), (Fraction(0), Fraction(-1))):
+        latitude, sense = False, direction[1]
+    else:
+        return None
+    cos_u, sin_u = _point_trig(u0)
+    cos_v, sin_v = _point_trig(v0)
+    major = coefficient_interval(patch.major_radius_exact)
+    minor = coefficient_interval(patch.minor_radius_exact)
+
+    def add(*terms: tuple[Fraction, Fraction]) -> tuple[Fraction, Fraction]:
+        return sum((term[0] for term in terms), Fraction(0)), sum(
+            (term[1] for term in terms), Fraction(0)
+        )
+
+    def negate(value: tuple[Fraction, Fraction], /) -> tuple[Fraction, Fraction]:
+        return -value[1], -value[0]
+
+    def axis_combination(
+        cosine: tuple[Fraction, Fraction],
+        sine: tuple[Fraction, Fraction],
+        first_axis: tuple[ExactScalar, ...],
+        second_axis: tuple[ExactScalar, ...],
+    ) -> tuple[tuple[Fraction, Fraction], ...]:
+        return tuple(
+            add(
+                _scaled_interval(first_axis[index], cosine),
+                _scaled_interval(second_axis[index], sine),
+            )
+            for index in range(3)
+        )
+
+    first_axis = patch.first_axis_exact
+    second_axis = patch.second_axis_exact
+    axis = patch.axis_exact
+    # w = cos(u0) a1 + sin(u0) a2 and its quarter turn w' = -sin(u0) a1 + cos(u0) a2.
+    radial = axis_combination(cos_u, sin_u, first_axis, second_axis)
+    tangent = axis_combination(negate(sin_u), cos_u, first_axis, second_axis)
+    axial = tuple(coefficient_interval(value) for value in axis)
+    center = tuple(coefficient_interval(value) for value in patch.center_exact)
+    if latitude:
+        ring = add(major, _interval_product(minor, cos_v))
+        height = _interval_product(minor, sin_v)
+        image = (
+            tuple(
+                add(center[index], _interval_product(height, axial[index]))
+                for index in range(3)
+            ),
+            tuple(_interval_product(ring, radial[index]) for index in range(3)),
+            tuple(
+                _scaled_interval(sense, _interval_product(ring, tangent[index]))
+                for index in range(3)
+            ),
+        )
+    else:
+        image = (
+            tuple(
+                add(center[index], _interval_product(major, radial[index]))
+                for index in range(3)
+            ),
+            tuple(
+                _interval_product(
+                    minor,
+                    add(
+                        _interval_product(cos_v, radial[index]),
+                        _interval_product(sin_v, axial[index]),
+                    ),
+                )
+                for index in range(3)
+            ),
+            tuple(
+                _scaled_interval(
+                    sense,
+                    _interval_product(
+                        minor,
+                        add(
+                            _interval_product(negate(sin_v), radial[index]),
+                            _interval_product(cos_v, axial[index]),
+                        ),
+                    ),
+                )
+                for index in range(3)
+            ),
+        )
+    squared = Fraction(0)
+    for index in range(3):
+        magnitude = Fraction(0)
+        for source, target in zip(_conic_coefficients(curve), image, strict=True):
+            lower, upper = coefficient_interval(source[index])
+            target_lower, target_upper = target[index]
+            magnitude += max(abs(lower - target_upper), abs(upper - target_lower))
+        squared += magnitude * magnitude
+    return squared
 
 
 def _rational_spline_line_gap_squared(
@@ -779,17 +968,13 @@ def _rational_spline_line_gap_squared(
 
     def source_point(parameter: Fraction, /) -> tuple[ExactScalar, ...]:
         return tuple(
-            source_origin[axis] + parameter * source_direction[axis]
-            for axis in range(3)
+            source_origin[axis] + parameter * source_direction[axis] for axis in range(3)
         )
 
-    def endpoint_gap_squared(
-        parameter: Fraction, /
-    ) -> Fraction | None:
+    def endpoint_gap_squared(parameter: Fraction, /) -> Fraction | None:
         uv = chart_point(parameter)
         if any(
-            uv[axis] < region_exact[0][axis]
-            or uv[axis] > region_exact[1][axis]
+            uv[axis] < region_exact[0][axis] or uv[axis] > region_exact[1][axis]
             for axis in range(2)
         ):
             return None
@@ -860,10 +1045,28 @@ def native_face_gap_squared(
         raise TypeError("source_region must be a SurfaceRegion.")
     if not np.isfinite(first) or not np.isfinite(last) or first > last:
         raise ValueError("Face-gap parameters must be finite and ordered.")
-    from ._correspondence import _affine_bspline_pcurve, exact_source_lift
+    from ._boolean_core import _pcurve_execution_shadows_match
+    from ._correspondence import (
+        _affine_bspline_pcurve,
+        _periodic_pcurve_source,
+        exact_source_lift,
+    )
 
     if exact_source_lift(curve, pcurve, source_region, first, last):
         return Fraction(0)
+    periodic_source = _periodic_pcurve_source(pcurve, source_region.patch)
+    if (
+        periodic_source is not None
+        and periodic_source[0] is not pcurve
+        and _pcurve_execution_shadows_match(pcurve)
+    ):
+        # Whole native two-pi shifts on the owning patch leave every surface
+        # point unchanged, so the unshifted chart has the identical gap.
+        periodic_gap = native_face_gap_squared(
+            curve, periodic_source[0], source_region, first, last
+        )
+        if periodic_gap is not None:
+            return periodic_gap
     affine_pcurve = _affine_bspline_pcurve(pcurve, first, last)
     if affine_pcurve is not None:
         affine_gap = native_face_gap_squared(
@@ -887,6 +1090,10 @@ def native_face_gap_squared(
     )
     if revolution_gap is not None:
         return revolution_gap
+    if isinstance(curve, CircleCurve) and isinstance(patch, TorusPatch):
+        torus_gap = _torus_circle_gap_squared(curve, pcurve, source_region, first, last)
+        if torus_gap is not None:
+            return torus_gap
     if isinstance(patch, (PlanePatch, ExtrusionSurface)):
         lifted = _affine_face_coefficients(patch, pcurve)
         source = _affine_coefficients(curve)
@@ -932,9 +1139,11 @@ def native_face_gap_squared(
             for index in range(len(source_controls))
         ):
             return Fraction(0)
-    if isinstance(curve, (CircleCurve, EllipseCurve)) and isinstance(
-        pcurve, (CircleCurve, EllipseCurve)
-    ) and isinstance(patch, PlanePatch):
+    if (
+        isinstance(curve, (CircleCurve, EllipseCurve))
+        and isinstance(pcurve, (CircleCurve, EllipseCurve))
+        and isinstance(patch, PlanePatch)
+    ):
         source = _conic_coefficients(curve)
         chart = _conic_coefficients(pcurve)
         origin = rational_vector(np.asarray(patch.origin))

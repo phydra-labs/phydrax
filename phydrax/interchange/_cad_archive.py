@@ -534,6 +534,8 @@ def _construct_intersection_dataclass(
             "parameter_lower",
             "parameter_upper",
             "parameters",
+            "enclosure_lower",
+            "enclosure_upper",
             "preconditioner",
             "endpoint_witness",
             "contraction",
@@ -558,6 +560,12 @@ def _construct_intersection_dataclass(
             root.root_id != fields["root_id"]
             or not np.array_equal(
                 np.asarray(root.parameters), np.asarray(fields["parameters"])
+            )
+            or not np.array_equal(
+                np.asarray(root.enclosure_lower), np.asarray(fields["enclosure_lower"])
+            )
+            or not np.array_equal(
+                np.asarray(root.enclosure_upper), np.asarray(fields["enclosure_upper"])
             )
             or not np.array_equal(
                 np.asarray(root.preconditioner), np.asarray(fields["preconditioner"])

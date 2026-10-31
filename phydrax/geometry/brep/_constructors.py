@@ -892,12 +892,15 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
     tolerance = 2048.0 * np.finfo(np.float64).eps * max(1, len(loop.segments))
     if abs(abs(total) - _TWO_PI) > tolerance:
         raise NotImplementedError(
-            "Curved profile loops must have one convex, non-self-intersecting turn."
+            "Curved profile loops must have one non-self-intersecting turn."
         )
     direction = 1 if total > 0.0 else -1
-    if any(direction * value < -tolerance for value in terms):
+    if any(
+        direction * value < -tolerance for value in terms
+    ) and not _curved_loop_is_simple(loop):
         raise NotImplementedError(
-            "Curved profile loops must have one convex, non-self-intersecting turn."
+            "Curved profile loops must have one non-self-intersecting turn; "
+            "nonconvex loops require an exact line/circle simplicity proof."
         )
     return direction
 
@@ -1034,10 +1037,18 @@ def _segment_curve(
             raise ValueError(
                 "ProfileArc endpoints must lie on one positive-radius circle."
             )
+        if segment.counterclockwise:
+            return (
+                CircleCurve(segment.center, (1.0, 0.0), (0.0, 1.0), start_radius),
+                first,
+                last,
+            )
+        # A clockwise arc runs forward on the mirrored chart angle, so every
+        # traversed arc keeps an increasing edge parameter.
         return (
-            CircleCurve(segment.center, (1.0, 0.0), (0.0, 1.0), start_radius),
-            first,
-            last,
+            CircleCurve(segment.center, (1.0, 0.0), (0.0, -1.0), start_radius),
+            -first,
+            -last,
         )
     curve = segment.curve
     return curve, segment.first, segment.last
@@ -1666,6 +1677,70 @@ def _validate_profile_loop_relations(loops: tuple[ProfileLoop, ...], /) -> None:
                 second_hole, first_point
             ):
                 raise ValueError("Profile holes must not be nested.")
+
+
+def _curved_loop_is_simple(loop: ProfileLoop, /) -> bool:
+    """Prove that one line/circle profile loop meets itself only at its junctions.
+
+    Exact rational line/circle contacts decide every segment pair; adjacent
+    segments may meet only at their shared profile vertices.
+    """
+    edges = _profile_loop_edges(loop)
+    vertices = tuple(
+        (_fraction(point[0]), _fraction(point[1])) for point in loop.vertices
+    )
+    count = len(edges)
+    for first_index in range(count):
+        for second_index in range(first_index + 1, count):
+            first, second = edges[first_index], edges[second_index]
+            shared = frozenset(
+                vertices[index]
+                for index in (first_index, (first_index + 1) % count)
+                if index in (second_index, (second_index + 1) % count)
+            )
+            first_arc = isinstance(first.pcurve, CircleCurve)
+            second_arc = isinstance(second.pcurve, CircleCurve)
+            first_line = isinstance(first.pcurve, LineCurve)
+            second_line = isinstance(second.pcurve, LineCurve)
+            if first_arc and second_arc:
+                contact = _arc_arc_contact(first, second, shared)
+            elif first_arc and second_line:
+                contact = _line_arc_contact(second, first, shared)
+            elif first_line and second_arc:
+                contact = _line_arc_contact(first, second, shared)
+            elif first_line and second_line:
+                contact = _line_pair_contact(first, second, shared)
+            else:
+                return False
+            if contact:
+                return False
+    return True
+
+
+def _line_pair_contact(
+    first: _ProfileEdge,
+    second: _ProfileEdge,
+    shared: frozenset[tuple[Fraction, Fraction]],
+    /,
+) -> bool:
+    if not shared:
+        return _segments_intersect(first.start, first.end, second.start, second.end)
+    # Two segments sharing an endpoint meet elsewhere only by folding back
+    # along one common line.
+    a = tuple(_fraction(value) for value in first.start)
+    b = tuple(_fraction(value) for value in first.end)
+    c = tuple(_fraction(value) for value in second.start)
+    d = tuple(_fraction(value) for value in second.end)
+    u = (b[0] - a[0], b[1] - a[1])
+    v = (d[0] - c[0], d[1] - c[1])
+    if u[0] * v[1] - u[1] * v[0] != 0:
+        return len(shared) > 1
+    if len(shared) > 1:
+        return True
+    pivot = next(iter(shared))
+    outward_first = u if a == pivot else (-u[0], -u[1])
+    outward_second = v if c == pivot else (-v[0], -v[1])
+    return outward_first[0] * outward_second[0] + outward_first[1] * outward_second[1] > 0
 
 
 def _profile_endpoint_gap_rows(
@@ -3469,6 +3544,7 @@ def _offset_period_roots(
         )
     return rebound[0], rebound[1]
 
+
 def _offset_chart_pcurve(
     pcurve: AbstractCurve,
     source_patch: AbstractSurfacePatch,
@@ -3502,7 +3578,6 @@ def _offset_native_turn_roots(
         NativePeriodEndpoint(carrier, patch, axis, rational=0, turns=0),
         NativePeriodEndpoint(carrier, patch, axis, rational=0, turns=1),
     )
-
 
 
 def _single_chart_torus_offset(
@@ -3829,7 +3904,9 @@ def _single_chart_torus_offset(
             last,
             0,
             0,
-            endpoint_roots=_offset_native_turn_roots(offset_curve, offset_patch, axis_index),
+            endpoint_roots=_offset_native_turn_roots(
+                offset_curve, offset_patch, axis_index
+            ),
         )
     for coedge, edge in enumerate(geometry.coedge_edges):
         axis_index, shifts = coedge_lines[coedge]

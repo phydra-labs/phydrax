@@ -29,6 +29,7 @@ from ..discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
 )
 from ..discretization._cell_mesh import CellBlock, CellMesh
+from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._partition import CellAdjacency
 from ..discretization._periodic_cell import PeriodicCell
 from ..discretization._periodic_exact import (
@@ -1649,6 +1650,7 @@ def periodic_topology_after_edit(
     vertex_orbit_keys: ArrayLike | None = None,
     vertex_windings: ArrayLike | None = None,
     source_entity_degree: int | None = None,
+    exact_coordinate_source: ExactPlcCellGeometrySource | None = None,
 ) -> PeriodicMeshTopology | None:
     """Rebuild a quotient descriptor for an unbound lifted topology edit target.
 
@@ -1667,7 +1669,10 @@ def periodic_topology_after_edit(
     Equal keys then form one vertex orbit and windings are the absolute deck
     exponents of each member; located interpolation stencils are not orbit
     evidence in this mode. Coordinates validate the resulting identity bit for
-    bit through the canonical PeriodicMeshTopology constructor in every mode.
+    bit through the canonical PeriodicMeshTopology constructor in every mode;
+    ``exact_coordinate_source`` is the target's exact vertex bank when new
+    vertices are canonical roundings of exact quotient-chart translates rather
+    than translates of their rounded roots.
     """
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
         raise TypeError(
@@ -1885,6 +1890,7 @@ def periodic_topology_after_edit(
         target_representatives,
         target_shifts,
         entity_allocator_next_ids=allocator or None,
+        exact_coordinate_source=exact_coordinate_source,
     )
 
 
@@ -2018,6 +2024,7 @@ def stage_periodic_refinement_candidate(
     vertex_orbit_keys: ArrayLike | None = None,
     vertex_windings: ArrayLike | None = None,
     source_entity_degree: int | None = None,
+    exact_coordinate_source: ExactPlcCellGeometrySource | None = None,
 ) -> PeriodicCellEditCandidate:
     """Stage a full orbit of marked and conformity-closure bisections.
 
@@ -2115,6 +2122,7 @@ def stage_periodic_refinement_candidate(
         vertex_orbit_keys=vertex_orbit_keys,
         vertex_windings=vertex_windings,
         source_entity_degree=source_entity_degree,
+        exact_coordinate_source=exact_coordinate_source,
     )
     if descriptor is None:
         raise ValueError("A periodic refinement candidate requires a periodic source.")

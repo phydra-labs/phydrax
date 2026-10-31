@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <set>
 #include <span>
 #include <unordered_map>
@@ -247,7 +248,11 @@ struct TetEditBatch {
   std::vector<TetEdit> operations;
   std::string source_id;
   std::string source_map_id;
+  // The current periodic identity (staleness is guarded with the generation).
   TetPeriodicIdentity periodic_identity;
+  // A periodic edit rebinds the identity of the state it produces; absent, the
+  // identity is kept.
+  std::optional<TetPeriodicIdentity> target_periodic_identity;
 };
 
 struct TetEditResult {
@@ -415,6 +420,22 @@ class TetMesh {
   TetEditStatus insert_local_cone(const TetEditVertex& vertex,
                                   std::span<const std::int32_t> cavity,
                                   std::vector<std::uint64_t>& created_cells);
+  // Called by refinement through LocalIncidence: splits the edge (`first`,
+  // `second`) (vertex slots) at the new source-witnessed vertex `vertex`.
+  // `edge_cells` is the edge's complete finite star; the commit touches only
+  // its cells and the hull ghosts around the edge. `facet_rows` must be the
+  // facets_ rows of every constrained face containing the edge and
+  // `segment_rows` the segments_ row of the edge when it is a segment. Each
+  // split facet row is overwritten by its first half and the second half is
+  // appended (likewise for the segment), so other rows keep their indices
+  // and the banks leave ID order until the caller restores it. Created
+  // finite cell IDs are returned.
+  TetEditStatus split_local_edge(std::int32_t first, std::int32_t second,
+                                 const TetEditVertex& vertex,
+                                 std::span<const std::int32_t> edge_cells,
+                                 std::span<const std::size_t> facet_rows,
+                                 std::span<const std::size_t> segment_rows,
+                                 std::vector<std::uint64_t>& created_cells);
   // Called by refinement and improvement: the star-shaped cavity of `point`
   // reached by walking from cell slot `start`.
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,
@@ -457,6 +478,12 @@ class TetMesh {
       const TetEdit& operation, std::span<const std::int32_t> removed_slots,
       std::span<const TetSnapshotFacet> candidate_facets) const;
   bool validate_periodic_closure(const TetEdit& operation) const;
+  // Lifted vertex ID -> (orbit row, member row) in periodic_orbits_.
+  using PeriodicMemberIndex =
+      std::unordered_map<std::uint64_t, std::pair<std::size_t, std::size_t>>;
+  PeriodicMemberIndex periodic_member_index() const;
+  bool periodic_seam_facet(const TetSnapshotFacet& facet,
+                           const PeriodicMemberIndex& members) const;
   bool audit_state() const;
 
   BoundaryPolicy policy_;

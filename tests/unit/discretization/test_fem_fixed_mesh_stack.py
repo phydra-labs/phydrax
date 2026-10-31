@@ -525,7 +525,7 @@ def test_compiled_fe_owner_local_repartition_rebinds_accepted_restart() -> None:
         owner_id=state_entry.owner_id,
         structure_id=history_layout.layout_id,
         revision_id=source_manifest.manifest_id,
-        semantics_id=history_layout.layout_id,
+        semantics_id=history_layout.semantics_id,
         dependencies=(state_entry.binding("structure"),),
     )
     source_composition = Composition(

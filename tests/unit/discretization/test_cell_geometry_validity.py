@@ -17,6 +17,7 @@ import phydrax.discretization._cell_geometry_validity as validity_module
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization._cell_geometry import (
     CellGeometrySpec,
+    PerCellRestrictedCellGeometryElement,
     PolynomialComposedCellGeometryElement,
     RationalComposedCellGeometryElement,
     SplineCellGeometryElement,
@@ -528,6 +529,88 @@ def test_pyramid_nonaffine_chart_has_a_supported_apex_jacobian() -> None:
     mapped_jacobian = np.einsum("pnd,nc->pdc", np.asarray(gradients), local_coordinates)
     assert np.allclose(mapped[0], (0.5, 0.5, 1.0))
     assert np.allclose(mapped_jacobian[0], np.eye(3))
+
+
+def test_per_cell_pyramid_chart_accepts_only_removable_apex_poles() -> None:
+    # F_x = x - (x - z/2)(y - z/2) / (4(1 - z)) is u(1 - w)(1 - v/4) + w/2 in
+    # collapsed-cube form: the 1 - z pole cancels and the apex image is 1/2.
+    pole: dict[tuple[int, ...], Fraction] = {
+        (0, 0, 0): Fraction(1),
+        (0, 0, 1): Fraction(-1),
+    }
+    removable_x = RationalPolynomial(
+        {
+            (1, 0, 0): Fraction(1),
+            (1, 0, 1): Fraction(-7, 8),
+            (1, 1, 0): Fraction(-1, 4),
+            (0, 1, 1): Fraction(1, 8),
+            (0, 0, 2): Fraction(-1, 16),
+        },
+        pole,
+    )
+    y: dict[tuple[int, ...], Fraction] = {(0, 1, 0): Fraction(1)}
+    z: dict[tuple[int, ...], Fraction] = {(0, 0, 1): Fraction(1)}
+    source = D.fem.lagrange_element("hexahedron", 1)
+    element = PerCellRestrictedCellGeometryElement(
+        source, "pyramid", (7,), (3,), ((removable_x, y, z),)
+    )
+    assert normalize_pyramid_reference_expression(removable_x).apex_value == Fraction(
+        1, 2
+    )
+
+    point = (Fraction(1, 4), Fraction(1, 2), Fraction(1, 4))
+    values, gradients = element.tabulate_cell(
+        0, np.asarray([[float(value) for value in point]], dtype=np.float64)
+    )
+    nodes = np.asarray(source.reference_nodes, dtype=np.float64)
+    mapped = np.asarray(values)[0] @ nodes
+    expected_x = evaluate_expression(removable_x, point)
+    np.testing.assert_allclose(
+        mapped, (float(expected_x), 0.5, 0.25), rtol=0.0, atol=1e-14
+    )
+    assert np.all(np.isfinite(np.asarray(gradients)))
+
+    mesh = D.CellMesh(
+        np.asarray(
+            ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 1)),
+            dtype=np.float64,
+        ),
+        (
+            D.CellBlock(
+                "pyramids",
+                "pyramid",
+                np.arange(5, dtype=np.int32)[None, :],
+                global_ids=np.asarray((7,), dtype=np.int64),
+            ),
+        ),
+    )
+    geometry = CellGeometrySpec(
+        {"pyramids": element},
+        {"pyramids": np.arange(nodes.shape[0], dtype=np.int64)[None, :]},
+        nodes,
+    )
+    certificate = D.certify_cell_geometry_validity(
+        geometry,
+        mesh=mesh,
+        policy=D.CellValidityPolicy(relative_determinant_floor=0.0),
+    )
+    assert int(certificate.status[0]) == Status.CERTIFIED_VALID
+    # dF_x/dx = 1 - v/4 depends on the collapsed direction at the apex.
+    assert not bool(np.asarray(certificate.apex_derivative_unique)[0])
+    with pytest.raises(ValueError, match="pyramid-apex continuation"):
+        element.tabulate_cell(0, np.asarray(((0.5, 0.5, 1.0),), dtype=np.float64))
+
+    # (x - z/2) / (1 - z) is the collapsed coordinate u: no unique apex image.
+    direction_x = RationalPolynomial(
+        {(1, 0, 0): Fraction(1), (0, 0, 1): Fraction(-1, 2)}, pole
+    )
+    # x / (1 - z) keeps a genuine pole at the apex.
+    pole_x = RationalPolynomial({(1, 0, 0): Fraction(1)}, pole)
+    for refused in (direction_x, pole_x):
+        with pytest.raises(ValueError, match="denominator is not proved nonzero"):
+            PerCellRestrictedCellGeometryElement(
+                source, "pyramid", (7,), (3,), ((refused, y, z),)
+            )
 
 
 @pytest.mark.parametrize("kind", ("simplex:2", "simplex:3", "tensor:2", "tensor:3"))

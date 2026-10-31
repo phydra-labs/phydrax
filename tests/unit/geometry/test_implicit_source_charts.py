@@ -36,13 +36,19 @@ from phydrax.geometry._source_fidelity import (
     validate_source_fidelity_witness,
 )
 from phydrax.geometry._source_identity import source_entity_id
-from phydrax.geometry.implicit import AnalyticImplicitProfile
+from phydrax.geometry.implicit import (
+    _adaptive_discovery as adaptive_discovery,
+    AnalyticImplicitProfile,
+)
 from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
     AdaptiveImplicitSurface,
     discover_adaptive_implicit_surface,
 )
-from phydrax.geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
+from phydrax.geometry.implicit._policy import (
+    AdaptiveImplicitBoxIssue,
+    AdaptiveImplicitSurfacePolicy,
+)
 from phydrax.geometry.implicit._source_charts import (
     _AdaptiveImplicitProjectionResult,
     certify_adaptive_implicit_charts,
@@ -471,7 +477,7 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
         np.asarray(global_query.distance_lower_bounds)[0]
         <= np.asarray(global_query.residuals)[0]
     )
-    assert "global closest" in global_query.reasons[0]
+    assert "globally closest" in global_query.reasons[0]
     scoped_query = source.project_boundary(
         query_points,
         entity_ids=(surface_entity_key,),
@@ -725,3 +731,86 @@ def test_singular_implicit_target_map_retains_unresolved_fidelity_evidence() -> 
         finding.check == "implicit_root_chart" and finding.status == "unresolved"
         for finding in certificate.findings
     )
+
+
+_UNIT_DOMAIN = np.asarray(((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)), dtype=np.float64)
+
+
+def _singular_issue_count(surface: AdaptiveImplicitSurface, /) -> int:
+    issues = np.asarray(surface.evidence.unresolved_issues, dtype=np.int64)
+    return int(np.count_nonzero(issues & int(AdaptiveImplicitBoxIssue.SINGULAR)))
+
+
+def test_adaptive_implicit_discovery_reanchors_a_lattice_vertex_on_a_crossing() -> None:
+    # The superquadric's y tip lies on a vertex of the declared lattice; the
+    # field changes sign around it, so the vertex root is a lattice coincidence.
+    geometry = phx.geometry.Superquadric((0.0, 0.0, 0.0), (0.45, 0.50, 0.55)).compile()
+    policy = AdaptiveImplicitSurfacePolicy(
+        relative_cell_diameter=0.12, root_tolerance=1.0e-8
+    )
+    surface = discover_adaptive_implicit_surface(
+        geometry, domain=_UNIT_DOMAIN, policy=policy, source_id="reanchored-tip"
+    )
+
+    assert surface.evidence.lattice_anchor > 0
+    assert surface.mesh is not None
+    assert _singular_issue_count(surface) == 0
+    assert not np.any(np.asarray(surface.scaffold.corner_signs) == 0)
+    np.testing.assert_array_equal(surface.evidence.declared_domain, _UNIT_DOMAIN)
+    anchored = np.asarray(surface.scaffold.domain, dtype=np.float64)
+    assert np.all(anchored[0] < _UNIT_DOMAIN[0])
+    assert np.all(anchored[1] > _UNIT_DOMAIN[1])
+    cell_diagonal = float(
+        np.linalg.norm((anchored[1] - anchored[0]) / 2.0**surface.scaffold.target_level)
+    )
+    assert cell_diagonal <= policy.relative_cell_diameter * float(
+        np.linalg.norm(_UNIT_DOMAIN[1] - _UNIT_DOMAIN[0])
+    )
+
+
+def test_adaptive_implicit_discovery_refuses_a_field_singular_cell_on_the_first_lattice() -> (
+    None
+):
+    # A bubble far below the cell size is a possible zero without a corner sign
+    # change or a nonvanishing gradient component on every lattice: refused
+    # without trying re-anchored lattices.
+    geometry = phx.geometry.Sphere((0.013, 0.017, 0.019), 1.0e-4).compile()
+    surface = discover_adaptive_implicit_surface(
+        geometry,
+        domain=_UNIT_DOMAIN,
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.12, root_tolerance=1.0e-8
+        ),
+        source_id="subresolution-bubble",
+    )
+
+    assert surface.evidence.lattice_anchor == 0
+    assert surface.mesh is None
+    assert _singular_issue_count(surface) > 0
+
+
+def test_adaptive_implicit_discovery_keeps_the_last_refusal_when_anchors_are_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With a single half-cell anchor, the plane x = 0 is a vertex plane of both
+    # the declared and the re-anchored lattice; a box face on it keeps a vertex
+    # on a sign crossing at every anchor.
+    monkeypatch.setattr(adaptive_discovery, "_LATTICE_ANCHORS", ((0.5, 0.5, 0.5),))
+    geometry = phx.geometry.Box(
+        (0.25, 0.03, 0.04), (0.5, 0.6, 0.7), feature_id="lattice-face"
+    ).compile()
+    surface = discover_adaptive_implicit_surface(
+        geometry,
+        domain=_UNIT_DOMAIN,
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.25,
+            root_tolerance=1.0e-6,
+            allow_nonsmooth_field=True,
+        ),
+        source_id="lattice-face",
+    )
+
+    assert surface.evidence.lattice_anchor == 1
+    assert surface.mesh is None
+    assert _singular_issue_count(surface) > 0
+    assert np.any(np.asarray(surface.scaffold.corner_signs) == 0)

@@ -2099,6 +2099,135 @@ def _evaluate_orthogonal_cylinder_parameters_on_chart(
     return jnp.stack((theta, small_profile, angle, large_profile))
 
 
+def _implicit_chart_derivative_bounds(
+    curve: IntersectionCurve, chart: int, first: float, last: float, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose all four chart-parameter derivatives on one certified chart.
+
+    The chart axis moves affinely with the branch parameter. The free
+    parameters follow the implicit function theorem on the certified chart
+    boxes: ``J_free dq_free = -J_axis dq_axis`` with surface Jacobian
+    enclosures, solved by a preconditioned interval contraction.
+    """
+    from .._interval_enclosure import interval_add, interval_multiply, interval_subtract
+    from .._rational import fraction_down, fraction_up
+
+    axis = int(np.asarray(curve.chart_axes)[chart])
+    free = tuple(index for index in range(4) if index != axis)
+    start = float(np.asarray(curve.chart_start)[chart, axis])
+    end = float(np.asarray(curve.chart_end)[chart, axis])
+    rate_exact = Fraction.from_float(end) - Fraction.from_float(start)
+    rate = (
+        np.asarray(fraction_down(rate_exact), dtype=np.float64),
+        np.asarray(fraction_up(rate_exact), dtype=np.float64),
+    )
+    boxes = np.asarray(curve.parameter_enclosures(first, last), dtype=np.float64)
+    box_lower = np.min(boxes[:, 0, :], axis=0)
+    box_upper = np.max(boxes[:, 1, :], axis=0)
+    first_lower, first_upper = curve.first.patch.derivative_bounds(
+        np.stack((box_lower[:2], box_upper[:2]))
+    )
+    second_lower, second_upper = curve.second.patch.derivative_bounds(
+        np.stack((box_lower[2:], box_upper[2:]))
+    )
+    # Residual S1(q[:2]) - S2(q[2:]) has Jacobian [J1, -J2].
+    jacobian_lower = np.concatenate(
+        (np.asarray(first_lower), -np.asarray(second_upper)), axis=1
+    )
+    jacobian_upper = np.concatenate(
+        (np.asarray(first_upper), -np.asarray(second_lower)), axis=1
+    )
+    if not np.all(np.isfinite(jacobian_lower)) or not np.all(np.isfinite(jacobian_upper)):
+        raise ValueError("IntersectionPCurve derivative needs finite surface Jacobians.")
+    matrix = (jacobian_lower[:, free], jacobian_upper[:, free])
+    try:
+        preconditioner = np.linalg.inv(0.5 * (matrix[0] + matrix[1]))
+    except np.linalg.LinAlgError as error:
+        raise ValueError(
+            "IntersectionPCurve derivative interval is unresolved at a singular chart."
+        ) from error
+    if not np.all(np.isfinite(preconditioner)):
+        raise ValueError(
+            "IntersectionPCurve derivative interval is unresolved at a singular chart."
+        )
+    rhs = interval_multiply(
+        (-jacobian_upper[:, axis], -jacobian_lower[:, axis]), rate
+    )
+
+    def precondition(
+        values: tuple[np.ndarray, np.ndarray], /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rows_lower, rows_upper = [], []
+        for row in range(3):
+            total = (np.zeros(values[0].shape[1:]), np.zeros(values[0].shape[1:]))
+            for column in range(3):
+                coefficient = preconditioner[row, column]
+                total = interval_add(
+                    total,
+                    interval_multiply(
+                        (np.asarray(coefficient), np.asarray(coefficient)),
+                        (values[0][column], values[1][column]),
+                    ),
+                )
+            rows_lower.append(np.asarray(total[0], dtype=np.float64))
+            rows_upper.append(np.asarray(total[1], dtype=np.float64))
+        return np.stack(rows_lower), np.stack(rows_upper)
+
+    product_lower, product_upper = precondition(matrix)
+    identity = np.eye(3)
+    error_lower, error_upper = interval_subtract(
+        (identity, identity), (product_lower, product_upper)
+    )
+    contraction = Fraction(0)
+    for row in range(3):
+        contraction = max(
+            contraction,
+            sum(
+                (
+                    Fraction.from_float(
+                        float(max(abs(error_lower[row, column]), abs(error_upper[row, column])))
+                    )
+                    for column in range(3)
+                ),
+                Fraction(0),
+            ),
+        )
+    if contraction >= 1:
+        raise ValueError(
+            "IntersectionPCurve derivative interval is unresolved; the chart Jacobian does not contract."
+        )
+    center_lower, center_upper = precondition(rhs)
+    radius = fraction_up(
+        max(
+            Fraction.from_float(float(max(abs(low), abs(high))))
+            for low, high in zip(center_lower, center_upper, strict=True)
+        )
+        / (1 - contraction)
+    )
+    ball = (np.asarray(-radius), np.asarray(radius))
+    free_lower, free_upper = [], []
+    for row in range(3):
+        total = (np.asarray(center_lower[row]), np.asarray(center_upper[row]))
+        for column in range(3):
+            total = interval_add(
+                total,
+                interval_multiply(
+                    (np.asarray(error_lower[row, column]), np.asarray(error_upper[row, column])),
+                    ball,
+                ),
+            )
+        free_lower.append(float(total[0]))
+        free_upper.append(float(total[1]))
+    lower = np.empty(4, dtype=np.float64)
+    upper = np.empty(4, dtype=np.float64)
+    lower[axis], upper[axis] = float(rate[0]), float(rate[1])
+    lower[list(free)] = free_lower
+    upper[list(free)] = free_upper
+    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+        raise ValueError("IntersectionPCurve derivative interval is unresolved.")
+    return lower, upper
+
+
 def _evaluate_curve_point_on_chart_impl(
     curve: IntersectionCurve, chart: Array, parameter: Array
 ) -> tuple[Array, ...]:
@@ -3105,26 +3234,14 @@ class IntersectionPCurve(AbstractCurve):
             if chart_first > chart_last:
                 continue
             if family is None:
-                parameter_first, parameter_last = (
-                    (
-                        self.first + self.last - chart_last,
-                        self.first + self.last - chart_first,
-                    )
-                    if self.reversed
-                    else (chart_first, chart_last)
+                lower4, upper4 = _implicit_chart_derivative_bounds(
+                    self.curve, chart, chart_first, chart_last
                 )
-                derivative = prepare_interval_function(
-                    jax.jacfwd(
-                        lambda parameter: self._evaluate_on_chart(parameter, chart)
-                    ),
-                    1,
-                )
-                lower, upper = derivative.evaluate(
-                    np.asarray(((parameter_first,),), dtype=np.float64),
-                    np.asarray(((parameter_last,),), dtype=np.float64),
-                )
-                current_lower = np.asarray(lower[0, :, 0], dtype=np.float64)
-                current_upper = np.asarray(upper[0, :, 0], dtype=np.float64)
+                if self.reversed:
+                    lower4, upper4 = -upper4, -lower4
+                columns = slice(0, 2) if self.side == "first" else slice(2, 4)
+                current_lower = lower4[columns]
+                current_upper = upper4[columns]
             else:
                 theta_axis = 2 * family.small_index
                 chart_start = np.asarray(self.curve.chart_start[chart], dtype=np.float64)
@@ -3308,6 +3425,26 @@ def _endpoint_binds_carrier(endpoint: object, carrier: AbstractCurve, /) -> bool
                     )
                 except (TypeError, ValueError, NotImplementedError):
                     return False
+            operand = (
+                endpoint.root.first
+                if endpoint.operand == "first"
+                else endpoint.root.second
+            )
+            if (
+                isinstance(operand, CurveTrimSegment)
+                and not operand.reversed
+                and not endpoint.affine_transforms
+                and _same_carrier_source(operand.curve, source)
+            ):
+                # A window-local root binds its carrier through the window's
+                # exact forward chart map, carried by the endpoint itself.
+                return Fraction.from_float(
+                    endpoint.affine_parameter_offset
+                ) == Fraction.from_float(operand.first) and Fraction.from_float(
+                    endpoint.affine_parameter_scale
+                ) == Fraction.from_float(operand.last) - Fraction.from_float(
+                    operand.first
+                )
             return _same_carrier_source(
                 endpoint.root.first, source
             ) or _same_carrier_source(endpoint.root.second, source)

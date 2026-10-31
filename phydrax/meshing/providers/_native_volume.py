@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import combinations
 from typing import final
 
@@ -727,7 +728,7 @@ def _source_identity_maps(
 
 
 def _source_key(
-    source: NativePlcSource,
+    key_for_scope: Callable[[int, int], tuple[str, tuple[str, ...]]],
     source_maps: tuple[dict[tuple[str, tuple[str, ...]], int], ...],
     dimension: int,
     identifier: str,
@@ -740,7 +741,7 @@ def _source_key(
         raise ValueError(
             "A PLC source association must resolve one authored ID/occurrence pair."
         ) from error
-    key, path = source.source_entity_key_for_scope(dimension, entity_id)
+    key, path = key_for_scope(dimension, entity_id)
     if path != occurrence_path:
         raise ValueError(
             "PLC source scope resolution changed its authored occurrence path."
@@ -754,6 +755,24 @@ def _source_associations(
     mesh = construction.mesh
     complex_ = source.complex
     source_maps = _source_identity_maps(source)
+    # One authored ID/occurrence pair resolves to one key; the mesh refers to
+    # each source entity from many simplices. The resolver is bound once: an
+    # Equinox module method lookup traverses the whole source pytree.
+    key_for_scope = source.source_entity_key_for_scope
+    source_keys: dict[tuple[int, str, tuple[str, ...]], str] = {}
+
+    def _cached_source_key(
+        dimension: int, identifier: str, occurrence_path: tuple[str, ...], /
+    ) -> str:
+        cache_key = (dimension, identifier, occurrence_path)
+        key = source_keys.get(cache_key)
+        if key is None:
+            key = _source_key(
+                key_for_scope, source_maps, dimension, identifier, occurrence_path
+            )
+            source_keys[cache_key] = key
+        return key
+
     vertex_set, edge_set, face_set, cell_set = (
         mesh.entity_set(dimension) for dimension in (0, 1, 2, 3)
     )
@@ -794,7 +813,7 @@ def _source_associations(
             )
     vertex_dimensions = np.asarray(vertex_dimensions_list, dtype=np.int64)
     vertex_keys = tuple(
-        _source_key(source, source_maps, int(dimension), identity, path)
+        _cached_source_key(int(dimension), identity, path)
         for dimension, identity, path in zip(
             vertex_dimensions.tolist(),
             construction.vertex_source_ids,
@@ -817,9 +836,7 @@ def _source_associations(
             else:
                 region_row = int(region)
                 region_sides.append(
-                    _source_key(
-                        source,
-                        source_maps,
+                    _cached_source_key(
                         3,
                         complex_.region_ids[region_row],
                         complex_.region_occurrence_paths[region_row],
@@ -916,7 +933,7 @@ def _source_associations(
         constrained = segment_source_by_edge.get(key)
         if constrained is not None:
             local_id, path, residual, source_row = constrained
-            edge_sources.append(_source_key(source, source_maps, 1, local_id, path))
+            edge_sources.append(_cached_source_key(1, local_id, path))
             edge_paths.append(path)
             edge_roles.append(GeometrySourceEntityRole.EDGE)
             edge_region_sides.append((None, None))
@@ -945,7 +962,7 @@ def _source_associations(
             facet = next(iter(facets))
             local_id = construction.facet_ids[facet]
             path = construction.facet_occurrence_paths[facet]
-            edge_sources.append(_source_key(source, source_maps, 2, local_id, path))
+            edge_sources.append(_cached_source_key(2, local_id, path))
             edge_paths.append(path)
             edge_roles.append(GeometrySourceEntityRole.FACET)
             edge_residuals.append(
@@ -965,7 +982,7 @@ def _source_associations(
         region = next(iter(regions))
         local_id = construction.region_ids[region]
         path = construction.region_occurrence_paths[region]
-        edge_sources.append(_source_key(source, source_maps, 3, local_id, path))
+        edge_sources.append(_cached_source_key(3, local_id, path))
         edge_paths.append(path)
         edge_roles.append(GeometrySourceEntityRole.REGION)
         edge_region_sides.append((None, None))
@@ -982,7 +999,7 @@ def _source_associations(
         constrained = face_source_by_face.get(key)
         if constrained is not None:
             local_id, path, residual, facet, orientation = constrained
-            face_sources.append(_source_key(source, source_maps, 2, local_id, path))
+            face_sources.append(_cached_source_key(2, local_id, path))
             face_paths.append(path)
             face_roles.append(GeometrySourceEntityRole.FACET)
             face_residuals.append(residual)
@@ -995,16 +1012,14 @@ def _source_associations(
         region = next(iter(regions))
         local_id = construction.region_ids[region]
         path = construction.region_occurrence_paths[region]
-        face_sources.append(_source_key(source, source_maps, 3, local_id, path))
+        face_sources.append(_cached_source_key(3, local_id, path))
         face_paths.append(path)
         face_roles.append(GeometrySourceEntityRole.REGION)
         face_residuals.append(0.0)
         face_region_sides.append((None, None))
 
     cell_sources = tuple(
-        _source_key(
-            source,
-            source_maps,
+        _cached_source_key(
             3,
             construction.region_ids[int(region)],
             construction.region_occurrence_paths[int(region)],
