@@ -90,6 +90,7 @@ from ._exact_polyhedral_geometry import (
     _dot3,
     _sub3,
     determinant3,
+    outward_tetrahedron_enclosures,
     Point2,
     Point3,
     point_in_triangle3,
@@ -97,6 +98,7 @@ from ._exact_polyhedral_geometry import (
     point_on_segment3,
     segment_contact_points3,
     tetrahedron_contact_points,
+    TetrahedronEnclosures,
     triangle_contact_points2,
     triangle_contact_points3,
 )
@@ -4140,6 +4142,126 @@ def _straight_planar_polygon(
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class _VolumePieceFilter:
+    """Binary64 contact certificates for the exact tetrahedra of straight cells in R3.
+
+    Cells with `counts == 0` are not filtered.  Simplex cells contribute their own
+    corners as their single piece, in vertex-identifier order.
+    """
+
+    enclosures: TetrahedronEnclosures
+    offsets: NDArray[np.intp]
+    counts: NDArray[np.intp]
+    vertex_ids: NDArray[np.int64]
+    simplex: NDArray[np.bool_]
+
+    @classmethod
+    def prepare(
+        cls,
+        mesh: CellMesh,
+        cells: tuple[EmbeddingCell, ...],
+        simplices: list[tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None],
+        /,
+    ) -> _VolumePieceFilter | None:
+        if mesh.ambient_dimension != 3 or mesh.topological_dimension != 3:
+            return None
+        counts = np.zeros((len(cells),), dtype=np.intp)
+        vertex_ids = np.full((len(cells), 4), -1, dtype=np.int64)
+        simplex = np.zeros((len(cells),), dtype=np.bool_)
+        tetrahedra: list[tuple[Point3, ...]] = []
+        for index, (cell, pieces) in enumerate(zip(cells, simplices, strict=True)):
+            if (
+                pieces is None
+                or cell.dimension != 3
+                or (not cell.affine and cell.coordinates)
+                or any(
+                    len(piece) != 4 or any(len(point) != 3 for point in piece)
+                    for piece in pieces
+                )
+            ):
+                continue
+            counts[index] = len(pieces)
+            tetrahedra.extend(
+                tuple(_point3(point) for point in piece) for piece in pieces
+            )
+            if cell.kind in ("tetrahedron", "simplex:3") and len(cell.vertex_ids) == 4:
+                simplex[index] = True
+                vertex_ids[index] = cell.vertex_ids
+        if not tetrahedra:
+            return None
+        offsets = np.zeros((len(cells) + 1,), dtype=np.intp)
+        np.cumsum(counts, out=offsets[1:])
+        return cls(
+            outward_tetrahedron_enclosures(tetrahedra),
+            offsets,
+            counts,
+            vertex_ids,
+            simplex,
+        )
+
+    def certify(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> tuple[NDArray[np.bool_], dict[tuple[int, int], NDArray[np.bool_]]]:
+        """Cell pairs with no exact finding, and certified piece pairs of the others.
+
+        A cleared pair of simplex cells has equal corner images exactly on its
+        shared vertex identifiers, so its exact restriction trace holds, and its
+        intersection lies in the hull of those images, every point of which lies
+        in the declared shared stratum.  For other filtered cell pairs the
+        returned `(first pieces, second pieces)` mask marks piece pairs whose
+        intersection lies in the hull of their common corners.
+        """
+        cleared = np.zeros(first.shape, dtype=np.bool_)
+        simplex_rows = np.flatnonzero(self.simplex[first] & self.simplex[second])
+        if simplex_rows.size:
+            left, right = first[simplex_rows], second[simplex_rows]
+            point_ids = self.enclosures.point_ids
+            consistent = np.all(
+                (
+                    point_ids[self.offsets[left]][:, :, None]
+                    == point_ids[self.offsets[right]][:, None, :]
+                )
+                == (
+                    self.vertex_ids[left][:, :, None]
+                    == self.vertex_ids[right][:, None, :]
+                ),
+                axis=(1, 2),
+            )
+            cleared[simplex_rows] = consistent & self.enclosures.common_hull_contacts(
+                self.offsets[left], self.offsets[right]
+            )
+        general = np.flatnonzero(
+            (self.counts[first] > 0)
+            & (self.counts[second] > 0)
+            & ~(self.simplex[first] & self.simplex[second])
+        )
+        certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
+        if not general.size:
+            return cleared, certificates
+        left, right = first[general], second[general]
+        left_counts, right_counts = self.counts[left], self.counts[right]
+        sizes = left_counts * right_counts
+        row = np.repeat(np.arange(general.size), sizes)
+        local = np.arange(row.size) - np.repeat(np.cumsum(sizes) - sizes, sizes)
+        certified = self.enclosures.common_hull_contacts(
+            self.offsets[left][row] + local // right_counts[row],
+            self.offsets[right][row] + local % right_counts[row],
+        )
+        for position, (block, first_index, second_index) in enumerate(
+            zip(
+                np.split(certified, np.cumsum(sizes)[:-1]),
+                left.tolist(),
+                right.tolist(),
+                strict=True,
+            )
+        ):
+            certificates[first_index, second_index] = block.reshape(
+                (int(left_counts[position]), int(right_counts[position]))
+            )
+        return cleared, certificates
+
+
 def _nonperiodic_contacts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -4190,6 +4312,7 @@ def _nonperiodic_contacts(
         int,
         tuple[EmbeddingCell, tuple[tuple[tuple[ExactScalar, ...], ...], ...]] | None,
     ] = {}
+    piece_filter = _VolumePieceFilter.prepare(mesh, cells, simplices)
 
     def straight_polygon(
         index: int, /
@@ -4203,12 +4326,15 @@ def _nonperiodic_contacts(
     for first_block, second_block in bvh_overlap_pair_blocks(
         tree, tree, include_touching=True
     ):
-        for first_row, second_row in zip(
+        ordered = first_block < second_block
+        first_block, second_block = first_block[ordered], second_block[ordered]
+        piece_certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
+        if piece_filter is not None:
+            cleared, piece_certificates = piece_filter.certify(first_block, second_block)
+            first_block, second_block = first_block[~cleared], second_block[~cleared]
+        for first_index, second_index in zip(
             first_block.tolist(), second_block.tolist(), strict=True
         ):
-            first_index, second_index = int(first_row), int(second_row)
-            if first_index >= second_index:
-                continue
             first_cell, second_cell = cells[first_index], cells[second_index]
             first_pieces, second_pieces = simplices[first_index], simplices[second_index]
             if (
@@ -4446,10 +4572,33 @@ def _nonperiodic_contacts(
                 )
             if first_pieces is None or second_pieces is None:
                 continue
+            certified_pieces = piece_certificates.get((first_index, second_index))
+            declared_common: dict[frozenset[Point3], bool] = {}
             offending: tuple[tuple[ExactScalar, ...], ...] = ()
             contact_error: Exception | None = None
-            for left in first_pieces:
-                for right in second_pieces:
+            for left_index, left in enumerate(first_pieces):
+                for right_index, right in enumerate(second_pieces):
+                    if (
+                        certified_pieces is not None
+                        and certified_pieces[left_index, right_index]
+                    ):
+                        # The certified intersection lies in the hull of the
+                        # common corners; shared-stratum membership is convex.
+                        common = tuple(_point3(point) for point in left if point in right)
+                        key = frozenset(common)
+                        if key not in declared_common:
+                            declared_common[key] = (
+                                _contact_is_declared(
+                                    first_cell,
+                                    second_cell,
+                                    common,
+                                    first_cell.vertex_ids,
+                                    second_cell.vertex_ids,
+                                )
+                                is True
+                            )
+                        if declared_common[key]:
+                            continue
                     shared_contacts = _plane_side_shared_contacts(
                         left, right, first_cell.dimension, mesh.ambient_dimension
                     )
