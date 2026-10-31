@@ -2854,8 +2854,8 @@ def _migrate_owner_local_periodic_delaunay_data(
                 or any(len(row) != dimension for row in key_relative_windings)
                 or len(cell_winding) != dimension
                 or exact_measure <= 0
-                or len(support_lower_bits) != dimension
-                or len(support_upper_bits) != dimension
+                or len(support_lower_bits) not in (0, dimension)
+                or len(support_upper_bits) != len(support_lower_bits)
                 or len(neighbors) != len(neighbor_owners)
                 or len(neighbors) != len(neighbor_weights)
                 or len(set(neighbors)) != len(neighbors)
@@ -2999,12 +2999,27 @@ def _migrate_owner_local_periodic_delaunay_data(
         key_windings = np.asarray(mesh_data["cell_key_relative_windings"], dtype=np.int64)
         cell_windings = np.asarray(mesh_data["cell_windings"], dtype=np.int64)
         exact_measures = tuple(mesh_data["exact_cell_measures"])
-        support_lower = np.asarray(
-            mesh_data["support_fractional_lower"], dtype=np.float64
-        ).view(np.uint64)
-        support_upper = np.asarray(
-            mesh_data["support_fractional_upper"], dtype=np.float64
-        ).view(np.uint64)
+        raw_support_lower = mesh_data["support_fractional_lower"]
+        raw_support_upper = mesh_data["support_fractional_upper"]
+        if (raw_support_lower is None) != (raw_support_upper is None):
+            raise ValueError("Periodic cell support bounds are only partially present.")
+        support_lower = (
+            None
+            if raw_support_lower is None
+            else np.asarray(raw_support_lower, dtype=np.float64).view(np.uint64)
+        )
+        support_upper = (
+            None
+            if raw_support_upper is None
+            else np.asarray(raw_support_upper, dtype=np.float64).view(np.uint64)
+        )
+        support_width = 0 if support_lower is None else dimension
+        if support_lower is not None and (
+            support_upper is None
+            or support_lower.shape != (cell_ids.size, dimension)
+            or support_upper.shape != support_lower.shape
+        ):
+            raise ValueError("Periodic cell support bound rows are malformed.")
         graph_ids = np.asarray(mesh_data["graph_cell_ids"], dtype=np.int64)
         graph_offsets = np.asarray(mesh_data["graph_cell_offsets"], dtype=np.int64)
         graph_neighbors = np.asarray(mesh_data["graph_neighbor_ids"], dtype=np.int64)
@@ -3111,12 +3126,16 @@ def _migrate_owner_local_periodic_delaunay_data(
                     int(value) for value in cell_windings[cell_row].tolist()
                 ],
                 "measure": pair(exact_measures[cell_row]),
-                "support_lower_bits": [
-                    int(value) for value in support_lower[cell_row].tolist()
-                ],
-                "support_upper_bits": [
-                    int(value) for value in support_upper[cell_row].tolist()
-                ],
+                "support_lower_bits": (
+                    []
+                    if support_lower is None
+                    else [int(value) for value in support_lower[cell_row].tolist()]
+                ),
+                "support_upper_bits": (
+                    []
+                    if support_upper is None
+                    else [int(value) for value in support_upper[cell_row].tolist()]
+                ),
                 "neighbors": [
                     int(value)
                     for value in graph_neighbors[neighbor_start:neighbor_stop].tolist()
@@ -3473,8 +3492,18 @@ def _migrate_owner_local_periodic_delaunay_data(
         cell_key_relative_windings = np.asarray(
             cell_key_windings, dtype=np.int64
         ).reshape((-1, dimension))
+        if any(
+            len(cell_records[int(identifier)]["support_lower_bits"]) != support_width
+            for identifier in target_cell_ids.tolist()
+        ):
+            raise ValueError(
+                "Periodic graph migration support-bound rows disagree with the "
+                "source mesh support contract."
+            )
         support_fractional_lower = (
-            np.asarray(
+            None
+            if support_width == 0
+            else np.asarray(
                 [
                     cell_records[int(identifier)]["support_lower_bits"]
                     for identifier in target_cell_ids.tolist()
@@ -3485,7 +3514,9 @@ def _migrate_owner_local_periodic_delaunay_data(
             .view(np.float64)
         )
         support_fractional_upper = (
-            np.asarray(
+            None
+            if support_width == 0
+            else np.asarray(
                 [
                     cell_records[int(identifier)]["support_upper_bits"]
                     for identifier in target_cell_ids.tolist()
@@ -8400,7 +8431,12 @@ def _owner_local_periodic_candidate_from_accepted_view(
         raise ValueError("Accepted Delaunay mesh data changed the local carrier.")
     # Adapted views key midpoint vertices by themselves; their exact roots are
     # the cumulative coordinate ancestry carried with the accepted mesh data.
-    adapted = view.adaptive_result is not None
+    # An owner without resident vertices has no ancestry to carry.
+    stencil = (
+        mesh_data["source_coordinate_stencil"]
+        if view.adaptive_result is not None and np.asarray(view.vertex_ids).size
+        else None
+    )
     return OwnerLocalPeriodicCandidate(
         rank,
         part_count,
@@ -8446,11 +8482,11 @@ def _owner_local_periodic_candidate_from_accepted_view(
         cell_neighbor_ids=mesh_data["graph_neighbor_ids"],
         cell_neighbor_owner_ranks=mesh_data["graph_neighbor_owner_ranks"],
         cell_neighbor_weights=mesh_data["graph_neighbor_weights"],
-        vertex_coordinate_stencil=(
-            mesh_data["source_coordinate_stencil"] if adapted else None
-        ),
+        vertex_coordinate_stencil=stencil,
         exact_vertex_coordinate_offsets=(
-            tuple(mesh_data["exact_vertex_coordinate_offsets"]) if adapted else None
+            None
+            if stencil is None
+            else tuple(mesh_data["exact_vertex_coordinate_offsets"])
         ),
     )
 
@@ -8735,6 +8771,7 @@ def _repartition_owner_local_periodic_assembly(
     from ...meshing._assembly import MeshAssembly
     from .._distribution import (
         _owner_group_fail_if_any,
+        _owner_group_fail_with_reasons,
         OwnerLocalGraphMigrationEvidence,
         OwnerLocalGraphPartitionEvidence,
     )
@@ -9083,11 +9120,8 @@ def _repartition_owner_local_periodic_assembly(
             )
         except Exception as error:
             local_error = f"{type(error).__name__}: {error}"
-    _owner_group_fail_if_any(
-        local_error,
-        execution_group,
-        f"{axis_name}_source_replay",
-        "periodic graph source replay",
+    _owner_group_fail_with_reasons(
+        local_error, execution_group, f"{axis_name}_source_replay"
     )
 
     source_content_id = _owner_local_periodic_source_content_identity(

@@ -23,6 +23,7 @@ from phydrax.discretization.finite_volume._automatic_remap import (
 from phydrax.discretization.finite_volume._material_chain_action import (
     material_chain_apply,
     material_chain_transpose,
+    prepare_material_chain_conservative_remap,
 )
 from phydrax.discretization.finite_volume._material_schedule import (
     prepare_material_chain_schedule,
@@ -237,7 +238,17 @@ def test_pwl_refinement_and_coarsening_renew_original_domain_acceptance() -> Non
     source.certification.revalidate(source.mesh, source.geometry)
 
 
-def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -> None:
+def _curved_material_refinement_case() -> tuple[
+    CellMeshingResult,
+    object,
+    CellMeshTransition,
+    MeshAdaptationPolicy,
+    np.ndarray,
+    MeshAdaptationResult,
+    object,
+    tuple[str, str],
+]:
+    """Certified curved two-tetrahedron source and its material-following refinement."""
     (
         root_mesh,
         root_geometry,
@@ -259,27 +270,23 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
         region_id="aluminum",
         occurrence_path=occurrence,
     )
-
-    def certified(mesh: CellMesh, geometry: CellGeometrySpec) -> CellMeshingResult:
-        inputs = MeshCertificationInputs(
-            mesh,
-            geometry,
-            MeshCertificationSchedule("volume_plc"),
-            source_id=domain.source_id,
-            source_revision=domain.source_revision,
-            domain=domain,
-            cell_regions=np.zeros(
-                (sum(block.cell_count for block in mesh.blocks),), dtype=np.int64
-            ),
-        )
-        return certify_cell_mesh(
-            mesh,
-            phx.SpatialCoordinateContract.si(),
-            geometry=geometry,
-            certification_inputs=inputs,
-        )
-
-    source = certified(source_mesh, source_geometry)
+    inputs = MeshCertificationInputs(
+        source_mesh,
+        source_geometry,
+        MeshCertificationSchedule("volume_plc"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        domain=domain,
+        cell_regions=np.zeros(
+            (sum(block.cell_count for block in source_mesh.blocks),), dtype=np.int64
+        ),
+    )
+    source = certify_cell_mesh(
+        source_mesh,
+        phx.SpatialCoordinateContract.si(),
+        geometry=source_geometry,
+        certification_inputs=inputs,
+    )
     assert source.certification is not None and source.certification.coverage is not None
     reference = declare_material_reference(
         source.mesh,
@@ -300,17 +307,6 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
         MeshTransitionKind.REMESH,
         material_reference=reference,
     )
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        prepare_mesh_adaptation(
-            source,
-            MarkedMeshAdaptation(()),
-            policy=MeshAdaptationPolicy(
-                MeshAdaptationRoute.NATIVE_BISECTION,
-                compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
-            ),
-            prior_transition=prior,
-            material_reference=reference,
-        )
     route = MeshAdaptationPolicy(
         MeshAdaptationRoute.NATIVE_BISECTION,
         compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
@@ -328,6 +324,52 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
             material_reference=reference,
         )
     )
+    return source, reference, prior, route, source_ids, refined, domain, occurrence
+
+
+def _tetrahedral_fv_plan(
+    result: CellMeshingResult, component_names: tuple[str, ...], /
+) -> UnstructuredFiniteVolumePlan:
+    return UnstructuredFiniteVolumePlan(
+        np.asarray(result.mesh.coordinates),
+        tetrahedra=np.concatenate(
+            tuple(
+                np.asarray(block.vertices, dtype=np.int32) for block in result.mesh.blocks
+            )
+        ),
+        vertex_global_ids=np.asarray(result.mesh.vertex_global_ids, dtype=np.int64),
+        cell_global_ids=np.concatenate(
+            tuple(
+                np.asarray(block.global_ids, dtype=np.int64)
+                for block in result.mesh.blocks
+            )
+        ),
+        component_names=component_names,
+    )
+
+
+def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -> None:
+    (
+        source,
+        reference,
+        prior,
+        route,
+        source_ids,
+        refined,
+        domain,
+        occurrence,
+    ) = _curved_material_refinement_case()
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(()),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
+            ),
+            prior_transition=prior,
+            material_reference=reference,
+        )
     refined_transition = refined.transition
     assert refined_transition is not None
     refined_chain = refined_transition.volume_material_chain
@@ -605,6 +647,119 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
             )
             assert actual == expected
     source.certification.revalidate(source.mesh, source.geometry)
+
+
+def _euler_fv_runtime(
+    result: CellMeshingResult, system: phx.equations.EulerSystem, /
+) -> tuple[object, object]:
+    discretization = _tetrahedral_fv_plan(result, system.component_names).prepare()
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        discretization.boundary_patch_names,
+        {
+            name: phx.discretization.ExtrapolationBoundary()
+            for name in discretization.boundary_patch_names
+        },
+    )
+    dynamics = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR(
+            "material-remesh", "state", system, boundaries
+        ),
+        discretization,
+        phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+        coupling=phx.discretization.UnstructuredFiniteVolumeCouplingPlan(
+            topology_event_capacity=4,
+            topology_event_policy="accepted_step",
+        ),
+    ).dynamics
+    return discretization, dynamics
+
+
+def test_fv_commit_remesh_routes_material_and_eulerian_content() -> None:
+    source, _, prior, _, _, refined, _, _ = _curved_material_refinement_case()
+    transition = refined.transition
+    assert transition is not None and transition.volume_material_chain is not None
+    system = phx.equations.EulerSystem(3)
+    source_geometry, source_dynamics = _euler_fv_runtime(source, system)
+    target_geometry, target_dynamics = _euler_fv_runtime(refined.target, system)
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        source_dynamics,
+        phx.discretization.FluxPositivityPlan(),
+        phx.solver.FiniteVolumeStepPolicy(maximum_retries=2),
+    )
+    primitive = jnp.asarray(
+        ((1.0, 0.1, 0.0, -0.05, 1.0), (2.0, -0.2, 0.05, 0.0, 1.5)), dtype=jnp.float64
+    )
+    accepted = runtime.advance(
+        runtime.initialize_state(system.primitive_to_conserved(primitive), 0.0, 1.0e-4)
+    )
+    assert bool(np.asarray(accepted.accepted))
+    source_content = accepted.runtime_state.content_state
+    source_total = np.sum(np.asarray(source_content.conservative_content), axis=0)
+
+    material = runtime.commit_remesh(
+        accepted,
+        transition,
+        target_dynamics,
+        content_semantics="material_following_content",
+    )
+    assert material.successor_runtime is not None
+    material_epoch = material.runtime_state.topology_journal.epoch_table[-1]
+    assert material_epoch.index == 1
+    assert material_epoch.topology_id == target_geometry.topology_id
+    oracle = prepare_material_chain_conservative_remap(
+        transition.volume_material_chain,
+        np.asarray(source_geometry.cell_global_ids, dtype=np.int64),
+        np.asarray(target_geometry.cell_global_ids, dtype=np.int64),
+        source_geometry.cell_volumes,
+        target_geometry.cell_volumes,
+    )
+    material_content = np.asarray(
+        material.runtime_state.content_state.conservative_content
+    )
+    np.testing.assert_allclose(
+        material_content,
+        np.asarray(oracle.apply_content(source_content.conservative_content)),
+        rtol=1.0e-13,
+        atol=1.0e-15,
+    )
+    np.testing.assert_allclose(
+        np.sum(material_content, axis=0), source_total, rtol=1.0e-14
+    )
+    continued = material.successor_runtime.advance(material.runtime_state)
+    assert bool(np.asarray(continued.accepted))
+
+    eulerian = runtime.commit_remesh(accepted, transition, target_dynamics)
+    assert eulerian.successor_runtime is not None
+    overlap = prepare_unstructured_conservative_remap(
+        source_geometry, target_geometry, provenance="eulerian-oracle"
+    ).plan
+    assert overlap is not None
+    np.testing.assert_allclose(
+        np.asarray(eulerian.runtime_state.content_state.cell_average()),
+        np.asarray(overlap.apply(source_content.cell_average())),
+        rtol=1.0e-13,
+        atol=1.0e-15,
+    )
+    np.testing.assert_allclose(
+        np.sum(
+            np.asarray(eulerian.runtime_state.content_state.conservative_content),
+            axis=0,
+        ),
+        source_total,
+        rtol=1.0e-14,
+    )
+
+    assert prior.volume_material_chain is None
+    with pytest.raises(ValueError, match="accepted volume material chain"):
+        runtime.commit_remesh(
+            accepted,
+            prior,
+            target_dynamics,
+            content_semantics="material_following_content",
+        )
 
 
 def test_fixed_topology_motion_reproves_source_coverage_or_rolls_back() -> None:

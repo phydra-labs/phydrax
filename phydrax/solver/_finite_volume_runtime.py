@@ -82,6 +82,7 @@ from ._finite_volume import (
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._finite_volume_topology_events import (
     _OwnerLocalRepartitionTransfer,
+    FiniteVolumeContentTransferSemantics,
     FiniteVolumeTopologyArtifacts,
     FiniteVolumeTopologyEventJournal,
     FiniteVolumeTopologyEventRequest,
@@ -4935,6 +4936,256 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             lambda result: result.overset_motion_receipt,
             answer,
             receipt,
+            is_leaf=lambda node: node is None,
+        )
+
+    def commit_remesh(
+        self,
+        accepted_result: FiniteVolumeAdvanceResult,
+        transition: Any,
+        successor_dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+        /,
+        *,
+        content_semantics: FiniteVolumeContentTransferSemantics = (
+            "eulerian_physical_overlap"
+        ),
+    ) -> FiniteVolumeAdvanceResult:
+        """Commit one accepted remesh/adaptation transition at the step boundary.
+
+        ``content_semantics`` selects how the accepted conservative content
+        crosses the transition: the exact physical overlap of the endpoint
+        geometries for Eulerian content, or the transition's accepted volume
+        material chain for material-following content. The topology transaction
+        prepares that route, checks coverage and conservation, and publishes the
+        successor runtime only after the event commits; a rejected event keeps
+        the accepted predecessor state runnable.
+        """
+        from ..meshing import CellMeshTransition
+        from ._finite_volume_topology_events import (
+            FiniteVolumeRemeshArtifact,
+            FiniteVolumeTopologyArtifactEvidence,
+        )
+
+        if not isinstance(accepted_result, FiniteVolumeAdvanceResult):
+            raise TypeError("accepted_result must be FiniteVolumeAdvanceResult.")
+        if not isinstance(transition, CellMeshTransition):
+            raise TypeError("transition must be a CellMeshTransition.")
+        if not isinstance(successor_dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+            raise TypeError(
+                "successor_dynamics must be PreparedUnstructuredFiniteVolumeDynamics."
+            )
+        if not bool(np.asarray(accepted_result.accepted)):
+            return accepted_result
+        if self.owner_local_geometry is not None:
+            raise ValueError(
+                "Owner-local FV remeshing commits through the owner-local adaptation "
+                "and repartition transactions, not a single-rank remesh."
+            )
+        if not isinstance(self.dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+            raise TypeError("FV remeshing requires prepared unstructured dynamics.")
+        if (
+            self.dynamics.coupling.topology_event_policy != "accepted_step"
+            or successor_dynamics.coupling.topology_event_policy != "accepted_step"
+        ):
+            raise ValueError("FV remeshing requires accepted-step topology events.")
+        if (
+            self.sliding_plan is not None
+            or successor_dynamics.coupling.sliding is not None
+            or successor_dynamics.coupling.overset is not None
+            or successor_dynamics.coupling.motion is not None
+        ):
+            raise ValueError(
+                "Remesh commits rebind no sliding, overset, or motion coupling; "
+                "use the coupling's own topology transaction."
+            )
+        if (
+            successor_dynamics.system.system_id != self.dynamics.system.system_id
+            or successor_dynamics.precision.policy_id != self.precision.policy_id
+        ):
+            raise ValueError("Successor dynamics change the FV system or precision.")
+        accepted_state = accepted_result.runtime_state
+        current_epoch = accepted_state.topology_journal.epoch_table[-1]
+        current_artifacts = accepted_state.topology_journal.artifact_table[-1]
+        source_geometry = self.dynamics.discretization
+        target_geometry = successor_dynamics.discretization
+        request = FiniteVolumeTopologyEventRequest(
+            TopologyEventKind.REMESH,
+            current_epoch.epoch_id,
+            transition.transition_id,
+            payload_id=transition.transition_id,
+            reason=f"accepted {content_semantics} remesh",
+        )
+        accepted_step = int(np.asarray(accepted_state.accepted_step))
+        event_time = float(np.asarray(accepted_state.time))
+
+        def with_state(
+            content: FiniteVolumeConservativeContentState,
+            journal: FiniteVolumeTopologyEventJournal,
+            /,
+        ) -> FiniteVolumeRuntimeState:
+            return FiniteVolumeRuntimeState(
+                content,
+                journal,
+                accepted_state.step_size,
+                accepted_step=accepted_state.accepted_step,
+                last_status=accepted_state.last_status,
+                controller_state=accepted_state.controller_state,
+                integrator_state=accepted_state.integrator_state,
+                output_cursor=accepted_state.output_cursor,
+                sliding_coupling=accepted_state.sliding_coupling,
+                sliding_shift=accepted_state.sliding_shift,
+                sliding_event_id=accepted_state.sliding_event_id,
+            )
+
+        def fail(
+            status: TopologyEventStatus, reason: str, /
+        ) -> FiniteVolumeAdvanceResult:
+            evidence = FiniteVolumeTopologyArtifactEvidence(
+                passed=jnp.asarray(False),
+                status=jnp.asarray(int(status), dtype=jnp.int32),
+                coverage_error=jnp.asarray(0.0),
+                conservation_defect=jnp.asarray(0.0),
+                evidence_id=canonical_fingerprint(
+                    {
+                        "kind": "failed-finite-volume-remesh",
+                        "request": request.request_id,
+                        "reason": reason,
+                        "status": int(status),
+                    }
+                ),
+            )
+            scheduler = FiniteVolumeTopologyEventScheduler(
+                accepted_state.topology_journal
+            )
+            scheduler.submit(request, accepted_step, event_time)
+            rejected = scheduler.transact(
+                accepted=True,
+                source_content=accepted_state.content_state,
+                candidate_epoch=current_epoch,
+                candidate_artifacts=current_artifacts,
+                remap=evidence,
+                metrics=evidence,
+                evidence=evidence,
+                status=status,
+            )
+            return eqx.tree_at(
+                lambda result: result.runtime_state,
+                accepted_result,
+                with_state(rejected.content_state, rejected.journal),
+            )
+
+        candidate_epoch = TopologyEpoch(
+            current_epoch.index + 1,
+            target_geometry.geometry_id,
+            target_geometry.topology_id,
+            current_epoch.partition_id,
+        )
+        candidate_artifacts = FiniteVolumeTopologyArtifacts(
+            candidate_epoch,
+            target_geometry.prepared_id,
+            topology_artifact_id=transition.transition_id,
+            operators_artifact_id=successor_dynamics.dynamics_id,
+        )
+        try:
+            successor_runtime = PreparedFiniteVolumeRuntime(
+                successor_dynamics,
+                self.positivity,
+                self.policy,
+                topology_epoch=candidate_epoch,
+                topology_artifacts=candidate_artifacts,
+                stage_state_provider=self.stage_state_provider,
+                stage_flux_provider=self.stage_flux_provider,
+            )
+        except (TypeError, ValueError) as error:
+            return fail(
+                TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                f"successor runtime preparation failed: {error}",
+            )
+        artifact = FiniteVolumeRemeshArtifact(
+            transition,
+            candidate_epoch,
+            candidate_artifacts,
+            None,
+            None,
+            None,
+            TopologyEventStatus.SUCCESS,
+            candidate_epoch.epoch_id,
+            payload_ids=(request.payload_id,),
+            target_geometry=target_geometry,
+            content_semantics=content_semantics,
+        )
+
+        def transfer(
+            source: FiniteVolumeConservativeContentState, remap: Any, /
+        ) -> FiniteVolumeConservativeContentState:
+            return FiniteVolumeConservativeContentState.from_cell_average(
+                remap.apply(source.cell_average()),
+                successor_runtime.effective_cell_volumes,
+                successor_runtime.active_cell_mask,
+                accepted_state.time,
+                topology_epoch_id=candidate_epoch.epoch_id,
+                geometry_family_id=successor_runtime.geometry_family_id,
+                geometry_layout_id=successor_runtime.geometry_layout_id,
+                geometry_version=jnp.asarray(0, dtype=jnp.int32),
+                evidence_policy_id=successor_runtime.evidence_policy_id,
+                evidence_version=jnp.asarray(0, dtype=jnp.int32),
+                precision=successor_runtime.precision,
+            )
+
+        # The transferred totals round once per moved product and compensated
+        # accumulation; bound the admitted content defect accordingly.
+        source_total = np.asarray(
+            accepted_state.content_state.conservative_content, dtype=np.float64
+        )
+        cell_rows = source_geometry.cell_count + target_geometry.cell_count
+        map_count = (
+            1
+            if transition.volume_material_chain is None
+            else len(transition.volume_material_chain.maps)
+        )
+        conservation_tolerance = float(
+            8.0
+            * np.finfo(np.float64).eps
+            * cell_rows
+            * map_count
+            * max(float(np.max(np.sum(np.abs(source_total), axis=0))), 1.0)
+        )
+        scheduler = FiniteVolumeTopologyEventScheduler(accepted_state.topology_journal)
+        scheduler.submit(request, accepted_step, event_time)
+        transaction = scheduler.transact(
+            accepted=True,
+            source_content=accepted_state.content_state,
+            artifact=artifact,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            coverage_tolerance=conservation_tolerance,
+            active_cell_mask=successor_runtime.active_cell_mask,
+            admissibility=lambda content: jnp.all(
+                successor_dynamics.system.admissible(content.cell_average())
+            ),
+            transfer=transfer,
+            result_id=candidate_epoch.epoch_id,
+            payload_ids=(request.payload_id,),
+        )
+        if not transaction.committed:
+            failure_status = (
+                transaction.failure
+                if transaction.failure is not None
+                else TopologyEventStatus.FAILED_COVERAGE
+            )
+            return fail(
+                failure_status,
+                "FV remesh transaction was rejected: " + failure_status.name,
+            )
+        answer = eqx.tree_at(
+            lambda result: result.runtime_state,
+            accepted_result,
+            with_state(transaction.content_state, transaction.journal),
+        )
+        return eqx.tree_at(
+            lambda result: result.successor_runtime,
+            answer,
+            successor_runtime,
             is_leaf=lambda node: node is None,
         )
 
