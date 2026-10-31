@@ -102,6 +102,22 @@ class CellInverseRefusal(StrictModule):
         self.lower, self.upper, self.witness = lower_, upper_, witness_
 
 
+class CellLocationRefusalError(ValueError):
+    """A location consumer refused queries whose location stayed undecided.
+
+    ``inverse_refusals`` carries the locator's exact box evidence for those queries,
+    with ``point`` re-indexed to the consumer's own query rows as its message states.
+    It is empty when the refusal has no undecided inverse map behind it (for
+    example an ambiguous or incomplete candidate search).
+    """
+
+    def __init__(
+        self, message: str, inverse_refusals: tuple[CellInverseRefusal, ...], /
+    ) -> None:
+        super().__init__(message)
+        self.inverse_refusals = inverse_refusals
+
+
 class CellLocationResult(StrictModule):
     """Location plus every containing cell and explicit completeness evidence.
 
@@ -170,6 +186,7 @@ class AbstractCellLocator(StrictModule):
 __all__ = [
     "AbstractCellLocator",
     "CellInverseRefusal",
+    "CellLocationRefusalError",
     "CellLocationResult",
     "CellLocationStatus",
     "InverseRefusalReason",
