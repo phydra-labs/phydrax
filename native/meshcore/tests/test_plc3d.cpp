@@ -22,6 +22,7 @@
 #include "cavity.hpp"
 #include "check.hpp"
 #include "intersections.hpp"
+#include "phydrax_meshcore.h"
 #include "plc3d.hpp"
 #include "predicates.hpp"
 #include "triangulation3d.hpp"
@@ -2367,6 +2368,99 @@ void test_suppression_wedge_without_delaunay_fill_is_searched() {
   }
 }
 
+// The distance envelope of the unit tetrahedron at offset 1.5 has grid
+// vertices such as (-1.5, 0.5, 0.5) at exactly the offset from a face. Its
+// marching-tetrahedra surface used to carry clusters of ~10 vertices within
+// 4e-14 of each such vertex, with needle facets whose split points no dyadic
+// parameter reached (the reconstruction envelopes failed NONREPRESENTABLE at
+// such facets). With the kernel's separated field the surface is a closed,
+// well-spaced triangle PLC with one facet per triangle; its recovery splits
+// many segments and facets, inserts most of the split points into star-shaped
+// parts of non-Delaunay conflict cavities, and must succeed under both
+// boundary policies.
+void test_offset_tie_envelope_recovers_under_both_policies() {
+  constexpr double source[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  constexpr int64_t source_faces[] = {0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+  void* handle = nullptr;
+  std::array<double, 4> bounds{};
+  const phx_mc_surface_envelope_create_request request{
+      .vertices = source,
+      .vertex_count = 4,
+      .faces = source_faces,
+      .face_count = 4,
+      .offset = 1.5,
+      .spacing = 0.5,
+      .certificate_spacing = 0.4,
+      .result = &handle,
+      .bounds = bounds.data(),
+  };
+  if (phx_mc_surface_envelope_create(&request) != PHX_MC_OK || handle == nullptr) {
+    PHX_CHECK(false);
+    return;
+  }
+  std::array<int64_t, 4> sizes{};
+  PHX_CHECK(phx_mc_surface_envelope_sizes(handle, sizes.data()) == PHX_MC_OK);
+  std::vector<double> points(static_cast<std::size_t>(3 * sizes[0]));
+  std::vector<int64_t> triangles(static_cast<std::size_t>(3 * sizes[1]));
+  std::vector<double> volume_points(static_cast<std::size_t>(3 * sizes[2]));
+  std::vector<int64_t> cells(static_cast<std::size_t>(4 * sizes[3]));
+  const int32_t arrays_status = phx_mc_surface_envelope_arrays(
+      handle, sizes[0], sizes[1], sizes[2], sizes[3], points.data(), triangles.data(),
+      volume_points.data(), cells.data());
+  phx_mc_surface_envelope_free(handle);
+  PHX_CHECK(arrays_status == PHX_MC_OK);
+  if (arrays_status != PHX_MC_OK) return;
+  const std::size_t triangle_count = static_cast<std::size_t>(sizes[1]);
+  std::vector<int64_t> offsets(triangle_count + 1);
+  std::vector<int32_t> vertices(3 * triangle_count);
+  std::vector<int32_t> polygon_facets(triangle_count);
+  std::vector<int32_t> facet_regions(2 * triangle_count);
+  for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
+    offsets[triangle + 1] = static_cast<int64_t>(3 * (triangle + 1));
+    for (int corner = 0; corner < 3; ++corner) {
+      vertices[3 * triangle + static_cast<std::size_t>(corner)] =
+          static_cast<int32_t>(triangles[3 * triangle + static_cast<std::size_t>(corner)]);
+    }
+    polygon_facets[triangle] = static_cast<int32_t>(triangle);
+    facet_regions[2 * triangle] = -1;
+    facet_regions[2 * triangle + 1] = 1;
+  }
+  for (BoundaryPolicy policy : {BoundaryPolicy::kFixed, BoundaryPolicy::kConforming}) {
+    PlcInput input;
+    input.point_count = sizes[0];
+    input.points = points.data();
+    input.polygon_count = static_cast<int64_t>(triangle_count);
+    input.polygon_offsets = offsets.data();
+    input.polygon_vertices = vertices.data();
+    input.polygon_facets = polygon_facets.data();
+    input.facet_count = static_cast<int64_t>(triangle_count);
+    input.facet_regions = facet_regions.data();
+    input.policy = policy;
+    PlcRecovery result;
+    const int32_t status = recover_plc(input, result);
+    if (status != PHX_MC_OK) {
+      std::fprintf(stderr, "offset-tie envelope recovery failed: policy=%d status=%d\n",
+                   static_cast<int>(policy), status);
+      PHX_CHECK(status == PHX_MC_OK);
+      continue;
+    }
+    PHX_CHECK(!result.tets.empty());
+    PHX_CHECK(std::all_of(result.tet_regions.begin(), result.tet_regions.end(),
+                          [](int32_t region) { return region == 1; }));
+    // Recovery keeps the source points as the prefix of its point bank.
+    PHX_CHECK(result.points.size() >= points.size() &&
+              std::equal(points.begin(), points.end(), result.points.begin()));
+    std::vector<char> covered(triangle_count, 0);
+    for (int32_t facet : result.face_sources) {
+      PHX_CHECK(facet >= 0 && static_cast<std::size_t>(facet) < triangle_count);
+      if (facet >= 0 && static_cast<std::size_t>(facet) < triangle_count) {
+        covered[static_cast<std::size_t>(facet)] = 1;
+      }
+    }
+    PHX_CHECK(std::all_of(covered.begin(), covered.end(), [](char used) { return used != 0; }));
+  }
+}
+
 }  // namespace
 
 
@@ -2397,6 +2491,7 @@ int main() {
   test_recover_plc_nonconvex_prism();
   test_recover_plc_removes_a_closed_cavity();
   test_recover_plc_corner_scaffold_tracks_inserted_points_and_region_interface();
+  test_offset_tie_envelope_recovers_under_both_policies();
   test_suppression_wedge_without_delaunay_fill_is_searched();
   return phx::mc::test::finish("test_plc3d");
 }
