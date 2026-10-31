@@ -290,8 +290,15 @@ int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
 
 bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c,
                                   const std::array<VertexEvidence, 3>& evidence) const {
-  return transversal_sign(a, b, c) == orientation_ &&
-         distance_bound(a, b, c, evidence) <= tolerance_;
+  if (transversal_sign(a, b, c) != orientation_) {
+    ++refusals_.transversality;
+    return false;
+  }
+  if (!(distance_bound(a, b, c, evidence) <= tolerance_)) {
+    ++refusals_.distance;
+    return false;
+  }
+  return true;
 }
 
 Point ZeroSetBandAdmission::project(const Point& position) const {
@@ -423,6 +430,7 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
   status = remesh_surface(points, triangles, admission,
                           {request.edge_length, request.minimum_angle_degrees}, remesh);
   if (status != PHX_MC_OK) return status;
+  const ZeroSetBandAdmission::Refusals refusals = admission.refusals();
   // Every surviving triangle is either admitted (its certified distance) or an
   // untouched input triangle (the carrier's declared distance).
   double maximum = 0;
@@ -446,6 +454,8 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
   counters[3] = remesh.relocations;
   counters[4] = remesh.unmet;
   counters[5] = orientation;
+  counters[6] = refusals.transversality;
+  counters[7] = refusals.distance;
   *distance = maximum;
   result.points = std::move(points);
   result.triangles = std::move(triangles);

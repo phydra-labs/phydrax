@@ -179,12 +179,9 @@ class BRepImportReport:
             raise TypeError("B-Rep source counts must be integers.")
         if any(value < 0 for value in counts):
             raise ValueError("B-Rep source counts must be non-negative.")
-        if self.num_faces == 0 and any(
-            value != 0 for value in (self.num_solids, self.num_edges, self.num_vertices)
-        ):
-            raise ValueError(
-                "A face-free B-Rep report must describe a fully empty model."
-            )
+        # Free vertices and edges need no face; a solid always bounds faces.
+        if self.num_faces == 0 and self.num_solids != 0:
+            raise ValueError("A face-free B-Rep report cannot describe solids.")
         if self.converted_surface_count > self.num_faces:
             raise ValueError("converted_surface_count cannot exceed num_faces.")
         if (
@@ -2543,17 +2540,11 @@ class BRepGeometry(StrictModule):
             edge_endpoint_roots_,
             declared_bounds=edge_vertex_gap_bounds_,
         )
-        if face_loops_:
-            if any(not loops or any(not loop for loop in loops) for loops in face_loops_):
-                raise ValueError("Every face requires nonempty coedge loops.")
-        elif (
-            coedge_count
-            or edge_curves_
-            or points.shape[0]
-            or shell_faces_
-            or solid_shells_
-        ):
-            raise ValueError("A face-free BRepGeometry must contain no source entities.")
+        # Free vertices and edges are source entities in their own right (wire
+        # and point roots), so a faceless geometry may carry them. Coedges, shells
+        # and solids still require faces through the incidence checks below.
+        if any(not loops or any(not loop for loop in loops) for loops in face_loops_):
+            raise ValueError("Every face requires nonempty coedge loops.")
         used_coedges = tuple(
             coedge for loops in face_loops_ for loop in loops for coedge in loop
         )
@@ -3482,15 +3473,9 @@ class BRepModel(StrictModule):
         for patch in patches_:
             _validate_surface_source_shadows(patch)
         geometry.require_current()
-        if not patches_ and (
-            geometry.topology.num_faces
-            or geometry.topology.num_edges
-            or geometry.topology.num_vertices
-            or geometry.topology.num_solids
-        ):
-            raise ValueError(
-                "A faceless BRepModel must have fully empty source geometry."
-            )
+        # Free vertex and edge roots are faceless sources; only solids need faces.
+        if not patches_ and geometry.topology.num_solids:
+            raise ValueError("A faceless BRepModel cannot contain solids.")
         face_count = len(patches_)
         bounds_host = np.asarray(parameter_bounds, dtype=np.float64)
         orientation_host = np.asarray(orientation, dtype=np.float64)
