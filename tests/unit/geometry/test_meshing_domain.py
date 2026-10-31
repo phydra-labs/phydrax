@@ -1121,6 +1121,55 @@ def test_meshing_domain_boundary_cover_and_normal_turn_are_continuous() -> None:
     assert 0.0 <= turn[0] < 1.0e-10
 
 
+def test_sphere_adaptive_interpolation_bound_refines_wide_polar_chart() -> None:
+    model = brep_sphere(
+        1.0,
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id="sphere-interpolation",
+    )
+    domain = MeshingDomain.from_brep(model)
+    # A first-ring cell next to a pole: wide in angle, narrow in profile.
+    chart = (
+        (Fraction(np.pi), Fraction(-np.pi / 4.0)),
+        (Fraction(2.0 * np.pi / 3.0), Fraction(-np.pi / 4.0)),
+        (Fraction(2.0 * np.pi / 3.0), Fraction(-3.0 * np.pi / 8.0)),
+    )
+    corners = np.asarray(chart, dtype=np.float64)
+    weights = np.asarray(
+        [
+            (first, second)
+            for first in np.linspace(0.0, 1.0, 81)
+            for second in np.linspace(0.0, 1.0, 81)
+            if first + second <= 1.0
+        ],
+        dtype=np.float64,
+    )
+    barycentric = np.column_stack((1.0 - weights.sum(axis=1), weights))
+    points = barycentric @ corners
+    patches = np.zeros((points.shape[0],), dtype=np.int64)
+    corner_values = domain.evaluate(np.zeros((3,), dtype=np.int64), corners)
+    sampled = float(
+        np.max(
+            np.linalg.norm(
+                domain.evaluate(patches, points) - barycentric @ corner_values,
+                axis=1,
+            )
+        )
+    )
+    box_bound = float(domain.interpolation_bounds(0, corners[None])[0])
+    budget = Fraction(1, 4)
+
+    (refined,) = domain.adaptive_interpolation_bounds(0, (chart,), (budget,))
+    (unreachable,) = domain.adaptive_interpolation_bounds(
+        0, (chart,), (Fraction(sampled) / 2,)
+    )
+
+    assert box_bound > 1.0
+    assert 0.1 < sampled < 0.2
+    assert refined is not None and sampled <= refined <= budget
+    assert unreachable is not None and unreachable >= sampled
+
+
 def test_meshing_domain_scope_banks_preserve_stable_keys_and_occurrences() -> None:
     domain = _square_domain()
     identifiers = np.asarray(domain.scope_entity_ids(1), dtype=np.int64)

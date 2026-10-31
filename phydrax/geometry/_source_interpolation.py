@@ -1078,6 +1078,7 @@ def certify_domain_surface_charts(
     patch_bounds: dict[int, np.ndarray] = {}
     source_point_intervals: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     grouped_rows: dict[int, list[int]] = {}
+    adaptive_patches: set[int] = set()
     for row, patch in enumerate(patch_rows):
         grouped_rows.setdefault(int(patch), []).append(row)
     patch_local_row_by_witness_row = {
@@ -1192,51 +1193,17 @@ def certify_domain_surface_charts(
                     source_point_intervals[patch] = (lower, upper)
                     continue
 
-                chart_boxes: list[
-                    tuple[
-                        tuple[float, float],
-                        tuple[float, float],
-                        tuple[float, float],
-                        tuple[float, float],
-                    ]
-                ] = []
                 parameter_lowers: list[tuple[float, float]] = []
                 parameter_uppers: list[tuple[float, float]] = []
                 for row in rows:
-                    point_intervals: tuple[
-                        tuple[tuple[float, float], tuple[float, float]], ...
-                    ] = tuple(
-                        (
-                            _fraction_float_interval(point[0]),
-                            _fraction_float_interval(point[1]),
-                        )
-                        for point in charts[row]
-                    )
-                    box_lower: tuple[float, float] = (
-                        min(point[0][0] for point in point_intervals),
-                        min(point[1][0] for point in point_intervals),
-                    )
-                    box_upper: tuple[float, float] = (
-                        max(point[0][1] for point in point_intervals),
-                        max(point[1][1] for point in point_intervals),
-                    )
-                    chart_boxes.append(
-                        (
-                            (box_lower[0], box_lower[1]),
-                            (box_upper[0], box_lower[1]),
-                            (box_upper[0], box_upper[1]),
-                            (box_lower[0], box_upper[1]),
-                        )
-                    )
-                    for point in point_intervals:
-                        parameter_lowers.append((point[0][0], point[1][0]))
-                        parameter_uppers.append((point[0][1], point[1][1]))
-                interpolation = np.asarray(
-                    domain.interpolation_bounds(
-                        patch, np.asarray(chart_boxes, dtype=np.float64)
-                    ),
-                    dtype=np.float64,
-                )
+                    for point in charts[row]:
+                        u_interval = _fraction_float_interval(point[0])
+                        v_interval = _fraction_float_interval(point[1])
+                        parameter_lowers.append((u_interval[0], v_interval[0]))
+                        parameter_uppers.append((u_interval[1], v_interval[1]))
+                # Generic carriers are bounded once each row's budget is known.
+                interpolation = np.zeros((len(rows),), dtype=np.float64)
+                adaptive_patches.add(patch)
                 program = prepare_interval_function(surface.evaluate, 2)
                 lower, upper = program.evaluate(
                     np.asarray(parameter_lowers, dtype=np.float64),
@@ -1288,6 +1255,28 @@ def certify_domain_surface_charts(
         source_point_intervals[patch] = (lower, upper)
     limit = Fraction.from_float(float(tolerance))
     upper_max: Fraction | float = Fraction(0)
+    adaptive_rows: dict[int, list[tuple[int, Fraction, Fraction | float]]] = {}
+
+    def record_deviation(row: int, deviation: Fraction | float, /) -> None:
+        nonlocal upper_max
+        deviation_upper = (
+            fraction_endpoint(deviation, upper=True, saturate=True)
+            if isinstance(deviation, Fraction)
+            else math.inf
+        )
+        deviations[row] = (0.0, deviation_upper)
+        upper_max = max(upper_max, deviation)
+        if deviation > limit:
+            findings.append(
+                MeshCertificateFinding(
+                    "source_fidelity_tolerance",
+                    "unresolved",
+                    "cell",
+                    (int(cell_ids[row]),),
+                    detail="A continuous two-directed chart deviation upper bound exceeds tolerance.",
+                )
+            )
+
     for row, (patch_raw, (block_index, cell_row)) in enumerate(
         zip(patch_rows, target_rows, strict=True)
     ):
@@ -1469,28 +1458,64 @@ def certify_domain_surface_charts(
             )
         if exact_surface is not None and _exact_surface_map_is_affine(exact_surface):
             source_interpolation = Fraction(0)
+        elif patch in adaptive_patches:
+            adaptive_rows.setdefault(patch, []).append(
+                (row, endpoint_error, target_interpolation)
+            )
+            continue
         else:
             source_interpolation = Fraction.from_float(
                 float(patch_bounds[patch][local_row])
             )
-        deviation = source_interpolation + endpoint_error + target_interpolation
-        deviation_upper = (
-            fraction_endpoint(deviation, upper=True, saturate=True)
-            if isinstance(deviation, Fraction)
-            else math.inf
+        record_deviation(
+            row, source_interpolation + endpoint_error + target_interpolation
         )
-        deviations[row] = (0.0, deviation_upper)
-        upper_max = max(upper_max, deviation)
-        if deviation > limit:
-            findings.append(
-                MeshCertificateFinding(
-                    "source_fidelity_tolerance",
-                    "unresolved",
-                    "cell",
-                    (int(cell_ids[row]),),
-                    detail="A continuous two-directed chart deviation upper bound exceeds tolerance.",
-                )
+    for patch, pending in adaptive_rows.items():
+        try:
+            adaptive_bounds = domain.adaptive_interpolation_bounds(
+                patch,
+                tuple(charts[row] for row, _, _ in pending),
+                tuple(
+                    limit - endpoint_error - target_interpolation
+                    if isinstance(target_interpolation, Fraction)
+                    else Fraction(-1)
+                    for _, endpoint_error, target_interpolation in pending
+                ),
             )
+        except (
+            ArithmeticError,
+            FloatingPointError,
+            IntervalExtensionError,
+            NotImplementedError,
+            TypeError,
+            ValueError,
+        ) as error:
+            findings.extend(
+                MeshCertificateFinding(
+                    "source_chart_interpolation",
+                    "unresolved",
+                    "source_facet",
+                    (patch,),
+                    detail=f"Continuous source chart interpolation is unavailable: {error}",
+                )
+                for _ in pending
+            )
+            continue
+        for (row, endpoint_error, target_interpolation), bound in zip(
+            pending, adaptive_bounds, strict=True
+        ):
+            if bound is None:
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_chart_interpolation",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail="Source chart interpolation enclosures are malformed or nonfinite.",
+                    )
+                )
+                continue
+            record_deviation(row, bound + endpoint_error + target_interpolation)
     upper_float = (
         fraction_endpoint(upper_max, upper=True, saturate=True)
         if isinstance(upper_max, Fraction)
