@@ -144,9 +144,27 @@ def _mapped_root_entity_banks(
     if isinstance(connectivity, SimplicialConnectivity):
         if connectivity.dimension != 3:
             raise TypeError("Mapped root simplex connectivity must have dimension three.")
+        # Local face indices follow the reference simplex (face i opposite
+        # vertex i), as every mapped-root chart producer names them.
+        faces = np.asarray(connectivity.entities[2], dtype=np.int64)
+        face_rows = {
+            tuple(sorted(int(value) for value in face)): row
+            for row, face in enumerate(faces.tolist())
+        }
+        local_faces = reference_cell_topology("simplex:3").entities[2]
+        cell_faces = np.asarray(
+            [
+                [
+                    face_rows[tuple(sorted(int(cell[local]) for local in face))]
+                    for face in local_faces
+                ]
+                for cell in np.asarray(connectivity.cells, dtype=np.int64).tolist()
+            ],
+            dtype=np.int64,
+        ).reshape((-1, len(local_faces)))
         return (
-            np.asarray(connectivity.entities[2], dtype=np.int64),
-            np.asarray(connectivity.cell_entities[2], dtype=np.int64),
+            faces,
+            cell_faces,
             np.asarray(connectivity.entities[1], dtype=np.int64),
         )
     if isinstance(connectivity, (HexahedralConnectivity, TetrahedralConnectivity)):
@@ -949,8 +967,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         if raw_points.ndim != 2 or raw_points.shape[1] != 3:
             raise ValueError("root_reference_points must have shape (N, 3).")
         points = tuple(
-            tuple(_exact_scalar(value) for value in raw_point)
-            for raw_point in raw_points
+            tuple(_exact_scalar(value) for value in raw_point) for raw_point in raw_points
         )
         if not points:
             return ()

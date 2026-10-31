@@ -7,7 +7,13 @@ import pytest
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry import PerCellRestrictedCellGeometryElement
 from phydrax.discretization._cell_mesh import SimplicialConnectivity
-from phydrax.discretization._coordinate_enclosure import axes
+from phydrax.discretization._coordinate_enclosure import (
+    add,
+    axes,
+    constant,
+    multiply,
+    scale,
+)
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import lagrange_element
 from phydrax.meshing._hex_dominant import extract_hex_dominant
@@ -131,8 +137,8 @@ def test_hex_dominant_core_has_conforming_pyramid_and_tet_closure() -> None:
         extract_hex_dominant(source, np.asarray((0, 1), dtype=np.int64))
 
 
-def test_curved_source_map_is_composed_through_mixed_families() -> None:
-    source = _two_tetrahedra()
+def _binary64_quartic_bubble_geometry(source: CellMesh, /) -> CellGeometrySpec:
+    """Degree-4 nodes rounded to binary64; the warp-blend nodes are irrational."""
     element = lagrange_element("tetrahedron", 4)
     reference_nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     source_cells = np.asarray(source.blocks[0].vertices, dtype=np.int64)
@@ -154,11 +160,40 @@ def test_curved_source_map_is_composed_through_mixed_families() -> None:
     routes = np.arange(coordinates.shape[0], dtype=np.int64).reshape(
         2, element.local_dof_count
     )
-    geometry = CellGeometrySpec(
+    return CellGeometrySpec(
         {source.blocks[0].name: element},
         {source.blocks[0].name: routes},
         coordinates,
     )
+
+
+def _exact_quartic_bubble_geometry(source: CellMesh, /) -> CellGeometrySpec:
+    """The same degree-4 map, authored exactly as an affine tet plus a bubble."""
+    block = source.blocks[0]
+    identifiers = tuple(int(value) for value in block.global_ids)
+    u, v, w = axes(3)
+    complement = add(constant(Fraction(1), 3), scale(add(add(u, v), w), -1))
+    bubble = multiply(multiply(multiply(u, v), w), complement)
+    # Cell 0 is the unit corner tetrahedron, so its reference chart is the
+    # physical map; the bubble vanishes on every face and keeps traces affine.
+    curved = (u, v, add(w, scale(bubble, Fraction(1, 100))))
+    element = PerCellRestrictedCellGeometryElement(
+        lagrange_element("tetrahedron", 1),
+        "tetrahedron",
+        identifiers,
+        identifiers,
+        (curved, axes(3)),
+    )
+    return CellGeometrySpec(
+        {block.name: element},
+        {block.name: np.asarray(block.vertices, dtype=np.int64)},
+        np.asarray(source.coordinates, dtype=np.float64),
+    )
+
+
+def test_curved_source_map_is_composed_through_mixed_families() -> None:
+    source = _two_tetrahedra()
+    geometry = _exact_quartic_bubble_geometry(source)
 
     result = extract_hex_dominant(
         source,
@@ -189,6 +224,17 @@ def test_curved_source_map_is_composed_through_mixed_families() -> None:
         result.mesh, identifier, reference
     )
     assert not np.allclose(mapped, affine, rtol=0.0, atol=1.0e-12)
+
+
+def test_binary64_quartic_nodes_are_refused_as_an_inexact_curved_map() -> None:
+    source = _two_tetrahedra()
+
+    with pytest.raises(ValueError, match="no global embedding proof"):
+        extract_hex_dominant(
+            source,
+            np.asarray((0,), dtype=np.int64),
+            source_geometry=_binary64_quartic_bubble_geometry(source),
+        )
 
 
 def test_mixed_closure_flattens_nested_per_cell_root_charts() -> None:

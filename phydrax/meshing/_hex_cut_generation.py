@@ -2960,7 +2960,7 @@ def generate_balanced_cut_hexes(
         or plan.source_topology_id != source_mesh.topology_id
         or schedule.route not in ("balanced_grid", "frame_grid")
         or (schedule.route == "frame_grid") != (plan.frame_id is not None)
-        or source.geometry is not None
+        or (source.geometry is not None and source_geometry is None)
         or source.boundary != "conforming"
         or any(not _is_tetrahedron_block(block) for block in source_mesh.blocks)
     ):

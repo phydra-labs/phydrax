@@ -1270,21 +1270,20 @@ def _compose_mixed_geometry(
                 raise ValueError(
                     f"Exact {kind} chart does not reproduce target vertex row {target_vertex}."
                 )
-        pyramid_vertex_family = False
-        if family == "pyramid":
-            vertex_physical = tuple(
-                exact_vertex_images[target_vertex] for target_vertex in vertices
+        # Affine pyramids keep the apex-regular vertex family; curved ones
+        # stay exact restrictions of their source root chart.
+        pyramid_vertex_family = family == "pyramid" and all(
+            expression_equal(actual, expected)
+            for actual, expected in zip(
+                physical_chart,
+                _pyramid_chart(
+                    tuple(
+                        exact_vertex_images[target_vertex] for target_vertex in vertices
+                    )
+                ),
+                strict=True,
             )
-            vertex_chart = _pyramid_chart(vertex_physical)
-            pyramid_vertex_family = all(
-                expression_equal(actual, expected)
-                for actual, expected in zip(physical_chart, vertex_chart, strict=True)
-            )
-            if not pyramid_vertex_family:
-                raise ValueError(
-                    f"Curved source chart for pyramid transition cell ID {global_id} "
-                    "has no exact apex-regular family map."
-                )
+        )
         records.append(
             _ComposedCell(
                 kind,
