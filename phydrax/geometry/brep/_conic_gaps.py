@@ -502,7 +502,7 @@ def endpoint_gap_bounds(
 
 
 def _affine_face_coefficients(
-    patch: PlanePatch | ExtrusionSurface,
+    patch: PlanePatch | ExtrusionSurface | CylinderPatch,
     pcurve: AbstractCurve,
     /,
 ) -> tuple[_Vector, _Vector] | None:
@@ -510,6 +510,29 @@ def _affine_face_coefficients(
     if uv is None or len(uv[0]) != 2:
         return None
     origin_uv, direction_uv = uv
+    if isinstance(patch, CylinderPatch):
+        # The angle-zero generator lifts exactly: cos 0 = 1 and sin 0 = 0.
+        vectors = (patch.origin_exact, patch.first_axis_exact, patch.axis_exact)
+        if (
+            origin_uv[0] != 0
+            or direction_uv[0] != 0
+            or not isinstance(patch.radius_exact, Fraction)
+            or any(
+                not all(isinstance(value, Fraction) for value in vector)
+                for vector in vectors
+            )
+        ):
+            return None
+        cylinder_origin, first_axis, cylinder_axis = vectors
+        return (
+            tuple(
+                cylinder_origin[axis]
+                + patch.radius_exact * first_axis[axis]
+                + origin_uv[1] * cylinder_axis[axis]
+                for axis in range(3)
+            ),
+            tuple(direction_uv[1] * cylinder_axis[axis] for axis in range(3)),
+        )
     if isinstance(patch, PlanePatch):
         surface_origin = rational_vector(np.asarray(patch.origin))
         first_axis = rational_vector(np.asarray(patch.first_axis))
@@ -1094,7 +1117,7 @@ def native_face_gap_squared(
         torus_gap = _torus_circle_gap_squared(curve, pcurve, source_region, first, last)
         if torus_gap is not None:
             return torus_gap
-    if isinstance(patch, (PlanePatch, ExtrusionSurface)):
+    if isinstance(patch, (PlanePatch, ExtrusionSurface, CylinderPatch)):
         lifted = _affine_face_coefficients(patch, pcurve)
         source = _affine_coefficients(curve)
         if lifted is not None and source is not None and len(source[0]) == 3:

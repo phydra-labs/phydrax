@@ -250,8 +250,14 @@ def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Poi
                 "Source p-curve endpoints are not exactly represented in binary64."
             )
     else:
+        # One whole native turn returns to its start chart point exactly.
+        last = (
+            use.first
+            if isinstance(use, PatchCurveUse) and use.closes_native_turn()
+            else use.last
+        )
         values = np.asarray(
-            use.pcurve.evaluate(jnp.asarray((use.first, use.last), dtype=jnp.float64)),
+            use.pcurve.evaluate(jnp.asarray((use.first, last), dtype=jnp.float64)),
             dtype=np.float64,
         )
         if values.shape != (2, 2) or np.any(~np.isfinite(values)):
@@ -279,6 +285,8 @@ def _patch_chart_polygon(
         [PatchCurveUse | PatchPoleUse, _Point2, _Point2], tuple[_Point2, ...]
     ]
     | None = None,
+    *,
+    drop_enclosed_curved_loops: bool = False,
 ) -> (
     tuple[
         tuple[_Point2, ...],
@@ -287,9 +295,17 @@ def _patch_chart_polygon(
     ]
     | None
 ):
+    """Return the chord polygon of one patch trim in its exact chart.
+
+    With ``drop_enclosed_curved_loops`` a curved loop whose chords enclose no
+    chart area (a single full circle, two half arcs) is omitted: every point it
+    bounds lies in the convex hull of its arcs, which the curved-trim enclosure
+    boxes cover, so only cover construction may request it.
+    """
     points: list[tuple[Fraction, Fraction]] = []
     segments: list[tuple[int, int]] = []
     loops: list[tuple[tuple[Fraction, Fraction], ...]] = []
+    dropped = False
     for loop in domain.patches[patch].loops:
         if not all(isinstance(use, (PatchCurveUse, PatchPoleUse)) for use in loop):
             return None
@@ -312,6 +328,15 @@ def _patch_chart_polygon(
             previous_end = last
         if not loop_points or loop_start is None or previous_end != loop_start:
             raise ValueError("Source trim loop does not close in its exact chart.")
+        if (
+            drop_enclosed_curved_loops
+            and _signed_area2(tuple(loop_points)) == 0
+            and any(
+                not isinstance(use.pcurve, (ExactLineCurve, LineCurve)) for use in loop
+            )
+        ):
+            dropped = True
+            continue
         offset = len(points)
         segments.extend(
             (offset + index, offset + (index + 1) % len(loop_points))
@@ -319,7 +344,7 @@ def _patch_chart_polygon(
         )
         points.extend(loop_points)
         loops.append(tuple(loop_points))
-    if not loops:
+    if not loops and not dropped:
         return None
     return tuple(points), tuple(segments), tuple(loops)
 
@@ -445,8 +470,12 @@ def _target_boundary_chain(
     last: _Point2,
     /,
 ) -> tuple[_Point2, ...]:
+    """Walk directed target boundary edges from ``first`` to ``last``.
+
+    A self-closing trim (one full turn, ``first == last``) walks its whole loop.
+    """
     chain = [first]
-    while chain[-1] != last:
+    while len(chain) == 1 or chain[-1] != last:
         following = successors.get(chain[-1], ())
         if len(following) != 1 or len(chain) > len(successors):
             raise ValueError(
@@ -734,6 +763,119 @@ def _point_triangle_squared(
     return min(
         _point_segment_squared(point, triangle[index], triangle[(index + 1) % 3])
         for index in range(3)
+    )
+
+
+def _cover_chord_triangles(
+    patch: int,
+    uv_points: tuple[_Point2, ...],
+    segments: tuple[tuple[int, int], ...],
+    loops: tuple[tuple[_Point2, ...], ...],
+    /,
+) -> tuple[_Triangle2, ...] | MeshCertificateFinding:
+    """Triangulate the chord polygon of one cover patch or report why it cannot.
+
+    A trim whose curved loops all enclose no chord area has no chord polygon; its
+    curved-trim enclosure boxes are then the whole cover.
+    """
+    if not loops:
+        return ()
+    outer_sign = 1 if _signed_area2(loops[0]) > 0 else -1
+    if outer_sign < 0 or any(_signed_area2(loop) >= 0 for loop in loops[1:]):
+        return MeshCertificateFinding(
+            "source_trim_orientation",
+            "violated",
+            "source_facet",
+            (patch,),
+            detail="Source trim loops must be outer counterclockwise and holes clockwise.",
+        )
+    hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
+    points = np.asarray(
+        [[float(value) for value in point] for point in uv_points],
+        dtype=np.float64,
+    )
+    segments_array = np.asarray(segments, dtype=np.int64)
+    holes = (
+        None
+        if not hole_seeds
+        else np.asarray(
+            [[float(value) for value in point] for point in hole_seeds],
+            dtype=np.float64,
+        )
+    )
+    triangulation = ConstrainedDelaunayTriangulation(
+        points,
+        segments_array,
+        holes=holes,
+        keep_convex_hull=False,
+    )
+    triangulation_points = np.asarray(triangulation.points, dtype=np.float64)
+    if triangulation_points.shape != points.shape or not np.array_equal(
+        triangulation_points, points
+    ):
+        return MeshCertificateFinding(
+            "source_trim_triangulation",
+            "unresolved",
+            "source_facet",
+            (patch,),
+            detail="Triangulation introduced or moved a chart vertex outside the exact trim vertex table.",
+        )
+    triangle_rows = np.asarray(triangulation.triangles, dtype=np.int64)
+    if triangle_rows.ndim != 2 or triangle_rows.shape[1] != 3:
+        return MeshCertificateFinding(
+            "source_trim_triangulation",
+            "unresolved",
+            "source_facet",
+            (patch,),
+            detail="Constrained source triangulation did not return triangular rows.",
+        )
+    edge_counts: Counter[tuple[int, int]] = Counter()
+    for triangle_row in range(triangle_rows.shape[0]):
+        indices = (
+            int(triangle_rows[triangle_row, 0]),
+            int(triangle_rows[triangle_row, 1]),
+            int(triangle_rows[triangle_row, 2]),
+        )
+        for first, second in (
+            (indices[0], indices[1]),
+            (indices[1], indices[2]),
+            (indices[2], indices[0]),
+        ):
+            edge_counts[(min(first, second), max(first, second))] += 1
+    boundary = {edge for edge, count in edge_counts.items() if count == 1}
+    expected = {
+        (min(int(first), int(second)), max(int(first), int(second)))
+        for first, second in segments_array
+    }
+    triangle_area = Fraction(0)
+    for triangle_row in range(triangle_rows.shape[0]):
+        values = (
+            uv_points[int(triangle_rows[triangle_row, 0])],
+            uv_points[int(triangle_rows[triangle_row, 1])],
+            uv_points[int(triangle_rows[triangle_row, 2])],
+        )
+        area = _cross2(values[0], values[1], values[2])
+        if area <= 0:
+            raise ValueError(
+                "Constrained source chart triangles must have positive orientation."
+            )
+        triangle_area += area
+    source_area = sum((_signed_area2(loop) for loop in loops), Fraction(0))
+    if boundary != expected or triangle_area != source_area:
+        return MeshCertificateFinding(
+            "source_trim_coverage",
+            "unresolved",
+            "source_facet",
+            (patch,),
+            detail="Constrained triangulation did not reproduce the complete oriented trim chain and measure.",
+        )
+    return tuple(
+        (
+            uv_points[int(triangle_rows[row, 0])],
+            uv_points[int(triangle_rows[row, 1])],
+            uv_points[int(triangle_rows[row, 2])],
+        )
+        for row in range(triangle_rows.shape[0])
     )
 
 
@@ -1069,7 +1211,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     )
                 )
                 continue
-            chart = _patch_chart_polygon(self.domain, patch)
+            chart = _patch_chart_polygon(
+                self.domain, patch, drop_enclosed_curved_loops=True
+            )
             if chart is None:
                 complete = False
                 findings.append(
@@ -1082,120 +1226,13 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     )
                 )
                 continue
-            uv_points, segments, loops = chart
-            outer_sign = 1 if _signed_area2(loops[0]) > 0 else -1
-            if outer_sign < 0 or any(_signed_area2(loop) >= 0 for loop in loops[1:]):
-                findings.append(
-                    MeshCertificateFinding(
-                        "source_trim_orientation",
-                        "violated",
-                        "source_facet",
-                        (patch,),
-                        detail="Source trim loops must be outer counterclockwise and holes clockwise.",
-                    )
-                )
+            uv_points = chart[0]
+            chord_charts = _cover_chord_triangles(patch, *chart)
+            if isinstance(chord_charts, MeshCertificateFinding):
                 complete = False
+                findings.append(chord_charts)
                 continue
-            hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
-            points = np.asarray(
-                [[float(value) for value in point] for point in uv_points],
-                dtype=np.float64,
-            )
-            segments_array = np.asarray(segments, dtype=np.int64)
-            holes = (
-                None
-                if not hole_seeds
-                else np.asarray(
-                    [[float(value) for value in point] for point in hole_seeds],
-                    dtype=np.float64,
-                )
-            )
-            triangulation = ConstrainedDelaunayTriangulation(
-                points,
-                segments_array,
-                holes=holes,
-                keep_convex_hull=False,
-            )
-            triangulation_points = np.asarray(triangulation.points, dtype=np.float64)
-            if triangulation_points.shape != points.shape or not np.array_equal(
-                triangulation_points, points
-            ):
-                complete = False
-                findings.append(
-                    MeshCertificateFinding(
-                        "source_trim_triangulation",
-                        "unresolved",
-                        "source_facet",
-                        (patch,),
-                        detail="Triangulation introduced or moved a chart vertex outside the exact trim vertex table.",
-                    )
-                )
-                continue
-            triangle_rows = np.asarray(triangulation.triangles, dtype=np.int64)
-            if triangle_rows.ndim != 2 or triangle_rows.shape[1] != 3:
-                complete = False
-                findings.append(
-                    MeshCertificateFinding(
-                        "source_trim_triangulation",
-                        "unresolved",
-                        "source_facet",
-                        (patch,),
-                        detail="Constrained source triangulation did not return triangular rows.",
-                    )
-                )
-                continue
-            edge_counts: Counter[tuple[int, int]] = Counter()
-            for triangle_row in range(triangle_rows.shape[0]):
-                indices = (
-                    int(triangle_rows[triangle_row, 0]),
-                    int(triangle_rows[triangle_row, 1]),
-                    int(triangle_rows[triangle_row, 2]),
-                )
-                for first, second in (
-                    (indices[0], indices[1]),
-                    (indices[1], indices[2]),
-                    (indices[2], indices[0]),
-                ):
-                    edge_counts[(min(first, second), max(first, second))] += 1
-            boundary = {edge for edge, count in edge_counts.items() if count == 1}
-            expected = {
-                (min(int(first), int(second)), max(int(first), int(second)))
-                for first, second in segments_array
-            }
-            triangle_area = Fraction(0)
-            for triangle_row in range(triangle_rows.shape[0]):
-                values = (
-                    uv_points[int(triangle_rows[triangle_row, 0])],
-                    uv_points[int(triangle_rows[triangle_row, 1])],
-                    uv_points[int(triangle_rows[triangle_row, 2])],
-                )
-                area = _cross2(values[0], values[1], values[2])
-                if area <= 0:
-                    raise ValueError(
-                        "Constrained source chart triangles must have positive orientation."
-                    )
-                triangle_area += area
-            source_area = sum((_signed_area2(loop) for loop in loops), Fraction(0))
-            if boundary != expected or triangle_area != source_area:
-                complete = False
-                findings.append(
-                    MeshCertificateFinding(
-                        "source_trim_coverage",
-                        "unresolved",
-                        "source_facet",
-                        (patch,),
-                        detail="Constrained triangulation did not reproduce the complete oriented trim chain and measure.",
-                    )
-                )
-                continue
-            exact_charts = tuple(
-                (
-                    uv_points[int(triangle_rows[row, 0])],
-                    uv_points[int(triangle_rows[row, 1])],
-                    uv_points[int(triangle_rows[row, 2])],
-                )
-                for row in range(triangle_rows.shape[0])
-            ) + _trim_enclosure_triangles(self.domain, patch)
+            exact_charts = chord_charts + _trim_enclosure_triangles(self.domain, patch)
             uv_triangles = np.asarray(
                 [
                     [[float(value) for value in point] for point in triangle]

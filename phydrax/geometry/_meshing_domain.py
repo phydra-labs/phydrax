@@ -152,6 +152,19 @@ class PatchCurveUse(StrictModule, NonTrainableState):
         parameters = (self.first, self.last) if self.sense > 0 else (self.last, self.first)
         return self.charts(parameters)
 
+    def closes_native_turn(self) -> bool:
+        """Whether this use spans exactly one turn of a ``2 pi``-periodic p-curve.
+
+        Such a use returns to its start chart point exactly; its end is evaluated
+        at the start parameter instead of through the rounded binary64 turn.
+        """
+        period = self.pcurve.period
+        return (
+            self.pcurve.native_period_symbol() == "two_pi"
+            and period is not None
+            and self.last == self.first + period
+        )
+
 
 class PatchPoleUse(StrictModule, NonTrainableState):
     """A source trim side collapsed to a declared physical corner."""
@@ -1200,13 +1213,19 @@ def _same_brep_trim_endpoint(
     ]
     if vertex != next_vertex:
         return False
+    from .brep._intersection import closes_native_turn
+
+    end_root = geometry.coedge_endpoint_roots[first_coedge][first_end]
+    start_root = geometry.coedge_endpoint_roots[second_coedge][second_start]
+    if first_coedge == second_coedge and closes_native_turn(end_root, start_root):
+        return True
     root = geometry.vertex_roots[vertex]
     return root is not None and root.same_uv_endpoint(
         authority.patches[face],
         first_use.pcurve,
-        geometry.coedge_endpoint_roots[first_coedge][first_end],
+        end_root,
         second_use.pcurve,
-        geometry.coedge_endpoint_roots[second_coedge][second_start],
+        start_root,
     )
 
 

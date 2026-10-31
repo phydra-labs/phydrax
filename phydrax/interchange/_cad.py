@@ -52,6 +52,7 @@ from ..geometry.brep._correspondence import (
     torus_circle_pcurve,
 )
 from ..geometry.brep._intersection import (
+    closes_native_turn,
     CurveSurfaceIntersectionRoot,
     endpoint_root_payload,
     NativePeriodEndpoint,
@@ -121,6 +122,9 @@ from ._step_metadata import StepEntityMetadata
 
 
 _TWO_PI = 2.0 * pi
+# Exchange formats print reals with finitely many decimal digits; an authored
+# value this close (relative to its scale) to a symbolic source value is it.
+_AUTHORED_DECIMAL_RELATIVE = 1.0e-12
 _ZERO_UV = (Fraction(0), Fraction(0))
 
 CadRefusalReason: TypeAlias = Literal[
@@ -1480,6 +1484,23 @@ def _sampled_curve_parameter(curve: AbstractCurve, target: np.ndarray, /) -> flo
         parameter = candidate
 
 
+def _authored_turn_end(first: float, last: float, /) -> float:
+    """Return the binary64 end of one authored turn written as a rounded decimal.
+
+    A closed edge on a ``2 pi``-periodic carrier (or a pole edge spanning the
+    chart period) covers a whole number of turns; exchange formats print that
+    end with finitely many decimal digits. A range within decimal rounding of
+    one turn is the turn itself; every other range is returned unchanged.
+    """
+    turn = float(first) + _TWO_PI
+    last = float(last)
+    if last != turn and abs(last - turn) <= _AUTHORED_DECIMAL_RELATIVE * max(
+        1.0, abs(turn)
+    ):
+        return turn
+    return last
+
+
 @checked
 def edge_range(
     curve: AbstractCurve,
@@ -1968,6 +1989,8 @@ class CadStage:
             )
         else:
             first, last = (float(parameter_range[0]), float(parameter_range[1]))
+            if start == end and isinstance(curve, (CircleCurve, EllipseCurve)):
+                last = _authored_turn_end(first, last)
             _validate_curve_parameter_range(curve, first, last, label)
             ends = np.asarray(
                 curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64))
@@ -1989,11 +2012,11 @@ class CadStage:
         if (
             start == end
             and isinstance(curve, (CircleCurve, EllipseCurve))
-            and (first, last) == (0.0, _TWO_PI)
+            and last == first + _TWO_PI
         ):
-            # A closed conic entity over its whole native parameter interval
+            # A closed conic entity over one whole native parameter interval
             # authors one mathematical turn; binary64 tau is only its carrier.
-            self.native_phase(edge, None, None)
+            self.native_phase(edge, None, None, rational=Fraction(first))
         return edge
 
     def degenerate(self, vertex: int, first: float, last: float, /) -> int:
@@ -3421,6 +3444,9 @@ class CadStage:
                         and second_root is not None
                         and endpoint_root_payload(first_root)
                         == endpoint_root_payload(second_root)
+                    ) or (
+                        # A self-closing whole native turn is one point.
+                        first == second and closes_native_turn(first_root, second_root)
                     )
                     if not shares_source_root:
                         if any(
