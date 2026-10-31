@@ -215,12 +215,38 @@ def _exact_brep_pole_collapse(
         )
         return mapped == point
 
-    if not isinstance(source_patch, RevolutionSurface):
+    # A normal offset of a source sphere revolution shares its chart; its pole is
+    # the radial image of the rooted source pole at the exact offset radius.
+    offset_pole = isinstance(source_patch, OffsetSurface) and isinstance(
+        source_patch.base, RevolutionSurface
+    )
+    revolution = source_patch.base if offset_pole else source_patch
+    if not isinstance(revolution, RevolutionSurface):
         return False
-    if conic_root is not None and (
-        not _same_source_definition(conic_root.conic, source_patch.curve)
-        or conic_root.exact_point() != point
+    if conic_root is not None and not _same_source_definition(
+        conic_root.conic, revolution.curve
     ):
+        return False
+    source_pole = point
+    if offset_pole:
+        witness = source_patch.exact_sphere_revolution_witness()
+        if conic_root is None or witness is None:
+            return False
+        center, radius, _, frame_sign = witness
+        offset_radius = radius + frame_sign * source_patch.distance_exact
+        source_pole = conic_root.exact_point()
+        if (
+            radius <= 0
+            or offset_radius <= 0
+            or len(source_pole) != 3
+            or point
+            != tuple(
+                center[axis] + offset_radius * (source_pole[axis] - center[axis]) / radius
+                for axis in range(3)
+            )
+        ):
+            return False
+    elif conic_root is not None and conic_root.exact_point() != point:
         return False
     from ._intersection import NativePeriodEndpoint
 
@@ -243,7 +269,7 @@ def _exact_brep_pole_collapse(
         or not _same_source_definition(last_root.curve, pcurve)
     ):
         return False
-    period = source_patch.periods[0]
+    period = revolution.periods[0]
     if period is None or last - first != period:
         return False
     affine = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
@@ -261,7 +287,7 @@ def _exact_brep_pole_collapse(
             return False
     else:
         profile = _affine_curve_coefficients(
-            source_patch.curve, (Fraction(0), Fraction(0), Fraction(0))
+            revolution.curve, (Fraction(0), Fraction(0), Fraction(0))
         )
         if profile is None:
             return False
@@ -270,13 +296,13 @@ def _exact_brep_pole_collapse(
             profile_origin[axis] + chart_start[1] * profile_direction[axis]
             for axis in range(3)
         )
-        if profile_point != point:
+        if profile_point != source_pole:
             return False
-    axis_origin = rational_vector(np.asarray(source_patch.axis_origin, dtype=np.float64))
+    axis_origin = rational_vector(np.asarray(revolution.axis_origin, dtype=np.float64))
     axis_direction = rational_vector(
-        np.asarray(source_patch.axis_direction, dtype=np.float64)
+        np.asarray(revolution.axis_direction, dtype=np.float64)
     )
-    relative = tuple(value - axis_origin[axis] for axis, value in enumerate(point))
+    relative = tuple(value - axis_origin[axis] for axis, value in enumerate(source_pole))
     cross = (
         relative[1] * axis_direction[2] - relative[2] * axis_direction[1],
         relative[2] * axis_direction[0] - relative[0] * axis_direction[2],
@@ -622,7 +648,7 @@ def _same_cylinder_generator_line_lift(
 
 def _affine_bspline_space_line(
     curve: BSplineCurve, first: float, last: float, /
-) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
+) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]] | None:
     """Return the exact affine map of a clamped two-control linear B-spline on a range."""
     knots, weights = curve.exact_knots, curve.exact_weights
     controls = curve.exact_control_points
@@ -1314,6 +1340,16 @@ def _revolution_angular_circle_lift(
             ),
         )
         return _revolution_circle_profile_point_lift(curve, profile_point, patch)
+    if isinstance(profile, BSplineCurve) and isinstance(profile_parameter, Fraction):
+        # A rational spline profile parameter has an exact profile point.
+        spline_point = exact_curve_parameter_point(profile, profile_parameter)
+        if spline_point is None or len(spline_point) != 3:
+            return False
+        return _revolution_circle_profile_point_lift(
+            curve,
+            (spline_point[0], spline_point[1], spline_point[2]),
+            patch,
+        )
 
     witness = patch.exact_quadric_witness(profile_interval)
     if (
@@ -2661,6 +2697,27 @@ def _same_mapped_surface_chart_lift(
     )
 
 
+def _same_revolution_ring(
+    patch: AbstractSurfacePatch, first: ExactScalar, second: ExactScalar, /
+) -> bool:
+    """Prove two profile parameters revolve the same exact ring point."""
+    from ._root_bindings import revolution_offset_conic_frame
+
+    if isinstance(patch, OffsetSurface):
+        first_frame = revolution_offset_conic_frame(patch, first)
+        return first_frame is not None and first_frame == revolution_offset_conic_frame(
+            patch, second
+        )
+    if not isinstance(patch, RevolutionSurface):
+        return False
+    if not isinstance(first, Fraction) or not isinstance(second, Fraction):
+        return False
+    first_point = exact_curve_parameter_point(patch.curve, first)
+    return first_point is not None and first_point == exact_curve_parameter_point(
+        patch.curve, second
+    )
+
+
 def exact_source_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
@@ -2794,8 +2851,21 @@ def exact_source_lift(
     frame = _affine_surface_frame(region.patch)
     if frame is not None and _same_plane_line_lift(curve, pcurve, frame):
         return True
-    if isinstance(curve, SurfaceIsoparametricCurve) and isinstance(pcurve, LineCurve):
+    if isinstance(curve, SurfaceIsoparametricCurve):
         if not _same_patch(curve.surface, region.patch) or pcurve.ambient_dimension != 2:
+            return False
+        # A whole native turn of the fixed coordinate names the same isoline.
+        periodic_source = _periodic_pcurve_source(pcurve, region.patch)
+        if periodic_source is None:
+            return False
+        pcurve, shifts = periodic_source
+        exact_box = _revolution_region_box(region)
+        if (
+            not isinstance(pcurve, LineCurve)
+            or shifts[1 - curve.fixed_axis]
+            or exact_box is None
+            or not _periodic_region_admits_shifts(region.patch, shifts, exact_box)
+        ):
             return False
         parameter_domain = curve.parameter_domain
         if parameter_domain is not None and (
@@ -2811,7 +2881,13 @@ def exact_source_lift(
             expected_origin = (fixed, Fraction(0))
             expected_direction = (Fraction(0), Fraction(1))
         else:
-            expected_origin = (Fraction(0), fixed)
+            chart_fixed = pcurve.origin_exact[1]
+            # A closed meridian revolves one exact ring from both of its ends.
+            if chart_fixed != fixed and not _same_revolution_ring(
+                region.patch, fixed, chart_fixed
+            ):
+                return False
+            expected_origin = (Fraction(0), chart_fixed)
             expected_direction = (Fraction(1), Fraction(0))
         if (
             pcurve.origin_exact != expected_origin
