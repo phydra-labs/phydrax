@@ -192,36 +192,65 @@ double ZeroSetBandAdmission::piece_distance(
   return kInfinity;
 }
 
-// Pieces whose bound misses the tolerance split into four at edge midpoints,
-// at most kSplitDepth times. Rounded midpoints leave every point of T within
-// one coordinate ulp per level of the union of the pieces, which `slack` adds.
+// Pieces whose bound misses the tolerance split into four at edge midpoints
+// until each piece is decided: certified within the tolerance, refuted (no
+// point of it lies within the tolerance), or at binary64 resolution (a rounded
+// midpoint coincides with an endpoint), which refuses. Rounded midpoints leave
+// every point of T within one coordinate ulp per level of the union of the
+// pieces, so a piece at depth k adds k such slacks.
 double ZeroSetBandAdmission::distance_bound(
     const Point& a, const Point& b, const Point& c,
     const std::array<VertexEvidence, 3>& evidence) const {
   double scale = 0;
   for (const Point* p : {&a, &b, &c})
     for (double coordinate : *p) scale = std::max(scale, std::fabs(coordinate));
-  const double slack =
-      next_up(kSplitDepth * 2 * std::numeric_limits<double>::epsilon() * scale);
-  const double bound = split_distance(a, b, c, evidence, 0);
-  return std::isfinite(bound) ? next_up(bound + slack) : kInfinity;
+  const double slack = next_up(2 * std::numeric_limits<double>::epsilon() * scale);
+  return split_distance(a, b, c, evidence, 0, slack);
+}
+
+// No point of the piece lies within the tolerance of Z: otherwise a zero of f
+// lies in the tolerance-widened box B within the tolerance of that point, so
+// |f| <= max |grad f| over B times the tolerance there.
+bool ZeroSetBandAdmission::piece_refuted(const Point& a, const Point& b,
+                                         const Point& c) const {
+  Point lower{}, upper{};
+  bounding_box(a, b, c, lower, upper);
+  Interval field{};
+  if (!value_.evaluate(lower, upper, &field) || !finite(field)) return false;
+  Point wide_lower{}, wide_upper{};
+  for (int d = 0; d < 3; ++d) {
+    wide_lower[d] = next_down(lower[d] - tolerance_);
+    wide_upper[d] = next_up(upper[d] + tolerance_);
+  }
+  std::array<Interval, 3> gradient{};
+  if (!gradient_over(gradient_, wide_lower, wide_upper, gradient)) return false;
+  double sum = 0;
+  for (const Interval& component : gradient) {
+    const double m = magnitude(component);
+    sum = next_up(sum + next_up(m * m));
+  }
+  const double lipschitz = next_up(std::sqrt(sum));
+  return mignitude(field) > next_up(lipschitz * tolerance_);
 }
 
 double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, const Point& c,
                                             const std::array<VertexEvidence, 3>& evidence,
-                                            int depth) const {
-  const double bound = piece_distance(a, b, c, evidence);
-  if (bound <= tolerance_ || depth == kSplitDepth) return bound;
+                                            int depth, double slack) const {
+  const double piece = piece_distance(a, b, c, evidence);
+  const double bound =
+      std::isfinite(piece) ? next_up(piece + next_up(depth * slack)) : kInfinity;
+  if (bound <= tolerance_ || piece_refuted(a, b, c)) return bound;
   const auto middle = [](const Point& p, const Point& q) {
     return Point{0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2])};
   };
   const Point ab = middle(a, b), bc = middle(b, c), ca = middle(c, a);
+  if (ab == a || ab == b || bc == b || bc == c || ca == c || ca == a) return kInfinity;
   const VertexEvidence eab = evaluate(ab), ebc = evaluate(bc), eca = evaluate(ca);
   double worst = 0;
   for (const auto& [p, q, r, ep, eq, er] :
        {std::tuple{a, ab, ca, evidence[0], eab, eca}, std::tuple{ab, b, bc, eab, evidence[1], ebc},
         std::tuple{ca, bc, c, eca, ebc, evidence[2]}, std::tuple{bc, ca, ab, ebc, eca, eab}}) {
-    worst = std::max(worst, split_distance(p, q, r, {ep, eq, er}, depth + 1));
+    worst = std::max(worst, split_distance(p, q, r, {ep, eq, er}, depth + 1, slack));
     if (!(worst <= tolerance_)) return kInfinity;
   }
   return worst;

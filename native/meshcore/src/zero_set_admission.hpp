@@ -10,8 +10,10 @@
 //    within |f(x)| / m. Hence sup |F| <= r m certifies dist(x, Z) <= sup |F| / m
 //    <= r for every x in T; r is tried at twice the bbox estimate and at the
 //    tolerance itself. F intersects the natural enclosure over bbox(T) with
-//    corner-anchored mean-value forms along the triangle's edges; a piece
-//    that misses the tolerance splits into four (at most three levels);
+//    corner-anchored mean-value forms along the triangle's edges; an
+//    undecided piece splits into four until certified, refuted (|f| exceeds
+//    the gradient-norm upper bound times the tolerance), or at binary64
+//    resolution, which refuses;
 //  * transversality: the triangle normal n satisfies orientation * (n . g) > 0
 //    for every g enclosing grad f over bbox(T). This is the strict-gradient
 //    sign witness the adaptive scaffold carries per leaf cell: T is a local
@@ -78,12 +80,14 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   int transversal_sign(const Point& a, const Point& b, const Point& c) const;
 
  private:
-  static constexpr int kSplitDepth = 3;
   // One unsplit piece: the residual/gradient bound over its (widened) box.
   double piece_distance(const Point& a, const Point& b, const Point& c,
                         const std::array<VertexEvidence, 3>& evidence) const;
+  // Certified: no point of the piece lies within the tolerance of Z.
+  bool piece_refuted(const Point& a, const Point& b, const Point& c) const;
   double split_distance(const Point& a, const Point& b, const Point& c,
-                        const std::array<VertexEvidence, 3>& evidence, int depth) const;
+                        const std::array<VertexEvidence, 3>& evidence, int depth,
+                        double slack) const;
 
   const IntervalBoxProgram& value_;
   const IntervalBoxProgram& gradient_;
