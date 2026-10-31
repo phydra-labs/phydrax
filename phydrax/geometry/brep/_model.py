@@ -722,6 +722,7 @@ def _rebuild_intersection_root(root: Any, cache: dict[int, Any] | None = None, /
         return cache[key]
     from ._intersection import (
         CurveSurfaceIntersectionRoot,
+        ExactLineCylinderTangency,
         IntersectionCurvePointRoot,
         TrimIntersectionRoot,
         TripleSurfaceIntersectionRoot,
@@ -755,6 +756,11 @@ def _rebuild_intersection_root(root: Any, cache: dict[int, Any] | None = None, /
                 None
                 if root.endpoint_witness is None
                 else _rebuild_conic_root_line_endpoint(root.endpoint_witness, cache)
+            ),
+            tangent_witness=(
+                None
+                if root.tangent_witness is None
+                else ExactLineCylinderTangency(curve, surface)
             ),
         )
     elif isinstance(root, TripleSurfaceIntersectionRoot):
