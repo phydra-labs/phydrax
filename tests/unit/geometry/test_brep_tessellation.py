@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from typing import final
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +26,7 @@ from phydrax.geometry.brep._constructors import (
 )
 from phydrax.geometry.brep._model import BRepGeometry, BRepModel, BRepTessellation
 from phydrax.geometry.brep._patches import (
+    AbstractCurve,
     BSplineSurfacePatch,
     ExactLineCurve,
     LineCurve,
@@ -33,6 +35,21 @@ from phydrax.geometry.brep._patches import (
 )
 from phydrax.geometry.brep._tessellation import tessellate_brep_model
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+
+
+@final
+class _UnqualifiedLineCurve(AbstractCurve):
+    """A straight source curve with no declared continuity class."""
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    def evaluate(self, parameters: jax.Array, /) -> jax.Array:
+        return jnp.stack(
+            (parameters, jnp.zeros_like(parameters), jnp.zeros_like(parameters)),
+            axis=-1,
+        )
 
 
 def _policy(*, linear: float = 0.02, angular: float = 0.2) -> BRepTessellationPolicy:
@@ -141,6 +158,7 @@ def _bspline_bump_model(contract: SpatialCoordinateContract) -> BRepModel:
         exact_weights=exact_weights,
         exact_u_knots=knots,
         exact_v_knots=knots,
+        control_point_ids=tuple(tuple(3 * u + v for v in range(3)) for u in range(3)),
     )
     return BRepModel(
         geometry=source.geometry,
@@ -163,9 +181,11 @@ def _offset_ruled_model(contract: SpatialCoordinateContract) -> BRepModel:
         coordinate_contract=contract,
         source_id="tessellation-offset-ruled",
     )
+    # The base runs along +x, so the +z direction offsets it toward -y.
     top = OffsetCurve(
         LineCurve((0.0, 1.0, 0.0), (0.5, 0.0, 0.0)),
         Fraction(1, 10),
+        (0.0, 0.0, 1.0),
     )
     curves = (
         ExactLineCurve((0, 0, 0), (1, 0, 0)),
@@ -206,7 +226,16 @@ def _offset_ruled_model(contract: SpatialCoordinateContract) -> BRepModel:
         shell_orientations=(),
         solid_shells=(),
     )
-    patch = RuledSurface(curves[0], top)
+    # The ruling pairs both rails at one chart parameter u in [0, 1]; the top edge
+    # runs at half that speed over its own range [0, 2].
+    patch = RuledSurface(
+        curves[0],
+        OffsetCurve(
+            LineCurve((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+            Fraction(1, 10),
+            (0.0, 0.0, 1.0),
+        ),
+    )
     return BRepModel(
         geometry=geometry,
         patches=(patch,),
@@ -519,35 +548,28 @@ def test_offset_curve_ruled_surface_carrier_tessellates_with_bounds() -> None:
     assert np.all((edge_parameters > 0.0) & (edge_parameters < 2.0))
 
 
-def test_custom_curve_without_c1_claim_refuses_tessellation() -> None:
-    class UnqualifiedLineCurve(LineCurve):
-        pass
-
+def test_custom_curve_without_c1_claim_has_no_tessellatable_source_model() -> None:
     contract = SpatialCoordinateContract.si()
     source = _offset_ruled_model(contract)
     assert isinstance(source.patches[0], RuledSurface)
     patch = RuledSurface(
-        UnqualifiedLineCurve(
-            jnp.asarray((0.0, 0.0, 0.0), dtype=jnp.float64),
-            jnp.asarray((1.0, 0.0, 0.0), dtype=jnp.float64),
-            origin_exact=(Fraction(0), Fraction(0), Fraction(0)),
-            direction_exact=(Fraction(1), Fraction(0), Fraction(0)),
-        ),
+        _UnqualifiedLineCurve(),
         source.patches[0].second,
     )
-    model = BRepModel(
-        geometry=source.geometry,
-        patches=(patch,),
-        parameter_bounds=np.asarray(source.parameter_bounds),
-        orientation=np.asarray(source.orientation),
-        physical_tags=source.physical_tags,
-        coordinate_contract=contract,
-        report=source.report,
-        trim_domains=source.trim_domains,
-    )
     assert not patch.is_c1_on(np.asarray(((0.0, 0.0), (1.0, 1.0))))
-    with pytest.raises(NotImplementedError, match="C1 continuity"):
-        tessellate_brep_model(model, _policy())
+    # A carrier without declared structure has no exact edge-on-face proof, so
+    # the source model refuses it before any tessellation could be requested.
+    with pytest.raises(ValueError, match="exact source face-gap proof"):
+        BRepModel(
+            geometry=source.geometry,
+            patches=(patch,),
+            parameter_bounds=np.asarray(source.parameter_bounds),
+            orientation=np.asarray(source.orientation),
+            physical_tags=source.physical_tags,
+            coordinate_contract=contract,
+            report=source.report,
+            trim_domains=source.trim_domains,
+        )
 
 
 def test_brep_model_rejects_unproven_bounds_and_forged_root_binding() -> None:

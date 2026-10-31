@@ -318,8 +318,11 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
     """Prove a single line-trim loop covers the entire parameter rectangle.
 
     Trim sides are chart lines: rational lines or exact conic-root angle
-    isolines, whose bounds are outward enclosures of the exact root.
+    isolines, whose bounds are outward enclosures of the exact root. A seam
+    side may carry an integer native-period gauge over its line.
     """
+    from ._boolean_core import PeriodicPCurve
+
     geometry = model.geometry
     loops = geometry.face_loops[face]
     if len(loops) != 1:
@@ -334,8 +337,11 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
     for coedge in loops[0]:
         edge = geometry.coedge_edges[coedge]
         curve = geometry.pcurves[coedge]
+        line = curve
+        while isinstance(line, PeriodicPCurve):
+            line = line.source_curve
         if (
-            not isinstance(curve, (LineCurve, ExactLineCurve, ConicRootLinePCurve))
+            not isinstance(line, (LineCurve, ExactLineCurve, ConicRootLinePCurve))
             or curve.ambient_dimension != 2
         ):
             return False
@@ -620,10 +626,16 @@ def _plane_boundary_hit(
     patch: AbstractSurfacePatch,
     path: tuple[str, ...],
     orientation: float,
+    policy: BRepProjectionPolicy,
     /,
     *,
     embedding: PlanarEmbedding | None,
 ) -> _Hit | None:
+    """Closest boundary point of a planar face bounded by line and circle edges.
+
+    Each edge's closest point comes from its exact carrier; its p-curve must lift
+    to that point, so the chart point names the same boundary location.
+    """
     geometry = model.geometry
     best: tuple[float, np.ndarray, np.ndarray] | None = None
     for loop in geometry.face_loops[face]:
@@ -631,43 +643,30 @@ def _plane_boundary_hit(
             edge = geometry.coedge_edges[coedge]
             pcurve = geometry.pcurves[coedge]
             carrier = geometry.edge_curves[edge]
-            if (
-                not isinstance(pcurve, (LineCurve, ExactLineCurve))
-                or pcurve.ambient_dimension != 2
-                or carrier < 0
-            ):
+            if pcurve.ambient_dimension != 2 or carrier < 0:
                 return None
             curve = geometry.curves[carrier]
-            if not isinstance(curve, (LineCurve, ExactLineCurve)):
+            lines = isinstance(pcurve, (LineCurve, ExactLineCurve)) and isinstance(
+                curve, (LineCurve, ExactLineCurve)
+            )
+            circles = isinstance(pcurve, CircleCurve) and isinstance(curve, CircleCurve)
+            if not lines and not circles:
                 return None
-            first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
-            uv0 = np.asarray(pcurve.evaluate(jnp.asarray(first)), dtype=np.float64)
-            uv1 = np.asarray(pcurve.evaluate(jnp.asarray(last)), dtype=np.float64)
-            source0 = np.asarray(curve.evaluate(jnp.asarray(first)), dtype=np.float64)
-            source1 = np.asarray(curve.evaluate(jnp.asarray(last)), dtype=np.float64)
-            lifted0 = np.asarray(patch.evaluate(jnp.asarray(uv0)), dtype=np.float64)
-            lifted1 = np.asarray(patch.evaluate(jnp.asarray(uv1)), dtype=np.float64)
+            hit = _line_curve_hit(model, edge, point, path, policy)
+            if hit.status not in (_UNIQUE, _SEAM):
+                return None
+            parameter = float(hit.parameters[0])
+            uv = np.asarray(pcurve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+            lifted = np.asarray(patch.evaluate(jnp.asarray(uv)), dtype=np.float64)
+            closest = np.asarray(hit.point, dtype=np.float64)
             scale = max(
                 1.0,
                 float(np.max(np.abs(point))),
-                float(np.max(np.abs(source0))),
-                float(np.max(np.abs(source1))),
+                float(np.max(np.abs(closest))),
             )
             tolerance = 256.0 * np.finfo(np.float64).eps * scale
-            if (
-                np.linalg.norm(source0 - lifted0) > tolerance
-                or np.linalg.norm(source1 - lifted1) > tolerance
-            ):
+            if np.linalg.norm(closest - lifted) > tolerance:
                 return None
-            segment = source1 - source0
-            squared = float(segment @ segment)
-            fraction = (
-                0.0
-                if squared == 0.0
-                else float(np.clip((point - source0) @ segment / squared, 0.0, 1.0))
-            )
-            closest = source0 + fraction * segment
-            uv = uv0 + fraction * (uv1 - uv0)
             distance = float(np.sum((point - closest) ** 2))
             if best is None or distance < best[0]:
                 best = distance, closest, uv
@@ -1279,10 +1278,11 @@ def _project_face(
                 path,
             )
         angle = float(np.arctan2(y, x))
-        # Axial and angular distances separate on a cylinder, so clamping the
-        # height to the authored range keeps the rectangle-closest point.
+        # Axial and angular distances separate on a cylinder: the free angle and
+        # the height clamped to the authored range give the rectangle-closest
+        # point, seam angles included.
         clamped = float(np.clip(axial, bounds[0, 1], bounds[1, 1]))
-        rectangle_closest = clamped != axial
+        rectangle_closest = True
         uv = np.asarray((angle, clamped), dtype=np.float64)
         candidate = (
             origin
@@ -1644,6 +1644,7 @@ def _project_face(
                 patch,
                 path,
                 orientation,
+                policy,
                 embedding=embedding,
             )
             if boundary_hit is not None:

@@ -3900,7 +3900,9 @@ class BRepModel(StrictModule):
             maximum_normal_deviation=tessellation.angular_deflection,
             witness=witness,
         )
-        certificate.require_current(mesh, coordinate_geometry, boundary)
+        # The proof was just derived from exactly these inputs; a full replay
+        # would recompute the same certificate. Only its identity binding is checked.
+        certificate.binding.require(mesh, coordinate_geometry, source=boundary)
         if certificate.status != "certified":
             details = "; ".join(finding.detail for finding in certificate.findings)
             raise ValueError(

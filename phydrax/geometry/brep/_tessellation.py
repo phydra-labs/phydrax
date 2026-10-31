@@ -481,7 +481,7 @@ def _build_request(
         maximum_normal_deviation=None,
     )
     schedule = NativeSurfaceSchedule(
-        quality_angle_degrees=0.0,
+        quality_angle_degrees=20.0,
         spacing_fraction=0.95,
         minimum_edge_samples=policy.trim_samples_per_edge,
         curve_schedule=NativeCurveSchedule(fidelity_samples=policy.trim_samples_per_edge),

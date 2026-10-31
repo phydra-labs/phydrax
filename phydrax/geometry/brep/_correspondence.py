@@ -52,6 +52,7 @@ from ._patches import (
     PlanePatch,
     RevolutionSurface,
     RuledSurface,
+    SpherePatch,
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
     TorusPatch,
@@ -166,6 +167,31 @@ def _exact_constant_chart_point(
     return None
 
 
+def exact_sphere_pole(
+    patch: SpherePatch, latitude: ExactScalar, /
+) -> tuple[Fraction, Fraction, Fraction] | None:
+    """Exact pole of a sphere chart at its declared latitude limit.
+
+    A sphere chart's latitude range is declared by the binary64 limits
+    ``±0.5 * pi``; at the symbolic limit ``sin = ±1`` and ``cos = 0``, so the
+    chart collapses to ``center ± radius * axis`` exactly.
+    """
+    limit = Fraction.from_float(0.5 * np.pi)
+    if latitude not in (limit, -limit):
+        return None
+    sign = 1 if latitude > 0 else -1
+    center = rational_vector(np.asarray(patch.center, dtype=np.float64))
+    axis = rational_vector(np.asarray(patch.axis, dtype=np.float64))
+    radius = Fraction.from_float(float(patch.radius))
+    if radius <= 0 or all(value == 0 for value in axis):
+        return None
+    return (
+        center[0] + sign * radius * axis[0],
+        center[1] + sign * radius * axis[1],
+        center[2] + sign * radius * axis[2],
+    )
+
+
 def _exact_brep_pole_collapse(
     curve: AbstractCurve | None,
     source_patch: AbstractSurfacePatch,
@@ -222,9 +248,13 @@ def _exact_brep_pole_collapse(
         source_patch.base, RevolutionSurface
     )
     revolution = source_patch.base if offset_pole else source_patch
-    if not isinstance(revolution, RevolutionSurface):
+    if isinstance(revolution, SpherePatch):
+        # A sphere chart pole is its symbolic latitude limit, not a conic root.
+        if conic_root is not None:
+            return False
+    elif not isinstance(revolution, RevolutionSurface):
         return False
-    if conic_root is not None and not _same_source_definition(
+    elif conic_root is not None and not _same_source_definition(
         conic_root.conic, revolution.curve
     ):
         return False
@@ -283,6 +313,8 @@ def _exact_brep_pole_collapse(
     )
     if direction != (Fraction(1), Fraction(0)) or chart_start[0] != first_root.rational:
         return False
+    if isinstance(revolution, SpherePatch):
+        return exact_sphere_pole(revolution, chart_start[1]) == source_pole
     if conic_root is not None:
         if chart_start[1] != Fraction.from_float(conic_root.parameter):
             return False
