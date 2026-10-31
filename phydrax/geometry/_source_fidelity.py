@@ -42,6 +42,7 @@ from ._domain_boundary import CurvedTrimLens, MeshingDomainBoundarySource
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import (
     interval_cos,
+    interval_sin,
     IntervalExtensionError,
     prepare_interval_function,
     PreparedIntervalFunction,
@@ -443,8 +444,13 @@ def _partition_findings(
     witness: SurfaceChartWitness | SourceBoundaryChartWitness,
     /,
 ) -> tuple[MeshCertificateFinding, ...]:
-
+    # Currentness fingerprints the whole domain: check once, not per patch.
+    source.require_current()
     domain = source.domain
+    # Binding a method of the Equinox source builds a pytree that flattens the
+    # whole domain; bind the per-patch queries once, not once per patch.
+    collapsed_pole_slivers = source.collapsed_pole_slivers
+    trim_partition_reference = source._trim_partition_reference_unchecked
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
         charts = tuple(
@@ -502,9 +508,9 @@ def _partition_findings(
             # Collapsed pole slivers are part of their owner cells' chart preimages.
             target = (
                 *target,
-                *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
+                *(sliver for _, sliver in collapsed_pole_slivers(patch, target)),
             )
-        declared, _ = source.trim_partition_reference(patch, target)
+        declared, _ = trim_partition_reference(patch, target)
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
@@ -744,6 +750,81 @@ def _acos_upper(cosine_lower: Fraction, /) -> Fraction:
         else:
             lower = midpoint
     return Fraction(upper)
+
+
+def _asin_upper(sine_upper: Fraction, /) -> Fraction:
+    """Outward upper bound of ``asin`` on ``[0, 1]`` by certified bisection."""
+    if sine_upper <= 0:
+        return Fraction(0)
+    half_pi = float(np.nextafter(math.pi / 2, math.inf))
+    if sine_upper >= 1:
+        return Fraction(half_pi)
+    lower, upper = 0.0, half_pi
+    while np.nextafter(lower, math.inf) < upper:
+        midpoint = lower + (upper - lower) / 2
+        if midpoint == lower or midpoint == upper:
+            break
+        interval = interval_sin((np.asarray(midpoint), np.asarray(midpoint)))
+        if Fraction(float(interval[0])) >= sine_upper:
+            upper = midpoint
+        else:
+            lower = midpoint
+    return Fraction(upper)
+
+
+def _normal_angle_upper(
+    source_cross: tuple[tuple[Fraction, Fraction], ...],
+    target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    cosine_lower: Fraction,
+    /,
+) -> Fraction:
+    """Upper normal angle from the cosine and, when acute, the sine bound.
+
+    The cosine of interval normals loses ``O(h)`` to independently maximized
+    norms, so ``acos`` alone is ``O(sqrt(h))`` on a curved cell. With a positive
+    dot product the angle is acute and ``sin θ <= |S x t| / (|S| |t|)`` from the
+    interval cross product is first order in the cell's tangent range.
+    """
+    upper = _acos_upper(cosine_lower)
+    if cosine_lower <= 0:
+        return upper
+    target = tuple(
+        (
+            Fraction(coefficient_endpoint(value, upper=False)),
+            Fraction(coefficient_endpoint(value, upper=True)),
+        )
+        for value in target_cross
+    )
+    cross = (
+        _interval_difference(
+            _interval_product(source_cross[1], target[2]),
+            _interval_product(source_cross[2], target[1]),
+        ),
+        _interval_difference(
+            _interval_product(source_cross[2], target[0]),
+            _interval_product(source_cross[0], target[2]),
+        ),
+        _interval_difference(
+            _interval_product(source_cross[0], target[1]),
+            _interval_product(source_cross[1], target[0]),
+        ),
+    )
+
+    def norm_lower(intervals: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
+        return _distance_lower(
+            tuple(
+                Fraction(0) if low <= 0 <= high else min(abs(low), abs(high))
+                for low, high in intervals
+            )
+        )
+
+    source_norm = norm_lower(source_cross)
+    target_norm = norm_lower(target)
+    if source_norm <= 0 or target_norm <= 0:
+        return upper
+    cross_norm = _distance_upper(tuple(max(abs(low), abs(high)) for low, high in cross))
+    sine_upper = min(Fraction(1), cross_norm / (source_norm * target_norm))
+    return min(upper, _asin_upper(sine_upper))
 
 
 def _source_domain_id(source: SourceBoundaryQuery, /) -> str:
@@ -4002,7 +4083,9 @@ def _normal_deviation_for_cell(
     ):
         if cosine is None:
             return None
-        return _acos_lower(cosine[1]), _acos_upper(cosine[0])
+        return _acos_lower(cosine[1]), _normal_angle_upper(
+            source_cross, target_cross, cosine[0]
+        )
     # The componentwise Jacobian-box cross product decouples the tangent
     # components; the exact Bernstein normal cone keeps them coupled.
     cone_cosine = derivatives.span_normal_cone_cosine(
@@ -4024,7 +4107,9 @@ def _normal_deviation_for_cell(
     upper = min(
         bound
         for bound in (
-            None if cosine is None else _acos_upper(cosine[0]),
+            None
+            if cosine is None
+            else _normal_angle_upper(source_cross, target_cross, cosine[0]),
             None if cone_cosine is None else _acos_upper(cone_cosine),
         )
         if bound is not None
@@ -4043,13 +4128,23 @@ def _curved_trim_lens_caps(
     A lens point is within ``parameter_bound`` of its chord and its arc along a
     chart segment inside the lens box, clipped to the convex source parameter
     domain that holds both segment ends. The surface image of that segment is no
-    longer than the Jacobian norm bound on the box times the chart distance.
+    longer than the Jacobian norm bound on the box times the chart distance. A
+    straight trim's box is flat across the trim; that axis is widened by
+    ``parameter_bound`` before clipping, a superset on which the Jacobian bound
+    still holds.
     """
     caps: dict[int, Fraction] = {}
     domain = surface.parameter_domain
     for lens in lenses:
-        lower = lens.lower
-        upper = lens.upper
+        if lens.parameter_bound == 0:
+            # A straight trim coincides with its chord; its lens adds nothing.
+            continue
+        widths = tuple(
+            lens.parameter_bound if lens.lower[axis] == lens.upper[axis] else 0
+            for axis in range(2)
+        )
+        lower = (lens.lower[0] - widths[0], lens.lower[1] - widths[1])
+        upper = (lens.upper[0] + widths[0], lens.upper[1] + widths[1])
         if domain is not None:
             lower = (
                 max(lower[0], Fraction.from_float(float(domain[0][0]))),
@@ -5235,6 +5330,11 @@ def certify_source_fidelity(
         witness_ids, witness_patches, witness_charts, strict=True
     ):
         by_patch.setdefault(patch, []).append((cell_id, chart))
+    # Binding a method of the Equinox source builds a pytree that flattens the
+    # whole domain; bind the per-patch queries once, not once per patch.
+    collapsed_pole_slivers = domain_source.collapsed_pole_slivers
+    pole_sliver_cap_bound = domain_source.pole_sliver_cap_bound
+    trim_partition_reference = domain_source._trim_partition_reference_unchecked
     for patch, chart_rows in by_patch.items():
         charts_float = np.asarray(
             [
@@ -5345,17 +5445,18 @@ def certify_source_fidelity(
             # pole corner, whose target image is bounded by the endpoint error.
             sliver_caps: dict[int, Fraction] = {}
             target_charts = tuple(chart for _, chart in chart_rows)
-            slivers = domain_source.collapsed_pole_slivers(patch, target_charts)
+            slivers = collapsed_pole_slivers(patch, target_charts)
             for owner_row, sliver in slivers:
                 owner = chart_rows[owner_row][0]
                 sliver_caps[owner] = max(
                     sliver_caps.get(owner, Fraction(0)),
-                    domain_source.pole_sliver_cap_bound(patch, sliver),
+                    pole_sliver_cap_bound(patch, sliver),
                 )
             # Target charts follow a curved trim by chords. A chart point between a
             # chord and its arc is within the lens bound of both, so the directed
             # distances of every cell meeting the lens box grow by its surface image.
-            _, lenses = domain_source.trim_partition_reference(
+            # Currentness was validated once above, before the per-patch loop.
+            _, lenses = trim_partition_reference(
                 patch, (*target_charts, *(sliver for _, sliver in slivers))
             )
             lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses)

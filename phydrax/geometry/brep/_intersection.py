@@ -2946,6 +2946,26 @@ class NativePeriodEndpoint(StrictModule):
         return float(lower), float(upper)
 
 
+def closes_native_turn(end: object, start: object, /) -> bool:
+    """Prove a self-closing use returns to its start after one native turn.
+
+    Both endpoints bind one curve-owned period (no surface chart axis) with the
+    same rational phase and turn counts one apart; the carrier's ``2 pi``
+    periodicity then maps the two parameters to the same point exactly.
+    """
+    from ._carrier_pieces import carrier_payload
+
+    return (
+        isinstance(end, NativePeriodEndpoint)
+        and isinstance(start, NativePeriodEndpoint)
+        and end.patch is None
+        and start.patch is None
+        and end.rational == start.rational
+        and abs(end.turns - start.turns) == 1
+        and carrier_payload(end.curve) == carrier_payload(start.curve)
+    )
+
+
 class ConicParameterEndpoint(StrictModule):
     """Exact conic-root endpoint on one unchanged edge or coedge carrier."""
 

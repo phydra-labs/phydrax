@@ -153,7 +153,11 @@ class PlcEntityKind(IntEnum):
 
 
 class PlcSourceFailure(MeshcoreError):
-    """Structured source-preparation refusal with original PLC entities."""
+    """Structured source-preparation refusal with original PLC entities.
+
+    ``suppression_search`` carries the Steiner-suppression evidence up to the
+    refusal (for a suppression refusal: the exhausted merged regions).
+    """
 
     def __init__(
         self,
@@ -166,6 +170,8 @@ class PlcSourceFailure(MeshcoreError):
         certified_deviation: float,
         declared_bound: float,
         /,
+        *,
+        suppression_search: "PlcSuppressionSearch | None" = None,
     ) -> None:
         super().__init__(
             status,
@@ -179,6 +185,7 @@ class PlcSourceFailure(MeshcoreError):
         self.second = second
         self.certified_deviation = certified_deviation
         self.declared_bound = declared_bound
+        self.suppression_search = suppression_search
 
 
 class RestrictedPowerFailure(MeshcoreError):
@@ -2471,7 +2478,11 @@ class PlcSuppressionSearch(NamedTuple):
 
     The search runs only for wedges that no polynomial fill handles:
     wedges searched and filled, states expanded in total and at most per
-    wedge, and the largest searched wedge in cells.
+    wedge, and the largest searched wedge in cells. Wedges with no fill of
+    their own are merged with neighbouring cells layer by layer: wedges
+    filled that way and the most layers one needed, and wedges whose
+    constraint-delimited region was exhausted without a fill with the
+    largest such region in cells.
     """
 
     searches: int
@@ -2479,6 +2490,10 @@ class PlcSuppressionSearch(NamedTuple):
     nodes: int
     max_nodes: int
     max_wedge_cells: int
+    merges: int
+    max_merge_layers: int
+    exhausted: int
+    max_exhausted_cells: int
 
 
 class PlcSourceData(NamedTuple):
@@ -4837,6 +4852,12 @@ def _plc3d_build(
             ),
             "plc3d_failure",
         )
+        search = np.zeros((9,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_plc3d_suppression_search"](handle, search.ctypes.data),
+            "plc3d_suppression_search",
+        )
+        suppression_search = PlcSuppressionSearch(*(int(value) for value in search))
         if code != MeshcoreStatus.OK:
             if failure_reason[0] != PlcFailureReason.NONE:
                 raise PlcSourceFailure(
@@ -4848,6 +4869,7 @@ def _plc3d_build(
                     int(second[0]),
                     float(certified_deviation[0]),
                     float(declared_bound[0]),
+                    suppression_search=suppression_search,
                 )
             _raise_for_call(code, operation_label)
         sizes = np.empty((6,), dtype=np.int64)
@@ -4862,11 +4884,6 @@ def _plc3d_build(
             )
         point_count, tet_count, face_count, segment_count, edge_count, triangle_count = (
             map(int, sizes)
-        )
-        search = np.zeros((5,), dtype=np.int64)
-        _raise_for_call(
-            library["phx_mc_plc3d_suppression_search"](handle, search.ctypes.data),
-            "plc3d_suppression_search",
         )
         result = PlcSourceData(
             code,
@@ -4887,7 +4904,7 @@ def _plc3d_build(
             np.empty((point_count,), dtype=np.int32),
             np.empty((point_count, 2), dtype=np.float64),
             np.empty((point_count,), dtype=np.float64),
-            PlcSuppressionSearch(*(int(value) for value in search)),
+            suppression_search,
         )
         _raise_for_call(
             library["phx_mc_plc3d_export"](

@@ -670,7 +670,11 @@ contracts:
   edges to a point in the ring's kernel. The latter removes a flat cell whose
   four vertices lie on a fixed boundary (two constrained faces splitting a
   planar quad) without moving the boundary: no flip can remove such a cell and
-  no circumsphere cavity contains it.
+  no circumsphere cavity contains it. A relocation must also make sufficient
+  progress: at the first position where its star's sorted scores change, the
+  new score meets the target or closes at least an eighth of that score's gap
+  to the target (at least one quantum). A cell's gap therefore shrinks
+  geometrically rather than one quantum per move.
 - **Precedence.** The determinant floor binds every edit. The size gate is
   relative to the cells an edit removes: no created cell may exceed its target
   by more than the largest excess (circumradius over target) among them, or at

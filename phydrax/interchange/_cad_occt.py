@@ -295,7 +295,8 @@ def model_from_occt_shape(
     digest = shape_digest(shape) if source_digest is None else source_digest
     payload = _canonical_brep_text(shape, occt)
     from ..geometry.brep._model import BRepImportReport, BRepModel
-    from ._cad import CadImportPolicy
+    from ..geometry.brep._tessellation import tessellate_brep_model
+    from ._cad import CadImportPolicy, refuse
     from ._cad_brep_text import decode_brep_text_bytes
 
     policy = CadImportPolicy(
@@ -303,9 +304,15 @@ def model_from_occt_shape(
         tessellation=tessellation,
         relative_geometric_tolerance=relative_geometric_tolerance,
     )
+    # The report is rebound to this shape before tessellating, so the
+    # source-fidelity proof of the tessellation is derived and validated once,
+    # on the published model.
     imported = decode_brep_text_bytes(
         payload,
-        policy,
+        CadImportPolicy(
+            coordinate_contract,
+            relative_geometric_tolerance=relative_geometric_tolerance,
+        ),
         source_length_unit=coordinate_contract.length_unit,
         source_path=identifier,
     ).model
@@ -316,8 +323,9 @@ def model_from_occt_shape(
         source_id=identifier,
         source_digest=digest,
         source_format=source_format,
+        import_policy_id=policy.policy_id,
     )
-    return BRepModel(
+    model = BRepModel(
         geometry=imported.geometry,
         patches=imported.patches,
         parameter_bounds=imported.parameter_bounds,
@@ -326,8 +334,24 @@ def model_from_occt_shape(
         coordinate_contract=coordinate_contract,
         report=report,
         trim_domains=imported.trim_domains,
-        tessellation=imported.tessellation,
     )
+    if tessellation is None or not model.patches:
+        return model
+    try:
+        realization = tessellate_brep_model(model, tessellation)
+        return BRepModel(
+            geometry=model.geometry,
+            patches=model.patches,
+            parameter_bounds=model.parameter_bounds,
+            orientation=model.orientation,
+            physical_tags=model.physical_tags,
+            coordinate_contract=coordinate_contract,
+            report=report,
+            trim_domains=model.trim_domains,
+            tessellation=realization,
+        )
+    except ValueError as error:
+        raise refuse("inconsistent-geometry", identifier, str(error)) from error
 
 
 

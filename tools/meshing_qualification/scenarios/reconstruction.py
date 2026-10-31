@@ -18,6 +18,7 @@ from phydrax.meshing._contracts import (
 )
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength
+from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.meshing.providers import NativeMeshingProvider
 
 from .._runtime import (
@@ -334,8 +335,19 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
         size_controls=(UniformSizeControl(volume_scope, 2.0 * spacing),),
         maximum_deviation=envelope.maximum_deviation,
     )
+    # The certified envelope boundary is FIXED: no edit may split or move its
+    # marching-tetrahedra facets. Cells spanning only boundary vertices across a
+    # nearly flat fold then keep an arbitrarily large radius-edge ratio and the
+    # boundary's own dihedral angle, so no quality target is attainable a priori.
+    # The schedule declares none (sizes and the determinant floor still apply),
+    # and the result reports the achieved quality.
+    volume_schedule = NativeVolumeSchedule(
+        radius_edge_bound=1.0e6, minimum_dihedral_degrees=0.0
+    )
     volume_plan = NativeMeshingProvider(
-        phx.meshing.NativeMeshingOptions("surface_envelope_tetrahedral")
+        phx.meshing.NativeMeshingOptions(
+            "surface_envelope_tetrahedral", volume_schedule=volume_schedule
+        )
     ).plan(envelope, volume_specification, coordinate_contract=contract)
     volume_result = volume_plan.execute()
     volume_accepted = accepted_result_record(volume_result)
@@ -396,6 +408,8 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
             "offset_m": envelope.offset,
             "spacing_m": envelope.spacing,
             "maximum_deviation_m": envelope.maximum_deviation,
+            "radius_edge_bound": volume_schedule.radius_edge_bound,
+            "minimum_dihedral_degrees": volume_schedule.minimum_dihedral_degrees,
             "measured_volume_m3": envelope_volume,
             "accepted": volume_accepted,
             "fe": fe,
