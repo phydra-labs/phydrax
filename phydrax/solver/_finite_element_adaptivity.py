@@ -77,7 +77,9 @@ from ..linalg import AbstractLinearOperator
 from ..meshing import MeshAdaptationResult
 from ..meshing._distribution import (
     _owner_group_allgather,
+    _owner_group_differing_declarations,
     _owner_group_fail_if_any,
+    _owner_local_state_value_identity,
     OwnerLocalGraphKeyedStateTransfer,
     OwnerLocalGraphMigrationEvidence,
     OwnerLocalGraphPartitionEvidence,
@@ -747,6 +749,8 @@ class FiniteElementOwnerLocalFieldTransferEvidence(StrictModule, NonTrainableSta
     source_owner_map_id: str = eqx.field(static=True)
     target_owner_map_id: str = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
+    source_content_root: str = eqx.field(static=True)
+    target_content_root: str = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
     source_integral: Array | None
     target_integral: Array | None
@@ -943,21 +947,35 @@ class FiniteElementOwnerLocalFieldTransferEvidence(StrictModule, NonTrainableSta
             or not isinstance(target, CompositionEntry)
             or source.entry_id != target.entry_id
             or source.structure_id != self.source_structure_id
-            or target.structure_id != self.target_structure_id
+            or array_tree_fingerprint(np.asarray(target.value))
+            != array_tree_fingerprint(np.asarray(self.target_values))
             or target.revision_id != target_revision_id
         ):
             raise ValueError(
                 "Owner-local FE transfer entries differ from their evidence."
             )
+        # Adaptive transfers remap content onto new entities. Conservative fields
+        # report their allreduced integrals and roundoff bound; the exact source
+        # and target roots stay bound through the transfer route identity.
+        source_integral = self.source_integral
+        bound = self.conservation_bound
+        conservative = (
+            self.conservative and source_integral is not None and bound is not None
+        )
         return CompositionTransport(
-            "ownership-migration",
+            "physical-remap",
             (source.entry_id,),
             (target,),
             source_structure_ids=(source.structure_id,),
             route_id=self.transfer_id,
             successful=self.successful,
-            source_content_root=self.source_content_root,
-            target_content_root=self.target_content_root,
+            source_content=source_integral if conservative else None,
+            target_content=self.target_integral if conservative else None,
+            content_tolerance=(
+                jnp.full(jnp.shape(source_integral), bound, dtype=jnp.float64)
+                if conservative and source_integral is not None and bound is not None
+                else None
+            ),
         )
 
 
@@ -1276,16 +1294,24 @@ class _FiniteElementOwnerLocalFieldActionContext:
             raise ValueError(
                 "FE transfer source requests need canonical three-column keys."
             )
-        unique_keys = np.unique(keys, axis=0)
+        # The owned source rows stay on their owners (an exact key bijection);
+        # requested rows, repeated or remote, are then fetched from those owners.
+        owned_keys = np.asarray(self.source_ownership.dof_keys, dtype=np.int64)
         transfer = context.migration.transfer_keyed_values(
-            self.source_entry,
-            self.source_ownership.dof_keys,
+            _owner_local_keyed_declaration(context, self.source_entry),
+            owned_keys,
             self.source_ownership.owner_ranks,
             self.source_values,
-            unique_keys,
-            np.full((unique_keys.shape[0],), context.rank, dtype=np.int32),
+            owned_keys,
+            np.full((owned_keys.shape[0],), context.rank, dtype=np.int32),
             context.execution_group,
-            target_structure_id=self.source_plan.dof_map_id,
+            target_structure_id=canonical_fingerprint(
+                {
+                    "kind": "finite-element-owner-local-source-row-request",
+                    "layout": self.layout.layout_id,
+                    "identity": self.source_plan.identity_id,
+                }
+            ),
             key_identity_id=self.source_plan.identity_id,
             axis_name=axis_name,
             value_fiber_shape=tuple(int(size) for size in self.source_values.shape[1:]),
@@ -1303,13 +1329,119 @@ def _owner_local_target_field_structure(
     ownership: FiniteElementDofOwnership,
     /,
 ) -> str:
+    """Group-wide structure of one owned FE field on the target placement.
+
+    Every owner, including an empty one, declares the same structure: the field
+    layout, canonical DOF identity, global target topology/geometry and owner
+    directory. Rank-local ownership rows bind the accepted target state instead.
+    """
     return canonical_fingerprint(
         {
-            "kind": "prepared-finite-element-owned-field",
-            "prepared": context.target_discretization.prepared_id,
+            "kind": "owner-local-finite-element-owned-field",
             "layout": layout.layout_id,
-            "ownership": ownership.ownership_id,
+            "identity": ownership.identity_id,
+            "target_topology": context.target_geometry_view.source_topology_id,
+            "target_geometry": context.target_global_geometry_id,
+            "target_directory": context.migration.target_directory_id,
         }
+    )
+
+
+def _owner_local_keyed_revision(
+    context: _FiniteElementRepartitionContext, entry_id: str, /
+) -> str:
+    """Group-wide revision under which one rank's FE shard enters a keyed transfer."""
+    state = context.source_state
+    return canonical_fingerprint(
+        {
+            "kind": "finite-element-owner-local-keyed-declaration",
+            "entry": entry_id,
+            "state_entry": context.state_entry_id,
+            "source_topology": context.source_geometry_view.source_topology_id,
+            "source_geometry": context.global_geometry_id,
+            "target_topology": context.target_geometry_view.source_topology_id,
+            "target_geometry": context.target_global_geometry_id,
+            "step": state.step,
+            "cursor": state.schedule_cursor,
+            "version": state.state_version,
+        }
+    )
+
+
+def _owner_local_keyed_declaration(
+    context: _FiniteElementRepartitionContext, entry: CompositionEntry, /
+) -> CompositionEntry:
+    """Present one rank's FE shard entry under its group-wide keyed declaration.
+
+    Owner-local FE shard entries carry rank-local structure and revision IDs
+    (local ownership rows, local prepared spaces). Graph keyed transfers require
+    one declaration on every owner, so the shard keeps its entry, role, owner,
+    semantics and value, and takes a structure/revision derived from the global
+    accepted placement. The composition transport binds the actual shard entry.
+    """
+    return CompositionEntry(
+        entry.value,
+        entry_id=entry.entry_id,
+        role=entry.role,
+        owner_id=entry.owner_id,
+        structure_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-owner-local-keyed-structure",
+                "entry": entry.entry_id,
+                "semantics": entry.semantics_id,
+                "source_topology": context.source_geometry_view.source_topology_id,
+                "source_geometry": context.global_geometry_id,
+            }
+        ),
+        revision_id=_owner_local_keyed_revision(context, entry.entry_id),
+        semantics_id=entry.semantics_id,
+    )
+
+
+def _finite_element_keyed_transport(
+    transfer: OwnerLocalGraphKeyedStateTransfer
+    | FiniteElementOwnerLocalFieldTransferEvidence,
+    source: CompositionEntry,
+    target: CompositionEntry,
+    /,
+    *,
+    target_revision_id: str,
+) -> CompositionTransport:
+    """Bind the actual shard entries to a keyed transfer of their declaration."""
+    if not isinstance(transfer, OwnerLocalGraphKeyedStateTransfer):
+        return transfer.composition_transport(
+            source, target, target_revision_id=target_revision_id
+        )
+    if (
+        source.entry_id != transfer.source_entry_id
+        or target.entry_id != source.entry_id
+        or source.role != transfer.source_role
+        or target.role != source.role
+        or source.owner_id != transfer.source_owner_id
+        or target.owner_id != source.owner_id
+        or source.semantics_id != transfer.source_semantics_id
+        or target.semantics_id != source.semantics_id
+        or target.revision_id != target_revision_id
+        or _owner_local_state_value_identity(source.value) != transfer.source_value_id
+        or _owner_local_state_value_identity(target.value) != transfer.target_value_id
+    ):
+        raise ValueError("Owner-local FE keyed transport entries differ from their rows.")
+    return CompositionTransport(
+        "ownership-migration",
+        (source.entry_id,),
+        (target,),
+        source_structure_ids=(source.structure_id,),
+        route_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-owner-local-keyed-transport",
+                "transfer": transfer.transfer_id,
+                "source_entry": source.record_id,
+                "target_entry": target.record_id,
+            }
+        ),
+        successful=transfer.successful,
+        source_content_root=transfer.source_content_root,
+        target_content_root=transfer.target_content_root,
     )
 
 
@@ -1324,29 +1456,37 @@ def _owner_local_gather_target_field(
     axis_name: str,
     /,
 ) -> Array:
+    entry_id = f"{source_entry.entry_id}:target-local:{layout.layout_id}"
     candidate_entry = CompositionEntry(
         target_values,
-        entry_id=f"{source_entry.entry_id}:target-local:{layout.layout_id}",
+        entry_id=entry_id,
         role=source_entry.role,
         owner_id=source_entry.owner_id,
         structure_id=target_structure_id,
-        revision_id=context.adaptive_result_id or context.target_global_geometry_id,
+        revision_id=_owner_local_keyed_revision(context, entry_id),
         semantics_id=layout.layout_id,
     )
-    gathered = context.migration.transfer_keyed_values(
+    # Owned target rows stay on their owners; the local plan's resident rows,
+    # including ghosts owned elsewhere, are then fetched from those owners.
+    owned_keys = np.asarray(target_ownership.dof_keys, dtype=np.int64)
+    owned = context.migration.transfer_keyed_values(
         candidate_entry,
-        target_ownership.dof_keys,
+        owned_keys,
         target_ownership.owner_ranks,
         target_values,
-        target_plan.dof_keys,
-        np.full((target_plan.dof_keys.shape[0],), context.rank, dtype=np.int32),
+        owned_keys,
+        np.full((owned_keys.shape[0],), context.rank, dtype=np.int32),
         context.execution_group,
         target_structure_id=target_structure_id,
         key_identity_id=target_plan.identity_id,
         axis_name=axis_name,
         value_fiber_shape=tuple(int(size) for size in target_values.shape[1:]),
     )
-    local_values = jnp.asarray(gathered.target_values)
+    local_values = owned.gather_target_local_values(
+        np.asarray(target_plan.dof_keys, dtype=np.int64),
+        context.execution_group,
+        axis_name=f"{axis_name}_local",
+    )
     if local_values.shape[0] != target_plan.dof_keys.shape[0]:
         raise ValueError("Owner-local target FE field gather changed its row count.")
     return local_values
@@ -1460,26 +1600,21 @@ def _owner_local_conservative_integrals(
         f"{axis_name}_content_preflight",
         "FE conservative content evaluation",
     )
-    source_rows = _owner_group_allgather(
-        source_local,
-        context.execution_group,
-        f"{axis_name}_source_integral",
-    )
-    target_rows = _owner_group_allgather(
-        target_local,
-        context.execution_group,
-        f"{axis_name}_target_integral",
-    )
-    source_abs_rows = _owner_group_allgather(
-        source_abs_local,
-        context.execution_group,
-        f"{axis_name}_source_absolute",
-    )
-    target_abs_rows = _owner_group_allgather(
-        target_abs_local,
-        context.execution_group,
-        f"{axis_name}_target_absolute",
-    )
+
+    def gather(value: np.ndarray, name: str, /) -> np.ndarray:
+        # Scalar fibers carry a unit leading axis: owner metadata is never 0-d.
+        array = np.asarray(value)
+        rows = np.asarray(
+            _owner_group_allgather(
+                array[None, ...], context.execution_group, f"{axis_name}_{name}"
+            )
+        )
+        return rows.reshape((rows.shape[0], *array.shape))
+
+    source_rows = gather(source_local, "source_integral")
+    target_rows = gather(target_local, "target_integral")
+    source_abs_rows = gather(source_abs_local, "source_absolute")
+    target_abs_rows = gather(target_abs_local, "target_absolute")
     source_integral = np.asarray(
         compensated_sum_chunks((source_rows,), output_ndim=source_local.ndim)
     )
@@ -2270,23 +2405,44 @@ def _validate_finite_element_repartition_authority(
         )
     source_view = context.source_geometry_view
     target_view = context.target_geometry_view
-    if (
-        not isinstance(source_view, OwnerLocalCellGeometry)
-        or not isinstance(target_view, OwnerLocalCellGeometry)
-        or source_view.owner_rank != context.rank
-        or target_view.owner_rank != context.rank
-        or source_view.distribution_id != context.migration.source_directory_id
-        or target_view.distribution_id != context.migration.target_directory_id
-        or source_view.source_topology_id != state.topology_id
-        or target_view.source_topology_id != state.topology_id
-        or source_view.source_geometry_id != target_view.source_geometry_id
-        or source_view.source_id != target_view.source_id
-        or source_view.source_revision != target_view.source_revision
-        or source_view.source_map_id != target_view.source_map_id
-        or source_view.source_context_id != target_view.source_context_id
+    if not isinstance(source_view, OwnerLocalCellGeometry) or not isinstance(
+        target_view, OwnerLocalCellGeometry
     ):
         raise ValueError(
-            "Source/target compact FE geometry views differ from the current graph authority."
+            "Source/target compact FE geometry views differ from the current graph "
+            "authority: view-type."
+        )
+    # source_map_id/source_context_id bind each rank's resident source bank (an
+    # exact local power map, or a halo-expanded periodic quotient); both
+    # placements must share the authored source identity, not those rank banks.
+    stale = tuple(
+        name
+        for name, failed in (
+            ("source-owner", source_view.owner_rank != context.rank),
+            ("target-owner", target_view.owner_rank != context.rank),
+            (
+                "source-directory",
+                source_view.distribution_id != context.migration.source_directory_id,
+            ),
+            (
+                "target-directory",
+                target_view.distribution_id != context.migration.target_directory_id,
+            ),
+            ("source-topology", source_view.source_topology_id != state.topology_id),
+            ("target-topology", target_view.source_topology_id != state.topology_id),
+            (
+                "geometry",
+                source_view.source_geometry_id != target_view.source_geometry_id,
+            ),
+            ("source", source_view.source_id != target_view.source_id),
+            ("revision", source_view.source_revision != target_view.source_revision),
+        )
+        if failed
+    )
+    if stale:
+        raise ValueError(
+            "Source/target compact FE geometry views differ from the current graph "
+            f"authority: {', '.join(stale)}."
         )
     source_view.require_owner_directory_current(
         context.execution_group,
@@ -2394,6 +2550,35 @@ def _finite_element_owner_local_mesh_rows_match_view(
     )
 
 
+def _finite_element_adapted_in_place_after_migration(
+    context: _FiniteElementRepartitionContext, /
+) -> bool:
+    """Whether the FE source view is the migrated shard an adaptation refined in place.
+
+    The target view's migration evidence either moves the FE source view onto
+    the adapted target, or it is the earlier migration that produced the
+    adaptive source shard, with the adaptation applied in place on that
+    placement. The shard's part identity also binds the adaptation
+    specification, so the FE source view is matched to it by its owner
+    directory, topology and geometry, which the part identity is derived from.
+    """
+    from ..meshing._device_adaptation import OwnerLocalPeriodicAdaptiveResult
+
+    source_view = context.source_geometry_view
+    migration = context.migration
+    adaptive = context.adaptive_result
+    return bool(
+        type(adaptive) is OwnerLocalPeriodicAdaptiveResult
+        and isinstance(source_view, OwnerLocalCellGeometry)
+        and isinstance(migration, OwnerLocalGraphMigrationEvidence)
+        and migration.target_directory_id == source_view.distribution_id
+        and migration.target_part_id == adaptive.source_part_id
+        and adaptive.source_distribution_id == source_view.distribution_id
+        and adaptive.source_topology_id == source_view.source_topology_id
+        and adaptive.source_geometry_id == source_view.source_geometry_id
+    )
+
+
 def _validate_finite_element_owner_local_topology_authority(
     context: _FiniteElementRepartitionContext, /
 ) -> None:
@@ -2412,26 +2597,52 @@ def _validate_finite_element_owner_local_topology_authority(
     field_ownership = state.field_ownership
     if not field_ownership:
         raise ValueError("Owner-local FE topology transition lacks DOF ownership.")
+    in_place_after_migration = _finite_element_adapted_in_place_after_migration(context)
     if (
         not context.topology_change
         or not isinstance(source_view, OwnerLocalCellGeometry)
         or not isinstance(target_view, OwnerLocalCellGeometry)
-        or migration is not target_view.graph_migration_evidence
-        or migration.group_id != context.execution_group.spec.group_id
-        or migration.local_rank != context.rank
-        or migration.part_count != context.parts
-        or migration.source_directory_id != source_view.distribution_id
-        or migration.target_directory_id != target_view.distribution_id
-        or migration.target_part_id != target_view.part_id
-        or source_view.owner_rank != context.rank
-        or target_view.owner_rank != context.rank
-        or source_view.source_topology_id != state.topology_id
-        or source_view.distribution_id != field_ownership[0].distribution_id
-        or target_view.source_topology_id == state.topology_id
-        or not migration.result.feasible
-        or not context.axis_name.strip()
     ):
-        raise ValueError("Owner-local FE topology transition authority is stale.")
+        raise ValueError(
+            "Owner-local FE topology transition authority is stale: it needs compact "
+            "source/target views."
+        )
+    stale = tuple(
+        name
+        for name, failed in (
+            ("migration-evidence", migration is not target_view.graph_migration_evidence),
+            ("group", migration.group_id != context.execution_group.spec.group_id),
+            ("rank", migration.local_rank != context.rank),
+            ("part-count", migration.part_count != context.parts),
+            (
+                "migration-directories",
+                not in_place_after_migration
+                and (
+                    migration.source_directory_id != source_view.distribution_id
+                    or migration.target_directory_id != target_view.distribution_id
+                    or migration.target_part_id != target_view.part_id
+                ),
+            ),
+            (
+                "view-owner",
+                source_view.owner_rank != context.rank
+                or target_view.owner_rank != context.rank,
+            ),
+            ("source-topology", source_view.source_topology_id != state.topology_id),
+            (
+                "ownership-directory",
+                source_view.distribution_id != field_ownership[0].distribution_id,
+            ),
+            ("unchanged-topology", target_view.source_topology_id == state.topology_id),
+            ("infeasible-migration", not migration.result.feasible),
+            ("axis", not context.axis_name.strip()),
+        )
+        if failed
+    )
+    if stale:
+        raise ValueError(
+            f"Owner-local FE topology transition authority is stale: {', '.join(stale)}."
+        )
     source_view.require_owner_directory_current(
         context.execution_group,
         axis_name=f"{context.axis_name}_source_directory",
@@ -2527,37 +2738,87 @@ def _validate_finite_element_owner_local_topology_authority(
             raise ValueError("A nonempty FE topology transition lacks adaptive evidence.")
     elif type(context.adaptive_result) is OwnerLocalPeriodicAdaptiveResult:
         adaptive = context.adaptive_result
-        if (
-            adaptive.source_distribution_id != source_view.distribution_id
-            or adaptive.target_distribution_id != target_view.distribution_id
-            or adaptive.source_topology_id != source_view.source_topology_id
-            or adaptive.source_geometry_id != source_view.source_geometry_id
-            or adaptive.target_topology_id != target_view.source_topology_id
-            or adaptive.target_geometry_id != target_view.source_geometry_id
-            or adaptive.target_local_view_id != target_view.local_view_id
-            or adaptive.target_owner_directory_id != target_view.distribution_id
-            or target_view.adaptive_result is None
-            or target_view.adaptive_result.result_id != adaptive.result_id
-            or not np.array_equal(
-                np.sort(metadata.target_cell_ids),
-                np.sort(np.asarray(target_view.cell_ids, dtype=np.int64)),
+        differing = tuple(
+            name
+            for name, differs in (
+                (
+                    "source-distribution",
+                    adaptive.source_distribution_id != source_view.distribution_id,
+                ),
+                (
+                    "target-distribution",
+                    adaptive.target_distribution_id != target_view.distribution_id,
+                ),
+                (
+                    "source-topology",
+                    adaptive.source_topology_id != source_view.source_topology_id,
+                ),
+                (
+                    "source-geometry",
+                    adaptive.source_geometry_id != source_view.source_geometry_id,
+                ),
+                (
+                    "target-topology",
+                    adaptive.target_topology_id != target_view.source_topology_id,
+                ),
+                (
+                    "target-geometry",
+                    adaptive.target_geometry_id != target_view.source_geometry_id,
+                ),
+                (
+                    "target-local-view",
+                    adaptive.target_local_view_id != target_view.local_view_id,
+                ),
+                (
+                    "target-owner-directory",
+                    adaptive.target_owner_directory_id != target_view.distribution_id,
+                ),
+                (
+                    "target-view-result",
+                    target_view.adaptive_result is None
+                    or target_view.adaptive_result.result_id != adaptive.result_id,
+                ),
+                # The adaptive result binds this owner's target cells; the
+                # compact view adds read-only face-neighbor halo cells around
+                # them, so its resident vertices cover the adaptive vertices.
+                (
+                    "target-cells",
+                    not np.array_equal(
+                        np.sort(metadata.target_cell_ids),
+                        np.sort(np.asarray(target_view.owned_cell_ids, dtype=np.int64)),
+                    ),
+                ),
+                (
+                    "target-vertices",
+                    not np.all(
+                        np.isin(
+                            np.asarray(adaptive.target_vertex_ids, dtype=np.int64),
+                            np.asarray(target_view.vertex_ids, dtype=np.int64),
+                        )
+                    ),
+                ),
+                (
+                    "graph-plan",
+                    adaptive.graph_partition_plan is not None
+                    and adaptive.graph_partition_plan.plan_id != migration.result.plan_id,
+                ),
+                (
+                    "target-face-coverage",
+                    adaptive.target_periodic_face_coverage_id
+                    != target_view.periodic_face_coverage_id,
+                ),
+                (
+                    "target-periodic-topology",
+                    adaptive.target_periodic_topology_id
+                    != target_view.periodic_topology_id,
+                ),
             )
-            or not np.array_equal(
-                np.sort(np.asarray(adaptive.target_vertex_ids, dtype=np.int64)),
-                np.sort(np.asarray(target_view.vertex_ids, dtype=np.int64)),
-            )
-            or (
-                adaptive.graph_partition_plan is not None
-                and adaptive.graph_partition_plan.plan_id != migration.result.plan_id
-            )
-            or (
-                adaptive.target_periodic_face_coverage_id
-                != target_view.periodic_face_coverage_id
-            )
-            or adaptive.target_periodic_topology_id != target_view.periodic_topology_id
-        ):
+            if differs
+        )
+        if differing:
             raise ValueError(
-                "Periodic FE adaptive evidence differs from the target view."
+                "Periodic FE adaptive evidence differs from the target view: "
+                f"{', '.join(differing)}."
             )
     elif type(context.adaptive_result) is OwnerLocalAdaptivePartTransition:
         adaptive = context.adaptive_result
@@ -2599,17 +2860,28 @@ def _validate_finite_element_owner_local_topology_authority(
     target_graph_rows = np.sort(
         target_graph_ids[target_graph_owners == context.rank], kind="stable"
     )
+    migrated_view = source_view if in_place_after_migration else target_view
     target_owned_rows = np.sort(
-        np.asarray(target_view.cell_ids, dtype=np.int64)[
-            np.asarray(target_view.owned, dtype=np.bool_)
+        np.asarray(migrated_view.cell_ids, dtype=np.int64)[
+            np.asarray(migrated_view.owned, dtype=np.bool_)
         ],
         kind="stable",
     )
-    if not np.array_equal(target_graph_rows, target_owned_rows) or not np.array_equal(
-        np.asarray(migration.target_cell_ids, dtype=np.int64),
-        target_graph_rows,
+    # The distributed partition result lists the cells this rank held before the
+    # migration with their new owners; the evidence lists the cells it holds
+    # after it. Kept cells are a subset of the migrated rows, which must equal
+    # the view's owned rows.
+    migrated_rows = np.sort(np.asarray(migration.target_cell_ids, dtype=np.int64))
+    if (
+        not np.array_equal(migrated_rows, target_owned_rows)
+        or np.setdiff1d(target_graph_rows, migrated_rows).size
     ):
-        raise ValueError("FE target graph partition rows differ from current ownership.")
+        raise ValueError(
+            "FE target graph partition rows differ from current ownership "
+            f"({'source' if in_place_after_migration else 'target'} view: "
+            f"{target_graph_rows.size} kept rows, {target_owned_rows.size} owned rows, "
+            f"{migrated_rows.size} migrated rows)."
+        )
 
 
 def _validate_finite_element_repartition_identity_plans(
@@ -2739,21 +3011,31 @@ def _validate_finite_element_repartition_identity_plans(
         np.asarray(source_view.owned, dtype=np.bool_)
     ]
     source_graph_rows = np.sort(source_owned_rows, kind="stable")
-    target_graph_rows = np.sort(graph_ids[graph_owners == context.rank], kind="stable")
+    # The partition result lists only the rows this rank held before migration;
+    # the rows it receives are bound by the migration evidence. Kept rows must
+    # appear among them, and the evidence must equal the target view's rows.
+    kept_graph_rows = np.sort(graph_ids[graph_owners == context.rank], kind="stable")
+    migration_rows = np.sort(
+        np.asarray(context.migration.target_cell_ids, dtype=np.int64), kind="stable"
+    )
     target_owned_rows = np.asarray(target_view.cell_ids, dtype=np.int64)[
         np.asarray(target_view.owned, dtype=np.bool_)
     ]
     target_directory_owned = np.sort(target_owned_rows, kind="stable")
-    if (
-        not np.array_equal(np.sort(graph_ids, kind="stable"), source_graph_rows)
-        or not np.array_equal(target_graph_rows, target_directory_owned)
-        or not np.array_equal(
-            np.asarray(context.migration.target_cell_ids, dtype=np.int64),
-            target_graph_rows,
+    mismatched = tuple(
+        f"{name} ({left.size} vs {right.size} rows)"
+        for name, left, right in (
+            ("graph-source", np.sort(graph_ids, kind="stable"), source_graph_rows),
+            ("migration-target", migration_rows, target_directory_owned),
         )
-    ):
+        if not np.array_equal(left, right)
+    )
+    if not np.all(np.isin(kept_graph_rows, migration_rows)):
+        mismatched = (*mismatched, "graph-kept")
+    if mismatched:
         raise ValueError(
-            "Graph migration rows differ from the current compact source or target view."
+            "Graph migration rows differ from the current compact source or target "
+            f"view: {', '.join(mismatched)}."
         )
     for index, (layout, source_plan, target_plan, ownership) in enumerate(
         zip(
@@ -2962,12 +3244,27 @@ def _finite_element_geometry_source_entry(
             continue
         if view.source_value is not None:
             value = view.source_value
+            authority = view.source_geometry_authority
+            # A graph-migrated view keeps its authored source data while the
+            # migrated source binding (the view's source context) lives in its
+            # geometry authority, so the authored source then binds only the
+            # source identity.
+            authored_matches = (
+                source_authority_matches(value)
+                if authority is None or authority is value
+                else (
+                    isinstance(value, NativePeriodicSource)
+                    and isinstance(authority, NativePeriodicSource)
+                    and value.source_id == view.source_id
+                    and value.source_revision == view.source_revision
+                )
+            )
             if (
                 entry.value is not value
                 or entry.structure_id != view.source_mesh_id
                 or entry.revision_id != view.source_revision
-                or not source_authority_matches(value)
-                or not source_authority_matches(view.source_geometry_authority)
+                or not authored_matches
+                or not source_authority_matches(authority)
             ):
                 continue
         else:
@@ -3053,27 +3350,57 @@ def _validate_finite_element_repartition_source_composition(
     geometry_entry = context.source_composition.entry(context.geometry_entry_id)
     manifest = geometry_entry.value
     source_view = context.source_geometry_view
-    if (
-        state_entry.structure_id != state.topology_id
-        or geometry_entry.role != "discretization"
-        or not isinstance(manifest, MeshPartManifest)
-        or manifest.source_topology_id != state.topology_id
-        or not manifest.source_geometry_id
-        or manifest.part_id != source_view.part_id
-        or manifest.source_geometry_id != source_view.source_geometry_id
-        or manifest.distribution_id != source_view.distribution_id
-        or manifest.distribution_id != context.migration.source_directory_id
-        or geometry_entry.structure_id != manifest.source_geometry_id
-        or geometry_entry.revision_id != manifest.manifest_id
-        or not any(
-            dependency.entry_id == geometry_entry.entry_id
-            and dependency.facet == "structure"
-            and dependency.bound_id == geometry_entry.structure_id
-            for dependency in state_entry.dependencies
-        )
-    ):
+    if not isinstance(manifest, MeshPartManifest):
         raise ValueError(
-            "Accepted FE state lacks its current compact global geometry authority."
+            "Accepted FE state lacks its current compact global geometry authority: "
+            "the geometry entry is not a mesh-part manifest."
+        )
+    migrated_directory_id = (
+        context.migration.target_directory_id
+        if _finite_element_adapted_in_place_after_migration(context)
+        else context.migration.source_directory_id
+    )
+    stale = tuple(
+        name
+        for name, failed in (
+            ("state-structure", state_entry.structure_id != state.topology_id),
+            ("geometry-role", geometry_entry.role != "discretization"),
+            ("manifest-topology", manifest.source_topology_id != state.topology_id),
+            ("manifest-geometry-missing", not manifest.source_geometry_id),
+            ("manifest-part", manifest.part_id != source_view.part_id),
+            (
+                "manifest-geometry",
+                manifest.source_geometry_id != source_view.source_geometry_id,
+            ),
+            (
+                "manifest-view-directory",
+                manifest.distribution_id != source_view.distribution_id,
+            ),
+            (
+                "manifest-migration-directory",
+                manifest.distribution_id != migrated_directory_id,
+            ),
+            (
+                "geometry-structure",
+                geometry_entry.structure_id != manifest.source_geometry_id,
+            ),
+            ("geometry-revision", geometry_entry.revision_id != manifest.manifest_id),
+            (
+                "state-geometry-dependency",
+                not any(
+                    dependency.entry_id == geometry_entry.entry_id
+                    and dependency.facet == "structure"
+                    and dependency.bound_id == geometry_entry.structure_id
+                    for dependency in state_entry.dependencies
+                ),
+            ),
+        )
+        if failed
+    )
+    if stale:
+        raise ValueError(
+            "Accepted FE state lacks its current compact global geometry authority: "
+            f"{', '.join(stale)}."
         )
     source_source_entry = _finite_element_geometry_source_entry(
         source_view, context.source_composition.entries
@@ -3343,95 +3670,135 @@ def _validate_finite_element_owner_local_topology_preflight(
 ) -> None:
     source_view = context.source_geometry_view
     target_view = context.target_geometry_view
+    migration = context.migration
     if (
         not context.topology_change
         or not isinstance(source_view, OwnerLocalCellGeometry)
         or not isinstance(target_view, OwnerLocalCellGeometry)
-        or not isinstance(context.migration, OwnerLocalGraphMigrationEvidence)
-        or context.migration is not target_view.graph_migration_evidence
-        or context.migration.group_id != context.execution_group.spec.group_id
-        or context.migration.local_rank != context.rank
-        or context.migration.part_count != context.parts
-        or context.migration.source_directory_id != source_view.distribution_id
-        or context.migration.target_directory_id != target_view.distribution_id
-        or context.migration.target_part_id != target_view.part_id
-        or source_view.owner_rank != context.rank
-        or target_view.owner_rank != context.rank
-        or context.source_compiled.form.form_id != context.target_compiled.form.form_id
-        or context.source_compiled.form.field_names
-        != context.target_compiled.form.field_names
-        or tuple(layout.name for layout in context.source_state.field_layouts)
-        != context.source_compiled.form.field_names
-        or context.source_state.field_ownership is None
-        or source_view.source_topology_id != context.source_state.topology_id
-        or source_view.distribution_id
-        != context.source_state.field_ownership[0].distribution_id
-        or target_view.source_topology_id == context.source_state.topology_id
-        or not context.axis_name.strip()
+        or not isinstance(migration, OwnerLocalGraphMigrationEvidence)
     ):
-        raise ValueError("Owner-local FE topology transition inputs are stale.")
-
-
-def _finite_element_owner_local_topology_schema_id(
-    context: _FiniteElementRepartitionContext, /
-) -> str:
-    metadata = _finite_element_owner_local_adaptive_metadata(context.adaptive_result)
-    return canonical_fingerprint(
-        {
-            "kind": "finite-element-owner-local-topology-schema",
-            "state_entry": context.state_entry_id,
-            "source_topology": context.source_geometry_view.source_topology_id,
-            "target_topology": context.target_geometry_view.source_topology_id,
-            "source_geometry": context.global_geometry_id,
-            "target_geometry": context.target_global_geometry_id,
-            "source_directory": context.migration.source_directory_id,
-            "target_directory": context.migration.target_directory_id,
-            "graph_plan": context.migration.result.plan_id,
-            "graph_result": context.migration.result.result_id,
-            "adaptive_candidate": metadata.candidate_id,
-            "field_entries": context.field_ids,
-            "auxiliary_entries": context.auxiliary_ids,
-            "integrator_entries": context.integrator_ids,
-            "material_entry": context.material_entry_id,
-            "retained_entries": tuple(sorted(context.retained)),
-            "invalidated_entries": tuple(sorted(context.invalidated)),
-            "reprepare_entries": tuple(
-                sorted(entry.entry_id for entry in context.reprepared)
+        raise ValueError(
+            "Owner-local FE topology transition inputs are stale: it needs compact "
+            "source/target views and graph migration evidence."
+        )
+    ownership = context.source_state.field_ownership
+    stale = tuple(
+        name
+        for name, failed in (
+            (
+                "migration-evidence",
+                migration is not target_view.graph_migration_evidence,
             ),
-            "field_layouts": tuple(
-                (layout.name, layout.layout_id, layout.transfer_semantics.value)
-                for layout in context.source_state.field_layouts
+            ("group", migration.group_id != context.execution_group.spec.group_id),
+            ("rank", migration.local_rank != context.rank),
+            ("part-count", migration.part_count != context.parts),
+            (
+                "migration-directories",
+                not _finite_element_adapted_in_place_after_migration(context)
+                and (
+                    migration.source_directory_id != source_view.distribution_id
+                    or migration.target_directory_id != target_view.distribution_id
+                    or migration.target_part_id != target_view.part_id
+                ),
             ),
-            "source_auxiliary": _finite_element_restart_layout_schema(
-                context.source_auxiliary_layouts
+            (
+                "view-owner",
+                source_view.owner_rank != context.rank
+                or target_view.owner_rank != context.rank,
             ),
-            "target_auxiliary": _finite_element_restart_layout_schema(
-                context.target_auxiliary_layouts
+            (
+                "form",
+                context.source_compiled.form.form_id
+                != context.target_compiled.form.form_id
+                or context.source_compiled.form.field_names
+                != context.target_compiled.form.field_names,
             ),
-            "source_integrator": _finite_element_restart_layout_schema(
-                context.source_integrator_layouts
+            (
+                "field-layouts",
+                tuple(layout.name for layout in context.source_state.field_layouts)
+                != context.source_compiled.form.field_names,
             ),
-            "target_integrator": _finite_element_restart_layout_schema(
-                context.target_integrator_layouts
+            ("field-ownership", ownership is None),
+            (
+                "source-topology",
+                source_view.source_topology_id != context.source_state.topology_id,
             ),
-            "source_material_plan": (
-                None
-                if context.source_material_plan is None
-                else context.source_material_plan.layout_id
+            (
+                "ownership-directory",
+                ownership is not None
+                and source_view.distribution_id != ownership[0].distribution_id,
             ),
-            "target_material_plan": (
-                None
-                if context.target_material_plan is None
-                else context.target_material_plan.layout_id
+            (
+                "unchanged-topology",
+                target_view.source_topology_id == context.source_state.topology_id,
             ),
-            "source_material_layouts": _finite_element_restart_layout_schema(
-                context.source_manifest.material_layouts
-            ),
-            "target_material_layouts": _finite_element_restart_layout_schema(
-                context.target_material_layouts
-            ),
-        }
+            ("axis", not context.axis_name.strip()),
+        )
+        if failed
     )
+    if stale:
+        raise ValueError(
+            f"Owner-local FE topology transition inputs are stale: {', '.join(stale)}."
+        )
+
+
+def _finite_element_owner_local_topology_schema(
+    context: _FiniteElementRepartitionContext, /
+) -> dict[str, object]:
+    """Group-global declaration schema; rank-local candidate IDs stay out of it."""
+    return {
+        "kind": "finite-element-owner-local-topology-schema",
+        "state_entry": context.state_entry_id,
+        "source_topology": context.source_geometry_view.source_topology_id,
+        "target_topology": context.target_geometry_view.source_topology_id,
+        "source_geometry": context.global_geometry_id,
+        "target_geometry": context.target_global_geometry_id,
+        "source_directory": context.migration.source_directory_id,
+        "target_directory": context.migration.target_directory_id,
+        "graph_plan": context.migration.result.plan_id,
+        "graph_result": context.migration.result.result_id,
+        "field_entries": context.field_ids,
+        "auxiliary_entries": context.auxiliary_ids,
+        "integrator_entries": context.integrator_ids,
+        "material_entry": context.material_entry_id,
+        "retained_entries": tuple(sorted(context.retained)),
+        "invalidated_entries": tuple(sorted(context.invalidated)),
+        "reprepare_entries": tuple(
+            sorted(entry.entry_id for entry in context.reprepared)
+        ),
+        "field_layouts": tuple(
+            (layout.name, layout.layout_id, layout.transfer_semantics.value)
+            for layout in context.source_state.field_layouts
+        ),
+        "source_auxiliary": _finite_element_restart_layout_schema(
+            context.source_auxiliary_layouts
+        ),
+        "target_auxiliary": _finite_element_restart_layout_schema(
+            context.target_auxiliary_layouts
+        ),
+        "source_integrator": _finite_element_restart_layout_schema(
+            context.source_integrator_layouts
+        ),
+        "target_integrator": _finite_element_restart_layout_schema(
+            context.target_integrator_layouts
+        ),
+        "source_material_plan": (
+            None
+            if context.source_material_plan is None
+            else context.source_material_plan.layout_id
+        ),
+        "target_material_plan": (
+            None
+            if context.target_material_plan is None
+            else context.target_material_plan.layout_id
+        ),
+        "source_material_layouts": _finite_element_restart_layout_schema(
+            context.source_manifest.material_layouts
+        ),
+        "target_material_layouts": _finite_element_restart_layout_schema(
+            context.target_material_layouts
+        ),
+    }
 
 
 def _admit_finite_element_owner_local_topology(
@@ -3464,7 +3831,9 @@ def _admit_finite_element_owner_local_topology(
         _validate_finite_element_restart_bank_names(context)
         _validate_finite_element_material_contract(context)
         _validate_finite_element_material_entry(context)
-        context.schema_id = _finite_element_owner_local_topology_schema_id(context)
+        context.schema_id = canonical_fingerprint(
+            _finite_element_owner_local_topology_schema(context)
+        )
 
     error = _validate_finite_element_repartition_collectively(
         context, "topology_schema", validate_schema
@@ -3476,12 +3845,20 @@ def _admit_finite_element_owner_local_topology(
         context.execution_group,
         f"{context.axis_name}_topology_schema",
     )
-    if any(
-        np.asarray(row, dtype=np.uint8).tobytes().hex() != context.schema_id
+    if all(
+        np.asarray(row, dtype=np.uint8).tobytes().hex() == context.schema_id
         for row in rows
     ):
-        return "Owner-local FE topology field/bank schemas differ across ranks."
-    return None
+        return None
+    differing = _owner_group_differing_declarations(
+        _finite_element_owner_local_topology_schema(context),
+        context.execution_group,
+        f"{context.axis_name}_topology_schema_parts",
+    )
+    return (
+        "Owner-local FE topology field/bank schemas differ across ranks: "
+        f"{', '.join(differing)}."
+    )
 
 
 def _admit_finite_element_repartition(
@@ -3670,25 +4047,17 @@ def _migrate_finite_element_fields(
                 {
                     "kind": "finite-element-canonical-dof-state",
                     "field_layout": layout.layout_id,
-                    "identity": source_plan.identity_id,
-                    "source_dof_map": source_plan.dof_map_id,
-                    "target_dof_map": target_plan.dof_map_id,
-                    "source_orientation_action": source_plan.orientation_action_id,
-                    "target_orientation_action": target_plan.orientation_action_id,
-                    "topology": context.source_mesh.topology_id,
-                    "geometry": context.source_mesh.geometry_id,
+                    "source_identity": source_plan.identity_id,
+                    "target_identity": target_plan.identity_id,
+                    "source_topology": context.source_geometry_view.source_topology_id,
+                    "source_geometry": context.global_geometry_id,
                 }
             )
-            target_structure = canonical_fingerprint(
-                {
-                    "kind": "prepared-finite-element-owned-field",
-                    "prepared": context.target_discretization.prepared_id,
-                    "layout": layout.layout_id,
-                    "ownership": target_ownership.ownership_id,
-                }
+            target_structure = _owner_local_target_field_structure(
+                context, layout, target_ownership
             )
             transfer = context.migration.transfer_keyed_values(
-                source_entry,
+                _owner_local_keyed_declaration(context, source_entry),
                 source_ownership.dof_keys,
                 source_ownership.owner_ranks,
                 state.fields[index],
@@ -3855,7 +4224,7 @@ def _validate_finite_element_payload_bank(
             or entry.owner_id != state_entry.owner_id
             or entry.structure_id != source_layout.layout_id
             or entry.revision_id != context.source_manifest.manifest_id
-            or entry.semantics_id != source_layout.layout_id
+            or entry.semantics_id != source_layout.semantics_id
             or _finite_element_payload_identity(entry.value, source_layout)
             != _finite_element_payload_identity(value, source_layout)
         ):
@@ -3872,13 +4241,13 @@ def _validate_finite_element_payload_bank(
                     context,
                     source_ownership,
                     context.source_plans,
-                    context.migration.source_directory_id,
+                    context.source_geometry_view.distribution_id,
                 )
                 or not _finite_element_ownership_matches_plan(
                     context,
                     target_ownership,
                     context.target_plans,
-                    context.migration.target_directory_id,
+                    context.target_geometry_view.distribution_id,
                 )
             ):
                 raise ValueError(
@@ -4000,13 +4369,12 @@ def _transfer_finite_element_payload_bank(
                         "source_layout": source_layout.layout_id,
                         "target_layout": target_layout.layout_id,
                         "field_layout": source_ownership.field_layout_id,
-                        "identity": source_ownership.identity_id,
-                        "source_orientation": source_ownership.orientation_action_id,
-                        "target_orientation": target_ownership.orientation_action_id,
+                        "source_identity": source_ownership.identity_id,
+                        "target_identity": target_ownership.identity_id,
                     }
                 )
                 transfer = context.migration.transfer_keyed_values(
-                    source_entry,
+                    _owner_local_keyed_declaration(context, source_entry),
                     source_ownership.dof_keys,
                     source_ownership.owner_ranks,
                     source_value,
@@ -4340,11 +4708,8 @@ def _stage_finite_element_state_transport(
     staged[source_entry.entry_id] = target_state_entry
     transports: list[CompositionTransport] = []
     field_transfers = _active_finite_element_field_transfers(context)
-    target_field_revision = (
-        target_state_entry.revision_id
-        if context.topology_change
-        else target_state.accepted_id
-    )
+    # Field sidecars bind the accepted state they belong to: its structure and
+    # accepted ID (the source-composition contract every later transition checks).
     for source_field, transfer in zip(
         context.field_source_entries, field_transfers, strict=True
     ):
@@ -4353,18 +4718,19 @@ def _stage_finite_element_state_transport(
             entry_id=source_field.entry_id,
             role=source_field.role,
             owner_id=source_field.owner_id,
-            structure_id=transfer.target_structure_id,
-            revision_id=target_field_revision,
+            structure_id=target_state_entry.structure_id,
+            revision_id=target_state.accepted_id,
             semantics_id=source_field.semantics_id,
             dependencies=_finite_element_target_dependencies(
                 context, source_field, staged
             ),
         )
         transports.append(
-            transfer.composition_transport(
+            _finite_element_keyed_transport(
+                transfer,
                 source_field,
                 target_field,
-                target_revision_id=target_state_entry.revision_id,
+                target_revision_id=target_state.accepted_id,
             )
         )
         staged[source_field.entry_id] = target_field
@@ -4454,10 +4820,24 @@ def _stage_finite_element_aggregate_transport(
                 transfer.target_owner_map_id
                 for transfer in (*field_transfers, *payload_transfers)
             ],
+            "source_root": source_root,
+            "target_root": target_root,
         }
     )
+    # A topology change remaps the accepted state onto new entities: content is
+    # not row-preserved, so the per-field evidence carries the conservation
+    # claims. A fixed-topology repartition moves exact rows and pairs its roots.
     context.transports.append(
         CompositionTransport(
+            "physical-remap",
+            (state_entry.entry_id,),
+            (target_state_entry,),
+            source_structure_ids=(state_entry.structure_id,),
+            route_id=route_id,
+            successful=jnp.asarray(True),
+        )
+        if context.topology_change
+        else CompositionTransport(
             "ownership-migration",
             (state_entry.entry_id,),
             (target_state_entry,),
@@ -4544,8 +4924,8 @@ def _stage_finite_element_payload_transports(
             ),
         )
         if transfer is not None:
-            transport = transfer.composition_transport(
-                source, target, target_revision_id=target_manifest.manifest_id
+            transport = _finite_element_keyed_transport(
+                transfer, source, target, target_revision_id=target_manifest.manifest_id
             )
         else:
             transport = CompositionTransport(
