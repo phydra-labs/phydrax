@@ -15,7 +15,6 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import (
     rational_bspline_curve_spans,
-    rational_bspline_surface_spans,
 )
 from ..._strict import StrictModule
 from ...discretization._exact_algebraic_geometry import (
@@ -2109,18 +2108,7 @@ def _bspline_boundary_line_lift(
         tuple(Fraction.from_float(float(value)) for value in box[:, axis])
         for axis in range(2)
     )
-    spans = rational_bspline_surface_spans(
-        np.asarray(patch.control_points, dtype=np.float64).tolist(),
-        np.asarray(patch.weights, dtype=np.float64).tolist(),
-        np.asarray(patch.u_knots, dtype=np.float64).tolist(),
-        np.asarray(patch.v_knots, dtype=np.float64).tolist(),
-        patch.u_degree,
-        patch.v_degree,
-        exact_control_points=patch.exact_control_points,
-        exact_weights=patch.exact_weights,
-        exact_u_knots=patch.exact_u_knots,
-        exact_v_knots=patch.exact_v_knots,
-    )
+    spans = patch.rational_spans()
     for fixed_axis in range(2):
         free_axis = 1 - fixed_axis
         fixed_value = chart_origin[fixed_axis]
@@ -2510,18 +2498,7 @@ def _exact_spline_surface_boundary_spans(
     from ._tspline import TSplineSurfacePatch
 
     if isinstance(patch, BSplineSurfacePatch):
-        spans = rational_bspline_surface_spans(
-            np.asarray(patch.control_points, dtype=np.float64).tolist(),
-            np.asarray(patch.weights, dtype=np.float64).tolist(),
-            np.asarray(patch.u_knots, dtype=np.float64).tolist(),
-            np.asarray(patch.v_knots, dtype=np.float64).tolist(),
-            patch.u_degree,
-            patch.v_degree,
-            exact_control_points=patch.exact_control_points,
-            exact_weights=patch.exact_weights,
-            exact_u_knots=patch.exact_u_knots,
-            exact_v_knots=patch.exact_v_knots,
-        )
+        spans = patch.rational_spans()
         exact_knots = (patch.exact_u_knots, patch.exact_v_knots)
         degrees = (patch.u_degree, patch.v_degree)
         counts = (len(patch.exact_control_points), len(patch.exact_control_points[0]))

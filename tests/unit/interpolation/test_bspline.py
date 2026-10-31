@@ -679,7 +679,10 @@ def test_exact_rational_curve_span_enclosures_include_two_derivatives() -> None:
     assert full.positive_denominator
     assert full.denominator_bounds == (Fraction(1), Fraction(2))
     restricted = span.enclose((Fraction(1, 4), Fraction(1, 2)))
-    assert restricted.denominator_bounds == (Fraction(5, 4), Fraction(3, 2))
+    # Outward-rounded interval restriction contains the exact hull tightly.
+    restricted_lower, restricted_upper = restricted.denominator_bounds
+    assert restricted_lower <= Fraction(5, 4) < restricted_lower + Fraction(1, 2**40)
+    assert restricted_upper - Fraction(1, 2**40) < Fraction(3, 2) <= restricted_upper
     nonbinary_spans = rational_bspline_curve_spans(
         ((Fraction(0),), (Fraction(2),), (Fraction(4),)),
         (Fraction(1), Fraction(2), Fraction(3)),
@@ -1052,7 +1055,7 @@ def test_exact_surface_spans_preserve_subfloat_source_coefficients() -> None:
 def test_interval_span_restriction_contains_exact_restricted_nets() -> None:
     from phydrax._interpolation._bspline_extraction import (
         _bernstein_restrict,
-        _interval_net,
+        _interval_tensor_stack,
         _interval_tensor_restrict,
     )
 
@@ -1103,9 +1106,10 @@ def test_interval_span_restriction_contains_exact_restricted_nets() -> None:
         )
         for net in nets:
             exact = exact_restrict(net, lower_u, upper_u, lower_v, upper_v)
-            lower, upper = _interval_tensor_restrict(
-                _interval_net(net), lower_u, upper_u, lower_v, upper_v
+            stacked_lower, stacked_upper = _interval_tensor_restrict(
+                _interval_tensor_stack((net,)), lower_u, upper_u, lower_v, upper_v
             )
+            lower, upper = stacked_lower[..., 0], stacked_upper[..., 0]
             assert lower.shape == upper.shape == (len(exact), len(exact[0]))
             for row, exact_row in enumerate(exact):
                 for column, value in enumerate(exact_row):

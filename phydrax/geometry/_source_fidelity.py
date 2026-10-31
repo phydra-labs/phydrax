@@ -3853,9 +3853,7 @@ class _DerivativeCache:
         self.enclosures: dict[
             tuple[int, Triangle2], tuple[RationalBSplineSurfaceHessianEnclosure, ...]
         ] = {}
-        self.normal_nets: dict[
-            tuple[int, tuple[int, int]], tuple[_IntervalNet, _IntervalNet, _IntervalNet]
-        ] = {}
+        self.normal_nets: dict[tuple[int, tuple[int, int]], _IntervalNet] = {}
 
     def patch_spans(
         self, patch: int, surface: AbstractSurfacePatch, /
@@ -3900,8 +3898,8 @@ class _DerivativeCache:
         spans: tuple[RationalBSplineSurfaceSpan, ...],
         span_indices: tuple[int, int],
         /,
-    ) -> tuple[_IntervalNet, _IntervalNet, _IntervalNet]:
-        """Interval Bernstein nets of ``N_u x N_v``, positively parallel to ``S_u x S_v``.
+    ) -> _IntervalNet:
+        """Stacked interval Bernstein net of ``N_u x N_v``, parallel to ``S_u x S_v``.
 
         A rational span's first derivatives are ``N_u / W**2`` and ``N_v / W**2``
         with ``W > 0``, so the polynomial cross product of the derivative
@@ -3911,7 +3909,7 @@ class _DerivativeCache:
         nets = self.normal_nets.get(key)
         if nets is None:
             from .._interpolation._bspline_extraction import (
-                _interval_net,
+                _interval_tensor_stack,
                 _tensor_bernstein_linear_combination,
                 _tensor_bernstein_product,
             )
@@ -3935,10 +3933,8 @@ class _DerivativeCache:
                     )
                 )
 
-            nets = (
-                _interval_net(component(1, 2)),
-                _interval_net(component(2, 0)),
-                _interval_net(component(0, 1)),
+            nets = _interval_tensor_stack(
+                (component(1, 2), component(2, 0), component(0, 1))
             )
             self.normal_nets[key] = nets
         return nets
@@ -3970,35 +3966,91 @@ class _DerivativeCache:
             (lower_u, upper_u), (lower_v, upper_v) = enclosure.parameter_bounds
             width_u = span_upper_u - span_lower_u
             width_v = span_upper_v - span_lower_v
-            restricted = tuple(
-                _interval_tensor_restrict(
-                    net,
-                    (lower_u - span_lower_u) / width_u,
-                    (upper_u - span_lower_u) / width_u,
-                    (lower_v - span_lower_v) / width_v,
-                    (upper_v - span_lower_v) / width_v,
-                )
-                for net in nets
-            )
             # Each restricted control vector lies in its outward interval box.
-            lowers = np.stack([net[0] for net in restricted], axis=-1)
-            uppers = np.stack([net[1] for net in restricted], axis=-1)
+            lowers, uppers = _interval_tensor_restrict(
+                nets,
+                (lower_u - span_lower_u) / width_u,
+                (upper_u - span_lower_u) / width_u,
+                (lower_v - span_lower_v) / width_v,
+                (upper_v - span_lower_v) / width_v,
+            )
             if orientation < 0:
                 lowers, uppers = -uppers, -lowers
             if not (np.all(np.isfinite(lowers)) and np.all(np.isfinite(uppers))):
                 return None
-            for lower_row, upper_row in zip(lowers, uppers, strict=True):
-                for lower_vector, upper_vector in zip(lower_row, upper_row, strict=True):
-                    intervals = tuple(
-                        (Fraction(float(low)), Fraction(float(high)))
-                        for low, high in zip(lower_vector, upper_vector, strict=True)
-                    )
-                    cosine = _normal_cosine_interval_bounds(intervals, target)
-                    if cosine is None or cosine[0] <= 0:
-                        return None
-                    if cosine_lower is None or cosine[0] < cosine_lower:
-                        cosine_lower = cosine[0]
+            lowers, uppers = lowers.reshape((-1, 3)), uppers.reshape((-1, 3))
+            for row in _cone_cosine_candidates(lowers, uppers, target):
+                intervals = tuple(
+                    (Fraction(float(low)), Fraction(float(high)))
+                    for low, high in zip(lowers[row], uppers[row], strict=True)
+                )
+                cosine = _normal_cosine_interval_bounds(intervals, target)
+                if cosine is None or cosine[0] <= 0:
+                    return None
+                if cosine_lower is None or cosine[0] < cosine_lower:
+                    cosine_lower = cosine[0]
         return cosine_lower
+
+
+# Binary64 evaluation of the cone cosine formula differs from its rational
+# value by a few units of roundoff relative to the Cauchy-Schwarz scale one;
+# this margin exceeds that error by many orders of magnitude.
+_CONE_SCREEN_MARGIN = 1.0e-9
+_CONE_SCREEN_NORM_FLOOR = 1.0e-150
+
+
+def _cone_cosine_candidates(
+    lowers: np.ndarray,
+    uppers: np.ndarray,
+    target: tuple[tuple[Fraction, Fraction], ...],
+    /,
+) -> np.ndarray:
+    """Rows whose exact cone cosine can attain the minimum or refuse the cone.
+
+    ``_normal_cosine_interval_bounds`` is evaluated for every control vector in
+    binary64. Only rows within the screening margin of the smallest value, or
+    whose norm or cosine is near zero, can decide the exact minimum or a
+    refusal; those rows are re-evaluated exactly.
+    """
+    target_lower = np.asarray([float(low) for low, _ in target], dtype=np.float64)
+    target_upper = np.asarray([float(high) for _, high in target], dtype=np.float64)
+    products = np.stack(
+        (
+            lowers * target_lower,
+            lowers * target_upper,
+            uppers * target_lower,
+            uppers * target_upper,
+        )
+    )
+    dot_lower = np.sum(np.min(products, axis=0), axis=-1)
+
+    def norms(low: np.ndarray, high: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+        magnitude_low = np.where(
+            (low <= 0.0) & (high >= 0.0), 0.0, np.minimum(np.abs(low), np.abs(high))
+        )
+        magnitude_high = np.maximum(np.abs(low), np.abs(high))
+        return (
+            np.sqrt(np.sum(magnitude_low**2, axis=-1)),
+            np.sqrt(np.sum(magnitude_high**2, axis=-1)),
+        )
+
+    source_low, source_high = norms(lowers, uppers)
+    target_low, target_high = norms(target_lower, target_upper)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cosine = np.where(
+            dot_lower >= 0.0,
+            dot_lower / (source_high * target_high),
+            dot_lower / (source_low * target_low),
+        )
+    uncertain = (
+        ~np.isfinite(cosine)
+        | (source_low <= _CONE_SCREEN_NORM_FLOOR)
+        | (cosine <= _CONE_SCREEN_MARGIN)
+    )
+    if np.all(uncertain):
+        return np.arange(cosine.size)
+    certain_minimum = np.min(cosine[~uncertain])
+    return np.flatnonzero(uncertain | (cosine <= certain_minimum + _CONE_SCREEN_MARGIN))
 
 
 def _span_jacobian_bounds(

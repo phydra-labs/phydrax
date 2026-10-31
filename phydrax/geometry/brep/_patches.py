@@ -26,6 +26,8 @@ from ..._interpolation import (
     bspline_jet_stencil,
     rational_bspline_curve_spans,
     rational_bspline_surface_spans,
+    RationalBSplineCurveSpan,
+    RationalBSplineSurfaceSpan,
     RationalSplineJet,
     TensorBSplineJetPlan,
 )
@@ -1497,19 +1499,7 @@ class OffsetCurve(AbstractCurve):
         ):
             return True
         base = self.base
-        spans = (
-            rational_bspline_curve_spans(
-                np.asarray(base.control_points).tolist(),
-                np.asarray(base.weights).tolist(),
-                np.asarray(base.knots).tolist(),
-                base.degree,
-                exact_control_points=base.exact_control_points,
-                exact_weights=base.exact_weights,
-                exact_knots=base.exact_knots,
-            )
-            if isinstance(base, BSplineCurve)
-            else ()
-        )
+        spans = base.rational_spans() if isinstance(base, BSplineCurve) else ()
 
         def derivative(parameter: Array, /) -> Array:
             return jax.jvp(
@@ -5177,6 +5167,11 @@ def _exact_bspline_source_bank(
             raise ValueError(f"{name} does not match its numeric realization.")
     return bank
 
+# Exact span extraction of a high-degree source dominates repeated source
+# enclosure queries; spans are shared per complete source definition.
+_SURFACE_SPAN_CAPACITY = 64
+_SURFACE_SPANS: dict[str, tuple[RationalBSplineSurfaceSpan, ...]] = {}
+
 
 class BSplineSurfacePatch(AbstractSurfacePatch):
     """Tensor-product rational B-spline surface with expanded knot vectors."""
@@ -5409,6 +5404,37 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
             np.count_nonzero(knots == knot) >= degree for knot in np.unique(interior)
         )
 
+    def rational_spans(self) -> tuple[RationalBSplineSurfaceSpan, ...]:
+        """Exact rational Bernstein spans with Hessian nets, extracted once per definition.
+
+        Exact consumers restrict these spans instead of re-extracting them;
+        each span prepares its interval nets on first use and keeps them.
+        The bank is keyed by the complete source definition, so equal sources
+        rebuilt as new patch values share one extraction.
+        """
+        from ._carrier_pieces import carrier_payload
+
+        key = canonical_fingerprint(carrier_payload(self))
+        spans = _SURFACE_SPANS.get(key)
+        if spans is None:
+            spans = rational_bspline_surface_spans(
+                np.asarray(self.control_points, dtype=np.float64).tolist(),
+                np.asarray(self.weights, dtype=np.float64).tolist(),
+                np.asarray(self.u_knots, dtype=np.float64).tolist(),
+                np.asarray(self.v_knots, dtype=np.float64).tolist(),
+                self.u_degree,
+                self.v_degree,
+                exact_control_points=self.exact_control_points,
+                exact_weights=self.exact_weights,
+                exact_u_knots=self.exact_u_knots,
+                exact_v_knots=self.exact_v_knots,
+                include_hessian=True,
+            )
+            if len(_SURFACE_SPANS) >= _SURFACE_SPAN_CAPACITY:
+                del _SURFACE_SPANS[next(iter(_SURFACE_SPANS))]
+            _SURFACE_SPANS[key] = spans
+        return spans
+
     def _evaluate_one(self, parameters: Array) -> Array:
         u_stencil = bspline_jet_stencil(
             self.u_knots,
@@ -5444,18 +5470,7 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
             tuple(Fraction.from_float(float(value)) for value in box[:, axis])
             for axis in range(2)
         )
-        spans = rational_bspline_surface_spans(
-            np.asarray(self.control_points, dtype=np.float64).tolist(),
-            np.asarray(self.weights, dtype=np.float64).tolist(),
-            np.asarray(self.u_knots, dtype=np.float64).tolist(),
-            np.asarray(self.v_knots, dtype=np.float64).tolist(),
-            self.u_degree,
-            self.v_degree,
-            exact_control_points=self.exact_control_points,
-            exact_weights=self.exact_weights,
-            exact_u_knots=self.exact_u_knots,
-            exact_v_knots=self.exact_v_knots,
-        )
+        spans = self.rational_spans()
         component_bounds: list[list[list[tuple[Fraction, Fraction]]]] = [
             [[], []] for _ in range(3)
         ]
@@ -5503,6 +5518,10 @@ def _bspline_surface_evaluate(surface: BSplineSurfacePatch, parameters: Array, /
     leading = parameters.shape[:-1]
     values = jax.vmap(surface._evaluate_one)(parameters.reshape((-1, 2)))
     return values.reshape((*leading, 3))
+
+
+_CURVE_SPAN_CAPACITY = 256
+_CURVE_SPANS: dict[str, tuple[RationalBSplineCurveSpan, ...]] = {}
 
 
 class BSplineCurve(AbstractCurve):
@@ -5622,6 +5641,31 @@ class BSplineCurve(AbstractCurve):
             float(self.knots[self.control_points.shape[0]]),
         )
 
+    def rational_spans(self) -> tuple[RationalBSplineCurveSpan, ...]:
+        """Exact rational Bernstein spans, extracted once per source definition.
+
+        Exact consumers restrict these spans instead of re-extracting them;
+        each span prepares its interval nets on first use and keeps them.
+        """
+        from ._carrier_pieces import carrier_payload
+
+        key = canonical_fingerprint(carrier_payload(self))
+        spans = _CURVE_SPANS.get(key)
+        if spans is None:
+            spans = rational_bspline_curve_spans(
+                np.asarray(self.control_points).tolist(),
+                np.asarray(self.weights).tolist(),
+                np.asarray(self.knots).tolist(),
+                self.degree,
+                exact_control_points=self.exact_control_points,
+                exact_weights=self.exact_weights,
+                exact_knots=self.exact_knots,
+            )
+            if len(_CURVE_SPANS) >= _CURVE_SPAN_CAPACITY:
+                del _CURVE_SPANS[next(iter(_CURVE_SPANS))]
+            _CURVE_SPANS[key] = spans
+        return spans
+
     def is_c1_on(self, first: float, last: float, /) -> bool:
         if not super().is_c1_on(first, last):
             return False
@@ -5632,22 +5676,13 @@ class BSplineCurve(AbstractCurve):
         )
 
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
-        from ..._interpolation import rational_bspline_curve_spans
         from .._rational import fraction_down, fraction_up
 
         if not np.isfinite(first) or not np.isfinite(last) or first > last:
             raise ValueError("BSplineCurve bounds must be finite and ordered.")
         lower = Fraction.from_float(float(first))
         upper = Fraction.from_float(float(last))
-        spans = rational_bspline_curve_spans(
-            np.asarray(self.control_points).tolist(),
-            np.asarray(self.weights).tolist(),
-            np.asarray(self.knots).tolist(),
-            self.degree,
-            exact_control_points=self.exact_control_points,
-            exact_weights=self.exact_weights,
-            exact_knots=self.exact_knots,
-        )
+        spans = self.rational_spans()
         component_bounds: list[list[tuple[Fraction, Fraction]]] = [
             [] for _ in range(self.ambient_dimension)
         ]
@@ -5690,15 +5725,7 @@ class BSplineCurve(AbstractCurve):
                 "A derivative bound across a non-C1 B-spline knot is unsupported."
             )
         lower, upper = Fraction.from_float(float(first)), Fraction.from_float(float(last))
-        spans = rational_bspline_curve_spans(
-            np.asarray(self.control_points).tolist(),
-            np.asarray(self.weights).tolist(),
-            np.asarray(self.knots).tolist(),
-            self.degree,
-            exact_control_points=self.exact_control_points,
-            exact_weights=self.exact_weights,
-            exact_knots=self.exact_knots,
-        )
+        spans = self.rational_spans()
         component_bounds: list[list[tuple[Fraction, Fraction]]] = [
             [] for _ in range(self.ambient_dimension)
         ]
@@ -5750,12 +5777,18 @@ class BSplineCurve(AbstractCurve):
         return RationalSplineJet(plan, self.weights).apply(self.control_points)
 
     def evaluate(self, parameters: Array, /) -> Array:
-        parameters_ = jnp.asarray(parameters, dtype=self.control_points.dtype)
-        if parameters_.ndim == 0:
-            return self._evaluate_one(parameters_)
-        return jax.vmap(self._evaluate_one)(parameters_.reshape((-1,))).reshape(
-            (*parameters_.shape, self.control_points.shape[1])
+        return _bspline_curve_evaluate(
+            self, jnp.asarray(parameters, dtype=self.control_points.dtype)
         )
+
+
+@eqx.filter_jit
+def _bspline_curve_evaluate(curve: BSplineCurve, parameters: Array, /) -> Array:
+    """Compiled rational B-spline curve evaluation; eager tracing dominates queries."""
+    if parameters.ndim == 0:
+        return curve._evaluate_one(parameters)
+    values = jax.vmap(curve._evaluate_one)(parameters.reshape((-1,)))
+    return values.reshape((*parameters.shape, curve.control_points.shape[1]))
 
 
 type BRepCurve = AbstractCurve
