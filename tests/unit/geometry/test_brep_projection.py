@@ -299,6 +299,35 @@ def test_closed_revolution_containment_is_exact_with_unresolved_boundary(
     assert np.asarray(located.dimensions).tolist() == [3] * len(inside)
 
 
+def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
+    # From the axis point (0, 0, 1) the first ray direction meets the cylinder
+    # exactly on the top rim (height 1 + sqrt(2) * sqrt(3) / sqrt(6) = 2); that
+    # ray is not decisive, the next transversal direction decides containment.
+    model = model_from_occt_shape(
+        BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape(),
+        coordinate_contract=_CONTRACT,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1, angular_deflection=0.3
+        ),
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+
+    def contains(points: Any) -> list[bool | None]:
+        return [
+            projection._contains_solid(np.asarray(point, dtype=np.float64), 0)
+            for point in points
+        ]
+
+    inside = ((0.0, 0.0, 1.0), (0.5, 0.0, 1.0), (0.0, 0.0, 0.5), (-0.3, 0.4, 1.9))
+    outside = ((0.0, 0.0, 3.0), (0.0, 0.0, -1.0), (2.0, 0.0, 1.0), (0.0, 1.5, 2.0))
+    boundary = ((0.0, 0.0, 2.0), (0.0, 0.0, 0.0), (1.0, 0.0, 1.0), (0.5, 0.0, 2.0))
+    assert contains(inside) == [True] * len(inside)
+    assert contains(outside) == [False] * len(outside)
+    assert contains(boundary) == [None] * len(boundary)
+    located = projection.locate_solids(np.asarray(inside, dtype=np.float64))
+    assert np.asarray(located.status).tolist() == [_STATUS.UNIQUE] * len(inside)
+
+
 def test_brep_projection_scenario_2() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     model = model_from_occt_shape(
@@ -339,6 +368,12 @@ def test_brep_projection_scenario_2() -> None:
 
     np.testing.assert_allclose(edge.points, [[2**-0.5, 2**-0.5]])
     np.testing.assert_allclose(edge.residuals, [1.0 - 2**-0.5])
+    # The edge frame survives the planar embedding: one unit in-plane tangent
+    # orthogonal to the radius, the unused second tangent stays undefined.
+    tangent = np.asarray(edge.tangents)[0]
+    np.testing.assert_allclose(np.abs(tangent[0]), [2**-0.5, 2**-0.5])
+    assert tangent[0] @ np.asarray(edge.points)[0] == pytest.approx(0.0, abs=1e-12)
+    assert np.all(np.isnan(tangent[1]))
     # Inside the hole the trimmed face's closest point lies on the hole boundary.
     np.testing.assert_allclose(face.points, [[2**-0.5, 2**-0.5], [1.5, 0.0]])
     np.testing.assert_allclose(face.residuals, [1.0 - 2**-0.5, 0.0], atol=1e-12)

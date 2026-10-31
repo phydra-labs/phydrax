@@ -10,10 +10,13 @@ from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations
 
+import numpy as np
+
 from ..discretization._cell_geometry import _coordinate_coefficient_identity
 from ..discretization._coordinate_enclosure import (
     add,
     bernstein_coefficients,
+    bernstein_degree,
     BernsteinDomain,
     derivative,
     evaluate_expression,
@@ -232,7 +235,172 @@ def prove_mapped_cell_injective(
         controls = _positive_definite_controls(projected_jacobian, domain, dimension)
         if controls is not None:
             return MappedInjectivityWitness(rows, projection_matrix, controls)
+    # The centroid preconditioner fails on strongly curved cells; search a constant
+    # preconditioner against the Jacobian's own Bernstein control matrices.
+    for rows in combinations(range(ambient), dimension):
+        matrices = jacobian_control_matrices(
+            tuple(
+                tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
+            ),
+            domain,
+            dimension,
+        )
+        found = None if matrices is None else monotone_preconditioner(matrices)
+        if found is not None:
+            return MappedInjectivityWitness(rows, found[0], found[1])
     return None
 
 
-__all__ = ["MappedInjectivityWitness", "prove_mapped_cell_injective"]
+_ExactMatrix = tuple[tuple[ExactScalar, ...], ...]
+
+
+def jacobian_control_matrices(
+    jacobian: tuple[tuple[Expression, ...], ...],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[_ExactMatrix, ...] | None:
+    """Bernstein control matrices of a square polynomial Jacobian at one degree.
+
+    Every value of the Jacobian on the domain is a convex combination of these
+    matrices (all entries share the elevated degree and control index).
+    """
+    entries = [entry for row in jacobian for entry in row if isinstance(entry, dict)]
+    if len(entries) != sum(len(row) for row in jacobian):
+        return None
+    degrees = [bernstein_degree(entry, domain, dimension) for entry in entries]
+    degree = tuple(max(values) for values in zip(*degrees, strict=True))
+    columns = [
+        bernstein_coefficients(entry, domain, dimension, degree=degree)
+        for entry in entries
+    ]
+    size = len(jacobian)
+    return tuple(
+        tuple(
+            tuple(columns[row * size + column][index] for column in range(size))
+            for row in range(size)
+        )
+        for index in range(len(columns[0]))
+    )
+
+
+def _exact_determinant(matrix: _ExactMatrix, /) -> ExactScalar:
+    if len(matrix) == 1:
+        return matrix[0][0]
+    total: ExactScalar = Fraction(0)
+    for column, value in enumerate(matrix[0]):
+        minor = tuple(
+            tuple(entry for index, entry in enumerate(row) if index != column)
+            for row in matrix[1:]
+        )
+        term = value * _exact_determinant(minor)
+        total = total + term if column % 2 == 0 else total - term
+    return total
+
+
+def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
+    """Unit-norm ``M`` maximizing the least eigenvalue of every ``sym(M C_k)``.
+
+    The objective is concave in ``M``; candidates are the inverses of the mean
+    and of each control, refined by soft-min supergradient ascent. Floats only
+    propose ``M``; the caller decides positivity exactly.
+    """
+    if not np.all(np.isfinite(controls)):
+        return None
+
+    def margins(matrix: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+        products = matrix @ controls
+        values, vectors = np.linalg.eigh(0.5 * (products + np.swapaxes(products, 1, 2)))
+        return values[:, 0], vectors[:, :, 0]
+
+    starts = []
+    for matrix in (controls.mean(axis=0), *controls):
+        try:
+            inverse = np.linalg.inv(matrix)
+        except np.linalg.LinAlgError:
+            continue
+        if np.all(np.isfinite(inverse)):
+            starts.append(inverse / np.linalg.norm(inverse))
+    if not starts:
+        return None
+    current = max(starts, key=lambda matrix: float(np.min(margins(matrix)[0])))
+    best, best_margin = current, float(np.min(margins(current)[0]))
+    for step in range(400):
+        if best_margin > 0.0 and step >= 50:
+            break
+        values, vectors = margins(current)
+        spread = max(float(np.ptp(values)), 1.0e-12)
+        weights = np.exp(-(values - values.min()) / (0.05 * spread))
+        weights /= weights.sum()
+        gradient = np.einsum(
+            "k,ki,kj->ij", weights, vectors, np.einsum("kij,kj->ki", controls, vectors)
+        )
+        current = current + 0.2 / np.sqrt(1.0 + step) * gradient
+        current = current / np.linalg.norm(current)
+        margin = float(np.min(margins(current)[0]))
+        if margin > best_margin:
+            best, best_margin = current, margin
+    return best if best_margin > 0.0 else None
+
+
+def monotone_preconditioner(
+    controls: tuple[_ExactMatrix, ...], /
+) -> tuple[_ExactMatrix, tuple[tuple[str, ...], ...]] | None:
+    """An exact ``M`` with ``sym(M C)`` positive definite at every control ``C``.
+
+    The positive definite cone is convex, so ``sym(M J(x))`` is then positive
+    definite for every convex combination ``J(x)`` of the controls. Returns
+    ``M`` with the leading principal minors of every ``sym(M C)`` (per size).
+    """
+    if not controls:
+        return None
+    size = len(controls[0])
+    proposal = _float_search_preconditioner(
+        np.asarray(
+            [[[float(value) for value in row] for row in matrix] for matrix in controls],
+            dtype=np.float64,
+        )
+    )
+    if proposal is None:
+        return None
+    scale = float(np.max(np.abs(proposal)))
+    matrix: _ExactMatrix = tuple(
+        tuple(Fraction(round(float(value) / scale * 2.0**30)) for value in row)
+        for row in proposal
+    )
+    minors: list[list[str]] = [[] for _ in range(size)]
+    for control in controls:
+        product = tuple(
+            tuple(
+                sum(
+                    (
+                        matrix[row][inner] * control[inner][column]
+                        for inner in range(size)
+                    ),
+                    Fraction(0),
+                )
+                for column in range(size)
+            )
+            for row in range(size)
+        )
+        symmetric = tuple(
+            tuple(
+                (product[row][column] + product[column][row]) / 2
+                for column in range(size)
+            )
+            for row in range(size)
+        )
+        for order in range(1, size + 1):
+            minor = _exact_determinant(tuple(row[:order] for row in symmetric[:order]))
+            if _sign(minor) <= 0:
+                return None
+            minors[order - 1].append(repr(_coordinate_coefficient_identity(minor)))
+    return matrix, tuple(tuple(values) for values in minors)
+
+
+__all__ = [
+    "jacobian_control_matrices",
+    "MappedInjectivityWitness",
+    "monotone_preconditioner",
+    "prove_mapped_cell_injective",
+]
