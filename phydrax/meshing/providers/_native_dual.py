@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from typing import final
@@ -25,7 +26,20 @@ from ...discretization._cell_geometry import ScalarCoordinateElement
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._cell_locator import CellLocationStatus
 from ...discretization._cell_mesh import SimplicialConnectivity
-from ...discretization._coordinate_enclosure import evaluate_expression
+from ...discretization._coordinate_enclosure import (
+    add,
+    axes,
+    bernstein_coefficients,
+    compose_expression,
+    constant,
+    coordinate_map_expressions,
+    CoordinateSourceBank,
+    derivative,
+    evaluate_expression,
+    expression_equal,
+    RationalPolynomial,
+    scale,
+)
 from ...discretization._exact_algebraic_geometry import rational_coefficient
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._mapped_locator import PreparedMappedCellLocator
@@ -1950,11 +1964,203 @@ def _reference_face_coordinates(
     raise ValueError("Reference face frame is singular.")
 
 
+type _ReferencePoint = tuple[Fraction, ...]
+
+# Largest per-axis refinement of one twisted quadrilateral face piece bank.
+_MAXIMUM_FACE_SUBDIVISIONS = 64
+
+
+def _bilinear_point(
+    corners: tuple[_ReferencePoint, ...], a: Fraction, b: Fraction, /
+) -> _ReferencePoint:
+    weights = ((1 - a) * (1 - b), a * (1 - b), a * b, (1 - a) * b)
+    return tuple(
+        sum(
+            (
+                weight * corner[axis]
+                for weight, corner in zip(weights, corners, strict=True)
+            ),
+            Fraction(0),
+        )
+        for axis in range(len(corners[0]))
+    )
+
+
+def _require_bilinear_face_chart(
+    chart: tuple[ExactReferenceChartExpression, ...] | None,
+    reference: tuple[_ReferencePoint, ...],
+    parent: tuple[_ReferencePoint, ...],
+    /,
+) -> None:
+    """Prove a child chart restricts to its quadrilateral face bilinearly."""
+    if any(
+        reference[2][axis] != reference[1][axis] + reference[3][axis] - reference[0][axis]
+        for axis in range(3)
+    ):
+        raise ValueError("Reference quadrilateral faces must be parallelograms.")
+    if chart is None:
+        # Corner-interpolating hexahedron and pyramid maps are bilinear on
+        # their quadrilateral faces.
+        return
+    a, b = axes(2)
+    face_parameters = tuple(
+        add(
+            add(
+                constant(reference[0][axis], 2),
+                scale(a, reference[1][axis] - reference[0][axis]),
+            ),
+            scale(b, reference[3][axis] - reference[0][axis]),
+        )
+        for axis in range(3)
+    )
+    twist_monomial: dict[tuple[int, ...], Fraction] = {(1, 1): Fraction(1)}
+    for axis, expression in enumerate(chart):
+        bilinear = add(
+            add(
+                add(
+                    constant(parent[0][axis], 2),
+                    scale(a, parent[1][axis] - parent[0][axis]),
+                ),
+                scale(b, parent[3][axis] - parent[0][axis]),
+            ),
+            scale(
+                twist_monomial,
+                parent[0][axis] - parent[1][axis] + parent[2][axis] - parent[3][axis],
+            ),
+        )
+        if not expression_equal(
+            compose_expression(expression, face_parameters), bilinear
+        ):
+            raise ValueError(
+                "A restricted quadrilateral boundary face is not bilinear in its parent."
+            )
+
+
+def _cell_map_lipschitz_squared(
+    element: ScalarCoordinateElement,
+    local: CoordinateSourceBank,
+    row: int,
+    /,
+) -> Fraction:
+    """Bound the squared spectral norm of a simplex cell map's Jacobian.
+
+    Each exact Jacobian entry is enclosed by its largest absolute Bernstein
+    coefficient on the reference simplex; their squared sum bounds the
+    Frobenius, hence spectral, norm.
+    """
+    total = Fraction(0)
+    for expression in coordinate_map_expressions(element, local, cell_row=row):
+        if isinstance(expression, RationalPolynomial):
+            raise ValueError(
+                "Twisted restricted boundary faces require polynomial scaffold maps."
+            )
+        for axis in range(3):
+            controls = tuple(
+                rational_coefficient(value, role="Scaffold Jacobian control")
+                for value in bernstein_coefficients(
+                    derivative(expression, axis), "simplex", 3
+                )
+            )
+            largest = max((abs(value) for value in controls), default=Fraction(0))
+            total += largest * largest
+    return total
+
+
+def _bilinear_face_subdivisions(
+    lipschitz_squared: Fraction, twist_squared: Fraction, tolerance: float | None, /
+) -> int:
+    """Smallest dyadic refinement keeping twisted-face pieces within tolerance/2.
+
+    On a triangle of an ``n``-by-``n`` split, a bilinear face departs from its
+    straight interpolant by at most ``|twist| / (4 n**2)`` in parent reference
+    coordinates, so the physical correspondence error is at most
+    ``L |twist| / (4 n**2)``.
+    """
+    if tolerance is None or not math.isfinite(tolerance) or tolerance <= 0.0:
+        raise ValueError(
+            "Twisted restricted boundary faces require a positive fidelity tolerance."
+        )
+    bound = Fraction.from_float(float(tolerance))
+    subdivisions = 1
+    while lipschitz_squared * twist_squared > 4 * subdivisions**4 * bound * bound:
+        subdivisions *= 2
+        if subdivisions > _MAXIMUM_FACE_SUBDIVISIONS:
+            raise ValueError(
+                "A twisted restricted boundary face needs more than "
+                f"{_MAXIMUM_FACE_SUBDIVISIONS} subdivisions per axis to meet its "
+                "fidelity tolerance."
+            )
+    return subdivisions
+
+
+def _quad_face_pieces(
+    reference: tuple[_ReferencePoint, ...],
+    parent: tuple[_ReferencePoint, ...],
+    frame: tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]],
+    subdivisions: int,
+    /,
+) -> tuple[tuple[tuple[_FacePoint, ...], tuple[_ReferencePoint, ...]], ...]:
+    """Split a bilinear quadrilateral face into straight parent-face triangles.
+
+    Corners of every piece are exact images of the bilinear face map; outer
+    edges are affine, so the straight pieces tile the parent face exactly.
+    """
+    planar_face = tuple(_reference_face_coordinates(frame, point) for point in parent)
+    if any(point is None for point in planar_face):
+        raise ValueError("Restricted quadrilateral face leaves its parent face.")
+    area = _face_area2(tuple(point for point in planar_face if point is not None))
+    pieces: list[tuple[tuple[_FacePoint, ...], tuple[_ReferencePoint, ...]]] = []
+    step = Fraction(1, subdivisions)
+    for first in range(subdivisions):
+        for second in range(subdivisions):
+            parameters = (
+                (first * step, second * step),
+                ((first + 1) * step, second * step),
+                ((first + 1) * step, (second + 1) * step),
+                (first * step, (second + 1) * step),
+            )
+            references = tuple(_bilinear_point(reference, a, b) for a, b in parameters)
+            planar = tuple(
+                _reference_face_coordinates(frame, _bilinear_point(parent, a, b))
+                for a, b in parameters
+            )
+            if any(point is None for point in planar):
+                raise ValueError("Restricted quadrilateral face leaves its parent face.")
+            corners = tuple(point for point in planar if point is not None)
+            split = next(
+                (
+                    candidate
+                    for candidate in (((0, 1, 2), (0, 2, 3)), ((0, 1, 3), (1, 2, 3)))
+                    if all(
+                        _face_area2(tuple(corners[index] for index in triangle)) * area
+                        > 0
+                        for triangle in candidate
+                    )
+                ),
+                None,
+            )
+            if split is None:
+                raise ValueError(
+                    "Restricted quadrilateral boundary face has no positive "
+                    "triangle split in its parent face."
+                )
+            pieces.extend(
+                (
+                    tuple(corners[index] for index in triangle),
+                    tuple(references[index] for index in triangle),
+                )
+                for triangle in split
+            )
+    return tuple(pieces)
+
+
 def _restricted_boundary_chart_witness(
     scaffold_mesh: CellMesh,
+    scaffold_geometry: CellGeometrySpec,
     scaffold_witness: SourceBoundaryChartWitness,
     mesh: CellMesh,
     geometry: CellGeometrySpec,
+    tolerance: float | None,
     /,
 ) -> SourceBoundaryChartWitness:
     """Compose a scaffold boundary chart witness through exact child-in-parent maps.
@@ -1963,6 +2169,8 @@ def _restricted_boundary_chart_witness(
     triangles whose exact parent-reference corner images span straight
     triangles of that face; these are clipped exactly against the scaffold's
     source pieces, so target and source pieces partition the same face.
+    Twisted (non-parallelogram) bilinear quadrilateral faces are refined until
+    the straight correspondence stays within half the fidelity tolerance.
     """
     if scaffold_witness.chart_dimension != 2 or scaffold_witness.reference_dimension != 3:
         raise ValueError(
@@ -2011,6 +2219,37 @@ def _restricted_boundary_chart_witness(
         zip(restriction.block_names, restriction.parent_reference_maps, strict=True)
     )
     facets = source_fidelity_owner._volume_boundary_facet_lookup(mesh)
+    scaffold_elements, scaffold_routes, _ = scaffold_geometry.resolve(scaffold_mesh)
+    scaffold_coordinates = scaffold_geometry.source_coordinates()
+    scaffold_rows = {
+        int(global_id): (block_index, row)
+        for block_index, block in enumerate(scaffold_mesh.blocks)
+        for row, global_id in enumerate(np.asarray(block.global_ids).tolist())
+    }
+    lipschitz_squared: dict[int, Fraction] = {}
+
+    def scaffold_lipschitz_squared(cell_id: int, /) -> Fraction:
+        cached = lipschitz_squared.get(cell_id)
+        if cached is not None:
+            return cached
+        block_index, row = scaffold_rows[cell_id]
+        scaffold_kind = scaffold_mesh.blocks[block_index].cell_kind
+        if reference_cell_topology(scaffold_kind).family != "tetrahedron":
+            raise ValueError(
+                "Twisted restricted boundary faces require tetrahedral scaffold cells."
+            )
+        element = scaffold_elements[block_index]
+        if not isinstance(element, ScalarCoordinateElement):
+            raise TypeError("Scaffold cells require scalar coordinate elements.")
+        route = np.asarray(scaffold_routes[block_index][row], dtype=np.int64)
+        value = _cell_map_lipschitz_squared(
+            element,
+            tuple(scaffold_coordinates[int(index)] for index in route.tolist()),
+            row,
+        )
+        lipschitz_squared[cell_id] = value
+        return value
+
     cell_ids: list[int] = []
     face_ids: list[int] = []
     local_faces: list[int] = []
@@ -2067,38 +2306,47 @@ def _restricted_boundary_chart_witness(
                         "Restricted boundary face is absent from target facet routes."
                     )
                 frame = _reference_face_frame(block.cell_kind, local_face)
+                face_reference = tuple(
+                    reference_vertices[index] for index in face_vertices
+                )
                 if len(face_vertices) == 3:
-                    splits: tuple[tuple[int, int, int], ...] = ((0, 1, 2),)
+                    face_pieces = ((planar_corners, face_reference),)
                 else:
-                    area = _face_area2(planar_corners)
-                    splits = next(
-                        (
-                            candidate
-                            for candidate in (
-                                ((0, 1, 2), (0, 2, 3)),
-                                ((0, 1, 3), (1, 2, 3)),
-                            )
-                            if all(
-                                _face_area2(
-                                    tuple(planar_corners[index] for index in split)
-                                )
-                                * area
-                                > 0
-                                for split in candidate
-                            )
-                        ),
-                        (),
-                    )
-                    if not splits:
-                        raise ValueError(
-                            "Restricted quadrilateral boundary face has no positive "
-                            "triangle split in its parent face."
+                    face_parent = tuple(
+                        tuple(
+                            rational_coefficient(value, role="Parent face corner")
+                            for value in corners[index]
                         )
-                for split in splits:
-                    straight = tuple(planar_corners[index] for index in split)
-                    reference = tuple(
-                        reference_vertices[face_vertices[index]] for index in split
+                        for index in face_vertices
                     )
+                    twist = tuple(
+                        face_parent[0][axis]
+                        - face_parent[1][axis]
+                        + face_parent[2][axis]
+                        - face_parent[3][axis]
+                        for axis in range(3)
+                    )
+                    subdivisions = 1
+                    if any(twist):
+                        _require_bilinear_face_chart(
+                            None
+                            if witness.source_reference_chart_arguments is None
+                            else witness.source_reference_chart_arguments[row],
+                            face_reference,
+                            face_parent,
+                        )
+                        subdivisions = _bilinear_face_subdivisions(
+                            scaffold_lipschitz_squared(parent_id),
+                            sum((value * value for value in twist), Fraction(0)),
+                            tolerance,
+                        )
+                    face_pieces = _quad_face_pieces(
+                        face_reference,
+                        face_parent,
+                        scaffold_frames[parent_face],
+                        subdivisions,
+                    )
+                for straight, reference in face_pieces:
                     for pieces, source_points, scaffold_row in pieces_by_face[
                         (parent_id, parent_face)
                     ]:
@@ -2231,10 +2479,20 @@ def _restricted_certification(
 ) -> NativeCertificationRequest:
     """Carry the scaffold certification request onto an exact restriction of it."""
     request = scaffold.certification
+    scaffold_geometry = (
+        CellGeometrySpec.affine(scaffold.mesh)
+        if scaffold.geometry is None
+        else scaffold.geometry
+    )
     fidelity_witness = request.fidelity_witness
     if isinstance(fidelity_witness, SourceBoundaryChartWitness):
         fidelity_witness = _restricted_boundary_chart_witness(
-            scaffold.mesh, fidelity_witness, mesh, geometry
+            scaffold.mesh,
+            scaffold_geometry,
+            fidelity_witness,
+            mesh,
+            geometry,
+            request.fidelity_tolerance,
         )
     elif fidelity_witness is not None:
         raise ValueError(
@@ -2252,7 +2510,7 @@ def _restricted_certification(
             (
                 query,
                 _restricted_boundary_chart_witness(
-                    scaffold.mesh, witness, mesh, geometry
+                    scaffold.mesh, scaffold_geometry, witness, mesh, geometry, bound
                 ),
                 bound,
             )

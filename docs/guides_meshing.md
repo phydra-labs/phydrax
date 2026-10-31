@@ -776,6 +776,23 @@ Their target geometry is the exact per-cell restriction of the root map, so a
 request without `maximum_deviation` is certified at zero source deviation; an
 explicit bound is honored as requested.
 
+On a curved PLC source, `plc_hex_dominant` and `plc_balanced_grid_hex` both
+restrict one curved tetrahedral fill. Every output cell keeps an exact chart
+into its fill tetrahedron, and that tetrahedron keeps its affine chart into the
+curved root.
+Global embedding reuses the fill's own proof through these child-in-fill maps
+(a forward reference chain) rather than proving curved cell pairs apart one by
+one. Source fidelity carries the fill's boundary chart witness onto the output
+faces. A quadrilateral face that is a twisted bilinear patch of its fill face
+is split into straight pieces until the correspondence error stays within half
+the tolerance; that error is bounded with the fill map's exact Bernstein
+Lipschitz constant. Parallelogram faces keep two pieces. Curved transition
+pyramids are per-cell restrictions with rational charts. Such a chart is
+accepted only when its `1 - z` pole cancels in collapsed-cube form, the
+remaining denominator has a strict sign, and the apex has one image. Evaluating
+the gradient exactly at the apex is still refused when it depends on the
+direction of approach.
+
 Every accepted family still passes the common continuous whole-cell validity,
 embedding, coverage, and source-fidelity checks. Quality samples are
 observations only; they cannot prove those claims or authorize a different

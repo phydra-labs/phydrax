@@ -1323,11 +1323,45 @@ def _batched_points(
     return flat, leading
 
 
-def _raise_for_call(status: int, operation: str, /) -> None:
+# Statuses that reject the caller's input; they raise ``ValueError``.
+_CALLER_INPUT_STATUSES = frozenset(
+    (
+        MeshcoreStatus.NONFINITE_INPUT,
+        MeshcoreStatus.RANGE_ERROR,
+        MeshcoreStatus.DEGENERATE_INPUT,
+        MeshcoreStatus.INVALID_ARGUMENT,
+        MeshcoreStatus.INVALID_INPUT,
+        MeshcoreStatus.CONSTRAINT_INTERSECTION,
+    )
+)
+
+
+def _raise_for_call(
+    status: int,
+    operation: str,
+    /,
+    *,
+    contracts: Mapping[MeshcoreStatus, str] | None = None,
+) -> None:
+    """Raise the error a native call status reports.
+
+    The default texts state each status's library-wide contract. A call site
+    whose kernel returns a status for a different contract (for example a
+    certified error bound in place of the coordinate domain) names it through
+    ``contracts``; the exception type stays the status's.
+    """
     code = MeshcoreStatus(status)
+    contract = None if contracts is None else contracts.get(code)
     match code:
         case MeshcoreStatus.OK:
             return
+        case _ if contract is not None:
+            message = f"{operation}: {contract}"
+            if code in _CALLER_INPUT_STATUSES:
+                raise ValueError(message)
+            if code is MeshcoreStatus.INDEX_RANGE_ERROR:
+                raise OverflowError(message)
+            raise MeshcoreError(code, message)
         case MeshcoreStatus.NONFINITE_INPUT:
             raise ValueError(f"{operation}: inputs must be finite.")
         case MeshcoreStatus.RANGE_ERROR:
@@ -2981,6 +3015,48 @@ class SurfaceEnvelopeResult(NamedTuple):
     tetrahedra: np.ndarray
 
 
+# Periodic kernels also bound lattice (fractional) coordinates by 2**30 so that
+# integer image shifts stay exact.
+_PERIODIC_RANGE_CONTRACT = (
+    "points and lattice entries must be zero or have magnitude in [2**-120, 2**120], "
+    "and every fractional (lattice) coordinate must have magnitude at most 2**30."
+)
+
+
+def _surface_envelope_range_contract(
+    points: np.ndarray, offset: float, spacing: float, certificate_spacing: float, /
+) -> str:
+    """State the surface-envelope contract behind a RANGE_ERROR status.
+
+    The kernel certifies the envelope only when ``offset`` strictly exceeds its
+    certified error: the grid-cell diameter ``sqrt(3) * spacing``, the source
+    covering radius (at most ``certificate_spacing`` plus roundoff) and the
+    arithmetic error ``1024 * eps * scale``, where ``scale`` bounds the source
+    coordinates and ``offset + spacing``. This recomputes that requirement in
+    binary64 to report it; an offset that clears it failed instead because the
+    error bound, the distance field or an envelope coordinate left the binary64
+    exact-evaluation domain.
+    """
+    scale = max(offset + spacing, float(np.max(np.abs(points))))
+    arithmetic = 1024.0 * float(np.finfo(np.float64).eps) * scale
+    required = float(np.sqrt(3.0)) * spacing + certificate_spacing + arithmetic
+    if offset <= required:
+        return (
+            f"offset {offset:.17g} does not dominate the certified envelope error "
+            f"~{required:.17g} (sqrt(3) * spacing {np.sqrt(3.0) * spacing:.17g} + "
+            f"certificate_spacing {certificate_spacing:.17g} + arithmetic error "
+            f"{arithmetic:.3g}); increase the offset or decrease spacing and "
+            "certificate_spacing."
+        )
+    return (
+        f"offset {offset:.17g} dominates the nominal envelope error ~{required:.17g}, "
+        "but the certified error bound, the sampled distance field or an envelope "
+        "coordinate left the exact-evaluation domain (finite, zero or magnitude in "
+        "[2**-120, 2**120]); the offset may also fall short of the error once "
+        "roundoff is bounded."
+    )
+
+
 def surface_envelope(
     vertices: object,
     triangles: object,
@@ -3026,9 +3102,16 @@ def surface_envelope(
         bounds.ctypes.data,
     )
     library = load_meshcore()
+    status = library["phx_mc_surface_envelope_create"](ctypes.byref(request))
     _raise_for_call(
-        library["phx_mc_surface_envelope_create"](ctypes.byref(request)),
+        status,
         "surface_envelope_create",
+        # The certified-error contract is formatted only when it failed.
+        contracts={
+            MeshcoreStatus.RANGE_ERROR: _surface_envelope_range_contract(points, *values)
+        }
+        if status == MeshcoreStatus.RANGE_ERROR
+        else None,
     )
     if not handle.value:
         raise MeshcoreError(
@@ -3167,7 +3250,11 @@ def periodic_delaunay(
         ctypes.addressof(handle),
     )
     if status != MeshcoreStatus.OK:
-        _raise_for_call(status, "periodic_delaunay")
+        _raise_for_call(
+            status,
+            "periodic_delaunay",
+            contracts={MeshcoreStatus.RANGE_ERROR: _PERIODIC_RANGE_CONTRACT},
+        )
     if not handle.value:
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, "periodic_delaunay: missing handle"
@@ -3533,7 +3620,11 @@ def periodic_refine_2d(
         )
     )
     if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
-        _raise_for_call(status, "periodic_refine_2d")
+        _raise_for_call(
+            status,
+            "periodic_refine_2d",
+            contracts={MeshcoreStatus.RANGE_ERROR: _PERIODIC_RANGE_CONTRACT},
+        )
     if not handle.value:
         raise MeshcoreError(
             status if status != MeshcoreStatus.OK else MeshcoreStatus.INTERNAL_ERROR,

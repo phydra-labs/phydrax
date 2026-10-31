@@ -830,6 +830,33 @@ struct PlcFaceUse {
   Triple oriented;
 };
 
+// The cells using one face: at most two in a valid complex; `count` keeps
+// counting past two so callers can reject an invalid one.
+struct PlcFaceUses {
+  std::array<PlcFaceUse, 2> uses{};
+  std::size_t count = 0;
+  void push_back(const PlcFaceUse& use) {
+    if (count < 2) uses[count] = use;
+    ++count;
+  }
+  std::size_t size() const { return count; }
+  const PlcFaceUse* begin() const { return uses.data(); }
+  const PlcFaceUse* end() const { return uses.data() + std::min<std::size_t>(count, 2); }
+};
+
+struct TripleHash {
+  std::size_t operator()(const Triple& key) const {
+    const auto word = [](int32_t value) { return static_cast<std::uint64_t>(static_cast<uint32_t>(value)); };
+    const std::uint64_t mixed = (word(key[0]) * 0x9E3779B97F4A7C15ULL) ^
+                                (word(key[1]) * 0xC2B2AE3D27D4EB4FULL) ^
+                                (word(key[2]) * 0x165667B19E3779F9ULL);
+    return static_cast<std::size_t>(mixed ^ (mixed >> 29));
+  }
+};
+
+// Faces of the current complex keyed by sorted vertex triple.
+using PlcFaceMap = std::unordered_map<Triple, PlcFaceUses, TripleHash>;
+
 struct PlcSourceFace {
   Triple oriented;
   int32_t facet;
@@ -1331,7 +1358,7 @@ class PlcRecoveryBuilder {
   }
 
   int32_t recover_planar_polygons(
-      const std::map<Triple, std::vector<PlcFaceUse>>& faces) {
+      const PlcFaceMap& faces) {
     planar_source_faces_.clear();
     for (auto source = source_faces_.begin(); source != source_faces_.end();) {
       const std::int32_t polygon = candidate_.input_polygons[
@@ -1863,7 +1890,8 @@ class PlcRecoveryBuilder {
   // Recovers every chain interval of every source edge, in row order. A
   // missing interval is first recovered without new vertices (planar flips on
   // an incident facet plane, else one edge removal); otherwise an encroached
-  // interval is split by split_source_edge and the scan restarts. An interval
+  // interval is split by split_source_edge, the pass goes on with the next
+  // edge, and the next pass rescans. An interval
   // whose closed diametral ball holds no other vertex is strongly Delaunay
   // and so present in every Delaunay tetrahedralization of the vertices: it
   // can be missing only after local recovery edits, and the restart rebuilds.
@@ -1899,7 +1927,17 @@ class PlcRecoveryBuilder {
         const int32_t local_status = try_planar_source_edge(edge, first, second, recovered);
         if (local_status != PHX_MC_OK) return local_status;
         if (recovered) continue;
-        if (encroached(first, second)) return split_source_edge(edge, interval, restart);
+        if (encroached(first, second)) {
+          // Split, then go on with the next edge on the updated complex; a
+          // refused incremental insertion leaves the rebuild to the restart.
+          const int32_t split_status = split_source_edge(edge, interval, restart);
+          if (split_status != PHX_MC_OK || !incremental_triangulation_ready_) return split_status;
+          const int32_t middle = edge_chains_[edge][interval + 1].vertex;
+          chain_intervals_.erase(topology::undirected_edge(first, second));
+          chain_intervals_.insert(topology::undirected_edge(first, middle));
+          chain_intervals_.insert(topology::undirected_edge(middle, second));
+          break;
+        }
         if (!local_edits_) {
           return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge, edge);
         }
@@ -2885,6 +2923,31 @@ class PlcRecoveryBuilder {
       }
       return on_boundary ? 1 : 2;
     };
+    // Chain intervals whose carrier box misses the face's carrier box,
+    // widened by four units in the last place of the largest coordinate
+    // (carriers of exact positions are within half a unit), cannot meet the
+    // face; the exact tests below run only on the others.
+    double box_lower[3], box_upper[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      box_lower[axis] = std::min({point(source.oriented[0])[axis], point(source.oriented[1])[axis],
+                                  point(source.oriented[2])[axis]});
+      box_upper[axis] = std::max({point(source.oriented[0])[axis], point(source.oriented[1])[axis],
+                                  point(source.oriented[2])[axis]});
+      const double margin = 0x1p-50 * std::max({std::fabs(box_lower[axis]),
+                                                std::fabs(box_upper[axis]),
+                                                std::numeric_limits<double>::min()});
+      box_lower[axis] -= margin;
+      box_upper[axis] += margin;
+    }
+    const auto misses_box = [&](int32_t first, int32_t second) {
+      for (int axis = 0; axis < 3; ++axis) {
+        if (std::max(point(first)[axis], point(second)[axis]) < box_lower[axis] ||
+            std::min(point(first)[axis], point(second)[axis]) > box_upper[axis]) {
+          return true;
+        }
+      }
+      return false;
+    };
     std::vector<std::array<int32_t, 2>> internal_constraints;
     std::set<uint64_t> internal_keys;
     for (const auto& chain : edge_chains_) {
@@ -2892,7 +2955,7 @@ class PlcRecoveryBuilder {
         const int32_t first = chain[interval].vertex;
         const int32_t second = chain[interval + 1].vertex;
         const uint64_t key = topology::undirected_edge(first, second);
-        if (boundary_intervals.contains(key)) continue;
+        if (boundary_intervals.contains(key) || misses_box(first, second)) continue;
         const int first_location = point_location(first);
         const int second_location = point_location(second);
         if (first_location > 0 && second_location > 0) {
@@ -3004,15 +3067,87 @@ class PlcRecoveryBuilder {
     return PHX_MC_OK;
   }
 
+  // Lawson flips toward the in-plane Delaunay triangulation of the children
+  // of one source triangle. A child edge shared by two children (a, b, c)
+  // and (b, a, d) that is not a chain interval is flipped to cd when d lies
+  // strictly inside the circumcircle of abc, decided exactly on the source
+  // plane: the sphere through a, b, c and the lifted point a + n (n the
+  // normal of abc) meets the plane in that circumcircle. A strictly
+  // non-Delaunay edge has a strictly convex quadrilateral, so the flip keeps
+  // the children a triangulation of the source triangle, and each flip
+  // strictly lowers the lifted triangulation, so the pass ends (Lawson).
+  // Children that follow the in-plane Delaunay triangulation are the faces
+  // the Delaunay tetrahedralization tends to contain, where a fan from a
+  // split point keeps demanding edges that cross in-plane mesh edges.
+  void legalize_source_children(int32_t source_triangle) {
+    const auto inside = [&](int32_t a, int32_t b, int32_t c, int32_t d) {
+      Expansion pa[3], pb[3], pc[3], pd[3], pe[3], u[3], v[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        pa[axis] = coordinate(ref(a), axis);
+        pb[axis] = coordinate(ref(b), axis);
+        pc[axis] = coordinate(ref(c), axis);
+        pd[axis] = coordinate(ref(d), axis);
+        u[axis] = pb[axis] - pa[axis];
+        v[axis] = pc[axis] - pa[axis];
+      }
+      // orient3d(a, b, c, a + n) = |n|^2 > 0, so insphere > 0 is inside.
+      pe[0] = pa[0] + (u[1] * v[2] - u[2] * v[1]);
+      pe[1] = pa[1] + (u[2] * v[0] - u[0] * v[2]);
+      pe[2] = pa[2] + (u[0] * v[1] - u[1] * v[0]);
+      return insphere_sign(pa, pb, pc, pe, pd) > 0;
+    };
+    for (;;) {
+      // Directed child edge -> (child key, opposite vertex).
+      std::map<std::pair<int32_t, int32_t>, std::pair<Triple, int32_t>> edges;
+      for (const auto& [key, child] : source_faces_) {
+        if (child.source_triangle != source_triangle) continue;
+        for (int side = 0; side < 3; ++side) {
+          edges.emplace(std::pair{child.oriented[static_cast<std::size_t>(side)],
+                                  child.oriented[static_cast<std::size_t>((side + 1) % 3)]},
+                        std::pair{key, child.oriented[static_cast<std::size_t>((side + 2) % 3)]});
+        }
+      }
+      bool flipped = false;
+      for (const auto& [edge, use] : edges) {
+        const auto [a, b] = edge;
+        if (a > b) continue;
+        const auto other = edges.find({b, a});
+        if (other == edges.end()) continue;
+        if (chain_intervals_.contains(topology::undirected_edge(a, b))) continue;
+        const int32_t c = use.second;
+        const int32_t d = other->second.second;
+        if (!inside(a, b, c, d)) continue;
+        const PlcSourceFace template_face = source_faces_.at(use.first);
+        source_faces_.erase(use.first);
+        source_faces_.erase(other->second.first);
+        const Triple first{a, d, c};
+        const Triple second{d, b, c};
+        source_faces_.emplace(sorted_triple(first.data()),
+                              PlcSourceFace{first, template_face.facet, source_triangle});
+        source_faces_.emplace(sorted_triple(second.data()),
+                              PlcSourceFace{second, template_face.facet, source_triangle});
+        flipped = true;
+        break;
+      }
+      if (!flipped) return;
+    }
+  }
+
   // Splits the missing subface `source`, a child of source triangle
   // T = ABC, at the exactly witnessed point S = A + l1 (B - A) + l2 (C - A).
   // (l1, l2) are the barycentric coordinates of the child's centroid,
   // rounded to dyadic rationals of increasing precision until S lies
-  // exactly in the child's open interior; S keeps its exact position in the
-  // exact vertex bank (its carrier is the rounding of S), so S is exactly
-  // coplanar with every subface of T and later recovery and suppression
-  // decide on S itself. The child becomes the fan from S over its boundary,
-  // which includes the split points on its edges.
+  // exactly in the child's central region (every barycentric coordinate of
+  // S in the child at least 1/4), else, failing that at every precision, in
+  // its open interior. A point merely inside could lie arbitrarily close to
+  // an edge, and the fan triangle on that edge would be a needle whose own
+  // interior no dyadic split point reaches; in the central region every fan
+  // triangle keeps at least a quarter of the child's height over its edge.
+  // S keeps its exact position in the exact vertex bank (its carrier is the
+  // rounding of S), so S is exactly coplanar with every subface of T and
+  // later recovery and suppression decide on S itself. The child becomes
+  // the fan from S over its boundary, which includes the split points on its
+  // edges.
   int32_t split_source_face(const Triple& key, const PlcSourceFace& source, bool& restart) {
     restart = false;
     const auto refuse = [&]() {
@@ -3066,25 +3201,70 @@ class PlcRecoveryBuilder {
     const double target[2] = {(wu * vv - wv * uv) / determinant, (wv * uu - wu * uv) / determinant};
     const ExactPointRef child[3] = {ref(source.oriented[0]), ref(source.oriented[1]),
                                     ref(source.oriented[2])};
+    // The central region: the triangle of the points (2 X + Y + Z) / 4.
+    Expansion central_exact[3][3];
+    double central_carrier[3][3];
+    ExactPointRef central[3];
+    for (int corner = 0; corner < 3; ++corner) {
+      for (int axis = 0; axis < 3; ++axis) {
+        central_exact[corner][axis] =
+            (coordinate(child[corner], axis).scaled(2.0) +
+             coordinate(child[(corner + 1) % 3], axis) +
+             coordinate(child[(corner + 2) % 3], axis))
+                .scaled(0.25);
+        central_carrier[corner][axis] = central_exact[corner][axis].estimate();
+      }
+      central[corner] = ExactPointRef{central_carrier[corner], central_exact[corner]};
+    }
     double parameters[2];
     Expansion position[3];
     double carrier[3];
     bool found = false;
-    for (int bits = 4; bits <= 52 && !found; ++bits) {
-      const double scale = std::exp2(bits);
-      parameters[0] = std::round(target[0] * scale) / scale;
-      parameters[1] = std::round(target[1] * scale) / scale;
-      if (!source_parameters_valid(SourceStratum::kFacet, parameters) ||
-          !source_point(corners, SourceStratum::kFacet, parameters, position)) {
-        continue;
+    for (int pass = 0; pass < 2 && !found; ++pass) {
+      const ExactPointRef* region = pass == 0 ? central : child;
+      for (int bits = 4; bits <= 64 && !found; ++bits) {
+        const double scale = std::exp2(bits);
+        parameters[0] = std::round(target[0] * scale) / scale;
+        parameters[1] = std::round(target[1] * scale) / scale;
+        if (!source_parameters_valid(SourceStratum::kFacet, parameters) ||
+            !source_point(corners, SourceStratum::kFacet, parameters, position)) {
+          continue;
+        }
+        for (int axis = 0; axis < 3; ++axis) carrier[axis] = nearest_double(position[axis]);
+        if (!geometry::point_in_domain(carrier)) continue;
+        int side = 0;
+        found = locate_on_triangle(ExactPointRef{carrier, position}, region, side) ==
+                kFeatureInterior;
       }
-      for (int axis = 0; axis < 3; ++axis) carrier[axis] = nearest_double(position[axis]);
-      if (!geometry::point_in_domain(carrier)) continue;
-      int side = 0;
-      found = locate_on_triangle(ExactPointRef{carrier, position}, child, side) ==
-              kFeatureInterior;
     }
     if (!found) return refuse();
+    // A split point in the closed diametral ball of a chain interval on the
+    // child's boundary encroaches that interval, which is split instead
+    // (Shewchuk: encroached segments are split before subfacets), so facet
+    // splits never pile up against a segment.
+    const ExactPointRef candidate{carrier, position};
+    for (std::size_t side = 0; side < boundary.size(); ++side) {
+      const int32_t a = boundary[side];
+      const int32_t b = boundary[(side + 1) % boundary.size()];
+      if (!chain_intervals_.contains(topology::undirected_edge(a, b))) continue;
+      Expansion dot;
+      for (int axis = 0; axis < 3; ++axis) {
+        dot = dot + (coordinate(candidate, axis) - coordinate(ref(a), axis)) *
+                        (coordinate(candidate, axis) - coordinate(ref(b), axis));
+      }
+      if (dot.sign() > 0) continue;
+      for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
+        const auto& chain = edge_chains_[row];
+        for (std::size_t interval = 0; interval + 1 < chain.size(); ++interval) {
+          const int32_t first = chain[interval].vertex;
+          const int32_t second = chain[interval + 1].vertex;
+          if ((first == a && second == b) || (first == b && second == a)) {
+            return split_source_edge(row, interval, restart);
+          }
+        }
+      }
+      return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcFacet, source.facet);
+    }
     const double deviation = outward_distance(carrier, position);
     // Distinct exact points with equal carriers would be indistinguishable.
     const ExactPointRef split{carrier, deviation == 0.0 ? nullptr : position};
@@ -3124,6 +3304,7 @@ class PlcRecoveryBuilder {
     if (deviation != 0.0) exact_points_.assign(center, position);
     source_faces_.erase(key);
     source_faces_.merge(staged_source_faces);
+    legalize_source_children(source.source_triangle);
     const int32_t insertion_status = insert_source_vertex_incrementally(center);
     if (insertion_status != PHX_MC_OK) return insertion_status;
     restart = true;
@@ -3137,7 +3318,7 @@ class PlcRecoveryBuilder {
   // removed again by suppression.
   int32_t recover_source_faces(bool& restart) {
     restart = false;
-    std::map<Triple, std::vector<PlcFaceUse>> faces;
+    PlcFaceMap faces;
     TetrahedralComplex& complex = triangulation_->complex();
     const auto mark_source_faces = [&]() -> int32_t {
       for (const auto& [key, source] : source_faces_) {
@@ -3171,6 +3352,7 @@ class PlcRecoveryBuilder {
 
     for (;;) {
       faces.clear();
+      faces.reserve(2 * complex.tets.size());
       for (std::size_t t = 0; t < complex.tets.size(); ++t) {
         const Tetrahedron& tet = complex.tets[t];
         if (tet.v[0] == kDeadVertex) continue;
@@ -3182,19 +3364,36 @@ class PlcRecoveryBuilder {
       }
       const int32_t planar_status = recover_planar_polygons(faces);
       if (planar_status != PHX_MC_OK) return planar_status;
-      bool source_face_recovered = false;
+      // The subfaces missing at this pass are handled in turn on the current
+      // complex: one still missing (checked locally once the complex has
+      // changed) is recovered by planar flips, else split. Facet splits go
+      // on with the next one; an interval split (an encroached boundary) or
+      // a refused incremental insertion ends the pass.
+      std::vector<std::pair<Triple, PlcSourceFace>> missing;
       for (const auto& [key, source] : source_faces_) {
         const auto found = faces.find(key);
-        if (found != faces.end() && found->second.size() == 2) continue;
+        if (found == faces.end() || found->second.size() != 2) missing.push_back({key, source});
+      }
+      if (missing.empty()) return mark_source_faces();
+      bool flipped = false;
+      std::vector<int32_t> cells;
+      for (const auto& [key, source] : missing) {
+        if (!source_faces_.contains(key)) continue;
+        if (restart || flipped) {
+          const int32_t status = edge_cells(key[0], key[1], cells);
+          if (status != PHX_MC_OK) return status;
+          if (std::any_of(cells.begin(), cells.end(), [&](int32_t cell) {
+                return vertex_slot(complex.tets[static_cast<std::size_t>(cell)], key[2]) >= 0;
+              })) {
+            continue;
+          }
+        }
         const PlcFailure prior_failure = failure_;
         bool planar_recovered = false;
-        const Triple planar_key = key;
-        const PlcSourceFace planar_source = source;
-        const int32_t planar_status =
-            recover_planar_source_face(planar_key, planar_source, planar_recovered);
+        const int32_t planar_status = recover_planar_source_face(key, source, planar_recovered);
         if (planar_recovered) {
-          source_face_recovered = true;
-          break;
+          flipped = true;
+          continue;
         }
         if (planar_status != PHX_MC_OK) {
           if (planar_status != PHX_MC_CONSTRAINT_INTERSECTION ||
@@ -3203,10 +3402,18 @@ class PlcRecoveryBuilder {
           }
           failure_ = prior_failure;
         }
-        return split_source_face(planar_key, planar_source, restart);
+        const std::size_t points_before = candidate_.points.size();
+        bool split = false;
+        const int32_t split_status = split_source_face(key, source, split);
+        if (split_status != PHX_MC_OK) return split_status;
+        restart = restart || split;
+        if (candidate_.points.size() != points_before &&
+            (candidate_.witnesses.back().stratum == SourceStratum::kSegment ||
+             !incremental_triangulation_ready_)) {
+          return PHX_MC_OK;
+        }
       }
-      if (source_face_recovered) continue;
-      return mark_source_faces();
+      if (restart) return PHX_MC_OK;
     }
   }
 
@@ -3232,15 +3439,31 @@ class PlcRecoveryBuilder {
     std::vector<Triple> new_faces;
   };
 
+  // Points are tried newest first (undoing later splits before the earlier
+  // ones they refined), in passes: a point none of whose replacements
+  // applies is retried after the others have been removed, and the pass that
+  // removes nothing refuses its first remaining point. Each pass removes at
+  // least one point, so there are at most as many passes as points.
   int32_t suppress_witnessed_vertices() {
     const int32_t count = static_cast<int32_t>(candidate_.points.size() / 3);
     suppressed_.assign(static_cast<std::size_t>(count), 0);
-    for (int32_t vertex = source_point_count_; vertex < count; ++vertex) {
+    std::vector<int32_t> pending;
+    for (int32_t vertex = count - 1; vertex >= source_point_count_; --vertex) {
       if (input_.policy != BoundaryPolicy::kFixed && exact_points_.position(vertex) == nullptr) {
         continue;
       }
-      const int32_t status = suppress_vertex(vertex);
-      if (status != PHX_MC_OK) return status;
+      pending.push_back(vertex);
+    }
+    while (!pending.empty()) {
+      std::vector<int32_t> remaining;
+      for (int32_t vertex : pending) {
+        bool removed = false;
+        const int32_t status = suppress_vertex(vertex, removed);
+        if (status != PHX_MC_OK) return status;
+        if (!removed) remaining.push_back(vertex);
+      }
+      if (remaining.size() == pending.size()) return refuse_suppression(remaining.front());
+      pending = std::move(remaining);
     }
     return PHX_MC_OK;
   }
@@ -4162,27 +4385,31 @@ class PlcRecoveryBuilder {
     return PHX_MC_OK;
   }
 
-  // Suppresses one witnessed vertex: contraction onto a chain neighbour (a
-  // segment point) or a disk neighbour (a facet point), else the ear-clipped
-  // half-fans. A point that cannot be removed is a
-  // STEINER_SUPPRESSION refusal naming its source segment or facet; under
-  // FIXED it is the FIXED_SEGMENT / FIXED_FACET refusal of that entity (its
-  // boundary could not be recovered unmodified).
-  int32_t suppress_vertex(int32_t s) {
+  // A point that cannot be removed is a STEINER_SUPPRESSION refusal naming
+  // its source segment or facet; under FIXED it is the FIXED_SEGMENT /
+  // FIXED_FACET refusal of that entity (its boundary could not be recovered
+  // unmodified).
+  int32_t refuse_suppression(int32_t s) {
+    const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
+    const bool fixed = input_.policy == BoundaryPolicy::kFixed;
+    const int32_t status = fixed ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_UNRESOLVED;
+    if (witness.stratum == SourceStratum::kSegment) {
+      return fail(status, fixed ? kPlcFixedSegment : kPlcSteinerSuppression, kPlcEdge,
+                  static_cast<int64_t>(witness.entity), kPlcPoint, s);
+    }
+    const int32_t facet = input_.polygon_facets[
+        candidate_.input_polygons[static_cast<std::size_t>(witness.entity)]];
+    return fail(status, fixed ? kPlcFixedFacet : kPlcSteinerSuppression, kPlcFacet, facet,
+                kPlcPoint, s);
+  }
+
+  // Suppresses one witnessed vertex if it can: contraction onto a chain
+  // neighbour (a segment point) or a disk neighbour (a facet point), else
+  // the ear-clipped half-fans.
+  int32_t suppress_vertex(int32_t s, bool& removed) {
+    removed = false;
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
     const bool segment = witness.stratum == SourceStratum::kSegment;
-    const auto refuse = [&]() {
-      const bool fixed = input_.policy == BoundaryPolicy::kFixed;
-      const int32_t status = fixed ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_UNRESOLVED;
-      if (segment) {
-        return fail(status, fixed ? kPlcFixedSegment : kPlcSteinerSuppression, kPlcEdge,
-                    static_cast<int64_t>(witness.entity), kPlcPoint, s);
-      }
-      const int32_t facet = input_.polygon_facets[
-          candidate_.input_polygons[static_cast<std::size_t>(witness.entity)]];
-      return fail(status, fixed ? kPlcFixedFacet : kPlcSteinerSuppression, kPlcFacet, facet,
-                  kPlcPoint, s);
-    };
     int32_t p = -1;
     int32_t q = -1;
     std::vector<int32_t> targets;
@@ -4212,7 +4439,6 @@ class PlcRecoveryBuilder {
     }
     targets.push_back(-1);
     for (int32_t target : targets) {
-      bool removed = false;
       const int32_t status = remove_witnessed_vertex(s, target, p, q, removed);
       if (status != PHX_MC_OK) return status;
       if (!removed) continue;
@@ -4222,7 +4448,7 @@ class PlcRecoveryBuilder {
       }
       return PHX_MC_OK;
     }
-    return refuse();
+    return PHX_MC_OK;
   }
 
   int32_t seed_tet(const double* seed, int64_t row) {

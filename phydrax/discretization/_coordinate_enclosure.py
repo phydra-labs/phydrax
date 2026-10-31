@@ -536,6 +536,8 @@ def compose(
     )
     if dimension_ < 0:
         raise ValueError("compose.dimension must be nonnegative.")
+    if any(isinstance(argument, RationalPolynomial) for argument in arguments):
+        return _compose_over_common_denominator(expression, arguments, dimension_)
     result: Expression = constant(0, dimension_)
     # Each argument power is formed once per call, not once per monomial.
     powers: dict[tuple[int, int], Expression] = {}
@@ -552,6 +554,98 @@ def compose(
                 term = multiply(term, factor)
         result = add(result, term)
     return result
+
+
+def _compose_over_common_denominator(
+    expression: Polynomial,
+    arguments: tuple[ExpressionInput, ...],
+    dimension: int,
+    /,
+) -> Expression:
+    """Compose through rational arguments over one shared denominator.
+
+    A monomial's denominator is the product of its argument denominators;
+    raising each distinct argument denominator to its largest monomial share
+    keeps one common denominator with exactly that pole set, instead of
+    multiplying unequal term denominators together.
+    """
+    denominators: list[Polynomial] = []
+    groups: list[int | None] = []
+    numerators: list[Polynomial] = []
+    for argument in arguments:
+        if not isinstance(argument, RationalPolynomial):
+            groups.append(None)
+            numerators.append(dict(argument))
+            continue
+        denominator = dict(argument.denominator)
+        group = next(
+            (index for index, known in enumerate(denominators) if known == denominator),
+            None,
+        )
+        if group is None:
+            group = len(denominators)
+            denominators.append(denominator)
+        groups.append(group)
+        numerators.append(dict(argument.numerator))
+    shares: dict[tuple[int, ...], tuple[int, ...]] = {}
+    for exponent in expression:
+        if len(exponent) != len(arguments):
+            raise ValueError("composition arguments must match the polynomial dimension.")
+        shares[exponent] = tuple(
+            sum(
+                degree
+                for degree, owner in zip(exponent, groups, strict=True)
+                if owner == group
+            )
+            for group in range(len(denominators))
+        )
+    totals = tuple(
+        max((share[group] for share in shares.values()), default=0)
+        for group in range(len(denominators))
+    )
+    numerator_powers: dict[tuple[int, int], Polynomial] = {}
+    denominator_powers: dict[tuple[int, int], Polynomial] = {}
+
+    def cached_power(
+        cache: dict[tuple[int, int], Polynomial],
+        bank: list[Polynomial],
+        index: int,
+        degree: int,
+    ) -> Polynomial:
+        value = cache.get((index, degree))
+        if value is None:
+            raised = power(bank[index], degree, dimension=dimension)
+            if isinstance(raised, RationalPolynomial):
+                raise RuntimeError("A polynomial power must remain polynomial.")
+            value = raised
+            cache[index, degree] = value
+        return value
+
+    numerator: Polynomial = constant(0, dimension)
+    for exponent, coefficient in expression.items():
+        term = constant(coefficient, dimension)
+        for axis, degree in enumerate(exponent):
+            if degree:
+                term = multiply(
+                    term, cached_power(numerator_powers, numerators, axis, degree)
+                )
+        for group, total in enumerate(totals):
+            missing = total - shares[exponent][group]
+            if missing:
+                term = multiply(
+                    term, cached_power(denominator_powers, denominators, group, missing)
+                )
+        numerator = add(numerator, term)
+    denominator = constant(1, dimension)
+    for group, total in enumerate(totals):
+        if total:
+            denominator = multiply(
+                denominator,
+                cached_power(denominator_powers, denominators, group, total),
+            )
+    if not any(totals):
+        return numerator
+    return RationalPolynomial(numerator, denominator)
 
 
 def expression_equal(first: Expression, second: Expression, /) -> bool:
@@ -900,6 +994,7 @@ def compose_expression(
         )
     return compose(expression, arguments)
 
+
 class PyramidApexNormalization(NamedTuple):
     """Exact pyramid pullback and its collapsed-apex trace conditions."""
 
@@ -994,10 +1089,7 @@ def _pyramid_apex_trace_and_value(
     denominator_trace = _pyramid_apex_trace(denominator)
     if not denominator_trace:
         return None, None
-    if (
-        len(denominator_trace) == 1
-        and denominator_trace.get((0, 0)) == Fraction(1)
-    ):
+    if len(denominator_trace) == 1 and denominator_trace.get((0, 0)) == Fraction(1):
         trace_expression: Expression = numerator_trace
     else:
         trace_expression = RationalPolynomial(numerator_trace, denominator_trace)
@@ -1010,9 +1102,9 @@ def _pyramid_apex_trace_and_value(
         else numerator_coefficient * denominator_coefficient.reciprocal()
     )
     for exponent in numerator_trace.keys() | denominator_trace.keys():
-        if numerator_trace.get(exponent, Fraction(0)) != apex_value * denominator_trace.get(
+        if numerator_trace.get(
             exponent, Fraction(0)
-        ):
+        ) != apex_value * denominator_trace.get(exponent, Fraction(0)):
             return trace_expression, None
     return trace_expression, apex_value
 
@@ -1178,12 +1270,13 @@ def coordinate_execution_map_expressions(
     basis = coordinate_execution_basis(element, cell_row=cell_row)
     bank = _source_bank(local)
     if len(basis) != len(bank):
-        raise ValueError("Execution coordinate basis and local coefficient bank widths differ.")
+        raise ValueError(
+            "Execution coordinate basis and local coefficient bank widths differ."
+        )
     if not bank:
         raise ValueError("Coordinate map requires a nonempty coefficient bank.")
     components = tuple(
-        tuple(bank[dof][axis] for dof in range(len(bank)))
-        for axis in range(len(bank[0]))
+        tuple(bank[dof][axis] for dof in range(len(bank))) for axis in range(len(bank[0]))
     )
     return linear_combinations(basis, components)
 
