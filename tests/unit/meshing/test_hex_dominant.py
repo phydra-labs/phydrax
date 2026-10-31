@@ -226,6 +226,17 @@ def test_curved_source_map_is_composed_through_mixed_families() -> None:
     assert not np.allclose(mapped, affine, rtol=0.0, atol=1.0e-12)
 
 
+def test_binary64_quartic_nodes_are_refused_as_an_inexact_curved_map() -> None:
+    source = _two_tetrahedra()
+
+    with pytest.raises(ValueError, match="no global embedding proof"):
+        extract_hex_dominant(
+            source,
+            np.asarray((0,), dtype=np.int64),
+            source_geometry=_binary64_quartic_bubble_geometry(source),
+        )
+
+
 def test_mixed_closure_flattens_nested_per_cell_root_charts() -> None:
     source = _two_tetrahedra()
     root = lagrange_element("tetrahedron", 1)
