@@ -42,8 +42,10 @@ from ._geometry_protocol import (
     FiniteVolumeStageMetrics,
 )
 from ._unstructured import (
+    _owner_neighbor,
     _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC,
     evaluate_unstructured_fv_geometry,
+    periodic_seam_vertex_pairs,
     UnstructuredFiniteVolumePlan,
 )
 
@@ -162,6 +164,13 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
     follows the shared :class:`FiniteElementMotionExtension` route (``monitor(time,
     points, args)`` drives ``MMPDE``). Mesh velocity is the exact time JVP of the
     realized vertices in both cases, so the discrete GCL holds by construction.
+
+    On an owner-local periodic plan (joined seam faces) the geometry is
+    evaluated on the lifted topology faces and reduced to the joined FV faces.
+    The prescribed motion must be translation equivariant: every seam twin
+    vertex stays its partner's lattice translate with the same velocity, or the
+    stage geometry is invalid. Routed interior motion is not seam-coupled and is
+    refused there.
     """
 
     base_plan: UnstructuredFiniteVolumePlan
@@ -174,6 +183,10 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
     owner_cells: Array
     neighbor_cells: Array
     owner_signs: Array
+    geometry_owner_cells: Array
+    geometry_owner_signs: Array
+    face_topology_ids: Array | None
+    seam_vertex_pairs: tuple[Array, Array, Array] | None
     face_vertices: Array
     face_quadrature_vertex_weights: Array
     face_layout: FiniteVolumeStageFaceLayout
@@ -193,12 +206,6 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         motion_policy: FiniteElementMeshMotionPolicy | None = None,
         monitor: TimeMeshMonitor | None = None,
     ) -> None:
-        if base_plan.periodic_face_joins is not None:
-            raise ValueError(
-                "Continuous ALE stage geometry needs both sides of every face in one "
-                "embedding; this owner-local periodic FV plan joins seam faces across "
-                "lattice images."
-            )
         if not callable(motion):
             raise TypeError("motion must be callable.")
         if (
@@ -234,7 +241,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         prepared = base_plan.prepare()
         connectivity = prepared.connectivity
         if isinstance(connectivity, PolygonalConnectivity):
-            face_vertices = jnp.asarray(connectivity.edges, dtype=jnp.int32)
+            topology_face_vertices = jnp.asarray(connectivity.edges, dtype=jnp.int32)
             offset = 0.5 / np.sqrt(3.0)
             quadrature_vertex_weights = jnp.asarray(
                 (
@@ -244,13 +251,48 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 dtype=base_plan.vertices.dtype,
             )
         elif isinstance(connectivity, TetrahedralConnectivity):
-            face_vertices = jnp.asarray(connectivity.faces, dtype=jnp.int32)
+            topology_face_vertices = jnp.asarray(connectivity.faces, dtype=jnp.int32)
             quadrature_vertex_weights = jnp.asarray(
                 _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC,
                 dtype=base_plan.vertices.dtype,
             )
         else:
             raise TypeError("Unsupported unstructured connectivity.")
+        # Owner-local periodic seams: geometry is evaluated on every lifted
+        # topology face, then reduced to the joined FV faces (the owner sides).
+        face_topology_ids = prepared.face_topology_ids
+        seam_vertex_pairs = None
+        if base_plan.periodic_face_joins is None or face_topology_ids is None:
+            face_topology_ids = None
+            face_vertices = topology_face_vertices
+            geometry_owner_cells = jnp.asarray(prepared.owner_cells, dtype=jnp.int32)
+            geometry_owner_signs = jnp.asarray(
+                prepared.owner_signs, dtype=base_plan.vertices.dtype
+            )
+        else:
+            if routed:
+                raise ValueError(
+                    "Routed interior motion is not coupled across owner-local periodic "
+                    "seams; prescribe a translation-equivariant vertex motion."
+                )
+            face_vertices = topology_face_vertices[face_topology_ids]
+            topology_owner, _, topology_signs = _owner_neighbor(
+                connectivity, prepared.cell_count
+            )
+            geometry_owner_cells = jnp.asarray(topology_owner, dtype=jnp.int32)
+            geometry_owner_signs = jnp.asarray(
+                topology_signs, dtype=base_plan.vertices.dtype
+            )
+            kept_rows, twin_rows, pair_translations = periodic_seam_vertex_pairs(
+                base_plan,
+                np.asarray(base_plan.periodic_face_joins, dtype=np.int32),
+                np.asarray(base_plan.periodic_face_translations, dtype=np.float64),
+            )
+            seam_vertex_pairs = (
+                jnp.asarray(kept_rows, dtype=jnp.int32),
+                jnp.asarray(twin_rows, dtype=jnp.int32),
+                jnp.asarray(pair_translations, dtype=base_plan.vertices.dtype),
+            )
         cell_blocks = tuple(
             (kind, np.asarray(cells, dtype=np.int64))
             for kind, cells in (
@@ -335,6 +377,10 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         self.owner_signs = jnp.asarray(
             prepared.owner_signs, dtype=base_plan.vertices.dtype
         )
+        self.geometry_owner_cells = geometry_owner_cells
+        self.geometry_owner_signs = geometry_owner_signs
+        self.face_topology_ids = face_topology_ids
+        self.seam_vertex_pairs = seam_vertex_pairs
         self.face_vertices = face_vertices
         self.face_quadrature_vertex_weights = quadrature_vertex_weights
         self.face_layout = face_layout
@@ -371,6 +417,8 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             raise ValueError("Fixed-connectivity motion must preserve vertex shape.")
         if not bool(successful):
             raise ValueError("The interior motion route failed to realize the epoch.")
+        if self.face_topology_ids is not None:
+            return self.base_plan.with_periodic_seam_vertices(vertices)
         plan = UnstructuredFiniteVolumePlan(
             vertices,
             triangles=self.base_plan.triangles,
@@ -460,6 +508,26 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(outward) & (outward > 0.0))
         )
 
+    def _seams_are_equivariant(self, vertices: Array, velocity: Array, /) -> Array:
+        """Seam twins stay lattice translates of their partners and move with them.
+
+        A joined seam face's neighbor sees the owner face translated; the
+        joined geometry is exact only while the twin vertices are those
+        translates (``1e-9`` of the coordinate and velocity scales).
+        """
+        if self.seam_vertex_pairs is None:
+            return jnp.asarray(True)
+        kept, twin, translations = self.seam_vertex_pairs
+        dtype = vertices.dtype
+        scale = jnp.maximum(jnp.max(jnp.abs(vertices)), jnp.asarray(1.0, dtype=dtype))
+        velocity_scale = jnp.maximum(
+            jnp.max(jnp.abs(velocity)), jnp.asarray(1.0, dtype=dtype)
+        )
+        offset = vertices[twin] - vertices[kept] - translations.astype(dtype)
+        return jnp.all(jnp.abs(offset) <= 1.0e-9 * scale) & jnp.all(
+            jnp.abs(velocity[twin] - velocity[kept]) <= 1.0e-9 * velocity_scale
+        )
+
     def _instantaneous_geometry(
         self,
         time: Array,
@@ -485,17 +553,30 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             route_successful
             & self.validity.evaluate(vertices).valid
             & jnp.all(jnp.isfinite(vertex_velocity))
+            & self._seams_are_equivariant(vertices, vertex_velocity)
         )
 
         def evaluate_geometry(points: Any) -> Any:
-            return evaluate_unstructured_fv_geometry(
+            values = evaluate_unstructured_fv_geometry(
                 points,
                 self.base_plan.triangles,
                 self.base_plan.quadrilaterals,
                 self.base_plan.tetrahedra,
                 self.connectivity,
-                self.owner_cells,
-                self.owner_signs,
+                self.geometry_owner_cells,
+                self.geometry_owner_signs,
+            )
+            if self.face_topology_ids is None:
+                return values
+            # Cell measures close over every lifted face; FV faces are the
+            # owner sides of the joined seams.
+            faces = self.face_topology_ids
+            return (
+                values[0],
+                values[1],
+                *(value[faces] for value in values[2:5]),
+                values[5],
+                *(value[faces] for value in values[6:]),
             )
 
         fallback_vertices = jnp.asarray(self.base_plan.vertices, dtype=vertices.dtype)

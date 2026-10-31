@@ -167,12 +167,14 @@ class HighOrderCurvingStatus(StrEnum):
     ``CURVED``: the returned geometry is certified valid with every constrained
     node within the residual tolerance, and came from the CAD projection or a
     converged (or explicitly admitted non-converged) relaxation.
-    ROLLED_BACK_INVALID: no candidate was certified valid; the straight
-    geometry is returned. ROLLED_BACK_RESIDUAL: valid candidates missed the
-    residual tolerance. ROLLED_BACK_EMBEDDING: cells are locally valid but
-    do not have a certified global embedding. ROLLED_BACK_SOURCE_ACCEPTANCE:
-    the source-bound acceptance of a candidate was not renewed. ROLLED_BACK_NONCONVERGED:
-    the last candidate was valid within the tolerance but its relaxation did not converge.
+    A rollback returns the straight geometry and names the first refusal of the
+    last candidate, in this order. ROLLED_BACK_INVALID: some cell is not
+    certified valid. ROLLED_BACK_EMBEDDING: cells are locally valid but do not
+    have a certified global embedding. ROLLED_BACK_RESIDUAL: a constrained node
+    misses the residual tolerance. ROLLED_BACK_SOURCE_ACCEPTANCE: the
+    source-bound acceptance of the candidate was not renewed.
+    ROLLED_BACK_NONCONVERGED: the last candidate passed every check but its
+    relaxation did not converge.
     """
 
     CURVED = "curved"
@@ -308,9 +310,11 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
     nodes on B-Rep entities of lower dimension than the ambient space, and
     ``node_residuals`` their distance to that entity (zero for free nodes).
     ``minimum_scaled_jacobian`` and ``maximum_distortion`` are sampled at the
-    the Bernstein control-point lattice; acceptance additionally requires a
+    Bernstein control-point lattice; acceptance additionally requires a
     certified global embedding and source fidelity when source claims are supplied.
-    An explicit material-bearing `prior_transition` also yields a fresh
+    Source claims are renewed only for a locally accepted map (certified cells
+    and embedding, residuals within tolerance); otherwise the source fields stay
+    empty. An explicit material-bearing `prior_transition` also yields a fresh
     source-to-curved `material_transition` in this evidence.
     """
 
@@ -1294,6 +1298,7 @@ def _curving_target_result(
     /,
     *,
     prior_transition: CellMeshTransition | None = None,
+    embedding: GlobalEmbeddingCertificate,
 ) -> tuple[
     CellMeshingResult | None,
     MeshCertificationReport | None,
@@ -1326,9 +1331,9 @@ def _curving_target_result(
             raise ValueError("source_result must retain the exact mesh being curved.")
         lineage = _identity_lineage(mesh, mesh)
         identity_maps = _identity_reference_maps_for_transition(mesh, mesh)
-        coordinate_transition = _transition_geometry_record(
-            source_result, mesh, geometry, reference_maps=identity_maps
-        )
+        # Curving relocates geometry nodes on a fixed topology: the identity cell
+        # maps carry lineage, never a coordinate-map equality claim.
+        coordinate_transition = _transition_geometry_record(source_result, mesh, geometry)
         if source_result.layer_curving_evidence is not None:
             from ._layer_curving import renew_layer_curving_source_evidence
 
@@ -1385,6 +1390,12 @@ def _curving_target_result(
             region_boundary_evidence=source_result.region_boundary_evidence,
             planar_embedding=source_result.planar_embedding,
             layer_curving_evidence=layer_curving_evidence,
+            # The in-hand proof is reused only when it answers the same premises.
+            embedding=embedding
+            if audit_policy is not None
+            and audit_policy.validity_policy.policy_id
+            == embedding.validity.policy.policy_id
+            else None,
         )
         if prior_transition is not None:
             material_chain = _extend_prior_volume_material_chain(
@@ -1436,15 +1447,39 @@ def _evidence(
     _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
     scaled, distortion = _sampled_quality(blocks, coordinates)
     validity = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity)
-    embedding = certify_global_embedding(mesh, geometry, validity)
+    certification = None if source_result is None else source_result.certification
+    embedding = certify_global_embedding(
+        mesh,
+        geometry,
+        validity,
+        junction_vertices=None
+        if certification is None
+        else certification.inputs.junction_vertices,
+    )
+    # Source claims are renewed only for a locally accepted map: a rejected
+    # candidate's refusal is decided before any source acceptance is consulted.
+    locally_accepted = bool(
+        validity.all_certified
+        and embedding.status == "certified"
+        and float(np.max(residuals, initial=0.0)) <= policy.residual_tolerance
+    )
     (
         target_result,
         source_certification,
         source_failure,
         coordinate_transition,
         material_transition,
-    ) = _curving_target_result(
-        source_result, mesh, geometry, projection, prior_transition=prior_transition
+    ) = (
+        _curving_target_result(
+            source_result,
+            mesh,
+            geometry,
+            projection,
+            prior_transition=prior_transition,
+            embedding=embedding,
+        )
+        if locally_accepted
+        else (None, None, None, None, None)
     )
     return CurvedGeometryEvidence(
         validity,
@@ -1674,26 +1709,30 @@ def curve_cell_mesh(
     straight = _straight_geometry(mesh, policy.degree)
     classes = _node_classes(mesh, straight, association, projection)
     blocks = _distortion_blocks(mesh, straight, policy.degree)
-    straight_evidence = _evidence(
-        mesh,
-        straight,
-        classes,
-        projection,
-        blocks,
-        policy,
-        source_result=source_result,
-        prior_transition=prior_transition,
-    )
-    if not np.all(classes.resolved):
-        return HighOrderCurvingResult(
-            HighOrderCurvingStatus.UNRESOLVED_ASSOCIATION,
+
+    def rollback(
+        status: HighOrderCurvingStatus,
+        candidate: CurvedGeometryEvidence | None,
+        minimizations: tuple[MinimizationResult, ...],
+        /,
+    ) -> HighOrderCurvingResult:
+        # The straight map's evidence is needed only when it is the returned geometry.
+        evidence = _evidence(
+            mesh,
             straight,
-            straight,
-            straight_evidence,
-            None,
-            (),
-            None,
+            classes,
+            projection,
+            blocks,
+            policy,
+            source_result=source_result,
+            prior_transition=prior_transition,
         )
+        return HighOrderCurvingResult(
+            status, straight, straight, evidence, candidate, minimizations, None
+        )
+
+    if not np.all(classes.resolved):
+        return rollback(HighOrderCurvingStatus.UNRESOLVED_ASSOCIATION, None, ())
     pairs = _periodic_nodes(mesh, straight, tuple(periodic))
     fixed = classes.fixed.copy()
     fixed[pairs.targets] = True
@@ -1814,9 +1853,17 @@ def curve_cell_mesh(
             accepted[2],
             cell_result=accepted[1].target_result,
         )
-    # Without an accepted geometry, a valid last candidate within the residual
-    # tolerance was refused only because its relaxation did not converge.
-    if (
+    # Without an accepted geometry, the last candidate names the first refusal in
+    # the order: local cell validity, global embedding, CAD residual, retained
+    # source acceptance; a candidate passing all of them was refused only
+    # because its relaxation did not converge.
+    if not candidate.certificate.all_certified:
+        status = HighOrderCurvingStatus.ROLLED_BACK_INVALID
+    elif candidate.embedding.status != "certified":
+        status = HighOrderCurvingStatus.ROLLED_BACK_EMBEDDING
+    elif candidate.maximum_residual > candidate.residual_tolerance:
+        status = HighOrderCurvingStatus.ROLLED_BACK_RESIDUAL
+    elif (
         candidate.source_failure is not None
         or (
             candidate.source_certification is not None
@@ -1825,23 +1872,9 @@ def curve_cell_mesh(
         or (source_result is not None and candidate.target_result is None)
     ):
         status = HighOrderCurvingStatus.ROLLED_BACK_SOURCE_ACCEPTANCE
-    elif candidate.accepted:
-        status = HighOrderCurvingStatus.ROLLED_BACK_NONCONVERGED
-    elif candidate.embedding.status != "certified":
-        status = HighOrderCurvingStatus.ROLLED_BACK_EMBEDDING
-    elif candidate.certificate.all_certified:
-        status = HighOrderCurvingStatus.ROLLED_BACK_RESIDUAL
     else:
-        status = HighOrderCurvingStatus.ROLLED_BACK_INVALID
-    return HighOrderCurvingResult(
-        status,
-        straight,
-        straight,
-        straight_evidence,
-        candidate,
-        tuple(minimizations),
-        None,
-    )
+        status = HighOrderCurvingStatus.ROLLED_BACK_NONCONVERGED
+    return rollback(status, candidate, tuple(minimizations))
 
 
 __all__ = [

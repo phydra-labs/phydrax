@@ -122,9 +122,27 @@ target mesh's vertex table. Restricted maps may retain parent coefficients and
 bind exact target-vertex images separately; those images are checked through
 the retained maps rather than inferred from rounded coordinate equality.
 
+A cell's Jacobian is certified only above `CellValidityPolicy.determinant_floor()`:
+the requested `relative_determinant_floor` (default 2^-35), but never below what
+finite-element geometry preparation can evaluate, so no certified cell is
+refused there. The policy measures a full-dimensional map by its relative
+determinant `r = |det J| / prod |c_j|` (`c_j` the Jacobian's columns) and an
+embedded map by its Gram-relative determinant `r^2`. Preparation evaluates the
+signed `det(J)` of a full-dimensional cell, whose binary64 sign holds down to a
+few units of roundoff relative to `prod |c_j|`, and the Gram determinant
+`det(J^T J)` only for embedded cells. Each Jacobian is solved after scaling its
+columns to unit length, so the solve's condition number is at most `d^2 / r`
+(full-dimensional) or `d^2 / r^2` (embedded) for reference dimension `d`. With
+the small-solve limits (condition `1e12`, scaled-determinant tolerance `1e-12`),
+full-dimensional cells are evaluable for `r > 16 / 1e12` and embedded cells for
+`r^2 > 9 / 1e12`; 2^-35 is the next power of two above both. Both measures are
+angles, so the floor does not limit thin (high-aspect-ratio) cells.
+
 Polygon cells are certified without assuming star-shapedness. A planar polygon
-is `CERTIFIED_VALID` iff its vertices are finite and distinct, every edge clears
-`relative_determinant_floor` times the polygon diameter, its boundary is simple
+is `CERTIFIED_VALID` iff its vertices are finite and distinct, every edge is at
+least 2^-30 times the polygon diameter (binary64 resolves the direction of such
+an edge, and so its normal, to 2^-20: the edge vector's rounding is at most
+`8 u` times the diameter), its boundary is simple
 (`polygon_simplicity_2d`: non-adjacent edges are disjoint and adjacent edges meet
 only at their shared vertex), it is counterclockwise, and twice its signed area
 exceeds the policy floor. An embedded polygon must instead lie within
@@ -716,6 +734,67 @@ preimage, so folded or duplicated sheets are refused. A remeshed face still
 above the bound is a typed `QUALITY_REJECTED` refusal; carriers already within
 the bound keep the scaffold triangles and their one-to-one certificate. The
 compliance report records the carrier ratio and minimum angle before and after.
+
+Without an explicit `implicit_policy`, a native implicit route resolves its
+adaptive discovery from the request: the relative cell diameter is the smallest
+of half the `maximum_deviation`, every hard `UniformSizeControl` allowance and
+every soft uniform size target, each relative to the discovery-domain diagonal,
+and the root tolerance is at most a quarter of `maximum_deviation`. The policy
+default applies only when the request declares none of these. An explicit policy
+is only tightened by the deviation and hard size allowances. An analytic profile
+given to an adaptive route is discovered once at that resolution and the route
+reuses the discovery. Discovery re-anchors its
+lattice only when a lattice vertex lies on a sign crossing (its point enclosure
+contains zero while its neighbour stencil takes both certified signs): it
+restarts on a deterministic shifted lattice at the declared resolution. Touching
+or degenerate vertex zeros and other singular cells refuse on the current
+lattice. A `NativeImplicitSource` republishes the discovery under its own
+revision; fidelity and domain coverage bind it through the discovery's adaptive
+boundary query and the source ID, and its zero-set scope is the one canonical
+surface entity.
+
+Root charts map each target face (P1–P3) to the zero set along gradient lines.
+A face is certified piece by piece: undecided pieces split and siblings share
+one batched interval evaluation. The field and gradient use mean-value forms
+about the piece center, and the residual also uses a second-order Taylor form.
+The normal-line root interval is one-sided and narrowed by an interval Newton
+step. Its endpoint signs are also bounded by the residual plus the interval
+times the certified normal-line derivative. A bracket that misses a sign widens
+until it is signed, its tube leaves the certified domain, or that derivative
+loses strict positivity; no attempt count caps it. The chart Jacobian is
+`det[B P_u, B P_v, g_p] |g_q|^2 / (g_q . g_p)`, and a certainly non-positive
+Jacobian refuses. Needle faces (centroid tangent condition number above 8) use
+tangents conditioned by the inverse QR factor of their centroid tangents. Each
+conditioned column is enclosed from its own exact polynomial, so a nearly
+parallel tangent pair does not cancel.
+
+Whole-face injectivity is first proved transversally. Two target points with
+the same root satisfy `det[(I + t H) A_u, (I + t H) A_v, g] = 0`, where `A` is
+the chord mean of `DP`, `H` is the mean Hessian on the chord, `t` is the first
+point's root parameter and `g` is the gradient at the second point. A map of
+degree at most three has `A = DP(m) + D^2(DP)[d, d] / 24`. The P3 chord error
+`D^3 P[d, d, B e_j] / 24` is formed exactly along the conditioned basis `B`,
+and the chord is bounded by `B^-1`. The determinant, a quadratic in `t`, must
+be strictly signed in one of four forms. Three are whole-face forms, using the
+face's gradient and Hessian, with or without expanding `(I + t H)^-1`. The
+fourth is local. Two pieces can only collide when their root boxes meet, so
+for each piece it uses the Hessian over the pieces whose root boxes meet its
+own, their root parameters, and the chord means of the pieces around them. The
+local form tightens as pieces shrink, so large faces of coarse carriers
+certify; the pieces that block it are refined. Strong monotonicity under the
+inverse or the transposed mean projected Jacobian is checked alongside, and
+its undecided pieces are refined too. The transposed form pairs each chord
+image with its mean image, which keeps rotating thin faces positive.
+
+A field that is not smooth needs an exact `AnalyticImplicitProfile` whose
+singular set is disjoint from the certified zero-set cover. Point lifts double a
+bracket from the coordinate spacing, independently of the face, so faces
+sharing a node lift it to the same root. A remeshed carrier proves that each
+lifted point has one preimage by excluding it from every other face. Only the
+pieces whose interval-Newton root boxes still reach the point are refined,
+without a depth cap. Certification takes the prepared root charts explicitly
+(`root_charts=`) and checks them against its operands. Interval products take an
+exact zero times an unbounded side as zero (IEEE 1788).
 
 Native curve meshing binds each `SegmentMesh` edge to a `SegmentChartCurve`: the
 exact affine map of the edge onto its declared chart parameter range. Its rational

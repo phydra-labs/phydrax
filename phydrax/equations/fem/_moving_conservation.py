@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._cell_geometry_validity import cell_jacobian_inverse_and_measure
 from ...discretization.fem._generic import (
     _degree_aware_reference_rule,
     FiniteElementDiscretization,
@@ -34,7 +35,6 @@ from ...linalg import (
     factorize,
     OperatorProperties,
 )
-from ._operators import _cell_inverse_and_determinant
 from ._trace_routes import PreparedDGTraceRoute
 
 
@@ -174,8 +174,8 @@ def finite_element_ale_metric_evidence(
         velocity_gradient_reference = ein.contract(
             "qid,cia->cqad", gradients, velocity, backend="jax"
         )
-        current_inverse, current_determinant, current_successful = (
-            _cell_inverse_and_determinant(current_jacobian)
+        current_inverse, _, _, current_determinant, current_successful = (
+            cell_jacobian_inverse_and_measure(current_jacobian)
         )
         next_determinant = compound_matrix(next_jacobian, next_jacobian.shape[-1])[
             ..., 0, 0

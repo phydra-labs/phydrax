@@ -11,6 +11,7 @@ from fractions import Fraction
 import numpy as np
 
 from ..geometry._rational import fraction_up
+from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 from ..geometry.brep._assembly import (
     BRepAssemblyGraph,
     BRepPlacementEvidence,
@@ -76,6 +77,7 @@ def _model_with_geometry(
     model: BRepModel,
     geometry: BRepGeometry,
     tessellation: BRepTessellation | None,
+    certificate: SourceFidelityCertificate | None = None,
     /,
 ) -> BRepModel:
     return BRepModel(
@@ -88,6 +90,7 @@ def _model_with_geometry(
         report=model.report,
         trim_domains=model.trim_domains,
         tessellation=tessellation,
+        tessellation_certificate=certificate,
     )
 
 
@@ -146,8 +149,8 @@ def _realize_tessellation(
 ) -> BRepModel:
     if policy is None:
         return model
-    tessellation = tessellate_brep_model(model, policy)
-    return _model_with_geometry(model, model.geometry, tessellation)
+    tessellation, certificate = tessellate_brep_model(model, policy)
+    return _model_with_geometry(model, model.geometry, tessellation, certificate)
 
 
 def certify_placed_model(model: BRepModel, policy: CadImportPolicy, /) -> BRepModel:

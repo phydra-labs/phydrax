@@ -934,6 +934,7 @@ class CurveSurfaceIntersectionRoot(StrictModule):
     parameters: Array
     preconditioner: Array
     endpoint_witness: ConicRootLineEndpointWitness | None
+    tangent_witness: ExactLineCylinderTangency | None
     contraction: float = eqx.field(static=True)
     root_id: str = eqx.field(static=True)
 
@@ -947,6 +948,7 @@ class CurveSurfaceIntersectionRoot(StrictModule):
         parameter_lower: ArrayLike,
         parameter_upper: ArrayLike,
         endpoint_witness: ConicRootLineEndpointWitness | None = None,
+        tangent_witness: ExactLineCylinderTangency | None = None,
     ) -> None:
         if curve.ambient_dimension != 3:
             raise ValueError(
@@ -955,7 +957,32 @@ class CurveSurfaceIntersectionRoot(StrictModule):
 
         lower_input = np.asarray(parameter_lower, dtype=np.float64)
         upper_input = np.asarray(parameter_upper, dtype=np.float64)
-        if endpoint_witness is None:
+        if tangent_witness is not None:
+            # A double root has a singular Jacobian, so no Krawczyk contraction
+            # exists: the exact zero discriminant proves the root and its
+            # multiplicity, and makes it the only root on the whole edge line.
+            if endpoint_witness is not None or not isinstance(curve, AbstractCurve):
+                raise ValueError(
+                    "A tangent root takes only its exact multiplicity witness."
+                )
+            replay = ExactLineCylinderTangency(curve, surface)
+            box = replay.parameter_box()
+            if (
+                replay.parameter_exact != tangent_witness.parameter_exact
+                or replay.profile_exact != tangent_witness.profile_exact
+                or lower_input.shape != (3,)
+                or upper_input.shape != (3,)
+                or np.any(box[0] < lower_input)
+                or np.any(box[1] > upper_input)
+            ):
+                raise ValueError(
+                    "A tangent root box must contain its replayed exact double root."
+                )
+            params = 0.5 * box[0] + 0.5 * box[1]
+            preconditioner = np.zeros((3, 3), dtype=np.float64)
+            # No contraction certifies a double root (1 is not below 1).
+            contraction = 1.0
+        elif endpoint_witness is None:
 
             def residual(values: Array) -> Array:
                 return curve.evaluate(values[0]) - surface.patch.evaluate(values[1:])
@@ -1015,26 +1042,33 @@ class CurveSurfaceIntersectionRoot(StrictModule):
         )
         self.contraction = contraction
         self.endpoint_witness = endpoint_witness
-        self.root_id = canonical_fingerprint(
-            {
-                "kind": "curve-surface-root",
-                "curve": _curve_payload(curve),
-                "surface": surface.identity_payload(),
-                "lower": _float_hex(lower_input),
-                "upper": _float_hex(upper_input),
-                "endpoint_witness": (
-                    None
-                    if endpoint_witness is None
-                    else endpoint_witness.identity_payload()
-                ),
-            }
-        )
+        self.tangent_witness = tangent_witness
+        identity: dict[str, object] = {
+            "kind": "curve-surface-root",
+            "curve": _curve_payload(curve),
+            "surface": surface.identity_payload(),
+            "lower": _float_hex(lower_input),
+            "upper": _float_hex(upper_input),
+            "endpoint_witness": (
+                None if endpoint_witness is None else endpoint_witness.identity_payload()
+            ),
+        }
+        if tangent_witness is not None:
+            # Absent for every simple root, so existing identities are kept.
+            identity["tangent_witness"] = tangent_witness.identity_payload()
+        self.root_id = canonical_fingerprint(identity)
+
+    @property
+    def multiplicity(self) -> int:
+        return 1 if self.tangent_witness is None else self.tangent_witness.multiplicity
 
     def parameter_enclosure(self) -> np.ndarray:
         if self.endpoint_witness is not None:
             return self.endpoint_witness.curve_surface_parameter_box(
                 self.curve, self.surface
             )
+        if self.tangent_witness is not None:
+            return self.tangent_witness.parameter_box()
         return np.stack(
             (np.asarray(self.parameter_lower), np.asarray(self.parameter_upper))
         )
@@ -3058,7 +3092,7 @@ def _root_definition_payload(root: object, /) -> dict[str, object]:
             ),
         }
     if isinstance(root, CurveSurfaceIntersectionRoot):
-        return {
+        payload: dict[str, object] = {
             "kind": "curve-surface-root",
             "curve": _curve_payload(root.curve),
             "surface": root.surface.identity_payload(),
@@ -3070,6 +3104,9 @@ def _root_definition_payload(root: object, /) -> dict[str, object]:
                 else root.endpoint_witness.identity_payload()
             ),
         }
+        if root.tangent_witness is not None:
+            payload["tangent_witness"] = root.tangent_witness.identity_payload()
+        return payload
     if isinstance(root, IntersectionCurvePointRoot):
         return {
             "kind": "intersection-curve-point-root",
@@ -3756,18 +3793,34 @@ def intersect_trim_curves(
     return CurveIntersectionResult(points, unresolved=tuple(unresolved))
 
 
-def _line_cylinder_region_intersections(
-    source: CurveRange,
-    surface: SurfaceRegion,
-    policy: ParametricIntersectionPolicy,
-    /,
-) -> CurveIntersectionResult | None:
-    """Isolate a line/revolution-cylinder pair from its exact quadratic."""
-    from .._rational import fraction_down, fraction_up
+@dataclass(frozen=True, slots=True)
+class _LineCylinderQuadratic:
+    """Exact rational data of a straight edge against a straight cylinder.
+
+    The edge point ``origin + t * direction`` is on the cylinder exactly where
+    ``quadratic t^2 + linear t + constant = 0``.
+    """
+
+    line_origin: tuple[Fraction, ...]
+    line_direction: tuple[Fraction, ...]
+    cylinder_origin: tuple[Fraction, ...]
+    axis: tuple[Fraction, ...]
+    first_axis: tuple[Fraction, ...]
+    second_axis: tuple[Fraction, ...]
+    profile_slope: Fraction
+    quadratic: Fraction
+    linear: Fraction
+    constant: Fraction
+
+
+def _line_cylinder_quadratic(
+    curve: AbstractCurve, surface: SurfaceRegion, /
+) -> _LineCylinderQuadratic | None:
+    """Return the exact edge/cylinder quadratic, or None for other carriers."""
     from ._patches import CylinderPatch, ExactLineCurve, LineCurve, RevolutionSurface
 
     if not isinstance(surface.patch, RevolutionSurface) or not isinstance(
-        source.curve, (LineCurve, ExactLineCurve)
+        curve, (LineCurve, ExactLineCurve)
     ):
         return None
     view = _revolution_cylinder_view(surface)
@@ -3786,18 +3839,14 @@ def _line_cylinder_region_intersections(
         != Fraction.from_float(float(surface.patch.periods[0]))
     ):
         return None
-    if isinstance(source.curve, LineCurve):
-        line_origin = source.curve.origin_exact
-        line_direction = source.curve.direction_exact
+    if isinstance(curve, LineCurve):
+        line_origin = curve.origin_exact
+        line_direction = curve.direction_exact
     else:
-        line_origin = source.curve.first_exact
+        line_origin = curve.first_exact
         line_direction = tuple(
             last - first
-            for first, last in zip(
-                source.curve.first_exact,
-                source.curve.last_exact,
-                strict=True,
-            )
+            for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
         )
     vectors = (
         line_origin,
@@ -3807,16 +3856,18 @@ def _line_cylinder_region_intersections(
         cylinder.first_axis_exact,
         cylinder.second_axis_exact,
     )
-    if any(
-        not all(isinstance(value, Fraction) for value in vector) for vector in vectors
-    ) or not isinstance(cylinder.radius_exact, Fraction):
+    if (
+        any(
+            not all(isinstance(value, Fraction) for value in vector) for vector in vectors
+        )
+        or not isinstance(cylinder.radius_exact, Fraction)
+        or not isinstance(profile_slope, Fraction)
+    ):
         return None
     line_origin = cast(tuple[Fraction, ...], line_origin)
     line_direction = cast(tuple[Fraction, ...], line_direction)
     cylinder_origin = cast(tuple[Fraction, ...], cylinder.origin_exact)
     axis = cast(tuple[Fraction, ...], cylinder.axis_exact)
-    first_axis = cast(tuple[Fraction, ...], cylinder.first_axis_exact)
-    second_axis = cast(tuple[Fraction, ...], cylinder.second_axis_exact)
     radius = cylinder.radius_exact
     displacement = tuple(
         point - origin for point, origin in zip(line_origin, cylinder_origin, strict=True)
@@ -3831,9 +3882,132 @@ def _line_cylinder_region_intersections(
         value - axial_rate * direction
         for value, direction in zip(line_direction, axis, strict=True)
     )
-    quadratic = rational_dot(radial_direction, radial_direction)
-    linear = 2 * rational_dot(radial_offset, radial_direction)
-    constant = rational_dot(radial_offset, radial_offset) - radius * radius
+    return _LineCylinderQuadratic(
+        line_origin,
+        line_direction,
+        cylinder_origin,
+        axis,
+        cast(tuple[Fraction, ...], cylinder.first_axis_exact),
+        cast(tuple[Fraction, ...], cylinder.second_axis_exact),
+        profile_slope,
+        rational_dot(radial_direction, radial_direction),
+        2 * rational_dot(radial_offset, radial_direction),
+        rational_dot(radial_offset, radial_offset) - radius * radius,
+    )
+
+
+class ExactLineCylinderTangency(StrictModule):
+    """An edge tangent to a straight cylinder: a double root with exact evidence.
+
+    The edge/cylinder quadratic has a zero discriminant, so its only root is
+    the rational parameter ``-linear / (2 quadratic)`` of multiplicity two:
+    no other root exists anywhere on the edge line, which isolates it. The
+    contact point, its profile parameter and its radial direction are exact.
+    """
+
+    curve: AbstractCurve
+    surface: SurfaceRegion
+    parameter_exact: Fraction = eqx.field(static=True)
+    profile_exact: Fraction = eqx.field(static=True)
+    radial_exact: tuple[Fraction, ...] = eqx.field(static=True)
+    cosine_exact: Fraction = eqx.field(static=True)
+    sine_exact: Fraction = eqx.field(static=True)
+    multiplicity: int = eqx.field(static=True)
+
+    @checked
+    def __init__(self, curve: AbstractCurve, surface: SurfaceRegion, /) -> None:
+        quadratic = _line_cylinder_quadratic(curve, surface)
+        if quadratic is None or quadratic.quadratic == 0:
+            raise ValueError(
+                "An exact tangency needs a straight edge against a straight cylinder."
+            )
+        if quadratic.linear**2 != 4 * quadratic.quadratic * quadratic.constant:
+            raise ValueError("The edge does not touch the cylinder in a double root.")
+        parameter = -quadratic.linear / (2 * quadratic.quadratic)
+        point = tuple(
+            origin + parameter * direction
+            for origin, direction in zip(
+                quadratic.line_origin, quadratic.line_direction, strict=True
+            )
+        )
+        relative = tuple(
+            value - origin
+            for value, origin in zip(point, quadratic.cylinder_origin, strict=True)
+        )
+        axial = rational_dot(relative, quadratic.axis)
+        radial = tuple(
+            value - axial * direction
+            for value, direction in zip(relative, quadratic.axis, strict=True)
+        )
+        self.curve, self.surface = curve, surface
+        self.parameter_exact = parameter
+        self.profile_exact = axial / quadratic.profile_slope
+        # The solid cylinder lies in the half-space (x - point) . radial <= 0.
+        self.radial_exact = radial
+        self.cosine_exact = rational_dot(radial, quadratic.first_axis)
+        self.sine_exact = rational_dot(radial, quadratic.second_axis)
+        self.multiplicity = 2
+
+    def parameter_box(self) -> np.ndarray:
+        """Outward-enclose ``(edge parameter, angle, profile)`` of the double root."""
+        from .._rational import fraction_down, fraction_up
+
+        context = interval_context(80)
+
+        def scalar(value: Fraction) -> Any:
+            return context.mpf(value.numerator) / context.mpf(value.denominator)
+
+        angle = context.atan2(scalar(self.sine_exact), scalar(self.cosine_exact))
+        window = float(self.surface.parameter_box[0, 0])
+        middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+        angle = angle + math.ceil((window - middle) / math.tau) * 2 * context.pi
+        return np.asarray(
+            (
+                (
+                    fraction_down(self.parameter_exact),
+                    float(np.nextafter(float(angle.a), -np.inf)),
+                    fraction_down(self.profile_exact),
+                ),
+                (
+                    fraction_up(self.parameter_exact),
+                    float(np.nextafter(float(angle.b), np.inf)),
+                    fraction_up(self.profile_exact),
+                ),
+            ),
+            dtype=np.float64,
+        )
+
+    def identity_payload(self) -> dict[str, object]:
+        return {
+            "kind": "exact-line-cylinder-tangency",
+            "curve": _curve_payload(self.curve),
+            "surface": self.surface.identity_payload(),
+            "parameter": (
+                self.parameter_exact.numerator,
+                self.parameter_exact.denominator,
+            ),
+            "multiplicity": self.multiplicity,
+        }
+
+
+def _line_cylinder_region_intersections(
+    source: CurveRange,
+    surface: SurfaceRegion,
+    policy: ParametricIntersectionPolicy,
+    /,
+) -> CurveIntersectionResult | None:
+    """Isolate a line/revolution-cylinder pair from its exact quadratic."""
+    from .._rational import fraction_down, fraction_up
+
+    setup = _line_cylinder_quadratic(source.curve, surface)
+    angle_period = surface.patch.periods[0]
+    if setup is None or angle_period is None:
+        return None
+    line_origin, line_direction = setup.line_origin, setup.line_direction
+    cylinder_origin, axis = setup.cylinder_origin, setup.axis
+    first_axis, second_axis = setup.first_axis, setup.second_axis
+    profile_slope = setup.profile_slope
+    quadratic, linear, constant = setup.quadratic, setup.linear, setup.constant
     domain_lower = np.concatenate(
         (
             np.asarray((source.first,), dtype=np.float64),
@@ -3859,17 +4033,45 @@ def _line_cylinder_region_intersections(
         return CurveIntersectionResult()
     if discriminant == 0:
         # The line touches the cylinder at one exact rational parameter; a touch
-        # outside the edge's own range is no contact with this edge.
-        touch = -linear / (2 * quadratic)
+        # outside the edge's own range or the surface's profile range is no
+        # contact. Inside, it is a typed double root with exact evidence.
+        tangency = ExactLineCylinderTangency(source.curve, surface)
+        box = tangency.parameter_box()
         if not (
             Fraction.from_float(float(source.first))
-            <= touch
+            <= tangency.parameter_exact
             <= Fraction.from_float(float(source.last))
+        ) or not (
+            Fraction.from_float(float(surface.parameter_box[0, 1]))
+            <= tangency.profile_exact
+            <= Fraction.from_float(float(surface.parameter_box[1, 1]))
         ):
             return CurveIntersectionResult()
+        root = CurveSurfaceIntersectionRoot(
+            source.curve,
+            surface,
+            parameter_lower=np.nextafter(box[0], -np.inf),
+            parameter_upper=np.nextafter(box[1], np.inf),
+            tangent_witness=tangency,
+        )
+        parameters = np.asarray(root.parameters, dtype=np.float64)
+        source_point = np.asarray(
+            source.curve.evaluate(jnp.asarray(parameters[0])), dtype=np.float64
+        )
         return CurveIntersectionResult(
-            unresolved=(
-                UnresolvedParameterRegion(domain_lower, domain_upper, "singular"),
+            points=(
+                ParametricIntersectionPoint(
+                    kind="tangent_point",
+                    certificate="analytic-contact",
+                    parameters=parameters,
+                    parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
+                    parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
+                    point=source_point,
+                    gap_bound=0.0,
+                    condition_estimate=float("inf"),
+                    branch_count=1,
+                    root_id=root.root_id,
+                ),
             )
         )
     radical = RadicalElement.sqrt(discriminant)
@@ -3945,7 +4147,7 @@ def _line_cylinder_region_intersections(
         angle = context.atan2(interval(sine), interval(cosine))
         angle_lower = math.nextafter(float(angle.a), -math.inf)
         angle_upper = math.nextafter(float(angle.b), math.inf)
-        period = float(surface.patch.periods[0])
+        period = float(angle_period)
         turns = math.ceil(
             (float(surface.parameter_box[0, 0]) - 0.5 * angle_lower - 0.5 * angle_upper)
             / period
@@ -5325,6 +5527,7 @@ def _angular_surface_branch(
     start_kind: IntersectionEndpointKind = "closed",
     end_kind: IntersectionEndpointKind = "closed",
     end_nodes: tuple[tuple[int, float], tuple[int, float]] | None = None,
+    interior_nodes: tuple[tuple[float, int, float], ...] = (),
     seam: tuple[float, float] | None = None,
 ) -> IntersectionCurve | None:
     """Build an angular source branch with certified chart and node roots.
@@ -5338,6 +5541,10 @@ def _angular_surface_branch(
     ``theta_lower`` up to the window's upper end and on from its lower end to
     ``theta_upper``. The crossing is one node fixing the angle at the exact
     lower window value; the charts before it see it through one exact deck.
+
+    Each ``interior_nodes`` entry ``(angle, axis, value)`` splits the branch at
+    ``angle`` with a node fixing source coordinate ``axis`` at the exact
+    ``value`` instead of the angle: a tangent touch of a trim edge.
     """
     from ._intersection_curve import _PreparedPair
 
@@ -5363,10 +5570,21 @@ def _angular_surface_branch(
     def subdivide(
         piece_lower: float, piece_upper: float, /
     ) -> list[tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] | None:
-        breakpoints = [
-            piece_lower + (piece_upper - piece_lower) * index / 4.0 for index in range(5)
+        breakpoints = sorted(
+            {
+                piece_lower + (piece_upper - piece_lower) * index / 4.0
+                for index in range(5)
+            }
+            | {
+                angle
+                for angle, _, _ in interior_nodes
+                if piece_lower < angle < piece_upper
+            }
+        )
+        pending = [
+            (breakpoints[index], breakpoints[index + 1])
+            for index in range(len(breakpoints) - 1)
         ]
-        pending = [(breakpoints[index], breakpoints[index + 1]) for index in range(4)]
         found = []
         while pending:
             lower_angle, upper_angle = pending.pop()
@@ -5438,11 +5656,19 @@ def _angular_surface_branch(
             index for index, angle in enumerate(node_angles) if angle == seam[1]
         )
         node_angles[seam_node] = seam[0]
+    fixed = {angle: (axis, value) for angle, axis, value in interior_nodes}
+    if sum(angle in fixed for angle in node_angles[1:-1]) != len(fixed):
+        return None
+    node_axes = np.full((len(node_angles),), chart_axis, dtype=np.int32)
+    node_values = np.asarray(node_angles, dtype=np.float64)
     node_boxes = []
     for index, angle in enumerate(node_angles):
         node_axis, node_value = chart_axis, angle
         if end_nodes is not None and index in (0, len(node_angles) - 1):
             node_axis, node_value = end_nodes[0 if index == 0 else 1]
+        elif 0 < index < len(node_angles) - 1 and angle in fixed:
+            node_axis, node_value = fixed[angle]
+        node_axes[index], node_values[index] = node_axis, node_value
         isolated = _surface_branch_node_box(
             pair, point_at(angle), node_axis, node_value, policy
         )
@@ -5463,10 +5689,6 @@ def _angular_surface_branch(
                 if shifts is None:
                     return None
                 node_shifts[index, direction] = shifts
-    node_axes = np.full((len(node_angles),), chart_axis, dtype=np.int32)
-    node_values = np.asarray(node_angles, dtype=np.float64)
-    if end_nodes is not None:
-        (node_axes[0], node_values[0]), (node_axes[-1], node_values[-1]) = end_nodes
     try:
         return IntersectionCurve(
             first,
@@ -6824,7 +7046,10 @@ class _IsolineArc:
 
     Each end is a crossing of one rectangle edge: the chart coordinate
     ``*_axis`` equals the exact edge value ``*_value`` there, at an angle
-    enclosed by ``[*_lower, *_upper]``.
+    enclosed by ``[*_lower, *_upper]``. Each ``touches`` entry
+    ``(angle, axis, value)`` is an interior tangency with an edge: the arc
+    stays inside and meets the edge at the one node where chart coordinate
+    ``axis`` (along the edge) has the exact value ``value``.
     """
 
     start_lower: float
@@ -6836,9 +7061,10 @@ class _IsolineArc:
     end_axis: int
     end_value: float
     across_seam: bool = False
+    touches: tuple[tuple[float, int, float], ...] = ()
 
 
-def _edge_tangency_misses_segment(
+def _edge_tangency(
     center: Sequence[ExactScalar],
     cosine: Sequence[ExactScalar],
     sine: Sequence[ExactScalar],
@@ -6846,16 +7072,18 @@ def _edge_tangency_misses_segment(
     axis: int,
     edge: int,
     /,
-) -> bool:
-    """Prove a circle reaches one rectangle edge line without entering the chart.
+) -> bool | tuple[Fraction, Fraction, Fraction]:
+    """Decide a circle that reaches one rectangle edge line by a double root.
 
     ``c + a cos t + b sin t = e`` has a double root exactly when the rational
     discriminant ``a^2 + b^2 - (e - c)^2`` vanishes; the circle then touches
     the edge line once, at the unit direction ``(a, b) / (e - c)``, where the
-    other chart coordinate is rational. A negative discriminant means no
-    contact. A touch outside the edge, or one from the rectangle's exterior
-    side (the circle's extreme coordinate is the edge value of a lower edge,
-    or its least coordinate that of an upper edge), never enters the chart.
+    other chart coordinate is rational. Returns True when the circle never
+    enters the chart there: a negative discriminant, a touch outside the edge,
+    or one from the rectangle's exterior side (the circle's extreme coordinate
+    is the edge value of a lower edge, or its least that of an upper edge).
+    An interior touch strictly inside the edge returns its exact
+    ``(cos t, sin t, other coordinate)``; anything else returns False.
     """
     other = 1 - axis
     values = (
@@ -6875,13 +7103,15 @@ def _edge_tangency_misses_segment(
         return True
     if discriminant > 0 or gap == 0:
         return False
-    if (gap > 0) == (edge == 0):
-        return True
     # The double root has cos t = a / gap and sin t = b / gap exactly.
     touch = other_center + (other_cosine * a + other_sine * b) / gap
-    return touch < Fraction.from_float(float(bounds[0, other])) or touch > (
-        Fraction.from_float(float(bounds[1, other]))
-    )
+    other_lower = Fraction.from_float(float(bounds[0, other]))
+    other_upper = Fraction.from_float(float(bounds[1, other]))
+    if (gap > 0) == (edge == 0) or touch < other_lower or touch > other_upper:
+        return True
+    if touch == other_lower or touch == other_upper:
+        return False
+    return a / gap, b / gap, touch
 
 
 def _isoline_rectangle_arcs(
@@ -6933,6 +7163,15 @@ def _isoline_rectangle_arcs(
         return 1 if inside else None
 
     events: list[tuple[Any, int, float]] = []
+    touches: list[tuple[Any, int, float]] = []
+
+    def in_window(angle: Any, /) -> Any | None:
+        middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
+        angle = angle - math.floor((middle - window_lower) / math.tau) * two_pi
+        if not (window.b < angle.a and angle.b < (window + two_pi).a):
+            return None
+        return angle
+
     for axis in range(2):
         amplitude = context.sqrt(cosines[axis] ** 2 + sines[axis] ** 2)
         if not amplitude.a > 0:
@@ -6944,21 +7183,28 @@ def _isoline_rectangle_arcs(
             if ratio.b < -1 or ratio.a > 1:
                 continue
             if not (-1 < ratio.a and ratio.b < 1):
-                if _edge_tangency_misses_segment(
-                    center, cosine, sine, bounds, axis, edge
-                ):
+                tangency = _edge_tangency(center, cosine, sine, bounds, axis, edge)
+                if tangency is True:
                     continue
-                return None
+                if tangency is False:
+                    return None
+                touch_cosine, touch_sine, touch_value = tangency
+                touch_angle = in_window(
+                    context.atan2(interval(touch_sine), interval(touch_cosine))
+                )
+                if touch_angle is None or float(touch_value) != touch_value:
+                    return None
+                touches.append((touch_angle, 1 - axis, float(touch_value)))
+                continue
             offset = context.atan2(context.sqrt(1 - ratio**2), ratio)
             for angle in (phase - offset, phase + offset):
-                middle = 0.5 * float(angle.a) + 0.5 * float(angle.b)
-                angle = angle - math.floor((middle - window_lower) / math.tau) * two_pi
-                if not (window.b < angle.a and angle.b < (window + two_pi).a):
+                angle = in_window(angle)
+                if angle is None:
                     return None
                 events.append((angle, axis, value))
     if not events:
         state = side(window + context.pi)
-        if state is None:
+        if state is None or touches:
             return None
         return "full" if state > 0 else ()
     events.sort(key=lambda event: float(event[0].a))
@@ -6968,12 +7214,23 @@ def _isoline_rectangle_arcs(
     ):
         return None
     arcs = []
+    placed = 0
     for index, (start, start_axis, start_value) in enumerate(events):
         across_seam = index == len(events) - 1
         end, end_axis, end_value = events[(index + 1) % len(events)]
         stop = end + (two_pi if across_seam else 0)
-        # The arc stays on one side of every edge line; only an exterior
-        # tangent touch can sit on a boundary, so further samples settle it.
+        # Interior touches strictly inside this arc's angle span become nodes.
+        arc_touches = []
+        for touch_angle, touch_axis, touch_value in touches:
+            for turn in (0, 1) if across_seam else (0,):
+                shifted = touch_angle + turn * two_pi
+                if start.b < shifted.a and shifted.b < stop.a:
+                    middle = 0.5 * float(touch_angle.a) + 0.5 * float(touch_angle.b)
+                    arc_touches.append((middle, touch_axis, touch_value))
+                elif not (shifted.b < start.a or stop.b < shifted.a):
+                    return None
+        # The arc stays on one side of every edge line; only a tangent touch
+        # can sit on a boundary, so further samples settle it.
         state = None
         for weight in (0.5, 0.381966, 0.618034, 0.25, 0.75):
             state = side(start + weight * (stop - start))
@@ -6982,7 +7239,10 @@ def _isoline_rectangle_arcs(
         if state is None:
             return None
         if state < 0:
+            if arc_touches:
+                return None
             continue
+        placed += len(arc_touches)
         arcs.append(
             _IsolineArc(
                 float(np.nextafter(float(start.a), -np.inf)),
@@ -6994,8 +7254,11 @@ def _isoline_rectangle_arcs(
                 end_axis,
                 end_value,
                 across_seam,
+                tuple(sorted(arc_touches)),
             )
         )
+    if placed != len(touches):
+        return None
     return tuple(arcs)
 
 
@@ -7209,6 +7472,14 @@ def _revolution_plane_isoline(
                 start_kind="closed" if arc is None else "boundary",
                 end_kind="closed" if arc is None else "boundary",
                 end_nodes=end_nodes,
+                interior_nodes=(
+                    ()
+                    if arc is None
+                    else tuple(
+                        (angle, plane_offset + axis, value)
+                        for angle, axis, value in arc.touches
+                    )
+                ),
                 seam=(
                     (angle_lower, angle_upper)
                     if arc is not None and arc.across_seam

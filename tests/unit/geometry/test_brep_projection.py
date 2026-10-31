@@ -249,6 +249,56 @@ def test_native_torus_projects_interior_and_both_seam_points() -> None:
     np.testing.assert_allclose(result.normals[:5], outward, atol=1e-12)
 
 
+@pytest.mark.parametrize(
+    ("model", "inside", "outside", "boundary"),
+    [
+        (
+            brep_sphere(1.0, coordinate_contract=_CONTRACT),
+            ((0.3, 0.4, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, -0.5), (-0.9, 0.0, 0.0)),
+            ((0.0, 0.0, 2.0), (0.6, 0.6, 0.6), (0.0, 0.0, -1.5), (1.0, 0.0, 1.0)),
+            ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), (1.0, 0.0, 0.0), (0.0, -1.0, 0.0)),
+        ),
+        (
+            brep_sphere(
+                0.5,
+                center=(0.25, -1.0, 2.0),
+                axis=(0.0, 1.0, 0.0),
+                coordinate_contract=_CONTRACT,
+            ),
+            ((0.25, -1.0, 2.0), (0.5, -1.25, 2.0), (0.25, -0.625, 2.0)),
+            ((0.0, 0.0, 0.0), (0.25, -0.25, 2.0), (0.75, -0.5, 2.0)),
+            ((0.25, -0.5, 2.0), (0.25, -1.5, 2.0), (0.75, -1.0, 2.0), (0.25, -1.0, 1.5)),
+        ),
+        (
+            brep_torus(2.0, 0.5, coordinate_contract=_CONTRACT),
+            ((2.0, 0.0, 0.0), (0.0, -2.0, 0.25), (1.75, 0.0, -0.125), (-2.25, 0.0, 0.0)),
+            ((0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (2.0, 0.0, 0.75), (1.0, 0.0, 0.0)),
+            ((2.5, 0.0, 0.0), (1.5, 0.0, 0.0), (0.0, 2.0, 0.5), (0.0, -2.0, -0.5)),
+        ),
+    ],
+    ids=("sphere", "offset-sphere", "torus"),
+)
+def test_closed_revolution_containment_is_exact_with_unresolved_boundary(
+    model: Any, inside: Any, outside: Any, boundary: Any
+) -> None:
+    # The meridian image (rho, h) of a point decides containment against the
+    # exact profile circle; points on the surface are unresolved, not guessed.
+    projection = phx.geometry.prepare_brep_projection(model)
+
+    def contains(points: Any) -> list[bool | None]:
+        return [
+            projection._contains_solid(np.asarray(point, dtype=np.float64), 0)
+            for point in points
+        ]
+
+    assert contains(inside) == [True] * len(inside)
+    assert contains(outside) == [False] * len(outside)
+    assert contains(boundary) == [None] * len(boundary)
+    located = projection.locate_solids(np.asarray(inside, dtype=np.float64))
+    assert np.asarray(located.status).tolist() == [_STATUS.UNIQUE] * len(inside)
+    assert np.asarray(located.dimensions).tolist() == [3] * len(inside)
+
+
 def test_brep_projection_scenario_2() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     model = model_from_occt_shape(
