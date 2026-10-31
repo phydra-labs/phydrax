@@ -1361,21 +1361,41 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
                     "Graph migration evidence owned cell IDs differ from this local view."
                 )
         else:
+            # Two migrations can carry an adaptive result: the one applied to
+            # the adaptive source shard before adaptation, or a later
+            # geometry-preserving repartition of the adapted target, whose
+            # evidence targets this view and whose plan the rebound result
+            # records as current.
             plan = adaptive_result.graph_partition_plan
-            if (
-                not isinstance(plan, GraphPartitionPlan)
-                or graph_migration_evidence.result.plan_id != plan.plan_id
-                or graph_migration_evidence.target_part_id
-                != adaptive_result.source_part_id
-                or graph_migration_evidence.target_directory_id
-                != adaptive_result.source_distribution_id
-                or not np.array_equal(
+            binds_source_shard = (
+                graph_migration_evidence.target_part_id == adaptive_result.source_part_id
+                and graph_migration_evidence.target_directory_id
+                == adaptive_result.source_distribution_id
+                and np.array_equal(
                     np.asarray(graph_migration_evidence.target_cell_ids, dtype=np.int64),
                     np.asarray(adaptive_result.source_cell_ids, dtype=np.int64),
                 )
+            )
+            binds_target_view = (
+                graph_migration_evidence.target_part_id == identities["part_id"]
+                and graph_migration_evidence.target_directory_id
+                == identities["distribution_id"]
+                and cell_ids.ndim == 1
+                and owned.shape == cell_ids.shape
+                and owned.dtype == np.dtype(np.bool_)
+                and np.array_equal(
+                    np.asarray(graph_migration_evidence.target_cell_ids, dtype=np.int64),
+                    np.sort(cell_ids[owned], kind="stable"),
+                )
+            )
+            if (
+                not isinstance(plan, GraphPartitionPlan)
+                or graph_migration_evidence.result.plan_id != plan.plan_id
+                or not (binds_source_shard or binds_target_view)
             ):
                 raise ValueError(
-                    "Graph migration evidence does not bind the adaptive source shard."
+                    "Graph migration evidence does not bind the adaptive source shard "
+                    "or this repartitioned target view."
                 )
         if (
             not isinstance(serial_source_view, bool)
@@ -2261,6 +2281,12 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Stored exact power source map changed its local binding."
                     )
+            elif isinstance(source_authority, OwnerLocalCellGeometry):
+                # Checked before the structural coordinate-map protocol, which a
+                # view also satisfies through its identity fields.
+                raise ValueError(
+                    "Nested owner-local source views require their own current-group restore."
+                )
             elif isinstance(source_authority, CellGeometryCoordinateMap):
                 if (
                     source_authority.source_id != value.source_id
@@ -2270,10 +2296,6 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Stored coordinate map differs from its local source identity."
                     )
-            elif isinstance(source_authority, OwnerLocalCellGeometry):
-                raise ValueError(
-                    "Nested owner-local source views require their own current-group restore."
-                )
             elif source_authority is not None:
                 raise TypeError(
                     "Stored owner-local source map has an unsupported concrete type."

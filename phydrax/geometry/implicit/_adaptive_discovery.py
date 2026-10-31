@@ -514,10 +514,17 @@ def _classes(lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
 
 
 class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
-    """Adaptive-discovery issues and numerical termination evidence."""
+    """Adaptive-discovery issues and numerical termination evidence.
+
+    ``lattice_anchor`` names the discovery lattice: ``0`` subdivides the declared
+    domain, ``k > 0`` the ``k``-th deterministic re-anchored lattice, tried because
+    the previous lattice placed a vertex on a sign crossing of the zero set.
+    ``declared_domain`` is the caller's box.
+    """
 
     unresolved_boxes: np.ndarray
     unresolved_issues: np.ndarray
+    declared_domain: np.ndarray
     accuracy: ImplicitDiscoveryAccuracy = eqx.field(static=True)
     enclosure: ImplicitDiscoveryEnclosure = eqx.field(static=True)
     status: int = eqx.field(static=True)
@@ -525,6 +532,7 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
     surface_leaf_count: int = eqx.field(static=True)
     maximum_level_reached: int = eqx.field(static=True)
     maximum_surface_box_diagonal: float = eqx.field(static=True)
+    lattice_anchor: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -539,11 +547,15 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
         maximum_level_reached: int,
         maximum_surface_box_diagonal: float,
         evidence_id: str,
+        *,
+        declared_domain: np.ndarray,
+        lattice_anchor: int,
     ) -> None:
         boxes = np.array(unresolved_boxes, dtype=np.float64, copy=True).reshape(
             (-1, 2, 3)
         )
         issues = np.array(unresolved_issues, dtype=np.int64, copy=True).reshape((-1,))
+        declared = np.array(declared_domain, dtype=np.float64, copy=True)
         if (
             boxes.shape[0] != issues.shape[0]
             or not np.all(np.isfinite(boxes))
@@ -553,10 +565,21 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "Adaptive evidence requires aligned unresolved boxes and nonzero issues."
             )
+        if (
+            declared.shape != (2, 3)
+            or not np.all(np.isfinite(declared))
+            or np.any(declared[0] >= declared[1])
+            or not 0 <= lattice_anchor <= len(_LATTICE_ANCHORS)
+        ):
+            raise ValueError(
+                "Adaptive evidence requires a finite declared domain and a known lattice anchor."
+            )
         boxes.setflags(write=False)
         issues.setflags(write=False)
+        declared.setflags(write=False)
         self.unresolved_boxes = boxes
         self.unresolved_issues = issues
+        self.declared_domain = declared
         self.accuracy = accuracy
         self.enclosure = enclosure
         self.status = int(status)
@@ -564,6 +587,7 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
         self.surface_leaf_count = int(surface_leaf_count)
         self.maximum_level_reached = int(maximum_level_reached)
         self.maximum_surface_box_diagonal = float(maximum_surface_box_diagonal)
+        self.lattice_anchor = int(lattice_anchor)
         self.evidence_id = evidence_id
 
     @property
@@ -915,7 +939,7 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
         """Return source-only inputs; derived interval programs are intentionally omitted."""
         return AdaptiveImplicitSurfaceArchiveRecipe(
             self.geometry,
-            self.volume.domain,
+            self.evidence.declared_domain,
             self.policy,
             self.source_id,
         )
@@ -1373,6 +1397,95 @@ def _target_level(domain: np.ndarray, relative_diameter: float) -> int:
     while float(np.nextafter(math.ldexp(diagonal, -level), np.inf)) > target:
         level += 1
     return level
+
+
+# Per-axis lattice shifts, in target-level cells, of the re-anchored lattices
+# tried when a lattice vertex lies on a regular crossing of the zero set. The
+# shifts are the fractional parts of multiples of the golden ratio, sqrt(2) and
+# sqrt(3): no low-denominator dyadic coincidence with authored coordinates, and
+# the zero set meets any one shifted vertex family only on a measure-zero set.
+_LATTICE_ANCHORS: tuple[tuple[float, float, float], ...] = (
+    (0.6180339887498949, 0.41421356237309515, 0.7320508075688772),
+    (0.2360679774997898, 0.8284271247461903, 0.4641016151377544),
+    (0.8541019662496847, 0.2426406871192854, 0.1961524227066316),
+)
+
+# Neighbour stencil of the lattice-independent vertex-root probe, in units of
+# ``_ROOT_PROBE_SCALE`` target-level cells.
+_ROOT_PROBE_OFFSETS = np.asarray(
+    [offset for offset in itertools.product((-1.0, 0.0, 1.0), repeat=3) if any(offset)],
+    dtype=np.float64,
+)
+_ROOT_PROBE_SCALE = 2.0**-8
+
+
+def _anchored_domain(
+    declared: np.ndarray, relative_diameter: float, anchor: int, /
+) -> np.ndarray:
+    """Discovery box of lattice ``anchor``; anchor ``0`` is the declared box.
+
+    A re-anchored box extends the declared box by one target-level cell per axis,
+    split by the anchor's shift, so it still covers the declared box.
+    """
+    if anchor == 0:
+        return declared
+    cell = (declared[1] - declared[0]) / 2.0 ** _target_level(declared, relative_diameter)
+    shift = np.asarray(_LATTICE_ANCHORS[anchor - 1], dtype=np.float64)
+    anchored = np.stack((declared[0] - shift * cell, declared[1] + (1.0 - shift) * cell))
+    if (
+        not np.all(np.isfinite(anchored))
+        or np.any(anchored[0] >= declared[0])
+        or np.any(anchored[1] <= declared[1])
+    ):
+        raise ValueError(
+            "A re-anchored discovery lattice must cover the declared domain."
+        )
+    return anchored
+
+
+def _anchored_relative_diameter(
+    declared: np.ndarray, anchored: np.ndarray, relative_diameter: float, /
+) -> float:
+    """Relative cell diameter keeping the declared physical resolution on ``anchored``.
+
+    Every anchored axis is at most ``1 / ratio`` times its declared extent, so the
+    anchored diagonal times the returned value never exceeds the declared target.
+    """
+    ratio = float(np.min((declared[1] - declared[0]) / (anchored[1] - anchored[0])))
+    return float(np.nextafter(np.nextafter(relative_diameter * ratio, 0.0), 0.0))
+
+
+def _vertex_roots_are_lattice_coincidences(
+    geometry: CompiledGeometry,
+    surface: AdaptiveImplicitSurface,
+    enclosure: ImplicitDiscoveryEnclosure,
+    /,
+) -> bool:
+    """Whether every undecided lattice vertex lies on a sign crossing of the field.
+
+    A vertex whose point enclosure contains zero is a lattice coincidence when the
+    field takes both certified signs on its neighbour stencil a small fraction of
+    a cell away: the zero set separates the stencil there, so a shifted lattice
+    brackets it by corner signs. A vertex without such a crossing (a touching or
+    degenerate zero, or a field too uncertain to sign its neighbourhood) is
+    singular for the field independently of the lattice; re-anchoring cannot
+    resolve it, so the current lattice's refusal stands.
+    """
+    scaffold = surface.scaffold
+    undecided = np.asarray(scaffold.corner_signs) == 0
+    if not np.any(undecided):
+        return False
+    vertices = np.asarray(scaffold.corner_coordinates, dtype=np.float64)[undecided]
+    domain = np.asarray(scaffold.domain, dtype=np.float64)
+    step = _ROOT_PROBE_SCALE * (domain[1] - domain[0]) / 2.0**scaffold.target_level
+    probes = vertices[:, None, :] + _ROOT_PROBE_OFFSETS[None, :, :] * step
+    lower, upper = _FieldEnclosures(geometry, enclosure).point_values(
+        probes.reshape((-1, _DIMENSION))
+    )
+    lower = lower.reshape(probes.shape[:2])
+    upper = upper.reshape(probes.shape[:2])
+    crossing = np.any(upper < 0.0, axis=1) & np.any(lower > 0.0, axis=1)
+    return bool(np.all(crossing))
 
 
 def _box_corner_indices(prefix: _GridIndex) -> tuple[_GridIndex, ...]:
@@ -1922,6 +2035,8 @@ def _discover_adaptive_implicit_surface_once(
     domain: ArrayLike,
     policy: AdaptiveImplicitSurfacePolicy = AdaptiveImplicitSurfacePolicy(),
     source_id: str,
+    declared_domain: ArrayLike,
+    lattice_anchor: int,
 ) -> AdaptiveImplicitSurface:
     """Exhaustively enclose and polygonize a region's implicit zero set.
 
@@ -2525,6 +2640,17 @@ def _discover_adaptive_implicit_surface_once(
             "unresolved_issues": array_tree_fingerprint(unresolved_issues),
             "cover": None if cover is None else cover.cover_id,
             "leaf_count": len(cover_cells),
+            # The declared lattice is identified by its cover domain alone.
+            **(
+                {}
+                if lattice_anchor == 0
+                else {
+                    "lattice_anchor": lattice_anchor,
+                    "declared_domain": array_tree_fingerprint(
+                        np.asarray(declared_domain, dtype=np.float64)
+                    ),
+                }
+            ),
         }
     )
     evidence = AdaptiveImplicitSurfaceEvidence(
@@ -2538,6 +2664,8 @@ def _discover_adaptive_implicit_surface_once(
         deepest,
         max_surface_diagonal,
         evidence_id,
+        declared_domain=np.asarray(declared_domain, dtype=np.float64),
+        lattice_anchor=lattice_anchor,
     )
     volume = ImplicitVolumeQuery(
         geometry,
@@ -2571,25 +2699,36 @@ def _discover_adaptive_implicit_surface_once(
     )
 
 
-@checked
-def discover_adaptive_implicit_surface(
+def _discover_on_lattice(
     geometry: CompiledGeometry,
-    /,
-    *,
-    domain: ArrayLike,
-    policy: AdaptiveImplicitSurfacePolicy = AdaptiveImplicitSurfacePolicy(),
+    declared_domain: np.ndarray,
+    lattice_anchor: int,
+    policy: AdaptiveImplicitSurfacePolicy,
     source_id: str,
+    /,
 ) -> AdaptiveImplicitSurface:
-    """Discover every possible zero, refining unresolved cell contours as needed."""
-    requested_policy = policy
-    effective_policy = policy
-    selected_domain = domain
+    """Discover on one lattice, refining edge-ambiguous cell contours as needed."""
+    selected_domain = _anchored_domain(
+        declared_domain, policy.relative_cell_diameter, lattice_anchor
+    )
+    effective_policy = (
+        policy
+        if lattice_anchor == 0
+        else replace(
+            policy,
+            relative_cell_diameter=_anchored_relative_diameter(
+                declared_domain, selected_domain, policy.relative_cell_diameter
+            ),
+        )
+    )
     while True:
         surface = _discover_adaptive_implicit_surface_once(
             geometry,
             domain=selected_domain,
             policy=effective_policy,
             source_id=source_id,
+            declared_domain=declared_domain,
+            lattice_anchor=lattice_anchor,
         )
         issues = np.asarray(surface.evidence.unresolved_issues, dtype=np.int64)
         refinable_issues = int(
@@ -2624,7 +2763,7 @@ def discover_adaptive_implicit_surface(
             effective_policy,
             relative_cell_diameter=next_relative,
         )
-    if effective_policy is requested_policy:
+    if effective_policy is policy:
         return surface
     return AdaptiveImplicitSurface(
         surface.mesh,
@@ -2638,9 +2777,41 @@ def discover_adaptive_implicit_surface(
         surface.boundary_witnesses,
         surface.boundary_errors,
         surface.geometry,
-        requested_policy,
+        policy,
         surface.source_id,
     )
+
+
+@checked
+def discover_adaptive_implicit_surface(
+    geometry: CompiledGeometry,
+    /,
+    *,
+    domain: ArrayLike,
+    policy: AdaptiveImplicitSurfacePolicy = AdaptiveImplicitSurfacePolicy(),
+    source_id: str,
+) -> AdaptiveImplicitSurface:
+    """Discover every possible zero, refining unresolved cell contours as needed.
+
+    The discovery lattice is internal. A lattice vertex whose point enclosure
+    contains zero while the field takes both certified signs on its small
+    neighbour stencil is a coincidence of where the lattice falls on a crossing of
+    the zero set, so discovery restarts on the next deterministic re-anchored
+    lattice covering the declared domain at the declared physical resolution. Any
+    other singular cell (a touching or degenerate vertex zero, or a possible zero
+    without a corner sign change or a nonvanishing gradient component) is refused
+    on the current lattice without re-anchoring. When every anchor still places a
+    vertex on a crossing, the last lattice's singular cells remain the refusal.
+    """
+    declared = np.array(domain, dtype=np.float64, copy=True)
+    anchor = 0
+    while True:
+        surface = _discover_on_lattice(geometry, declared, anchor, policy, source_id)
+        if anchor == len(_LATTICE_ANCHORS) or not _vertex_roots_are_lattice_coincidences(
+            geometry, surface, policy.enclosure
+        ):
+            return surface
+        anchor += 1
 
 
 __all__ = [

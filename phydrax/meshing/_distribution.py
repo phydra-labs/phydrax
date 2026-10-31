@@ -15,7 +15,7 @@ and migrate cell data through explicit send/receive sparse relations.
 from __future__ import annotations
 
 import operator
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from math import prod
 from typing import Any, final, TYPE_CHECKING, TypedDict
@@ -672,6 +672,28 @@ def _owner_group_allgather(
         check_vma=False,
     )(distributed)
     return np.asarray(jax.device_get(gathered))
+
+
+def _owner_group_differing_declarations(
+    declaration: Mapping[str, object], execution_group: Any, axis_name: str, /
+) -> tuple[str, ...]:
+    """Collectively name the declaration components that differ across ranks."""
+    names = tuple(sorted(declaration))
+    local = np.frombuffer(
+        b"".join(
+            bytes.fromhex(canonical_fingerprint(declaration[name])) for name in names
+        ),
+        dtype=np.uint8,
+    )
+    rows = np.asarray(
+        _owner_group_allgather(local, execution_group, axis_name), dtype=np.uint8
+    )
+    width = local.size // max(len(names), 1)
+    return tuple(
+        name
+        for index, name in enumerate(names)
+        if np.unique(rows[:, index * width : (index + 1) * width], axis=0).shape[0] > 1
+    )
 
 
 def _owner_pair_channel_plan(
@@ -2767,17 +2789,37 @@ class ShardedOwnerDirectoryData(StrictModule, NonTrainableState):
                 owner_evidence=owner_evidence,
             )
             local_error = None
-            if (
-                not np.array_equal(rebuilt_ids, np.asarray(stored_ids, dtype=np.int64))
-                or not np.array_equal(
-                    rebuilt_owners, np.asarray(stored_owners, dtype=np.int32)
+            differences = [
+                name
+                for name, differs in (
+                    (
+                        "shard ids",
+                        not np.array_equal(
+                            rebuilt_ids, np.asarray(stored_ids, dtype=np.int64)
+                        ),
+                    ),
+                    (
+                        "shard owners",
+                        not np.array_equal(
+                            rebuilt_owners, np.asarray(stored_owners, dtype=np.int32)
+                        ),
+                    ),
+                    ("directory id", rebuilt_directory_id != stored_directory_id),
+                    (
+                        "count",
+                        rebuilt_count != sum(record[0] for record in stored_records),
+                    ),
+                    ("shard records", rebuilt_records != stored_records),
                 )
-                or rebuilt_directory_id != stored_directory_id
-                or rebuilt_count != sum(record[0] for record in stored_records)
-                or rebuilt_records != stored_records
-            ):
+                if differs
+            ]
+            if differences:
                 local_error = (
-                    f"Restored {kind} owner shards differ from collective evidence."
+                    f"Restored {kind} owner shards differ from collective evidence "
+                    f"at {axis_name} "
+                    f"({', '.join(differences)}; {np.asarray(local_owned_ids).size} "
+                    f"local owned rows, {rebuilt_count} rebuilt vs "
+                    f"{sum(record[0] for record in stored_records)} stored)."
                 )
             _owner_group_fail_if_any(
                 local_error,
@@ -5343,19 +5385,27 @@ def _owner_local_keyed_target_owners(
     owners = np.full((source_keys.shape[0],), -1, dtype=np.int32)
     local_error = None
     try:
+        # Query rows index the requesting rank's key list, so only local rows
+        # index ``owners``; remote rows are unique per requesting rank.
+        remote_rows: set[tuple[int, int]] = set()
         for key, requests in source_queries.items():
             owner = target_owners[key]
             for source_rank, source_row in requests:
-                if not 0 <= source_row < owners.size or owners[source_row] >= 0:
+                if source_rank == rank:
+                    if not 0 <= source_row < owners.size or owners[source_row] >= 0:
+                        raise ValueError(
+                            "Keyed target owner query rows are duplicated or invalid."
+                        )
+                    owners[source_row] = owner
+                    continue
+                if source_row < 0 or (source_rank, source_row) in remote_rows:
                     raise ValueError(
                         "Keyed target owner query rows are duplicated or invalid."
                     )
-                if source_rank == rank:
-                    owners[source_row] = owner
-                else:
-                    reply_rows[source_rank].append(
-                        np.asarray((source_row, owner), dtype=np.int64)
-                    )
+                remote_rows.add((source_rank, source_row))
+                reply_rows[source_rank].append(
+                    np.asarray((source_row, owner), dtype=np.int64)
+                )
     except Exception as error:
         local_error = f"{type(error).__name__}: {error}"
         reply_rows = [[] for _ in range(parts)]
@@ -6285,27 +6335,26 @@ def _transfer_owner_local_graph_keyed_values(
             "key_identity": key_identity_id,
         }
     )
-    layout_id = canonical_fingerprint(
-        {
-            "kind": "owner-local-graph-keyed-state-layout",
-            "migration": common_migration_id,
-            "source_entry": source_entry.record_id,
-            "source_structure": source_entry.structure_id,
-            "target_structure": target_structure_id,
-            "source_owner": source_entry.owner_id,
-            "role": source_entry.role,
-            "revision": source_entry.revision_id,
-            "semantics": source_entry.semantics_id,
-            "key_identity": key_identity_id,
-            "route_identity": route_identity_id,
-            "key_width": key_width,
-            "value_kind": value_kind,
-            "value_implementation": value_implementation_id,
-            "logical_tail_shape": logical_tail_shape,
-            "storage_dtype": values.dtype.str,
-            "storage_tail_shape": storage_tail_shape,
-        }
-    )
+    layout_declaration = {
+        "kind": "owner-local-graph-keyed-state-layout",
+        "migration": common_migration_id,
+        "source_entry": source_entry.record_id,
+        "source_structure": source_entry.structure_id,
+        "target_structure": target_structure_id,
+        "source_owner": source_entry.owner_id,
+        "role": source_entry.role,
+        "revision": source_entry.revision_id,
+        "semantics": source_entry.semantics_id,
+        "key_identity": key_identity_id,
+        "route_identity": route_identity_id,
+        "key_width": key_width,
+        "value_kind": value_kind,
+        "value_implementation": value_implementation_id,
+        "logical_tail_shape": logical_tail_shape,
+        "storage_dtype": values.dtype.str,
+        "storage_tail_shape": storage_tail_shape,
+    }
+    layout_id = canonical_fingerprint(layout_declaration)
     layout_rows = _owner_group_allgather(
         np.frombuffer(bytes.fromhex(layout_id), dtype=np.uint8),
         execution_group,
@@ -6315,7 +6364,13 @@ def _transfer_owner_local_graph_keyed_values(
         np.asarray(value, dtype=np.uint8).tobytes().hex() != layout_id
         for value in layout_rows
     ):
-        raise ValueError("Owner-local keyed state declarations differ across ranks.")
+        differing = _owner_group_differing_declarations(
+            layout_declaration, execution_group, f"{axis_name}_layout_parts"
+        )
+        raise ValueError(
+            "Owner-local keyed state declarations differ across ranks: "
+            f"{', '.join(differing)}."
+        )
 
     key_set_header = {
         "migration": common_migration_id,

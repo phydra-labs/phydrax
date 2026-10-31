@@ -1022,6 +1022,23 @@ class FiniteElementRestartStateLayout(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def semantics_id(self) -> str:
+        """Scientific meaning of this payload, invariant under adaptation and repartition.
+
+        The row layout (``layout_id``, which binds the DOF ownership identity
+        and so the topology) is structure; the payload's name, role and row
+        association are its meaning and survive every transport.
+        """
+        return canonical_fingerprint(
+            {
+                "kind": "finite-element-restart-state-semantics",
+                "name": self.name,
+                "role": self.role.value,
+                "association": self.association.value,
+            }
+        )
+
     def validate_value(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         typed = jax.dtypes.issubdtype(array.dtype, jax.dtypes.prng_key)

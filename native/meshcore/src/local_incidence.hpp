@@ -98,6 +98,8 @@ class LocalIncidence {
   bool erase(std::int32_t cell, const LocalCell& vertices);
   Star vertex_star(std::int32_t vertex) const;
   std::size_t edge_valence(std::int32_t first, std::int32_t second) const;
+  // Finite cells containing the edge (sorted slots); empty if it is absent.
+  std::span<const std::int32_t> edge_star(std::int32_t first, std::int32_t second) const;
   std::int32_t edge_cell_outside(
       const TetMesh& mesh, std::int32_t first, std::int32_t second,
       std::span<const std::int32_t> removed_slots) const;
@@ -114,6 +116,14 @@ class LocalIncidence {
   TetEditStatus insert_cone(TetMesh& mesh, const TetEditVertex& vertex,
                             std::span<const std::int32_t> cavity,
                             std::vector<std::uint64_t>& created_cells);
+  // Splits a constrained edge at a new source-witnessed vertex through the
+  // cavity-local TetMesh route (TetMesh::split_local_edge, whose bank-row
+  // contract applies) and updates this index.
+  TetEditStatus split_edge(TetMesh& mesh, std::int32_t first, std::int32_t second,
+                           const TetEditVertex& vertex,
+                           std::span<const std::size_t> facet_rows,
+                           std::span<const std::size_t> segment_rows,
+                           std::vector<std::uint64_t>& created_cells);
 
  private:
   static bool erase_cell(std::vector<std::int32_t>& cells, std::int32_t cell);

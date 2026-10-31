@@ -159,6 +159,35 @@ def test_interval_real_power_of_sum_of_squares_encloses_origin_box() -> None:
         )
 
 
+def test_interval_exact_constant_arithmetic_keeps_an_integer_power_exponent() -> None:
+    # ``blockiness / 2 - 1`` with blockiness 2 is exactly 0; exact operations
+    # are not rounded out, so the power stays the integer power 0 ** 0 = 1
+    # on a box straddling the origin.
+    def function(point: jax.Array) -> jax.Array:
+        exponent = jnp.asarray(2.0) * 0.5 - 1.0
+        return jnp.asarray((jnp.power(jnp.square(point[0]), exponent),))
+
+    lower, upper = prepare_interval_function(function, 1).evaluate(
+        np.asarray(((-0.05,),), dtype=np.float64),
+        np.asarray(((0.05,),), dtype=np.float64),
+    )
+
+    assert lower[0, 0] == 1.0
+    assert upper[0, 0] == 1.0
+
+    # Inexact sums and products are still rounded outward.
+    def inexact(point: jax.Array) -> jax.Array:
+        return jnp.asarray((point[0] + 0.1, point[0] * 0.1))
+
+    lower, upper = prepare_interval_function(inexact, 1).evaluate(
+        np.asarray(((0.2,),), dtype=np.float64),
+        np.asarray(((0.2,),), dtype=np.float64),
+    )
+
+    assert lower[0, 0] < 0.2 + 0.1 < upper[0, 0]
+    assert lower[0, 1] < 0.2 * 0.1 < upper[0, 1]
+
+
 def test_interval_multiply_does_not_infer_correlation_from_equal_bounds() -> None:
     def function(point: jax.Array) -> jax.Array:
         return jnp.asarray((point[0] * point[1],))
@@ -508,3 +537,27 @@ def test_interval_argmin_encloses_possible_first_minimum_indices() -> None:
 
     np.testing.assert_array_equal(lower, (1.0, 0.0, 0.0, 2.0))
     np.testing.assert_array_equal(upper, (1.0, 1.0, 0.0, 2.0))
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_interval_scan_unrolls_carry_and_stacked_outputs(reverse: bool) -> None:
+    def function(point: jax.Array) -> jax.Array:
+        def step(carry: jax.Array, scale: jax.Array) -> tuple[jax.Array, jax.Array]:
+            updated = carry * scale + point[1]
+            return updated, updated * updated
+
+        final, stacked = jax.lax.scan(
+            step, point[0], jnp.asarray((1.0, -2.0, 0.5)), reverse=reverse
+        )
+        return jnp.concatenate((final[None], stacked))
+
+    prepared = prepare_interval_function(function, 2, execution="host")
+    lower = np.asarray(((0.5, -0.25),), dtype=np.float64)
+    upper = np.asarray(((1.0, 0.25),), dtype=np.float64)
+    bounds = prepared.evaluate(lower, upper)
+    grid = np.stack(
+        np.meshgrid(np.linspace(0.5, 1.0, 9), np.linspace(-0.25, 0.25, 9)), -1
+    ).reshape(-1, 2)
+    values = np.asarray(jax.vmap(function)(jnp.asarray(grid)), dtype=np.float64)
+    assert np.all(bounds[0][0] <= values.min(axis=0))
+    assert np.all(bounds[1][0] >= values.max(axis=0))

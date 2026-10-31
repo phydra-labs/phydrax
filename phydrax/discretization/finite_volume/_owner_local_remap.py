@@ -198,8 +198,43 @@ def _require_group_identity(
     gathered = _all_gather_local(
         np.asarray(word, dtype=np.int64), mesh, axis, owner_count
     )
-    if not np.all(gathered == gathered[0]):
-        raise ValueError(f"Owner-local {name} differs across execution-group ranks.")
+    if np.all(gathered == gathered[0]):
+        return
+    # Every rank observed the mismatch, so naming the differing components is
+    # itself collective over one fixed-width row per rank.
+    components: dict[str, Any] = {}
+    if isinstance(identity, dict):
+        for key, value in identity.items():
+            if isinstance(value, dict):
+                for inner, inner_value in value.items():
+                    components[f"{key}.{inner}"] = inner_value
+            else:
+                components[str(key)] = value
+    names = tuple(sorted(components))
+    widths = _all_gather_local(
+        np.asarray(len(names), dtype=np.int64), mesh, axis, owner_count
+    )
+    differing: tuple[str, ...] = ()
+    if names and np.all(widths == widths[0]):
+        words = np.asarray(
+            _all_gather_local(
+                np.asarray(
+                    [
+                        _fingerprint_word(canonical_fingerprint(components[key]))
+                        for key in names
+                    ],
+                    dtype=np.int64,
+                ),
+                mesh,
+                axis,
+                owner_count,
+            )
+        ).reshape((owner_count, len(names)))
+        differing = tuple(
+            key for index, key in enumerate(names) if np.unique(words[:, index]).size > 1
+        )
+    detail = f": {', '.join(differing)}" if differing else ""
+    raise ValueError(f"Owner-local {name} differs across execution-group ranks{detail}.")
 
 
 def _resolve_group_cell_kind(
@@ -4592,12 +4627,16 @@ def prepare_owner_local_conservative_remap(
             raise ValueError("Source and target local cell dimensions differ.")
         source_binding = _view_binding(source_view)
         target_binding = _view_binding(target_view)
+        # Exact coordinate maps are bound to each rank's resident mesh, so their
+        # IDs are rank-local evidence (checked against the rank's own geometry
+        # authority); the group compares the published geometry/context IDs.
         rank_local_binding_fields = (
             "local_mesh_id",
             "local_topology_id",
             "local_geometry_id",
             "local_view_id",
             "owner_rank",
+            "source_map_id",
         )
         source_signature = {
             key: value
