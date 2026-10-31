@@ -2924,6 +2924,24 @@ def _rebuild_reference_cell_map_witnesses(value: object, /) -> ReferenceCellMapW
     return witness
 
 
+def _decode_finite_element_projections[T](value: T, /) -> T:
+    """Restore nested FiniteElementSpec archive projections inside a raw record.
+
+    Raw coordinate maps keep these projections, so their recomputed IDs and tree
+    content differ from the live maps; the owner's restore then re-proves the
+    decoded record against its stored IDs.
+    """
+    from phydrax._model._structure import _FiniteElementSpecArchiveProjection
+
+    return jax.tree_util.tree_map(
+        lambda node: (
+            node.rebuild() if type(node) is _FiniteElementSpecArchiveProjection else node
+        ),
+        value,
+        is_leaf=lambda node: type(node) is _FiniteElementSpecArchiveProjection,
+    )
+
+
 def _rebuild_domain_coverage_certificate(
     value: object,
     mesh: CellMesh,
@@ -2939,6 +2957,7 @@ def _rebuild_domain_coverage_certificate(
         or type(value) is not DomainCoverageCertificate
     ):
         raise TypeError("Stored material coverage has an unexpected concrete type.")
+    value = _decode_finite_element_projections(value)
     domain = _rebuild_continuation_value(value.domain)
     if not isinstance(
         domain,
@@ -13883,9 +13902,7 @@ def _read(directory: Path, expected: dict[str, object], /) -> None:
     assert array_tree_fingerprint(mapped_curve.pcurve) == array_tree_fingerprint(
         mapped.geometry.pcurves[0]
     )
-    mapped_point = np.asarray(
-        mapped_curve.evaluate(jnp.asarray((0.5,), dtype=jnp.float64))
-    )
+    mapped_point = np.asarray(mapped_curve.evaluate(jnp.asarray(0.5, dtype=jnp.float64)))
     np.testing.assert_array_equal(mapped_point, (0.5, 0.0, 0.0))
     boolean_carriers = load_brep_archive(directory / "boolean-carriers.phx")
     assert boolean_carriers.source_revision == expected["boolean_carrier_revision"]
@@ -14137,8 +14154,8 @@ def _read(directory: Path, expected: dict[str, object], /) -> None:
         np.asarray(
             [
                 [
-                    float(anchor.parameter[0]),
-                    float(anchor.parameter[1]),
+                    float(sum(anchor.local_knots.u[1:4], Fraction(0)) / 3),
+                    float(sum(anchor.local_knots.v[1:4], Fraction(0)) / 3),
                     float(tiny) if index == 0 else 0.0,
                 ]
                 for index, anchor in enumerate(patch.source_mesh.anchors)
