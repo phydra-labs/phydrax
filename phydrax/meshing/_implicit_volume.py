@@ -2123,6 +2123,7 @@ def _organization(
     surface_mesh = CellMesh.from_triangles(
         np.asarray(mesh.coordinates, dtype=np.float64)[used],
         inverse[np.asarray(boundary_faces, dtype=np.int64)].astype(np.int32, copy=False),
+        vertex_global_ids=vertex_ids[used],
         numeric_version=profile.source_revision,
     )
     boundary_model = SurfaceModel(
