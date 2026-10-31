@@ -370,6 +370,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Unstructured viscous gradients require prepared unstructured FV."
             )
+        discretization.require_single_face_embedding("Unstructured viscous gradients")
         value = jnp.asarray(state)
         if value.shape != discretization.state_shape:
             raise ValueError("Unstructured viscous state has incompatible shape.")
@@ -429,6 +430,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Unstructured viscous evaluation requires prepared unstructured FV."
             )
+        discretization.require_single_face_embedding("Unstructured viscous evaluation")
         value = jnp.asarray(state)
         gradient = self.unstructured_conserved_gradient(
             system,
@@ -533,6 +535,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Unstructured viscous stability requires prepared unstructured FV."
             )
+        discretization.require_single_face_embedding("Unstructured viscous stability")
         value = jnp.asarray(state)
         diffusivity = jnp.broadcast_to(
             jnp.asarray(system.maximum_diffusivity(value, args)),

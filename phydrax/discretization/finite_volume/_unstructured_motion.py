@@ -193,6 +193,12 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         motion_policy: FiniteElementMeshMotionPolicy | None = None,
         monitor: TimeMeshMonitor | None = None,
     ) -> None:
+        if base_plan.periodic_face_joins is not None:
+            raise ValueError(
+                "Continuous ALE stage geometry needs both sides of every face in one "
+                "embedding; this owner-local periodic FV plan joins seam faces across "
+                "lattice images."
+            )
         if not callable(motion):
             raise TypeError("motion must be callable.")
         if (

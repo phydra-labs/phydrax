@@ -331,6 +331,9 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         *,
         stencil_direction: ArrayLike | None = None,
     ) -> None:
+        discretization.require_single_face_embedding(
+            "Cell polynomial reconstruction stencils"
+        )
         required_quadrature_degree = max(plan.degree, 2 * (plan.degree - 1))
         if required_quadrature_degree > discretization.cell_quadrature_degree:
             raise ValueError(

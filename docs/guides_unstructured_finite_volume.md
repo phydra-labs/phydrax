@@ -301,6 +301,20 @@ integrals, source totals, and CFL decisions. A rank with no owned cells uses a
 genuine zero-cell plan and state, with no placeholder physical cell, and still
 participates in the same stage collectives.
 
+A periodic view's resident patch is a lifted piece of the quotient mesh. A cell's
+periodic neighbour is often resident at another lattice image, so their shared
+face appears twice and is not welded. The lowering joins these seam faces by
+quotient identity (vertex roots and their windings relative to an anchor, never
+coordinates) into interior faces. A periodic part therefore has no physical
+boundary faces: `__physical_boundary__` is empty, and only artificial halo cuts
+stay open. `periodic_face_translations` records, per FV face, the translation
+from the owner's frame to the neighbour's lifted frame (zero off the seams).
+`face_topology_ids` maps FV faces back to the lifted connectivity. Owner/neighbour
+fluxes are exact across seams. Operators that need both sides of a face in one
+embedding refuse a joined seam explicitly. These are cell-polynomial and WENO
+stencils, unstructured viscous terms, continuous ALE stage geometry, and side
+traces on seam facets.
+
 ```python
 plan = phx.discretization.finite_volume.prepare_owner_local_conservative_remap(
     source_view,

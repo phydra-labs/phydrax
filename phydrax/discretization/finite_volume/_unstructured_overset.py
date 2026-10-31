@@ -618,6 +618,15 @@ def _prepare_overset_face_artifact(
         reference_vectors = np.asarray(receptor.area_vectors)[face_ids]
         reference_face_measures = np.asarray(receptor.face_measures)[face_ids]
         orientation = np.where(physical_owners == face_cells, 1.0, -1.0)
+        seam_translations = getattr(receptor, "periodic_face_translations", None)
+        if seam_translations is not None:
+            # A receptor on the neighbor side of a periodic seam sees the face
+            # at its own lattice image.
+            translations = np.asarray(seam_translations)[face_ids]
+            reference_points = (
+                reference_points
+                + np.where(orientation[:, None] < 0.0, translations, 0.0)[:, None, :]
+            )
         reference_normals = orientation[:, None] * (
             reference_vectors / reference_face_measures[:, None]
         )
