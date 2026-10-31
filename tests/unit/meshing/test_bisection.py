@@ -4,6 +4,7 @@
 
 
 import itertools
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -21,6 +22,11 @@ from phydrax.meshing import (
     MeshingEntityKind,
     MeshingScope,
     prepare_mesh_adaptation,
+)
+from phydrax.meshing._bisection import execute_bisection
+from phydrax.meshing._topology_edit import (
+    assemble_topology_edit,
+    reference_cell_maps_from_edit,
 )
 
 
@@ -330,3 +336,36 @@ def test_bisection_scenario_3() -> None:
     second = _adapt(_certified(_kuhn_grid(2)), (0, 7, 13))
     assert first.result_id == second.result_id
     assert first.hierarchy.hierarchy_id == second.hierarchy.hierarchy_id
+
+
+def test_uniform_barycentric_refinement_keeps_exact_reference_ancestry() -> None:
+    points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
+    mesh = CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
+    outcome = execute_bisection(
+        mesh,
+        np.asarray((0,), dtype=np.int64),
+        np.empty((0,), dtype=np.int64),
+        hierarchy=None,
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+        protected_edges=np.empty((0, 2), dtype=np.int64),
+        protected_vertices=np.empty((0,), dtype=np.int64),
+        cell_classes=np.zeros((mesh.entity_set(2).count,), dtype=np.int64),
+        facet_classes=np.zeros((mesh.entity_set(1).count,), dtype=np.int64),
+    )
+    assert outcome.evidence.uniform_refinement_applied
+    exact = outcome.edit.stencil_exact_weights
+    assert exact is not None
+    valid = np.asarray(outcome.edit.stencil_valid, dtype=np.bool_)
+    assert all(
+        sum((value for value, used in zip(row, mask, strict=True) if used), Fraction(0))
+        == 1
+        for row, mask in zip(exact, valid.tolist(), strict=True)
+    )
+    assert (Fraction(1, 3), Fraction(1, 3), Fraction(1, 3)) in exact
+    target, _, _ = assemble_topology_edit(
+        mesh, outcome.edit, numeric_version="uniform-barycentric-refinement"
+    )
+    maps = reference_cell_maps_from_edit(mesh, target, outcome.edit)
+    assert sum(np.asarray(group.target_cell_ids).size for group in maps) == sum(
+        block.cell_count for block in target.blocks
+    )

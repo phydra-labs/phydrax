@@ -18,6 +18,10 @@ from ._cell_geometry import (
     CellGeometrySpec,
     CellVertexGeometryElement,
     coordinate_effective_basis,
+    PerCellRestrictedCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ._cell_geometry_validity import cell_geometry_id
@@ -170,12 +174,38 @@ def _require_geometry_realizes_mesh(
                     "Variable-topology coordinate elements must realize mesh vertices."
                 )
             continue
-        reference = np.asarray(
-            reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
-        )
-        reference_rows = np.broadcast_to(reference, (block.cell_count, *reference.shape))
-        actual = geometry.evaluate(mesh, np.asarray(block.global_ids), reference_rows)
+        reference = reference_cell_topology(block.cell_kind).vertices
         expected = points[cells]
+        if isinstance(
+            element,
+            PerCellRestrictedCellGeometryElement
+            | RestrictedCellGeometryElement
+            | PolynomialComposedCellGeometryElement
+            | RationalComposedCellGeometryElement,
+        ):
+            # Binary64 tabulation of a composed chart rounds every basis term; the
+            # realized corner is the correctly rounded exact image of the chart.
+            exact_corners = tuple(
+                tuple(Fraction(float(value)) for value in point) for point in reference
+            )
+            images = geometry.evaluate_exact(
+                mesh,
+                np.asarray(block.global_ids, dtype=np.int64),
+                (exact_corners,) * block.cell_count,
+            )
+            actual = np.asarray(
+                [
+                    [[float(value) for value in point] for point in cell]
+                    for cell in images
+                ],
+                dtype=np.float64,
+            ).reshape(expected.shape)
+        else:
+            reference_rows = np.broadcast_to(
+                np.asarray(reference, dtype=np.float64),
+                (block.cell_count, len(reference), len(reference[0])),
+            )
+            actual = geometry.evaluate(mesh, np.asarray(block.global_ids), reference_rows)
         if not np.array_equal(actual, expected):
             raise ValueError(
                 "Coordinate element corner images must equal mesh physical vertices."
