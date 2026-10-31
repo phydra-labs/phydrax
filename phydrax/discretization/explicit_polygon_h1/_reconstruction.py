@@ -197,8 +197,13 @@ def evaluate_explicit_polygon_h1_trace(
 
 
 @final
-class _ExplicitPolygonH1TriangleBasis(AbstractPolygonLocalBasis, NonTrainableState):
-    """Piecewise-triangle P1 basis of every explicit polygon cell."""
+class _ExplicitPolygonH1FanBasis(AbstractPolygonLocalBasis, NonTrainableState):
+    """Condensed fan-P1 basis of every explicit polygon cell at located points.
+
+    The locator subdivides each cell into its witness fan; `prolongation` maps
+    the padded vertex values of each cell to the fan nodes: rows
+    `0..width-1` are the vertices and row `width` is the condensed witness.
+    """
 
     prolongation: Array
     width: int = eqx.field(static=True)
@@ -208,7 +213,7 @@ class _ExplicitPolygonH1TriangleBasis(AbstractPolygonLocalBasis, NonTrainableSta
         values = np.asarray(prolongation)
         if values.ndim != 3 or values.shape[1] != values.shape[2] + 1:
             raise ValueError(
-                "Polygon prolongations must have shape (cells, width + 1, width)."
+                "Fan prolongations must have shape (cells, width + 1, width)."
             )
         self.prolongation = jnp.asarray(values)
         self.width = values.shape[2]
@@ -248,8 +253,8 @@ def _padded_fan_data(
     discretization: ExplicitPolygonH1Discretization,
     runtime: ExplicitPolygonH1RuntimeData,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Host `(prolongation, valid, cell_dofs)` over the global cells."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Host `(prolongation, witness, valid, cell_dofs)` over the global cells."""
     width = discretization.dof_map.local_width
     prolongations = []
     for block, basis in zip(discretization.mesh.blocks, runtime.bases, strict=True):
@@ -260,6 +265,7 @@ def _padded_fan_data(
         prolongations.append(padded)
     return (
         np.concatenate(prolongations, axis=0),
+        np.concatenate(tuple(np.asarray(basis.witness) for basis in runtime.bases)),
         np.concatenate(
             tuple(np.asarray(basis.evidence.passed) for basis in runtime.bases)
         ),
@@ -276,12 +282,15 @@ def prepare_explicit_polygon_h1_field_reconstruction(
     runtime: ExplicitPolygonH1RuntimeData | None = None,
     value_port: ValuePort | None = None,
 ) -> PreparedFieldReconstruction:
-    """Prepare exact coordinate reconstruction over general simple polygons.
+    """Prepare the exact, evidenced coordinate reconstruction of the field.
 
-    Bounded BVH candidates are triangulated with exact orientation predicates;
-    values use the piecewise-linear local basis. A derivative on a shared cell
-    edge needs a bound trace side, and a derivative on an internal triangulation
-    edge is unresolved because the discrete gradient jumps there.
+    Points are located in the witness fans of the star-shaped cells (bounded
+    BVH candidates, fixed point batches) and evaluated with the condensed
+    fan-P1 basis: values are exact and `C^0`; first derivatives are exact and
+    piecewise constant on the fan triangles. A derivative on a shared cell
+    edge needs a bound trace side, and a derivative on an interior fan edge
+    (including polygon vertices) is `SIDE_UNRESOLVED` for every side because
+    the discrete gradient jumps there; no fan triangle is chosen silently.
     """
     if not isinstance(discretization, ExplicitPolygonH1Discretization):
         raise TypeError("discretization must be ExplicitPolygonH1Discretization.")
@@ -294,7 +303,7 @@ def prepare_explicit_polygon_h1_field_reconstruction(
     cells = np.asarray(connectivity.cell_vertices, dtype=np.int32)
     arity = np.asarray(connectivity.cell_kinds, dtype=np.int32)
     coordinates = np.asarray(runtime_.coordinates)
-    prolongation, valid, cell_dofs = _padded_fan_data(discretization, runtime_)
+    prolongation, witness, valid, cell_dofs = _padded_fan_data(discretization, runtime_)
     policy = discretization.qualification_policy
     locator = PreparedPolygonMeshLocator(
         coordinates,
@@ -306,6 +315,7 @@ def prepare_explicit_polygon_h1_field_reconstruction(
             np.finfo(np.dtype(discretization.precision_policy.factorization_dtype)).eps
         ),
         maximum_condition=policy.maximum_condition_number,
+        witness=witness,
     )
     field_space_id = discretization.field_space.field_space_id
     support_id = canonical_fingerprint(
@@ -315,11 +325,11 @@ def prepare_explicit_polygon_h1_field_reconstruction(
             "coordinates": array_tree_fingerprint(coordinates),
         }
     )
-    basis = _ExplicitPolygonH1TriangleBasis(
+    basis = _ExplicitPolygonH1FanBasis(
         prolongation,
         basis_id=canonical_fingerprint(
             {
-                "kind": "explicit-polygon-h1-triangle-basis",
+                "kind": "explicit-polygon-h1-fan-basis",
                 "runtime": runtime_.runtime_id,
                 "prolongation": array_tree_fingerprint(prolongation),
             }

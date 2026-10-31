@@ -326,6 +326,8 @@ class _PeriodicContext(NamedTuple):
     # represents each edge orbit; orbit-locked splits are anchored on it.
     edge_member_windings: np.ndarray
     edge_representative_rows: np.ndarray
+    # Absolute deck exponents of each live state vertex (zero for dead rows).
+    vertex_windings: np.ndarray
 
 
 def _exact_periodic_point(
@@ -4155,6 +4157,9 @@ def _periodic_state_context(
         for row in range(mesh.ambient_dimension + 1)
     )
     vertex_exact_isometries = [identity] * state.points.shape[0]
+    state_vertex_windings = np.zeros(
+        (state.points.shape[0], vertex_windings.shape[1]), dtype=np.int64
+    )
     vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [
         ()
     ] * state.points.shape[0]
@@ -4168,6 +4173,7 @@ def _periodic_state_context(
         representative_metric = state.metric[representative_state_row]
         representative_point = state.points[representative_state_row]
         for state_row, target_row in zip(state_rows, target_rows, strict=True):
+            state_vertex_windings[state_row] = vertex_windings[target_row]
             winding = vertex_windings[target_row] - representative_winding
             exact_isometry = exact_periodic_element(bound_periodic.cell, winding)
             vertex_exact_isometries[state_row] = exact_isometry
@@ -4313,6 +4319,7 @@ def _periodic_state_context(
         int(bound_periodic.allocator_next_ids[0]),
         edge_member_windings,
         edge_representative_rows,
+        state_vertex_windings,
     )
 
 

@@ -186,7 +186,7 @@ def test_triangle_charts_bind_shared_corners_exactly() -> None:
         np.arange(count, dtype=np.int64) for count in (4, edges.shape[0], 4)
     )
 
-    domain = _triangle_complex_meshing_domain(
+    arguments = (
         vertices,
         faces,
         edges,
@@ -197,7 +197,29 @@ def test_triangle_charts_bind_shared_corners_exactly() -> None:
         0,
         ("reconstructed_vertex", "reconstructed_edge", "reconstructed_triangle"),
     )
+    domain = _triangle_complex_meshing_domain(*arguments, None)
 
     assert domain.accuracy == "exact_represented"
     assert domain.tolerance == 0.0
     np.testing.assert_array_equal(np.asarray(domain.corner_points), vertices)
+
+    # A retained domain is reused only for exactly its construction inputs.
+    assert _triangle_complex_meshing_domain(*arguments, domain) is domain
+    moved = vertices.copy()
+    moved[3, 2] = np.nextafter(moved[3, 2], 1.0)
+    rebuilt = _triangle_complex_meshing_domain(moved, *arguments[1:], domain)
+    assert rebuilt is not domain
+    np.testing.assert_array_equal(np.asarray(rebuilt.corner_points), moved)
+    # Same oriented triangle, rotated chart corners: a different construction.
+    rotated = faces.copy()
+    rotated[0] = np.roll(rotated[0], 1)
+    rotated_domain = _triangle_complex_meshing_domain(
+        vertices, rotated, *arguments[2:], domain
+    )
+    assert rotated_domain is not domain
+    assert rotated_domain.domain_id != domain.domain_id
+    revised = _triangle_complex_meshing_domain(
+        *arguments[:4], "revision-2", *arguments[5:], domain
+    )
+    assert revised is not domain
+    assert revised.source_revision == "revision-2"

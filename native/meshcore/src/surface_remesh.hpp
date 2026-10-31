@@ -56,7 +56,14 @@
 //    patch's worst score, and every surviving edge neighbor of the created
 //    patch (whose fold factor the edit changes) either keeps its score or
 //    also exceeds it, so the multiset of quantized scores decreases in the
-//    well-founded multiset order;
+//    well-founded multiset order. The candidate edits of a triangle, in
+//    order: split of an over-long longest edge, flips of its edges, collapse
+//    of its shortest edge, relocation of each corner to its star centroid
+//    (projected, as is) or its own projection, relocation of each corner part
+//    of the way toward its star centroid (1/2 .. 2^-10) or toward its
+//    equilateral apex over the opposite edge (1 .. 2^-10), and a midpoint
+//    split of the longest edge. A full move that lifts the triangle can push
+//    another star triangle below it where a partial one does not;
 //  * regularization: collapse of an edge shorter than 4/5 of the target
 //    length, or a flip that strictly lowers the squared valence deviation
 //    from six over its four vertices, admitted only if no created or changed

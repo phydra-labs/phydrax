@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._cell_mesh import SimplicialConnectivity
 from phydrax.geometry._compartments import CompartmentMeshingSource
 from phydrax.geometry.multiregion_surface import (
     LabelFieldSurfaceExtractionPlan,
@@ -89,7 +90,9 @@ def _image_source() -> tuple[CompartmentMeshingSource, phx.SpatialCoordinateCont
             (phx.imaging.LabelDefinition(1, "solid-label", "Solid"),),
         ),
     )
-    compartments = (phx.geometry.CompartmentDefinition("solid", ("solid-label",), "solid"),)
+    compartments = (
+        phx.geometry.CompartmentDefinition("solid", ("solid-label",), "solid"),
+    )
     complex_ = phx.imaging.build_compartment_complex(labels, compartments, ())
     interfaces = phx.imaging.extract_compartment_surfaces(labels, complex_)
 
@@ -180,9 +183,23 @@ def test_native_image_route_constructs_labeled_tetrahedra_and_region() -> None:
     assert construction.mesh.blocks[0].arity == 4
     assert construction.certification.cell_regions is not None
     assert construction.certification.domain is not None
-    assert construction.organization.boundary is source.outer_surface
+    boundary = construction.organization.boundary
+    assert boundary is not None
+    assert boundary.metadata.source_id == source.outer_surface.metadata.source_id
+    assert source.outer_surface.model_id in boundary.metadata.provenance
+    connectivity = construction.mesh.connectivity
+    assert isinstance(connectivity, SimplicialConnectivity)
+    exterior = np.asarray(connectivity.entities[2])[
+        np.asarray(connectivity.boundary_faces)
+    ]
+    assert np.array_equal(
+        np.asarray(boundary.mesh.vertex_global_ids),
+        np.unique(np.asarray(construction.mesh.vertex_global_ids)[exterior]),
+    )
     assert {zone.name for zone in construction.organization.zones} == {"solid"}
-    assert all(zone.region_role is RegionRole.SOLID for zone in construction.organization.zones)
+    assert all(
+        zone.region_role is RegionRole.SOLID for zone in construction.organization.zones
+    )
     assert construction.compliance.passed, (
         f"{construction.compliance.issues}; requested={construction.compliance.requested}; "
         f"achieved={construction.compliance.achieved}"
@@ -284,9 +301,10 @@ def test_native_label_surface_route_preserves_multimaterial_plc_identity() -> No
 
     assert construction.certification.source_id == source.source_id
     assert construction.certification.source_revision == source.source_revision
-    assert {
-        zone.name for zone in construction.organization.zones
-    } == {"material-a", "material-b"}
+    assert {zone.name for zone in construction.organization.zones} == {
+        "material-a",
+        "material-b",
+    }
     source_region_keys = {
         region_id: source.source_entity_key_for_scope(3, int(entity_id))
         for region_id, entity_id in zip(
@@ -326,17 +344,21 @@ def test_native_label_surface_route_preserves_multimaterial_plc_identity() -> No
         region_ids = patch.source_adjacent_region_ids
         occurrence_paths = patch.source_adjacent_region_occurrence_paths
         if region_ids is None or occurrence_paths is None:
-            raise AssertionError("A source PLC patch lost its region identity or occurrence.")
+            raise AssertionError(
+                "A source PLC patch lost its region identity or occurrence."
+            )
         sides = []
-        for region_id, occurrence_path in zip(
-            region_ids, occurrence_paths, strict=True
-        ):
+        for region_id, occurrence_path in zip(region_ids, occurrence_paths, strict=True):
             if region_id is None:
                 if occurrence_path is not None:
-                    raise AssertionError("An exterior PLC side cannot carry a source occurrence.")
+                    raise AssertionError(
+                        "An exterior PLC side cannot carry a source occurrence."
+                    )
                 sides.append(None)
             elif occurrence_path is None:
-                raise AssertionError("An authored PLC region side lost its occurrence path.")
+                raise AssertionError(
+                    "An authored PLC region side lost its occurrence path."
+                )
             else:
                 sides.append((region_id, occurrence_path))
         actual_pairs.add(unordered_pair(tuple(sides)))
