@@ -4921,8 +4921,16 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
         )
         result = type(self)._from_execution_validated(execution, current_view)
         if not _owner_local_periodic_values_equal(self, result):
+            changed = [
+                name
+                for name in self._fields
+                if not _owner_local_periodic_values_equal(
+                    getattr(self, name), getattr(result, name)
+                )
+            ]
             raise ValueError(
-                "Periodic adaptive result fields or identities changed on cold replay."
+                "Periodic adaptive result fields or identities changed on cold "
+                f"replay: {', '.join(changed) or 'structure'}."
             )
         return result
 
