@@ -189,11 +189,33 @@ class _RootClosure:
                 )
         record.supports = list(supports.values())
         spatial = matches[0][1] if matches else None
+        # A merged vertex keeps any branch-node witness: the joint root carries
+        # it through the witnessed spatial root it certifies, never dropped.
+        witnesses = {
+            binding.branch_node.root_id: binding.branch_node
+            for vertex in (*old_vertices, record.vertex)
+            if (binding := state.vertex_bindings.get(vertex)) is not None
+            and binding.branch_node is not None
+        }
+        if len(witnesses) > 1:
+            raise BRepBooleanFailure(
+                "BRepBoolean.joint_vertex must carry at most one branch-node witness; got several",
+                (record.vertex,),
+            )
+        branch_node = next(iter(witnesses.values()), None)
+        if branch_node is not None:
+            spatial = next((root for _, root in matches if branch_node.binds(root)), None)
+            if spatial is None:
+                raise BRepBooleanFailure(
+                    "BRepBoolean.joint_vertex must certify a witnessed branch-node root; got none",
+                    (record.vertex,),
+                )
         binding = BRepVertexRoot(
             joint,
             aliases=tuple(record.supports),
             spatial_root=spatial,
             source_edge_lifts=tuple(lifts_by_id.values()),
+            branch_node=branch_node,
         )
         for token, cuts in state.cuts.items():
             state.cuts[token] = [

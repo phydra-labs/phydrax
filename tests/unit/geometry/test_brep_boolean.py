@@ -447,7 +447,7 @@ def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks(
         BRepBranchNodeRoots(
             IntersectionCurvePointRoot(branch, float(node)), witness.endpoints
         )
-    with pytest.raises(ValueError, match="certify the primary"):
+    with pytest.raises(ValueError, match="certify the vertex source root"):
         BRepVertexRoot(witness.node, branch_node=witness)
 
     archive = tmp_path / "seam-crossing-quadric.phx"
