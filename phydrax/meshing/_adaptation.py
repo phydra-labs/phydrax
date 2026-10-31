@@ -2845,6 +2845,11 @@ def _restricted_target_geometry(
     }
     source_elements, source_routes, _ = source.geometry.resolve(source.mesh)
     source_vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    # Host vertex and route tables per source block, read per target row below.
+    source_cells = tuple(
+        np.asarray(block.vertices, dtype=np.int64) for block in source.mesh.blocks
+    )
+    source_route_tables = tuple(np.asarray(route) for route in source_routes)
     target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
     target_elements: dict[str, Any] = {}
     target_routes: dict[str, np.ndarray] = {}
@@ -2907,14 +2912,12 @@ def _restricted_target_geometry(
                 )
                 block_roots.append(root)
                 charts.append(composed)
-                routes.append(np.asarray(source_routes[source_block_index])[source_row])
+                routes.append(source_route_tables[source_block_index][source_row])
                 if roots is None:
                     # The source is the root: ancestry is the target→source map itself.
                     parent_ids.append(source_id)
                     parent_vertices.append(
-                        source_vertex_ids[
-                            np.asarray(source_block.vertices[source_row], dtype=np.int64)
-                        ]
+                        source_vertex_ids[source_cells[source_block_index][source_row]]
                     )
                     parent_blocks.append(source_block.name)
                     parent_kinds.add(witness.source_cell_kind)
