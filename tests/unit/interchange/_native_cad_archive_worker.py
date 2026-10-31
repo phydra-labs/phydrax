@@ -4993,7 +4993,11 @@ def _rebuild_continuation_value(
         return _rebuild_surface_chart_deformation(value)
     if (
         type(value).__module__ == "phydrax._model._structure"
-        and type(value).__name__ == "SparseCoordinateOperatorArchiveRecipe"
+        and type(value).__name__
+        in {
+            "SparseCoordinateOperatorArchiveRecipe",
+            "_FiniteElementSpecArchiveProjection",
+        }
     ) or type(value).__module__ in {
         "phydrax.sparse._relation",
         "phydrax.linalg._spaces",
@@ -10947,16 +10951,16 @@ def _rebuild_coordinate_map_composition(value: object, /) -> Composition:
         for entry in value.entries
     )
     composition = Composition(rebuilt_entries, boundary_id=value.boundary_id)
+    # Stored geometry values hold archive projections of their FE elements; each
+    # entry's revision is the identity of the geometry it was written from.
     if (
         composition.composition_id != value.composition_id
-        or cell_geometry_id(power_geometry)
-        != cell_geometry_id(entries["power/geometry"].value)
-        or cell_geometry_id(cut_geometry)
-        != cell_geometry_id(entries["cut/geometry"].value)
+        or cell_geometry_id(power_geometry) != entries["power/geometry"].revision_id
+        or cell_geometry_id(cut_geometry) != entries["cut/geometry"].revision_id
         or cell_geometry_id(power_refined_geometry)
-        != cell_geometry_id(entries["power/refined-geometry"].value)
+        != entries["power/refined-geometry"].revision_id
         or cell_geometry_id(selected_geometry)
-        != cell_geometry_id(entries["power/selected-geometry"].value)
+        != entries["power/selected-geometry"].revision_id
     ):
         raise ValueError("Cold coordinate-map Composition identity changed.")
     return composition
