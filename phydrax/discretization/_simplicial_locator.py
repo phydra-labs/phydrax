@@ -517,6 +517,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             candidate_cells,
             jnp.where(candidate_accepted[:, :, None], candidate_reference, 0.0),
             candidates_complete,
+            (),
             self.locator_id,
         )
 
