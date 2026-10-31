@@ -32,6 +32,7 @@ from .._strict import StrictModule
 from .._validation import finite_real_scalar, positive_finite_float
 from ..discretization._exact_algebraic_geometry import (
     ExactScalar,
+    RadicalElement,
     rational_coefficient,
 )
 from ..geometry._atlas import TrimDomain
@@ -43,7 +44,12 @@ from ..geometry.brep._constructors import (
     assemble_brep_model,
     BRepTessellationPolicy,
 )
-from ..geometry.brep._correspondence import native_edge_pcurve
+from ..geometry.brep._correspondence import (
+    _affine_bspline_pcurve,
+    _affine_surface_frame,
+    _plane_parameter_vector,
+    native_edge_pcurve,
+)
 from ..geometry.brep._intersection import (
     CurveSurfaceIntersectionRoot,
     endpoint_root_payload,
@@ -97,9 +103,10 @@ from ..geometry.brep._root_bindings import (
 )
 from ..geometry.brep._source_correspondence import (
     _affine_curve_coefficients,
+    _harmonic_coefficients,
     norm_upper,
 )
-from ..geometry.brep._trim_helpers import PeriodOffset
+from ..geometry.brep._trim_helpers import period_offset, PeriodOffset
 from ..typing import checked, parse
 from ._report import (
     AdapterError,
@@ -1604,6 +1611,26 @@ def natural_box(patch: AbstractSurfacePatch, /) -> np.ndarray:
     return box
 
 
+def _aligned_period_axis(
+    patch: AbstractSurfacePatch, pcurve: AbstractCurve, /
+) -> Literal[0, 1] | None:
+    """Declared 2pi axis of ``patch`` along which an affine p-curve source moves."""
+    source = pcurve.source_curve if isinstance(pcurve, PeriodicPCurve) else pcurve
+    if not isinstance(source, AbstractCurve):
+        return None
+    affine = _affine_curve_coefficients(explicit_carrier(source), _ZERO_UV)
+    if affine is None:
+        return None
+    direction = affine[1]
+    for axis, period in enumerate(patch.native_period_symbols()):
+        unit = tuple(Fraction(int(component == axis)) for component in range(2))
+        if period == "two_pi" and (
+            direction == unit or direction == tuple(-value for value in unit)
+        ):
+            return 0 if axis == 0 else 1
+    return None
+
+
 def _sweep_domain(
     patch: AbstractSurfacePatch, axis: int, /
 ) -> tuple[float, float] | None:
@@ -1623,6 +1650,34 @@ def _sweep_domain(
             return max(first[0], second[0]), min(first[1], second[1])
         case _:
             return None
+
+
+def _representative_pcurve_box(
+    patch: AbstractSurfacePatch, pcurve: AbstractCurve, first: float, last: float, /
+) -> np.ndarray:
+    """UV box of a p-curve in the native representative chart.
+
+    A whole-turn sheet p-curve denotes its source shifted by symbolic native
+    turns; its representative is the source translated by the binary period,
+    the convention under which a full-turn source region is exactly one binary
+    period wide.
+    """
+    if isinstance(pcurve, PeriodicPCurve) and pcurve.patch is patch:
+        symbols = patch.native_period_symbols()
+        periods = patch.periods
+        offset = np.zeros(2, dtype=np.float64)
+        for axis, shift in enumerate(pcurve.period_shifts):
+            period = periods[axis]
+            if not shift:
+                continue
+            if symbols[axis] != "two_pi" or period is None:
+                return np.asarray(pcurve.bounding_box(first, last), dtype=np.float64)
+            offset[axis] = shift * float(period)
+        source = np.asarray(
+            pcurve.source_curve.bounding_box(first, last), dtype=np.float64
+        )
+        return source + offset
+    return np.asarray(pcurve.bounding_box(first, last), dtype=np.float64)
 
 
 # ------------------------------------------------------------ p-curve recovery
@@ -1656,8 +1711,15 @@ def recover_pcurve(
     policy: CadCurveFitPolicy | None,
     /,
 ) -> AbstractCurve:
-    """Recover only a p-curve whose complete source map is algebraically known."""
+    """Recover only a p-curve whose complete source map is algebraically known.
+
+    A circle in a plane exactly parallel to a planar face maps to its exact
+    orthogonal chart projection; its normal offset is not hidden, it is the
+    face gap that publication certifies against the import tolerance.
+    """
     candidate = native_edge_pcurve(curve, patch)
+    if candidate is None and isinstance(curve, CircleCurve):
+        candidate = _parallel_plane_circle_pcurve(patch, curve)
     if candidate is not None:
         return candidate
     if policy is not None:
@@ -1666,6 +1728,58 @@ def recover_pcurve(
         )
     raise ValueError(
         f"No exact p-curve source map exists for surface={type(patch).__name__}, curve={type(curve).__name__}."
+    )
+
+
+def _parallel_plane_circle_pcurve(
+    patch: AbstractSurfacePatch, curve: CircleCurve, /
+) -> CircleCurve | None:
+    """Chart circle of a 3D circle whose radial harmonics lie exactly in a plane chart."""
+    frame = _affine_surface_frame(patch)
+    if frame is None or curve.ambient_dimension != 3:
+        return None
+    origin, first, second = frame
+    center, cosine, sine = _harmonic_coefficients(curve)
+    chart = (
+        _plane_parameter_vector(
+            frame, tuple(value - base for value, base in zip(center, origin, strict=True))
+        ),
+        _plane_parameter_vector(frame, cosine),
+        _plane_parameter_vector(frame, sine),
+    )
+    chart_center, chart_cosine, chart_sine = chart
+    if chart_center is None or chart_cosine is None or chart_sine is None:
+        return None
+    for vector, target in ((chart_cosine, cosine), (chart_sine, sine)):
+        image = tuple(first[i] * vector[0] + second[i] * vector[1] for i in range(3))
+        if image != target:
+            return None
+    radius = curve.radius_exact
+
+    def dot(
+        left: tuple[ExactScalar, ...], right: tuple[ExactScalar, ...], /
+    ) -> ExactScalar:
+        return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
+
+    squared = radius * radius
+    if (
+        dot(chart_cosine, chart_cosine) != squared
+        or dot(chart_sine, chart_sine) != squared
+        or dot(chart_cosine, chart_sine) != 0
+    ):
+        return None
+    inverse = radius.reciprocal() if isinstance(radius, RadicalElement) else 1 / radius
+    first_axis = tuple(value * inverse for value in chart_cosine)
+    second_axis = tuple(value * inverse for value in chart_sine)
+    return CircleCurve(
+        tuple(float(value) for value in chart_center),
+        tuple(float(value) for value in first_axis),
+        tuple(float(value) for value in second_axis),
+        float(radius),
+        center_exact=chart_center,
+        first_axis_exact=first_axis,
+        second_axis_exact=second_axis,
+        radius_exact=radius,
     )
 
 
@@ -2071,9 +2185,13 @@ class CadStage:
             pcurve, (1.0, 1.0), 1.0, (float(shift[0]), float(shift[1]))
         )
 
-    @staticmethod
+    @classmethod
     def _canonical_native_sheet(
-        pcurve: AbstractCurve, patch: AbstractSurfacePatch, /
+        cls,
+        pcurve: AbstractCurve,
+        patch: AbstractSurfacePatch,
+        parameter_range: tuple[float, float],
+        /,
     ) -> AbstractCurve:
         if isinstance(pcurve, PeriodicPCurve):
             return pcurve
@@ -2081,6 +2199,15 @@ class CadStage:
         symbols = patch.native_period_symbols()
         if not any(symbol is not None for symbol in symbols):
             return pcurve
+        if isinstance(pcurve, BSplineCurve):
+            # A spline p-curve is a native sheet only when it is exactly the
+            # affine isoline over the authored edge range (formats without a
+            # line p-curve entity write seams this way).
+            affine = _affine_bspline_pcurve(pcurve, *parameter_range)
+            if affine is None:
+                return pcurve
+            sheet = cls._canonical_native_sheet(affine, patch, parameter_range)
+            return sheet if isinstance(sheet, PeriodicPCurve) else pcurve
         carrier = explicit_carrier(pcurve)
         affine = _affine_curve_coefficients(carrier, _ZERO_UV)
         if affine is None:
@@ -2103,14 +2230,10 @@ class CadStage:
                 native_sheet = True
         if native_sheet:
             source = LineCurve(
-                np.asarray(
-                    tuple(float(value) for value in source_constant),
-                    dtype=np.float64,
-                ),
-                np.asarray(
-                    tuple(float(value) for value in direction),
-                    dtype=np.float64,
-                ),
+                tuple(float(value) for value in source_constant),
+                tuple(float(value) for value in direction),
+                origin_exact=tuple(source_constant),
+                direction_exact=direction,
             )
             return PeriodicPCurve(source, patch, (turns[0], turns[1]))
         if isinstance(pcurve, LineCurve):
@@ -2120,11 +2243,10 @@ class CadStage:
             for derivative, symbol in zip(direction, symbols, strict=True)
         ):
             source = LineCurve(
-                np.zeros((2,), dtype=np.float64),
-                np.asarray(
-                    tuple(float(value) for value in direction),
-                    dtype=np.float64,
-                ),
+                (0.0, 0.0),
+                tuple(float(value) for value in direction),
+                origin_exact=(Fraction(), Fraction()),
+                direction_exact=direction,
             )
             return _rational_affine_pcurve(
                 source,
@@ -2180,7 +2302,9 @@ class CadStage:
         traces: dict[int, AbstractCurve] = {}
         for coedge in loop:
             pcurve = self._coedge_pcurve(face, coedge)
-            pcurve = self._canonical_native_sheet(pcurve, face.patch)
+            pcurve = self._canonical_native_sheet(
+                pcurve, face.patch, self.edge_ranges[coedge.edge]
+            )
             source_trace = pcurve
             ends = self._ends(coedge, pcurve)
             if coedge.edge in traces:
@@ -2354,6 +2478,9 @@ class CadStage:
         period = periods[axis]
         if symbols[axis] != "two_pi" or period is None:
             return None
+        seam = self._exact_seam_endpoint(pcurve, axis, parameter)
+        if seam is not None:
+            return seam
         affine = _affine_curve_coefficients(explicit_carrier(pcurve), _ZERO_UV)
         if affine is None:
             return None
@@ -2393,6 +2520,38 @@ class CadStage:
         if point is None:
             return None
         return tuple(point), endpoint.exact_parameter
+
+    @staticmethod
+    def _exact_seam_endpoint(
+        pcurve: AbstractCurve, axis: int, parameter: float, /
+    ) -> tuple[tuple[ExactScalar, ...], Fraction | PeriodOffset] | None:
+        """Exact chart endpoint of a seam isoline on a declared native-period sheet.
+
+        A seam use is an exact affine isoline of the periodic coordinate whose
+        sheet is an integer number of native turns, so its periodic coordinate
+        is ``offset + turns * period`` with no rounding; the transverse
+        coordinate is the exact affine image of the authored edge parameter.
+        """
+        if not isinstance(pcurve, PeriodicPCurve):
+            return None
+        fixed = 1 - axis
+        if pcurve.period_shifts[fixed] != 0:
+            return None
+        affine = _affine_curve_coefficients(
+            explicit_carrier(pcurve.source_curve), _ZERO_UV
+        )
+        if affine is None:
+            return None
+        offset, direction = affine
+        if direction[axis] != 0 or direction[fixed] == 0:
+            return None
+        point: list[ExactScalar] = [Fraction(), Fraction()]
+        point[axis] = offset[axis]
+        point[fixed] = offset[fixed] + direction[fixed] * Fraction.from_float(parameter)
+        rational = offset[axis]
+        if not isinstance(rational, Fraction):
+            return None
+        return tuple(point), period_offset(rational, Fraction(pcurve.period_shifts[axis]))
 
     def _pole_curve(
         self,
@@ -2575,14 +2734,14 @@ class CadStage:
         for loop in loops:
             for coedge, pcurve in loop:
                 first, last = self.edge_ranges[coedge.edge]
-                boxes.append(np.asarray(pcurve.bounding_box(first, last)))
+                boxes.append(_representative_pcurve_box(patch, pcurve, first, last))
         stacked = np.stack(boxes)
         box = np.stack((np.min(stacked[:, 0], axis=0), np.max(stacked[:, 1], axis=0)))
         natural = natural_box(patch)
         box = np.stack((np.maximum(box[0], natural[0]), np.minimum(box[1], natural[1])))
-        # Symbolic native-period gauges have outward UV bounds wider than their
-        # numerical period representative. Re-centering to that width clips
-        # the represented source; only a source-declared domain may clip here.
+        # Whole-turn sheet p-curves use the binary period representative, so a
+        # full native turn is exactly one binary period wide; other symbolic
+        # gauges keep outward bounds, and only a source-declared domain clips.
         return box
 
     @staticmethod
@@ -3020,33 +3179,13 @@ class CadStage:
         for face, ((loops, _), staged) in enumerate(
             zip(resolved, self.faces, strict=True)
         ):
-            periods = staged.patch.native_period_symbols()
             for loop in loops:
                 for coedge, pcurve in loop:
                     if coedge.edge != edge:
                         continue
-                    source = (
-                        pcurve.source_curve
-                        if isinstance(pcurve, PeriodicPCurve)
-                        else pcurve
-                    )
-                    if not isinstance(source, AbstractCurve):
-                        continue
-                    carrier = explicit_carrier(source)
-                    affine = _affine_curve_coefficients(carrier, _ZERO_UV)
-                    if affine is None:
-                        continue
-                    direction = affine[1]
-                    for axis, period in enumerate(periods):
-                        unit = tuple(
-                            Fraction(int(component == axis)) for component in range(2)
-                        )
-                        if period == "two_pi" and (
-                            direction == unit
-                            or direction == tuple(-value for value in unit)
-                        ):
-                            axis_: Literal[0, 1] = 0 if axis == 0 else 1
-                            candidates.append((face, axis_, staged.patch))
+                    axis = _aligned_period_axis(staged.patch, pcurve)
+                    if axis is not None:
+                        candidates.append((face, axis, staged.patch))
         return candidates
 
     def _bind_native_phase_surfaces(
@@ -3082,12 +3221,18 @@ class CadStage:
         self,
         pcurves: Sequence[AbstractCurve],
         coedge_edges: Sequence[int],
+        face_loops: Sequence[tuple[tuple[int, ...], ...]],
         /,
     ) -> tuple[
         tuple[tuple[RootEndpoint | None, RootEndpoint | None], ...] | None,
         tuple[tuple[RootEndpoint | None, RootEndpoint | None], ...] | None,
     ]:
-        """Bind symbolic native-turn endpoints to each edge carrier and coedge p-curve."""
+        """Bind symbolic native-turn endpoints to each edge carrier and coedge p-curve.
+
+        Every coedge use binds to its own face: the edge owner's period when
+        the face carries that patch, else a declared period of the face patch
+        aligned with the use, else the p-curve's own native turn.
+        """
         if not self.native_phases and not self.split_endpoint_phases:
             return None, None
         edge_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = [
@@ -3096,6 +3241,11 @@ class CadStage:
         coedge_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = [
             (None, None)
         ] * len(coedge_edges)
+        coedge_faces = [-1] * len(coedge_edges)
+        for face, loops in enumerate(face_loops):
+            for loop in loops:
+                for coedge in loop:
+                    coedge_faces[coedge] = face
         for edge, (patch, axis, rational) in sorted(self.native_phases.items()):
             uses = [
                 coedge for coedge, source in enumerate(coedge_edges) if source == edge
@@ -3124,25 +3274,23 @@ class CadStage:
             )
             for coedge in uses:
                 pcurve = pcurves[coedge]
-                if patch is None and pcurve.native_period_symbol() != "two_pi":
+                face_patch = self.faces[coedge_faces[coedge]].patch
+                binding: tuple[AbstractSurfacePatch | None, int | None]
+                if patch is not None and carrier_payload(face_patch) == carrier_payload(
+                    patch
+                ):
+                    binding = patch, axis
+                elif (aligned := _aligned_period_axis(face_patch, pcurve)) is not None:
+                    binding = face_patch, aligned
+                elif pcurve.native_period_symbol() == "two_pi":
+                    binding = None, None
+                else:
                     # A curve-owned full turn does not fabricate the same
                     # symbolic support for an externally rounded p-curve parameterization.
                     continue
                 coedge_roots[coedge] = (
-                    NativePeriodEndpoint(
-                        pcurve,
-                        patch,
-                        axis,
-                        rational=rational,
-                        turns=0,
-                    ),
-                    NativePeriodEndpoint(
-                        pcurve,
-                        patch,
-                        axis,
-                        rational=rational,
-                        turns=1,
-                    ),
+                    NativePeriodEndpoint(pcurve, *binding, rational=rational, turns=0),
+                    NativePeriodEndpoint(pcurve, *binding, rational=rational, turns=1),
                 )
         for edge, phases in self.split_endpoint_phases.items():
             carrier = self.curves[self.edge_curves[edge]]
@@ -3472,7 +3620,9 @@ class CadStage:
                 indexed.append(tuple(ids))
             face_loops.append(tuple(indexed))
         self._bind_native_phase_surfaces(resolved)
-        edge_roots, coedge_roots = self._native_phase_roots(pcurves, coedge_edges)
+        edge_roots, coedge_roots = self._native_phase_roots(
+            pcurves, coedge_edges, face_loops
+        )
         vertex_roots, edge_roots, coedge_roots = self._bind_incidence_roots(
             pcurves,
             coedge_edges,
@@ -3482,8 +3632,29 @@ class CadStage:
             edge_roots,
             coedge_roots,
         )
+        vertex_points = np.asarray(self.vertices, dtype=np.float64).reshape(-1, 3)
+        # A collapsed pole edge is proved against its authored vertex; the
+        # binary file coordinates are that vertex's exact source value.
+        pole_vertices = {
+            vertex
+            for edge, curve in enumerate(self.edge_curves)
+            if curve < 0
+            for vertex in self.edge_vertices[edge]
+        }
+        vertex_exact_points: list[tuple[Fraction, Fraction, Fraction] | None] = []
+        for vertex, (x, y, z) in enumerate(vertex_points):
+            vertex_exact_points.append(
+                (
+                    Fraction.from_float(float(x)),
+                    Fraction.from_float(float(y)),
+                    Fraction.from_float(float(z)),
+                )
+                if vertex in pole_vertices
+                else None
+            )
         geometry = BRepGeometry(
-            vertex_points=np.asarray(self.vertices, dtype=np.float64).reshape(-1, 3),
+            vertex_points=vertex_points,
+            vertex_exact_points=tuple(vertex_exact_points),
             curves=tuple(self.curves),
             edge_curves=tuple(self.edge_curves),
             edge_ranges=np.asarray(self.edge_ranges, dtype=np.float64).reshape(-1, 2),

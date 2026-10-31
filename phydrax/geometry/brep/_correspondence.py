@@ -375,6 +375,8 @@ def native_edge_pcurve(
         return LineCurve((0.0, curve.fixed_value), (1.0, 0.0))
     if isinstance(curve, SurfaceMappedCurve) and _same_patch(curve.surface, patch):
         return curve.pcurve
+    if isinstance(curve, CircleCurve) and isinstance(patch, CylinderPatch):
+        return _cylinder_section_pcurve(curve, patch)
     frame = _affine_surface_frame(patch)
     if frame is not None and curve.ambient_dimension == 3:
         plane_origin = frame[0]
@@ -390,6 +392,45 @@ def native_edge_pcurve(
         candidate = _affine_pcurve_carrier(curve, uv_origin, uv_direction)
         return candidate if _same_plane_line_lift(curve, candidate, frame) else None
     return None
+
+
+def _cylinder_section_pcurve(
+    curve: CircleCurve, patch: CylinderPatch, /
+) -> AbstractCurve | None:
+    """The exact height isoline of a cross-section circle that shares the cylinder phase.
+
+    The circle must have the cylinder's exact radial harmonics and a center on
+    the cylinder axis at an exact height ``h``; its p-curve is then ``(t, h)``.
+    A reversed or phase-shifted circle has no affine exact chart map here.
+    """
+    if curve.ambient_dimension != 3:
+        return None
+    center, cosine, sine = _harmonic_coefficients(curve)
+    radius = patch.radius_exact
+    if cosine != tuple(
+        radius * value for value in patch.first_axis_exact
+    ) or sine != tuple(radius * value for value in patch.second_axis_exact):
+        return None
+    offset = tuple(
+        value - origin for value, origin in zip(center, patch.origin_exact, strict=True)
+    )
+    pivot = next((value for value in patch.axis_exact if value != 0), None)
+    if pivot is None:
+        return None
+    pivot_offset = offset[patch.axis_exact.index(pivot)]
+    height = (
+        pivot_offset * pivot.reciprocal()
+        if isinstance(pivot, RadicalElement)
+        else pivot_offset / pivot
+    )
+    if tuple(height * value for value in patch.axis_exact) != offset:
+        return None
+    return LineCurve(
+        (0.0, float(height)),
+        (1.0, 0.0),
+        origin_exact=(Fraction(0), height),
+        direction_exact=(Fraction(1), Fraction(0)),
+    )
 
 
 def _cylinder_chart_line(
