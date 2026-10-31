@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from fractions import Fraction
 from typing import Any, Literal
 
 import numpy as np
@@ -11,10 +12,14 @@ from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import PerCellRestrictedCellGeometryElement
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.discretization._coordinate_enclosure import add, axes, multiply, scale
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import lagrange_element
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
-from phydrax.geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+from phydrax.geometry._mapped_reference_boundary import (
+    _mapped_root_entity_banks,
+    MappedReferenceBoundarySource,
+)
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
@@ -202,22 +207,26 @@ def _mapped_plc_tetra_source(
         vertex_global_ids=root_vertex_ids,
     )
     if curved:
-        element = lagrange_element("tetrahedron", 2)
-        reference_nodes = np.asarray(element.reference_nodes, dtype=np.float64)
-        coordinates = np.column_stack(
-            (
-                reference_nodes[:, 0]
-                + reference_nodes[:, 1] * reference_nodes[:, 2] / 8.0,
-                reference_nodes[:, 1]
-                + reference_nodes[:, 0] * reference_nodes[:, 2] / 8.0,
-                reference_nodes[:, 2]
-                + reference_nodes[:, 0] * reference_nodes[:, 1] / 8.0,
-            )
+        # The quadratic map x + (yz, xz, xy)/8 is authored exactly as a per-cell
+        # chart of the vertex-bound P1 root, so the PLC binds one coordinate row
+        # per source vertex.
+        u, v, w = axes(3)
+        chart = (
+            add(u, scale(multiply(v, w), Fraction(1, 8))),
+            add(v, scale(multiply(u, w), Fraction(1, 8))),
+            add(w, scale(multiply(u, v), Fraction(1, 8))),
+        )
+        element = PerCellRestrictedCellGeometryElement(
+            lagrange_element("tetrahedron", 1),
+            "tetrahedron",
+            root_cell_ids,
+            root_cell_ids,
+            (chart,),
         )
         source_geometry = CellGeometrySpec(
             {"root": element},
-            {"root": np.arange(element.local_dof_count, dtype=np.int64)[None, :]},
-            coordinates,
+            {"root": np.arange(4, dtype=np.int64)[None, :]},
+            vertices,
         )
     else:
         source_geometry = CellGeometrySpec.affine(root_mesh)
@@ -889,20 +898,25 @@ def test_native_plc_source_revalidates_tetra_root_boundary_and_curved_bounds() -
     assert relation is not None
     assert query.authority is affine_source
     root_face_ids = np.asarray(affine_domain.reference_mesh.entity_set(2).entity_ids)
-    cell_faces = np.asarray(
-        affine_domain.reference_mesh.connectivity.cell_entities[2], dtype=np.int64
-    )
+    _, cell_faces, _ = _mapped_root_entity_banks(affine_domain.reference_mesh)
     root_cell_rows = {
         int(identifier): row for row, identifier in enumerate(affine_domain.root_cell_ids)
     }
-    for face_id, cell_id, local_face in zip(
+    for face_id, cell_ids, local_faces in zip(
         relation.polygon_root_face_global_ids,
-        relation.polygon_root_cell_global_ids[:, 0],
-        relation.polygon_root_local_face_indices[:, 0],
+        relation.polygon_root_cell_global_ids,
+        relation.polygon_root_local_face_indices,
         strict=True,
     ):
-        root_row = root_cell_rows[int(cell_id)]
-        assert int(root_face_ids[cell_faces[root_row, int(local_face)]]) == int(face_id)
+        incident = tuple(
+            (int(cell_id), int(local_face))
+            for cell_id, local_face in zip(cell_ids, local_faces, strict=True)
+            if int(cell_id) >= 0
+        )
+        assert incident
+        for cell_id, local_face in incident:
+            root_row = root_cell_rows[cell_id]
+            assert int(root_face_ids[cell_faces[root_row, local_face]]) == int(face_id)
     for entity_id, key, occurrence in zip(
         relation.polygon_source_entity_ids,
         relation.polygon_source_entity_keys,
