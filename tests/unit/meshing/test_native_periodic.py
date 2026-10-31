@@ -1,23 +1,35 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from fractions import Fraction
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
+import phydrax.meshing.providers._native_periodic as native_periodic
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import exact_periodic_element
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
+    MeshingFailure,
+    MeshingFailureCategory,
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._controls import PeriodicConstraint, RegionControl
+from phydrax.meshing._local_metric import (
+    execute_local_metric_adaptation,
+    LocalMetricOutcome,
+)
 from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._periodic import (
     periodic_delaunay_mesh,
     periodic_entity_orbit_map,
     PeriodicPointOrbits,
+    stage_periodic_topology_edit,
 )
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeCompliancePolicy, UniformSizeControl
@@ -124,10 +136,84 @@ def _periodic_vertex_pair(
                     exact_periodic_element(topology.cell, exponents), dtype=np.float64
                 )
                 return PeriodicConstraint(source_scope, target_scope, transform)
-    raise AssertionError("Periodic point orbits did not contain a nontrivial winding pair.")
+    raise AssertionError(
+        "Periodic point orbits did not contain a nontrivial winding pair."
+    )
 
 
-def test_native_periodic_route_adapts_skew_winding_orbits_to_size() -> None:
+def _stalled_periodic_adaptation(
+    monkeypatch: pytest.MonkeyPatch, run: Callable[[], object], /
+) -> tuple[CellMesh, LocalMetricOutcome, MeshingFailure]:
+    """Run a periodic route that must stall, recording its local adaptation."""
+    calls: list[tuple[CellMesh, LocalMetricOutcome]] = []
+
+    def recorded(
+        mesh: CellMesh, metric: np.ndarray, /, **controls: Any
+    ) -> LocalMetricOutcome:
+        outcome = execute_local_metric_adaptation(mesh, metric, **controls)
+        calls.append((mesh, outcome))
+        return outcome
+
+    monkeypatch.setattr(native_periodic, "execute_local_metric_adaptation", recorded)
+    with pytest.raises(MeshingFailure) as raised:
+        run()
+    assert len(calls) == 1
+    return calls[0][0], calls[0][1], raised.value
+
+
+def _assert_honest_stall(
+    failure: MeshingFailure,
+    mesh: CellMesh,
+    outcome: LocalMetricOutcome,
+    expected: tuple[tuple[float, str], ...],
+    /,
+) -> CellMesh:
+    """The stall is reported edge by edge and its candidate keeps every contract."""
+    assert failure.category is MeshingFailureCategory.COMPLIANCE_FAILED
+    assert failure.stage == "periodic-metric-adaptation"
+    assert "status=stalled" in str(failure)
+    assert failure.evidence.checkpoint == "periodic-metric-adaptation:stalled"
+    assert failure.evidence.logical_findings == tuple(
+        f"stalled_edge_{index}: {reason}" for index, (_, reason) in enumerate(expected)
+    )
+    achieved = dict(failure.evidence.achieved_quantities)
+    evidence = outcome.evidence
+    assert evidence.stalled and not evidence.converged
+    assert evidence.out_of_range_edges == len(expected)
+    assert len(evidence.stalled_edges) == len(expected)
+    for index, ((length, reason), (expected_length, expected_reason)) in enumerate(
+        zip(evidence.stalled_edges, expected, strict=True)
+    ):
+        assert reason == expected_reason
+        assert length == pytest.approx(expected_length, abs=5.0e-4)
+        assert achieved[f"stalled_edge_{index}_metric_length"] == length
+
+    # The stalled candidate is still a valid periodic edit: exact lifted orbits
+    # and windings, and an exact convex P1 transfer stencil for every vertex.
+    target = stage_periodic_topology_edit(mesh, outcome.edit)
+    assert target is not None
+    topology = target.periodic_topology
+    assert topology is not None
+    topology.require_lifted(target.topology, target.lifted_topology_id, target.blocks)
+    topology.require_coordinates(target.coordinates)
+    assert np.any(np.asarray(periodic_entity_orbit_map(target, 0).winding_shifts))
+    edit = outcome.edit
+    assert edit.vertex_orbit_keys is not None and edit.vertex_windings is not None
+    exact_weights = edit.stencil_exact_weights
+    assert exact_weights is not None
+    for row in exact_weights:
+        assert all(weight >= 0 for weight in row)
+        assert sum(row, Fraction(0)) == 1
+    weights = np.where(
+        np.asarray(edit.stencil_valid), np.asarray(edit.stencil_weights), 0.0
+    )
+    np.testing.assert_allclose(np.sum(weights, axis=1), 1.0, rtol=0.0, atol=1.0e-12)
+    return target
+
+
+def test_native_periodic_route_adapts_skew_winding_orbits_to_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source_orbits = _point_source()
     source_id, revision = "periodic-sites", "periodic-sites-revision-1"
     source = NativePeriodicSource(source_orbits, source_id, revision)
@@ -140,28 +226,34 @@ def test_native_periodic_route_adapts_skew_winding_orbits_to_size() -> None:
         source.scope_entity_set_id(2),
         source.scope_entity_ids(2),
     )
-    construction = prepare_native_periodic(
-        source,
-        specification,
-        NativeMeshingOptions("periodic_delaunay"),
-        phx.SpatialCoordinateContract.si(),
-    ).execute()
 
-    mesh = construction.mesh
-    topology = mesh.periodic_topology
-    assert topology is not None
-    topology.require_lifted(mesh.topology, mesh.lifted_topology_id, mesh.blocks)
-    topology.require_coordinates(mesh.coordinates)
-    vertex_map = periodic_entity_orbit_map(mesh, 0)
+    # The skew orbits adapt until one short birth edge remains whose collapse
+    # would create an edge above the split threshold in either direction (the
+    # classic split/collapse hysteresis) and whose flip is invalid: an honest
+    # stall, reported as such rather than published as a size-compliant mesh.
+    mesh, outcome, failure = _stalled_periodic_adaptation(
+        monkeypatch,
+        lambda: prepare_native_periodic(
+            source,
+            specification,
+            NativeMeshingOptions("periodic_delaunay"),
+            phx.SpatialCoordinateContract.si(),
+        ).execute(),
+    )
+    target = _assert_honest_stall(
+        failure,
+        mesh,
+        outcome,
+        ((0.6631, "collapse=hysteresis+hysteresis;flip=invalid"),),
+    )
+    vertex_map = periodic_entity_orbit_map(target, 0)
     assert vertex_map.quotient_entity_ids.size > source_orbits.point_ids.size
-    assert np.any(np.asarray(vertex_map.winding_shifts))
-    assert construction.compliance.issues == ()
     assert source.cell_regions is None
-    assert construction.organization.attributes == ()
-    assert construction.organization.zones == ()
 
 
-def test_native_periodic_route_binds_constraints_and_materials_by_quotient_ids() -> None:
+def test_native_periodic_route_binds_constraints_and_materials_by_quotient_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source_orbits = _point_source()
     mesh = periodic_delaunay_mesh(source_orbits).mesh
     cell_map = periodic_entity_orbit_map(mesh, mesh.topological_dimension)
@@ -170,7 +262,9 @@ def test_native_periodic_route_binds_constraints_and_materials_by_quotient_ids()
     lifted_regions = quotient_regions[
         np.asarray(cell_map.lifted_to_quotient, dtype=np.int64)
     ]
-    cell_ids = np.asarray(mesh.entity_set(mesh.topological_dimension).entity_ids, dtype=np.int64)
+    cell_ids = np.asarray(
+        mesh.entity_set(mesh.topological_dimension).entity_ids, dtype=np.int64
+    )
     region_by_id = {
         int(identifier): int(region)
         for identifier, region in zip(cell_ids, lifted_regions, strict=True)
@@ -217,45 +311,42 @@ def test_native_periodic_route_binds_constraints_and_materials_by_quotient_ids()
         periodic_constraints=(periodic_constraint,),
         region_controls=region_controls,
     )
-    construction = prepare_native_periodic(
-        source,
-        specification,
-        NativeMeshingOptions("periodic_delaunay"),
-        phx.SpatialCoordinateContract.si(),
-    ).execute()
-
-    target = construction.mesh
-    target_topology = target.periodic_topology
-    assert target_topology is not None
-    target_topology.require_lifted(target.topology, target.lifted_topology_id, target.blocks)
-    target_cells = periodic_entity_orbit_map(target, target.topological_dimension)
-    attribute = next(
-        value for value in construction.organization.attributes
-        if value.name == "periodic-material-id"
+    # Two short birth edges remain: each collapse either creates an edge above
+    # the split threshold (hysteresis) or would remove a curve vertex off its
+    # curve (inadmissible), and neither flip is valid/improving. The route
+    # reports this stall instead of publishing the unmet candidate.
+    stalled_mesh, outcome, failure = _stalled_periodic_adaptation(
+        monkeypatch,
+        lambda: prepare_native_periodic(
+            source,
+            specification,
+            NativeMeshingOptions("periodic_delaunay"),
+            phx.SpatialCoordinateContract.si(),
+        ).execute(),
     )
-    values = np.asarray(attribute.values, dtype=np.int64)
+    target = _assert_honest_stall(
+        failure,
+        stalled_mesh,
+        outcome,
+        (
+            (0.6156, "collapse=hysteresis+inadmissible;flip=invalid"),
+            (0.7057, "collapse=hysteresis+inadmissible;flip=not-improving"),
+        ),
+    )
+
+    # Materials follow the quotient cells through the stalled candidate's lineage:
+    # both codes survive and every target cell orbit carries one material.
+    values = native_periodic._target_cell_regions(
+        stalled_mesh, target, outcome.edit, block_regions
+    )
     assert np.unique(values).size == 2
+    target_cells = periodic_entity_orbit_map(target, target.topological_dimension)
     for orbit in range(target_cells.quotient_entity_ids.size):
         rows = np.flatnonzero(
             np.asarray(target_cells.lifted_to_quotient, dtype=np.int64) == orbit
         )
         assert np.unique(values[rows]).size == 1
-
-    target_cell_ids = np.asarray(
-        target.entity_set(target.topological_dimension).entity_ids, dtype=np.int64
-    )
-    for code in (0, 1):
-        zone = next(
-            value for value in construction.organization.zones
-            if value.name == f"periodic-region-{code}"
-        )
-        expected_ids = target_cell_ids[values == code]
-        assert np.array_equal(
-            np.sort(np.asarray(zone.scope.entity_ids, dtype=np.int64)),
-            np.sort(expected_ids),
-        )
     assert values.size > block_regions.size
-    assert construction.compliance.issues == ()
 
     invalid_transform = np.asarray(periodic_constraint.transform, dtype=np.float64).copy()
     invalid_transform[0, -1] += 0.01
@@ -286,37 +377,54 @@ def test_native_periodic_route_binds_constraints_and_materials_by_quotient_ids()
         ("foreign-periodic-source", revision),
         (source_id, "stale-periodic-revision"),
     ):
-        invalid_scope = MeshingScope(
-            invalid_source_id,
-            invalid_revision,
-            MeshingEntityKind.MESH,
-            0,
-            quotient_vertices.entity_set_id,
-            np.asarray(periodic_constraint.source_scope.entity_ids, dtype=np.int64),
+        invalid_source_scope, invalid_target_scope = (
+            MeshingScope(
+                invalid_source_id,
+                invalid_revision,
+                MeshingEntityKind.MESH,
+                0,
+                scope.entity_set_id,
+                np.asarray(scope.entity_ids, dtype=np.int64),
+            )
+            for scope in (
+                periodic_constraint.source_scope,
+                periodic_constraint.target_scope,
+            )
         )
         invalid_constraint = PeriodicConstraint(
-            invalid_scope,
-            periodic_constraint.target_scope,
-            periodic_constraint.transform,
+            invalid_source_scope, invalid_target_scope, periodic_constraint.transform
         )
-        invalid_binding_specification = _specification(
-            source_id,
-            revision,
-            MeshingEntityKind.MESH,
-            quotient_vertices.entity_set_id,
-            np.asarray(quotient_vertices.entity_ids, dtype=np.int64),
-            source.scope_entity_set_id(mesh.topological_dimension),
-            source.scope_entity_ids(mesh.topological_dimension),
-            periodic_constraints=(invalid_constraint,),
-            region_controls=region_controls,
-        )
-        with pytest.raises(ValueError, match="bound source entity set and revision"):
-            prepare_native_periodic(
-                source,
-                invalid_binding_specification,
-                NativeMeshingOptions("periodic_delaunay"),
-                phx.SpatialCoordinateContract.si(),
+        # The specification itself refuses a constraint bound to another source
+        # or revision, before any provider can consume it.
+        with pytest.raises(
+            ValueError, match="Meshing controls must share the top-level source binding"
+        ):
+            _specification(
+                source_id,
+                revision,
+                MeshingEntityKind.MESH,
+                quotient_vertices.entity_set_id,
+                np.asarray(quotient_vertices.entity_ids, dtype=np.int64),
+                source.scope_entity_set_id(mesh.topological_dimension),
+                source.scope_entity_ids(mesh.topological_dimension),
+                periodic_constraints=(invalid_constraint,),
+                region_controls=region_controls,
             )
+    # A constraint whose two scopes disagree on the revision is refused outright.
+    stale_scope = MeshingScope(
+        source_id,
+        "stale-periodic-revision",
+        MeshingEntityKind.MESH,
+        0,
+        quotient_vertices.entity_set_id,
+        np.asarray(periodic_constraint.source_scope.entity_ids, dtype=np.int64),
+    )
+    with pytest.raises(
+        ValueError, match="Periodic scopes must share one source revision"
+    ):
+        PeriodicConstraint(
+            stale_scope, periodic_constraint.target_scope, periodic_constraint.transform
+        )
 
 
 def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
@@ -333,9 +441,7 @@ def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
     if jax.process_count() != 1:
         pytest.skip("This skew periodic graph-load regression uses one owner.")
     process = int(jax.process_index())
-    device = next(
-        device for device in jax.devices() if device.process_index == process
-    )
+    device = next(device for device in jax.devices() if device.process_index == process)
     group = ExecutionGroup(
         ExecutionGroupSpec(
             "skew-periodic-integer-work",
@@ -396,9 +502,7 @@ def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
     assert isinstance(view, OwnerLocalCellGeometry)
     cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
     neighbor_ids = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
-    neighbor_owner_ranks = np.asarray(
-        view.cell_neighbor_owner_ranks, dtype=np.int32
-    )
+    neighbor_owner_ranks = np.asarray(view.cell_neighbor_owner_ranks, dtype=np.int32)
     assert np.all(np.isin(neighbor_ids, cell_ids))
     owner_by_cell_id = {
         int(identifier): int(owner)
@@ -431,9 +535,7 @@ def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
         origin = points[0]
         first = tuple(points[1][axis] - origin[axis] for axis in range(2))
         second = tuple(points[2][axis] - origin[axis] for axis in range(2))
-        measure = (
-            first[0] * second[1] - first[1] * second[0]
-        ) / 2
+        measure = (first[0] * second[1] - first[1] * second[0]) / 2
         assert measure > 0
         exact_by_id[cell_id] = measure
     owned_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
@@ -444,9 +546,7 @@ def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
     assert np.array_equal(work, np.ones(owned_ids.shape, dtype=np.int64))
     owned_measures = tuple(exact_by_id[int(identifier)] for identifier in owned_ids)
     assert all(isinstance(value, Fraction) and value > 0 for value in owned_measures)
-    assert any(
-        Fraction.from_float(float(value)) != value for value in owned_measures
-    )
+    assert any(Fraction.from_float(float(value)) != value for value in owned_measures)
     assert any(value != Fraction(1) for value in owned_measures)
 
     evidence = partition_owner_local_graph(

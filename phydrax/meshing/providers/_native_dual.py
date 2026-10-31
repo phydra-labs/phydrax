@@ -29,7 +29,10 @@ from ...discretization._coordinate_enclosure import evaluate_expression
 from ...discretization._exact_algebraic_geometry import rational_coefficient
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._mapped_locator import PreparedMappedCellLocator
-from ...discretization._nested_reference_types import ExactReferenceChartExpression
+from ...discretization._nested_reference_types import (
+    exact_reference_cell_vertices,
+    ExactReferenceChartExpression,
+)
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry._curve_boundary import ParametricCurveBoundarySource
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
@@ -1822,6 +1825,446 @@ def _dual_hex_compliance(
     )
 
 
+type _FacePoint = tuple[Fraction, Fraction]
+
+
+def _face_cross(first: _FacePoint, second: _FacePoint, /) -> Fraction:
+    return first[0] * second[1] - first[1] * second[0]
+
+
+def _face_area2(points: tuple[_FacePoint, ...], /) -> Fraction:
+    return sum(
+        (
+            _face_cross(points[row], points[(row + 1) % len(points)])
+            for row in range(len(points))
+        ),
+        Fraction(0),
+    )
+
+
+def _face_barycentric(
+    point: _FacePoint, triangle: tuple[_FacePoint, ...], /
+) -> tuple[Fraction, Fraction, Fraction]:
+    first = (triangle[1][0] - triangle[0][0], triangle[1][1] - triangle[0][1])
+    second = (triangle[2][0] - triangle[0][0], triangle[2][1] - triangle[0][1])
+    delta = (point[0] - triangle[0][0], point[1] - triangle[0][1])
+    determinant = _face_cross(first, second)
+    if determinant == 0:
+        raise ValueError("Restricted boundary chart triangle is singular.")
+    s = _face_cross(delta, second) / determinant
+    t = _face_cross(first, delta) / determinant
+    return 1 - s - t, s, t
+
+
+def _clip_convex_by_triangle(
+    subject: tuple[_FacePoint, ...], triangle: tuple[_FacePoint, ...], /
+) -> tuple[_FacePoint, ...]:
+    """Exactly intersect a convex polygon with a triangle (Sutherland-Hodgman)."""
+    clip = triangle if _face_area2(triangle) > 0 else tuple(reversed(triangle))
+    polygon = list(subject)
+    for edge_row in range(3):
+        if not polygon:
+            break
+        edge_start = clip[edge_row]
+        edge_end = clip[(edge_row + 1) % 3]
+        direction = (edge_end[0] - edge_start[0], edge_end[1] - edge_start[1])
+        result: list[_FacePoint] = []
+        start = polygon[-1]
+        start_gap = _face_cross(
+            direction, (start[0] - edge_start[0], start[1] - edge_start[1])
+        )
+        for end in polygon:
+            end_gap = _face_cross(
+                direction, (end[0] - edge_start[0], end[1] - edge_start[1])
+            )
+            if (start_gap >= 0) != (end_gap >= 0):
+                fraction = start_gap / (start_gap - end_gap)
+                crossing = (
+                    start[0] + fraction * (end[0] - start[0]),
+                    start[1] + fraction * (end[1] - start[1]),
+                )
+                if not result or result[-1] != crossing:
+                    result.append(crossing)
+            if end_gap >= 0 and (not result or result[-1] != end):
+                result.append(end)
+            start, start_gap = end, end_gap
+        if len(result) > 1 and result[0] == result[-1]:
+            result.pop()
+        polygon = result
+    changed = True
+    while changed and len(polygon) >= 3:
+        changed = False
+        for row in range(len(polygon)):
+            previous, current = polygon[row - 1], polygon[row]
+            following = polygon[(row + 1) % len(polygon)]
+            if (
+                _face_cross(
+                    (current[0] - previous[0], current[1] - previous[1]),
+                    (following[0] - current[0], following[1] - current[1]),
+                )
+                == 0
+            ):
+                polygon.pop(row)
+                changed = True
+                break
+    return tuple(polygon)
+
+
+def _reference_face_frame(
+    cell_kind: str, local_face: int, /
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]]:
+    topology = reference_cell_topology(cell_kind)
+    vertices = tuple(
+        tuple(Fraction.from_float(float(value)) for value in point)
+        for point in topology.vertices
+    )
+    face = tuple(int(value) for value in topology.entities[2][local_face])
+    origin = vertices[face[0]]
+    first = tuple(vertices[face[1]][axis] - origin[axis] for axis in range(3))
+    other = vertices[face[2]] if len(face) == 3 else vertices[face[3]]
+    second = tuple(other[axis] - origin[axis] for axis in range(3))
+    return origin, first, second
+
+
+def _reference_face_coordinates(
+    frame: tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]],
+    point: tuple[Fraction, ...],
+    /,
+) -> _FacePoint | None:
+    """Exact face-frame coordinates of a reference point, or None off the face."""
+    origin, first, second = frame
+    for left in range(3):
+        for right in range(left + 1, 3):
+            determinant = first[left] * second[right] - first[right] * second[left]
+            if determinant == 0:
+                continue
+            dx, dy = point[left] - origin[left], point[right] - origin[right]
+            a = (dx * second[right] - dy * second[left]) / determinant
+            b = (first[left] * dy - first[right] * dx) / determinant
+            if any(
+                origin[axis] + a * first[axis] + b * second[axis] != point[axis]
+                for axis in range(3)
+            ):
+                return None
+            return a, b
+    raise ValueError("Reference face frame is singular.")
+
+
+def _restricted_boundary_chart_witness(
+    scaffold_mesh: CellMesh,
+    scaffold_witness: SourceBoundaryChartWitness,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+) -> SourceBoundaryChartWitness:
+    """Compose a scaffold boundary chart witness through exact child-in-parent maps.
+
+    Every output face on a witnessed scaffold face is split into reference
+    triangles whose exact parent-reference corner images span straight
+    triangles of that face; these are clipped exactly against the scaffold's
+    source pieces, so target and source pieces partition the same face.
+    """
+    if scaffold_witness.chart_dimension != 2 or scaffold_witness.reference_dimension != 3:
+        raise ValueError(
+            "Restricted boundary witnesses compose only volume face chart witnesses."
+        )
+    restriction = geometry.restriction_source
+    if restriction is None:
+        raise ValueError(
+            "A restricted boundary witness requires the output's exact parent restriction."
+        )
+    scaffold_kinds = {block.cell_kind for block in scaffold_mesh.blocks}
+    if len(scaffold_kinds) != 1:
+        raise ValueError("Restricted boundary witnesses require one scaffold cell kind.")
+    scaffold_kind = next(iter(scaffold_kinds))
+    scaffold_topology = reference_cell_topology(scaffold_kind)
+    scaffold_frames = tuple(
+        _reference_face_frame(scaffold_kind, local)
+        for local in range(len(scaffold_topology.entities[2]))
+    )
+    pieces_by_face: dict[
+        tuple[int, int],
+        list[tuple[tuple[_FacePoint, ...], tuple[_FacePoint, ...], int]],
+    ] = {}
+    scaffold_ids = np.asarray(scaffold_witness.cell_global_ids, dtype=np.int64)
+    scaffold_locals = np.asarray(scaffold_witness.local_entity_indices, dtype=np.int64)
+    for row in range(scaffold_ids.size):
+        local = int(scaffold_locals[row])
+        target = tuple(
+            tuple(Fraction(numerator, denominator) for numerator, denominator in point)
+            for point in scaffold_witness.target_reference_rational_tokens[row]
+        )
+        planar = tuple(
+            _reference_face_coordinates(scaffold_frames[local], point) for point in target
+        )
+        if any(point is None for point in planar):
+            raise ValueError("Scaffold chart witness leaves its declared parent face.")
+        source_points = tuple(
+            (Fraction(*point[0]), Fraction(*point[1]))
+            for point in scaffold_witness.source_parameter_rational_tokens[row]
+        )
+        pieces_by_face.setdefault((int(scaffold_ids[row]), local), []).append(
+            (tuple(point for point in planar if point is not None), source_points, row)
+        )
+
+    reference_maps = dict(
+        zip(restriction.block_names, restriction.parent_reference_maps, strict=True)
+    )
+    facets = source_fidelity_owner._volume_boundary_facet_lookup(mesh)
+    cell_ids: list[int] = []
+    face_ids: list[int] = []
+    local_faces: list[int] = []
+    target_rows: list[tuple[tuple[Fraction, ...], ...]] = []
+    chart_ids: list[str] = []
+    entity_ids: list[str] = []
+    occurrences: list[tuple[str, ...]] = []
+    parameter_rows: list[tuple[tuple[Fraction, Fraction], ...]] = []
+    orientations: list[int] = []
+    for block in mesh.blocks:
+        witness = reference_maps.get(block.name)
+        if witness is None:
+            raise ValueError(
+                f"Output block {block.name!r} lacks the exact parent reference map "
+                "needed to restrict the scaffold boundary witness."
+            )
+        parent_corners = exact_reference_cell_vertices(witness)
+        parent_ids = np.asarray(witness.source_cell_ids, dtype=np.int64)
+        target_ids = np.asarray(witness.target_cell_ids, dtype=np.int64)
+        if not np.array_equal(target_ids, np.arange(block.cell_count, dtype=np.int64)):
+            raise ValueError("Output parent reference maps must cover block rows.")
+        topology = reference_cell_topology(block.cell_kind)
+        reference_vertices = tuple(
+            tuple(Fraction.from_float(float(value)) for value in point)
+            for point in topology.vertices
+        )
+        global_ids = np.asarray(block.global_ids, dtype=np.int64)
+        for row in range(block.cell_count):
+            parent_id = int(parent_ids[row])
+            corners = parent_corners[row]
+            for local_face, face in enumerate(topology.entities[2]):
+                face_vertices = tuple(int(value) for value in face)
+                parent_face = None
+                planar_corners: tuple[_FacePoint, ...] = ()
+                for scaffold_local, frame in enumerate(scaffold_frames):
+                    if (parent_id, scaffold_local) not in pieces_by_face:
+                        continue
+                    projected = tuple(
+                        _reference_face_coordinates(frame, corners[index])
+                        for index in face_vertices
+                    )
+                    if all(point is not None for point in projected):
+                        parent_face = scaffold_local
+                        planar_corners = tuple(
+                            point for point in projected if point is not None
+                        )
+                        break
+                if parent_face is None:
+                    continue
+                cell_id = int(global_ids[row])
+                facet = facets.get((cell_id, local_face))
+                if facet is None:
+                    raise ValueError(
+                        "Restricted boundary face is absent from target facet routes."
+                    )
+                frame = _reference_face_frame(block.cell_kind, local_face)
+                if len(face_vertices) == 3:
+                    splits: tuple[tuple[int, int, int], ...] = ((0, 1, 2),)
+                else:
+                    area = _face_area2(planar_corners)
+                    splits = next(
+                        (
+                            candidate
+                            for candidate in (
+                                ((0, 1, 2), (0, 2, 3)),
+                                ((0, 1, 3), (1, 2, 3)),
+                            )
+                            if all(
+                                _face_area2(
+                                    tuple(planar_corners[index] for index in split)
+                                )
+                                * area
+                                > 0
+                                for split in candidate
+                            )
+                        ),
+                        (),
+                    )
+                    if not splits:
+                        raise ValueError(
+                            "Restricted quadrilateral boundary face has no positive "
+                            "triangle split in its parent face."
+                        )
+                for split in splits:
+                    straight = tuple(planar_corners[index] for index in split)
+                    reference = tuple(
+                        reference_vertices[face_vertices[index]] for index in split
+                    )
+                    for pieces, source_points, scaffold_row in pieces_by_face[
+                        (parent_id, parent_face)
+                    ]:
+                        clipped = _clip_convex_by_triangle(straight, pieces)
+                        for fan in range(1, len(clipped) - 1):
+                            piece = (clipped[0], clipped[fan], clipped[fan + 1])
+                            if _face_area2(piece) == 0:
+                                continue
+                            target_triangle = []
+                            parameters = []
+                            for point in piece:
+                                weights = _face_barycentric(point, straight)
+                                target_triangle.append(
+                                    tuple(
+                                        sum(
+                                            (
+                                                weight * corner[axis]
+                                                for weight, corner in zip(
+                                                    weights, reference, strict=True
+                                                )
+                                            ),
+                                            Fraction(0),
+                                        )
+                                        for axis in range(3)
+                                    )
+                                )
+                                source_weights = _face_barycentric(point, pieces)
+                                parameters.append(
+                                    (
+                                        sum(
+                                            (
+                                                weight * value[0]
+                                                for weight, value in zip(
+                                                    source_weights,
+                                                    source_points,
+                                                    strict=True,
+                                                )
+                                            ),
+                                            Fraction(0),
+                                        ),
+                                        sum(
+                                            (
+                                                weight * value[1]
+                                                for weight, value in zip(
+                                                    source_weights,
+                                                    source_points,
+                                                    strict=True,
+                                                )
+                                            ),
+                                            Fraction(0),
+                                        ),
+                                    )
+                                )
+                            local_target = tuple(
+                                _reference_face_coordinates(frame, point)
+                                for point in target_triangle
+                            )
+                            if any(point is None for point in local_target):
+                                raise ValueError(
+                                    "Restricted boundary piece leaves its target face."
+                                )
+                            target_sign = _face_area2(
+                                tuple(
+                                    point for point in local_target if point is not None
+                                )
+                            )
+                            source_sign = _face_area2(tuple(parameters))
+                            if target_sign == 0 or source_sign == 0:
+                                raise ValueError(
+                                    "Restricted boundary chart piece is degenerate."
+                                )
+                            cell_ids.append(cell_id)
+                            face_ids.append(int(facet[0]))
+                            local_faces.append(local_face)
+                            target_rows.append(tuple(target_triangle))
+                            chart_ids.append(
+                                scaffold_witness.source_chart_ids[scaffold_row]
+                            )
+                            entity_ids.append(
+                                scaffold_witness.source_entity_ids[scaffold_row]
+                            )
+                            occurrences.append(
+                                tuple(scaffold_witness.occurrence_paths[scaffold_row])
+                            )
+                            parameter_rows.append(tuple(parameters))
+                            orientations.append(
+                                1 if target_sign * source_sign > 0 else -1
+                            )
+    if not cell_ids:
+        raise ValueError("Restricted boundary witness produced no output face pieces.")
+    witness = SourceBoundaryChartWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=mesh.topology_id,
+        source_id=scaffold_witness.source_id,
+        source_revision=scaffold_witness.source_revision,
+        source_query_id=scaffold_witness.source_query_id,
+        chart_dimension=2,
+        reference_dimension=3,
+        cell_global_ids=np.asarray(cell_ids, dtype=np.int64),
+        entity_global_ids=np.asarray(face_ids, dtype=np.int64),
+        local_entity_indices=np.asarray(local_faces, dtype=np.int32),
+        target_reference_vertices=np.asarray(
+            [[[float(value) for value in point] for point in row] for row in target_rows],
+            dtype=np.float64,
+        ),
+        target_reference_rational_tokens=rational_chart_tokens(target_rows),
+        source_chart_ids=tuple(chart_ids),
+        source_entity_ids=tuple(entity_ids),
+        occurrence_paths=tuple(occurrences),
+        source_parameters=np.asarray(
+            [
+                [[float(value) for value in point] for point in row]
+                for row in parameter_rows
+            ],
+            dtype=np.float64,
+        ),
+        source_parameter_rational_tokens=rational_chart_tokens(parameter_rows),
+        orientations=np.asarray(orientations, dtype=np.int8),
+    )
+    return witness
+
+
+def _restricted_certification(
+    scaffold: NativeMeshConstruction,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    cell_regions: np.ndarray,
+    /,
+) -> NativeCertificationRequest:
+    """Carry the scaffold certification request onto an exact restriction of it."""
+    request = scaffold.certification
+    fidelity_witness = request.fidelity_witness
+    if isinstance(fidelity_witness, SourceBoundaryChartWitness):
+        fidelity_witness = _restricted_boundary_chart_witness(
+            scaffold.mesh, fidelity_witness, mesh, geometry
+        )
+    elif fidelity_witness is not None:
+        raise ValueError(
+            "Restricted outputs compose only volume face chart fidelity witnesses."
+        )
+    scoped = []
+    for query, witness, bound in request.scoped_fidelity:
+        if not isinstance(witness, SourceBoundaryChartWitness) or (
+            witness.chart_dimension != 2
+        ):
+            raise ValueError(
+                "Restricted outputs compose only face chart feature witnesses."
+            )
+        scoped.append(
+            (
+                query,
+                _restricted_boundary_chart_witness(
+                    scaffold.mesh, witness, mesh, geometry
+                ),
+                bound,
+            )
+        )
+    return replace(
+        request,
+        cell_regions=np.asarray(cell_regions, dtype=np.int64),
+        fidelity_witness=fidelity_witness,
+        scoped_fidelity=tuple(scoped),
+    )
+
+
 @final
 class _PreparedNativeDualHex(StrictModule, NonTrainableState):
     source: NativePlcSource
@@ -1868,8 +2311,7 @@ class _PreparedNativeDualHex(StrictModule, NonTrainableState):
             self.source, self.specification, extraction.mesh, organization
         )
         certification = replace(
-            scaffold.certification,
-            cell_regions=regions,
+            _restricted_certification(scaffold, extraction.mesh, geometry, regions),
             protected_features=self.specification.protected_features,
             feature_source=self.source if self.specification.protected_features else None,
         )
@@ -2206,7 +2648,9 @@ class _PreparedNativeHexDominant(StrictModule, NonTrainableState):
         compliance = _dual_hex_compliance(
             self.source, self.specification, construction.mesh, organization
         )
-        certification = replace(scaffold.certification, cell_regions=regions)
+        certification = _restricted_certification(
+            scaffold, construction.mesh, construction.geometry, regions
+        )
         return NativeMeshConstruction(
             construction.mesh,
             self.coordinate_contract,
@@ -2374,9 +2818,11 @@ class _PreparedNativeBalancedGridHex(StrictModule, NonTrainableState):
         compliance = _dual_hex_compliance(
             self.source, self.specification, construction.mesh, organization
         )
-        certification = replace(
-            scaffold.certification,
-            cell_regions=np.asarray(construction.cell_regions, dtype=np.int64),
+        certification = _restricted_certification(
+            scaffold,
+            construction.mesh,
+            construction.geometry,
+            np.asarray(construction.cell_regions, dtype=np.int64),
         )
         return NativeMeshConstruction(
             construction.mesh,
@@ -2546,9 +2992,11 @@ class _PreparedNativeFrameGridHex(StrictModule, NonTrainableState):
         compliance = _dual_hex_compliance(
             self.source, self.specification, construction.mesh, organization
         )
-        certification = replace(
-            scaffold.certification,
-            cell_regions=np.asarray(construction.cell_regions, dtype=np.int64),
+        certification = _restricted_certification(
+            scaffold,
+            construction.mesh,
+            construction.geometry,
+            np.asarray(construction.cell_regions, dtype=np.int64),
         )
         return NativeMeshConstruction(
             construction.mesh,
@@ -3056,6 +3504,8 @@ def _validate_mapped_region_seeds(
             status = int(np.asarray(result.status)[0])
             complete = bool(np.asarray(result.candidates_complete)[0])
             successful = bool(np.asarray(result.successful)[0])
+            # A complete candidate search proves OUTSIDE; only LOCATED rows
+            # additionally carry a successful inverse.
             if (
                 status
                 not in (
@@ -3063,7 +3513,7 @@ def _validate_mapped_region_seeds(
                     int(CellLocationStatus.LOCATED),
                 )
                 or not complete
-                or not successful
+                or (status == int(CellLocationStatus.LOCATED) and not successful)
             ):
                 raise ValueError(
                     "Mapped region-seed admission requires a complete resolved source-map inverse."

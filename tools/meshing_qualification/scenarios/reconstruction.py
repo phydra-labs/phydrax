@@ -207,7 +207,7 @@ def _affine_harmonic_solve(
 def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
     count = 320 * scale
     spacing = 0.08 / scale
-    coverage_distance = 2.0 * spacing
+    coverage_distance = spacing
     # The missing cap must exceed the declared coverage distance, or no surface
     # point lies farther than it from every sample and the gap is undetectable.
     cap_radius = 1.5 * coverage_distance
@@ -314,13 +314,16 @@ def _reconstruct_case(kind: str, scale: int, /) -> dict[str, object]:
         raise RuntimeError(
             f"{kind} native surface mesh deviates {mesh_deviation:.6g} m from its independent analytic source; tolerance is {source_deviation_tolerance:.6g} m."
         )
+    # The native envelope certifies only an offset that dominates its sampling
+    # error, sqrt(3) * spacing + certificate_spacing; the certified two-sided
+    # bound offset + error must stay within the declared maximum deviation.
     envelope = phx.meshing.SurfaceEnvelopeSource(
         source,
         source_id=f"native-qualification:{kind}:scale-{scale}:volume-envelope",
         coordinate_contract=contract,
-        offset=0.02 / scale,
-        spacing=2.0 * spacing,
-        certificate_spacing=spacing,
+        offset=1.5 * spacing,
+        spacing=0.5 * spacing,
+        certificate_spacing=0.5 * spacing,
         maximum_deviation=2.0 * source_deviation_tolerance,
     )
     volume_scope = MeshingScope.whole(envelope, 2)

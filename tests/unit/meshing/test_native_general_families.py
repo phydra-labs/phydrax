@@ -28,6 +28,7 @@ from phydrax.discretization.fem import lagrange_element
 from phydrax.discretization.finite_volume import (
     prepare_polyhedral_finite_volume_geometry,
 )
+from phydrax.geometry._domain_chart_chain import certify_child_chart_partition
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 from phydrax.geometry.simplicial import PlanarMeshRegion
@@ -51,6 +52,7 @@ from phydrax.meshing._hex_schedule import NativeHexGridSchedule
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
 from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing.providers._native_dual import prepare_native_balanced_grid_hex
 from phydrax.meshing.providers._native_sources import (
     NativePlanarSource,
     NativePlcSource,
@@ -748,6 +750,58 @@ def test_public_plc_balanced_grid_accepts_source_authored_curved_chart() -> None
     assert result.geometry.source_map is not None
     assert result.geometry.source_map.source_id == source.source_id
     assert result.geometry.source_map.source_revision == source.source_revision
+
+
+def test_curved_cut_hexes_certify_through_the_two_level_fill_chain() -> None:
+    source = _curved_public_plc_source()
+    domain = source.mapped_domain
+    assert isinstance(domain, MappedReferenceDomain)
+    specification = _volume_request(
+        source,
+        family_policy=CellFamilyPolicy(required=("hexahedron",)),
+        fill_strategy=VolumeFillStrategy.SIMPLEX,
+        size=0.8,
+        two_region_seed_points=((0.0, 0.2, 0.05), (0.0, 0.2, -0.05)),
+    )
+    construction = prepare_native_balanced_grid_hex(
+        source,
+        specification,
+        NativeMeshingOptions(
+            "plc_balanced_grid_hex",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=8.0,
+                minimum_dihedral_degrees=0.0,
+            ),
+            grid_schedule=NativeHexGridSchedule(
+                "balanced_grid",
+                minimum_scaled_jacobian=1.0e-10,
+                minimum_mean_ratio=1.0e-10,
+                maximum_aspect_ratio=1.0e10,
+            ),
+        ),
+        _COORDINATES,
+    ).execute()
+    geometry = construction.geometry
+    assert geometry is not None
+    restriction = geometry.restriction_source
+    assert restriction is not None
+    # The cut hexes restrict the fill tetrahedra, not the mapped roots.
+    assert restriction.source_geometry_id != domain.reference_geometry_id
+    regions = np.asarray(construction.certification.cell_regions, dtype=np.int64)
+
+    proof = certify_child_chart_partition(domain, construction.mesh, geometry, regions)
+
+    assert not proof.findings
+    assert set(proof.parent_cell_ids) == {901, 1703}
+    assert len(proof.chart_ids) == construction.mesh.connectivity.cell_count
+
+    swapped = certify_child_chart_partition(
+        domain, construction.mesh, geometry, 1 - regions
+    )
+    assert any(
+        finding.check == "mapped_chart_region_assignment" and finding.status == "violated"
+        for finding in swapped.findings
+    )
 
 
 def test_public_plc_hex_dominant_composes_the_mapped_curved_source() -> None:

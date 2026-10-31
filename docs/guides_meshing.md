@@ -229,6 +229,8 @@ bound-method pytrees, which flatten the whole domain on every call, and
 `resolve_entity_id` bisects a per-stratum key index instead of fingerprinting
 every slot. Per-entity loops over a domain with one patch per source face
 therefore stay linear. Scope-bank numeric IDs and the `domain_id` are unchanged.
+`ReconstructedGeometrySource` methods bind the same way, so per-row source-key
+lookups over a reconstructed surface do not flatten its domain.
 
 BRep material regions bind to their source solid occurrences, and each region's
 full oriented face/sign boundary must match the supplied topology. Missing
@@ -802,6 +804,18 @@ Owner-local uniform size controls bind the common complete fundamental-domain
 scope, not rank-local point subsets; each process validates the same source,
 revision, entity set, and domain ID.
 
+Periodic triangle metric adaptation decides on the quotient, not on the lifted
+fundamental-domain cut: boundary and material-interface edges are those whose
+quotient edge orbit meets one cell orbit or cell orbits of different classes,
+so seam edges stay unclassified. A collapse removes every lifted member of the
+vertex orbit onto exact deck images of the kept vertex; a lifted member row the
+collapse empties is retired onto another member of its orbit, keeping the
+quotient vertex and the feature/lineage records of its quotient edges. Seam
+edge orbits flip across the seam. When the route stalls it refuses with
+`COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
+`MeshingFailureEvidence` holds each remaining edge's metric length and refusal
+reasons.
+
 Every owner-local periodic view retains the exact `specification_id`, including
 nonadaptive periodic-power views. Cold reattachment requires the archived typed
 surface/volume request to match; a map/context fingerprint cannot substitute for
@@ -1028,19 +1042,39 @@ bound to the source vertices). Routes:
   (newest-vertex bisection) and tetrahedron meshes. The initial refinement edge
   is the longest edge (ties by global IDs); an incompatible initial labelling is
   rejected unless `BisectionCompatibility.UNIFORM_REFINEMENT` explicitly requests
-  one barycentric compatibility refinement. The conformity closure is vectorized
-  per iteration; coarsening removes complete bisection patches (Chen–Zhang
-  vertex removal) and restores the recorded cell, edge, and face IDs, so a
-  refine/coarsen round trip reproduces the source topology exactly.
+  one barycentric compatibility refinement. That subdivision is recorded in the
+  `BisectionHierarchy` as a refinement level (each source cell, its exact block
+  row, its (d+1)! children, and its created edge, face, and center vertices). The
+  conformity closure is vectorized per iteration; coarsening removes complete
+  bisection patches (Chen–Zhang vertex removal) and then every subdivision whose
+  children are all marked and whose created vertices' stars are undone together
+  (whole edge-connected components), restoring the recorded cell, edge, and face
+  IDs, so a refine/coarsen round trip reproduces the source topology exactly,
+  including an incompatible source. Restored incompatible cells carry tag 0;
+  refining such a hierarchy subdivides all of them again under
+  `UNIFORM_REFINEMENT` (device bisection does so at preparation) and rejects
+  otherwise.
 - `NATIVE_METRIC_2D`: planar triangle metric adaptation by edge split
-  (metric length above sqrt(2)), collapse (below 1/sqrt(2)), metric-quality flip,
-  and relocation, with deterministic independent-cavity selection. Orientation
-  decisions use the policy's predicate mode; unresolved filtered signs reject the
-  operation. The status is COMPLETE when the unit-mesh criterion holds, STALLED or
-  NUMERICAL_STOP otherwise; `RelocationMeshAdaptation` moves vertices only.
+  (metric length above sqrt(2)), collapse (below 1/sqrt(2); a collapse that
+  removes or keeps a vertex born in the run must not create an edge above
+  sqrt(2)), flip, and relocation, with deterministic independent-cavity
+  selection. A flip is accepted when it raises the minimum quality of its two
+  cells, or when it strictly lowers the quantized `|ln L|` deviation of its
+  diagonal without lowering their quality pair; a relocation likewise when it
+  raises its star's minimum quality or keeps it and strictly improves the
+  worst-first quantized deviations of its edges. Neither rule creates vertices,
+  so each phase terminates. Orientation decisions use the policy's predicate
+  mode; unresolved filtered signs reject the operation. The status is COMPLETE
+  when the unit-mesh criterion holds, STALLED or NUMERICAL_STOP otherwise; a
+  stalled `LocalMetricEvidence.stalled_edges` lists every remaining edge (one per
+  quotient orbit) with its metric length and refusal reasons, for example
+  `collapse=hysteresis+inadmissible;flip=invalid`. `RelocationMeshAdaptation`
+  moves vertices only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
-  and hierarchy of `NATIVE_BISECTION` byte for byte.
+  and hierarchy of `NATIVE_BISECTION` byte for byte. The device passes coarsen
+  bisection families; the commit then removes the recorded barycentric
+  subdivisions they expose by the host rule.
 - `DEVICE_METRIC_2D`: the planar metric and relocation requests executed as
   compiled device passes with FILTERED_DEVICE predicates (below).
 - `MMG`, `OMEGA_H`: the configured provider's metric adaptation; the lineage

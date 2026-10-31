@@ -9,16 +9,12 @@ from jax import Array
 
 import phydrax as phx
 from phydrax.discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
-from phydrax.discretization._cell_geometry import CellGeometryRestrictionSource
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization._surface_chart_records import (
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
-)
-from phydrax.discretization.finite_volume._automatic_remap import (
-    prepare_unstructured_conservative_remap,
 )
 from phydrax.discretization.finite_volume._material_chain_action import (
     material_chain_apply,
@@ -28,9 +24,7 @@ from phydrax.discretization.finite_volume._material_schedule import (
     prepare_material_chain_schedule,
 )
 from phydrax.discretization.finite_volume._remap_csr_view import material_csr_rows
-from phydrax.discretization.finite_volume._unstructured import (
-    UnstructuredFiniteVolumePlan,
-)
+from phydrax.geometry._common_root_volume_overlap import CommonRootVolumeWitness
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._meshing_domain import (
@@ -48,6 +42,7 @@ from phydrax.geometry._volume_material_deformation import (
     declare_material_reference,
     MaterialReferencePolicy,
 )
+from phydrax.geometry._volume_material_map import prepare_eulerian_volume_overlap
 from phydrax.geometry.brep._patches import AbstractSurfacePatch, LineCurve
 from phydrax.meshing._adaptation import (
     _renew_transition_certification_inputs,
@@ -138,45 +133,6 @@ def _bisection_hierarchy(
     return hierarchy
 
 
-def _with_root_restriction(
-    root_mesh: CellMesh,
-    root_geometry: CellGeometrySpec,
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    reference_map: ReferenceCellMapWitnesses,
-    /,
-) -> CellGeometrySpec:
-    """Retain the exact child→root chart ancestry of one restricted child mesh."""
-    (block,) = mesh.blocks
-    (root_block,) = root_mesh.blocks
-    parents = np.asarray(reference_map.source_cell_ids, dtype=np.int64)
-    root_rows = {
-        int(identifier): row
-        for row, identifier in enumerate(np.asarray(root_block.global_ids))
-    }
-    root_vertices = np.asarray(root_mesh.vertex_global_ids, dtype=np.int64)[
-        np.asarray(root_block.vertices, dtype=np.int64)
-    ]
-    restriction = CellGeometryRestrictionSource(
-        cell_geometry_id(root_geometry),
-        root_mesh.topology_id,
-        {block.name: parents},
-        {
-            block.name: np.stack(
-                [root_vertices[root_rows[int(parent)]] for parent in parents]
-            )
-        },
-        block_source_blocks={block.name: root_block.name},
-        block_parent_reference_maps={block.name: reference_map},
-    )
-    return CellGeometrySpec(
-        dict(zip(geometry.block_names, geometry.elements, strict=True)),
-        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
-        geometry.coordinates,
-        restriction_source=restriction,
-    )
-
-
 def test_pwl_refinement_and_coarsening_renew_original_domain_acceptance() -> None:
     source, domain = _certified_square()
     assert source.certification is not None and source.certification.passed
@@ -243,13 +199,10 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
         root_geometry,
         _,
         source_mesh,
-        restricted_geometry,
-        source_map,
+        source_geometry,
+        _,
         _,
     ) = make_curved_material_refinement(exact_chart_arguments=True)
-    source_geometry = _with_root_restriction(
-        root_mesh, root_geometry, source_mesh, restricted_geometry, source_map
-    )
     occurrence = ("assembly-1", "occurrence-9")
     domain, _, _ = make_material_coverage_pair(
         root_mesh,
@@ -338,40 +291,56 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
     assert (
         refined_transition.material_reference.declaration_id == reference.declaration_id
     )
-    source_fv = UnstructuredFiniteVolumePlan(
-        np.asarray(source.mesh.coordinates),
-        tetrahedra=np.concatenate(
-            tuple(
-                np.asarray(block.vertices, dtype=np.int32) for block in source.mesh.blocks
-            )
+
+    def root_reference_maps(
+        geometry: CellGeometrySpec, /
+    ) -> dict[str, ReferenceCellMapWitnesses]:
+        restriction = geometry.restriction_source
+        assert restriction is not None
+        assert restriction.source_topology_id == root_mesh.topology_id
+        maps = {}
+        for name, reference_map in zip(
+            restriction.block_names, restriction.parent_reference_maps, strict=True
+        ):
+            assert reference_map is not None
+            maps[name] = reference_map
+        return maps
+
+    source_count = sum(block.cell_count for block in source.mesh.blocks)
+    target_count = sum(block.cell_count for block in refined.target.mesh.blocks)
+    assert refined.target.certification is not None
+    assert refined.target.certification.coverage is not None
+    eulerian_overlap = prepare_eulerian_volume_overlap(
+        source.mesh,
+        source.geometry,
+        refined.target.mesh,
+        refined.target.geometry,
+        make_material_source(domain, occurrence_path=occurrence),
+        ("solid-cell",) * source_count,
+        ("solid-cell",) * target_count,
+        ("aluminum",) * source_count,
+        ("aluminum",) * target_count,
+        source_coverage=source.certification.coverage,
+        target_coverage=refined.target.certification.coverage,
+        source_occurrence_paths=(occurrence,) * source_count,
+        target_occurrence_paths=(occurrence,) * target_count,
+        common_root=CommonRootVolumeWitness(
+            root_mesh,
+            root_geometry,
+            source.mesh,
+            source.geometry,
+            refined.target.mesh,
+            refined.target.geometry,
+            root_reference_maps(source.geometry),
+            root_reference_maps(refined.target.geometry),
         ),
-        vertex_global_ids=np.asarray(source.mesh.vertex_global_ids, dtype=np.int64),
-        cell_global_ids=source_ids,
-    ).prepare()
-    target_fv = UnstructuredFiniteVolumePlan(
-        np.asarray(refined.target.mesh.coordinates),
-        tetrahedra=np.concatenate(
-            tuple(
-                np.asarray(block.vertices, dtype=np.int32)
-                for block in refined.target.mesh.blocks
-            )
-        ),
-        vertex_global_ids=np.asarray(
-            refined.target.mesh.vertex_global_ids, dtype=np.int64
-        ),
-        cell_global_ids=np.concatenate(
-            tuple(
-                np.asarray(block.global_ids, dtype=np.int64)
-                for block in refined.target.mesh.blocks
-            )
-        ),
-    ).prepare()
-    prepared_eulerian = prepare_unstructured_conservative_remap(
-        source_fv, target_fv, provenance="mixed-material-eulerian-fields"
     )
-    eulerian_remap = prepared_eulerian.plan
-    if eulerian_remap is None:
-        raise ValueError(prepared_eulerian.reason)
+    assert eulerian_overlap.refinement.succeeded
+    source_measures = np.asarray(eulerian_overlap.refinement.source_measures)
+    target_measures = np.asarray(eulerian_overlap.refinement.target_measures)
+    np.testing.assert_allclose(
+        np.sum(target_measures), np.sum(source_measures), rtol=1e-13, atol=0.0
+    )
 
     material_semantics = FiniteElementFieldTransferSemantics.MATERIAL_FOLLOWING_CONTENT
     eulerian_semantics = FiniteElementFieldTransferSemantics.EULERIAN_PHYSICAL_OVERLAP
@@ -472,7 +441,7 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
         if layout.transfer_semantics is not eulerian_semantics:
             raise ValueError("Eulerian transfer received another field semantics.")
         selected_actions.append("eulerian")
-        return eulerian_remap.apply(field)
+        return eulerian_overlap.apply_intensive(field)
 
     def nonconservative_field_transfer(
         field: Array,
@@ -502,8 +471,10 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
     eulerian_target = np.asarray(mixed.state.fields[1])
     np.testing.assert_allclose(np.sum(material_target), np.sum(source_cell_content))
     np.testing.assert_allclose(
-        np.sum(eulerian_target * np.asarray(target_fv.cell_volumes)),
-        np.sum(np.asarray(source_cell_average) * np.asarray(source_fv.cell_volumes)),
+        np.sum(eulerian_target * target_measures),
+        np.sum(np.asarray(source_cell_average) * source_measures),
+        rtol=1e-13,
+        atol=0.0,
     )
     assert not np.array_equal(material_target, eulerian_target)
     np.testing.assert_allclose(
@@ -603,7 +574,11 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
                 ),
                 Fraction(0),
             )
-            assert actual == expected
+            # Non-dyadic overlap weights (a source split into 48 cells) make the
+            # binary64 chain conservative to rounding only: each edit rounds every
+            # edge product and every row sum once.
+            rounding = Fraction(4 * schedule.map_count * schedule.maximum_edges, 2**53)
+            assert abs(actual - expected) <= rounding * abs(expected)
     source.certification.revalidate(source.mesh, source.geometry)
 
 
@@ -700,7 +675,8 @@ def _tiny_chart_domain() -> MeshingDomain:
     )
 
 
-def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> None:
+def tiny_chart_source() -> tuple[MeshingDomain, CellMeshingResult]:
+    """Certified one-triangle parametric chart surface with exact curve intervals."""
     domain = _tiny_chart_domain()
     scope = MeshingScope(
         domain.source_id,
@@ -770,6 +746,11 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
         region_boundary_evidence=organization.region_boundary_evidence,
         planar_embedding=construction.planar_embedding,
     )
+    return domain, source
+
+
+def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> None:
+    domain, source = tiny_chart_source()
     assert source.certification is not None and source.certification.passed
     original = source.certification.inputs.fidelity_witness
     assert isinstance(original, SurfaceChartWitness)

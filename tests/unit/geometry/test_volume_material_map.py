@@ -512,9 +512,13 @@ def test_material_reference_overlap_integrates_unequal_curved_partitions() -> No
         source_points,
         (CellBlock("source", "tetrahedron", connectivity, global_ids=(71, 72)),),
     )
+    # One coordinate element per block: each target cell has its own polynomial map.
     target_mesh = CellMesh(
         target_points,
-        (CellBlock("target", "tetrahedron", connectivity, global_ids=(81, 82)),),
+        (
+            CellBlock("target-lower", "tetrahedron", connectivity[:1], global_ids=(81,)),
+            CellBlock("target-upper", "tetrahedron", connectivity[1:], global_ids=(82,)),
+        ),
     )
     source_geometry = CellGeometrySpec.affine(source_mesh)
     linear_reference = lagrange_element("tetrahedron", 1)
@@ -593,9 +597,15 @@ def test_material_reference_overlap_integrates_unequal_curved_partitions() -> No
     source_reference_map = reference_map_witness(
         (0, 1), (7, 7), (lower_cell, upper_cell), chart_arguments=source_charts
     )
-    target_reference_map = reference_map_witness(
-        (0, 1), (7, 7), (lower_cell, upper_cell), chart_arguments=target_charts
-    )
+    target_reference_maps = {
+        name: reference_map_witness((0,), (7,), (cell,), chart_arguments=(chart,))
+        for name, cell, chart in zip(
+            ("target-lower", "target-upper"),
+            (lower_cell, upper_cell),
+            target_charts,
+            strict=True,
+        )
+    }
     witness = MaterialReferenceVolumeWitness(
         root_mesh,
         root_geometry,
@@ -604,7 +614,7 @@ def test_material_reference_overlap_integrates_unequal_curved_partitions() -> No
         target_mesh,
         target_geometry,
         {"source": source_reference_map},
-        {"target": target_reference_map},
+        target_reference_maps,
     )
     overlap = prepare_material_reference_volume_overlap(
         source_mesh,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import types
 from dataclasses import replace
 
 import jax.numpy as jnp
@@ -125,6 +126,9 @@ def test_reconstructed_native_route_preserves_source_identity_and_metadata() -> 
         for identifier in source.scope_entity_ids(2)
     )
     assert len(set(source_keys)) == 4
+    # Source methods bind as plain methods: an Equinox bound-method pytree would
+    # flatten the whole source and its domain on every per-row key lookup.
+    assert type(source.source_entity_key_for_scope) is types.MethodType
     domain = source.meshing_domain
     assert domain is not None
     triangle_indices = domain.source_indices[2]
