@@ -116,14 +116,14 @@ class LocalIncidence {
   TetEditStatus insert_cone(TetMesh& mesh, const TetEditVertex& vertex,
                             std::span<const std::int32_t> cavity,
                             std::vector<std::uint64_t>& created_cells);
-  // Splits a constrained edge at a new source-witnessed vertex through the
-  // cavity-local TetMesh route (TetMesh::split_local_edge, whose bank-row
+  // Inserts a source-witnessed vertex into a constrained facet or segment
+  // through TetMesh::insert_local_boundary_point (whose cavity and bank-row
   // contract applies) and updates this index.
-  TetEditStatus split_edge(TetMesh& mesh, std::int32_t first, std::int32_t second,
-                           const TetEditVertex& vertex,
-                           std::span<const std::size_t> facet_rows,
-                           std::span<const std::size_t> segment_rows,
-                           std::vector<std::uint64_t>& created_cells);
+  TetEditStatus insert_boundary_point(TetMesh& mesh, const TetEditVertex& vertex,
+                                      std::span<const std::int32_t> cavity,
+                                      std::span<const std::size_t> facet_rows,
+                                      std::span<const std::size_t> segment_rows,
+                                      std::vector<std::uint64_t>& created_cells);
 
  private:
   static bool erase_cell(std::vector<std::int32_t>& cells, std::int32_t cell);

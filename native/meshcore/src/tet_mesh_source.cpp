@@ -110,35 +110,66 @@ bool TetMesh::source_carrier_valid(const TetEditVertex& vertex) const {
       !std::isfinite(witness.deviation) || witness.deviation < 0.0) {
     return false;
   }
-  const std::size_t row = static_cast<std::size_t>(witness.entity);
+  // The exact source point S of the witness is authoritative and the carrier
+  // must be its correctly rounded realization. The recorded deviation must
+  // bound |carrier - S|; it may exceed the entity tolerance (which governs an
+  // authored approximation) only when it is exactly the realization rounding
+  // bound, i.e. the carrier is round(S) and nothing else was approximated.
   const double* corners[3] = {nullptr, nullptr, nullptr};
   double carrier[3];
   double deviation = 0.0;
-  if (witness.entity < 0) return false;
-  if (witness.stratum == SourceStratum::kSegment) {
-    if (row >= source_segments_.size() / 2) return false;
-    corners[0] = source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * row]);
-    corners[1] = source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * row + 1]);
-    if (!source_carrier(corners, witness.stratum, witness.parameters, carrier, deviation) ||
-        witness.deviation < deviation || witness.deviation > source_segment_tolerances_[row]) {
-      return false;
-    }
-  } else if (witness.stratum == SourceStratum::kFacet) {
-    if (row >= source_faces_.size() / 3) return false;
-    for (int k = 0; k < 3; ++k) {
-      corners[k] = source_points_.data() + 3 * static_cast<std::size_t>(source_faces_[3 * row + k]);
-    }
-    if (!source_carrier(corners, witness.stratum, witness.parameters, carrier, deviation) ||
-        witness.deviation < deviation || witness.deviation > source_face_tolerances_[row]) {
-      return false;
-    }
-  } else {
+  if (!source_corners(witness.stratum, witness.entity, corners)) return false;
+  const std::size_t row = static_cast<std::size_t>(witness.entity);
+  const double tolerance = witness.stratum == SourceStratum::kSegment
+                               ? source_segment_tolerances_[row]
+                               : source_face_tolerances_[row];
+  if (!source_carrier(corners, witness.stratum, witness.parameters, carrier, deviation) ||
+      witness.deviation < deviation ||
+      (witness.deviation > tolerance && witness.deviation != deviation)) {
     return false;
   }
   for (int axis = 0; axis < 3; ++axis) {
     if (!same_bits(carrier[axis], vertex.carrier[static_cast<std::size_t>(axis)])) return false;
   }
   return true;
+}
+
+bool TetMesh::source_corners(SourceStratum stratum, std::int32_t row,
+                             const double** corners) const {
+  if (row < 0) return false;
+  const std::size_t entity = static_cast<std::size_t>(row);
+  if (stratum == SourceStratum::kSegment) {
+    if (entity >= source_segments_.size() / 2) return false;
+    for (std::size_t k = 0; k < 2; ++k) {
+      corners[k] = source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * entity + k]);
+    }
+    corners[2] = nullptr;
+    return true;
+  }
+  if (stratum == SourceStratum::kFacet) {
+    if (entity >= source_faces_.size() / 3) return false;
+    for (std::size_t k = 0; k < 3; ++k) {
+      corners[k] = source_points_.data() + 3 * static_cast<std::size_t>(source_faces_[3 * entity + k]);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool TetMesh::witness_position(const SourceWitness& witness, const double* carrier,
+                               Expansion* position) const {
+  if (witness.stratum == SourceStratum::kNone) {
+    for (int axis = 0; axis < 3; ++axis) position[axis] = Expansion(carrier[axis]);
+    return true;
+  }
+  const double* corners[3] = {nullptr, nullptr, nullptr};
+  return source_corners(witness.stratum, witness.entity, corners) &&
+         source_point(corners, witness.stratum, witness.parameters, position);
+}
+
+bool TetMesh::exact_position(std::int32_t slot, Expansion* position) const {
+  return live_vertex(slot) &&
+         witness_position(witnesses_[static_cast<std::size_t>(slot)], point(slot), position);
 }
 
 bool TetMesh::source_face_valid(const TetEditFacet& facet,
@@ -232,41 +263,23 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
 
   // Exact source positions, not rounded carriers, authorize an off-plane
   // binary64 realization. A common convex primitive contains the complete
-  // source triangle; multi-primitive coverage was proved above.
+  // source triangle; multi-primitive coverage was proved above. A carrier that
+  // is only the realization rounding of its exact source point approximates
+  // nothing, so only an authored deviation is held to the row tolerance.
   Expansion exact_points[3][3];
   double point_deviations[3]{};
   for (int vertex = 0; vertex < 3; ++vertex) {
     const std::int32_t slot = slots[vertex];
     const SourceWitness& witness = witness_at(slot);
-    point_deviations[vertex] = witness.deviation;
-    if (witness.stratum == SourceStratum::kNone) {
-      const double* carrier = carrier_at(slot);
-      for (int axis = 0; axis < 3; ++axis) {
-        exact_points[vertex][axis] = Expansion(carrier[axis]);
-      }
-      continue;
-    }
-    const double* witness_corners[3] = {nullptr, nullptr, nullptr};
-    if (witness.stratum == SourceStratum::kSegment && witness.entity >= 0 &&
-        static_cast<std::size_t>(witness.entity) < source_segments_.size() / 2) {
-      const std::size_t row = static_cast<std::size_t>(witness.entity);
-      witness_corners[0] = source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * row]);
-      witness_corners[1] = source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * row + 1]);
-    } else if (witness.stratum == SourceStratum::kFacet && witness.entity >= 0 &&
-               static_cast<std::size_t>(witness.entity) < source_faces_.size() / 3) {
-      const std::size_t row = static_cast<std::size_t>(witness.entity);
-      for (int corner = 0; corner < 3; ++corner) {
-        witness_corners[corner] = source_points_.data() +
-            3 * static_cast<std::size_t>(source_faces_[3 * row + corner]);
-      }
-    } else {
+    const double* carrier = carrier_at(slot);
+    if (witness.stratum != SourceStratum::kNone &&
+        !source_carrier_valid(source_witness_record(vertex_id(slot), carrier, witness))) {
       return false;
     }
-    if (!source_carrier_valid(
-            source_witness_record(vertex_id(slot), carrier_at(slot), witness)) ||
-        !source_point(witness_corners, witness.stratum, witness.parameters,
-                      exact_points[vertex])) {
-      return false;
+    if (!witness_position(witness, carrier, exact_points[vertex])) return false;
+    if (witness.deviation != 0.0 &&
+        witness.deviation != outward_distance(carrier, exact_points[vertex])) {
+      point_deviations[vertex] = witness.deviation;
     }
   }
 
@@ -441,54 +454,48 @@ bool TetMesh::positive_impl(
       if (changed != nullptr) witness_records[vertex] = &changed->witness;
     }
   }
+  return carriers_positive(carriers, witness_records);
+}
+
+bool TetMesh::carriers_positive(const double* const* carriers,
+                                const SourceWitness* const* witness_records) const {
   // orient3d uses static error filters and exact fallback. When every witness
   // is kNone, its binary64 carriers are also the exact source points.
-  const double* carrier_points[4] = {carriers[0], carriers[1], carriers[2], carriers[3]};
-  if (orient3d(carrier_points[0], carrier_points[1], carrier_points[2],
-               carrier_points[3]) <= 0) {
-    return false;
-  }
-
+  if (orient3d(carriers[0], carriers[1], carriers[2], carriers[3]) <= 0) return false;
   bool all_carrier_points = true;
-  for (const SourceWitness* witness : witness_records) {
-    all_carrier_points = all_carrier_points &&
-                         witness->stratum == SourceStratum::kNone;
+  for (int vertex = 0; vertex < 4; ++vertex) {
+    all_carrier_points =
+        all_carrier_points && witness_records[vertex]->stratum == SourceStratum::kNone;
   }
   if (all_carrier_points) return true;
 
   Expansion exact_storage[4][3];
   const Expansion* exact_points[4][3];
   for (int vertex = 0; vertex < 4; ++vertex) {
-    const SourceWitness& witness = *witness_records[vertex];
-    if (witness.stratum == SourceStratum::kNone) {
-      for (int axis = 0; axis < 3; ++axis) {
-        exact_storage[vertex][axis] = Expansion(carriers[vertex][axis]);
-      }
-    } else {
-      const std::size_t row = static_cast<std::size_t>(witness.entity);
-      const double* corners[3] = {nullptr, nullptr, nullptr};
-      if (witness.entity < 0) return false;
-      if (witness.stratum == SourceStratum::kSegment) {
-        if (row >= source_segments_.size() / 2) return false;
-        corners[0] = source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * row]);
-        corners[1] = source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * row + 1]);
-      } else if (witness.stratum == SourceStratum::kFacet) {
-        if (row >= source_faces_.size() / 3) return false;
-        for (int k = 0; k < 3; ++k) {
-          corners[k] = source_points_.data() +
-                       3 * static_cast<std::size_t>(source_faces_[3 * row + k]);
-        }
-      } else {
-        return false;
-      }
-      if (!source_point(corners, witness.stratum, witness.parameters,
-                        exact_storage[vertex])) {
-        return false;
-      }
+    if (!witness_position(*witness_records[vertex], carriers[vertex], exact_storage[vertex])) {
+      return false;
     }
     for (int axis = 0; axis < 3; ++axis) exact_points[vertex][axis] = &exact_storage[vertex][axis];
   }
   return exact_orientation(exact_points) > 0;
+}
+
+bool TetMesh::cone_positive(const std::int32_t* vertices, int apex,
+                            const TetEditVertex& point) const {
+  const double* carriers[4];
+  const SourceWitness* witness_records[4];
+  for (int vertex = 0; vertex < 4; ++vertex) {
+    if (vertex == apex) {
+      carriers[vertex] = point.carrier.data();
+      witness_records[vertex] = &point.witness;
+      continue;
+    }
+    const std::int32_t slot = vertices[vertex];
+    if (!live_vertex(slot)) return false;
+    carriers[vertex] = this->point(slot);
+    witness_records[vertex] = &witnesses_[static_cast<std::size_t>(slot)];
+  }
+  return carriers_positive(carriers, witness_records);
 }
 
 bool TetMesh::positive(const std::int32_t* vertices) const {
