@@ -287,14 +287,91 @@ def layer_wall_associations(
     order = np.argsort(np.asarray(target_ids, dtype=np.int64), kind="stable")
     ordered_targets = np.asarray(target_ids, dtype=np.int64)[order]
     ordered_sources = np.asarray(source_rows, dtype=np.int64)[order]
+    residuals = np.asarray(parent.residuals, dtype=np.float64)[ordered_sources]
+    resolved = np.asarray(parent.resolved, dtype=np.bool_)[ordered_sources]
+    ambiguous = np.asarray(parent.ambiguous, dtype=np.bool_)[ordered_sources]
+    brep = parent.association_kind is association_owner.GeometryAssociationKind.BREP
+    rows = ordered_sources.tolist()
+    # The wall vertices are a subset of the combined vertices, so the rows are
+    # composed directly rather than through a complete entity-set inheritance.
     return (
-        association_owner.inherit_association_rows(
-            parent,
-            target.entity_set(0),
+        association_owner.GeometryAssociation(
+            parent.association_kind,
+            parent.source_id,
+            parent.source_revision,
+            target.entity_set(0).entity_set_id,
             ordered_targets,
-            ordered_sources,
-            residuals=np.asarray(parent.residuals, dtype=np.float64)[ordered_sources],
+            tuple(parent.source_entity_ids[row] for row in rows),
+            residuals,
+            resolved=resolved,
+            ambiguous=ambiguous,
+            exact=parent.exact
+            and bool(np.all(resolved))
+            and not bool(np.any(ambiguous))
+            and bool(np.all(residuals == 0.0)),
+            source_dimensions=np.asarray(parent.source_dimensions, dtype=np.int8)[
+                ordered_sources
+            ]
+            if brep
+            else None,
+            source_indices=np.asarray(parent.source_indices, dtype=np.int32)[
+                ordered_sources
+            ]
+            if brep
+            else None,
+            source_roles=tuple(parent.source_roles[row] for row in rows),
+            source_occurrence_paths=tuple(
+                parent.source_occurrence_paths[row] for row in rows
+            ),
+            source_region_sides=tuple(parent.source_region_sides[row] for row in rows),
+            source_parameter_intervals=tuple(
+                parent.source_parameter_intervals[row] for row in rows
+            ),
+            source_parameter_points=tuple(
+                parent.source_parameter_points[row] for row in rows
+            ),
+            parameters=np.asarray(parent.parameters)[ordered_sources],
+            orientations=np.asarray(parent.orientations, dtype=np.int8)[ordered_sources],
+            parent_association_id=parent.association_id,
+            provenance=association_owner.GeometryAssociationProvenance.LINEAGE,
         ),
+    )
+
+
+def composite_region_identity(
+    source: sources_owner.NativeLayerCoreSource, composite: int, /
+) -> str:
+    """Return the canonical source identity of one authored composite region.
+
+    A retained MeshingDomain names its regions in its own source stratum kind;
+    the composite region ID and occurrence select that stratum exactly.
+    """
+    region_id = int(source.region_entity_ids[composite])
+    region_path = tuple(source.region_occurrence_paths[composite])
+    domain = source.source_domain
+    if isinstance(domain, meshing_domain_owner.MeshingDomain):
+        slots = tuple(
+            slot
+            for slot, (index, path) in enumerate(
+                zip(
+                    domain.region_source_indices,
+                    domain.region_source_occurrences,
+                    strict=True,
+                )
+            )
+            if (int(index), tuple(path)) == (region_id, region_path)
+        )
+        if len(slots) != 1:
+            raise ValueError(
+                "A composite layer/core region must name one retained source region."
+            )
+        return domain.entity_id(3, slots[0])
+    return source_identity_owner.source_entity_id(
+        source.source_id,
+        source.source_revision,
+        "region",
+        region_id,
+        occurrence_path=region_path,
     )
 
 
@@ -305,7 +382,11 @@ def _core_source_identity(
     occurrence_path: tuple[str, ...],
     /,
 ) -> tuple[str, tuple[str, ...]]:
-    """Bind a PLC stratum key to its authored source identity and occurrence."""
+    """Bind a PLC stratum key to its authored source identity and occurrence.
+
+    PLC vertices and edges are authored by the PLC itself. Source-bound facets and
+    regions name strata of a retained MeshingDomain and must resolve there.
+    """
     complex_ = source.complex
     path = tuple(occurrence_path)
 
@@ -335,7 +416,7 @@ def _core_source_identity(
             identifier,
             occurrence_path=path,
         )
-        return bind(identity, path)
+        return identity, path
     if dimension == 1:
         edge_keys = {
             (name, tuple(row_path))
@@ -354,7 +435,7 @@ def _core_source_identity(
             identifier,
             occurrence_path=path,
         )
-        return bind(identity, path)
+        return identity, path
     if dimension == 2:
         facet_rows = {
             (name, tuple(row_path)): row
@@ -404,16 +485,10 @@ def _core_source_identity(
                 "A native core region lost its authored PLC source identity."
             )
         composite = int(np.asarray(source.core_region_map, dtype=np.int64)[row])
-        region_id = int(source.region_entity_ids[composite])
-        region_path = tuple(source.region_occurrence_paths[composite])
-        identity = source_identity_owner.source_entity_id(
-            source.source_id,
-            source.source_revision,
-            "region",
-            region_id,
-            occurrence_path=region_path,
+        return bind(
+            composite_region_identity(source, composite),
+            tuple(source.region_occurrence_paths[composite]),
         )
-        return bind(identity, region_path)
     raise ValueError("A native core source witness has an invalid stratum dimension.")
 
 
@@ -880,22 +955,19 @@ def core_source_associations(
     face_paths: list[tuple[str, ...]] = []
     core_region_map = np.asarray(source.core_region_map, dtype=np.int64)
     composite_region_ids = tuple(
-        source_identity_owner.source_entity_id(
-            source.source_id,
-            source.source_revision,
-            "region",
-            int(entity_id),
-            occurrence_path=path,
-        )
-        for entity_id, path in zip(
-            source.region_entity_ids,
-            source.region_occurrence_paths,
-            strict=True,
-        )
+        composite_region_identity(source, composite)
+        for composite in range(len(source.region_entity_ids))
     )
     for face_row, (face, facet, orientation) in enumerate(
         zip(boundary_faces, face_source_facets, face_orientations, strict=True)
     ):
+        if (
+            source.source_boundary_scope is not None
+            and source.core_facet_source_ids[int(facet)] is None
+        ):
+            # Unbound facets of a source-bound core are the fixed layer cap: the
+            # layer/core interface, not a source boundary face.
+            continue
         combined_rows = core_vertex_map[face]
         global_vertices = np.asarray(target.vertex_global_ids, dtype=np.int64)[
             combined_rows
@@ -1034,23 +1106,11 @@ def core_source_associations(
             interior_regions.append(region)
         if interior_ids:
             identifiers = tuple(
-                source_identity_owner.source_entity_id(
-                    source.source_id,
-                    source.source_revision,
-                    "region",
-                    int(source.region_entity_ids[region]),
-                    occurrence_path=source.region_occurrence_paths[region],
-                )
-                for region in interior_regions
+                composite_region_identity(source, region) for region in interior_regions
             )
             paths = tuple(
                 source.region_occurrence_paths[region] for region in interior_regions
             )
-            if isinstance(source.source_domain, meshing_domain_owner.MeshingDomain):
-                for identifier, path in zip(identifiers, paths, strict=True):
-                    source.source_domain.resolve_entity_id(
-                        3, identifier, occurrence_path=path
-                    )
             target_ids = np.asarray(interior_ids, dtype=np.int64)
             records.append(
                 association_owner.GeometryAssociation(

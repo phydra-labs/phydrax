@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from fractions import Fraction
 from typing import final
@@ -17,6 +18,7 @@ import phydrax.geometry._source_fidelity as source_fidelity_owner
 import phydrax.meshing._canonical as canonical_owner
 import phydrax.meshing._curving as high_order_curving_owner
 import phydrax.meshing._layer_core as layer_core_owner
+import phydrax.meshing._layer_core_brep as brep_owner
 import phydrax.meshing._layer_core_controls as controls_owner
 import phydrax.meshing._layer_core_mapped as mapped_core_owner
 import phydrax.meshing._layer_curving as layer_curving_owner
@@ -38,9 +40,13 @@ from ...discretization._cell_complex import (
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._cell_mesh import SimplicialConnectivity
 from ...discretization._hexahedral import HexahedralConnectivity
-from ...geometry._domain_boundary import MeshingDomainBoundarySource
+from ...geometry._domain_boundary import (
+    _patch_chart_polygon,
+    MeshingDomainBoundarySource,
+)
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
+from ...geometry._meshing_domain import MeshingDomain
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -672,13 +678,18 @@ def layer_core_support_issues(
         and source.layers.mesh.periodic_topology is None
     ):
         issues.append("source-authored periodic layers and core seam anatomy")
-    if any(
-        control.control_id != source.layers.control_id
-        for control in specification.layer_controls
-    ):
-        issues.append(
-            "layer controls different from the supplied accepted layer realization"
+    try:
+        realized = tuple(
+            controls_owner.realized_layer_control(source, control).control_id
+            for control in specification.layer_controls
         )
+    except ValueError as error:
+        issues.append(f"layer controls resolvable to the accepted layer wall: {error}")
+    else:
+        if any(identifier != source.layers.control_id for identifier in realized):
+            issues.append(
+                "layer controls different from the supplied accepted layer realization"
+            )
     if any(
         _core_region_row(source, specification, control) is None
         for control in specification.region_controls
@@ -952,10 +963,6 @@ def _compliance_report(
         achieved.extend(
             (
                 (
-                    f"layer:{control.control_id}:unconverged_visibility_count",
-                    float(layer_evidence.unconverged_visibility_count),
-                ),
-                (
                     f"layer:{control.control_id}:detected_collision_count",
                     float(layer_evidence.detected_collision_count),
                 ),
@@ -987,8 +994,6 @@ def _compliance_report(
             * control.maximum_corner_stretch
         ):
             issues.append(f"layer:{control.control_id}:maximum_corner_stretch")
-        if layer_evidence.unconverged_visibility_count:
-            issues.append(f"layer:{control.control_id}:unconverged_visibility")
         if control.growth_rate_bounds is not None:
             lower, upper = control.growth_rate_bounds
             growth = np.asarray(layer_evidence.achieved_growth_rates, dtype=np.float64)
@@ -1025,12 +1030,23 @@ def _compliance_report(
         # A restricted-power core's tetrahedral carrier is an internal scaffold;
         # its explicit quality request is enforced by the power generator and
         # output cells are measured above, so carrier refinement is not output.
-        if construction.core.refinement_status is not MeshcoreStatus.OK:
-            issues.append("native_refinement_status")
+        # As in the fixed-boundary PLC route, refinement is construction evidence:
+        # the fixed cap and source facets cannot be split, and the accepted cell
+        # quality is the improvement outcome.
+        achieved.extend(
+            (
+                (
+                    "native_refinement_status",
+                    float(int(construction.core.refinement_status)),
+                ),
+                (
+                    "native_refinement_unmet_count",
+                    float(len(construction.core.refinement_unmet)),
+                ),
+            )
+        )
         if construction.core.improvement_status is not MeshcoreStatus.OK:
             issues.append("native_improvement_status")
-        for name, _, _, _ in construction.core.refinement_unmet:
-            issues.append(f"native_refinement:{name}")
         for name, _, _, _ in construction.core.improvement_unmet:
             issues.append(f"native_improvement:{name}")
     return result_owner.MeshingComplianceReport(
@@ -1039,6 +1055,13 @@ def _compliance_report(
         achieved=tuple(achieved),
         issues=tuple(issues),
     )
+
+
+_ExactPoint2 = tuple[Fraction, Fraction]
+# A moved or strip vertex resolved on (patch, output row, seed chart parameters).
+_Request = tuple[int, int, _ExactPoint2]
+# Relative chart distance within which a shared column vertex lies on a trim.
+_TRIM_SNAP_TOLERANCE = 1.0e-9
 
 
 def _layer_surface_chart_witness(
@@ -1079,38 +1102,19 @@ def _layer_surface_chart_witness(
         ):
             source_cell_vertices[int(cell_id)] = np.asarray(vertices, dtype=np.int64)
 
-    target_faces = {
-        key: [
-            (
-                face_id,
-                cell_id,
-                local_face,
-                np.asarray(
-                    [parameter_by_vertex[identifier] for identifier in vertex_keys],
-                    dtype=np.float64,
-                ),
-                np.asarray(vertex_keys, dtype=np.int64),
-            )
-            for face_id, cell_id, local_face, _, vertex_keys, parameter_by_vertex in faces
-        ]
-        for key, faces in _layer_output_boundary_faces(mesh).items()
-    }
-
+    output_faces = _layer_output_boundary_faces(mesh)
     target_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    source_parameters: list[np.ndarray] = []
-    source_parameter_rational_rows = []
-    target_reference_rational_rows = []
-    target_reference_vertices: list[np.ndarray] = []
-    target_cell_ids: list[int] = []
-    target_face_ids: list[int] = []
-    target_local_faces: list[int] = []
-    source_chart_ids: list[str] = []
-    source_entity_ids: list[str] = []
-    occurrence_paths: list[tuple[str, ...]] = []
-    orientations: list[int] = []
+    # An open wall binds only its grown cells unchanged; the fixed remainder and
+    # the layer side strips are rebound by ``_open_wall_bindings``.
+    grown = (
+        None
+        if source.layers.closed_cap
+        else set(brep_owner.grown_wall_cells(source.layers).tolist())
+    )
+    bindings: list[tuple[tuple[int, ...], dict[int, _ExactPoint2], int]] = []
     for chart_row, cell_id in enumerate(charts.cell_global_ids):
         patch = int(charts.root_patches[chart_row])
-        if patch not in query.patches:
+        if grown is not None and int(cell_id) not in grown:
             continue
         root_vertices = source_cell_vertices.get(int(cell_id))
         if root_vertices is None:
@@ -1123,56 +1127,98 @@ def _layer_surface_chart_witness(
         if np.any(mapped_vertices < 0):
             raise ValueError("Layer source-wall ancestry omits a root chart vertex.")
         mapped_ids = target_vertex_ids[mapped_vertices]
-        face_key = tuple(sorted(int(value) for value in mapped_ids))
-        candidates = target_faces.get(face_key, ())
-        if len(candidates) != 1:
-            raise ValueError(
-                "A layer root chart does not bind one unique exterior target facet."
-            )
-        face_id, cell_global_id, local_face, target_reference, face_vertex_ids = (
-            candidates[0]
-        )
         exact_root_parameters = charts.root_parameter_chart(chart_row)
         if len(exact_root_parameters) != len(mapped_ids):
             raise ValueError(
                 "Layer root chart parameters do not align with source vertices."
             )
-        parameter_by_vertex = {
-            int(vertex_id): exact_root_parameters[corner]
-            for corner, vertex_id in enumerate(mapped_ids.tolist())
-        }
-        target_uv_exact = tuple(
-            parameter_by_vertex[int(vertex_id)] for vertex_id in face_vertex_ids
+        bindings.append(
+            (
+                tuple(sorted(int(value) for value in mapped_ids)),
+                {
+                    int(vertex_id): exact_root_parameters[corner]
+                    for corner, vertex_id in enumerate(mapped_ids.tolist())
+                },
+                patch,
+            )
         )
-        target_uv = np.asarray(
-            [[float(value) for value in point] for point in target_uv_exact],
-            dtype=np.float64,
+    if grown is not None:
+        bindings.extend(
+            _open_wall_bindings(
+                source,
+                construction,
+                query,
+                output_faces,
+                source_cell_vertices,
+                {key for key, _, _ in bindings},
+            )
         )
-        signed_area = float(
-            (target_uv[1, 0] - target_uv[0, 0]) * (target_uv[2, 1] - target_uv[0, 1])
-            - (target_uv[1, 1] - target_uv[0, 1]) * (target_uv[2, 0] - target_uv[0, 0])
-        )
-        if signed_area == 0.0:
+
+    source_parameters: list[np.ndarray] = []
+    source_parameter_rational_rows = []
+    target_reference_rational_rows = []
+    target_reference_vertices: list[np.ndarray] = []
+    target_cell_ids: list[int] = []
+    target_face_ids: list[int] = []
+    target_local_faces: list[int] = []
+    source_chart_ids: list[str] = []
+    source_entity_ids: list[str] = []
+    occurrence_paths: list[tuple[str, ...]] = []
+    orientations: list[int] = []
+    for face_key, parameter_by_vertex, patch in bindings:
+        if patch not in query.patches:
+            continue
+        candidates = output_faces.get(face_key, ())
+        if len(candidates) != 1:
             raise ValueError(
-                "Layer source chart collapses in its original parameter plane."
+                "A layer root chart does not bind one unique exterior target facet."
             )
-        source_parameters.append(target_uv)
-        source_parameter_rational_rows.append(target_uv_exact)
-        target_reference_vertices.append(target_reference)
-        target_reference_rational_rows.append(
-            tuple(
-                tuple(Fraction.from_float(float(value)) for value in point)
-                for point in target_reference
-            )
+        face_id, cell_global_id, local_face, _, face_vertex_ids, reference_by_vertex = (
+            candidates[0]
         )
-        target_cell_ids.append(cell_global_id)
-        target_face_ids.append(face_id)
-        target_local_faces.append(local_face)
+        if len(face_vertex_ids) == 3:
+            triangles = (face_vertex_ids,)
+        elif len(face_vertex_ids) == 4:
+            # Quadrilateral layer side faces split in their local face order.
+            first, second, third, fourth = face_vertex_ids
+            triangles = ((first, second, third), (first, third, fourth))
+        else:
+            raise ValueError(
+                "Layer boundary charts bind triangle and quadrilateral faces."
+            )
         entity_id = query.domain.entity_id(2, patch)
-        source_chart_ids.append(entity_id)
-        source_entity_ids.append(entity_id)
-        occurrence_paths.append(tuple(query.domain.source_occurrences[2][patch]))
-        orientations.append(1 if signed_area > 0.0 else -1)
+        occurrence = tuple(query.domain.source_occurrences[2][patch])
+        for triangle in triangles:
+            target_uv_exact = tuple(parameter_by_vertex[vertex] for vertex in triangle)
+            target_uv = np.asarray(
+                [[float(value) for value in point] for point in target_uv_exact],
+                dtype=np.float64,
+            )
+            signed_area = float(
+                (target_uv[1, 0] - target_uv[0, 0]) * (target_uv[2, 1] - target_uv[0, 1])
+                - (target_uv[1, 1] - target_uv[0, 1])
+                * (target_uv[2, 0] - target_uv[0, 0])
+            )
+            if signed_area == 0.0:
+                raise ValueError(
+                    "Layer source chart collapses in its original parameter plane."
+                )
+            target_reference_exact = tuple(
+                reference_by_vertex[vertex] for vertex in triangle
+            )
+            source_parameters.append(target_uv)
+            source_parameter_rational_rows.append(target_uv_exact)
+            target_reference_vertices.append(
+                np.asarray(target_reference_exact, dtype=np.float64)
+            )
+            target_reference_rational_rows.append(target_reference_exact)
+            target_cell_ids.append(cell_global_id)
+            target_face_ids.append(face_id)
+            target_local_faces.append(local_face)
+            source_chart_ids.append(entity_id)
+            source_entity_ids.append(entity_id)
+            occurrence_paths.append(occurrence)
+            orientations.append(1 if signed_area > 0.0 else -1)
 
     if not target_cell_ids:
         raise ValueError("Layer source chart query has no realized target facets.")
@@ -1205,6 +1251,208 @@ def _layer_surface_chart_witness(
         mesh, construction.geometry, query, witness
     )
     return witness
+
+
+def _snap_to_trim(
+    domain: MeshingDomain, patch: int, parameters: np.ndarray, /
+) -> _ExactPoint2:
+    """Place chart parameters exactly on the nearest straight trim segment."""
+    polygon = _patch_chart_polygon(domain, patch)
+    if polygon is None:
+        raise ValueError(
+            "A layer column shared by two source charts needs straight exact trims."
+        )
+    points, segments, _ = polygon
+    corners = np.asarray(points, dtype=np.float64)
+    extent = max(1.0, float(np.max(np.ptp(corners, axis=0))))
+    start = corners[[first for first, _ in segments]]
+    span = corners[[second for _, second in segments]] - start
+    length = np.maximum(np.sum(span * span, axis=1), np.finfo(np.float64).tiny)
+    step = np.clip(np.sum((parameters - start) * span, axis=1) / length, 0.0, 1.0)
+    distance = np.linalg.norm(start + step[:, None] * span - parameters, axis=1)
+    nearest = int(np.argmin(distance))
+    if distance[nearest] > _TRIM_SNAP_TOLERANCE * extent:
+        raise ValueError(
+            "A layer column shared by two source charts leaves their common trim "
+            f"(chart distance {float(distance[nearest]):.3g})."
+        )
+    first, second = (points[index] for index in segments[nearest])
+    point = tuple(Fraction.from_float(float(value)) for value in parameters)
+    direction = (second[0] - first[0], second[1] - first[1])
+    fraction = (
+        (point[0] - first[0]) * direction[0] + (point[1] - first[1]) * direction[1]
+    ) / (direction[0] * direction[0] + direction[1] * direction[1])
+    fraction = min(max(fraction, Fraction(0)), Fraction(1))
+    return (
+        first[0] + fraction * direction[0],
+        first[1] + fraction * direction[1],
+    )
+
+
+def _open_wall_bindings(
+    source: sources_owner.NativeLayerCoreSource,
+    construction: layer_core_owner.layer_topology.LayerCoreConstruction,
+    query: MeshingDomainBoundarySource,
+    output_faces: Mapping[tuple[int, ...], list[_LayerOutputFace]],
+    source_cell_vertices: Mapping[int, np.ndarray],
+    grown_keys: set[tuple[int, ...]],
+    /,
+) -> list[tuple[tuple[int, ...], dict[int, _ExactPoint2], int]]:
+    """Bind the fixed core surfaces and layer side strips of an open wall.
+
+    Fixed surface cells keep their exact charts except at rim vertices, which
+    moved to their column tops; side strips lie on the adjacent source faces.
+    Moved and strip vertices take the source chart parameters of their closest
+    point on that face, seeded at the rim vertex; a vertex shared by two charts
+    lies exactly on their common straight trim.
+    """
+    charts = source.source_surface_charts
+    domain = source.source_domain
+    if charts is None or not isinstance(domain, MeshingDomain):
+        raise ValueError("Open layer walls require their retained charted BRep source.")
+    if domain.domain_id != query.domain.domain_id:
+        raise ValueError("Open layer wall charts must bind the queried source domain.")
+    layers = source.layers
+    core = brep_owner.fixed_core(domain, layers, charts)
+    if core.complex_.complex_id != source.complex.complex_id:
+        raise ValueError(
+            "An open layer wall must keep the fixed core derived from its charted wall."
+        )
+    combined_map = layer_core_owner.layer_topology.prepare_identity(
+        layers, source.complex, source.vertex_layer_ids, source.cap_polygon_ids
+    )[0]
+    mesh = construction.mesh
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    if not layer_core_owner.layer_topology.bitwise_equal_points(
+        points[combined_map], np.asarray(source.complex.vertices, dtype=np.float64)
+    ):
+        raise ValueError("The open layer core output moved a fixed PLC vertex.")
+    target_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    row_of_target = {int(value): row for row, value in enumerate(target_ids.tolist())}
+    wall_ids = np.asarray(charts.mesh.vertex_global_ids, dtype=np.int64)
+    wall_row_of_id = {int(value): row for row, value in enumerate(wall_ids.tolist())}
+    wall_map = np.asarray(layers.wall_vertices, dtype=np.int64)
+    layer_count = int(np.asarray(layers.mesh.coordinates).shape[0])
+    layer_sources = np.asarray(layers.vertex_source_vertex_ids, dtype=np.int64)
+    chart_row_of_cell = {
+        int(cell): row for row, cell in enumerate(np.asarray(charts.cell_global_ids))
+    }
+    grown = set(brep_owner.grown_wall_cells(layers).tolist())
+
+    def cell_chart(cell: int, /) -> tuple[int, dict[int, _ExactPoint2]]:
+        row = chart_row_of_cell[cell]
+        exact = charts.root_parameter_chart(row)
+        return int(charts.root_patches[row]), {
+            int(wall_row): exact[corner]
+            for corner, wall_row in enumerate(source_cell_vertices[cell].tolist())
+        }
+
+    def source_wall_row(layer_row: int, /) -> int:
+        identifier = int(layer_sources[layer_row]) if layer_row < layer_count else -1
+        wall_row = wall_row_of_id.get(identifier)
+        if wall_row is None:
+            raise ValueError("An open layer wall vertex has no source wall vertex.")
+        return wall_row
+
+    # Exact parameters per face, plus moved/strip vertices resolved once per
+    # (patch, output row, seed chart) by projection onto the source face.
+    raw: list[
+        tuple[tuple[int, ...], dict[int, _ExactPoint2], dict[int, _Request], int]
+    ] = []
+    requests: dict[_Request, None] = {}
+    polygons = np.asarray(core.complex_.polygon_vertices, dtype=np.int64).reshape(-1, 3)
+    for polygon_row in range(core.cap_count, polygons.shape[0]):
+        cell = int(core.polygon_wall_cells[polygon_row])
+        patch, corner_uv = cell_chart(cell)
+        exact: dict[int, _ExactPoint2] = {}
+        moved: dict[int, _Request] = {}
+        for vertex in polygons[polygon_row].tolist():
+            row = int(combined_map[vertex])
+            wall_row = int(core.vertex_wall_rows[vertex])
+            if wall_row >= 0:
+                exact[int(target_ids[row])] = corner_uv[wall_row]
+            else:
+                key = (
+                    patch,
+                    row,
+                    corner_uv[source_wall_row(int(core.vertex_layer_ids[vertex]))],
+                )
+                requests[key] = None
+                moved[int(target_ids[row])] = key
+        raw.append((tuple(sorted((*exact, *moved))), exact, moved, patch))
+    fixed_keys = {key for key, _, _, _ in raw}
+
+    rim_cells: dict[tuple[int, int], list[int]] = {}
+    for cell, vertices in source_cell_vertices.items():
+        if cell in grown:
+            continue
+        for corner in range(3):
+            edge = sorted((int(vertices[corner]), int(vertices[(corner + 1) % 3])))
+            rim_cells.setdefault((edge[0], edge[1]), []).append(cell)
+    for face_key in output_faces:
+        if face_key in grown_keys or face_key in fixed_keys:
+            continue
+        rows = [row_of_target[identifier] for identifier in face_key]
+        if any(row >= layer_count for row in rows):
+            raise ValueError(
+                "An open layer boundary face is neither wall, core, nor strip."
+            )
+        sources = sorted({source_wall_row(row) for row in rows})
+        cells = rim_cells.get((sources[0], sources[-1]), []) if len(sources) == 2 else []
+        if len(cells) != 1:
+            raise ValueError(
+                "A layer side face must rise from one rim edge of one fixed surface cell."
+            )
+        patch, corner_uv = cell_chart(cells[0])
+        exact = {}
+        moved = {}
+        for row in rows:
+            wall_row = source_wall_row(row)
+            if int(wall_map[wall_row]) == row:
+                exact[int(target_ids[row])] = corner_uv[wall_row]
+            else:
+                key = (patch, row, corner_uv[wall_row])
+                requests[key] = None
+                moved[int(target_ids[row])] = key
+        raw.append((face_key, exact, moved, patch))
+
+    keys = list(requests)
+    resolved: dict[_Request, _ExactPoint2] = {}
+    if keys:
+        projection = domain.project(
+            points[[row for _, row, _ in keys]],
+            np.asarray([patch for patch, _, _ in keys], dtype=np.int64),
+            np.asarray(
+                [[float(seed[0]), float(seed[1])] for _, _, seed in keys],
+                dtype=np.float64,
+            ),
+        )
+        if not np.all(np.asarray(projection.converged, dtype=np.bool_)):
+            raise ValueError(
+                "A layer side vertex has no closest point on its source face."
+            )
+        projected = np.asarray(projection.parameters, dtype=np.float64)
+        shared = Counter(row for _, row, _ in keys)
+        for index, key in enumerate(keys):
+            resolved[key] = (
+                _snap_to_trim(domain, key[0], projected[index])
+                if shared[key[1]] > 1
+                else (
+                    Fraction.from_float(float(projected[index, 0])),
+                    Fraction.from_float(float(projected[index, 1])),
+                )
+            )
+    return [
+        (
+            face_key,
+            {
+                **exact,
+                **{identifier: resolved[key] for identifier, key in moved.items()},
+            },
+            patch,
+        )
+        for face_key, exact, moved, patch in raw
+    ]
 
 
 _LayerOutputFace = tuple[
