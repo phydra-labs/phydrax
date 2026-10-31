@@ -71,9 +71,10 @@ def _project(projection: Any, points: Any, dimension: Any, index: Any) -> Any:
 
 def _circle_edge(projection: Any, height: Any) -> Any:
     """Index of the closed circular edge at ``height`` (edges keep OCCT order)."""
-    vertices = np.asarray(projection.vertex_points)
-    edge_vertices = np.asarray(projection.edge_vertices)
-    closed = np.flatnonzero(np.asarray(projection.edge_closed))
+    geometry = projection.model.geometry
+    vertices = np.asarray(geometry.vertex_points)
+    edge_vertices = np.asarray(geometry.edge_vertices)
+    closed = np.flatnonzero(edge_vertices[:, 0] == edge_vertices[:, 1])
     return int(closed[np.isclose(vertices[edge_vertices[closed, 0], 2], height)][0])
 
 
@@ -161,7 +162,7 @@ def test_brep_projection_scenario_1() -> None:
         _STATUS.AMBIGUOUS,
         _STATUS.UNIQUE,
     ]
-    corner = int(np.asarray(projection.edge_vertices)[rim, 0])
+    corner = int(projection.model.geometry.edge_vertices[rim][0])
     assert np.asarray(
         projection.contains([2, 1, 1], [0, rim, rim], [1, 0, 2], [rim, corner, 0])
     ).tolist() == [True, True, False]
