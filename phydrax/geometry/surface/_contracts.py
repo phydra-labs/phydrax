@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import Enum
+from typing import NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,6 +14,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._archive_columns import StaticColumnArchiveRecipe
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
@@ -108,6 +110,46 @@ class SurfaceMetadata(StrictModule, NonTrainableState):
                 "cell_tags": tags,
             }
         )
+
+
+class SurfaceMetadataArchiveRecipe(NamedTuple):
+    """Archive form of surface metadata with per-cell tags as a static column.
+
+    :meth:`restore` rebuilds through the constructor and requires the stored
+    metadata identity.
+    """
+
+    source_id: str
+    source_revision: str
+    coordinate_contract: SpatialCoordinateContract
+    provenance: tuple[str, ...]
+    cell_tags: StaticColumnArchiveRecipe
+    metadata_id: str
+
+    @classmethod
+    def from_metadata(cls, value: SurfaceMetadata, /) -> SurfaceMetadataArchiveRecipe:
+        if type(value) is not SurfaceMetadata:
+            raise TypeError("value must be SurfaceMetadata.")
+        return cls(
+            value.source_id,
+            value.source_revision,
+            value.coordinate_contract,
+            value.provenance,
+            StaticColumnArchiveRecipe.encode(value.cell_tags),
+            value.metadata_id,
+        )
+
+    def restore(self) -> SurfaceMetadata:
+        restored = SurfaceMetadata(
+            source_id=self.source_id,
+            source_revision=self.source_revision,
+            coordinate_contract=self.coordinate_contract,
+            provenance=self.provenance,
+            cell_tags=self.cell_tags.decode(),
+        )
+        if restored.metadata_id != self.metadata_id:
+            raise ValueError("Stored surface metadata differs from its identity.")
+        return restored
 
 
 class SurfaceSelection(StrictModule, NonTrainableState):
@@ -560,6 +602,7 @@ __all__ = [
     "SurfaceChartMappingEvidence",
     "SurfaceInterface",
     "SurfaceMetadata",
+    "SurfaceMetadataArchiveRecipe",
     "SurfaceOrientationRepair",
     "SurfacePreparationError",
     "SurfacePreparationStatus",

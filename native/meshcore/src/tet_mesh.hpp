@@ -268,6 +268,8 @@ struct TetEditResult {
 };
 // Unmet-record apex vertex ID of a record without an acute-feature apex.
 inline constexpr std::uint64_t kNoUnmetApex = std::numeric_limits<std::uint64_t>::max();
+// Unmet-record facet ID of a record without a forcing constrained facet.
+inline constexpr std::uint64_t kNoUnmetFacet = std::numeric_limits<std::uint64_t>::max();
 struct TetUnmetRecord {
   std::uint64_t cell_id = 0;
   std::int32_t criterion = 0;
@@ -277,6 +279,11 @@ struct TetUnmetRecord {
   // angle in degrees; kNoUnmetApex and NaN for every other reason.
   std::uint64_t apex_vertex = kNoUnmetApex;
   double apex_angle = std::numeric_limits<double>::quiet_NaN();
+  // Improvement FIXED_BOUNDARY evidence: the ID of the cell's constrained
+  // facet whose own triangle radius-edge ratio (`facet_ratio`) exceeds the
+  // bound; kNoUnmetFacet and NaN for every other record.
+  std::uint64_t facet_id = kNoUnmetFacet;
+  double facet_ratio = std::numeric_limits<double>::quiet_NaN();
 };
 
 // A boundary vertex's record on the declared exact plane of source face row

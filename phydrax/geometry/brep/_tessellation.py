@@ -509,6 +509,7 @@ def _build_request(
         quality_angle_degrees=20.0,
         spacing_fraction=0.95,
         minimum_edge_samples=policy.trim_samples_per_edge,
+        normal_deviation_aim=policy.angular_deflection,
         curve_schedule=NativeCurveSchedule(fidelity_samples=policy.trim_samples_per_edge),
     )
     return specification, NativeMeshingOptions(

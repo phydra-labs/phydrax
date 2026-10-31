@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
@@ -3126,12 +3126,71 @@ def _triangle_centroid_balls(
     return centers, radii
 
 
+_CENTROID_QUERY_CHUNK = 256
+
+
+def _centroid_candidate_rows(
+    sample_points: np.ndarray,
+    center_values: np.ndarray,
+    center_scale: float,
+    radius_bound: float,
+    /,
+) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield each sample's centroid rows inside its ``_nearest_triangle_distance_upper`` ball.
+
+    A first box query, doubled from the triangle radius until it meets a
+    centroid, gives an offset ``U >= m``; the second box of half-width
+    ``reach(U) >= reach(m)`` then contains every centroid of the ball. Samples
+    are queried in bounded chunks, so the pair working set stays bounded.
+    """
+    from .._bvh import bvh_overlap_pairs_host, prepare_bvh
+
+    center_bvh = prepare_bvh(center_values, center_values, dtype=np.float64)
+
+    def pairs(points: np.ndarray, widths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+        query = prepare_bvh(
+            points - widths[:, None], points + widths[:, None], dtype=np.float64
+        )
+        return bvh_overlap_pairs_host(query, center_bvh, include_touching=True)
+
+    for start in range(0, sample_points.shape[0], _CENTROID_QUERY_CHUNK):
+        points = sample_points[start : start + _CENTROID_QUERY_CHUNK]
+        upper = np.full((points.shape[0],), np.inf, dtype=np.float64)
+        widths = np.full(
+            (points.shape[0],),
+            max(radius_bound, float(np.spacing(center_scale))),
+            dtype=np.float64,
+        )
+        pending = np.arange(points.shape[0], dtype=np.int64)
+        while pending.size:
+            local, rows = pairs(points[pending], widths[pending])
+            offsets = np.linalg.norm(center_values[rows] - points[pending][local], axis=1)
+            found = pending[local]
+            np.minimum.at(upper, found, offsets)
+            pending = pending[~np.isfinite(upper[pending])]
+            widths[pending] *= 2.0
+        scale = center_scale + np.max(np.abs(points), axis=1)
+        reach = (upper + 1.0e-9 * (upper + radius_bound + scale) + radius_bound) * (
+            1.0 + 1.0e-6
+        )
+        local, rows = pairs(points, reach)
+        bounds = np.searchsorted(local, np.arange(points.shape[0] + 1, dtype=np.int64))
+        for row in range(points.shape[0]):
+            yield start + row, rows[bounds[row] : bounds[row + 1]]
+
+
 def _nearest_triangle_distance_upper(
     point: Point3,
     point_value: np.ndarray,
     triangles: tuple[Triangle3, ...],
     center_values: np.ndarray,
     radius_values: np.ndarray,
+    rows: np.ndarray,
+    center_scale: float,
+    radius_bound: float,
+    box_lower: np.ndarray,
+    box_upper: np.ndarray,
+    vertex_values: np.ndarray,
     /,
 ) -> Fraction:
     """Return ``min_T sqrt_up(d_T^2)`` over every triangle, pruning provable losers.
@@ -3145,14 +3204,32 @@ def _nearest_triangle_distance_upper(
     nearest-offset, and also of the few-ulp gap between ``sqrt_up`` and the
     exact minimum. A pruned triangle's ``sqrt_up`` therefore exceeds the
     survivors' minimum, which is the minimum over all triangles exactly.
+
+    Only centroids within ``m + slack + max_T r_T`` can survive; ``rows`` (from
+    ``_centroid_candidate_rows``) contains every centroid of that ball widened
+    by a relative ``1e-6``. The same argument then prunes with sharper bounds:
+    the distance to a triangle's outward-rounded bounding box bounds ``d_T``
+    below, and the nearest triangle vertex bounds the minimum above, so far
+    points keep only the triangles facing them.
     """
     from ..geometry._domain_boundary import _point_triangle_squared
 
-    offsets = np.linalg.norm(center_values - point_value, axis=1)
+    scale = center_scale + float(np.max(np.abs(point_value)))
+    offsets = np.linalg.norm(center_values[rows] - point_value, axis=1)
     nearest = float(np.min(offsets))
-    scale = float(np.max(np.abs(center_values))) + float(np.max(np.abs(point_value)))
-    slack = 1.0e-9 * (nearest + float(np.max(radius_values)) + scale)
-    candidates = np.flatnonzero(offsets - radius_values <= nearest + slack)
+    slack = 1.0e-9 * (nearest + radius_bound + scale)
+    candidates = rows[offsets - radius_values[rows] <= nearest + slack]
+    vertex_nearest = float(
+        np.min(np.linalg.norm(vertex_values[candidates] - point_value, axis=2))
+    )
+    upper = min(nearest, vertex_nearest)
+    gaps = np.maximum(
+        np.maximum(
+            box_lower[candidates] - point_value, point_value - box_upper[candidates]
+        ),
+        0.0,
+    )
+    candidates = candidates[np.linalg.norm(gaps, axis=1) <= upper + slack]
     return min(
         fraction_sqrt_interval(_point_triangle_squared(point, triangles[row]))[1]
         for row in candidates.tolist()
@@ -3266,8 +3343,21 @@ def _analytic_profile_distance_evidence(
             "Analytic profile source samples do not reproduce a complete certified boundary cover."
         )
     radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
+    center_scale = float(np.max(np.abs(center_values)))
+    radius_bound = float(np.max(radius_values))
+    vertex_values = np.asarray(
+        [
+            [[float(value) for value in vertex] for vertex in triangle]
+            for triangle in target_triangles
+        ],
+        dtype=np.float64,
+    )
+    box_lower = np.nextafter(np.min(vertex_values, axis=1), -np.inf)
+    box_upper = np.nextafter(np.max(vertex_values, axis=1), np.inf)
     reverse_upper = Fraction(0)
-    for sample_row in range(sample_points.shape[0]):
+    for sample_row, rows in _centroid_candidate_rows(
+        sample_points, center_values, center_scale, radius_bound
+    ):
         point = (
             Fraction.from_float(float(sample_points[sample_row, 0])),
             Fraction.from_float(float(sample_points[sample_row, 1])),
@@ -3281,6 +3371,12 @@ def _analytic_profile_distance_evidence(
             target_triangles,
             center_values,
             radius_values,
+            rows,
+            center_scale,
+            radius_bound,
+            box_lower,
+            box_upper,
+            vertex_values,
         )
         reverse_upper = max(
             reverse_upper,
@@ -4256,6 +4352,7 @@ def _closed_form_normal_deviation(
     orientation: int,
     uv_triangle: Triangle2,
     target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
+    limit: Fraction | None,
     /,
 ) -> tuple[Fraction, Fraction] | None:
     """Normal deviation from a closed-form normal direction of a revolution chart.
@@ -4263,6 +4360,14 @@ def _closed_form_normal_deviation(
     The Jacobian cross product of sphere and revolution charts vanishes on the
     axis, so its interval enclosure loses the normal direction near a pole; the
     closed-form direction stays regular there. Other carriers return ``None``.
+
+    A cell's bounding box encloses up to twice its area, and the box enclosure
+    of the direction widens with it. While a piece's bound straddles ``limit``
+    it is split at its edge midpoints into four exact chart triangles whose
+    union is the piece, halving its box overestimate. Splitting stops when every
+    piece is decided, when a piece's lower bound exceeds the limit (the cell's
+    deviation then exceeds it), or when a piece's edge midpoints round onto
+    its corners in binary64, so its chart box can no longer shrink.
     """
     from ._meshing_domain import _PlacedSurfacePatch
 
@@ -4283,48 +4388,111 @@ def _closed_form_normal_deviation(
         surface = surface.source
     if not isinstance(surface, (SpherePatch, RevolutionSurface)):
         return None
-    lower = np.asarray(
-        tuple(
-            fraction_endpoint(min(point[axis] for point in uv_triangle), upper=False)
-            for axis in range(2)
-        ),
-        dtype=np.float64,
-    )
-    upper = np.asarray(
-        tuple(
-            fraction_endpoint(max(point[axis] for point in uv_triangle), upper=True)
-            for axis in range(2)
-        ),
-        dtype=np.float64,
-    )
-    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
-        return None
-    direction = (
-        _sphere_normal_direction(surface, lower, upper)
-        if isinstance(surface, SpherePatch)
-        else _revolution_normal_direction(surface, lower, upper)
-    )
-    if direction is None:
-        return None
-    for cofactor in reversed(cofactors):
-        direction = tuple(
-            _interval_sum(
-                *(
-                    _interval_scale(cofactor[row][column], direction[column])
-                    for column in range(3)
-                )
-            )
-            for row in range(3)
+    carrier = surface
+
+    def bound(triangle: Triangle2, /) -> tuple[Fraction, Fraction] | None:
+        lower = np.asarray(
+            tuple(
+                fraction_endpoint(min(point[axis] for point in triangle), upper=False)
+                for axis in range(2)
+            ),
+            dtype=np.float64,
         )
-    source_cross = (
-        direction if orientation > 0 else tuple((-high, -low) for low, high in direction)
-    )
-    cosine = _normal_cosine_bounds(source_cross, target_cross)
-    if cosine is None:
-        return None
-    return _acos_lower(cosine[1]), _normal_angle_upper(
-        source_cross, target_cross, cosine[0]
-    )
+        upper = np.asarray(
+            tuple(
+                fraction_endpoint(max(point[axis] for point in triangle), upper=True)
+                for axis in range(2)
+            ),
+            dtype=np.float64,
+        )
+        if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+            return None
+        direction = (
+            _sphere_normal_direction(carrier, lower, upper)
+            if isinstance(carrier, SpherePatch)
+            else _revolution_normal_direction(carrier, lower, upper)
+        )
+        if direction is None:
+            return None
+        for cofactor in reversed(cofactors):
+            direction = tuple(
+                _interval_sum(
+                    *(
+                        _interval_scale(cofactor[row][column], direction[column])
+                        for column in range(3)
+                    )
+                )
+                for row in range(3)
+            )
+        source_cross = (
+            direction
+            if orientation > 0
+            else tuple((-high, -low) for low, high in direction)
+        )
+        cosine = _normal_cosine_bounds(source_cross, target_cross)
+        if cosine is None:
+            return None
+        return _acos_lower(cosine[1]), _normal_angle_upper(
+            source_cross, target_cross, cosine[0]
+        )
+
+    def split(triangle: Triangle2, /) -> tuple[Triangle2, ...] | None:
+        first, second, third = triangle
+
+        def midpoint(start: Point2, end: Point2, /) -> Point2:
+            return (start[0] + end[0]) / 2, (start[1] + end[1]) / 2
+
+        near, middle, far = (
+            midpoint(first, second),
+            midpoint(second, third),
+            midpoint(third, first),
+        )
+        if all(
+            (float(point[0]), float(point[1]))
+            in ((float(start[0]), float(start[1])), (float(end[0]), float(end[1])))
+            for point, start, end in (
+                (near, first, second),
+                (middle, second, third),
+                (far, third, first),
+            )
+        ):
+            return None
+        return (
+            (first, near, far),
+            (near, second, middle),
+            (far, middle, third),
+            (near, middle, far),
+        )
+
+    evidence = bound(uv_triangle)
+    if evidence is None or limit is None or evidence[1] <= limit or evidence[0] > limit:
+        return evidence
+    # Every piece's lower bound is attained inside the cell; the cell's upper
+    # bound is the largest over a partition of the cell into pieces.
+    lower = evidence[0]
+    settled_upper = Fraction(0)
+    pending = [(uv_triangle, evidence)]
+    while pending:
+        following: list[tuple[Triangle2, tuple[Fraction, Fraction]]] = []
+        for piece, piece_evidence in pending:
+            children = split(piece)
+            child_evidence = (
+                None if children is None else tuple(bound(child) for child in children)
+            )
+            if children is None or child_evidence is None or None in child_evidence:
+                settled_upper = max(settled_upper, piece_evidence[1])
+                continue
+            for child, child_bound in zip(children, child_evidence, strict=True):
+                assert child_bound is not None
+                lower = max(lower, child_bound[0])
+                if child_bound[0] > limit:
+                    return lower, evidence[1]
+                if child_bound[1] <= limit:
+                    settled_upper = max(settled_upper, child_bound[1])
+                else:
+                    following.append((child, child_bound))
+        pending = following
+    return lower, min(evidence[1], settled_upper)
 
 
 def _normal_deviation_for_cell(
@@ -4333,13 +4501,15 @@ def _normal_deviation_for_cell(
     uv_triangle: Triangle2,
     target_cross: tuple[ExactScalar, ExactScalar, ExactScalar],
     derivatives: _DerivativeCache,
+    limit: Fraction | None = None,
     /,
 ) -> tuple[Fraction, Fraction] | None:
     """Enclose one cell's normal deviation; sources are cached per patch.
 
     Spline carriers use exact Bernstein Jacobian bounds of their extracted
     spans: a naive interval extension of the basis recursion does not shrink
-    to the cell's actual tangent range.
+    to the cell's actual tangent range. Closed-form revolution charts split a
+    cell whose bound straddles ``limit`` until the bound decides it.
     """
     surface_patch = domain.patches[patch]
     exact_plane = _plane_normal_deviation(
@@ -4348,7 +4518,11 @@ def _normal_deviation_for_cell(
     if exact_plane is not None:
         return exact_plane
     closed_form = _closed_form_normal_deviation(
-        surface_patch.surface, surface_patch.orientation, uv_triangle, target_cross
+        surface_patch.surface,
+        surface_patch.orientation,
+        uv_triangle,
+        target_cross,
+        limit,
     )
     if closed_form is not None:
         return closed_form
@@ -4892,6 +5066,7 @@ def _certify_domain_surface_chart_fidelity(
                     chart,
                     target_cross,
                     derivatives,
+                    normal_limit,
                 )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None
@@ -5931,6 +6106,7 @@ def certify_source_fidelity(
                     chart,
                     target_cross,
                     derivatives,
+                    Fraction.from_float(normal_limit),
                 )
             except (IntervalExtensionError, TypeError, ValueError, FloatingPointError):
                 normal_evidence = None

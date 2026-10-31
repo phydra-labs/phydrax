@@ -1619,7 +1619,8 @@ int32_t phx_mc_tet_mesh_unmet_count(const phx_mc_tet_mesh* mesh, int64_t* count)
 int32_t phx_mc_tet_mesh_unmet(const phx_mc_tet_mesh* mesh, int64_t capacity,
                               uint64_t* cell_ids, int32_t* criteria,
                               int32_t* reasons, double* values, uint64_t* apex_vertex_ids,
-                              double* apex_angles) {
+                              double* apex_angles, uint64_t* facet_ids,
+                              double* facet_ratios) {
   if (mesh == nullptr || capacity < 0 ||
       !addressable(capacity, 1, sizeof(uint64_t)) ||
       !addressable(capacity, 1, sizeof(int32_t)) ||
@@ -1633,7 +1634,8 @@ int32_t phx_mc_tet_mesh_unmet(const phx_mc_tet_mesh* mesh, int64_t capacity,
   const int64_t count = static_cast<int64_t>(records.size());
   if (!required_bank(cell_ids, count) || !required_bank(criteria, count) ||
       !required_bank(reasons, count) || !required_bank(values, count) ||
-      !required_bank(apex_vertex_ids, count) || !required_bank(apex_angles, count)) {
+      !required_bank(apex_vertex_ids, count) || !required_bank(apex_angles, count) ||
+      !required_bank(facet_ids, count) || !required_bank(facet_ratios, count)) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   for (std::size_t row = 0; row < records.size(); ++row) {
@@ -1643,6 +1645,8 @@ int32_t phx_mc_tet_mesh_unmet(const phx_mc_tet_mesh* mesh, int64_t capacity,
     values[row] = records[row].value;
     apex_vertex_ids[row] = records[row].apex_vertex;
     apex_angles[row] = records[row].apex_angle;
+    facet_ids[row] = records[row].facet_id;
+    facet_ratios[row] = records[row].facet_ratio;
   }
   return PHX_MC_OK;
 }
