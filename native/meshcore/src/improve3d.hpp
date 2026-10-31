@@ -19,7 +19,9 @@ namespace phx::mc {
 // floored to multiples of kTetScoreQuantum. Every edit (reconnection,
 // collapse, relocation, circumsphere-cavity or edge-ring vertex insertion) is
 // accepted only if its affected cells' worst-first sorted scores strictly
-// improve, with the determinant floor and source constraints as hard gates;
+// improve, with the determinant floor and source constraints as hard gates
+// (a relocation must also meet the target at, or close at least an eighth of
+// the gap to it of, the first sorted score it changes);
 // no created cell may exceed its circumradius size target by more than the
 // largest excess among the removed cells (at all, where they were within
 // target), except in an edit that removes a degenerate cell (below the

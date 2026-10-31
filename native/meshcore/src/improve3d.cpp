@@ -497,8 +497,6 @@ struct FlipQuality {
   // Circumradius over the cell's size target (0 without a target, +inf for
   // an unrepresentable circumsphere); above 1 the cell is beyond its size.
   double size_excess = 0.0;
-  // The score before its downward resolution to the kTetScoreQuantum grid.
-  double unresolved = 0.0;
 };
 using QualityVector = std::vector<FlipQuality>;
 void sort_quality_vector(QualityVector& quality);
@@ -533,7 +531,7 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
   const double size_excess = std::isinf(measure.size_target)
                                  ? 0.0
                                  : measure.circumradius / measure.size_target;
-  return {validity, quality_score, size_excess, unresolved};
+  return {validity, quality_score, size_excess};
 }
 
 double vertex_size(const TetQualityRequest& request, std::int32_t slot) {
@@ -838,23 +836,36 @@ bool improves_quality_vector(std::span<const FlipQuality> before,
 }
 
 // A relocation is continuous: an arbitrarily small move can carry a score
-// across a grid line, so relocations alone could step through the score
-// alphabet one quantum at a time while the geometry barely changes. A
-// relocation must therefore gain a whole quantum of unresolved score: with
-// every before score resolved upward instead (raise_scores) and every after
-// score downward, the sorted vectors must still strictly increase in
-// quality_vector_less, with every relocated cell admissible. No earlier
-// position then loses unresolved score and the first changed one gains at
-// least one quantum. Resolving the before scores upward only strengthens the
-// acceptance rule, so an accepted relocation also improves the resolved scores
-// (the termination argument is unchanged).
-void raise_scores(std::span<const FlipQuality> before, QualityVector& raised) {
-  raised.assign(before.begin(), before.end());
-  for (FlipQuality& quality : raised) {
-    quality.primary =
-        std::min(1.0, std::ceil(quality.unresolved / kTetScoreQuantum) * kTetScoreQuantum);
+// across a grid line, so relocations accepted on any strict improvement could
+// step through the score alphabet one quantum at a time while the geometry
+// barely changes. A relocation must instead make sufficient progress toward
+// the target: at the first position k where the star's worst-first sorted
+// scores before and after differ, the after score must be larger and either
+// meet the target (1) or close at least kRelocationGapFraction of the
+// remaining gap 1 - s_k, rounded up to a whole quantum. Earlier positions are
+// unchanged and position k rises, so the sorted vector strictly increases in
+// quality_vector_less (the star's worst-first sorted score never drops) and an
+// accepted relocation is accepted by the general rule too. For k = 0 (the
+// usual case) the star's worst score s gains at least max(quantum,
+// kRelocationGapFraction * (1 - s)): its gap shrinks geometrically, by the
+// factor 1 - kRelocationGapFraction per accepted relocation, so it reaches
+// the target after O(log(gap / quantum)) such relocations instead of up to
+// gap / quantum.
+constexpr double kRelocationGapFraction = 0x1p-3;
+bool relocation_makes_progress(std::span<const FlipQuality> before,
+                               std::span<const FlipQuality> after) {
+  if (before.size() != after.size()) return false;
+  for (std::size_t index = 0; index < before.size(); ++index) {
+    const double score = before[index].primary;
+    const double moved = after[index].primary;
+    if (moved == score) continue;
+    if (moved < score) return false;
+    if (moved >= 1.0) return true;
+    const double gain =
+        std::ceil(kRelocationGapFraction * (1.0 - score) / kTetScoreQuantum) * kTetScoreQuantum;
+    return moved >= score + gain;
   }
-  sort_quality_vector(raised);
+  return false;
 }
 
 // Improvement's targets are the score and the determinant floor; the size
@@ -2298,7 +2309,6 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   std::vector<PreparedRelocationCell> relocation_plan;
   QualityVector before_quality;
   QualityVector after_quality;
-  QualityVector raised_quality;
   std::vector<TetEditCell> replacement_cells;
   const auto vertex_step = [&](std::uint64_t vertex_id) -> std::int32_t {
     const std::int32_t removed = mesh.vertex_slot(vertex_id);
@@ -2363,10 +2373,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     // searched by backtracking from the target toward the current position
     // over the fractions 1, 1/2, ..., kTetScoreQuantum, so a vertex costs at
     // most 21 star evaluations per target, and a candidate is accepted only if
-    // it gains a whole quantum over the raised scores (raise_scores). A star
-    // whose raised scores are all 1 cannot gain one and is not searched.
-    raise_scores(before_quality, raised_quality);
-    if (raised_quality.front().primary >= 1.0) return PHX_MC_OK;
+    // it makes sufficient progress (relocation_makes_progress). A star whose
+    // scores are all 1 cannot make any and is not searched.
+    if (before_quality.front().primary >= 1.0) return PHX_MC_OK;
     const double size_excess_bound = admissible_size_excess(before_quality);
     std::vector<std::array<double, 3>> targets(1, std::array<double, 3>{});
     for (std::int32_t neighbor : neighbors) {
@@ -2399,9 +2408,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         }
         if (!distinct) break;
         if (relocated_quality(relocation_plan, candidate, request,
-                              raised_quality.front().primary, size_excess_bound,
+                              before_quality.front().primary, size_excess_bound,
                               after_quality) &&
-            quality_vector_less(raised_quality, after_quality)) {
+            relocation_makes_progress(before_quality, after_quality)) {
           TetEditVertex moved;
           moved.id = vertex_id;
           std::copy_n(candidate, 3, moved.carrier.begin());
@@ -2413,6 +2422,10 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
           const std::int32_t error = fatal_edit_error(status);
           if (error != PHX_MC_OK) return error;
           if (status == TetEditStatus::kApplied) {
+            // Every vertex of the star's cells sees a changed star (and a
+            // changed neighbor centroid), so each is stepped again: a vertex
+            // is last stepped on its final star, which an unmet
+            // NO_IMPROVEMENT record relies on.
             for (std::int32_t slot : star) {
               for (std::int32_t vertex : mesh.tet(slot).v) {
                 pending_vertices.insert(mesh.vertex_id(vertex));
@@ -2450,11 +2463,21 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // bound) only discard edits, so they leave this argument intact; the size
   // bound also keeps the largest size excess created by a non-degenerate
   // repair at most the largest one it removed. Edge-ring and point insertions
-  // are accepted by the same rule; relocations by the stricter whole-quantum
-  // gain over raised scores (raise_scores), which implies it. Each vertex step evaluates a
-  // bounded number of candidates (its star's collapses and at most 21 per
-  // relocation target). No complexity bound on the number of accepted edits
-  // is claimed; unmet targets are reported per cell below.
+  // are accepted by the same rule; relocations by the stricter sufficient-
+  // progress rule (relocation_makes_progress), which implies it. That rule
+  // also bounds the relocation work beyond mere termination: an accepted
+  // relocation closes at least kRelocationGapFraction of the gap to the target
+  // of its star's first changed score, so the relocations of a vertex whose
+  // surrounding does not otherwise change raise its star's worst score at most
+  // ceil(log(2^20) / log(8/7)) = 104 times before it meets the target, instead
+  // of up to 2^20 quantum-sized times. Each vertex step evaluates a bounded
+  // number of candidates (its star's collapses and at most 21 per relocation
+  // target). An accepted relocation re-queues every vertex of its star's
+  // cells, since each of their stars changed, so every vertex is last stepped
+  // on its final star (the evidence behind NO_IMPROVEMENT records); a rejected
+  // step re-queues nothing, and the gap rule alone bounds the accepted moves.
+  // No bound on the number of accepted topology edits is claimed; unmet
+  // targets are reported per cell below.
   while (!pending_cells.empty() || !pending_vertices.empty()) {
     while (!pending_cells.empty()) {
       const std::uint64_t logical_id = *pending_cells.begin();
