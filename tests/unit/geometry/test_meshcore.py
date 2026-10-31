@@ -1300,6 +1300,70 @@ def test_declared_facet_plane_groups_rounded_triangles_and_refuses_off_plane_ver
         assert (refusal.value.first_kind, refusal.value.first) == (PlcEntityKind.FACET, 5)
 
 
+def test_declared_planes_recover_a_rotated_cube_missing_its_face_diagonals() -> None:
+    # Corners are the correct roundings of the exact corners of a rotated
+    # cube of half side 1/8, and each face declares its exact plane (origin
+    # +-h c_k, axes c_{k+1}, c_{k+2}; tolerance 0). The two triangles of a
+    # face are not exactly coplanar and the Delaunay complex lacks some face
+    # diagonals. Recovery used to split faces endlessly around such a
+    # diagonal; it now recovers the diagonals as hidden edges, suppresses
+    # every split point on them, and publishes neither them nor any point.
+    c, s = np.cos(0.3), np.sin(0.3)
+    columns = np.asarray(((c, -s, 0.0), (s * c, c * c, -s), (s * s, s * c, c))).T
+    signs = np.asarray(
+        [(x, y, z) for z in (-1, 1) for y in (-1, 1) for x in (-1, 1)], dtype=np.float64
+    )
+    points = np.asarray(
+        [
+            [
+                float(
+                    sum(Fraction(sign[k] / 8) * Fraction(columns[k][a]) for k in range(3))
+                )
+                for a in range(3)
+            ]
+            for sign in signs
+        ]
+    )
+    sides = ((2, -1), (2, 1), (1, -1), (1, 1), (0, -1), (0, 1))
+    planes = np.asarray(
+        [
+            (side / 8 * columns[k], columns[(k + 1) % 3], columns[(k + 2) % 3])
+            for k, side in sides
+        ]
+    )
+    triangles = np.asarray(
+        (
+            (0, 2, 3),
+            (0, 3, 1),
+            (4, 5, 7),
+            (4, 7, 6),
+            (0, 1, 5),
+            (0, 5, 4),
+            (2, 6, 7),
+            (2, 7, 3),
+            (0, 4, 6),
+            (0, 6, 2),
+            (1, 3, 7),
+            (1, 7, 5),
+        )
+    )
+    arguments = (
+        points,
+        np.arange(0, 37, 3),
+        triangles.reshape(-1),
+        np.repeat(np.arange(6), 2),
+        np.tile(np.asarray((-1, 0)), (6, 1)),
+    )
+    for policy in (PlcBoundaryPolicy.FIXED, PlcBoundaryPolicy.CONFORMING):
+        loose = recover_plc_3d(*arguments, boundary_policy=policy)
+        declared = recover_plc_3d(*arguments, facet_planes=planes, boundary_policy=policy)
+        assert loose.plc_edges.shape[0] == 18
+        assert declared.plc_edges.shape[0] == 12
+        assert declared.segments.shape[0] == 12
+        np.testing.assert_array_equal(declared.points, points)
+        assert declared.faces.shape[0] == 12
+
+
 def test_surface_envelope_exposes_unsigned_distance_error_evidence() -> None:
     triangles = np.asarray(
         ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),

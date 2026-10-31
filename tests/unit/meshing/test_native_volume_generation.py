@@ -483,8 +483,8 @@ def test_grouped_coplanar_facet_diagonals_are_facet_owned_unless_requested() -> 
 
 
 def _declared_rotated_cube(
-    facet_planes: object | None,
-    facet_plane_tolerances: object | None = None,
+    facet_planes: np.ndarray | None,
+    facet_plane_tolerances: np.ndarray | None = None,
     boundary: PlcBoundaryPolicy = "fixed",
 ) -> NativePlcSource:
     base = _grouped_cube_source(angle=0.3).complex
