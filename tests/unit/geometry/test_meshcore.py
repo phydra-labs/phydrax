@@ -1268,6 +1268,46 @@ def test_fixed_cad_sphere_recovery_suppresses_its_splits_with_bounded_wraps() ->
     assert evidence.max_wrap_cells < recovered.tetrahedra.shape[0]
 
 
+@pytest.mark.parametrize(
+    "policy", [PlcBoundaryPolicy.FIXED, PlcBoundaryPolicy.CONFORMING]
+)
+def test_cylinder_crease_split_cavity_around_a_recovered_subface_recovers(
+    policy: PlcBoundaryPolicy,
+) -> None:
+    # A CAD cylinder PLC (745 points, caps declared on their exact planes).
+    # The split point of a lateral crease edge has a conflict cavity that
+    # reaches both sides of a recovered subface on that edge; inserting its
+    # cone erased the subface and failed after the topology write
+    # (NONREPRESENTABLE POINT:764, INTERNAL_ERROR). The insertion is now
+    # refused unchanged and the point goes into a star-shaped cavity.
+    data = np.load(
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "meshing"
+        / "cylinder_declared_caps_plc.npz"
+    )
+    source_count = data["points"].shape[0]
+    recovered = recover_plc_3d(
+        data["points"],
+        data["polygon_offsets"],
+        data["polygon_vertices"],
+        data["polygon_facets"],
+        data["facet_regions"],
+        segments=data["segments"],
+        facet_tolerances=data["facet_tolerances"],
+        segment_tolerances=data["segment_tolerances"],
+        boundary_policy=policy,
+        facet_planes=data["facet_planes"],
+        facet_plane_tolerances=data["facet_plane_tolerances"],
+    )
+    assert recovered.status is MeshcoreStatus.OK
+    np.testing.assert_array_equal(recovered.points[:source_count], data["points"])
+    assert recovered.tetrahedra.shape[0] > 0
+    if policy is PlcBoundaryPolicy.FIXED:
+        assert recovered.faces.shape[0] == data["polygon_facets"].shape[0]
+        assert not np.any(recovered.witness_strata[source_count:])
+
+
 def _tilted_prism() -> tuple[np.ndarray, ...]:
     # A unit-square prism whose top facet lies on z = 1 + 0.1 x + 0.3 y, with
     # six correctly rounded top vertices fanned into six triangles that are

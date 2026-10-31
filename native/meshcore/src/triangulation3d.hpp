@@ -174,8 +174,6 @@ class Triangulation3D {
     return valid_point_tet(cell);
   }
   std::size_t largest_cavity() const { return largest_cavity_; }
-  int64_t constrained_facets() const { return constrained_facets_; }
-  void count_constrained_facet() { ++constrained_facets_; }
 
   int32_t build(std::span<const int32_t> order, std::span<char> alive) {
     const std::size_t count = order.size();
@@ -272,6 +270,12 @@ class Triangulation3D {
     return orient3d(q[0], q[1], q[2], q[3]);
   }
 
+  // Inserts point p by the cone over its conflict cavity, which grows only
+  // through unconstrained faces. Refusals leave the complex unchanged:
+  // CONSTRAINT_INTERSECTION when a constrained face has the cavity on both
+  // sides (the cone would erase it); UNRESOLVED when the cavity is not
+  // star-shaped from p or would bury a vertex of an unweighted triangulation
+  // (the complex is no longer Delaunay after a caller's local edits).
   int32_t insert(int32_t p, std::span<char> alive, int32_t* duplicate = nullptr) {
     next_stamp();
     const int32_t origin = locate(ref(p));
@@ -294,32 +298,21 @@ class Triangulation3D {
     }
     int32_t status = grow_cavity(origin, p);
     if (status != PHX_MC_OK) return status;
-    status = removed_vertices();
-    if (status != PHX_MC_OK) return status;
-    if (constrained_facets_ == 0) {
-      // An inverted cone means the cavity was not star-shaped from p (the
-      // complex is no longer Delaunay); UNRESOLVED tells the caller to rebuild.
-      const ConeInsertion inserted = insert_checked_cone(
-          complex_, edit_,
-          [this](const int32_t* v) {
-            return orient3d_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), v[0], v[1], v[2],
-                                v[3]) > 0;
-          },
-          p, cavity_, boundary_, !removed_.empty());
-      switch (inserted) {
-        case ConeInsertion::kApplied: break;
-        case ConeInsertion::kInvertedCell:
-        case ConeInsertion::kRemovesVertex: return PHX_MC_UNRESOLVED;
-        case ConeInsertion::kSlotLimit: return PHX_MC_INDEX_RANGE_ERROR;
-        case ConeInsertion::kInternal: return PHX_MC_INTERNAL_ERROR;
-      }
-    } else {
-      EditStatus edit = stage_constrained(p);
-      if (edit == EditStatus::kOk) edit = edit_.commit();
-      if (edit != EditStatus::kOk) {
-        edit_.rollback();
-        return refuse(edit);
-      }
+    if (constraint_inside_) return PHX_MC_CONSTRAINT_INTERSECTION;
+    collect_removed_vertices();
+    const ConeInsertion inserted = insert_checked_cone(
+        complex_, edit_,
+        [this](const int32_t* v) {
+          return orient3d_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), v[0], v[1], v[2],
+                              v[3]) > 0;
+        },
+        p, cavity_, boundary_, !weights_.empty());
+    switch (inserted) {
+      case ConeInsertion::kApplied: break;
+      case ConeInsertion::kInvertedCell:
+      case ConeInsertion::kRemovesVertex: return PHX_MC_UNRESOLVED;
+      case ConeInsertion::kSlotLimit: return PHX_MC_INDEX_RANGE_ERROR;
+      case ConeInsertion::kInternal: return PHX_MC_INTERNAL_ERROR;
     }
     for (int32_t vertex : removed_) alive[static_cast<std::size_t>(vertex)] = 0;
     largest_cavity_ = std::max(largest_cavity_, cavity_.size());
@@ -431,21 +424,6 @@ class Triangulation3D {
     std::fill(vertex_stamp_.begin(), vertex_stamp_.end(), 0U);
     stamp_value_ = 1;
   }
-  int32_t refuse(EditStatus edit) const {
-    switch (edit) {
-      case EditStatus::kSlotLimit: return PHX_MC_INDEX_RANGE_ERROR;
-      case EditStatus::kConstraintViolation: return PHX_MC_CONSTRAINT_INTERSECTION;
-      case EditStatus::kOk: return PHX_MC_OK;
-      case EditStatus::kNotLive:
-      case EditStatus::kDuplicate:
-      case EditStatus::kNonManifold:
-      case EditStatus::kBoundaryMismatch:
-      case EditStatus::kInverted:
-        return constrained_facets_ == 0 ? PHX_MC_INTERNAL_ERROR : PHX_MC_CONSTRAINT_INTERSECTION;
-      case EditStatus::kInternal: return PHX_MC_INTERNAL_ERROR;
-    }
-    return PHX_MC_INTERNAL_ERROR;
-  }
   bool finite_conflict(const Tetrahedron& current, int32_t p) const {
     const int32_t* v = current.v;
     if (weights_.empty()) {
@@ -480,14 +458,21 @@ class Triangulation3D {
     current.state = result ? kConflict : kNoConflict;
     return result;
   }
+  // Grows the conflict cavity of p through unconstrained faces and records
+  // in constraint_inside_ whether a constrained face has cavity cells on
+  // both sides (reached around it).
   int32_t grow_cavity(int32_t origin, int32_t p) {
     if (!valid_point_tet(origin)) return PHX_MC_INTERNAL_ERROR;
     cavity_.clear();
     boundary_.clear();
     stack_.clear();
+    constraint_inside_ = false;
     mutable_tet(origin).state = kInCavity;
     cavity_.push_back(origin);
     stack_.push_back(origin);
+    const auto in_cavity = [this](int32_t cell) {
+      return tet(cell).stamp == stamp_value_ && tet(cell).state == kInCavity;
+    };
     while (!stack_.empty()) {
       const int32_t t = stack_.back();
       stack_.pop_back();
@@ -495,8 +480,8 @@ class Triangulation3D {
       for (int k = 0; k < 4; ++k) {
         const int32_t neighbor = tet(t).n[k];
         if (!valid_point_tet(neighbor)) return PHX_MC_INTERNAL_ERROR;
-        if (tet(neighbor).stamp == stamp_value_ &&
-            tet(neighbor).state == kInCavity) {
+        if (in_cavity(neighbor)) {
+          if (complex_.constraint(t, k) != kNoConstraint) constraint_inside_ = true;
           continue;
         }
         bool topology_valid = true;
@@ -516,9 +501,15 @@ class Triangulation3D {
         }
       }
     }
+    // A constrained boundary face whose outer cell joined the cavity later.
+    for (const BoundaryFacet& face : boundary_) {
+      if (in_cavity(face.outside)) constraint_inside_ = true;
+    }
     return PHX_MC_OK;
   }
-  int32_t removed_vertices() {
+  // The cavity vertices absent from the cavity boundary (a regular
+  // triangulation buries them).
+  void collect_removed_vertices() {
     for (const BoundaryFacet& face : boundary_) {
       const Tetrahedron& current = tet(face.tet);
       for (int slot = 0; slot < 4; ++slot) {
@@ -538,28 +529,6 @@ class Triangulation3D {
         }
       }
     }
-    if (!removed_.empty()) {
-      return weights_.empty() || constrained_facets_ != 0
-          ? (constrained_facets_ != 0 ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_INTERNAL_ERROR)
-          : PHX_MC_OK;
-    }
-    return PHX_MC_OK;
-  }
-  EditStatus stage_constrained(int32_t p) {
-    edit_.begin();
-    for (int32_t t : cavity_) {
-      const EditStatus status = edit_.remove(t);
-      if (status != EditStatus::kOk) return status;
-    }
-    for (const BoundaryFacet& face : boundary_) {
-      Tetrahedron cone = tet(face.tet);
-      cone.v[face.slot] = p;
-      const EditStatus status = edit_.add(cone.v, nullptr, complex_.region(face.tet));
-      if (status != EditStatus::kOk) return status;
-    }
-    return edit_.validate([&](const int32_t* v) {
-      return orient3d(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])) > 0;
-    });
   }
   int32_t initialize(int32_t a, int32_t b, int32_t c, int32_t d) {
     const int32_t root = complex_.allocate();
@@ -610,7 +579,7 @@ class Triangulation3D {
   std::uint32_t stamp_value_ = 0;
   std::uint64_t walk_step_ = 0;
   int32_t hint_ = 0;
-  int64_t constrained_facets_ = 0;
+  bool constraint_inside_ = false;
   std::size_t largest_cavity_ = 0;
   std::vector<int32_t> cavity_, stack_, removed_;
   std::vector<BoundaryFacet> boundary_;
