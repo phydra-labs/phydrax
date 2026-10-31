@@ -731,6 +731,42 @@ def _span_enclosures_for_chart(
 
 
 
+def _spline_interpolation_bound_from_enclosures(
+    chart: _ExactUVChart,
+    enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...],
+    /,
+) -> float:
+    """Affine interpolation bound of one chart cell from its span Hessian enclosures."""
+    if not enclosures:
+        return math.inf
+    width_u = max(point[0] for point in chart) - min(point[0] for point in chart)
+    width_v = max(point[1] for point in chart) - min(point[1] for point in chart)
+    component_bounds: list[Fraction] = []
+    for component in range(len(enclosures[0].duu_bounds)):
+        maximum_uu = Fraction(0)
+        maximum_uv = Fraction(0)
+        maximum_vv = Fraction(0)
+        for enclosure in enclosures:
+            bounds_uu = enclosure.duu_bounds[component]
+            bounds_uv = enclosure.duv_bounds[component]
+            bounds_vv = enclosure.dvv_bounds[component]
+            maximum_uu = max(maximum_uu, abs(bounds_uu[0]), abs(bounds_uu[1]))
+            maximum_uv = max(maximum_uv, abs(bounds_uv[0]), abs(bounds_uv[1]))
+            maximum_vv = max(maximum_vv, abs(bounds_vv[0]), abs(bounds_vv[1]))
+        component_bounds.append(
+            (
+                maximum_uu * width_u * width_u
+                + 2 * maximum_uv * width_u * width_v
+                + maximum_vv * width_v * width_v
+            )
+            / 2
+        )
+    squared = sum((value * value for value in component_bounds), Fraction(0))
+    return fraction_endpoint(
+        fraction_sqrt_interval(squared)[1], upper=True, saturate=True
+    )
+
+
 def _exact_spline_interpolation_bounds(
     cells: np.ndarray,
     spans: tuple[RationalBSplineSurfaceSpan, ...],
@@ -739,47 +775,8 @@ def _exact_spline_interpolation_bounds(
 ) -> np.ndarray:
     result = np.full((cells.shape[0],), np.inf, dtype=np.float64)
     for row, chart in enumerate(exact_charts):
-        enclosures = _span_enclosures_for_chart(spans, chart)
-        if not enclosures:
-            continue
-        vertices = chart
-        width_u = max(point[0] for point in vertices) - min(
-            point[0] for point in vertices
-        )
-        width_v = max(point[1] for point in vertices) - min(
-            point[1] for point in vertices
-        )
-        component_bounds: list[Fraction] = []
-        for component in range(len(enclosures[0].duu_bounds)):
-            maximum_uu = Fraction(0)
-            maximum_uv = Fraction(0)
-            maximum_vv = Fraction(0)
-            for enclosure in enclosures:
-                bounds_uu = enclosure.duu_bounds[component]
-                bounds_uv = enclosure.duv_bounds[component]
-                bounds_vv = enclosure.dvv_bounds[component]
-                maximum_uu = max(
-                    maximum_uu, abs(bounds_uu[0]), abs(bounds_uu[1])
-                )
-                maximum_uv = max(
-                    maximum_uv, abs(bounds_uv[0]), abs(bounds_uv[1])
-                )
-                maximum_vv = max(
-                    maximum_vv, abs(bounds_vv[0]), abs(bounds_vv[1])
-                )
-            component_bounds.append(
-                (
-                    maximum_uu * width_u * width_u
-                    + 2 * maximum_uv * width_u * width_v
-                    + maximum_vv * width_v * width_v
-                )
-                / 2
-            )
-        squared = sum(
-            (value * value for value in component_bounds), Fraction(0)
-        )
-        result[row] = fraction_endpoint(
-            fraction_sqrt_interval(squared)[1], upper=True, saturate=True
+        result[row] = _spline_interpolation_bound_from_enclosures(
+            chart, _span_enclosures_for_chart(spans, chart)
         )
     return result
 

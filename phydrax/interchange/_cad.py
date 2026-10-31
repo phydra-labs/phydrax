@@ -49,6 +49,7 @@ from ..geometry.brep._correspondence import (
     _affine_surface_frame,
     _plane_parameter_vector,
     native_edge_pcurve,
+    torus_circle_pcurve,
 )
 from ..geometry.brep._intersection import (
     CurveSurfaceIntersectionRoot,
@@ -1631,6 +1632,30 @@ def _aligned_period_axis(
     return None
 
 
+def _coedge_period_binding(
+    face_patch: AbstractSurfacePatch,
+    patch: AbstractSurfacePatch | None,
+    axis: int | None,
+    pcurve: AbstractCurve,
+    /,
+) -> tuple[AbstractSurfacePatch | None, int | None] | None:
+    """Bind a native-turn coedge endpoint to the period of its own face.
+
+    The edge owner's period when the face carries that patch, else a declared
+    period of the face patch aligned with the use, else the p-curve's own native
+    turn. ``None`` means the use has no symbolic support: a curve-owned full turn
+    does not fabricate it for an externally rounded p-curve parameterization.
+    """
+    if patch is not None and carrier_payload(face_patch) == carrier_payload(patch):
+        return patch, axis
+    aligned = _aligned_period_axis(face_patch, pcurve)
+    if aligned is not None:
+        return face_patch, aligned
+    if pcurve.native_period_symbol() == "two_pi":
+        return None, None
+    return None
+
+
 def _sweep_domain(
     patch: AbstractSurfacePatch, axis: int, /
 ) -> tuple[float, float] | None:
@@ -1720,6 +1745,13 @@ def recover_pcurve(
     candidate = native_edge_pcurve(curve, patch)
     if candidate is None and isinstance(curve, CircleCurve):
         candidate = _parallel_plane_circle_pcurve(patch, curve)
+    if (
+        candidate is None
+        and isinstance(curve, CircleCurve)
+        and isinstance(patch, TorusPatch)
+    ):
+        # Rounded torus angles: publication certifies the face gap.
+        candidate = torus_circle_pcurve(curve, patch)
     if candidate is not None:
         return candidate
     if policy is not None:
@@ -3274,19 +3306,10 @@ class CadStage:
             )
             for coedge in uses:
                 pcurve = pcurves[coedge]
-                face_patch = self.faces[coedge_faces[coedge]].patch
-                binding: tuple[AbstractSurfacePatch | None, int | None]
-                if patch is not None and carrier_payload(face_patch) == carrier_payload(
-                    patch
-                ):
-                    binding = patch, axis
-                elif (aligned := _aligned_period_axis(face_patch, pcurve)) is not None:
-                    binding = face_patch, aligned
-                elif pcurve.native_period_symbol() == "two_pi":
-                    binding = None, None
-                else:
-                    # A curve-owned full turn does not fabricate the same
-                    # symbolic support for an externally rounded p-curve parameterization.
+                binding = _coedge_period_binding(
+                    self.faces[coedge_faces[coedge]].patch, patch, axis, pcurve
+                )
+                if binding is None:
                     continue
                 coedge_roots[coedge] = (
                     NativePeriodEndpoint(pcurve, *binding, rational=rational, turns=0),
@@ -3303,15 +3326,15 @@ class CadStage:
             for coedge, source in enumerate(coedge_edges):
                 if source != edge:
                     continue
+                binding = _coedge_period_binding(
+                    self.faces[coedge_faces[coedge]].patch, patch, 0, pcurves[coedge]
+                )
+                if binding is None:
+                    continue
                 endpoints = [
                     None
                     if phase is None
-                    else NativePeriodEndpoint(
-                        pcurves[coedge],
-                        patch,
-                        0,
-                        turns=phase,
-                    )
+                    else NativePeriodEndpoint(pcurves[coedge], *binding, turns=phase)
                     for phase in phases
                 ]
                 coedge_roots[coedge] = endpoints[0], endpoints[1]
