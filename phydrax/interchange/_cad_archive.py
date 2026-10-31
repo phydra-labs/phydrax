@@ -1451,6 +1451,27 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
         )
         patch.validate_exact_transfer_chain()
         return patch
+    from ..geometry._meshing_domain import _PlacedSurfacePatch
+
+    if model_type is _PlacedSurfacePatch:
+        if set(fields) != {
+            "source",
+            "placement",
+            "linear",
+            "offset",
+            "orientation_sign",
+        }:
+            raise ValueError("Stored placed surface field set is not canonical.")
+        placed = _PlacedSurfacePatch(fields["source"], fields["placement"])
+        if (
+            placed.orientation_sign != fields["orientation_sign"]
+            or not np.array_equal(np.asarray(placed.linear), np.asarray(fields["linear"]))
+            or not np.array_equal(np.asarray(placed.offset), np.asarray(fields["offset"]))
+        ):
+            raise ValueError(
+                "Stored placed surface realization differs from its exact placement."
+            )
+        return placed
     raise TypeError(f"No explicit CAD constructor for {model_type.__qualname__}.")
 
 

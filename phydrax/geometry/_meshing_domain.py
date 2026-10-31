@@ -912,6 +912,304 @@ def _exact_spline_normal_turn_bounds(
     return result
 
 
+type _Barycentric = tuple[Fraction, Fraction, Fraction]
+type _BarycentricTriangle = tuple[_Barycentric, _Barycentric, _Barycentric]
+# Leaf: (barycentric triangle, Hessian term, leaf upper bound, vertex resolution).
+type _InterpolationLeaf = tuple[
+    _BarycentricTriangle, Fraction | None, Fraction | None, Fraction
+]
+_UNIT_BARYCENTRICS: tuple[_Barycentric, _Barycentric, _Barycentric] = (
+    (Fraction(1), Fraction(0), Fraction(0)),
+    (Fraction(0), Fraction(1), Fraction(0)),
+    (Fraction(0), Fraction(0), Fraction(1)),
+)
+
+
+def _barycentric_midpoint(first: _Barycentric, second: _Barycentric, /) -> _Barycentric:
+    return (
+        (first[0] + second[0]) / 2,
+        (first[1] + second[1]) / 2,
+        (first[2] + second[2]) / 2,
+    )
+
+
+def _fraction_magnitude(lower: float, upper: float, /) -> Fraction:
+    return max(abs(Fraction(lower)), abs(Fraction(upper)))
+
+
+def _adaptive_triangle_interpolation_bounds(
+    surface: AbstractSurfacePatch,
+    charts: Sequence[_ExactUVChart],
+    budgets: Sequence[Fraction],
+    /,
+) -> tuple[Fraction | None, ...]:
+    """Bound ``|S - I_T S|`` on exact UV triangles ``T``, refining each until decided.
+
+    On a leaf ``L`` of a midpoint refinement of ``T``,
+    ``S - I_T S = (S - I_L S) + (I_L S - I_T S)``. The first term is bounded by the
+    leaf's interval Hessian, the second is affine on ``L`` and so bounded by its
+    largest norm at the leaf vertices, where ``S`` is enclosed pointwise and
+    ``I_T S`` is the barycentric combination of the enclosed corner values. A row
+    refines its leaves above its budget until its bound meets the budget, a vertex
+    lower bound exceeds it, or a leaf above it reaches binary64 enclosure resolution.
+    ``None`` marks a row whose Hessian enclosure is nonfinite.
+    """
+    if len(charts) != len(budgets):
+        raise ValueError("Every interpolation chart needs exactly one budget.")
+    if any(len(chart) != 3 for chart in charts):
+        raise ValueError("Adaptive interpolation bounds require triangular UV charts.")
+    if not charts:
+        return ()
+    point_program = prepare_interval_function(surface.evaluate, 2)
+    hessian_program = prepare_interval_function(
+        jax.jacfwd(jax.jacfwd(surface.evaluate)), 2
+    )
+
+    def chart_point(row: int, weights: _Barycentric, /) -> tuple[Fraction, Fraction]:
+        chart = charts[row]
+        return (
+            weights[0] * chart[0][0]
+            + weights[1] * chart[1][0]
+            + weights[2] * chart[2][0],
+            weights[0] * chart[0][1]
+            + weights[1] * chart[1][1]
+            + weights[2] * chart[2][1],
+        )
+
+    def point_enclosures(
+        points: Sequence[tuple[Fraction, Fraction]], /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        boxes = np.asarray(
+            [
+                _outward_surface_parameter_box(
+                    surface,
+                    (float(point[0]), float(point[1])),
+                    (float(point[0]), float(point[1])),
+                )
+                for point in points
+            ],
+            dtype=np.float64,
+        )
+        lower, upper = point_program.evaluate(boxes[:, 0], boxes[:, 1])
+        lower_ = np.asarray(lower, dtype=np.float64).reshape(len(points), -1)
+        upper_ = np.asarray(upper, dtype=np.float64).reshape(len(points), -1)
+        if not np.all(np.isfinite(lower_)) or not np.all(np.isfinite(upper_)):
+            raise ValueError("Source surface point enclosures must be finite.")
+        return lower_, upper_
+
+    corner_lower, corner_upper = point_enclosures(
+        [point for chart in charts for point in chart]
+    )
+    corner_values = tuple(
+        tuple(
+            tuple(
+                (
+                    Fraction(float(corner_lower[3 * row + corner, axis])),
+                    Fraction(float(corner_upper[3 * row + corner, axis])),
+                )
+                for axis in range(corner_lower.shape[1])
+            )
+            for corner in range(3)
+        )
+        for row in range(len(charts))
+    )
+    resolution_floors = tuple(
+        max(
+            (
+                max(abs(bounds[0]), abs(bounds[1]))
+                for corner in values
+                for bounds in corner
+            ),
+            default=Fraction(0),
+        )
+        * Fraction(1, 2**48)
+        + Fraction(1, 2**1022)
+        for values in corner_values
+    )
+    # (upper, lower) of |S(q) - I_T S(q)| at each refinement vertex; zero at corners.
+    vertex_terms: dict[tuple[int, _Barycentric], tuple[Fraction, Fraction]] = {
+        (row, weights): (Fraction(0), Fraction(0))
+        for row in range(len(charts))
+        for weights in _UNIT_BARYCENTRICS
+    }
+
+    def evaluate_vertices(keys: Sequence[tuple[int, _Barycentric]], /) -> None:
+        missing = tuple(dict.fromkeys(key for key in keys if key not in vertex_terms))
+        if not missing:
+            return
+        lower, upper = point_enclosures(
+            [chart_point(row, weights) for row, weights in missing]
+        )
+        for index, (row, weights) in enumerate(missing):
+            upper_squared = Fraction(0)
+            lower_squared = Fraction(0)
+            for axis, corner_axis in enumerate(zip(*corner_values[row], strict=True)):
+                interpolated_lower = sum(
+                    (
+                        weight * bounds[0]
+                        for weight, bounds in zip(weights, corner_axis, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                interpolated_upper = sum(
+                    (
+                        weight * bounds[1]
+                        for weight, bounds in zip(weights, corner_axis, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                difference_lower = (
+                    Fraction(float(lower[index, axis])) - interpolated_upper
+                )
+                difference_upper = (
+                    Fraction(float(upper[index, axis])) - interpolated_lower
+                )
+                magnitude = max(abs(difference_lower), abs(difference_upper))
+                upper_squared += magnitude * magnitude
+                if difference_lower > 0:
+                    lower_squared += difference_lower * difference_lower
+                elif difference_upper < 0:
+                    lower_squared += difference_upper * difference_upper
+            vertex_terms[(row, weights)] = (
+                fraction_sqrt_interval(upper_squared)[1],
+                fraction_sqrt_interval(lower_squared)[0],
+            )
+
+    def hessian_terms(
+        leaves: Sequence[tuple[int, _BarycentricTriangle]], /
+    ) -> list[Fraction | None]:
+        boxes = []
+        for row, triangle in leaves:
+            points = [chart_point(row, weights) for weights in triangle]
+            boxes.append(
+                _outward_surface_parameter_box(
+                    surface,
+                    tuple(
+                        float(min(point[axis] for point in points)) for axis in range(2)
+                    ),
+                    tuple(
+                        float(max(point[axis] for point in points)) for axis in range(2)
+                    ),
+                )
+            )
+        boxes_ = np.asarray(boxes, dtype=np.float64)
+        lower, upper = hessian_program.evaluate(boxes_[:, 0], boxes_[:, 1])
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
+        terms: list[Fraction | None] = []
+        for index in range(len(leaves)):
+            low = lower_[index]
+            high = upper_[index]
+            if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
+                terms.append(None)
+                continue
+            widths = tuple(
+                Fraction(float(boxes_[index, 1, axis]))
+                - Fraction(float(boxes_[index, 0, axis]))
+                for axis in range(2)
+            )
+            squared = Fraction(0)
+            for physical in range(low.shape[0]):
+                component = (
+                    sum(
+                        (
+                            _fraction_magnitude(
+                                float(low[physical, first, second]),
+                                float(high[physical, first, second]),
+                            )
+                            * widths[first]
+                            * widths[second]
+                            for first in range(2)
+                            for second in range(2)
+                        ),
+                        Fraction(0),
+                    )
+                    / 2
+                )
+                squared += component * component
+            terms.append(fraction_sqrt_interval(squared)[1])
+        return terms
+
+    def make_leaves(
+        pending: Sequence[tuple[int, _BarycentricTriangle]], /
+    ) -> list[tuple[int, _InterpolationLeaf]]:
+        evaluate_vertices(
+            [(row, weights) for row, triangle in pending for weights in triangle]
+        )
+        result: list[tuple[int, _InterpolationLeaf]] = []
+        for (row, triangle), hessian in zip(pending, hessian_terms(pending), strict=True):
+            terms = [vertex_terms[(row, weights)] for weights in triangle]
+            vertex_upper = max(term[0] for term in terms)
+            resolution = max(term[0] - term[1] for term in terms) + resolution_floors[row]
+            result.append(
+                (
+                    row,
+                    (
+                        triangle,
+                        hessian,
+                        None if hessian is None else hessian + vertex_upper,
+                        resolution,
+                    ),
+                )
+            )
+        return result
+
+    leaves: list[list[_InterpolationLeaf]] = [[] for _ in charts]
+    for row, leaf in make_leaves(
+        [(row, _UNIT_BARYCENTRICS) for row in range(len(charts))]
+    ):
+        leaves[row].append(leaf)
+    row_lower = [Fraction(0) for _ in charts]
+    active = set(range(len(charts)))
+    while active:
+        pending: list[tuple[int, _BarycentricTriangle]] = []
+        for row in sorted(active):
+            budget = budgets[row]
+            above = [leaf for leaf in leaves[row] if leaf[2] is None or leaf[2] > budget]
+            if (
+                not above
+                or row_lower[row] > budget
+                or any(leaf[1] is None or leaf[1] <= leaf[3] for leaf in above)
+            ):
+                active.discard(row)
+                continue
+            leaves[row] = [
+                leaf for leaf in leaves[row] if not (leaf[2] is None or leaf[2] > budget)
+            ]
+            for triangle, _, _, _ in above:
+                first, second, third = triangle
+                first_second = _barycentric_midpoint(first, second)
+                second_third = _barycentric_midpoint(second, third)
+                third_first = _barycentric_midpoint(third, first)
+                pending.extend(
+                    (
+                        (row, (first, first_second, third_first)),
+                        (row, (first_second, second, second_third)),
+                        (row, (third_first, second_third, third)),
+                        (row, (first_second, second_third, third_first)),
+                    )
+                )
+        if not pending:
+            break
+        for row, leaf in make_leaves(pending):
+            leaves[row].append(leaf)
+            row_lower[row] = max(
+                row_lower[row],
+                *(vertex_terms[(row, weights)][1] for weights in leaf[0]),
+            )
+    result: list[Fraction | None] = []
+    for row_leaves in leaves:
+        bounds = [leaf[2] for leaf in row_leaves]
+        result.append(
+            None
+            if any(bound is None for bound in bounds)
+            else max(
+                (bound for bound in bounds if bound is not None), default=Fraction(0)
+            )
+        )
+    return tuple(result)
+
+
 def _source_tree_payload(value: object, /) -> dict[str, object]:
     identity = getattr(value, "identity_payload", None)
     return {
@@ -2447,6 +2745,52 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 fraction_sqrt_interval(squared)[1], upper=True, saturate=True
             )
         return result
+
+    def adaptive_interpolation_bounds(
+        self,
+        patch: int,
+        charts: Sequence[_ExactUVChart],
+        budgets: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction | None, ...]:
+        """Bound surface-to-affine interpolation over exact UV triangles to a budget.
+
+        Exact spline carriers keep their span Hessian bound. Other carriers refine
+        each triangle adaptively until its bound meets ``budgets[row]``, a vertex
+        lower bound exceeds it, or binary64 enclosure resolution is reached.
+        ``None`` marks a row without a finite bound.
+        """
+        if (
+            isinstance(patch, bool)
+            or not isinstance(patch, int)
+            or patch < 0
+            or patch >= len(self.patches)
+        ):
+            raise ValueError(
+                "adaptive_interpolation_bounds.patch must name a source surface."
+            )
+        exact_charts = tuple(
+            tuple((Fraction(point[0]), Fraction(point[1])) for point in chart)
+            for chart in charts
+        )
+        surface = self.patches[patch].surface
+        spans = _exact_rational_surface_spans(surface)
+        if spans is None:
+            return _adaptive_triangle_interpolation_bounds(
+                surface, exact_charts, tuple(Fraction(value) for value in budgets)
+            )
+        cells = np.asarray(
+            [
+                [[float(value) for value in point] for point in chart]
+                for chart in exact_charts
+            ],
+            dtype=np.float64,
+        ).reshape(len(exact_charts), -1, 2)
+        bounds = _exact_spline_interpolation_bounds(cells, spans, exact_charts)
+        return tuple(
+            Fraction(float(value)) if math.isfinite(float(value)) else None
+            for value in bounds
+        )
 
     def normal_turn_bounds(self, patch: int, charts: _MeshingChartInput, /) -> np.ndarray:
         """Bound normal rotation in radians over complete UV chart cells."""

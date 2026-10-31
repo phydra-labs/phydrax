@@ -4547,11 +4547,37 @@ def _expected_array(value: object, /) -> np.ndarray:
 def _rebuild_cell_validity_certificate(
     value: object, mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> CellValidityCertificate:
+    import dataclasses
+
+    from phydrax._model._structure import _restore_dataclass
+
     if type(value) is not CellValidityCertificate:
         raise TypeError("Stored chart validity proof has an unexpected concrete type.")
     policy = _rebuild_as(value.policy, CellValidityPolicy)
+    # The stored proof carries its coordinate map in archive form; renew it on the
+    # same mesh, require the exact renewed operands, then recompute every proof.
+    stored_mesh = None if value.mesh is None else _rebuild_as(value.mesh, CellMesh)
+    stored_geometry = _rebuild_geometry_for_mesh(
+        value.geometry, mesh if stored_mesh is None else stored_mesh
+    )
+    if not _same_tree_content(stored_geometry, geometry) or (
+        stored_mesh is not None and not _same_tree_content(stored_mesh, mesh)
+    ):
+        raise ValueError("Stored chart validity proof names different operands.")
+    fields = {
+        field.name: object.__getattribute__(value, field.name)
+        for field in dataclasses.fields(value)
+    }
+    fields.update(
+        geometry=geometry,
+        mesh=None if stored_mesh is None else mesh,
+        policy=policy,
+    )
     return CellValidityCertificate.from_stored_fields(
-        value, mesh, geometry, policy=policy
+        _restore_dataclass(CellValidityCertificate, fields),
+        None if stored_mesh is None else mesh,
+        geometry,
+        policy=policy,
     )
 
 
