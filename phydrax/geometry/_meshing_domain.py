@@ -49,6 +49,7 @@ from .brep._patches import (
 
 if TYPE_CHECKING:
     from ._curve_boundary import ParametricCurveBoundarySource
+    from .multiregion_surface import MultiRegionSurfaceTopology
 
 type MeshingSourceAccuracy = Literal[
     "exact_represented",
@@ -3153,6 +3154,61 @@ class MeshingDomain(StrictModule, NonTrainableState):
             angle = min(pi_upper, pi_upper * chord / 2)
             result[row] = fraction_endpoint(angle, upper=True, saturate=True)
         return result
+
+    def multiregion_surface(
+        self,
+        coordinates: ArrayLike,
+        triangles: ArrayLike,
+        triangle_patches: ArrayLike,
+        /,
+        *,
+        vertex_global_ids: ArrayLike,
+        cell_global_ids: ArrayLike,
+    ) -> MultiRegionSurfaceTopology | None:
+        """Label a patch triangulation by the regions on both sides of each patch.
+
+        Triangles follow their patch's oriented normal. A region whose boundary
+        uses the patch with sign ``+1`` lies behind that normal (``left``), one
+        with sign ``-1`` in front (``right``); an unclaimed side is the exterior
+        boundary label. Returns ``None`` when no patch bounds two regions, where
+        every region boundary is an ordinary manifold surface.
+        """
+        from .multiregion_surface import MultiRegionSurfaceSeed
+
+        sides: dict[int, list[tuple[int, int]]] = {}
+        for index, region in enumerate(self.regions):
+            for patch, sign in region.boundary:
+                sides.setdefault(patch, []).append((index, sign))
+        if all(len(uses) < 2 for uses in sides.values()):
+            return None
+        exterior = len(self.regions)
+        patch_labels = np.full((len(self.patches), 2), -1, dtype=np.int64)
+        for patch, uses in sides.items():
+            left = tuple(index for index, sign in uses if sign > 0)
+            right = tuple(index for index, sign in uses if sign < 0)
+            if len(left) > 1 or len(right) > 1:
+                raise ValueError(
+                    "A multiregion patch must separate at most one region per side."
+                )
+            patch_labels[patch] = (
+                left[0] if left else exterior,
+                right[0] if right else exterior,
+            )
+        rows = np.asarray(triangle_patches, dtype=np.int64)
+        labels = patch_labels[rows]
+        if np.any(labels < 0):
+            raise ValueError("Every multiregion surface patch must bound a region.")
+        seed = MultiRegionSurfaceSeed(
+            coordinates,
+            triangles,
+            labels,
+            (*(region.name for region in self.regions), "exterior"),
+            (*("finite",) * len(self.regions), "boundary"),
+            source=self.domain_id,
+            vertex_global_ids=vertex_global_ids,
+            face_global_ids=cell_global_ids,
+        )
+        return seed.topology(seed.capacity_plan(resource_id=self.domain_id))
 
     def project(
         self,

@@ -55,6 +55,7 @@ from ._topology import (
 
 
 if TYPE_CHECKING:
+    from ..geometry.multiregion_surface import MultiRegionSurfaceTopology
     from ._periodic_topology import PeriodicMeshTopology
 
 
@@ -519,6 +520,7 @@ def _polygonal_mesh_topology(
     edge_ids: np.ndarray | None,
     cell_ids: np.ndarray,
     /,
+    multiregion_surface: MultiRegionSurfaceTopology | None = None,
 ) -> tuple[PolygonalConnectivity, CellComplexTopology]:
     if any(
         block.cell_kind not in ("triangle", "quadrilateral", "polygon")
@@ -547,6 +549,7 @@ def _polygonal_mesh_topology(
             for block in blocks
             if block.cell_kind == "polygon"
         ),
+        multiregion_surface=multiregion_surface,
     )
     return connectivity, _polygonal_complex(
         connectivity,
@@ -930,6 +933,7 @@ def _prepare_cell_mesh_topology(
     vertex_global_ids: ArrayLike | None,
     entity_global_ids: Mapping[int, ArrayLike] | None,
     polyhedral_connectivity: PolyhedralConnectivity | None,
+    multiregion_surface: MultiRegionSurfaceTopology | None = None,
 ) -> _PreparedCellMeshTopology:
     """Validate blocks and identities, then build connectivity and topology once."""
 
@@ -945,6 +949,13 @@ def _prepare_cell_mesh_topology(
     if polyhedral_connectivity is not None and topological_dimension != 3:
         raise ValueError(
             "polyhedral_connectivity is valid only for three-dimensional meshes."
+        )
+    if multiregion_surface is not None and (
+        topological_dimension != 2
+        or any(block.cell_kind != "triangle" for block in normalized_blocks)
+    ):
+        raise ValueError(
+            "A multiregion surface topology binds only two-dimensional triangle meshes."
         )
     general_simplex = any(
         block.cell_kind.startswith("simplex:") for block in normalized_blocks
@@ -975,6 +986,7 @@ def _prepare_cell_mesh_topology(
             global_ids,
             entity_ids.get(1),
             cell_global_ids,
+            multiregion_surface,
         )
     else:
         connectivity, topology = _volume_mesh_topology(
@@ -1237,6 +1249,7 @@ class CellMesh(StrictModule, NonTrainableState):
         numeric_version: str = "0",
         periodic_topology: PeriodicMeshTopology | None = None,
         empty_local_authority: EmptyLocalCellMeshAuthority | None = None,
+        multiregion_surface: MultiRegionSurfaceTopology | None = None,
         _prepared_topology: _PreparedCellMeshTopology | None = None,
     ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
@@ -1283,6 +1296,7 @@ class CellMesh(StrictModule, NonTrainableState):
                 vertex_global_ids=vertex_global_ids,
                 entity_global_ids=entity_global_ids,
                 polyhedral_connectivity=polyhedral_connectivity,
+                multiregion_surface=multiregion_surface,
             )
         else:
             prepared = _reused_cell_mesh_topology(
@@ -1293,6 +1307,7 @@ class CellMesh(StrictModule, NonTrainableState):
                     vertex_global_ids is not None
                     or entity_global_ids is not None
                     or polyhedral_connectivity is not None
+                    or multiregion_surface is not None
                 ),
             )
         topology_identity = prepared.topology_id
@@ -1593,7 +1608,9 @@ class CellMesh(StrictModule, NonTrainableState):
         vertex_global_ids: ArrayLike | None = None,
         cell_global_ids: ConvertibleToArray | None = None,
         numeric_version: str = "0",
+        multiregion_surface: MultiRegionSurfaceTopology | None = None,
     ) -> CellMesh:
+        """Build a triangle mesh; a labeled multiregion surface admits junction edges."""
         return cls(
             coordinates,
             (
@@ -1606,6 +1623,7 @@ class CellMesh(StrictModule, NonTrainableState):
             ),
             vertex_global_ids=vertex_global_ids,
             numeric_version=numeric_version,
+            multiregion_surface=multiregion_surface,
         )
 
     @classmethod
