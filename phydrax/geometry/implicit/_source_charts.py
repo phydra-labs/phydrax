@@ -128,7 +128,7 @@ type IntervalDerivative3x2 = tuple[
 type PhysicalPoint3 = tuple[Fraction, Fraction, Fraction]
 # Target map values: P3 Lagrange coordinate bases carry quadratic radicals.
 type ExactPoint3 = tuple[ExactScalar, ExactScalar, ExactScalar]
-type RootCorner = tuple[TrianglePoint, np.ndarray, float]
+type RootCorner = tuple[GridEdge, np.ndarray, float] | None
 
 
 @runtime_checkable
@@ -247,6 +247,8 @@ class AdaptiveImplicitRootChartMap:
         bounds: _FieldEnclosures,
         tolerance: float | None,
         maximum_normal_deviation: float | None,
+        surface: AdaptiveImplicitSurface,
+        hessian_program: PreparedIntervalFunction,
         /,
     ) -> None:
         self.mesh = mesh
@@ -262,6 +264,8 @@ class AdaptiveImplicitRootChartMap:
         self.chart_evidence = tuple(face.evidence for face in faces)
         self._faces = faces
         self._bounds = bounds
+        self._surface = surface
+        self._hessian_program = hessian_program
         self.tolerance = tolerance
         self.maximum_normal_deviation = maximum_normal_deviation
         self.witness_id = canonical_fingerprint(
@@ -335,6 +339,40 @@ class AdaptiveImplicitRootChartMap:
             results[index] = lifted
         return tuple(result for result in results if result is not None)
 
+    def refined_target_to_root_bounds(
+        self,
+        rows: Sequence[int],
+        tolerances: Sequence[float],
+        /,
+        *,
+        generations: int = 4,
+    ) -> tuple[float, ...]:
+        """Re-prove certified faces until each target-to-root bound meets its tolerance.
+
+        Each listed face is subdivided again, independently of the prepared
+        pieces, until every piece's certified target-to-root bound is at most its
+        tolerance or ``generations`` splits are spent. The returned bound is the
+        certified maximum over the new pieces, or ``inf`` where the tolerance is
+        not reached. The prepared chart is unchanged.
+        """
+        if len(rows) != len(tolerances):
+            raise ValueError("rows and tolerances must align.")
+        faces = [self._faces[int(row)] for row in rows]
+        if any(face.evidence.status != "certified" for face in faces):
+            raise ValueError("Only certified implicit charts can be refined.")
+        return tuple(
+            _run_faces(
+                self._bounds,
+                self._hessian_program,
+                [
+                    _refined_bound_steps(
+                        self._surface, face, float(tolerance), generations
+                    )
+                    for face, tolerance in zip(faces, tolerances, strict=True)
+                ],
+            )
+        )
+
     def _target_query(
         self,
         row: int,
@@ -376,15 +414,10 @@ class AdaptiveImplicitRootChartMap:
             raise ValueError(
                 "target coordinate map produced a non-finite implicit query point."
             )
-        for corner, (source_uv, root_point, root_error) in enumerate(
-            face.root_corner_points
-        ):
+        for corner, root_corner in enumerate(face.root_corner_points):
             unit = tuple(Fraction(int(index == corner)) for index in range(3))
-            if (
-                barycentric == unit
-                and face.source_parameters[corner] == source_uv
-                and np.array_equal(point.view(np.uint64), root_point.view(np.uint64))
-            ):
+            if barycentric == unit and root_corner is not None:
+                _, root_point, root_error = root_corner
                 return ImplicitRootChartPoint(
                     np.array(root_point, copy=True),
                     float(np.nextafter(root_error, np.inf)),
@@ -630,13 +663,19 @@ def _enclosed_interval(
 
 @dataclass(frozen=True, slots=True)
 class _FaceEnclosure:
-    """Enclosed face coordinates and their first derivatives, built once per face."""
+    """Enclosed face coordinates and their first and second derivatives, built once per face."""
 
     values: tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial]
     tangents: tuple[
         tuple[_EnclosedPolynomial, _EnclosedPolynomial],
         tuple[_EnclosedPolynomial, _EnclosedPolynomial],
         tuple[_EnclosedPolynomial, _EnclosedPolynomial],
+    ]
+    # Per coordinate: (P_uu, P_uv, P_vv).
+    curvatures: tuple[
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial],
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial],
+        tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial],
     ]
 
 
@@ -648,8 +687,20 @@ def _enclose_face(expressions: Polynomial3, /) -> _FaceEnclosure:
     ) -> tuple[_EnclosedPolynomial, _EnclosedPolynomial]:
         return _enclosed_derivative(value, 0), _enclosed_derivative(value, 1)
 
+    def curvature(
+        value: _EnclosedPolynomial, /
+    ) -> tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial]:
+        along_u, along_v = tangent(value)
+        return (
+            _enclosed_derivative(along_u, 0),
+            _enclosed_derivative(along_u, 1),
+            _enclosed_derivative(along_v, 1),
+        )
+
     return _FaceEnclosure(
-        (first, second, third), (tangent(first), tangent(second), tangent(third))
+        (first, second, third),
+        (tangent(first), tangent(second), tangent(third)),
+        (curvature(first), curvature(second), curvature(third)),
     )
 
 
@@ -1370,18 +1421,26 @@ def _shifted_tangents(
 
 def _piece_center(
     face: _FaceEnclosure, triangle: TriangleReference, /
-) -> tuple[np.ndarray, np.ndarray, IntervalVector2]:
-    """Enclose the target point at the piece centroid and the parameter offsets."""
+) -> tuple[np.ndarray, np.ndarray, IntervalVector2, IntervalDerivative3x2]:
+    """Enclose the target point and tangents at the piece centroid, and the offsets."""
     center: TrianglePoint = (
         (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3,
         (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3,
     )
-    coordinates = tuple(
-        _widen(
+
+    def at_center(value: _EnclosedPolynomial, /) -> Interval:
+        if not value.center:
+            return _widen((0.0, 0.0), value.error)
+        return _widen(
             _exact_interval(_evaluate_exact_polynomial(value.center, center)),
             value.error,
         )
-        for value in face.values
+
+    coordinates = tuple(at_center(value) for value in face.values)
+    tangents: IntervalDerivative3x2 = (
+        (at_center(face.tangents[0][0]), at_center(face.tangents[0][1])),
+        (at_center(face.tangents[1][0]), at_center(face.tangents[1][1])),
+        (at_center(face.tangents[2][0]), at_center(face.tangents[2][1])),
     )
     offsets: IntervalVector2 = (
         (
@@ -1397,7 +1456,98 @@ def _piece_center(
         np.asarray([value[0] for value in coordinates], dtype=np.float64),
         np.asarray([value[1] for value in coordinates], dtype=np.float64),
         offsets,
+        tangents,
     )
+
+
+def _piece_curvatures(
+    face: _FaceEnclosure, triangle: TriangleReference, /
+) -> tuple[IntervalVector3, IntervalVector3, IntervalVector3]:
+    """Enclose ``(P_uu, P_uv, P_vv)`` per coordinate over a piece; zero for P1 faces."""
+
+    def enclose(value: _EnclosedPolynomial, /) -> Interval:
+        if not value.center and value.error == 0.0:
+            return (0.0, 0.0)
+        return _enclosed_interval(value, triangle)
+
+    return (
+        (
+            enclose(face.curvatures[0][0]),
+            enclose(face.curvatures[0][1]),
+            enclose(face.curvatures[0][2]),
+        ),
+        (
+            enclose(face.curvatures[1][0]),
+            enclose(face.curvatures[1][1]),
+            enclose(face.curvatures[1][2]),
+        ),
+        (
+            enclose(face.curvatures[2][0]),
+            enclose(face.curvatures[2][1]),
+            enclose(face.curvatures[2][2]),
+        ),
+    )
+
+
+def _taylor_value_interval(
+    center_value: Interval,
+    center_gradient: IntervalVector3,
+    center_tangents: IntervalDerivative3x2,
+    gradient: IntervalVector3,
+    hessian: IntervalMatrix3,
+    tangents: IntervalDerivative3x2,
+    curvatures: tuple[IntervalVector3, IntervalVector3, IntervalVector3],
+    offsets: IntervalVector2,
+    /,
+) -> Interval:
+    """Second-order Taylor form of ``g(u) = f(P(u))`` about the piece centre ``c``.
+
+    ``g(c + d) = g(c) + Dg(c) d + d^T D^2 g(xi) d / 2`` with ``xi`` in the piece and
+    ``D^2 g_jk = P_j^T H P_k + grad f . P_jk`` enclosed over the piece. The
+    first-order term uses the narrow centre gradient, so a face whose gradient
+    turns across the piece is not charged that turn times the full offset.
+    """
+    linear = _mean_value_interval(
+        center_value, _chain_slopes(center_gradient, center_tangents), offsets
+    )
+
+    # H P_j per Hessian row: hessian_tangents[row][j] encloses (H P_j)_row.
+    hessian_tangents = tuple(_chain_slopes(hessian[row], tangents) for row in range(3))
+
+    def second(first: int, second_axis: int, curvature: int, /) -> Interval:
+        return sum_interval(
+            (
+                *(
+                    _interval_multiply(
+                        tangents[row][first], hessian_tangents[row][second_axis]
+                    )
+                    for row in range(3)
+                ),
+                *(
+                    _interval_multiply(gradient[row], curvatures[row][curvature])
+                    for row in range(3)
+                ),
+            )
+        )
+
+    def square(value: Interval, /) -> Interval:
+        magnitude = max(abs(value[0]), abs(value[1]))
+        lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
+        return (
+            float(np.nextafter(lower, -np.inf)) if lower > 0.0 else 0.0,
+            float(np.nextafter(magnitude * magnitude, np.inf)),
+        )
+
+    quadratic = sum_interval(
+        (
+            _interval_multiply(second(0, 0, 0), square(offsets[0])),
+            _interval_scale(
+                _interval_multiply(second(0, 1, 1), _interval_multiply(*offsets)), 2.0
+            ),
+            _interval_multiply(second(1, 1, 2), square(offsets[1])),
+        )
+    )
+    return _interval_add(linear, _interval_scale(quadratic, 0.5))
 
 
 def _shifted_center_box(
@@ -1468,7 +1618,7 @@ def _face_piece_steps(
             "Target coordinate map has no physical two-dimensional chart extent.",
             False,
         )
-    center_low, center_high, offsets = _piece_center(face, triangle)
+    center_low, center_high, offsets, center_tangents = _piece_center(face, triangle)
     fields, hessians = yield _BoxRequests(
         ((p_low, p_high), (center_low, center_high)), ((p_low, p_high),)
     )
@@ -1510,9 +1660,21 @@ def _face_piece_steps(
     if gradient_norm[0] <= 0.0:
         return None, "target face has no strict source-gradient norm enclosure", True
     value_low, value_high = _intersect_intervals(
-        natural_value,
-        _mean_value_interval(
-            center_value, _chain_slopes(gradient_p, target_derivatives), offsets
+        _intersect_intervals(
+            natural_value,
+            _mean_value_interval(
+                center_value, _chain_slopes(gradient_p, target_derivatives), offsets
+            ),
+        ),
+        _taylor_value_interval(
+            center_value,
+            center_gradient,
+            center_tangents,
+            gradient_p,
+            hessian_intervals,
+            target_derivatives,
+            _piece_curvatures(face, triangle),
+            offsets,
         ),
     )
     residual = (value_low, value_high)
@@ -1826,13 +1988,17 @@ _STANDARD_TRIANGLE = (
 def _prove_face_triangles(
     prove: _PieceProver,
     triangles: Sequence[TriangleReference],
+    generations: int | None = None,
 ) -> _FaceSteps[tuple[tuple[_PieceProof, ...], str]]:
     """Prove target subtriangles, splitting only the pieces that need refinement.
 
-    Each refinement generation is one face round, batched across faces.
+    Each refinement generation is one face round, batched across faces. With
+    ``generations``, a piece still undecided after that many splits leaves the
+    face unresolved.
     """
     pending = list(triangles)
     accepted: list[_PieceProof] = []
+    generation = 0
     while pending:
         children: list[TriangleReference] = []
         outcomes, _ = yield _FaceRound(prove(pending))
@@ -1842,6 +2008,8 @@ def _prove_face_triangles(
                 continue
             if not refine:
                 return tuple(accepted), detail
+            if generations is not None and generation >= generations:
+                return tuple(accepted), detail or "implicit chart refinement limit"
             split = _split_triangle(triangle)
             if split is None:
                 return tuple(
@@ -1849,6 +2017,7 @@ def _prove_face_triangles(
                 ), detail or "implicit chart reached target-parameter representability"
             children.extend(split)
         pending = children
+        generation += 1
     return tuple(accepted), ""
 
 
@@ -2270,6 +2439,16 @@ def _source_root_rows(
     return result
 
 
+def _root_rows_by_point(
+    root_rows: dict[GridEdge, tuple[np.ndarray, float]], /
+) -> dict[bytes, GridEdge]:
+    """Index retained scaffold roots by their exact point bits; the least edge wins."""
+    result: dict[bytes, GridEdge] = {}
+    for edge in sorted(root_rows):
+        result.setdefault(root_rows[edge][0].tobytes(), edge)
+    return result
+
+
 def _source_cell_rows(surface: AdaptiveImplicitSurface, /) -> dict[SourceCellKey, int]:
     return {
         _source_cell_key(np.asarray(key, dtype=np.int64)): index
@@ -2279,6 +2458,32 @@ def _source_cell_rows(surface: AdaptiveImplicitSurface, /) -> dict[SourceCellKey
     }
 
 
+def _refined_bound_steps(
+    surface: AdaptiveImplicitSurface,
+    face: _PreparedFace,
+    tolerance: float,
+    generations: int,
+) -> _FaceSteps[float]:
+    """Certified target-to-root bound of one face refined to ``tolerance``, else inf."""
+    if not math.isfinite(tolerance) or tolerance <= 0.0:
+        return math.inf
+    prove: _PieceProver = partial(
+        _face_piece_proofs,
+        surface,
+        _enclose_face(face.face_expressions),
+        source_orientation=face.orientation,
+        projected_axes=face.projected_axes,
+        tolerance=tolerance,
+        maximum_normal_deviation=None,
+    )
+    pieces, detail = yield from _prove_face_triangles(
+        prove, (_STANDARD_TRIANGLE,), generations
+    )
+    if detail or not pieces:
+        return math.inf
+    return float(np.nextafter(max(piece.target_to_source[1] for piece in pieces), np.inf))
+
+
 def _build_face(
     row: int,
     target_row: tuple[int, int],
@@ -2286,6 +2491,7 @@ def _build_face(
     witness: SourceBoundaryChartWitness,
     surface: AdaptiveImplicitSurface,
     root_rows: dict[GridEdge, tuple[np.ndarray, float]],
+    root_by_point: dict[bytes, GridEdge],
     cell_rows: dict[SourceCellKey, int],
     *,
     tolerance: float | None,
@@ -2407,9 +2613,20 @@ def _build_face(
         detail,
     )
     root_corners: list[RootCorner] = []
-    for parameter, edge in zip(source_parameters, root_edges, strict=True):
-        point, error = root_rows[_canonical_grid_edge(edge)]
-        root_corners.append((parameter, point, error))
+    for corner in reference_corners:
+        corner_point = np.asarray(
+            tuple(
+                float(evaluate_expression(expression, corner))
+                for expression in cell_expressions
+            ),
+            dtype=np.float64,
+        )
+        corner_edge = root_by_point.get(corner_point.tobytes())
+        if corner_edge is None:
+            root_corners.append(None)
+        else:
+            point, error = root_rows[corner_edge]
+            root_corners.append((corner_edge, point, error))
     return _PreparedFace(
         row,
         block_index,
@@ -2441,10 +2658,10 @@ def _shared_edge_map_issues(
 ) -> dict[int, str]:
     """Require exact target polynomial agreement and root ancestry on shared edges.
 
-    A chart corner whose target point is exactly its named scaffold root point
-    takes that root (the scaffold path, where every corner is one); any other
-    corner lifts its own physical point, which depends only on the point. A
-    shared target vertex must therefore be taken from the same scaffold root
+    A chart corner whose target point is exactly a retained scaffold root point
+    takes that root (the scaffold path, where every corner is its named root);
+    any other corner lifts its own physical point. Both depend only on the
+    point, so a shared target vertex must be taken from the same scaffold root
     edge by every adjacent chart, or be lifted by all of them.
     """
     from ...discretization._reference_cell import reference_cell_topology
@@ -2493,19 +2710,8 @@ def _shared_edge_map_issues(
         if row in issues:
             continue
         for corner, target_vertex_id in enumerate(chart_vertex_global_ids):
-            root_key: GridEdge | None = _canonical_grid_edge(face.root_edge_keys[corner])
-            corner_point = np.asarray(
-                tuple(
-                    float(evaluate_expression(expression, face.reference_corners[corner]))
-                    for expression in face.cell_expressions
-                ),
-                dtype=np.float64,
-            )
-            if not np.array_equal(
-                corner_point.view(np.uint64),
-                face.root_corner_points[corner][1].view(np.uint64),
-            ):
-                root_key = None
+            root_corner = face.root_corner_points[corner]
+            root_key: GridEdge | None = None if root_corner is None else root_corner[0]
             if (
                 target_vertex_id in root_at_vertex
                 and root_at_vertex[target_vertex_id] != root_key
@@ -2672,6 +2878,7 @@ def prepare_adaptive_implicit_root_charts(
             "Implicit target chart rows do not align with the retained source witness."
         )
     root_rows = _source_root_rows(surface)
+    root_by_point = _root_rows_by_point(root_rows)
     cell_rows = _source_cell_rows(surface)
     target = _target_map_source(mesh, geometry)
     prepared = _run_faces(
@@ -2685,6 +2892,7 @@ def prepare_adaptive_implicit_root_charts(
                 witness,
                 surface,
                 root_rows,
+                root_by_point,
                 cell_rows,
                 tolerance=tolerance_,
                 maximum_normal_deviation=normal_,
@@ -2705,6 +2913,8 @@ def prepare_adaptive_implicit_root_charts(
         bounds,
         tolerance_,
         normal_,
+        surface,
+        hessian_program,
     )
 
 

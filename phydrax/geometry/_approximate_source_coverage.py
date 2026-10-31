@@ -2537,8 +2537,9 @@ def _single_sheet_preimages(
     error). Every lift moves a face point by at most the face's certified
     target-to-root bound, so a face whose distance lower bound to q exceeds
     that bound plus q's error has no preimage of q; the lifting face itself
-    is injective. Any other face that cannot be excluded (a folded or
-    duplicated sheet) leaves the degree unresolved.
+    is injective. A face the prepared bound cannot exclude is re-proved on
+    finer pieces toward half its distance margin. Any other face that cannot
+    be excluded (a folded or duplicated sheet) leaves the degree unresolved.
     """
     from ..discretization._coordinate_enclosure import affine_map
     from ._domain_numerics import cell_coordinate_expressions
@@ -2625,12 +2626,26 @@ def _single_sheet_preimages(
                 "An implicit target component has no certified lifted point.",
                 status="unresolved",
             )
-        for row in range(len(keys)):
-            if row == lifting_row:
-                continue
-            if _face_distance_lower(point, triangles[row]) <= math.nextafter(
-                bounds[row] + lifted.root_error, math.inf
-            ):
+        distances = {
+            row: _face_distance_lower(point, triangles[row])
+            for row in range(len(keys))
+            if row != lifting_row
+        }
+        blocking = [
+            row
+            for row, distance in distances.items()
+            if distance <= math.nextafter(bounds[row] + lifted.root_error, math.inf)
+        ]
+        refined = (
+            root_map.refined_target_to_root_bounds(
+                blocking,
+                [0.5 * (distances[row] - lifted.root_error) for row in blocking],
+            )
+            if blocking
+            else ()
+        )
+        for row, bound in zip(blocking, refined, strict=True):
+            if distances[row] <= math.nextafter(bound + lifted.root_error, math.inf):
                 raise SourceCoverageUnavailable(
                     "A second implicit target sheet may cover the zero-set point lifted "
                     f"from target face row {lifting_row}; the boundary degree is not one.",
