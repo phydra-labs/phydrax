@@ -3419,43 +3419,60 @@ class PlcRecoveryBuilder {
     vertices.insert(interior.begin(), interior.end());
     std::set<FacetKey> closed;
     filled.clear();
+    // Whether a vertex closes an open side depends only on the oriented
+    // side, so each side's admissible apices are found once per fill and
+    // ordered once, when the side is first chosen.
+    struct Apices {
+      std::vector<int32_t> order;
+      bool sorted = false;
+    };
+    std::map<FacetKey, Apices> apices;
+    const auto apices_of = [&](const FacetKey& side, const Open& open) -> Apices& {
+      const auto known = apices.find(side);
+      if (known != apices.end()) return known->second;
+      Apices found;
+      for (int32_t vertex : vertices) {
+        if (vertex == side.a || vertex == side.b || vertex == side.c) continue;
+        if (positive(with(open.cell, open.slot, vertex))) found.order.push_back(vertex);
+      }
+      return apices.emplace(side, std::move(found)).first->second;
+    };
     std::size_t budget = 4096;
     std::function<bool()> search = [&]() -> bool {
       if (front.empty()) return true;
       if (budget == 0) return false;
       --budget;
       FacetKey key{};
-      std::vector<int32_t> candidates;
-      bool chosen = false;
+      Apices* candidates = nullptr;
       for (const auto& [side, open] : front) {
-        std::vector<int32_t> admissible;
-        for (int32_t vertex : vertices) {
-          if (vertex == side.a || vertex == side.b || vertex == side.c) continue;
-          if (positive(with(open.cell, open.slot, vertex))) admissible.push_back(vertex);
-        }
-        if (admissible.empty()) return false;
-        if (!chosen || admissible.size() < candidates.size()) {
+        Apices& admissible = apices_of(side, open);
+        if (admissible.order.empty()) return false;
+        if (candidates == nullptr || admissible.order.size() < candidates->order.size()) {
           key = side;
-          candidates = std::move(admissible);
-          chosen = true;
+          candidates = &admissible;
         }
       }
       const Open open = front.at(key);
-      std::vector<std::pair<int, int32_t>> order;
-      for (int32_t vertex : candidates) {
-        const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
-        int inside = 0;
-        for (int32_t rival : candidates) {
-          if (rival == vertex) continue;
-          inside += insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
-                                 tet[0], tet[1], tet[2], tet[3], rival) > 0 ? 1 : 0;
+      if (!candidates->sorted) {
+        std::vector<std::pair<int, int32_t>> ranked;
+        for (int32_t vertex : candidates->order) {
+          const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
+          int inside = 0;
+          for (int32_t rival : candidates->order) {
+            if (rival == vertex) continue;
+            inside += insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
+                                   tet[0], tet[1], tet[2], tet[3], rival) > 0 ? 1 : 0;
+          }
+          // The preferred apex (the contraction target) goes first.
+          ranked.push_back({vertex == preferred ? -1 : inside, vertex});
         }
-        // The preferred apex (the contraction target) goes first.
-        order.push_back({vertex == preferred ? -1 : inside, vertex});
+        std::sort(ranked.begin(), ranked.end());
+        for (std::size_t row = 0; row < ranked.size(); ++row) {
+          candidates->order[row] = ranked[row].second;
+        }
+        candidates->sorted = true;
       }
-      std::sort(order.begin(), order.end());
-      for (const auto& [unused, vertex] : order) {
-        (void)unused;
+      for (int32_t vertex : candidates->order) {
         const std::array<int32_t, 4> tet = with(open.cell, open.slot, vertex);
         SuppressionCell cell{tet, {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
         cell.constraints[static_cast<std::size_t>(open.slot)] = open.constraint;
