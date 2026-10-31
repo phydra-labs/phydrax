@@ -4224,6 +4224,7 @@ def test_owner_local_periodic_adaptive_archive_cold_reattaches_new_group_with_sp
     assert refused_group.returncode != 0
     assert "incompatible with its registered recipe" in refused_group.stderr
 
+    _register_model_archive_types()
     graph_arrays = model_recipe_array_inventory(
         manifest["model_recipe"], prefix="model/leaves", limits=None
     )
@@ -4351,6 +4352,7 @@ def test_meshing_spec_archive_cold_rebuilds_background_metric_and_all_spec_types
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
 
+    _register_model_archive_types()
     inventory = model_recipe_array_inventory(
         manifest["model_recipe"], prefix="model/leaves", limits=None
     )

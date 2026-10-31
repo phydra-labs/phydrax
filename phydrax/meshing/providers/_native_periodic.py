@@ -6528,12 +6528,34 @@ def _require_owner_local_periodic_adaptive_target_current(
         "stored adaptive periodic source content",
     )
     mesh_error = None
+    candidate: dict[str, Any] = {}
     try:
         mesh_data = _owner_local_periodic_delaunay_view_mesh_data(
             view,
             source_authority,
             source.domain.cell,
         )
+        # The view stores its resident source-site rows by identifier; their
+        # coordinates are the rows of the current bound source bank.
+        bank_ids = np.asarray(source_authority.domain.point_ids, dtype=np.int64)
+        bank_points = np.asarray(source_authority.domain.points, dtype=np.float64)
+        view_point_ids = np.asarray(view.source_point_ids, dtype=np.int64)
+        bank_order = np.argsort(bank_ids, kind="stable")
+        positions = np.searchsorted(bank_ids, view_point_ids, sorter=bank_order)
+        if np.any(positions >= bank_ids.size) or not np.array_equal(
+            bank_ids[bank_order[np.minimum(positions, bank_ids.size - 1)]],
+            view_point_ids,
+        ):
+            raise ValueError(
+                "Adaptive periodic view source sites are absent from the current "
+                "bound source bank."
+            )
+        candidate = {
+            "points": np.ascontiguousarray(bank_points[bank_order[positions]]),
+            "point_ids": view_point_ids,
+            "point_owner_ranks": np.asarray(view.source_owner_ranks, dtype=np.int32),
+            "source_owned": np.asarray(view.source_owned, dtype=np.bool_),
+        }
     except Exception as error:
         mesh_error = f"{type(error).__name__}: {error}"
         mesh_data = {}
@@ -6543,11 +6565,6 @@ def _require_owner_local_periodic_adaptive_target_current(
         axis_name,
         "stored adaptive target exact mesh",
     )
-    candidate = {
-        "point_ids": np.asarray(view.source_point_ids, dtype=np.int64),
-        "point_owner_ranks": np.asarray(view.source_owner_ranks, dtype=np.int32),
-        "source_owned": np.asarray(view.source_owned, dtype=np.bool_),
-    }
     mesh_authority = _owner_local_periodic_mesh_authority(
         mesh_data,
         source,

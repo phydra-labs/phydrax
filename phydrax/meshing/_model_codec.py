@@ -821,6 +821,7 @@ def restore_model_archive_value(
     import inspect
     from collections.abc import Mapping
 
+    import jax
     import numpy as np
 
     from ..discretization._cell_mesh import CellMesh
@@ -1254,6 +1255,21 @@ def restore_model_archive_value(
                     raise TypeError(
                         "Owner-local adaptive archive lost its compact source view."
                     )
+                # The compact replay evidence (adaptive result vertex transfer)
+                # stores its sparse maps' spaces and operators as archive
+                # projections; decode them before the view replays them.
+                nested_recipe_types = (
+                    ArraySpaceArchiveRecipe,
+                    OperatorPairingArchiveRecipe,
+                    SparseCoordinateOperatorArchiveRecipe,
+                )
+                stored_view = jax.tree_util.tree_map(
+                    lambda node: (
+                        restore(node) if type(node) in nested_recipe_types else node
+                    ),
+                    stored_view,
+                    is_leaf=lambda node: type(node) in nested_recipe_types,
+                )
                 view = OwnerLocalCellGeometry.from_stored_fields(
                     stored_view,
                     execution_group,
