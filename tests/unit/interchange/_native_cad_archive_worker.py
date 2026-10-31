@@ -9778,7 +9778,9 @@ def _rebuild_brep_projection_composition(value: object, /) -> Composition:
         or projection_entry.structure_id != projection.result_id
         or projection_entry.revision_id != source.source_revision
         or projection_entry.dependencies
-        != (source_entry.binding("structure"), source_entry.binding("revision"))
+        != _canonical_dependencies(
+            (source_entry.binding("structure"), source_entry.binding("revision"))
+        )
     ):
         raise ValueError(
             "BRep projection Composition bindings differ from its renewed source."

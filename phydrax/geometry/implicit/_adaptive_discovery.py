@@ -823,6 +823,14 @@ class AdaptiveImplicitSurfaceArchiveRecipe:
         object.__setattr__(self, "domain", domain)
 
 
+# Archives inventory the geometry, domain and policy arrays as PyTree leaves.
+jax.tree_util.register_dataclass(
+    AdaptiveImplicitSurfaceArchiveRecipe,
+    data_fields=("geometry", "domain", "policy"),
+    meta_fields=("source_id",),
+)
+
+
 class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
     """Adaptive discovery product: source, boundary scaffold and enclosure cover."""
 
