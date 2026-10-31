@@ -39,6 +39,10 @@ constexpr std::int64_t kSelect = 14;
 // propagation, -0 below +0).
 constexpr std::int64_t kMaximum = 15;
 constexpr std::int64_t kMinimum = 16;
+// exp and log: libm endpoint values widened by one ulp each side; log maps a
+// nonpositive endpoint to the matching infinity (host interpreter semantics).
+constexpr std::int64_t kExp = 17;
+constexpr std::int64_t kLog = 18;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -48,7 +52,8 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kCosine) | (std::uint64_t{1} << kSqrt) |
     (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
     (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect) |
-    (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum);
+    (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
+    (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog);
 
 constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 constexpr double kPi = 3.141592653589793;  // binary64 pi, Python math.pi.
@@ -159,7 +164,7 @@ bool operand_valid(const std::int64_t* indices, std::int64_t index_count, std::i
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kMinimum) return false;
+  if (row.opcode < kGather || row.opcode > kLog) return false;
   if (row.size < 0 || row.out < previous_end || row.out > workspace_size - row.size) return false;
   const auto operand = [&](std::int64_t offset, std::int64_t index) {
     return operand_valid(indices, index_count, offset, index, row.size, row.out);
@@ -305,6 +310,8 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
     case kSquare:
     case kSqrt:
     case kReciprocal:
+    case kExp:
+    case kLog:
       for (std::int64_t k = begin; k < end; ++k) {
         const std::int64_t input = address(indices, row.a, row.a_index, k);
         const double low = lower[input];
@@ -312,6 +319,14 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
         if (std::isnan(low) || std::isnan(high)) {
           lower[out + k] = -std::numeric_limits<double>::infinity();
           upper[out + k] = std::numeric_limits<double>::infinity();
+        } else if (row.opcode == kExp) {
+          lower[out + k] = down(std::exp(low));
+          upper[out + k] = up(std::exp(high));
+        } else if (row.opcode == kLog) {
+          lower[out + k] =
+              low <= 0.0 ? -std::numeric_limits<double>::infinity() : down(std::log(low));
+          upper[out + k] =
+              high <= 0.0 ? std::numeric_limits<double>::infinity() : up(std::log(high));
         } else if (row.opcode == kSquare) {
           const bool crosses = low <= 0.0 && high >= 0.0;
           const double low_square = low * low;

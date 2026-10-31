@@ -35,6 +35,8 @@ constexpr std::int64_t kCompare = 13;
 constexpr std::int64_t kSelect = 14;
 constexpr std::int64_t kMaximum = 15;
 constexpr std::int64_t kMinimum = 16;
+constexpr std::int64_t kExp = 17;
+constexpr std::int64_t kLog = 18;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -455,6 +457,29 @@ void maximum_and_minimum() {
   }
 }
 
+// Shared vectors with tests/unit/geometry (host interpreter): libm endpoints
+// widened by one ulp; log sends a nonpositive endpoint to the matching infinity.
+void exponential_and_logarithm() {
+  Program program;
+  const std::int64_t input = program.values(
+      {{0.0, 1.0}, {-kInfinity, 0.0}, {-1.0, 2.0}, {1.0, kInfinity}, {-2.0, -1.0}});
+  const std::int64_t exponential = program.slots(5);
+  program.row(kExp, exponential, 5, input, -1, -1, -1, 0);
+  const std::int64_t logarithm = program.slots(5);
+  program.row(kLog, logarithm, 5, input, -1, -1, -1, 0);
+  PHX_CHECK(execute(program) == PHX_MC_OK);
+  const double lows[5] = {0.0, -kInfinity, -1.0, 1.0, -2.0};
+  const double highs[5] = {1.0, 0.0, 2.0, kInfinity, -1.0};
+  for (int k = 0; k < 5; ++k) {
+    PHX_CHECK(same(program.lower[exponential + k], step_down(std::exp(lows[k]))));
+    PHX_CHECK(same(program.upper[exponential + k], step_up(std::exp(highs[k]))));
+    const double log_low = lows[k] <= 0.0 ? -kInfinity : step_down(std::log(lows[k]));
+    const double log_high = highs[k] <= 0.0 ? kInfinity : step_up(std::log(highs[k]));
+    PHX_CHECK(same(program.lower[logarithm + k], log_low));
+    PHX_CHECK(same(program.upper[logarithm + k], log_high));
+  }
+}
+
 void interval_capability_query() {
   std::uint64_t opcodes = 0;
   const std::uint64_t expected =
@@ -465,7 +490,8 @@ void interval_capability_query() {
       (std::uint64_t{1} << kCosine) | (std::uint64_t{1} << kSqrt) |
       (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
       (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect) |
-      (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum);
+      (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
+      (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -642,6 +668,7 @@ int main() {
   interval_capability_query();
   compare_and_select();
   maximum_and_minimum();
+  exponential_and_logarithm();
   deterministic_random_programs();
   validation_and_empty_programs();
   floating_point_modes();

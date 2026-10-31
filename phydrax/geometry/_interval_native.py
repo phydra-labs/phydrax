@@ -42,6 +42,8 @@ _COMPARE = 13
 _SELECT = 14
 _MAXIMUM = 15
 _MINIMUM = 16
+_EXP = 17
+_LOG = 18
 
 
 def _size(shape: _Shape, /) -> int:
@@ -95,6 +97,8 @@ class NativeIntervalProgram:
     seeds: tuple[_Seed, ...]
     opcodes: frozenset[int]
     output: _Tensor
+    domain_guards: NDArray[np.int64]
+    """Workspace entries (real-power bases) that must be nonnegative."""
 
     def evaluate(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
@@ -122,6 +126,10 @@ class NativeIntervalProgram:
             lower_workspace,
             upper_workspace,
         )
+        if np.any(lower_workspace[self.domain_guards] < 0.0):
+            raise IntervalExtensionError(
+                "noninteger power requires a nonnegative base interval."
+            )
         if self.output.locations is None:
             start = self.output.offset
             stop = start + _size(self.output.shape)
@@ -166,7 +174,13 @@ class NativeIntervalProgram:
         from .._meshcore import IntervalBoxProgram
 
         return IntervalBoxProgram(
-            self.instructions, self.indices, self.parameters, lower, upper, outputs
+            self.instructions,
+            self.indices,
+            self.parameters,
+            lower,
+            upper,
+            outputs,
+            self.domain_guards,
         )
 
 
@@ -179,6 +193,7 @@ class _Builder:
         self.indices: list[int] = []
         self.parameters: list[float] = []
         self.seeds: list[_Seed] = []
+        self.domain_guards: list[int] = []
 
     def _reserve(self, shape: _Shape, /) -> int:
         offset = self.next_offset
@@ -659,22 +674,37 @@ class _Builder:
             return (self._emit_binary(opcode, first, second, output_shape),)
         if name == "pow":
             exponent = values[1].exact
+            flat = None if exponent is None else exponent.reshape((-1,))
             if (
-                exponent is None
-                or exponent.size != 1
-                or not np.isfinite(exponent.reshape((-1,))[0])
-                or exponent.reshape((-1,))[0] != math.trunc(exponent.reshape((-1,))[0])
+                flat is not None
+                and flat.size
+                and np.all(flat == flat[0])
+                and np.isfinite(flat[0])
+                and float(flat[0]).is_integer()
             ):
-                raise IntervalExtensionError(
-                    "native interval power requires a constant integer exponent."
+                return self._lower_arithmetic(
+                    "integer_pow",
+                    (values[0],),
+                    {"y": int(flat[0])},
+                    output_shape,
+                    False,
                 )
-            return self._lower_arithmetic(
-                "integer_pow",
-                (values[0],),
-                {"y": int(exponent.reshape((-1,))[0])},
-                output_shape,
-                False,
+            # As in the host interpreter: exp(y log x) over a base that must be
+            # nonnegative (checked after execution), clamped below at 0 since a
+            # nonnegative base has a nonnegative real power.
+            base = self._materialize(self._mapped(values[0], output_shape))
+            self.domain_guards.extend(
+                int(location) for location in self._locations(base).reshape((-1,))
             )
+            logarithm = self._emit_unary(_LOG, base, output_shape)
+            scaled = self._emit_binary(_MULTIPLY, values[1], logarithm, output_shape)
+            power = self._emit_unary(_EXP, scaled, output_shape)
+            zeros = np.zeros(output_shape, dtype=np.float64)
+            zero = self._seed(zeros, zeros, exact=zeros)
+            return (self._emit_binary(_MAXIMUM, power, zero, output_shape),)
+        if name in ("exp", "log"):
+            opcode = _EXP if name == "exp" else _LOG
+            return (self._emit_unary(opcode, values[0], output_shape),)
         raise IntervalExtensionError(
             f"no native interval arithmetic lowering for JAX primitive {name!r}."
         )
@@ -927,10 +957,55 @@ class _Builder:
             "integer_pow",
             "pow",
             "max",
+            "exp",
+            "log",
             "min",
         ):
             (output_shape,) = output_shapes
             return self._lower_arithmetic(name, values, params, output_shape, same_input)
+        if name == "pad":
+            (output_shape,) = output_shapes
+            value, padding = values
+            config = tuple(
+                (int(low), int(high), int(interior))
+                for low, high, interior in params["padding_config"]
+            )
+            if any(low < 0 or high < 0 or interior < 0 for low, high, interior in config):
+                raise IntervalExtensionError(
+                    "native interval pad requires nonnegative padding."
+                )
+            filler = self._locations(self._mapped(padding, ())).reshape(())
+            locations = np.full(output_shape, int(filler), dtype=np.int64)
+            selection = tuple(
+                slice(
+                    low,
+                    low + (extent - 1) * (interior + 1) + 1 if extent else low,
+                    interior + 1,
+                )
+                for (low, _high, interior), extent in zip(
+                    config, value.shape, strict=True
+                )
+            )
+            locations[selection] = self._locations(value)
+            padded = _Tensor(
+                output_shape, int(locations.reshape((-1,))[0]), locations.reshape((-1,))
+            )
+            return (padded,)
+        if name in ("reduce_max", "reduce_min"):
+            (output_shape,) = output_shapes
+            value = values[0]
+            axes = tuple(int(axis) for axis in params["axes"])
+            kept = tuple(axis for axis in range(len(value.shape)) if axis not in axes)
+            locations = self._locations(value).transpose(kept + axes)
+            lanes = locations.reshape((_size(output_shape), -1))
+            if lanes.shape[1] == 0:
+                raise IntervalExtensionError("native interval extremum of an empty axis.")
+            opcode = _MAXIMUM if name == "reduce_max" else _MINIMUM
+            result = _Tensor(output_shape, int(lanes[0, 0]), lanes[:, 0].copy())
+            for lane in range(1, lanes.shape[1]):
+                term = _Tensor(output_shape, int(lanes[0, lane]), lanes[:, lane].copy())
+                result = self._emit_binary(opcode, result, term, output_shape)
+            return (result,)
         if name == "dot_general":
             (output_shape,) = output_shapes
             return (self._dot_general(values[0], values[1], params, output_shape),)
@@ -1067,6 +1142,12 @@ class _Builder:
         return self._seed(lower_, upper_, exact=exact)
 
 
+def _immutable_indices(values: Sequence[int], /) -> NDArray[np.int64]:
+    result = np.asarray(values, dtype=np.int64).reshape((-1,))
+    result.setflags(write=False)
+    return result
+
+
 def lower_interval_jaxpr(
     closed_jaxpr: jax_core.ClosedJaxpr,
     constant_intervals: Sequence[_Interval],
@@ -1115,6 +1196,7 @@ def lower_interval_jaxpr(
         input_dimension=input_dimension,
         seeds=tuple(builder.seeds),
         output=output,
+        domain_guards=_immutable_indices(builder.domain_guards),
         opcodes=opcodes,
     )
 

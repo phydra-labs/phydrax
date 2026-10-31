@@ -46,14 +46,15 @@ class IntervalBoxProgram {
   int32_t bind(const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
                int64_t index_count, const double* parameters, int64_t parameter_count,
                const double* workspace_lower, const double* workspace_upper,
-               int64_t workspace_size, const int64_t* outputs, int64_t output_count);
+               int64_t workspace_size, const int64_t* outputs, int64_t output_count,
+               const int64_t* guards, int64_t guard_count);
   // Encloses every output over the box; false when execution fails or an
   // output is NaN. `result` must hold output_count() intervals.
   bool evaluate(const Point& lower, const Point& upper, Interval* result) const;
   int64_t output_count() const { return static_cast<int64_t>(outputs_.size()); }
 
  private:
-  std::vector<int64_t> instructions_, indices_, outputs_;
+  std::vector<int64_t> instructions_, indices_, outputs_, guards_;
   std::vector<double> parameters_, template_lower_, template_upper_;
   mutable std::vector<double> lower_, upper_;  // single-threaded scratch workspace
 };
