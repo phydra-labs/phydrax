@@ -69,6 +69,7 @@ from ..discretization._nested_reference_types import (
     freeze_reference_chart_arguments,
     NestedReferenceWitnesses,
     ReferenceCellMapWitnesses,
+    reference_chart_arguments_identity,
     validate_nested_reference_witnesses,
 )
 from ..discretization._reference_cell import reference_cell_topology
@@ -109,6 +110,7 @@ from ..geometry._volume_material_deformation import (
 )
 from ..geometry._volume_material_map import VolumeMaterialChain, VolumeMaterialMap
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
+from ..geometry.implicit._chart_restriction import ImplicitChartPremise
 from ..geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayBoundaryWitness,
     RestrictedDelaunayCoverageTransportWitness,
@@ -195,6 +197,7 @@ from ._tetra_metric import (
     TetraMetricStatus,
 )
 from ._topology_edit import (
+    _exact_stencil_rows,
     assemble_topology_edit,
     bind_periodic_topology_edit,
     CellTopologyEdit,
@@ -2586,17 +2589,23 @@ def _coarsened_root_charts(
         exact = []
         root_ids = []
         root_kinds = set()
+        interned_charts = {}
         for row, identifier in enumerate(
             np.asarray(block.global_ids, dtype=np.int64).tolist()
         ):
             root, chart = coordinate_reference_chain(element, cell_row=row)
-            charts.append(chart)
-            exact.append(
-                tuple(
-                    evaluate_reference_chart_arguments(block.cell_kind, chart, point)
+            key = reference_chart_arguments_identity((chart,))
+            retained = interned_charts.get(key)
+            if retained is None:
+                frozen = freeze_reference_chart_arguments((chart,))[0]
+                points = tuple(
+                    evaluate_reference_chart_arguments(block.cell_kind, frozen, point)
                     for point in corners
                 )
-            )
+                retained = (frozen, points)
+                interned_charts[key] = retained
+            charts.append(retained[0])
+            exact.append(retained[1])
             root_ids.append(roots[int(identifier)].cell_id)
             root_kinds.add(root.cell_kind)
             child_roots[int(identifier)] = (root, route_rows[row])
@@ -2609,13 +2618,7 @@ def _coarsened_root_charts(
             for value in point
         ):
             raise ValueError("Source root-chart corners must be exact rationals.")
-        exact_bank = tuple(
-            tuple(
-                tuple(value for value in point if isinstance(value, Fraction))
-                for point in cell
-            )
-            for cell in exact
-        )
+        exact_bank = tuple(exact)
         fine_to_root[block.name] = ReferenceCellMapWitnesses(
             np.arange(block.cell_count, dtype=np.int64),
             np.asarray(root_ids, dtype=np.int64),
@@ -2629,7 +2632,7 @@ def _coarsened_root_charts(
                 dtype=np.float64,
             ),
             exact_bank,
-            freeze_reference_chart_arguments(charts),
+            tuple(charts),
         )
     coarsened = coarsen_reference_cell_maps(coarsening, fine_to_root, source.mesh, target)
     children: dict[int, list[int]] = {}
@@ -2701,27 +2704,51 @@ def _coarsened_corner_coordinates(
         )
         if int(coarse_id) in parents
     ]
+    target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
+    needed: set[int] = set()
+    for block in target.blocks:
+        for identifier, vertices in zip(
+            np.asarray(block.global_ids, dtype=np.int64),
+            np.asarray(block.vertices, dtype=np.int64),
+            strict=True,
+        ):
+            if int(identifier) in parents:
+                needed.update(int(value) for value in target_vertex_ids[vertices])
     source_vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
-    child_rows: dict[int, tuple[str, np.ndarray]] = {}
+    selected = set(child_ids)
+    requests: list[int] = []
+    request_points = []
+    request_vertices = []
     for block in source.mesh.blocks:
-        vertices = np.asarray(block.vertices, dtype=np.int64)
-        for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
-            child_rows[int(identifier)] = (
-                block.cell_kind,
-                source_vertex_ids[vertices[row]],
-            )
+        corners = _fraction_reference_corners(block.cell_kind)
+        for identifier, vertices in zip(
+            np.asarray(block.global_ids, dtype=np.int64),
+            np.asarray(block.vertices, dtype=np.int64),
+            strict=True,
+        ):
+            if int(identifier) not in selected:
+                continue
+            points = []
+            vertex_ids = []
+            for vertex, point in zip(source_vertex_ids[vertices], corners, strict=True):
+                vertex_id = int(vertex)
+                if vertex_id in needed:
+                    needed.remove(vertex_id)
+                    points.append(point)
+                    vertex_ids.append(vertex_id)
+            if points:
+                requests.append(int(identifier))
+                request_points.append(tuple(points))
+                request_vertices.append(vertex_ids)
+    if needed:
+        raise ValueError("A restored parent corner is not a corner of its children.")
     images = source.geometry.evaluate_exact(
-        source.mesh,
-        np.asarray(child_ids, dtype=np.int64),
-        tuple(_fraction_reference_corners(child_rows[child][0]) for child in child_ids),
+        source.mesh, np.asarray(requests, dtype=np.int64), tuple(request_points)
     )
     vertex_coordinates: dict[int, tuple[Any, ...]] = {}
-    for child, corners in zip(child_ids, images, strict=True):
-        for vertex_id, coordinate in zip(
-            child_rows[child][1].tolist(), corners, strict=True
-        ):
-            vertex_coordinates[int(vertex_id)] = tuple(coordinate)
-    target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
+    for vertices, corners in zip(request_vertices, images, strict=True):
+        for vertex_id, coordinate in zip(vertices, corners, strict=True):
+            vertex_coordinates[vertex_id] = tuple(coordinate)
     result: dict[int, tuple[tuple[Any, ...], ...]] = {}
     for block in target.blocks:
         vertices = np.asarray(block.vertices, dtype=np.int64)
@@ -2766,10 +2793,10 @@ def _quotient_chart_bank(
     )
 
 
-def _quotient_chart_target_geometry(
+def _vertex_source_target_geometry(
     target: CellMesh, bank: ExactPlcCellGeometrySource | None, /
 ) -> CellGeometrySpec:
-    """Publish a periodic P1 target on its lifted vertex-indexed carrier."""
+    """Publish a P1 target with its exact vertex bank and rounded carrier."""
     affine = CellGeometrySpec.affine(target)
     if bank is None:
         return affine
@@ -2785,6 +2812,87 @@ def _quotient_chart_target_geometry(
     )
 
 
+def _metric_exact_source_vertices(
+    source: CellMeshingResult, /
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Read the rational physical vertex bank from the accepted coordinate map."""
+    vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    bank: dict[int, tuple[Fraction, ...]] = {}
+    for block in source.mesh.blocks:
+        identifiers = np.asarray(block.global_ids, dtype=np.int64)
+        corners = _fraction_reference_corners(block.cell_kind)
+        values = source.geometry.evaluate_exact(
+            source.mesh, identifiers, tuple(corners for _ in identifiers)
+        )
+        for cell, points in zip(np.asarray(block.vertices), values, strict=True):
+            for row, point in zip(cell, points, strict=True):
+                if any(not isinstance(value, Fraction) for value in point):
+                    raise ValueError(
+                        "Local metric ancestry requires rational source vertices."
+                    )
+                exact = tuple(value for value in point if isinstance(value, Fraction))
+                identifier = int(vertex_ids[int(row)])
+                previous = bank.setdefault(identifier, exact)
+                if previous != exact:
+                    raise ValueError(
+                        "Exact source maps disagree at a shared metric vertex."
+                    )
+    if len(bank) != vertex_ids.size:
+        raise ValueError("Exact source geometry does not cover every metric vertex.")
+    return tuple(bank[int(identifier)] for identifier in vertex_ids)
+
+
+def _affine_edit_geometry(
+    source: CellMeshingResult,
+    target: CellMesh,
+    edit: CellTopologyEdit,
+    exact_source_vertices: tuple[tuple[Fraction, ...], ...] | None,
+    /,
+) -> CellGeometrySpec:
+    """Preserve authored exact stencil images when the carrier must round them."""
+    if exact_source_vertices is None:
+        return CellGeometrySpec.affine(target)
+    source_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    source_points = dict(zip(source_ids.tolist(), exact_source_vertices, strict=True))
+    target_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
+    exact_targets: dict[int, tuple[Fraction, ...]] = {}
+    for identifier, terms in zip(
+        np.asarray(edit.vertex_global_ids, dtype=np.int64).tolist(),
+        _exact_stencil_rows(edit),
+        strict=True,
+    ):
+        if not terms or sum((weight for _, weight in terms), Fraction(0)) != 1:
+            raise ValueError("Exact metric source stencils must preserve constants.")
+        if any(weight < 0 or vertex not in source_points for vertex, weight in terms):
+            raise ValueError(
+                "Exact metric source stencils must lie in their source cells."
+            )
+        exact_targets[identifier] = tuple(
+            sum(
+                (weight * source_points[vertex][axis] for vertex, weight in terms),
+                Fraction(0),
+            )
+            for axis in range(target.ambient_dimension)
+        )
+    exact = tuple(exact_targets[int(identifier)] for identifier in target_ids)
+    rounded = np.asarray([[float(value) for value in point] for point in exact])
+    if not np.array_equal(rounded, np.asarray(target.coordinates)):
+        raise ValueError(
+            "Metric target coordinates are not canonical exact-stencil roundings."
+        )
+    if all(Fraction(float(value)) == value for point in exact for value in point):
+        return CellGeometrySpec.affine(target)
+    bank = ExactPlcCellGeometrySource(
+        source.mesh.mesh_id,
+        cell_geometry_id(source.geometry),
+        target_ids,
+        exact,
+        vertex_source_entity_ids=(None,) * len(exact),
+        vertex_occurrence_paths=((),) * len(exact),
+    )
+    return _vertex_source_target_geometry(target, bank)
+
+
 def _restricted_target_geometry(
     source: CellMeshingResult,
     target: CellMesh,
@@ -2792,6 +2900,7 @@ def _restricted_target_geometry(
     /,
     *,
     coarsening: NestedReferenceWitnesses | None = None,
+    exact_source_vertices: tuple[tuple[Fraction, ...], ...] | None = None,
 ) -> tuple[
     CellMesh,
     CellGeometrySpec,
@@ -2828,9 +2937,19 @@ def _restricted_target_geometry(
             not np.any(stencil_valid[stencil_rows[int(identifier)]])
             for identifier in target_vertex_ids
         ):
-            return target, CellGeometrySpec.affine(target), (), None
+            return (
+                target,
+                _affine_edit_geometry(source, target, edit, exact_source_vertices),
+                (),
+                None,
+            )
         reference_maps = _identity_reference_maps_for_transition(source.mesh, target)
-        return target, CellGeometrySpec.affine(target), reference_maps, None
+        return (
+            target,
+            _affine_edit_geometry(source, target, edit, exact_source_vertices),
+            reference_maps,
+            None,
+        )
     try:
         reference_maps = reference_cell_maps_from_edit(source.mesh, target, edit)
     except ValueError:
@@ -2838,7 +2957,12 @@ def _restricted_target_geometry(
             reference_maps = _available_reference_maps(source.mesh, target, edit)
         except ValueError:
             if _piecewise_linear_geometry(source.mesh, source.geometry):
-                return target, CellGeometrySpec.affine(target), (), None
+                return (
+                    target,
+                    _affine_edit_geometry(source, target, edit, exact_source_vertices),
+                    (),
+                    None,
+                )
             raise ValueError(
                 "A non-P1 source map needs exact reference ancestry for every target cell."
             ) from None
@@ -2854,7 +2978,12 @@ def _restricted_target_geometry(
     ):
         # A restored P1 parent is affine on its own exact corners; its children are
         # distinct roots, so no single root chart exists or is needed.
-        return target, CellGeometrySpec.affine(target), reference_maps, None
+        return (
+            target,
+            _affine_edit_geometry(source, target, edit, exact_source_vertices),
+            reference_maps,
+            None,
+        )
     roots = _source_root_parents(source)
     coarse = (
         {}
@@ -2877,7 +3006,12 @@ def _restricted_target_geometry(
     }
     if set(records) | set(coarse) != target_ids:
         if _piecewise_linear_geometry(source.mesh, source.geometry):
-            return target, CellGeometrySpec.affine(target), reference_maps, None
+            return (
+                target,
+                _affine_edit_geometry(source, target, edit, exact_source_vertices),
+                reference_maps,
+                None,
+            )
         raise ValueError("A non-P1 source map needs an exact map for every target cell.")
     source_cell_rows = {
         int(identifier): (block_index, row)
@@ -2921,6 +3055,9 @@ def _restricted_target_geometry(
         routes = []
         exact_cells = []
         parent_kinds = set()
+        reference_charts: dict[
+            tuple[tuple[Fraction, ...], ...], tuple[ExpressionInput, ...]
+        ] = {}
         # Exact source images of target corners, evaluated for the whole block
         # at once: each evaluation resolves the source map over every cell. A
         # corner shared by children of one parent at one exact point is
@@ -2967,7 +3104,10 @@ def _restricted_target_geometry(
                     )
                     source_chains[source_id] = chain
                 root, source_chart, identity_chart = chain
-                chart = _reference_chart_from_basis(chart_basis, exact_points)
+                chart = reference_charts.get(exact_points)
+                if chart is None:
+                    chart = _reference_chart_from_basis(chart_basis, exact_points)
+                    reference_charts[exact_points] = chart
                 composed = (
                     chart
                     if identity_chart and all(type(value) is dict for value in chart)
@@ -3036,6 +3176,8 @@ def _restricted_target_geometry(
                 (row, tuple(images[slot][0] for slot in slots))
                 for row, slots in pending_rows
             )
+            del images
+        del pending_rows, pending_sources, pending_points, pending_keys
         for row in range(identifiers.size):
             for vertex_id, coordinate in zip(
                 target_cell_vertices[row],
@@ -3048,6 +3190,7 @@ def _restricted_target_geometry(
                         "Adjacent exact source restrictions disagree at a shared target vertex."
                     )
                 exact_vertex_coordinates[int(vertex_id)] = tuple(coordinate)
+        del corner_images, target_cell_vertices
         if len({root.element_id for root in block_roots}) != 1:
             raise ValueError(
                 "One target block cannot mix unrelated source coordinate roots."
@@ -3081,13 +3224,16 @@ def _restricted_target_geometry(
             np.asarray(parent_ids, dtype=np.int64),
             target_block.cell_kind,
             next(iter(parent_kinds)),
-            np.asarray(
-                [
-                    [[float(value) for value in point] for point in cell]
+            np.fromiter(
+                (
+                    float(value)
                     for cell in exact_values
-                ],
+                    for point in cell
+                    for value in point
+                ),
                 dtype=np.float64,
-            ),
+                count=len(exact_values) * len(exact_values[0]) * len(exact_values[0][0]),
+            ).reshape(len(exact_values), len(exact_values[0]), len(exact_values[0][0])),
             exact_values,
             None if roots is None else freeze_reference_chart_arguments(charts),
         )
@@ -3906,8 +4052,15 @@ def _retarget_source_boundary_chart_witness(
     candidates: dict[
         tuple[int, str, str, tuple[str, ...]], dict[tuple[int, int], list[dict[str, Any]]]
     ] = {}
+    parameter_charts: dict[
+        tuple[object, ...], tuple[tuple[Fraction, ...], ...] | None
+    ] = {}
     for block in target.blocks:
         topology = reference_cell_topology(block.cell_kind)
+        exact_topology_vertices = tuple(
+            tuple(Fraction(float(value)) for value in point)
+            for point in topology.vertices
+        )
         cell_vertices = np.asarray(block.vertices, dtype=np.int64)
         target_cell_ids = np.asarray(block.global_ids, dtype=np.int64)
         for cell_row, target_cell_id_raw in enumerate(target_cell_ids):
@@ -4017,13 +4170,6 @@ def _retarget_source_boundary_chart_witness(
                             )
                         target_reference = tuple(reference_points)
                         parameters_exact = old_parameters_exact[old_row]
-                        parameters = np.asarray(
-                            [
-                                [float(value) for value in point]
-                                for point in parameters_exact
-                            ],
-                            dtype=np.float64,
-                        )
                         if _chart_orientation(parameters_exact, chart_dimension) == 0:
                             raise ValueError(
                                 "A coarsened source chart piece is degenerate."
@@ -4061,7 +4207,6 @@ def _retarget_source_boundary_chart_witness(
                                 "entity_id": target_entity_id,
                                 "local_entity": local_entity,
                                 "reference": target_reference,
-                                "parameters": parameters,
                                 "parameters_exact": parameters_exact,
                                 "orientation": _chart_orientation(
                                     parameters_exact, chart_dimension
@@ -4171,11 +4316,7 @@ def _retarget_source_boundary_chart_witness(
                     )
                 for subface in subfaces:
                     target_reference = tuple(
-                        tuple(
-                            Fraction(float(value))
-                            for value in np.asarray(topology.vertices)[local]
-                        )
-                        for local in subface
+                        exact_topology_vertices[local] for local in subface
                     )
                     source_reference = tuple(exact_cell[local] for local in subface)
                     old_rows = source_cells_by_entity.get(
@@ -4184,36 +4325,41 @@ def _retarget_source_boundary_chart_witness(
                     found_rows = []
                     for old_row in old_rows:
                         old_points = old_reference_exact[old_row]
-                        weights = tuple(
-                            _simplex_chart_weights(point, old_points, chart_dimension)
-                            for point in source_reference
+                        parameter_key = (
+                            source_reference,
+                            old_points,
+                            old_parameters_exact[old_row],
                         )
-                        valid_weights = tuple(
-                            value for value in weights if value is not None
-                        )
-                        if len(valid_weights) != len(weights):
-                            continue
-                        parameters_exact = tuple(
-                            tuple(
-                                sum(
-                                    (
-                                        valid_weights[vertex][corner]
-                                        * old_parameters_exact[old_row][corner][axis]
-                                        for corner in range(chart_dimension + 1)
-                                    ),
-                                    Fraction(0),
-                                )
-                                for axis in range(chart_dimension)
+                        if parameter_key in parameter_charts:
+                            parameters_exact = parameter_charts[parameter_key]
+                            if parameters_exact is None:
+                                continue
+                        else:
+                            weights = tuple(
+                                _simplex_chart_weights(point, old_points, chart_dimension)
+                                for point in source_reference
                             )
-                            for vertex in range(chart_dimension + 1)
-                        )
-                        parameters = np.asarray(
-                            [
-                                [float(value) for value in point]
-                                for point in parameters_exact
-                            ],
-                            dtype=np.float64,
-                        )
+                            valid_weights = tuple(
+                                value for value in weights if value is not None
+                            )
+                            if len(valid_weights) != len(weights):
+                                parameter_charts[parameter_key] = None
+                                continue
+                            parameters_exact = tuple(
+                                tuple(
+                                    sum(
+                                        (
+                                            valid_weights[vertex][corner]
+                                            * old_parameters_exact[old_row][corner][axis]
+                                            for corner in range(chart_dimension + 1)
+                                        ),
+                                        Fraction(0),
+                                    )
+                                    for axis in range(chart_dimension)
+                                )
+                                for vertex in range(chart_dimension + 1)
+                            )
+                            parameter_charts[parameter_key] = parameters_exact
                         if _chart_orientation(parameters_exact, chart_dimension) == 0:
                             continue
                         if chart_dimension == 1:
@@ -4255,10 +4401,6 @@ def _retarget_source_boundary_chart_witness(
                             )
                         found_rows = [first]
                     old_row, parameters_exact, target_orientation = found_rows[0]
-                    parameters = np.asarray(
-                        [[float(value) for value in point] for point in parameters_exact],
-                        dtype=np.float64,
-                    )
                     chart_key = (
                         target_entity_id,
                         witness.source_chart_ids[old_row],
@@ -4273,7 +4415,6 @@ def _retarget_source_boundary_chart_witness(
                             "entity_id": target_entity_id,
                             "local_entity": local_entity,
                             "reference": target_reference,
-                            "parameters": parameters,
                             "parameters_exact": parameters_exact,
                             "orientation": _chart_orientation(
                                 parameters_exact, chart_dimension
@@ -4283,14 +4424,6 @@ def _retarget_source_boundary_chart_witness(
                             "source_row": old_row,
                         }
                     )
-
-    # An implicit root chart is the target face itself lifted into the zero set
-    # of its root cell: every row keeps its ancestor's root cell and edges with
-    # the standard root parameters, oriented like its target reference face.
-    implicit = np.asarray(witness.implicit_cell_keys).size > 0
-    standard_chart = tuple(
-        tuple(Fraction(value) for value in point) for point in ((0, 0), (1, 0), (0, 1))
-    )
 
     def merged_pieces(rows: list[dict[str, Any]], /) -> list[dict[str, Any]]:
         """Merge the child pieces of one restored parent entity into its chart."""
@@ -4311,61 +4444,43 @@ def _retarget_source_boundary_chart_witness(
             target_orientation = _chart_orientation(
                 np.asarray(target_chart[0], dtype=np.float64), 2
             )
-        if implicit:
-            covered = {tuple(point) for value in rows for point in value["reference"]}
-            if any(corner not in covered for corner in corners):
-                raise ValueError(
-                    "A restored chart entity corner has no source chart piece."
-                )
-            corner_parameters = standard_chart
-            orientation = target_orientation
-        else:
-            point_parameters: dict[tuple[Fraction, ...], tuple[Fraction, ...]] = {}
-            for value in rows:
-                for point, parameter in zip(
-                    value["reference"], value["parameters_exact"], strict=True
-                ):
-                    previous = point_parameters.setdefault(tuple(point), tuple(parameter))
-                    if previous != tuple(parameter):
-                        raise ValueError(
-                            "Coarsened source chart pieces disagree at a shared point."
-                        )
-            if any(corner not in point_parameters for corner in corners):
-                raise ValueError(
-                    "A restored chart entity corner has no source chart piece."
-                )
-            corner_parameters = tuple(point_parameters[corner] for corner in corners)
-            for point, parameter in point_parameters.items():
-                weights = _simplex_chart_weights(point, corners, chart_dimension)
-                if weights is None or parameter != tuple(
-                    sum(
-                        (
-                            weights[corner] * corner_parameters[corner][axis]
-                            for corner in range(chart_dimension + 1)
-                        ),
-                        Fraction(0),
-                    )
-                    for axis in range(chart_dimension)
-                ):
-                    raise ValueError(
-                        "Coarsened source chart pieces are not one exact affine parent chart."
-                    )
-            orientation = (
-                _chart_orientation(corner_parameters, chart_dimension)
-                * target_orientation
-            )
-            if orientation == 0 or any(
-                value["orientation"] != orientation for value in rows
+        point_parameters: dict[tuple[Fraction, ...], tuple[Fraction, ...]] = {}
+        for value in rows:
+            for point, parameter in zip(
+                value["reference"], value["parameters_exact"], strict=True
             ):
-                raise ValueError("Coarsened source chart pieces disagree on orientation.")
+                previous = point_parameters.setdefault(tuple(point), tuple(parameter))
+                if previous != tuple(parameter):
+                    raise ValueError(
+                        "Coarsened source chart pieces disagree at a shared point."
+                    )
+        if any(corner not in point_parameters for corner in corners):
+            raise ValueError("A restored chart entity corner has no source chart piece.")
+        corner_parameters = tuple(point_parameters[corner] for corner in corners)
+        for point, parameter in point_parameters.items():
+            weights = _simplex_chart_weights(point, corners, chart_dimension)
+            if weights is None or parameter != tuple(
+                sum(
+                    (
+                        weights[corner] * corner_parameters[corner][axis]
+                        for corner in range(chart_dimension + 1)
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(chart_dimension)
+            ):
+                raise ValueError(
+                    "Coarsened source chart pieces are not one exact affine parent chart."
+                )
+        orientation = (
+            _chart_orientation(corner_parameters, chart_dimension) * target_orientation
+        )
+        if orientation == 0 or any(value["orientation"] != orientation for value in rows):
+            raise ValueError("Coarsened source chart pieces disagree on orientation.")
         merged = dict(rows[0])
         merged.update(
             reference=corners,
             parameters_exact=corner_parameters,
-            parameters=np.asarray(
-                [[float(value) for value in point] for point in corner_parameters],
-                dtype=np.float64,
-            ),
             orientation=orientation,
             vertices=_source_parameter_vertices(corner_parameters),
         )
@@ -4407,6 +4522,7 @@ def _retarget_source_boundary_chart_witness(
         raise ValueError(
             "One target chart entity has ambiguous source-chart occurrence ancestry."
         )
+    del candidates, by_entity
     if not rows_to_publish:
         raise ValueError("Transition removed every witnessed source chart stratum.")
     rows_to_publish.sort(
@@ -4417,18 +4533,6 @@ def _retarget_source_boundary_chart_witness(
             value["vertices"],
         )
     )
-    if implicit:
-        rows_to_publish = [
-            {
-                **value,
-                "parameters_exact": standard_chart,
-                "parameters": np.asarray(standard_chart, dtype=np.float64),
-                # The stored sign is chart orientation times target orientation.
-                "orientation": value["orientation"]
-                * _chart_orientation(value["parameters_exact"], chart_dimension),
-            }
-            for value in rows_to_publish
-        ]
     source_rows = [int(value["source_row"]) for value in rows_to_publish]
     implicit_cells = np.asarray(witness.implicit_cell_keys, dtype=np.int64)
     implicit_edges = np.asarray(witness.implicit_root_edge_keys, dtype=np.int64)
@@ -4452,30 +4556,69 @@ def _retarget_source_boundary_chart_witness(
         local_entity_indices=np.asarray(
             [value["local_entity"] for value in rows_to_publish], dtype=np.int32
         ),
-        target_reference_vertices=np.asarray(
-            [
-                [[float(value) for value in point] for point in row["reference"]]
+        target_reference_vertices=np.fromiter(
+            (
+                float(value)
                 for row in rows_to_publish
-            ],
+                for point in row["reference"]
+                for value in point
+            ),
             dtype=np.float64,
-        ),
+            count=len(rows_to_publish) * (chart_dimension + 1) * top_dimension,
+        ).reshape(len(rows_to_publish), chart_dimension + 1, top_dimension),
         target_reference_rational_tokens=rational_chart_tokens(
-            tuple(value["reference"] for value in rows_to_publish)
+            value["reference"] for value in rows_to_publish
         ),
         source_chart_ids=tuple(witness.source_chart_ids[row] for row in source_rows),
         source_entity_ids=tuple(witness.source_entity_ids[row] for row in source_rows),
         occurrence_paths=tuple(witness.occurrence_paths[row] for row in source_rows),
-        source_parameters=np.asarray(
-            [value["parameters"] for value in rows_to_publish], dtype=np.float64
-        ),
+        source_parameters=np.fromiter(
+            (
+                float(value)
+                for row in rows_to_publish
+                for point in row["parameters_exact"]
+                for value in point
+            ),
+            dtype=np.float64,
+            count=len(rows_to_publish) * (chart_dimension + 1) * chart_dimension,
+        ).reshape(len(rows_to_publish), chart_dimension + 1, chart_dimension),
         source_parameter_rational_tokens=rational_chart_tokens(
-            tuple(value["parameters_exact"] for value in rows_to_publish)
+            value["parameters_exact"] for value in rows_to_publish
         ),
         orientations=np.asarray(
             [value["orientation"] for value in rows_to_publish], dtype=np.int8
         ),
         implicit_cell_keys=implicit_cells_out,
         implicit_root_edge_keys=implicit_edges_out,
+    )
+
+
+def _fidelity_premise(
+    source: CellMeshingResult,
+    inputs: MeshCertificationInputs | None,
+    transition: CellGeometryTransition | None,
+    /,
+) -> ImplicitChartPremise | None:
+    """Offer target acceptance the source's implicit-chart fidelity certificate.
+
+    Rows equal to source rows are reused by identity; with the exact transition
+    a nested restriction inherits the source bounds. Acceptance proves
+    whatever the premise does not cover.
+    """
+    certification = source.certification
+    if (
+        inputs is None
+        or certification is None
+        or certification.fidelity is None
+        or not isinstance(certification.fidelity.witness, SourceBoundaryChartWitness)
+        or (
+            certification.fidelity.chart_rows is None
+            and (transition is None or certification.fidelity.status != "certified")
+        )
+    ):
+        return None
+    return ImplicitChartPremise(
+        source.mesh, source.geometry, certification.fidelity, transition
     )
 
 
@@ -5349,6 +5492,7 @@ def _finalize_native(
     polyhedral_outcome: PolyhedralAdaptationOutcome | None = None,
     surface_metric_outcome: SurfaceMetricOutcome | None = None,
     coverage_renewal: PolyhedralCoverageRenewal | None = None,
+    exact_source_vertices: tuple[tuple[Fraction, ...], ...] | None = None,
 ) -> _NativeTarget:
     """Assemble, inherit organization and associations, certify, and bind transfer."""
 
@@ -5405,7 +5549,11 @@ def _finalize_native(
         reference_maps = surface_metric_outcome.geometry.reference_maps
     else:
         mesh, geometry, reference_maps, quotient_rows = _restricted_target_geometry(
-            source, mesh, edit, coarsening=coarsening
+            source,
+            mesh,
+            edit,
+            coarsening=coarsening,
+            exact_source_vertices=exact_source_vertices,
         )
     if periodic_source:
         edit = edit._replace(coordinates=np.asarray(mesh.coordinates, dtype=np.float64))
@@ -5470,7 +5618,7 @@ def _finalize_native(
                 exact_coordinate_source=quotient_bank,
             )
         if quotient_rows is not None:
-            geometry = _quotient_chart_target_geometry(mesh, quotient_bank)
+            geometry = _vertex_source_target_geometry(mesh, quotient_bank)
     transition_geometry = None
     surface_chart_witness = None
     linear_transfer = True
@@ -5654,6 +5802,9 @@ def _finalize_native(
         certification_inputs=certification_inputs,
         validated_witnesses=validated_witnesses,
         embedding_premise=embedding_premise,
+        fidelity_premise=_fidelity_premise(
+            source, certification_inputs, transition_geometry
+        ),
         patches=patches,
         zones=zones,
         labels=labels,
@@ -5662,6 +5813,7 @@ def _finalize_native(
         region_boundary_evidence=boundaries,
         planar_embedding=source.planar_embedding,
         layer_curving_evidence=layer_curving_evidence,
+        validity_parent=None if certification_inputs is None else source.audit.validity,
     )
     if target.mesh.topology_id != mesh.topology_id:
         raise ValueError("Certification reordered the adapted topology.")
@@ -5909,6 +6061,11 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     policy = prepared.policy
     constraints = prepared.constraints
     topology = isinstance(request, MetricMeshAdaptation)
+    exact_source_vertices = (
+        _metric_exact_source_vertices(prepared.source)
+        if prepared.source.mesh.periodic_topology is None
+        else None
+    )
     outcome = execute_local_metric_adaptation(
         prepared.source.mesh,
         constraints.metric_values,
@@ -5919,6 +6076,7 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         predicate_mode=resolve_host_predicate_mode(policy.predicate_mode),
         topology_operations=topology,
         relocation=policy.relocation,
+        exact_source_points=exact_source_vertices,
     )
     evidence = outcome.evidence
     status = _metric_status(evidence, topology)
@@ -5928,7 +6086,11 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         # numerical/geometry obstruction prevented progress.
         return _unchanged(prepared, evidence, None, status=status)
     native = _finalize_native(
-        prepared, outcome.edit, MeshTransitionKind.REMESH, conservative=False
+        prepared,
+        outcome.edit,
+        MeshTransitionKind.REMESH,
+        conservative=False,
+        exact_source_vertices=exact_source_vertices,
     )
     return _RouteOutcome(
         status,
@@ -6429,6 +6591,9 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         ),
         certification_inputs=certification_inputs,
         validated_witnesses=validated_witnesses,
+        fidelity_premise=_fidelity_premise(
+            source, certification_inputs, hp_geometry_transition
+        ),
         patches=patches,
         zones=zones,
         labels=labels,
@@ -6437,6 +6602,7 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         region_boundary_evidence=boundaries,
         planar_embedding=source.planar_embedding,
         layer_curving_evidence=layer_curving_evidence,
+        validity_parent=None if certification_inputs is None else source.audit.validity,
     )
     if target.mesh.topology_id != mesh.topology_id:
         raise ValueError("Certification reordered the hp target topology.")

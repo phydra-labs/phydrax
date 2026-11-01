@@ -16,6 +16,7 @@ from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
+    CellValidityCertificate,
     certify_cell_geometry_validity,
 )
 from ..discretization._surface_chart_records import SurfaceChartWitness
@@ -53,6 +54,7 @@ from ..geometry._source_fidelity_certificate import (
     SourceFidelityCertificate,
     SourceFidelityWitness,
 )
+from ..geometry.implicit._chart_restriction import ImplicitChartPremise
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
 from ._audit import (
@@ -283,6 +285,48 @@ def _feature_findings(
     return tuple(failures), tuple(recorded)
 
 
+def _acceptance_validity(
+    inputs: MeshCertificationInputs,
+    policy: CellMeshAuditPolicy,
+    validity: CellValidityCertificate | None,
+    parent: CellValidityCertificate | tuple[CellValidityCertificate, ...] | None,
+    /,
+) -> CellValidityCertificate:
+    """Reuse an in-hand proof of exactly these inputs or prove with parent records."""
+    validity_policy = policy.validity_policy
+    if validity is not None:
+        if type(validity) is not CellValidityCertificate:
+            raise TypeError("validity must be CellValidityCertificate or None.")
+        if validity.policy_id != validity_policy.policy_id:
+            raise ValueError(
+                "An in-hand validity proof must use the acceptance validity policy."
+            )
+        validity.require_current(inputs.geometry, mesh=inputs.mesh)
+        return validity
+    match parent:
+        case None:
+            parents: tuple[CellValidityCertificate, ...] = ()
+        case CellValidityCertificate():
+            parents = (parent,)
+        case tuple():
+            parents = parent
+        case _:
+            raise TypeError(
+                "validity_parent must be CellValidityCertificate, a tuple of them, or None."
+            )
+    if not all(type(value) is CellValidityCertificate for value in parents):
+        raise TypeError("validity_parent must hold CellValidityCertificate values.")
+    # Proofs under another validity policy answer no acceptance obligation.
+    return certify_cell_geometry_validity(
+        inputs.geometry,
+        mesh=inputs.mesh,
+        policy=validity_policy,
+        parent=tuple(
+            value for value in parents if value.policy_id == validity_policy.policy_id
+        ),
+    )
+
+
 @final
 class MeshCertificationReport(StrictModule, NonTrainableState):
     """Computed acceptance, retaining its source premises for independent renewal.
@@ -320,6 +364,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         embedding: GlobalEmbeddingCertificate | None = None,
         embedding_premise: NestedRestrictionPremise | None = None,
         validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
+        fidelity_premise: ImplicitChartPremise | None = None,
+        validity: CellValidityCertificate | None = None,
+        validity_parent: CellValidityCertificate
+        | tuple[CellValidityCertificate, ...]
+        | None = None,
     ) -> None:
         """Compute acceptance from ``inputs``.
 
@@ -328,9 +377,16 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         map, local-validity and junction inputs; otherwise it is computed here,
         from ``embedding_premise`` (a certified source embedding and the exact
         nested transition to this mesh) when that theorem's premises hold.
+        ``fidelity_premise`` offers the source-fidelity proof a certified parent
+        certificate (implicit-chart identity reuse and chart restriction).
         ``validated`` holds fidelity-witness validations already made for the
         retained mesh, coordinate map and source objects of ``inputs``, as
         returned by ``inputs.require_current``; those are not repeated.
+        ``validity`` is a cell-validity certificate already computed for exactly
+        these mesh and coordinate map under the acceptance validity policy; it
+        is required current and reused. Otherwise local validity is proved,
+        reusing the cell proofs of ``validity_parent`` certificates of the
+        acceptance validity policy for identical exact cell maps.
         """
         if not isinstance(inputs, MeshCertificationInputs):
             raise TypeError("inputs must be MeshCertificationInputs.")
@@ -342,6 +398,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             embedding, GlobalEmbeddingCertificate
         ):
             raise TypeError("embedding must be GlobalEmbeddingCertificate or None.")
+        if validity is not None and validity_parent is not None:
+            raise ValueError("Pass either an in-hand validity proof or its parents.")
         _require_route_geometry(inputs)
         organization_ = NativeMeshOrganization() if organization is None else organization
         policy = (
@@ -354,11 +412,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             source=inputs.source,
             validated=validated,
         )
-        validity = certify_cell_geometry_validity(
-            inputs.geometry,
-            mesh=inputs.mesh,
-            policy=policy.validity_policy,
-        )
+        validity = _acceptance_validity(inputs, policy, validity, validity_parent)
         if embedding is None:
             embedding = certify_global_embedding(
                 inputs.mesh,
@@ -408,6 +462,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                     inputs.source,
                     inputs.fidelity_witness,
                 ),
+                chart_parent=fidelity_premise,
             )
             findings.extend(fidelity.findings)
         scoped = tuple(
@@ -717,6 +772,9 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             ),
             embedding=embedding,
             embedding_premise=self.embedding.nested_restriction_premise,
+            fidelity_premise=None
+            if self.fidelity is None
+            else self.fidelity.chart_premise,
             validated=validated,
         )
         if not _same_tree_content(self, renewed):

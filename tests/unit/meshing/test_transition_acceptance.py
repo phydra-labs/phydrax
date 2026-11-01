@@ -31,12 +31,17 @@ from phydrax.discretization.finite_volume._material_schedule import (
 )
 from phydrax.discretization.finite_volume._remap_csr_view import material_csr_rows
 from phydrax.discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumePlan,
+)
+from phydrax.discretization.finite_volume._unstructured_dynamics import (
+    PreparedUnstructuredFiniteVolumeDynamics,
 )
 from phydrax.geometry import _source_fidelity as source_fidelity_module
 from phydrax.geometry._common_root_volume_overlap import CommonRootVolumeWitness
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
     MeshingDomainCurve,
@@ -50,6 +55,7 @@ from phydrax.geometry._source_boundary_records import (
 )
 from phydrax.geometry._volume_material_deformation import (
     declare_material_reference,
+    MaterialReferenceDeclaration,
     MaterialReferencePolicy,
 )
 from phydrax.geometry._volume_material_map import prepare_eulerian_volume_overlap
@@ -205,12 +211,12 @@ def test_pwl_refinement_and_coarsening_renew_original_domain_acceptance() -> Non
 
 def _curved_material_refinement_case() -> tuple[
     CellMeshingResult,
-    object,
+    MaterialReferenceDeclaration,
     CellMeshTransition,
     MeshAdaptationPolicy,
     np.ndarray,
     MeshAdaptationResult,
-    object,
+    MappedReferenceDomain,
     tuple[str, str],
     CellMesh,
     CellGeometrySpec,
@@ -308,10 +314,10 @@ def _simplicial_fv_plan(
     cells = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in result.mesh.blocks)
     )
-    connectivity = "tetrahedra" if cells.shape[1] == 4 else "triangles"
     return UnstructuredFiniteVolumePlan(
         np.asarray(result.mesh.coordinates),
-        **{connectivity: cells},
+        tetrahedra=cells if cells.shape[1] == 4 else None,
+        triangles=cells if cells.shape[1] == 3 else None,
         vertex_global_ids=np.asarray(result.mesh.vertex_global_ids, dtype=np.int64),
         cell_global_ids=np.concatenate(
             tuple(
@@ -336,6 +342,8 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
         root_mesh,
         root_geometry,
     ) = _curved_material_refinement_case()
+    assert source.certification is not None
+    assert source.certification.coverage is not None
     with pytest.raises(ValueError, match="mutually exclusive"):
         prepare_mesh_adaptation(
             source,
@@ -650,7 +658,9 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
 
 def _euler_fv_runtime(
     result: CellMeshingResult, system: phx.equations.EulerSystem, /
-) -> tuple[object, object]:
+) -> tuple[
+    UnstructuredFiniteVolumeDiscretization, PreparedUnstructuredFiniteVolumeDynamics
+]:
     discretization = _simplicial_fv_plan(result, system.component_names).prepare()
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         discretization.boundary_patch_names,
@@ -673,6 +683,7 @@ def _euler_fv_runtime(
             topology_event_policy="accepted_step",
         ),
     ).dynamics
+    assert isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)
     return discretization, dynamics
 
 
@@ -1357,3 +1368,82 @@ def test_bisection_coarsening_preserves_nondyadic_source_chart_tokens() -> None:
             transition.lineage,
             reference_maps=(),
         )
+
+
+def test_metric_exact_stencil_keeps_nonrepresentable_boundary_point() -> None:
+    from phydrax.discretization import CellBlock, certify_cell_geometry_validity
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from phydrax.meshing._adaptation import (
+        _affine_edit_geometry,
+        _metric_exact_source_vertices,
+    )
+    from phydrax.meshing._topology_edit import CellTopologyEdit, TopologyEditBlock
+
+    points = np.asarray(
+        (
+            (0.0, 0.0),
+            (0.7071067811865476, 0.7071067811865475),
+            (0.38268343236508984, 0.9238795325112867),
+        )
+    )
+    mesh = CellMesh(
+        points,
+        (CellBlock("cells", "triangle", np.asarray(((0, 1, 2),))),),
+        vertex_global_ids=np.arange(3),
+    )
+    source = certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    exact_source = _metric_exact_source_vertices(source)
+    midpoint = tuple(
+        (first + second) / 2
+        for first, second in zip(exact_source[1], exact_source[2], strict=True)
+    )
+    rounded = tuple(float(value) for value in midpoint)
+    assert any(
+        Fraction(value) != exact for value, exact in zip(rounded, midpoint, strict=True)
+    )
+    target_points = np.vstack((points, rounded))
+    cells = np.asarray(((0, 1, 3), (0, 3, 2)))
+    target = CellMesh(
+        target_points,
+        (CellBlock("cells", "triangle", cells),),
+        vertex_global_ids=np.arange(4),
+    )
+    sources = np.asarray(((0, 0), (1, 0), (2, 0), (1, 2)))
+    weights = np.asarray(((1.0, 0.0), (1.0, 0.0), (1.0, 0.0), (0.5, 0.5)))
+    edit = CellTopologyEdit(
+        target_points,
+        np.arange(4),
+        (
+            TopologyEditBlock(
+                "cells",
+                "triangle",
+                "triangle",
+                cells,
+                np.asarray(target.blocks[0].global_ids),
+            ),
+        ),
+        sources,
+        weights,
+        weights != 0,
+        (),
+        stencil_exact_weights=tuple(
+            tuple(Fraction(value) for value in row) for row in weights
+        ),
+    )
+    geometry = _affine_edit_geometry(source, target, edit, exact_source)
+    assert isinstance(geometry.source_map, ExactPlcCellGeometrySource)
+    assert geometry.source_coordinates()[-1] == midpoint
+    validity = certify_cell_geometry_validity(geometry, mesh=target)
+    assert validity.all_certified
+    assert float(validity.maximum_coefficient_rounding_error) > 0
+    accepted = certify_cell_mesh(
+        target, phx.SpatialCoordinateContract.si(), geometry=geometry
+    )
+    assert _metric_exact_source_vertices(accepted)[-1] == midpoint
+    changed = edit._replace(coordinates=np.array(target_points, copy=True))
+    changed.coordinates[-1, 0] = np.nextafter(changed.coordinates[-1, 0], np.inf)
+    changed_target = CellMesh(
+        changed.coordinates, target.blocks, vertex_global_ids=np.arange(4)
+    )
+    with pytest.raises(ValueError, match="canonical exact-stencil roundings"):
+        _affine_edit_geometry(source, changed_target, changed, exact_source)

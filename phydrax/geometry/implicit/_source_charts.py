@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field, replace
@@ -73,6 +74,13 @@ from ._adaptive_discovery import (
     AdaptiveImplicitSurface,
 )
 from ._analytic_profile import AnalyticImplicitProfile
+from ._chart_restriction import (
+    certify_implicit_chart_restriction,
+    CHART_ROW_COLUMNS,
+    ImplicitChartPremise,
+    ImplicitChartRestriction,
+    ImplicitChartRows,
+)
 
 
 if TYPE_CHECKING:
@@ -223,6 +231,7 @@ class _PreparedFace:
     orientation: int
     maximum_root_parameter: float
     evidence: ImplicitRootChartEvidence
+    identity_key: bytes | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +286,10 @@ class AdaptiveImplicitRootChartMap:
         self._bounds = bounds
         self._surface = surface
         self._hessian_program = hessian_program
+        # Set by the preparation: every row's own proof evidence, and how many
+        # rows took a parent's evidence by identity.
+        self.chart_rows: ImplicitChartRows | None = None
+        self.reused_row_count = 0
         self.tolerance = tolerance
         self.maximum_normal_deviation = maximum_normal_deviation
         self.witness_id = canonical_fingerprint(
@@ -3169,21 +3182,53 @@ def _point_exclusion_steps(
         refinable = [refine for _proof, _detail, refine in outcomes]
 
 
-def _build_face(
+@dataclass(frozen=True, slots=True)
+class _FaceSetup:
+    """The exact inputs of one face proof, resolved before any interval work."""
+
+    row: int
+    block_index: int
+    cell_row: int
+    cell_key: SourceCellKey
+    root_edges: RootEdgeTriangle
+    reference_corners: ReferenceTriangle
+    source_parameters: TriangleReference
+    orientation: int
+    projected_axes: tuple[int, int, int]
+    cell_expressions: Polynomial3
+    target_expressions: Polynomial3
+    # Digest of everything the face proof reads; ``None`` when a coefficient
+    # has no canonical exact spelling.
+    identity_key: bytes | None
+
+
+def _face_identity_key(
+    cell_key: SourceCellKey,
+    root_edges: RootEdgeTriangle,
+    source_parameters: TriangleReference,
+    expressions: Polynomial3,
+    /,
+) -> bytes | None:
+    """Digest the proof inputs; term order is kept because enclosures sum in it."""
+    terms = []
+    for expression in expressions:
+        if any(type(value) is not Fraction for value in expression.values()):
+            return None
+        terms.append(tuple(expression.items()))
+    payload = repr((cell_key, root_edges, source_parameters, tuple(terms)))
+    return hashlib.blake2b(payload.encode(), digest_size=16).digest()
+
+
+def _face_setup(
     row: int,
     target_row: tuple[int, int],
     target: _TargetMapSource,
     witness: SourceBoundaryChartWitness,
     surface: AdaptiveImplicitSurface,
     root_rows: dict[GridEdge, tuple[np.ndarray, float]],
-    root_by_point: dict[bytes, GridEdge],
     cell_rows: dict[SourceCellKey, int],
-    *,
-    tolerance: float | None,
-    maximum_normal_deviation: float | None,
-) -> _FaceSteps[_PreparedFace]:
-    """Prove one face's root chart; its piece rounds are batched across faces."""
-
+    /,
+) -> _FaceSetup:
     block_index, cell_row = target_row
     cell_expressions = _target_cell_coordinate_expressions(target, block_index, cell_row)
     reference_corners = _reference_triangle(
@@ -3246,13 +3291,67 @@ def _build_face(
             raise ValueError(
                 "Implicit chart root edge has no retained adaptive root witness."
             )
-    face = _enclose_face(target_expressions)
+    return _FaceSetup(
+        row,
+        block_index,
+        cell_row,
+        cell_key,
+        root_edges,
+        reference_corners,
+        source_parameters,
+        orientation,
+        projected_axes,
+        cell_expressions,
+        target_expressions,
+        _face_identity_key(cell_key, root_edges, source_parameters, target_expressions),
+    )
+
+
+def _face_root_corners(
+    setup: _FaceSetup,
+    root_rows: dict[GridEdge, tuple[np.ndarray, float]],
+    root_by_point: dict[bytes, GridEdge],
+    /,
+) -> tuple[RootCorner, ...]:
+    root_corners: list[RootCorner] = []
+    for corner in setup.reference_corners:
+        corner_point = np.asarray(
+            tuple(
+                float(evaluate_expression(expression, corner))
+                for expression in setup.cell_expressions
+            ),
+            dtype=np.float64,
+        )
+        corner_edge = root_by_point.get(corner_point.tobytes())
+        if corner_edge is None:
+            root_corners.append(None)
+        else:
+            point, error = root_rows[corner_edge]
+            root_corners.append((corner_edge, point, error))
+    return tuple(root_corners)
+
+
+def _build_face(
+    setup: _FaceSetup,
+    witness: SourceBoundaryChartWitness,
+    surface: AdaptiveImplicitSurface,
+    root_rows: dict[GridEdge, tuple[np.ndarray, float]],
+    root_by_point: dict[bytes, GridEdge],
+    *,
+    tolerance: float | None,
+    maximum_normal_deviation: float | None,
+) -> _FaceSteps[_PreparedFace]:
+    """Prove one face's root chart; its piece rounds are batched across faces."""
+
+    row = setup.row
+    orientation = setup.orientation
+    face = _enclose_face(setup.target_expressions)
     prove: _PieceProver = partial(
         _face_piece_proofs,
         surface,
         face,
         source_orientation=orientation,
-        projected_axes=projected_axes,
+        projected_axes=setup.projected_axes,
         tolerance=tolerance,
         maximum_normal_deviation=maximum_normal_deviation,
     )
@@ -3273,17 +3372,14 @@ def _build_face(
     target_to_root_upper = max(piece.target_to_source[1] for piece in pieces)
     normal_lower = max(piece.normal_deviation[0] for piece in pieces)
     normal_upper = max(piece.normal_deviation[1] for piece in pieces)
-    target_cell_id = int(witness.cell_global_ids[row])
-    entity_id = int(witness.entity_global_ids[row])
-    local_entity = int(witness.local_entity_indices[row])
     status = "certified" if not detail else "unresolved"
     evidence = ImplicitRootChartEvidence(
         row,
-        target_cell_id,
-        entity_id,
-        local_entity,
-        cell_key,
-        root_edges,
+        int(witness.cell_global_ids[row]),
+        int(witness.entity_global_ids[row]),
+        int(witness.local_entity_indices[row]),
+        setup.cell_key,
+        setup.root_edges,
         status,
         math.nextafter(residual_upper, math.inf),
         math.nextafter(target_to_root_lower, 0.0),
@@ -3297,42 +3393,92 @@ def _build_face(
         min(piece.source_gradient_lower for piece in pieces),
         detail,
     )
-    root_corners: list[RootCorner] = []
-    for corner in reference_corners:
-        corner_point = np.asarray(
-            tuple(
-                float(evaluate_expression(expression, corner))
-                for expression in cell_expressions
-            ),
-            dtype=np.float64,
-        )
-        corner_edge = root_by_point.get(corner_point.tobytes())
-        if corner_edge is None:
-            root_corners.append(None)
-        else:
-            point, error = root_rows[corner_edge]
-            root_corners.append((corner_edge, point, error))
-    return _PreparedFace(
-        row,
-        block_index,
-        cell_row,
-        target_cell_id,
-        entity_id,
-        local_entity,
-        cell_key,
-        root_edges,
-        reference_corners,
-        _prepare_barycentric_solver(reference_corners),
-        source_parameters,
-        cell_expressions,
-        target_expressions,
+    return _prepared_face(
+        setup,
+        evidence,
         face,
         pieces,
-        tuple(root_corners),
-        projected_axes,
-        orientation,
+        _face_root_corners(setup, root_rows, root_by_point),
         max(piece.maximum_root_parameter for piece in pieces),
+    )
+
+
+def _prepared_face(
+    setup: _FaceSetup,
+    evidence: ImplicitRootChartEvidence,
+    face: _FaceEnclosure,
+    pieces: tuple[_PieceProof, ...],
+    root_corners: tuple[RootCorner, ...],
+    maximum_root_parameter: float,
+    /,
+) -> _PreparedFace:
+    return _PreparedFace(
+        setup.row,
+        setup.block_index,
+        setup.cell_row,
+        evidence.target_cell_global_id,
+        evidence.target_entity_global_id,
+        evidence.target_local_entity_index,
+        setup.cell_key,
+        setup.root_edges,
+        setup.reference_corners,
+        _prepare_barycentric_solver(setup.reference_corners),
+        setup.source_parameters,
+        setup.cell_expressions,
+        setup.target_expressions,
+        face,
+        pieces,
+        root_corners,
+        setup.projected_axes,
+        setup.orientation,
+        maximum_root_parameter,
         evidence,
+        setup.identity_key,
+    )
+
+
+def _reused_face(
+    setup: _FaceSetup,
+    witness: SourceBoundaryChartWitness,
+    values: np.ndarray,
+    root_corners: tuple[RootCorner, ...],
+    /,
+) -> _PreparedFace:
+    """A face whose proof inputs equal a certified parent row's: its evidence, relabelled.
+
+    The face carries no piece proofs; it serves certification (evidence, face
+    maps, shared edges), never point projection.
+    """
+    row = setup.row
+    (
+        residual,
+        lower,
+        upper,
+        normal_lower,
+        normal_upper,
+        jacobian,
+        margin,
+        gradient,
+    ) = (float(value) for value in values)
+    evidence = ImplicitRootChartEvidence(
+        row,
+        int(witness.cell_global_ids[row]),
+        int(witness.entity_global_ids[row]),
+        int(witness.local_entity_indices[row]),
+        setup.cell_key,
+        setup.root_edges,
+        "certified",
+        residual,
+        lower,
+        upper,
+        (normal_lower, normal_upper),
+        jacobian,
+        margin,
+        gradient,
+        "",
+    )
+    return _prepared_face(
+        setup, evidence, _enclose_face(setup.target_expressions), (), root_corners, 0.0
     )
 
 
@@ -3539,12 +3685,17 @@ def _prepare_root_charts(
     tolerance: float | None,
     maximum_normal_deviation: float | None,
     target_rows: tuple[tuple[int, int], ...] | None,
+    reuse: ImplicitChartRows | None = None,
 ) -> AdaptiveImplicitRootChartMap:
     """`prepare_adaptive_implicit_root_charts` body.
 
     ``target_rows`` are the witness's target chart rows from a caller that has
     already validated this mesh, geometry, source and witness; ``None``
-    validates them and derives the rows here.
+    validates them and derives the rows here. ``reuse`` holds a parent
+    certificate's certified rows for this source, tolerance and normal limit:
+    a row whose proof inputs equal one of them takes that evidence by identity
+    instead of being proved; such faces carry no piece proofs, so the map is
+    then for certification only.
     """
     from ...geometry._source_fidelity import (
         _surface_target_chart_rows,
@@ -3627,41 +3778,97 @@ def _prepare_root_charts(
     root_by_point = _root_rows_by_point(root_rows)
     cell_rows = _source_cell_rows(surface)
     target = _target_map_source(mesh, geometry)
-    prepared = _run_faces(
-        bounds,
-        hessian_program,
-        [
-            _build_face(
-                row,
-                target_row,
-                target,
-                witness,
-                surface,
-                root_rows,
-                root_by_point,
-                cell_rows,
-                tolerance=tolerance_,
-                maximum_normal_deviation=normal_,
-            )
-            for row, target_row in enumerate(target_rows)
-        ],
-    )
-    edge_issues = _shared_edge_map_issues(mesh, witness, target_rows, tuple(prepared))
+    setups = [
+        _face_setup(row, target_row, target, witness, surface, root_rows, cell_rows)
+        for row, target_row in enumerate(target_rows)
+    ]
+    reused_rows = {} if reuse is None else reuse.lookup()
+    prepared: list[_PreparedFace | None] = [None] * len(setups)
+    proved: list[int] = []
+    for setup in setups:
+        parent_row = (
+            None if setup.identity_key is None else reused_rows.get(setup.identity_key)
+        )
+        if parent_row is None:
+            proved.append(setup.row)
+            continue
+        assert reuse is not None
+        prepared[setup.row] = _reused_face(
+            setup,
+            witness,
+            reuse.values[parent_row],
+            _face_root_corners(setup, root_rows, root_by_point),
+        )
+    for row, face in zip(
+        proved,
+        _run_faces(
+            bounds,
+            hessian_program,
+            [
+                _build_face(
+                    setups[row],
+                    witness,
+                    surface,
+                    root_rows,
+                    root_by_point,
+                    tolerance=tolerance_,
+                    maximum_normal_deviation=normal_,
+                )
+                for row in proved
+            ],
+        ),
+        strict=True,
+    ):
+        prepared[row] = face
+    faces = tuple(face for face in prepared if face is not None)
+    if len(faces) != len(setups):
+        raise RuntimeError("Every implicit chart row must be proved or reused.")
+    rows = _chart_rows(faces)
+    edge_issues = _shared_edge_map_issues(mesh, witness, target_rows, faces)
+    marked = list(faces)
     for row, detail in edge_issues.items():
-        prepared[row] = _mark_chart_unresolved(prepared[row], detail)
-    return AdaptiveImplicitRootChartMap(
+        marked[row] = _mark_chart_unresolved(marked[row], detail)
+    root_map = AdaptiveImplicitRootChartMap(
         mesh,
         geometry,
         source,
         witness,
         selected_frame,
-        tuple(prepared),
+        tuple(marked),
         bounds,
         tolerance_,
         normal_,
         surface,
         hessian_program,
     )
+    root_map.chart_rows = rows
+    root_map.reused_row_count = len(setups) - len(proved)
+    return root_map
+
+
+def _chart_rows(faces: Sequence[_PreparedFace], /) -> ImplicitChartRows:
+    """Each face's own proof evidence, before shared-edge marking, by proof inputs."""
+    count = len(faces)
+    keys = np.zeros((count, 16), dtype=np.uint8)
+    reusable = np.zeros((count,), dtype=np.bool_)
+    values = np.zeros((count, len(CHART_ROW_COLUMNS)), dtype=np.float64)
+    for row, face in enumerate(faces):
+        evidence = face.evidence
+        if face.identity_key is None or evidence.status != "certified":
+            continue
+        keys[row] = np.frombuffer(face.identity_key, dtype=np.uint8)
+        reusable[row] = True
+        values[row] = (
+            evidence.field_residual_bound,
+            evidence.target_to_root_lower_bound,
+            evidence.target_to_root_bound,
+            evidence.source_normal_deviation_bounds[0],
+            evidence.source_normal_deviation_bounds[1],
+            evidence.chart_jacobian_lower,
+            evidence.chart_injectivity_margin,
+            evidence.source_gradient_lower,
+        )
+    return ImplicitChartRows(keys, reusable, values)
 
 
 # Rows per eager point-field block; blocks pad to power-of-two row buckets.
@@ -4399,12 +4606,20 @@ def certify_adaptive_implicit_charts(
     tolerance: float,
     maximum_normal_deviation: float | None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
+    chart_parent: ImplicitChartPremise | None = None,
 ) -> SourceFidelityCertificate:
     """Certify nonlinear P1/P2/P3 target maps against an adaptive implicit root cover.
 
     ``root_charts`` is a chart map the caller already prepared for exactly this
     mesh, geometry, source, witness and controls; it is checked against them
     and used instead of preparing the charts again.
+
+    ``chart_parent`` offers a certified parent certificate for the same source
+    and controls (see :mod:`._chart_restriction`). When its exact transition
+    restricts every target row to a tiled parent row, the certificate inherits
+    the parent's bounds and records the restriction evidence. Otherwise rows
+    whose proof inputs equal a parent row's take its evidence by identity and
+    only the other rows are proved; that certificate is the full proof's.
     """
     from ...geometry._source_fidelity import (
         _surface_target_chart_rows,
@@ -4419,6 +4634,26 @@ def certify_adaptive_implicit_charts(
     if not isinstance(chart_witness, SourceBoundaryChartWitness):
         raise TypeError("witness must be SourceBoundaryChartWitness.")
     witness = chart_witness
+    if root_charts is not None and chart_parent is not None:
+        raise ValueError("Prepared root charts and a chart parent are exclusive.")
+    reuse: ImplicitChartRows | None = None
+    if chart_parent is not None:
+        if not isinstance(chart_parent, ImplicitChartPremise):
+            raise TypeError("chart_parent must be ImplicitChartPremise or None.")
+        parent = chart_parent.certified_parent(
+            source, tolerance, maximum_normal_deviation
+        )
+        if parent is not None:
+            restriction = certify_implicit_chart_restriction(
+                mesh, geometry, witness, parent, chart_parent
+            )
+            if restriction is not None and not bool(np.all(restriction.identity_rows)):
+                return _restricted_certificate(
+                    mesh, geometry, source, witness, parent, chart_parent, restriction
+                )
+            reuse = parent.chart_rows
+            if reuse is not None:
+                reuse.require_current()
     if root_charts is not None:
         root_charts.require_request(
             mesh,
@@ -4443,6 +4678,7 @@ def certify_adaptive_implicit_charts(
                 tolerance=tolerance,
                 maximum_normal_deviation=maximum_normal_deviation,
                 target_rows=target_rows,
+                reuse=reuse,
             )
         except (ArithmeticError, IndexError, TypeError, ValueError) as error:
             return _unresolved_fidelity(
@@ -4626,7 +4862,7 @@ def certify_adaptive_implicit_charts(
         ),
         default=Fraction(0),
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -4648,6 +4884,65 @@ def certify_adaptive_implicit_charts(
         witness,
         None,
         tuple(findings),
+        chart_rows=root_map.chart_rows,
+    )
+
+
+def _restricted_certificate(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: AdaptiveImplicitSourceQuery,
+    witness: SourceBoundaryChartWitness,
+    parent: SourceFidelityCertificate,
+    premise: ImplicitChartPremise,
+    restriction: ImplicitChartRestriction,
+    /,
+) -> SourceFidelityCertificate:
+    """The target certificate the chart-restriction theorem inherits from ``parent``.
+
+    Per row: the parent row's upper bounds; its lower bound only where the row
+    is the whole parent row. Directed and normal bounds: the parent's, since
+    the tiled target image and its lifts are the parent's.
+    """
+    from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
+
+    rows = restriction.parent_rows
+    parent_bounds = np.asarray(parent.deviation_bounds, dtype=np.float64)
+    parent_normals = np.asarray(parent.normal_deviation_bounds, dtype=np.float64)
+    per_face = np.stack(
+        (
+            np.where(restriction.identity_rows, parent_bounds[rows, 0], 0.0),
+            parent_bounds[rows, 1],
+        ),
+        axis=1,
+    )
+    return SourceFidelityCertificate._from_computed(
+        MeshCertificateBinding(
+            mesh,
+            geometry,
+            "mapped",
+            source=source,
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+        ),
+        source,
+        parent.tolerance,
+        parent.maximum_normal_deviation,
+        per_face,
+        parent.mesh_to_source_lower,
+        parent.mesh_to_source_upper,
+        parent.source_to_mesh_lower,
+        parent.source_to_mesh_upper,
+        parent_normals[rows],
+        parent.maximum_normal_deviation_lower,
+        tuple(int(value) for value in witness.entity_global_ids),
+        tuple(0 for _ in witness.entity_global_ids),
+        witness.occurrence_paths,
+        witness,
+        None,
+        (),
+        chart_restriction=restriction.evidence,
+        chart_premise=premise,
     )
 
 

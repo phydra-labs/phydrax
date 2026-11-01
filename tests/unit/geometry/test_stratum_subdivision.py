@@ -101,7 +101,7 @@ def _cell(
         vertex_indices=tuple(range(len(vertex_ids))),
         vertex_ids=vertex_ids,
         reference_vertices=references,
-        coordinates=coordinates,
+        coordinate_expressions=coordinates,
         corner_images=images,
         affine_offset=None,
         affine_matrix=None,

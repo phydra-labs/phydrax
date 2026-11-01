@@ -20,7 +20,10 @@ from ..discretization._cell_geometry import (
     CellVertexGeometryElement,
     ScalarCoordinateElement,
 )
-from ..discretization._cell_geometry_validity import CellValidityStatus
+from ..discretization._cell_geometry_validity import (
+    CellValidityCertificate,
+    CellValidityStatus,
+)
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
@@ -28,6 +31,7 @@ from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry._surface_source_support import SurfaceSourceCharts
+from ..geometry.implicit._chart_restriction import ImplicitChartPremise
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshManifoldScope
@@ -232,8 +236,13 @@ def certify_cell_mesh(
     layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
     embedding: GlobalEmbeddingCertificate | None = None,
     embedding_premise: NestedRestrictionPremise | None = None,
+    fidelity_premise: ImplicitChartPremise | None = None,
     manifold_scope: CellMeshManifoldScope | None = None,
     validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
+    validity: CellValidityCertificate | None = None,
+    validity_parent: CellValidityCertificate
+    | tuple[CellValidityCertificate, ...]
+    | None = None,
 ) -> CellMeshingResult:
     """Canonicalize and certify one existing CellMesh through native substrates.
 
@@ -242,9 +251,16 @@ def certify_cell_mesh(
     ``embedding_premise`` offers acceptance a certified source embedding and
     the exact nested transition to this mesh, from which the global embedding
     follows when the nested-restriction theorem's premises hold.
+    ``fidelity_premise`` offers implicit-chart fidelity a certified parent
+    certificate: rows equal to the parent's are reused by identity, and a
+    nested restriction inherits the parent's bounds.
     ``validated_witnesses`` are fidelity-witness validations the caller made
     for exactly these mesh, coordinate map and source objects; acceptance with
     ``certification_inputs`` does not repeat them.
+    ``validity`` (an in-hand proof of exactly these inputs) or
+    ``validity_parent`` (earlier proofs whose identical cell maps are reused)
+    serve acceptance with ``certification_inputs``; see
+    ``MeshCertificationReport``.
     ``manifold_scope`` declares the vertex stars a resident patch of a
     distributed mesh certifies; it applies to the direct audit only.
     """
@@ -261,13 +277,19 @@ def certify_cell_mesh(
     if not isinstance(geometry_, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec or None.")
     if (
-        embedding is not None or embedding_premise is not None
+        embedding is not None
+        or embedding_premise is not None
+        or fidelity_premise is not None
     ) and certification_inputs is None:
         raise ValueError("A prepared embedding is reused only by certified acceptance.")
     if validated_witnesses and certification_inputs is None:
         raise ValueError(
             "Validated fidelity witnesses are reused only by certified acceptance."
         )
+    if (
+        validity is not None or validity_parent is not None
+    ) and certification_inputs is None:
+        raise ValueError("Validity proofs are reused only by certified acceptance.")
     if manifold_scope is not None and certification_inputs is not None:
         raise ValueError("A manifold scope applies only to the direct cell-mesh audit.")
     certification = None
@@ -308,7 +330,10 @@ def certify_cell_mesh(
             ),
             embedding=embedding,
             embedding_premise=embedding_premise,
+            fidelity_premise=fidelity_premise,
             validated=validated,
+            validity=validity,
+            validity_parent=validity_parent,
         )
         certification.require_passed()
         audit = certification.audit
@@ -563,6 +588,7 @@ def _accept_native_construction(
         inputs,
         organization=organization,
         embedding=request.global_embedding,
+        validity_parent=request.validity_parent,
         validated=validated,
     )
     certification.require_passed()

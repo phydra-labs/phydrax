@@ -31,7 +31,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import IntEnum
 from fractions import Fraction
 from functools import cache
@@ -367,6 +367,20 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
 
     def __init__(
         self,
+        geometry: CellGeometrySpec | CellMesh,
+        /,
+        *,
+        mesh: CellMesh | None = None,
+        policy: CellValidityPolicy | None = None,
+    ) -> None:
+        """Compute validity; caller-supplied statuses are not proof premises."""
+        computed = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
+        for item in fields(computed):
+            object.__setattr__(self, item.name, getattr(computed, item.name))
+
+    @classmethod
+    def _from_computed(
+        cls,
         status: ConvertibleToArray,
         determinant_lower: ConvertibleToArray,
         determinant_upper: ConvertibleToArray,
@@ -387,7 +401,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         geometry_layout_id: str,
         policy_id: str,
         cell_map_digests: bytes | None = None,
-    ) -> None:
+    ) -> CellValidityCertificate:
         execution = _normalize_proof_arrays(
             status, determinant_lower, determinant_upper, depth
         )
@@ -475,60 +489,57 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             raise ValueError(
                 "Validity block names must follow the bound mesh block order."
             )
-        self.execution_status = jnp.asarray(execution.status)
-        self.status = (
-            self.execution_status if status_ is execution.status else jnp.asarray(status_)
-        )
-        self.determinant_lower = jnp.asarray(lower)
-        self.determinant_upper = jnp.asarray(upper)
-        self.depth = jnp.asarray(depth_)
-        self.source_status = (
-            self.execution_status
+        execution_status = jnp.asarray(execution.status)
+        result = object.__new__(cls)
+        values = {
+            "execution_status": execution_status,
+            "status": execution_status
+            if status_ is execution.status
+            else jnp.asarray(status_),
+            "determinant_lower": jnp.asarray(lower),
+            "determinant_upper": jnp.asarray(upper),
+            "depth": jnp.asarray(depth_),
+            "source_status": execution_status
             if source.status is execution.status
-            else jnp.asarray(source.status)
-        )
-        self.source_determinant_lower = (
-            self.determinant_lower if source.lower is lower else jnp.asarray(source.lower)
-        )
-        self.source_determinant_upper = (
-            self.determinant_upper if source.upper is upper else jnp.asarray(source.upper)
-        )
-        self.source_depth = (
-            self.depth if source.depth is depth_ else jnp.asarray(source.depth)
-        )
-        self.maximum_coefficient_rounding_error = jnp.asarray(
-            rounding_error, dtype=jnp.float64
-        )
-        self.maximum_element_coefficient_rounding_error = jnp.asarray(
-            element_rounding_error, dtype=jnp.float64
-        )
-        self.apex_derivative_unique = jnp.asarray(apex_unique, dtype=jnp.bool_)
-        self.geometry = geometry
-        self.mesh = mesh
-        self.policy = policy
-        self.block_names = names
-        self.block_offsets = offsets
-        self.unsupported_block_names = unsupported
-        self.certified_valid_count = int(
-            np.count_nonzero(status_ == CellValidityStatus.CERTIFIED_VALID)
-        )
-        self.invalid_count = int(np.count_nonzero(status_ == CellValidityStatus.INVALID))
-        self.unresolved_count = int(
-            np.count_nonzero(status_ == CellValidityStatus.UNRESOLVED)
-        )
-        self.geometry_id = geometry_id_
-        self.geometry_layout_id = geometry_layout_id
-        self.mesh_id = mesh_id_
-        self.topology_id = topology_id_
-        self.policy_id = policy_id
-        self.certificate_id = canonical_fingerprint(
+            else jnp.asarray(source.status),
+            "source_determinant_lower": jnp.asarray(source.lower),
+            "source_determinant_upper": jnp.asarray(source.upper),
+            "source_depth": jnp.asarray(source.depth),
+            "maximum_coefficient_rounding_error": jnp.asarray(
+                rounding_error, dtype=jnp.float64
+            ),
+            "maximum_element_coefficient_rounding_error": jnp.asarray(
+                element_rounding_error, dtype=jnp.float64
+            ),
+            "apex_derivative_unique": jnp.asarray(apex_unique, dtype=jnp.bool_),
+            "geometry": geometry,
+            "mesh": mesh,
+            "policy": policy,
+            "block_names": names,
+            "block_offsets": offsets,
+            "unsupported_block_names": unsupported,
+            "certified_valid_count": int(
+                np.count_nonzero(status_ == CellValidityStatus.CERTIFIED_VALID)
+            ),
+            "invalid_count": int(np.count_nonzero(status_ == CellValidityStatus.INVALID)),
+            "unresolved_count": int(
+                np.count_nonzero(status_ == CellValidityStatus.UNRESOLVED)
+            ),
+            "geometry_id": geometry_id_,
+            "geometry_layout_id": geometry_layout_id,
+            "mesh_id": mesh_id_,
+            "topology_id": topology_id_,
+            "policy_id": policy_id,
+            "cell_map_digests": cell_map_digests,
+        }
+        values["certificate_id"] = canonical_fingerprint(
             {
                 "kind": "cell-validity-certificate",
                 "geometry": geometry_id_,
-                "geometry_layout": self.geometry_layout_id,
+                "geometry_layout": geometry_layout_id,
                 "mesh": mesh_id_,
                 "topology": topology_id_,
-                "policy": self.policy_id,
+                "policy": policy_id,
                 "blocks": names,
                 "block_offsets": offsets,
                 "unsupported": unsupported,
@@ -545,7 +556,9 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
                 "maximum_element_coefficient_rounding_error": element_rounding_error,
             }
         )
-        self.cell_map_digests = cell_map_digests
+        for name, value in values.items():
+            object.__setattr__(result, name, value)
+        return result
 
     @classmethod
     def from_stored_fields(
@@ -671,7 +684,10 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         """Recompute both proofs; stored identities are not proof authority."""
         self.require_bound(geometry, mesh=mesh)
         fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
-        if fresh.certificate_id != self.certificate_id:
+        if (
+            fresh.certificate_id != self.certificate_id
+            or fresh.cell_map_digests != self.cell_map_digests
+        ):
             raise ValueError(
                 "Validity certificate does not reproduce the current mathematical proof."
             )
@@ -2020,10 +2036,11 @@ def _parent_proofs(
             )
     proofs: _CellProofs = {}
     for certificate in parents:
-        if not isinstance(certificate, CellValidityCertificate):
+        if type(certificate) is not CellValidityCertificate:
             raise TypeError("parent must hold CellValidityCertificate values.")
         if certificate.policy_id != policy.policy_id:
             raise ValueError("Parent validity proofs must use the same validity policy.")
+        certificate.require_current(certificate.geometry, mesh=certificate.mesh)
         table = np.frombuffer(certificate.cell_map_digests, dtype=np.uint8).reshape(
             -1, 2, _MAP_DIGEST_SIZE
         )
@@ -2695,7 +2712,7 @@ def certify_cell_geometry_validity(
     )
     if not distinct_source:
         digests[:, 1] = digests[:, 0]
-    return CellValidityCertificate(
+    return CellValidityCertificate._from_computed(
         execution_proof.status,
         execution_proof.lower,
         execution_proof.upper,

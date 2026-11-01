@@ -177,12 +177,17 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
     certificate.require_current(geometry, mesh=mesh)
     certificate.revalidate(geometry, mesh=mesh)
+    public = D.CellValidityCertificate(geometry, mesh=mesh, policy=certificate.policy)
+    assert public.certificate_id == certificate.certificate_id
+    with pytest.raises(TypeError):
+        D.CellValidityCertificate(geometry, mesh=mesh, status=certificate.status)
     summary = certificate.stage_summary()
     for proof in ("execution", "source"):
         assert sum(summary[proof].values()) == certificate.status.shape[0]
 
     lower = np.asarray(certificate.determinant_lower) * 0.5
-    forged = validity_module.CellValidityCertificate(
+    # Simulate an untrusted stored record, bypassing the computing public constructor.
+    forged = validity_module.CellValidityCertificate._from_computed(
         certificate.execution_status,
         lower,
         certificate.determinant_upper,
@@ -221,6 +226,10 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
         certificate.require_current(other_geometry, mesh=mesh)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):
         certificate.revalidate(other_geometry, mesh=mesh)
+    object.__setattr__(public, "cell_map_digests", bytes(len(public.cell_map_digests)))
+    assert public.certificate_id == certificate.certificate_id
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        public.revalidate(geometry, mesh=mesh)
 
 
 def test_coordinate_source_basis_is_formed_once_per_element(

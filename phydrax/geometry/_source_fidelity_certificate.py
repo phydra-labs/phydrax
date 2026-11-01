@@ -12,6 +12,7 @@ at runtime without importing the proof machinery that consumes those models.
 from __future__ import annotations
 
 import math
+from dataclasses import fields
 from typing import final
 
 import numpy as np
@@ -38,6 +39,11 @@ from ._source_boundary_records import (
     SourceBoundaryPointWitness,
     SourceBoundaryQuery,
     SurfaceEnvelopeDistanceWitness,
+)
+from .implicit._chart_restriction import (
+    ImplicitChartPremise,
+    ImplicitChartRestrictionEvidence,
+    ImplicitChartRows,
 )
 
 
@@ -110,10 +116,42 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
     coverage: SourceBoundaryChartCover | None
     status: MeshCertificateStatus
     findings: tuple[MeshCertificateFinding, ...]
+    # Implicit root-chart evidence: every row's own proof, keyed by its proof
+    # inputs (not part of the certificate identity; checked by its own); and
+    # the restriction theorem with its premise when the bounds were inherited.
+    chart_rows: ImplicitChartRows | None
+    chart_restriction: ImplicitChartRestrictionEvidence | None
+    chart_premise: ImplicitChartPremise | None
     certificate_id: str
 
     def __init__(
         self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: SourceBoundaryQuery,
+        /,
+        *,
+        tolerance: float,
+        maximum_normal_deviation: float | None = None,
+        witness: SourceFidelityWitness | None = None,
+    ) -> None:
+        """Compute fidelity from scientific inputs, never from supplied claims."""
+        from ._source_fidelity import certify_source_fidelity
+
+        computed = certify_source_fidelity(
+            mesh,
+            geometry,
+            source,
+            tolerance=tolerance,
+            maximum_normal_deviation=maximum_normal_deviation,
+            witness=witness,
+        )
+        for item in fields(computed):
+            object.__setattr__(self, item.name, getattr(computed, item.name))
+
+    @classmethod
+    def _from_computed(
+        cls,
         binding: MeshCertificateBinding,
         source: SourceBoundaryQuery,
         tolerance: float,
@@ -132,7 +170,18 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         coverage: SourceBoundaryChartCover | None,
         findings: tuple[MeshCertificateFinding, ...],
         /,
-    ) -> None:
+        *,
+        chart_rows: ImplicitChartRows | None = None,
+        chart_restriction: ImplicitChartRestrictionEvidence | None = None,
+        chart_premise: ImplicitChartPremise | None = None,
+    ) -> SourceFidelityCertificate:
+        if (chart_restriction is None) != (chart_premise is None):
+            raise ValueError(
+                "An inherited implicit-chart certificate needs its restriction "
+                "evidence and premise together."
+            )
+        if chart_restriction is not None and chart_rows is not None:
+            raise ValueError("Inherited implicit-chart bounds carry no proved rows.")
         bounds = np.asarray(deviation_bounds, dtype=np.float64)
         if (
             bounds.ndim != 2
@@ -200,38 +249,49 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "Source fidelity cell identities must align with per-cell bounds."
             )
         status = certificate_status(findings)
-        self.binding = binding
-        self.source = source
-        self.source_id = binding.source_id or source.source_id
-        self.source_revision = binding.source_revision or source.source_revision
-        self.domain_id = _source_domain_id(source)
-        self.mesh_id = binding.mesh_id
-        self.topology_id = binding.topology_id
-        self.geometry_id = binding.geometry_id
-        self.tolerance = tolerance_
-        self.maximum_normal_deviation = maximum_normal_
-        self.deviation_bounds = bounds
-        self.mesh_to_source_lower, self.mesh_to_source_upper = values[0], values[1]
-        self.source_to_mesh_lower, self.source_to_mesh_upper = values[2], values[3]
-        self.normal_deviation_bounds = normal_bounds
-        self.maximum_normal_deviation_lower = maximum_normal_deviation_lower
-        self.maximum_normal_deviation_bound = (
-            None
-            if normal_bounds is None or normal_bounds.size == 0
-            else float(np.max(normal_bounds))
-        )
-        self.source_cell_global_ids = tuple(
-            int(value) for value in source_cell_global_ids
-        )
-        self.source_patch_ids = tuple(int(value) for value in source_patch_ids)
-        self.source_occurrence_paths = tuple(
-            tuple(path) for path in source_occurrence_paths
-        )
-        self.witness = witness
-        self.coverage = coverage
-        self.status = status
-        self.findings = tuple(findings)
-        self.certificate_id = self._derived_certificate_id()
+        result = object.__new__(cls)
+        attributes = {
+            "binding": binding,
+            "source": source,
+            "source_id": binding.source_id or source.source_id,
+            "source_revision": binding.source_revision or source.source_revision,
+            "domain_id": _source_domain_id(source),
+            "mesh_id": binding.mesh_id,
+            "topology_id": binding.topology_id,
+            "geometry_id": binding.geometry_id,
+            "tolerance": tolerance_,
+            "maximum_normal_deviation": maximum_normal_,
+            "deviation_bounds": bounds,
+            "mesh_to_source_lower": values[0],
+            "mesh_to_source_upper": values[1],
+            "source_to_mesh_lower": values[2],
+            "source_to_mesh_upper": values[3],
+            "normal_deviation_bounds": normal_bounds,
+            "maximum_normal_deviation_lower": maximum_normal_deviation_lower,
+            "maximum_normal_deviation_bound": (
+                None
+                if normal_bounds is None or normal_bounds.size == 0
+                else float(np.max(normal_bounds))
+            ),
+            "source_cell_global_ids": tuple(
+                int(value) for value in source_cell_global_ids
+            ),
+            "source_patch_ids": tuple(int(value) for value in source_patch_ids),
+            "source_occurrence_paths": tuple(
+                tuple(path) for path in source_occurrence_paths
+            ),
+            "witness": witness,
+            "coverage": coverage,
+            "status": status,
+            "findings": tuple(findings),
+            "chart_rows": chart_rows,
+            "chart_restriction": chart_restriction,
+            "chart_premise": chart_premise,
+        }
+        for name, value in attributes.items():
+            object.__setattr__(result, name, value)
+        object.__setattr__(result, "certificate_id", result._derived_certificate_id())
+        return result
 
     def _derived_certificate_id(self) -> str:
         """The content identity these stored claims determine."""
@@ -245,30 +305,32 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             )
         )
         witness, coverage = self.witness, self.coverage
-        return canonical_fingerprint(
-            {
-                "kind": "source-fidelity-certificate",
-                "binding": self.binding.binding_id,
-                "source": (self.source_id, self.source_revision, self.domain_id),
-                "tolerance": self.tolerance,
-                "maximum_normal_deviation": self.maximum_normal_deviation,
-                "deviation_bounds": array_tree_fingerprint(self.deviation_bounds),
-                "directed_bounds": tuple(
-                    value if math.isfinite(value) else value.hex() for value in values
-                ),
-                "normal_bounds": None
-                if self.normal_deviation_bounds is None
-                else array_tree_fingerprint(self.normal_deviation_bounds),
-                "normal_lower": self.maximum_normal_deviation_lower,
-                "cells": self.source_cell_global_ids,
-                "patches": self.source_patch_ids,
-                "occurrences": self.source_occurrence_paths,
-                "witness": None if witness is None else witness.witness_id,
-                "coverage": None if coverage is None else coverage.cover_id,
-                "findings": tuple(finding.finding_id for finding in self.findings),
-                "status": self.status,
-            }
-        )
+        identity = {
+            "kind": "source-fidelity-certificate",
+            "binding": self.binding.binding_id,
+            "source": (self.source_id, self.source_revision, self.domain_id),
+            "tolerance": self.tolerance,
+            "maximum_normal_deviation": self.maximum_normal_deviation,
+            "deviation_bounds": array_tree_fingerprint(self.deviation_bounds),
+            "directed_bounds": tuple(
+                value if math.isfinite(value) else value.hex() for value in values
+            ),
+            "normal_bounds": None
+            if self.normal_deviation_bounds is None
+            else array_tree_fingerprint(self.normal_deviation_bounds),
+            "normal_lower": self.maximum_normal_deviation_lower,
+            "cells": self.source_cell_global_ids,
+            "patches": self.source_patch_ids,
+            "occurrences": self.source_occurrence_paths,
+            "witness": None if witness is None else witness.witness_id,
+            "coverage": None if coverage is None else coverage.cover_id,
+            "findings": tuple(finding.finding_id for finding in self.findings),
+            "status": self.status,
+        }
+        # Full proofs keep their identity; inherited bounds name their theorem.
+        if self.chart_restriction is not None:
+            identity["chart_restriction"] = self.chart_restriction.evidence_id
+        return canonical_fingerprint(identity)
 
     def require_current(
         self,
@@ -301,6 +363,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             raise ValueError(
                 "Source fidelity certificate claims differ from its stored identity."
             )
+        if self.chart_rows is not None:
+            self.chart_rows.require_current()
 
     def revalidate(
         self,
@@ -313,6 +377,13 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         from ._source_fidelity import certify_source_fidelity
 
         self.binding.require(mesh, geometry, source=source)
+        if self.chart_premise is not None:
+            premise = self.chart_premise
+            premise.parent_certificate.revalidate(
+                premise.parent_mesh, premise.parent_geometry, source
+            )
+            if premise.transition is not None:
+                type(premise.transition).from_stored_fields(premise.transition)
         fresh = certify_source_fidelity(
             mesh,
             geometry,
@@ -320,8 +391,13 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             tolerance=self.tolerance,
             maximum_normal_deviation=self.maximum_normal_deviation,
             witness=self.witness,
+            chart_parent=self.chart_premise,
         )
-        if fresh.certificate_id != self.certificate_id:
+        if (
+            fresh.certificate_id != self.certificate_id
+            or not _same_tree_content(fresh.chart_rows, self.chart_rows)
+            or not _same_tree_content(fresh.chart_restriction, self.chart_restriction)
+        ):
             raise ValueError(
                 "Source fidelity proof does not reproduce its current source and map inputs."
             )

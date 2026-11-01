@@ -1083,6 +1083,42 @@ def test_affine_planar_cells_certify_only_their_declared_shared_edge() -> None:
     restored.require_current(mesh, geometry)
 
 
+@pytest.mark.parametrize("dimension", (2, 3))
+def test_affine_simplex_preparation_retains_exact_corners_without_polynomials(
+    dimension: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.geometry import _embedding_cells
+
+    points = np.vstack((np.zeros((1, dimension)), np.eye(dimension)))
+    kind = "triangle" if dimension == 2 else "tetrahedron"
+    mesh = CellMesh(
+        points,
+        (CellBlock("cells", kind, np.arange(dimension + 1)[None, :]),),
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+
+    def unexpected_polynomial(*args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            "Affine simplex preparation must use its exact corner frame."
+        )
+
+    with monkeypatch.context() as compact:
+        compact.setattr(_embedding_cells, "_cell_expressions", unexpected_polynomial)
+        compact.setattr(_embedding_cells, "_affine_expressions", unexpected_polynomial)
+        (cell,) = prepare_embedding_cells(mesh, geometry)
+    assert cell.coordinate_expressions is None
+    assert cell.corner_images == geometry.source_coordinates()
+    assert (
+        tuple(
+            tuple(
+                evaluate_expression(expression, point) for expression in cell.coordinates
+            )
+            for point in cell.reference_vertices
+        )
+        == cell.corner_images
+    )
+
+
 def test_restored_embedding_refuses_a_forged_stored_validity_proof() -> None:
     mesh, geometry, validity = _embedded_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -1090,7 +1126,8 @@ def test_restored_embedding_refuses_a_forged_stored_validity_proof() -> None:
     )
     certificate = certify_global_embedding(mesh, geometry, validity)
     lower = np.asarray(validity.determinant_lower) * 0.5
-    forged = CellValidityCertificate(
+    # Simulate stored field injection, not a public certificate construction.
+    forged = CellValidityCertificate._from_computed(
         validity.execution_status,
         lower,
         validity.determinant_upper,

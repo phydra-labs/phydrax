@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
 from fractions import Fraction
 
 import numpy as np
 import pytest
 
 from phydrax import SpatialCoordinateContract
-from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.geometry import Sphere
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
@@ -26,6 +30,11 @@ from phydrax.meshing._association import (
     GeometryAssociation,
     GeometryAssociationKind,
     GeometrySourceEntityRole,
+)
+from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+from phydrax.geometry.implicit._chart_restriction import (
+    certify_implicit_chart_restriction,
+    ImplicitChartPremise,
 )
 from phydrax.meshing._association_composition import ComposedAssociationTransfer
 from phydrax.meshing._association_routes import boundary_mask, target_dimension
@@ -63,6 +72,7 @@ from phydrax.meshing.providers._native_schedules import (
     NativeSurfaceSchedule,
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
+from tests.unit.geometry.test_implicit_source_charts import _retarget_implicit_witness
 from tests.unit.meshing.test_native_mapped_hex_routes import _mapped_plc_tetra_source
 from tests.unit.meshing.test_native_surface_routes import (
     _square_domain,
@@ -84,9 +94,11 @@ def _profile(source_id: str = "association-sphere") -> AnalyticImplicitProfile:
     )
 
 
-def _implicit_surface_result(profile: AnalyticImplicitProfile) -> CellMeshingResult:
+def _implicit_surface_result(
+    profile: AnalyticImplicitProfile, *, relative_cell_diameter: float = 0.2
+) -> CellMeshingResult:
     policy = AdaptiveImplicitSurfacePolicy(
-        relative_cell_diameter=0.2,
+        relative_cell_diameter=relative_cell_diameter,
         root_tolerance=1.0e-8,
     )
     bounds = np.asarray(profile.boundary_bounds, dtype=np.float64)
@@ -225,15 +237,17 @@ def test_implicit_sphere_association_survives_bisection_split_and_collapse() -> 
     hierarchy = refined.hierarchy
     if not isinstance(hierarchy, BisectionHierarchy):
         raise AssertionError("Bisection refinement must retain its bisection hierarchy.")
+    # Coarsening IDs belong to the refined target, not the pre-refinement source.
     coarsened = execute_mesh_adaptation(
         prepare_mesh_adaptation(
-            source,
+            target,
             MarkedMeshAdaptation(
                 np.empty((0,), dtype=np.int64),
                 np.asarray(target.mesh.entity_set(2).entity_ids, dtype=np.int64),
                 hierarchy=hierarchy,
             ),
             policy=policy,
+            prior_transition=refined.transition,
         )
     )
     assert coarsened.target.mesh.topology_id == source.mesh.topology_id
@@ -243,6 +257,104 @@ def test_implicit_sphere_association_survives_bisection_split_and_collapse() -> 
         and all(role is GeometrySourceEntityRole.FACET for role in value.source_roles)
         for value in coarsened.target.associations
     )
+
+
+def test_implicit_bisection_inherits_parent_chart_bounds_by_restriction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile("restriction-sphere")
+    source = _implicit_surface_result(profile, relative_cell_diameter=0.4)
+    certification = source.certification
+    assert certification is not None and certification.fidelity is not None
+    parent = certification.fidelity
+    assert parent.status == "certified" and parent.chart_rows is not None
+    native_source = certification.inputs.feature_source
+    assert isinstance(native_source, NativeImplicitSource)
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+        association_transfer=ImplicitAssociationTransfer(native_source),
+    )
+    from phydrax.geometry.implicit import _source_charts
+
+    def unexpected_proof(*args: object, **kwargs: object) -> None:
+        raise AssertionError("An exact chart restriction must not re-prove source rows.")
+
+    with monkeypatch.context() as reuse:
+        reuse.setattr(_source_charts, "_build_face", unexpected_proof)
+        refined = execute_mesh_adaptation(
+            prepare_mesh_adaptation(
+                source,
+                MarkedMeshAdaptation(
+                    np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
+                ),
+                policy=policy,
+            )
+        )
+    target = refined.target
+    assert target.certification is not None
+    assert target.certification.embedding.nested_restriction is not None
+    inherited = target.certification.fidelity
+    assert inherited is not None and inherited.chart_restriction is not None
+    evidence = inherited.chart_restriction
+    assert evidence.parent_certificate_id == parent.certificate_id
+    assert evidence.target_row_count > evidence.parent_row_count
+    inputs = target.certification.inputs
+    assert inputs.fidelity_tolerance is not None
+    # Independent cold replay is separately collected below, so the large target
+    # is not retained while a redundant in-process parent proof is recomputed.
+    assert inherited.status == "certified"
+
+    # Negative: rows that do not tile their parent rows inherit nothing.
+    witness = inputs.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    premise = inherited.chart_premise
+    assert isinstance(premise, ImplicitChartPremise)
+    partial = _retarget_implicit_witness(
+        witness,
+        target.mesh,
+        target.geometry,
+        np.asarray(witness.cell_global_ids, dtype=np.int64),
+        rows=tuple(range(len(witness.source_chart_ids) - 1)),
+    )
+    assert (
+        certify_implicit_chart_restriction(
+            target.mesh, target.geometry, partial, parent, premise
+        )
+        is None
+    )
+    overlapping = _retarget_implicit_witness(
+        witness,
+        target.mesh,
+        target.geometry,
+        np.asarray(witness.cell_global_ids, dtype=np.int64),
+        rows=(0, 0, *range(2, len(witness.source_chart_ids))),
+    )
+    assert (
+        certify_implicit_chart_restriction(
+            target.mesh, target.geometry, overlapping, parent, premise
+        )
+        is None
+    )
+    elements, routes, coordinates = target.geometry.resolve(target.mesh)
+    changed_coordinates = np.array(coordinates, copy=True)
+    changed_coordinates[0, 0] = np.nextafter(changed_coordinates[0, 0], np.inf)
+    changed_geometry = CellGeometrySpec(
+        {
+            block.name: element
+            for block, element in zip(target.mesh.blocks, elements, strict=True)
+        },
+        {
+            block.name: route
+            for block, route in zip(target.mesh.blocks, routes, strict=True)
+        },
+        changed_coordinates,
+        source_mesh=target.mesh,
+    )
+    with pytest.raises(ValueError, match="bound|geometry|inputs"):
+        certify_implicit_chart_restriction(
+            target.mesh, changed_geometry, witness, parent, premise
+        )
 
 
 def test_implicit_collapse_into_born_vertex_follows_its_target_stratum() -> None:
@@ -543,3 +655,35 @@ def test_implicit_volume_boundary_remap_orients_triangles_outward() -> None:
         model = transfer.remap_boundary(source, lineage, target)
         assert model is not None
         assert _outward_boundary_triangles(target, model.mesh)
+
+
+def test_implicit_chart_restriction_replays_in_an_independent_cold_process(
+    tmp_path: Path,
+) -> None:
+    worker = (
+        Path(__file__).resolve().parents[1]
+        / "interchange"
+        / "_native_cad_archive_worker.py"
+    )
+    written = subprocess.run(
+        [sys.executable, str(worker), "write-implicit-chart-restriction", str(tmp_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert written.returncode == 0, written.stderr
+    expected = json.loads(written.stdout)
+    restored = subprocess.run(
+        [
+            sys.executable,
+            str(worker),
+            "read-implicit-chart-restriction",
+            str(tmp_path / "implicit-chart-restriction.phx"),
+            json.dumps(expected),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert restored.returncode == 0, restored.stderr
+    assert json.loads(restored.stdout) == expected

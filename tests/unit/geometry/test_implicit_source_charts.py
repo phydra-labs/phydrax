@@ -7,6 +7,7 @@ from fractions import Fraction
 from typing import final, NoReturn
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -66,6 +67,10 @@ from phydrax.geometry.implicit._policy import (
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurfacePolicy,
 )
+from phydrax.geometry.implicit._chart_restriction import (
+    ImplicitChartPremise,
+    ImplicitChartRows,
+)
 from phydrax.geometry.implicit._source_charts import (
     _AdaptiveImplicitProjectionResult,
     AdaptiveImplicitRootChartMap,
@@ -118,7 +123,7 @@ class _BoundAdaptiveSourceQuery(StrictModule, NonTrainableState):
 
     __strict_contract__ = True
 
-    query: AdaptiveImplicitBoundarySource = eqx.field(static=True)
+    query: AdaptiveImplicitBoundarySource
     authoring_profile: AnalyticImplicitProfile | None
     source_id: Identifier = eqx.field(static=True)
     source_revision: Identifier = eqx.field(static=True)
@@ -489,6 +494,16 @@ def _curved_geometry(
 
 def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
     _surface, source, contract, mesh, affine, affine_witness = _adaptive_source()
+    from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
+
+    native = _NativeImplicitBoundaryQuery(
+        source.query, source.source_id, source.source_revision, source.frame_id
+    )
+    query_leaves = [leaf for leaf in jax.tree.leaves(source.query) if isinstance(leaf, Array)]
+    assert query_leaves
+    for owner in (source, native):
+        owner_leaves = jax.tree.leaves(owner)
+        assert all(any(leaf is item for item in owner_leaves) for leaf in query_leaves)
 
     query_points = np.asarray(((0.9, 0.2, 0.1),))
     surface_entity_key = source_entity_id(
@@ -877,6 +892,149 @@ def test_adaptive_implicit_fidelity_retains_scoped_target_extent() -> None:
         validate_source_fidelity_witness(target_mesh, target_geometry, source, repeated)
 
 
+def _counting_build_face(monkeypatch: pytest.MonkeyPatch, /) -> list[int]:
+    """Record the rows the chart prover is asked to prove."""
+    proved: list[int] = []
+    build_face = source_charts._build_face
+
+    def counting(setup, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        proved.append(setup.row)
+        return build_face(setup, *args, **kwargs)
+
+    monkeypatch.setattr(source_charts, "_build_face", counting)
+    return proved
+
+
+def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _surface, source, _contract, mesh, geometry, witness = _adaptive_source()
+    from phydrax.geometry._source_fidelity_certificate import SourceFidelityCertificate
+
+    parent = SourceFidelityCertificate(
+        mesh,
+        geometry,
+        source,
+        witness=witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    assert parent.status == "certified"
+    assert parent.chart_rows is not None
+    assert bool(np.all(parent.chart_rows.reusable))
+    premise = ImplicitChartPremise(mesh, geometry, parent, None)
+
+    # Unchanged rows of a new mesh: every row is checked by identity.
+    target_mesh, target_geometry, target_witness = _extend_implicit_target_mesh(
+        mesh, witness
+    )
+    full = certify_adaptive_implicit_charts(
+        target_mesh,
+        target_geometry,
+        source,
+        target_witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    proved = _counting_build_face(monkeypatch)
+    reused = certify_adaptive_implicit_charts(
+        target_mesh,
+        target_geometry,
+        source,
+        target_witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+        chart_parent=premise,
+    )
+    assert proved == []
+    assert reused.certificate_id == full.certificate_id
+    assert reused.chart_restriction is None
+
+    # A moved vertex changes exactly its incident rows; only those are proved.
+    points = np.array(mesh.coordinates, dtype=np.float64, copy=True)
+    points[0] *= 1.0 + 2.0**-12
+    block = mesh.blocks[0]
+    assert isinstance(block, CellBlock)
+    moved_mesh = CellMesh.from_triangles(
+        points, np.asarray(block.vertices, dtype=np.int32)
+    )
+    moved_geometry = CellGeometrySpec.affine(moved_mesh)
+    moved_witness = _retarget_implicit_witness(
+        witness,
+        moved_mesh,
+        moved_geometry,
+        np.asarray(witness.cell_global_ids, dtype=np.int64),
+    )
+    moved_full = certify_adaptive_implicit_charts(
+        moved_mesh,
+        moved_geometry,
+        source,
+        moved_witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    proved.clear()
+    moved_reused = certify_adaptive_implicit_charts(
+        moved_mesh,
+        moved_geometry,
+        source,
+        moved_witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+        chart_parent=premise,
+    )
+    incident = sorted(
+        row
+        for row, cell in enumerate(np.asarray(moved_witness.cell_global_ids).tolist())
+        if 0 in np.asarray(block.vertices)[list(block.global_ids).index(cell)]
+    )
+    assert incident and sorted(proved) == incident
+    assert moved_reused.certificate_id == moved_full.certificate_id
+
+    # Negative: other controls name other proofs, so nothing is reused.
+    proved.clear()
+    other = certify_adaptive_implicit_charts(
+        target_mesh,
+        target_geometry,
+        source,
+        target_witness,
+        tolerance=0.25,
+        maximum_normal_deviation=np.pi,
+        chart_parent=premise,
+    )
+    assert len(proved) == len(target_witness.source_chart_ids)
+    assert other.certificate_id != full.certificate_id
+
+    # Negative: altered retained evidence is refused, never reused.
+    rows = parent.chart_rows
+    tampered_values = np.array(rows.values, copy=True)
+    tampered_values[0, 2] = 0.0
+    tampered_rows = ImplicitChartRows(rows.keys, rows.reusable, tampered_values)
+    object.__setattr__(tampered_rows, "rows_id", rows.rows_id)
+    object.__setattr__(parent, "chart_rows", tampered_rows)
+    with pytest.raises(ValueError, match="identity"):
+        certify_adaptive_implicit_charts(
+            target_mesh,
+            target_geometry,
+            source,
+            target_witness,
+            tolerance=0.5,
+            maximum_normal_deviation=np.pi,
+            chart_parent=premise,
+        )
+    # A forged supplemental row identity must also fail independent replay,
+    # even though these acceleration records are not in the full-proof ID.
+    object.__setattr__(
+        tampered_rows,
+        "rows_id",
+        tampered_rows._identity(
+            tampered_rows.keys, tampered_rows.reusable, tampered_rows.values
+        ),
+    )
+    with pytest.raises(ValueError, match="does not reproduce"):
+        parent.revalidate(mesh, geometry, source)
+
+
 def test_adaptive_implicit_root_chart_requires_smooth_or_profile_regular_source() -> None:
     sphere_surface, sphere_source, contract, mesh, geometry, witness = _adaptive_source(
         smooth=False,
@@ -1070,3 +1228,82 @@ def test_adaptive_implicit_discovery_keeps_the_last_refusal_when_anchors_are_exh
     assert surface.mesh is None
     assert _singular_issue_count(surface) > 0
     assert np.any(np.asarray(surface.scaffold.corner_signs) == 0)
+
+
+def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof() -> None:
+    from phydrax.discretization._cell_geometry_transition_types import (
+        _reference_map_groups,
+    )
+    from phydrax.geometry._source_fidelity import certify_source_fidelity
+    from phydrax.geometry.implicit._chart_restriction import ImplicitChartPremise
+    from phydrax.meshing._adaptation import (
+        _retarget_source_boundary_chart_witness,
+        execute_mesh_adaptation,
+        MarkedMeshAdaptation,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        prepare_mesh_adaptation,
+    )
+    from phydrax.meshing._bisection import BisectionCompatibility
+    from phydrax.meshing._canonical import certify_cell_mesh
+
+    _, query, contract, mesh, geometry, witness = _adaptive_source()
+    source = certify_cell_mesh(mesh, contract, geometry=geometry)
+    parent = certify_source_fidelity(
+        mesh,
+        geometry,
+        query,
+        witness=witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    refined = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(np.asarray(mesh.entity_set(2).entity_ids)),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+            ),
+        )
+    )
+    assert refined.transition is not None
+    assert refined.lineage is not None
+    transition = refined.transition.geometry_transition
+    assert transition is not None and transition.reference_map is not None
+    target = refined.target
+    target_witness = _retarget_source_boundary_chart_witness(
+        source,
+        target.mesh,
+        target.geometry,
+        refined.lineage,
+        witness,
+        reference_maps=_reference_map_groups(transition.reference_map),
+    )
+    inherited = certify_source_fidelity(
+        target.mesh,
+        target.geometry,
+        query,
+        witness=target_witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+        chart_parent=ImplicitChartPremise(mesh, geometry, parent, transition),
+    )
+    full = certify_source_fidelity(
+        target.mesh,
+        target.geometry,
+        query,
+        witness=target_witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    assert inherited.chart_restriction is not None
+    assert full.chart_restriction is None
+    assert inherited.status == full.status == "certified"
+    assert inherited.certificate_id != full.certificate_id
+    assert inherited.mesh_to_source_lower <= full.mesh_to_source_upper
+    assert full.mesh_to_source_lower <= inherited.mesh_to_source_upper
+    assert np.all(
+        np.asarray(full.deviation_bounds)[:, 0]
+        <= np.asarray(inherited.deviation_bounds)[:, 1]
+    )

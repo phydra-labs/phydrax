@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from enum import IntEnum
 from fractions import Fraction
+from itertools import groupby
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
@@ -266,6 +267,9 @@ def rational_chart_tokens(
 ) -> SourceBoundaryRationalChartBank:
     """Encode exact chart coordinates as reduced numerator/denominator pairs."""
     rows: list[tuple[tuple[_RationalToken, ...], ...]] = []
+    distinct: dict[
+        tuple[tuple[_RationalToken, ...], ...], tuple[tuple[_RationalToken, ...], ...]
+    ] = {}
     for row in values:
         points: list[tuple[_RationalToken, ...]] = []
         for point in row:
@@ -280,7 +284,8 @@ def rational_chart_tokens(
                 exact = value if isinstance(value, Fraction) else Fraction(int(value))
                 coordinates.append((exact.numerator, exact.denominator))
             points.append(tuple(coordinates))
-        rows.append(tuple(points))
+        canonical_row = tuple(points)
+        rows.append(distinct.setdefault(canonical_row, canonical_row))
     return tuple(rows)
 
 
@@ -294,7 +299,7 @@ def _validated_rational_chart_tokens(
     /,
 ) -> SourceBoundaryRationalChartBank:
     if supplied is None:
-        exact = tuple(
+        exact = (
             tuple(
                 tuple(Fraction.from_float(float(value)) for value in point)
                 for point in row
@@ -305,6 +310,9 @@ def _validated_rational_chart_tokens(
     if len(supplied) != count:
         raise ValueError(f"{name} must contain one exact chart row per witness row.")
     result: list[tuple[tuple[_RationalToken, ...], ...]] = []
+    distinct: dict[
+        tuple[tuple[_RationalToken, ...], ...], tuple[tuple[_RationalToken, ...], ...]
+    ] = {}
     for row_index, row in enumerate(supplied):
         if len(row) != corners:
             raise ValueError(f"{name} chart rows have the wrong corner count.")
@@ -344,7 +352,8 @@ def _validated_rational_chart_tokens(
                     )
                 coordinates.append(canonical)
             points.append(tuple(coordinates))
-        result.append(tuple(points))
+        canonical_row = tuple(points)
+        result.append(distinct.setdefault(canonical_row, canonical_row))
     return tuple(result)
 
 
@@ -614,24 +623,19 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
             chart_dimension,
             "source_parameter_rational_tokens",
         )
-        target_exact_bank = tuple(
-            _fractions_from_chart_tokens(target_rational_tokens, row)
-            for row in range(count)
-        )
-        source_exact_bank = tuple(
-            _fractions_from_chart_tokens(source_rational_tokens, row)
-            for row in range(count)
-        )
-        if face_vertices.shape[0] != 0:
-            for row in target_exact_bank:
-                for point in row:
+        # Validate each distinct exact chart pair without retaining two full
+        # Fraction banks alongside the compact tokens and binary64 arrays.
+        for target_tokens, source_tokens in dict.fromkeys(
+            zip(target_rational_tokens, source_rational_tokens, strict=True)
+        ):
+            target_exact = _fractions_from_chart_tokens((target_tokens,), 0)
+            source_exact = _fractions_from_chart_tokens((source_tokens,), 0)
+            if face_vertices.shape[0] != 0:
+                for point in target_exact:
                     if point[0] < 0 or point[1] < 0 or point[0] + point[1] > 1:
                         raise ValueError(
                             "Polyhedral target face chart points must stay in the parent triangle."
                         )
-        for target_exact, source_exact in zip(
-            target_exact_bank, source_exact_bank, strict=True
-        ):
             if chart_dimension == 1:
                 target_nondegenerate = target_exact[0] != target_exact[1]
                 source_nondegenerate = source_exact[0] != source_exact[1]
@@ -666,24 +670,32 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 raise ValueError(
                     "SourceBoundaryChartWitness contains a degenerate exact chart piece."
                 )
-        order = sorted(
-            range(count),
-            key=lambda row: (
-                int(cell_ids[row]),
-                int(local_entities[row]),
-                int(entity_ids[row]),
-                charts[row],
-                target_rational_tokens[row],
-                tuple(float(value) for value in target[row].reshape(-1)),
-                tuple(int(value) for value in face_vertices[row])
-                if face_vertices.shape[0]
-                else (),
-                tuple(float(value) for value in parameters[row].reshape(-1)),
-                source_rational_tokens[row],
-                entities[row],
-                paths[row],
-            ),
-        )
+        # Most witnesses have one row per cell. Resolve later sort keys only
+        # for ties instead of retaining expanded float chart tuples per row.
+        order: list[int] = []
+        for _, group in groupby(
+            sorted(range(count), key=lambda row: int(cell_ids[row])),
+            key=lambda row: int(cell_ids[row]),
+        ):
+            rows = list(group)
+            if len(rows) > 1:
+                rows.sort(
+                    key=lambda row: (
+                        int(local_entities[row]),
+                        int(entity_ids[row]),
+                        charts[row],
+                        target_rational_tokens[row],
+                        tuple(float(value) for value in target[row].reshape(-1)),
+                        tuple(int(value) for value in face_vertices[row])
+                        if face_vertices.shape[0]
+                        else (),
+                        tuple(float(value) for value in parameters[row].reshape(-1)),
+                        source_rational_tokens[row],
+                        entities[row],
+                        paths[row],
+                    )
+                )
+            order.extend(rows)
         arrays = (
             cell_ids[order],
             entity_ids[order],

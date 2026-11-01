@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from .._physical import SpatialCoordinateContract
     from ..discretization import CellGeometrySpec, CellMesh
+    from ..discretization._cell_geometry_validity import CellValidityCertificate
     from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
     from ..geometry._domain_certification import CoverageDomain, SourceCoverageWitness
     from ..geometry._global_embedding import GlobalEmbeddingCertificate
@@ -68,6 +69,9 @@ class NativeCertificationRequest:
     # Global embedding the route already computed for exactly this mesh and
     # coordinate map; acceptance checks its bound inputs and reuses it.
     global_embedding: GlobalEmbeddingCertificate | None = None
+    # Validity certificates the route already proved (e.g. its layer cells);
+    # acceptance reuses their proofs of identical exact cell maps.
+    validity_parent: tuple[CellValidityCertificate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

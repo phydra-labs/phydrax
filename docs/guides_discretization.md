@@ -371,6 +371,24 @@ certificates of the same policy explicitly: a cell whose exact coordinate map
 (cell kind and exact coefficients) has the digest of a map a parent proved
 reuses that proof, every other cell is proved, and the certificate equals the
 one a full proof produces.
+`CellValidityCertificate(geometry, mesh=..., policy=...)` computes the proof;
+its public constructor does not accept statuses or determinant bounds. Stored
+certificates are independently re-proved before reuse. Source fidelity follows
+the same construction boundary. For exact nested implicit chart restrictions,
+the target may inherit parent upper bounds only after exact chart correspondence
+and an oriented tiling proof; this route records distinct restriction evidence.
+Changed or projected chart rows are proved anew. Cold replay renews the parent
+proof and exact transition before replaying the restriction theorem.
+Repeated immutable reference charts and witness rows share call-local storage;
+affine simplex embedding reads exact corner frames without retaining per-cell
+polynomials. For rational metric edits, authored exact stencil images remain
+the source geometry even when no binary64 point lies on the source edge.
+The carrier is the canonical rounding of that point, and the existing validity
+certificate reports its coefficient rounding error. Subsequent edits read the
+accepted exact map rather than promote the rounded carrier to source truth.
+The native frame-bound adaptive source query keeps its array-bearing query as a
+dynamic PyTree child rather than static metadata. Its PyTree structure therefore
+changes, while its explicit source identity and revision remain unchanged.
 
 ## Virtual elements
 

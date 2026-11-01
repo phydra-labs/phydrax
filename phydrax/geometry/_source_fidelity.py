@@ -97,6 +97,7 @@ if TYPE_CHECKING:
         AdaptiveImplicitBoundarySource,
         AdaptiveImplicitSurface,
     )
+    from .implicit._chart_restriction import ImplicitChartPremise
     from .implicit._source_charts import AdaptiveImplicitRootChartMap
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
@@ -1839,15 +1840,6 @@ def _validate_implicit_source_witness(
         triangle_keys.setdefault(key, []).append(triangle_row)
     witness_cell_keys = np.asarray(witness.implicit_cell_keys, dtype=np.int64)
     witness_root_edges = np.asarray(witness.implicit_root_edge_keys, dtype=np.int64)
-    witness_parameters = tuple(
-        _fractions_from_chart_tokens(witness.source_parameter_rational_tokens, row)
-        for row in range(len(witness.source_chart_ids))
-    )
-    standard_chart = (
-        (Fraction(0), Fraction(0)),
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1)),
-    )
     implicit_scope_key = source_entity_id(
         source.source_id,
         source.source_revision,
@@ -1860,11 +1852,28 @@ def _validate_implicit_source_witness(
         or witness.source_entity_ids
         != (implicit_scope_key,) * len(witness.source_chart_ids)
         or witness.occurrence_paths != tuple(() for _ in witness.source_chart_ids)
-        or witness_parameters != tuple(standard_chart for _ in witness.source_chart_ids)
     ):
         raise ValueError(
             "Implicit chart witness omits or changes retained root-cell/piece ancestry."
         )
+    # A row can name an exact oriented subchart of its root triangle. Its
+    # physical map is still independently proved by the implicit-chart prover;
+    # inheritance additionally requires exact parent correspondence and tiling.
+    for tokens in dict.fromkeys(witness.source_parameter_rational_tokens):
+        parameters = _exact_triangle2(
+            tuple(
+                tuple(
+                    Fraction(numerator, denominator) for numerator, denominator in point
+                )
+                for point in tokens
+            )
+        )
+        if _area2(parameters) <= 0 or any(
+            first < 0 or second < 0 or first + second > 1 for first, second in parameters
+        ):
+            raise ValueError(
+                "Implicit source parameters must be positively oriented root subcharts."
+            )
     # A scaffold-carrier witness (every target face is its named scaffold
     # triangle) names every scaffold triangle exactly once. A remeshed
     # carrier's rows each name the existing scaffold triangle whose cell and
@@ -4752,7 +4761,7 @@ def _certify_source_point_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -4835,7 +4844,7 @@ def _certify_surface_envelope_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -4915,7 +4924,7 @@ def _certify_analytic_profile_distance_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -4956,7 +4965,7 @@ def _unresolved_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -5117,7 +5126,7 @@ def _certify_domain_surface_chart_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -5170,7 +5179,7 @@ def _certify_reconstructed_chart_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -5238,7 +5247,7 @@ def _certify_curve_chart_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -5307,7 +5316,7 @@ def _certify_piecewise_linear_curve_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -5383,7 +5392,7 @@ def _certify_piecewise_linear_surface_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -5489,7 +5498,7 @@ def _certify_mapped_root_chart_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance,
@@ -5521,11 +5530,15 @@ def certify_source_fidelity(
     witness: SourceFidelityWitness | ValidatedSourceFidelityWitness | None = None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
     preparation: SourcePreparation | None = None,
+    chart_parent: ImplicitChartPremise | None = None,
 ) -> SourceFidelityCertificate:
     """Certify continuous physical source fidelity from one typed witness.
 
     ``root_charts`` passes adaptive implicit root charts the caller already
     prepared for exactly this request; other sources and witnesses refuse it.
+    ``chart_parent`` offers the adaptive implicit chart route a certified
+    parent certificate (identity reuse and the chart-restriction theorem);
+    other routes prove from scratch.
     A :class:`ValidatedSourceFidelityWitness` for exactly these operands is not
     validated again. ``preparation`` is the caller's `SourcePreparation` of the
     meshing domain behind a domain boundary source; without one the domain is
@@ -5687,6 +5700,7 @@ def certify_source_fidelity(
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
                     root_charts=root_charts,
+                    chart_parent=chart_parent,
                 )
         return _unresolved_fidelity(
             mesh,
@@ -6256,7 +6270,7 @@ def certify_source_fidelity(
         source_id=source.source_id,
         source_revision=source.source_revision,
     )
-    return SourceFidelityCertificate(
+    return SourceFidelityCertificate._from_computed(
         binding,
         source,
         tolerance_,

@@ -3,13 +3,16 @@
 #
 
 
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._geometry_predicates import PredicateMode
 from phydrax.meshing import (
+    _local_metric as local_metric,
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
     MeshAdaptationRoute,
@@ -210,7 +213,6 @@ def test_local_metric_scenario_1() -> None:
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
 
 
-
 def test_local_metric_preserves_rotated_spd_tensor() -> None:
     angle = np.deg2rad(31.0)
     rotation = np.asarray(
@@ -226,6 +228,7 @@ def test_local_metric_preserves_rotated_spd_tensor() -> None:
     assert np.all((lengths >= _LOWER - 1.0e-12) & (lengths <= _UPPER + 1.0e-12))
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
     assert np.sum(_signed_areas(result.target.mesh)) == pytest.approx(1.0, abs=1.0e-14)
+
 
 def test_metric_adaptation_transfers_linear_fields_exactly() -> None:
     source = _source(perturbation=0.3)
@@ -270,3 +273,91 @@ def test_local_metric_disjoint_selection_exhausts_finite_candidates() -> None:
     )
 
     np.testing.assert_array_equal(np.flatnonzero(selected), np.arange(0, count, 2))
+
+
+def test_split_preserves_an_unrepresentable_exact_boundary_point() -> None:
+    # This annulus boundary segment has no binary64 interior point on its
+    # exact line. Its authored midpoint remains a rational source point, not
+    # the slightly outside point represented by its rounded carrier.
+    points = np.asarray(
+        (
+            (0.48170439590427927, 0.6296209328044939),
+            (0.7071067811865476, 0.7071067811865475),
+            (0.38268343236508984, 0.9238795325112867),
+        )
+    )
+    mesh = phx.discretization.CellMesh.from_triangles(
+        points, np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    metric = np.broadcast_to(np.eye(2) / 0.2**2, (3, 2, 2))
+    state, source = local_metric._initial_state(
+        mesh,
+        metric,
+        np.zeros(1, dtype=np.int64),
+        np.zeros(3, dtype=np.int64),
+        np.zeros(3, dtype=np.bool_),
+        np.zeros(3, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    changed, _, count = local_metric._split_round(
+        state, topology, local_metric._Counts(), PredicateMode.EXACT, None, source
+    )
+    assert count == 1
+    exact_midpoint = tuple(
+        (Fraction(float(a)) + Fraction(float(b))) / 2
+        for a, b in zip(points[1], points[2], strict=True)
+    )
+    assert changed.source_stencil_exact[3] == ((1, Fraction(1, 2)), (2, Fraction(1, 2)))
+    np.testing.assert_array_equal(
+        changed.points[3], np.asarray(exact_midpoint, dtype=np.float64)
+    )
+    assert tuple(Fraction(float(v)) for v in changed.points[3]) != exact_midpoint
+    published = local_metric._stencil(changed, source, np.arange(4), PredicateMode.EXACT)
+    assert sum(published[3][3], Fraction(0)) == 1
+
+    # A subsequent epoch must retain the authored exact point, not promote
+    # the rounded coordinate to a new exact source vertex.
+    next_mesh = phx.discretization.CellMesh.from_triangles(changed.points, changed.cells)
+    exact_bank = (*source.exact_points, exact_midpoint)
+    next_state, next_source = local_metric._initial_state(
+        next_mesh,
+        np.broadcast_to(np.eye(2), (4, 2, 2)),
+        np.zeros(2, dtype=np.int64),
+        np.zeros(next_mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(next_mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(4, dtype=np.bool_),
+        PredicateMode.EXACT,
+        exact_source_points=exact_bank,
+    )
+    quarter = tuple(
+        (a + b) / 2 for a, b in zip(exact_bank[1], exact_midpoint, strict=True)
+    )
+    located = local_metric._located_stencil_bank(
+        next_source,
+        np.asarray((quarter,), dtype=np.float64),
+        PredicateMode.EXACT,
+        exact_points=(quarter,),
+    )
+    assert located[4] == (((1, Fraction(1, 2)), (3, Fraction(1, 2))),)
+    local_metric._stencil(next_state, next_source, np.arange(4), PredicateMode.EXACT)
+
+
+def test_local_metric_rejects_an_exact_source_bank_with_another_carrier() -> None:
+    source = _source()
+    mesh = source.mesh
+    bank = tuple(tuple(Fraction(float(v)) for v in row) for row in mesh.coordinates)
+    changed = ((bank[0][0] + 1, bank[0][1]), *bank[1:])
+    with pytest.raises(ValueError, match="canonically round"):
+        local_metric.execute_local_metric_adaptation(
+            mesh,
+            np.broadcast_to(np.eye(2), (len(bank), 2, 2)),
+            cell_classes=np.zeros(mesh.entity_set(2).count, dtype=np.int64),
+            edge_classes=np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+            protected_edges=np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+            fixed_vertices=np.zeros(len(bank), dtype=np.bool_),
+            predicate_mode=PredicateMode.EXACT,
+            topology_operations=False,
+            relocation=False,
+            exact_source_points=changed,
+        )
