@@ -458,6 +458,11 @@ def _exact_determinant(matrix: _ExactMatrix, /) -> ExactScalar:
     return total
 
 
+# Primal feasibility tolerance of the Kelley cutting-plane programs (controls are
+# normalized to unit magnitude and ``M`` to the unit box, so it is absolute).
+_KELLEY_FEASIBILITY_TOLERANCE = 1.0e-7
+
+
 def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
     """A box-bounded ``M`` maximizing ``min_k lambda_min(sym(M C_k))``, if positive.
 
@@ -466,10 +471,12 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
     least-eigenvalue vectors ``v`` give linear programs whose optima bound it
     from above: an optimum ``t <= 0`` proves that no preconditioner exists;
     otherwise every iterate cuts off the previous program point, and the search
-    stops once the attained margin is positive and within half the bound, or
-    the bound and the attained margin agree to binary64 resolution. Inverses
-    of the mean and of each control seed the cuts. Floats only propose ``M``;
-    the caller decides positivity exactly.
+    stops once the attained margin is positive and within half the bound, the
+    bound and the attained margin agree to binary64 resolution, or the new cuts
+    are violated by no more than the program's primal feasibility tolerance (the
+    program point cannot move). Inverses of the mean and of each control seed
+    the cuts. Floats only propose ``M``; the caller decides positivity exactly,
+    and ``None`` only means that no proposal was found.
     """
     from scipy.optimize import linprog
 
@@ -521,6 +528,7 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
             b_ub=np.zeros(len(rows)),
             bounds=bounds,
             method="highs",
+            options={"primal_feasibility_tolerance": _KELLEY_FEASIBILITY_TOLERANCE},
         )
         point = solution.x
         if not solution.success or point is None:
@@ -535,6 +543,10 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
         if best_margin > 0.0 and best_margin >= 0.5 * bound:
             return best
         if bound - best_margin <= 1.0e-12 * max(1.0, bound):
+            return best if best_margin > 0.0 else None
+        # Cuts violated by no more than the feasibility tolerance leave the
+        # program point in place: further rounds cannot tighten the bound.
+        if bound - float(np.min(values)) <= _KELLEY_FEASIBILITY_TOLERANCE:
             return best if best_margin > 0.0 else None
         rows.extend(cuts(vectors, np.flatnonzero(values < bound)))
 

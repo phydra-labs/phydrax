@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from fractions import Fraction
 
+import numpy as np
+import scipy.optimize
+
 from phydrax.discretization._coordinate_enclosure import (
     add,
     axes,
@@ -14,7 +17,10 @@ from phydrax.discretization._coordinate_enclosure import (
 )
 from phydrax.geometry._embedding_cells import EmbeddingCell
 from phydrax.geometry._global_embedding import _stratum_residuals
-from phydrax.geometry._mapped_embedding import prove_mapped_cell_injective
+from phydrax.geometry._mapped_embedding import (
+    _float_search_preconditioner,
+    prove_mapped_cell_injective,
+)
 from phydrax.geometry._stratum_subdivision import (
     glued_facet_monotone,
     StratumSubdivisionCache,
@@ -165,3 +171,63 @@ def test_sheared_prism_is_injective_by_a_searched_preconditioner() -> None:
     assert witness.projection_matrix != tuple(
         tuple(Fraction(int(row == column)) for column in range(3)) for row in range(3)
     )
+
+
+# Glued prism-facet controls of an adaptive layer whose Kelley cutting planes
+# stall at bound 1.5e-8: each new cut is violated by less than the linear
+# program's feasibility tolerance, so the program point never moves.
+_STALLED_VALUES = (
+    -1.0,
+    -0.9599999999999989,
+    -0.9599999999999987,
+    -0.9599999999999975,
+    -0.02000000000000124,
+    -0.020000000000001128,
+    -1.1830814106161824e-15,
+    -3.469446951953614e-18,
+    0.0,
+    0.02,
+    0.020000000000000004,
+    0.02000000000000118,
+    0.020000000000001183,
+    0.9599999999999975,
+    1.0,
+)
+_STALLED_CONTROLS = (
+    ((8, 8, 12), (8, 14, 12), (0, 0, 4)),
+    ((6, 7, 12), (6, 13, 12), (2, 3, 4)),
+    ((8, 8, 9), (8, 14, 9), (0, 0, 10)),
+    ((6, 7, 9), (6, 13, 9), (2, 3, 10)),
+    ((8, 8, 11), (8, 14, 4), (0, 0, 12)),
+    ((6, 7, 11), (6, 13, 4), (2, 3, 12)),
+    ((8, 0, 12), (8, 8, 12), (0, 0, 4)),
+    ((6, 2, 12), (6, 6, 12), (2, 1, 4)),
+    ((8, 0, 4), (8, 8, 12), (0, 0, 5)),
+    ((6, 2, 4), (6, 6, 12), (2, 1, 5)),
+    ((8, 0, 9), (8, 8, 9), (0, 0, 10)),
+    ((6, 2, 9), (6, 6, 9), (2, 1, 10)),
+)
+
+
+def test_preconditioner_search_stops_when_cuts_fall_below_lp_feasibility(
+    monkeypatch,
+) -> None:
+    controls = np.asarray(_STALLED_VALUES, dtype=np.float64)[
+        np.asarray(_STALLED_CONTROLS)
+    ]
+    programs = 0
+    linprog = scipy.optimize.linprog
+
+    def counted(*args, **kwargs):
+        nonlocal programs
+        programs += 1
+        # The stall runs thousands of programs; a converged search needs few.
+        assert programs <= 100, "the cutting-plane search did not stop"
+        return linprog(*args, **kwargs)
+
+    monkeypatch.setattr(scipy.optimize, "linprog", counted)
+    proposal = _float_search_preconditioner(controls)
+    # No positive margin was attained: the search reports no proposal (callers
+    # treat it as not found), never a positivity claim.
+    assert proposal is None
+    assert programs > 1
