@@ -1206,8 +1206,14 @@ def test_validated_parent_replays_once_before_target_reuse(
 
 @pytest.mark.parametrize(
     "field_name",
-    ("certified_valid_count", "invalid_count", "unresolved_count", "block_names",
-     "block_offsets", "unsupported_block_names"),
+    (
+        "certified_valid_count",
+        "invalid_count",
+        "unresolved_count",
+        "block_names",
+        "block_offsets",
+        "unsupported_block_names",
+    ),
 )
 def test_stored_validity_refuses_forged_static_claim(field_name: str) -> None:
     from phydrax._strict import reconstruct_strict

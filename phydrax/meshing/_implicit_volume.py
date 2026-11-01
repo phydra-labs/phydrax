@@ -2588,6 +2588,7 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
 
         def refine_grid() -> None:
             nonlocal spacing, site_points, site_ids, sample_input_rows, iteration
+            nonlocal samples, cover_radius
             next_spacing = spacing / 2.0
             if (
                 not math.isfinite(next_spacing)

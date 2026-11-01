@@ -24,8 +24,10 @@ if TYPE_CHECKING:
     from ..discretization._cell_geometry_validity import CellValidityCertificate
     from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
     from ..geometry._domain_certification import CoverageDomain, SourceCoverageWitness
-    from ..geometry._global_embedding import GlobalEmbeddingCertificate
-    from ..geometry._global_embedding import ValidatedGlobalEmbedding
+    from ..geometry._global_embedding import (
+        GlobalEmbeddingCertificate,
+        ValidatedGlobalEmbedding,
+    )
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import SourceBoundaryQuery
     from ..geometry._source_fidelity_certificate import SourceFidelityWitness

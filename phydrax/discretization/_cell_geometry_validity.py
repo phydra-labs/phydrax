@@ -384,8 +384,12 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         self.source_determinant_lower = computed.source_determinant_lower
         self.source_determinant_upper = computed.source_determinant_upper
         self.source_depth = computed.source_depth
-        self.maximum_coefficient_rounding_error = computed.maximum_coefficient_rounding_error
-        self.maximum_element_coefficient_rounding_error = computed.maximum_element_coefficient_rounding_error
+        self.maximum_coefficient_rounding_error = (
+            computed.maximum_coefficient_rounding_error
+        )
+        self.maximum_element_coefficient_rounding_error = (
+            computed.maximum_element_coefficient_rounding_error
+        )
         self.apex_derivative_unique = computed.apex_derivative_unique
         self.geometry = computed.geometry
         self.mesh = computed.mesh
@@ -711,7 +715,9 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             relative_planarity_tolerance=self.policy.relative_planarity_tolerance,
         )
         if renewed_policy.policy_id != self.policy_id:
-            raise ValueError("Validity certificate policy does not reproduce its controls.")
+            raise ValueError(
+                "Validity certificate policy does not reproduce its controls."
+            )
         fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
         if (
             fresh.certificate_id != self.certificate_id
@@ -2087,14 +2093,19 @@ class ValidatedCellValidityParent:
 
 
 def _parent_proofs(
-    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None,
+    parent: CellValidityCertificate
+    | ValidatedCellValidityParent
+    | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+    | None,
     policy: CellValidityPolicy,
     /,
 ) -> _CellProofs:
     """Index the recorded execution and source proofs of parent certificates."""
     match parent:
         case None:
-            parents: tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] = ()
+            parents: tuple[
+                CellValidityCertificate | ValidatedCellValidityParent, ...
+            ] = ()
         case CellValidityCertificate() | ValidatedCellValidityParent():
             parents = (parent,)
         case tuple():
@@ -2112,7 +2123,9 @@ def _parent_proofs(
             certificate = value
             certificate.revalidate(certificate.geometry, mesh=certificate.mesh)
         else:
-            raise TypeError("parent must hold exact validity certificates or validations.")
+            raise TypeError(
+                "parent must hold exact validity certificates or validations."
+            )
         if certificate.policy_id != policy.policy_id:
             raise ValueError("Parent validity proofs must use the same validity policy.")
         table = np.frombuffer(certificate.cell_map_digests, dtype=np.uint8).reshape(
@@ -2560,7 +2573,10 @@ def certify_cell_geometry_validity(
     *,
     mesh: CellMesh | None = None,
     policy: CellValidityPolicy | None = None,
-    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None = None,
+    parent: CellValidityCertificate
+    | ValidatedCellValidityParent
+    | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+    | None = None,
 ) -> CellValidityCertificate:
     """Certify determinant positivity of every mapped cell with Bernstein bounds.
 
