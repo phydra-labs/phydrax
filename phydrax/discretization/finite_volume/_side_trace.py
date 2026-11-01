@@ -58,6 +58,7 @@ from .._side_actions import (
     SideRepresentation,
     SideTraceQuantity,
 )
+from .._spaces import DiscreteFieldSpace
 from .._topology import EntitySelection
 from .._triangular import TriangleConnectivity
 from .._views import FieldTraceSide
@@ -117,13 +118,20 @@ def _require_owner(discretization: object, /) -> None:
         )
 
 
+def _cell_field(discretization: FiniteVolumeFacetOwner, /) -> DiscreteFieldSpace:
+    space = discretization.cell_space
+    if space is None:
+        raise ValueError("Finite-volume field operations require a published cell field.")
+    return space
+
+
 def finite_volume_field_space_id(discretization: FiniteVolumeFacetOwner, /) -> str:
     """Identity of the cell-average coefficient space of one finite-volume owner."""
     return canonical_fingerprint(
         {
             "kind": "finite-volume-field-space",
             "discretization": discretization.prepared_id,
-            "field": discretization.cell_space.name,
+            "field": _cell_field(discretization).name,
             "components": list(discretization.component_names),
         }
     )
@@ -328,8 +336,11 @@ def _mesh_table(discretization: _MeshOwner, /) -> _FacetTable:
         facets, valid, neighbor[interior], twins[interior]
     )
     dimension = mesh_cell_dimension(discretization)
+    topology = discretization.topology
+    if topology is None:
+        raise ValueError("Finite-volume facet tables require a cell topology.")
     return _FacetTable(
-        entity_set_id=discretization.topology.entity_sets[dimension - 1].entity_set_id,
+        entity_set_id=topology.entity_sets[dimension - 1].entity_set_id,
         owner=owner,
         neighbor=neighbor,
         owner_local=_local_positions(facets, valid, owner, faces),
@@ -360,7 +371,10 @@ def _cell_entity_set_id(discretization: FiniteVolumeFacetOwner, /) -> str:
             | TriangleFiniteVolumeDiscretization()
         ):
             dimension = mesh_cell_dimension(discretization)
-            return discretization.topology.entity_sets[dimension].entity_set_id
+            topology = discretization.topology
+            if topology is None:
+                raise ValueError("Finite-volume integration requires a cell topology.")
+            return topology.entity_sets[dimension].entity_set_id
         case _:
             assert_never(discretization)
 
@@ -400,7 +414,10 @@ def finite_volume_integration_domain(
     """Cell, exterior-facet, or interior-facet domain of a finite-volume owner."""
     _require_owner(discretization)
     kind_ = str(kind)
-    support_id = discretization.support.support_id
+    support = discretization.support
+    if support is None:
+        raise ValueError("Finite-volume integration requires a discrete support.")
+    support_id = support.support_id
     match kind_:
         case "cell":
             count = _cell_count(discretization)
@@ -454,8 +471,11 @@ def _checked_facets(
             raise ValueError(
                 "Finite-volume side traces act on exterior or interior facets."
             )
+    support = discretization.support
+    if support is None:
+        raise ValueError("Finite-volume side traces require a discrete support.")
     if (
-        domain.support_id != discretization.support.support_id
+        domain.support_id != support.support_id
         or domain.entity_set_id != table.entity_set_id
     ):
         raise ValueError(
@@ -1035,7 +1055,7 @@ def _support_rows(
 
 
 def _coefficient_space(discretization: FiniteVolumeFacetOwner, /) -> ArraySpace:
-    space = discretization.cell_space.vector_space
+    space = _cell_field(discretization).vector_space
     if not isinstance(space, ArraySpace):
         raise TypeError("Finite-volume cell averages are array valued.")
     return space
@@ -1099,7 +1119,7 @@ def _prepared_frame(
     /,
 ) -> _FacetFrame:
     _require_owner(discretization)
-    if str(field_name) != discretization.cell_space.name:
+    if str(field_name) != _cell_field(discretization).name:
         raise KeyError(f"Unknown finite-volume field {field_name!r}.")
     quantity_ = parse(quantity, SideTraceQuantity, "quantity")
     match quantity_:

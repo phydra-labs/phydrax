@@ -25,6 +25,7 @@ from ..._execution_device import device_platform
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
 from ..._jax_context import inside_jax_transformation
+from ..._owned_programs import run_owned_program
 from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -704,14 +705,19 @@ class SpectralTranspose(StrictModule, NonTrainableState):
             )
         topology.require_available()
         placed = jax.device_put(value, self.source.sharding(topology))
-        mapped = jax.shard_map(
+        mapped = run_owned_program(
+            self, "transpose", SpectralTranspose._execute_program, placed, topology
+        )
+        return jax.device_put(mapped, self.target.sharding(topology))
+
+    def _execute_program(self, placed: Array, topology: SpectralMeshTopology, /) -> Array:
+        return jax.shard_map(
             self.apply_local,
             mesh=topology.mesh,
             in_specs=self.source.partition_spec,
             out_specs=self.target.partition_spec,
             check_vma=False,
-        )
-        return mapped(placed)
+        )(placed)
 
 
 @final
@@ -1961,33 +1967,62 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             inverse=True,
         )
 
+    def _mapped_local(
+        self,
+        placed: Array,
+        in_spec: PartitionSpec,
+        out_spec: PartitionSpec,
+        padded: bool,
+        forward: bool,
+        /,
+    ) -> Array:
+        local = self.forward_local if forward else self.inverse_local
+        return jax.shard_map(
+            partial(local, padded=padded),
+            mesh=self.topology.mesh,
+            in_specs=in_spec,
+            out_specs=out_spec,
+            check_vma=self.transpose_provider == "cudecomp",
+        )(placed)
+
+    def _map_layouts(
+        self,
+        placed: Array,
+        source: SpectralLayout,
+        target: SpectralLayout,
+        padded: bool,
+        forward: bool,
+        /,
+    ) -> Array:
+        """Run one owned transform program and place its result on ``target``.
+
+        A compiled program may report any sharding equivalent to its declared
+        output spec (on one device every spec is equivalent); the result carries
+        the target layout's own sharding.
+        """
+        mapped = run_owned_program(
+            self,
+            "spectral-map",
+            DistributedSpectralExecutionPlan._mapped_local,
+            placed,
+            source.partition_spec,
+            target.partition_spec,
+            padded,
+            forward,
+        )
+        return jax.device_put(mapped, target.sharding(self.topology))
+
     def to_modal(self, values: ArrayLike, /, *, padded: bool = False) -> Array:
         source = self._layout("physical", padded)
         target = self._layout("modal", padded)
         placed = self._validate(values, source, "Physical spectral state")
-        action = partial(self.forward_local, padded=padded)
-        mapped = jax.shard_map(
-            action,
-            mesh=self.topology.mesh,
-            in_specs=source.partition_spec,
-            out_specs=target.partition_spec,
-            check_vma=self.transpose_provider == "cudecomp",
-        )
-        return mapped(placed)
+        return self._map_layouts(placed, source, target, padded, True)
 
     def to_physical(self, coefficients: ArrayLike, /, *, padded: bool = False) -> Array:
         source = self._layout("modal", padded)
         target = self._layout("physical", padded)
         placed = self._validate(coefficients, source, "Modal spectral state")
-        action = partial(self.inverse_local, padded=padded)
-        mapped = jax.shard_map(
-            action,
-            mesh=self.topology.mesh,
-            in_specs=source.partition_spec,
-            out_specs=target.partition_spec,
-            check_vma=self.transpose_provider == "cudecomp",
-        )
-        return mapped(placed)
+        return self._map_layouts(placed, source, target, padded, False)
 
     def to_modal_batched(self, values: ArrayLike, /, *, padded: bool = False) -> Array:
         """Transform one exact admitted trailing payload in a distributed C2C batch."""
@@ -1995,15 +2030,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             values, "physical", padded, "Batched physical spectral state"
         )
         target = self._batched_layout(placed.shape, "modal", padded)
-        action = partial(self.forward_local, padded=padded)
-        mapped = jax.shard_map(
-            action,
-            mesh=self.topology.mesh,
-            in_specs=source.partition_spec,
-            out_specs=target.partition_spec,
-            check_vma=self.transpose_provider == "cudecomp",
-        )
-        return mapped(placed)
+        return self._map_layouts(placed, source, target, padded, True)
 
     def to_physical_batched(
         self, coefficients: ArrayLike, /, *, padded: bool = False
@@ -2013,15 +2040,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             coefficients, "modal", padded, "Batched modal spectral state"
         )
         target = self._batched_layout(placed.shape, "physical", padded)
-        action = partial(self.inverse_local, padded=padded)
-        mapped = jax.shard_map(
-            action,
-            mesh=self.topology.mesh,
-            in_specs=source.partition_spec,
-            out_specs=target.partition_spec,
-            check_vma=self.transpose_provider == "cudecomp",
-        )
-        return mapped(placed)
+        return self._map_layouts(placed, source, target, padded, False)
 
     def execute_transform(
         self,
@@ -2193,11 +2212,22 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
     def _global_reductions(
         self, value: Array, layout: SpectralLayout, /
     ) -> tuple[Array, Array, Array, Array]:
+        return run_owned_program(
+            self,
+            "global-reductions",
+            DistributedSpectralExecutionPlan._global_reductions_program,
+            value,
+            layout.partition_spec,
+            layout.used_mesh_axes,
+        )
+
+    def _global_reductions_program(
+        self, value: Array, spec: PartitionSpec, axes: tuple[str, ...], /
+    ) -> tuple[Array, Array, Array, Array]:
         reduction_dtype = jnp.dtype(self.precision.reduction_dtype)
         sum_dtype = np.dtype(
             jnp.complex128 if reduction_dtype.itemsize > 4 else jnp.complex64
         )
-        axes = layout.used_mesh_axes
 
         def reduce_local(local: Array) -> tuple[Array, Array, Array, Array]:
             reduced = local.astype(sum_dtype)
@@ -2215,14 +2245,13 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 finite = jax.lax.pmin(finite, axes)
             return total, maximum, jnp.sqrt(squared), finite.astype(jnp.bool_)
 
-        mapped = jax.shard_map(
+        return jax.shard_map(
             reduce_local,
             mesh=self.topology.mesh,
-            in_specs=layout.partition_spec,
+            in_specs=spec,
             out_specs=(PartitionSpec(),) * 4,
             check_vma=False,
-        )
-        return mapped(value)
+        )(value)
 
     def diagnostics(
         self,
@@ -2286,24 +2315,42 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         )
         if right_layout.global_shape != layout.global_shape:
             raise ValueError("Distributed inner-product operands must have equal shape.")
+        return run_owned_program(
+            self,
+            "global-inner-product",
+            DistributedSpectralExecutionPlan._inner_product_program,
+            left_value,
+            right_value,
+            layout.partition_spec,
+            right_layout.partition_spec,
+            layout.used_mesh_axes,
+        )
+
+    def _inner_product_program(
+        self,
+        left_value: Array,
+        right_value: Array,
+        left_spec: PartitionSpec,
+        right_spec: PartitionSpec,
+        axes: tuple[str, ...],
+        /,
+    ) -> Array:
         reduction_dtype = np.dtype(self.precision.reduction_dtype)
         sum_dtype = np.dtype(
             jnp.complex128 if reduction_dtype.itemsize > 4 else jnp.complex64
         )
-        axes = layout.used_mesh_axes
 
         def inner_local(left_local: Array, right_local: Array) -> Array:
             total = jnp.vdot(left_local.astype(sum_dtype), right_local.astype(sum_dtype))
             return jax.lax.psum(total, axes) if axes else total
 
-        mapped = jax.shard_map(
+        return jax.shard_map(
             inner_local,
             mesh=self.topology.mesh,
-            in_specs=(layout.partition_spec, right_layout.partition_spec),
+            in_specs=(left_spec, right_spec),
             out_specs=PartitionSpec(),
             check_vma=False,
-        )
-        return mapped(left_value, right_value)
+        )(left_value, right_value)
 
     def global_all(
         self,
@@ -2318,22 +2365,31 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         layout = self._batched_layout(value.shape, representation, padded)
         self.topology.require_available()
         placed = jax.device_put(value, layout.sharding(self.topology))
-        axes = layout.used_mesh_axes
+        return run_owned_program(
+            self,
+            "global-all",
+            DistributedSpectralExecutionPlan._global_all_program,
+            placed,
+            layout.partition_spec,
+            layout.used_mesh_axes,
+        )
 
+    def _global_all_program(
+        self, placed: Array, spec: PartitionSpec, axes: tuple[str, ...], /
+    ) -> Array:
         def all_local(local: Array) -> Array:
             result = jnp.all(local).astype(jnp.int32)
             if axes:
                 result = jax.lax.pmin(result, axes)
             return result.astype(jnp.bool_)
 
-        mapped = jax.shard_map(
+        return jax.shard_map(
             all_local,
             mesh=self.topology.mesh,
-            in_specs=layout.partition_spec,
+            in_specs=spec,
             out_specs=PartitionSpec(),
             check_vma=False,
-        )
-        return mapped(placed)
+        )(placed)
 
     def execute_channel(
         self,

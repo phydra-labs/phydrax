@@ -2569,6 +2569,9 @@ def _error_on_failure(value: PyTree[Array], status: Array, /) -> PyTree[Array]:
     return jax.tree.unflatten(tree, leaves)
 
 
+# Direct providers execute eagerly; stage the implicit residual and its tangent
+# closures together instead of rebuilding custom-root traces on each solve.
+@eqx.filter_jit
 def _implicit_root_value(
     prepared: PreparedLinearSolve,
     problem: LinearSystem | LeastSquaresProblem | MinimumNormProblem,

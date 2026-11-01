@@ -1,31 +1,27 @@
 from __future__ import annotations
 
 import math
+from typing import cast
 
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
 from phydrax._physical import SpatialCoordinateContract
-from phydrax._strict import StrictModule
-from phydrax._trainable import NonTrainableState
 from phydrax.discretization.fem._reference import FiniteElementSpec
 from phydrax.discretization.finite_volume import UnstructuredFiniteVolumePlan
+from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from phydrax.geometry._planar_embedding import PlanarEmbedding
-from phydrax.geometry._source_boundary_records import (
-    SourceBoundaryDistance,
-    SourceBoundarySamples,
-)
 from phydrax.geometry.brep._patches import PlanePatch
 from phydrax.meshing import NativeMeshingProvider
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
     MeshingFailure,
+    MeshQualityTarget,
     SurfaceMeshingSpec,
     VolumeFillStrategy,
     VolumeMeshingSpec,
@@ -55,11 +51,14 @@ from phydrax.meshing.providers._native_sources import (
     NativeStructuredSource,
     NativeSweepSource,
 )
-from phydrax.meshing.providers._native_structured import prepare_native_structured
+from phydrax.meshing.providers._native_structured import (
+    _size_compliance,
+    prepare_native_structured,
+)
 
 
 def _curve(
-    points: tuple[tuple[float, float], ...],
+    points: tuple[tuple[float, ...], ...],
     /,
     *,
     source_id: str,
@@ -389,66 +388,6 @@ def test_closed_frame_sweep_retains_the_declared_periodic_seam() -> None:
     )
 
 
-class _SquareBoundaryQuery(StrictModule, NonTrainableState):
-    source_id: str = eqx.field(static=True)
-    source_revision: str = eqx.field(static=True)
-    ambient_dimension: int = eqx.field(static=True)
-
-    def __init__(self) -> None:
-        self.source_id = "square-source"
-        self.source_revision = "square-revision"
-        self.ambient_dimension = 2
-
-    def boundary_distance(self, points: np.ndarray, /) -> SourceBoundaryDistance:
-        coordinates = np.asarray(points, dtype=np.float64)
-        boundaries = (
-            np.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=np.float64),
-            np.asarray(((1.0, 0.0), (1.0, 1.0)), dtype=np.float64),
-            np.asarray(((1.0, 1.0), (0.0, 1.0)), dtype=np.float64),
-            np.asarray(((0.0, 1.0), (0.0, 0.0)), dtype=np.float64),
-        )
-        distances = np.full((coordinates.shape[0],), np.inf, dtype=np.float64)
-        for edge in boundaries:
-            direction = edge[1] - edge[0]
-            parameter = np.clip(
-                ((coordinates - edge[0]) @ direction) / np.dot(direction, direction),
-                0.0,
-                1.0,
-            )
-            closest = edge[0] + parameter[:, None] * direction
-            distances = np.minimum(
-                distances, np.linalg.norm(coordinates - closest, axis=-1)
-            )
-        return SourceBoundaryDistance(distances, distances, "certified")
-
-    def boundary_cover(self, maximum_radius: float, /) -> SourceBoundarySamples:
-        if isinstance(maximum_radius, (bool, np.bool_)):
-            raise TypeError("maximum_radius must be a positive physical length.")
-        requested = float(maximum_radius)
-        if not math.isfinite(requested) or requested <= 0.0:
-            raise ValueError("maximum_radius must be finite and positive.")
-        intervals = max(1, math.ceil(1.0 / (2.0 * requested)))
-        radius = float(np.nextafter(0.5 / intervals, np.inf))
-        while radius > requested:
-            intervals += 1
-            radius = float(np.nextafter(0.5 / intervals, np.inf))
-        parameter = np.arange(intervals, dtype=np.float64) / intervals
-        points = np.concatenate(
-            (
-                np.column_stack((parameter, np.zeros_like(parameter))),
-                np.column_stack((np.ones_like(parameter), parameter)),
-                np.column_stack((1.0 - parameter, np.ones_like(parameter))),
-                np.column_stack((np.zeros_like(parameter), 1.0 - parameter)),
-            ),
-            axis=0,
-        )
-        return SourceBoundarySamples(
-            points,
-            np.full((points.shape[0],), radius, dtype=np.float64),
-            np.zeros((points.shape[0],), dtype=np.float64),
-            "certified",
-            complete=True,
-        )
 
 
 class _SweepPwlDomainOwner:
@@ -547,14 +486,33 @@ def _native_square_request(
     SpatialCoordinateContract,
 ]:
     source_id = "square-source"
-    revision = "square-revision"
+    domain = PiecewiseLinearDomain(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        np.asarray(((0, 1), (1, 2), (2, 3), (3, 0)), dtype=np.int64),
+        np.tile(np.asarray((0, -1), dtype=np.int64), (4, 1)),
+        ("square",),
+        source_id=source_id,
+    )
+    revision = domain.source_revision
+    block = _rectangle("square-block", 0.0, 1.0, 0.0, 1.0)
+    curves = cast(tuple[TransfiniteCurveControl, ...], block.boundaries)
+    boundary = ParametricCurveBoundarySource(
+        tuple(control.curve for control in curves),
+        tuple(control.parameter_range for control in curves),
+        source_id=source_id,
+        source_revision=revision,
+        curve_entity_ids=tuple(control.source_id for control in block.boundaries),
+        occurrence_paths=((),) * len(block.boundaries),
+        chart_ids=tuple(control.source_id for control in block.boundaries),
+    )
     source = NativeStructuredSource(
-        (_rectangle("square-block", 0.0, 1.0, 0.0, 1.0),),
+        (block,),
         (),
         source_id,
         revision,
-        fidelity_source=_SquareBoundaryQuery(),
+        fidelity_source=boundary,
         maximum_deviation=1e-12,
+        domain=domain,
     )
     scope = MeshingScope.whole(source, 2)
     if outside_source_bank:
@@ -581,6 +539,7 @@ def _native_square_request(
         target,
         scope,
         size_controls=(),
+        quality_target=MeshQualityTarget(minimum_angle=0.2),
         planar_embedding=PlanarEmbedding(
             (0.0, 0.0, 0.0),
             (1.0, 0.0, 0.0),
@@ -608,11 +567,130 @@ def test_native_structured_provider_returns_canonical_construction_data() -> Non
     assert isinstance(elements[0], FiniteElementSpec)
     assert elements[0].degree == 1
     assert construction.compliance.passed
-    assert construction.certification.schedule.route == "surface"
+    assert dict(construction.compliance.requested)["minimum_angle"] == 0.2
+    assert dict(construction.compliance.achieved)["minimum_angle"] == pytest.approx(
+        math.pi / 2.0
+    )
+    assert construction.certification.schedule.route == "planar"
+    assert construction.certification.domain is source.domain
+    np.testing.assert_array_equal(
+        construction.certification.cell_regions,
+        np.zeros(construction.mesh.connectivity.cell_count, dtype=np.int64),
+    )
     assert construction.certification.fidelity_tolerance == 1e-12
     assert any(
         label.name.startswith("structured-boundary:")
         for label in construction.organization.labels
+    )
+
+
+def test_embedded_structured_surface_preserves_its_surface_query() -> None:
+    domain = PiecewiseLinearDomain(
+        np.asarray(((0., 0., 0.), (2., 0., 0.), (0., 2., 0.), (0., 0., 2.))),
+        np.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=np.int64),
+        np.tile(np.asarray((0, -1), dtype=np.int64), (4, 1)),
+        ("solid",),
+        source_id="embedded-structured-source",
+    )
+    query = PiecewiseLinearBoundarySource(
+        _SweepPwlDomainOwner(domain), 2, entity_ids=np.asarray((0,), dtype=np.int64)
+    )
+    edges = (
+        ((0., 0., 0.), (0., 0.5, 0.)),
+        ((0.5, 0., 0.), (0.5, 0.5, 0.)),
+        ((0., 0., 0.), (0.5, 0., 0.)),
+        ((0., 0.5, 0.), (0.5, 0.5, 0.)),
+    )
+    block = TransfiniteBlock(
+        "embedded",
+        tuple(
+            _curve(points, source_id=f"embedded:edge:{row}", intervals=2)
+            for row, points in enumerate(edges)
+        ),
+    )
+    source = NativeStructuredSource(
+        (block,), (), domain.source_id, domain.source_revision,
+        fidelity_source=query, maximum_deviation=1e-12,
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("quadrilateral",))),
+        MeshingScope.whole(source, 2),
+        size_controls=(),
+        quality_target=MeshQualityTarget(minimum_angle=0.2),
+    )
+    construction = prepare_native_structured(
+        source, specification,
+        NativeMeshingOptions(
+            "structured_transfinite", structured_schedule=NativeStructuredSchedule()
+        ),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    assert construction.mesh.ambient_dimension == 3
+    assert construction.mesh.blocks[0].cell_kind == "quadrilateral"
+    assert construction.compliance.passed
+    assert construction.certification.schedule.route == "surface"
+    assert construction.certification.fidelity_source is query
+    assert construction.certification.fidelity_witness is None
+    np.testing.assert_array_equal(np.asarray(construction.mesh.coordinates)[:, 2], 0.)
+
+
+@pytest.mark.parametrize("hard", (True, False))
+def test_structured_surface_quality_records_unmet_physical_corner_angle(
+    hard: bool,
+) -> None:
+    _, baseline, _, _ = _native_square_request(("quadrilateral",))
+    specification = SurfaceMeshingSpec(
+        baseline.target,
+        baseline.scope,
+        size_controls=(),
+        quality_target=MeshQualityTarget(minimum_angle=0.2, hard=hard),
+    )
+    block = TransfiniteBlock(
+        "skew",
+        tuple(
+            _curve(points, source_id=f"skew:{side}", intervals=1)
+            for side, points in enumerate(
+                (
+                    ((0.0, 0.0), (1.0, 0.1)),
+                    ((1.0, 0.0), (2.0, 0.1)),
+                    ((0.0, 0.0), (1.0, 0.0)),
+                    ((1.0, 0.1), (2.0, 0.1)),
+                )
+            )
+        ),
+    )
+    construction = generate_structured_block(block)
+    compliance = _size_compliance(
+        construction.mesh, construction.geometry, specification
+    )
+
+    assert compliance.passed is not hard
+    assert ("minimum_angle" in compliance.issues) is hard
+    assert dict(compliance.requested)["minimum_angle"] == 0.2
+    assert dict(compliance.achieved)["minimum_angle"] == pytest.approx(math.atan(0.1))
+
+
+def test_structured_surface_quality_uses_curved_edge_tangents_not_chords() -> None:
+    _, specification, _, _ = _native_square_request(("quadrilateral",))
+    rectangle = _rectangle(
+        "curved-quality", 0.0, 1.0, 0.0, 1.0, x_intervals=1, y_intervals=1
+    )
+    boundaries = list(rectangle.boundaries)
+    boundaries[2] = _curve(
+        ((0.0, 0.0), (0.5, 0.2), (1.0, 0.0)),
+        source_id="curved-quality:bottom",
+        intervals=1,
+    )
+    construction = generate_structured_block(
+        TransfiniteBlock(rectangle.name, tuple(boundaries)), geometry_degree=2
+    )
+    compliance = _size_compliance(
+        construction.mesh, construction.geometry, specification
+    )
+
+    assert compliance.passed
+    assert dict(compliance.achieved)["minimum_angle"] == pytest.approx(
+        math.atan2(1.0, 0.4)
     )
 
 
@@ -870,3 +948,19 @@ def test_native_structured_provider_refuses_scope_ids_outside_the_source_bank() 
     )
     with pytest.raises(MeshingFailure, match="source-owned entity bank"):
         prepare_native_structured(source, specification, options, coordinate_contract)
+
+
+def test_native_structured_planar_provider_requires_independent_coverage_domain() -> None:
+    source, specification, options, coordinate_contract = _native_square_request(
+        ("quadrilateral",)
+    )
+    unbound = NativeStructuredSource(
+        source.blocks,
+        source.interfaces,
+        source.source_id,
+        source.source_revision,
+        fidelity_source=source.fidelity_source,
+        maximum_deviation=source.maximum_deviation,
+    )
+    with pytest.raises(MeshingFailure, match="authoritative planar source domain"):
+        prepare_native_structured(unbound, specification, options, coordinate_contract)

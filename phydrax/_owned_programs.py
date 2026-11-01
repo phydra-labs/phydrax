@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 
 import equinox as eqx
 import jax
+from jax import core as jax_core
 
 from ._strict import StrictModule
 
@@ -41,7 +42,7 @@ def run_owned_program(
     together with the owner.
     """
     if any(
-        isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves((owner, operands))
+        isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves((owner, operands))
     ):
         return method(owner, *operands)
     key = (id(owner), phase)

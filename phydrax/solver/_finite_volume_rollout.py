@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
+from .._owned_programs import run_owned_program
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -159,6 +160,17 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
         initial_state: FiniteVolumeRuntimeState,
         args: Any = None,
         /,
+    ) -> FiniteVolumeRolloutResult:
+        return run_owned_program(
+            self,
+            "rollout",
+            AdaptiveFiniteVolumeRolloutPlan._rollout,
+            initial_state,
+            args,
+        )
+
+    def _rollout(
+        self, initial_state: FiniteVolumeRuntimeState, args: Any, /
     ) -> FiniteVolumeRolloutResult:
         retain_states = self.retention != "final"
 
@@ -306,6 +318,17 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         args: Any = None,
         /,
     ) -> FiniteVolumeRolloutResult:
+        return run_owned_program(
+            self,
+            "rollout",
+            ScheduledFiniteVolumeRolloutPlan._rollout,
+            initial_state,
+            args,
+        )
+
+    def _rollout(
+        self, initial_state: FiniteVolumeRuntimeState, args: Any, /
+    ) -> FiniteVolumeRolloutResult:
         initial_time = jnp.asarray(initial_state.time)
         tolerance = (
             32.0
@@ -442,6 +465,8 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
             )
             return loss(self.rollout(runtime, args).final_state, args)
 
+        # Keep the independent AD checks diagnostic rather than compiling three
+        # additional whole-rollout programs: that increased cold time and memory.
         _, directional = jax.jvp(objective, (initial_content,), (direction,))
         gradient = jax.grad(objective)(initial_content)
         reverse = jnp.vdot(gradient, direction)

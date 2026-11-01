@@ -138,19 +138,21 @@ def remap(
         provenance=label,
         policy=phx.geometry.CommonRefinementPolicy(overlap_simplices=True),
     )
-    if not prepared.succeeded:
+    plan = prepared.plan
+    if plan is None:
         raise RuntimeError(f"{label}: common refinement failed: {prepared.reason}.")
     limited = D.UnstructuredSecondOrderRemapPlan(
-        # ty: ignore[invalid-argument-type]
-        prepared.plan,
+        plan,
         prepared.refinement,
         source,
     ).apply(density)
-    # ty: ignore[unresolved-attribute]
-    first_order = prepared.plan.apply(density)
+    first_order = plan.apply(density)
+    source_fv_mesh, target_fv_mesh = source.mesh, target.mesh
+    if source_fv_mesh is None or target_fv_mesh is None:
+        raise TypeError("The ALE comparison requires full source and target meshes.")
     projection = D.prepare_l2_projection_transfer(
-        dg0(source.mesh),
-        D.prepare_l2_projection_target(dg0(target.mesh), field_name="rho"),
+        dg0(source_fv_mesh),
+        D.prepare_l2_projection_target(dg0(target_fv_mesh), field_name="rho"),
         prepared.refinement,
         field_name="rho",
     )

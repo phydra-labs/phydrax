@@ -1,5 +1,7 @@
 from collections.abc import Callable
 from dataclasses import replace
+from fractions import Fraction
+from itertools import product
 from typing import Literal
 
 import equinox as eqx
@@ -10,7 +12,7 @@ import pytest
 
 from phydrax._interpolation import bspline_jet_stencil
 from phydrax._meshcore import load_meshcore
-from phydrax.geometry import Superquadric
+from phydrax.geometry import _interval_enclosure as interval_enclosure, Superquadric
 from phydrax.geometry._interval_enclosure import (
     interval_multiply,
     IntervalExtensionError,
@@ -18,6 +20,116 @@ from phydrax.geometry._interval_enclosure import (
 )
 from phydrax.geometry.analytic._primitives import _finite_norm
 from phydrax.geometry.brep._patches import CylinderPatch
+
+
+@pytest.mark.parametrize("host", (True, False))
+def test_interval_products_enclose_exact_rational_endpoints(host: bool) -> None:
+    operation = (
+        interval_enclosure._host_interval_multiply
+        if host
+        else interval_enclosure.interval_multiply
+    )
+    tiny = float.fromhex("0x0.0000000000001p-1022")
+    cases = (
+        ((0.0, tiny), (0.0, 0.5)),
+        ((-tiny, -0.0), (0.0, 0.5)),
+        ((-tiny, tiny), (-0.5, 0.5)),
+        ((-0.0, 0.0), (-1.0, 1.0)),
+        ((tiny, 3 * tiny), (0.25, 0.5)),
+        ((-3 * tiny, -tiny), (0.25, 0.5)),
+        ((1.0, np.nextafter(1.0, np.inf)), (0.1, 0.3)),
+        ((-1.0e200, 2.0e200), (-1.0e-100, 1.0e-100)),
+    )
+    for first, second in cases:
+        lower, upper = operation(
+            (
+                np.asarray(first[0], dtype=np.float64),
+                np.asarray(first[1], dtype=np.float64),
+            ),
+            (
+                np.asarray(second[0], dtype=np.float64),
+                np.asarray(second[1], dtype=np.float64),
+            ),
+        )
+        exact = [Fraction(a) * Fraction(b) for a, b in product(first, second)]
+        assert Fraction(float(lower)) <= min(exact)
+        assert Fraction(float(upper)) >= max(exact)
+    positive = operation(
+        (np.asarray(0.0), np.asarray(tiny)), (np.asarray(0.0), np.asarray(0.5))
+    )
+    negative = operation(
+        (np.asarray(-tiny), np.asarray(-0.0)), (np.asarray(0.0), np.asarray(0.5))
+    )
+    assert positive[0] == 0.0 and positive[1] == tiny
+    assert negative[0] == -tiny and negative[1] == 0.0
+    assert not np.signbit(positive[0])
+
+
+@pytest.mark.parametrize("host", (True, False))
+@pytest.mark.parametrize("operation", ("add", "subtract", "multiply"))
+@pytest.mark.parametrize("nan_endpoint", range(4))
+def test_interval_nan_endpoint_means_whole_line(
+    host: bool, operation: str, nan_endpoint: int
+) -> None:
+    operations = {
+        "add": (interval_enclosure._host_interval_add, interval_enclosure.interval_add),
+        "subtract": (
+            interval_enclosure._host_interval_subtract,
+            interval_enclosure.interval_subtract,
+        ),
+        "multiply": (
+            interval_enclosure._host_interval_multiply,
+            interval_enclosure.interval_multiply,
+        ),
+    }
+    apply = operations[operation][0 if host else 1]
+    values = [np.asarray(value) for value in (0.0, 1.0, 0.0, 1.0)]
+    values[nan_endpoint] = np.asarray(np.nan)
+    lower, upper = apply((values[0], values[1]), (values[2], values[3]))
+    assert float(lower) == -np.inf and float(upper) == np.inf
+
+
+@pytest.mark.parametrize("host", (True, False))
+def test_interval_sum_zero_identity_does_not_hide_nan(host: bool) -> None:
+    apply = (
+        interval_enclosure._host_interval_add if host else interval_enclosure.interval_add
+    )
+    zero = (np.asarray(0.0), np.asarray(0.0))
+    for invalid in (
+        (np.asarray(np.nan), np.asarray(-1.0)),
+        (np.asarray(1.0), np.asarray(np.nan)),
+    ):
+        for first, second in ((zero, invalid), (invalid, zero)):
+            lower, upper = apply(first, second)
+            assert float(lower) == -np.inf and float(upper) == np.inf
+
+
+@pytest.mark.parametrize("host", (True, False))
+def test_interval_sum_encloses_exact_endpoints_and_preserves_signed_zero(
+    host: bool,
+) -> None:
+    add = (
+        interval_enclosure._host_interval_add if host else interval_enclosure.interval_add
+    )
+    subtract = (
+        interval_enclosure._host_interval_subtract
+        if host
+        else interval_enclosure.interval_subtract
+    )
+    tiny = float.fromhex("0x0.0000000000001p-1022")
+    for apply, subtracting in ((add, False), (subtract, True)):
+        for a, b in ((tiny, tiny), (1.0, tiny), (1.0, 0.1), (-1.0, -0.1)):
+            lower, upper = apply(
+                (np.asarray(a), np.asarray(a)), (np.asarray(b), np.asarray(b))
+            )
+            exact = Fraction(a) + (-Fraction(b) if subtracting else Fraction(b))
+            assert Fraction(float(lower)) <= exact <= Fraction(float(upper))
+    lower, upper = subtract(
+        (np.asarray(-0.0), np.asarray(-0.0)),
+        (np.asarray(0.0), np.asarray(0.0)),
+    )
+    assert lower == upper == 0.0
+    assert np.signbit(lower) and np.signbit(upper)
 
 
 def _assert_nested_enclosures(

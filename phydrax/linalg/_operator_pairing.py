@@ -146,29 +146,7 @@ class OperatorPairing(AbstractPairing):
         rhs = self.operator.source.inverse_riesz(value)
         if self.inverse_action is not None:
             return self.operator.source.validate(self.inverse_action(rhs))
-        from ._runtime import solve
-
-        prepared = self.prepared_inverse
-        assert prepared is not None
-
-        def prepared_solve(right: PyTree[Array], /) -> PyTree[Array]:
-            result = solve(prepared, right)
-            return eqx.error_if(
-                result.value,
-                jnp.any(~result.successful),
-                "Prepared Riesz inverse solve failed.",
-            )
-
-        def transposed_solve(right: PyTree[Array], /) -> PyTree[Array]:
-            return jax.tree.map(jnp.conj, prepared_solve(jax.tree.map(jnp.conj, right)))
-
-        candidate = jax.lax.custom_linear_solve(
-            self.operator.mv,
-            rhs,
-            solve=lambda _, right: prepared_solve(right),
-            transpose_solve=lambda _, right: transposed_solve(right),
-        )
-        return self.operator.source.validate(candidate)
+        return self.operator.source.validate(_solve_prepared(self, rhs))
 
     def archive_recipe(self, /) -> OperatorPairingArchiveRecipe:
         if type(self) is not OperatorPairing:
@@ -189,6 +167,33 @@ class OperatorPairing(AbstractPairing):
                 array_tree_fingerprint(self.prepared_inverse.template.plan.policy)
             ),
         )
+
+
+@eqx.filter_jit
+def _solve_prepared(pairing: OperatorPairing, rhs: PyTree[Array], /) -> PyTree[Array]:
+    """Stage primal and transpose closures with dynamic prepared coefficients."""
+    from ._runtime import solve
+
+    prepared = pairing.prepared_inverse
+    assert prepared is not None
+
+    def prepared_solve(_: Any, right: PyTree[Array], /) -> PyTree[Array]:
+        result = solve(prepared, right)
+        return eqx.error_if(
+            result.value,
+            jnp.any(~result.successful),
+            "Prepared Riesz inverse solve failed.",
+        )
+
+    def transposed_solve(_: Any, right: PyTree[Array], /) -> PyTree[Array]:
+        return jax.tree.map(jnp.conj, prepared_solve(None, jax.tree.map(jnp.conj, right)))
+
+    return jax.lax.custom_linear_solve(
+        pairing.operator.mv,
+        rhs,
+        solve=prepared_solve,
+        transpose_solve=transposed_solve,
+    )
 
 
 def _operator_content_fingerprint(operator: AbstractLinearOperator, /) -> str:

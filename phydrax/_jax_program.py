@@ -14,7 +14,6 @@ derivative, batching and effect rules are not visible in the program.
 from __future__ import annotations
 
 import functools
-from inspect import getclosurevars
 from typing import Any, Literal, TypeAlias
 
 import jax
@@ -117,6 +116,16 @@ def lowered_expansion(equation: jax_core.JaxprEqn, /) -> jax_core.ClosedJaxpr | 
     return stock_high_expansion(equation)
 
 
+def _closure_value(function: Any, name: str, /) -> Any:
+    """Value captured by ``function`` under the free variable ``name``.
+
+    Reads the closure cell directly; ``inspect.getclosurevars`` would also
+    disassemble the bytecode to resolve globals, which dominates interval
+    interpretation of every staged B-spline jet.
+    """
+    return function.__closure__[function.__code__.co_freevars.index(name)].cell_contents
+
+
 def custom_jvp_rule_owner(thunk: Any, /) -> Any | None:
     """Rule owner (a wrapped function) of a staged ``custom_jvp_call`` thunk.
 
@@ -134,15 +143,15 @@ def custom_jvp_rule_owner(thunk: Any, /) -> Any | None:
         or function.__qualname__ != "_memoize.<locals>.memoized"
     ):
         return None
-    memoized = getclosurevars(function).nonlocals["fn"]
-    owner = getclosurevars(memoized).nonlocals["jvp"]
+    memoized = _closure_value(function, "fn")
+    owner = _closure_value(memoized, "jvp")
     rule = getattr(owner, "f", None)
     if (
         rule is not None
         and rule.__module__ == "jax._src.custom_derivatives"
         and rule.__qualname__ == "lift_jvp.<locals>.jvp"
     ):
-        return custom_jvp_rule_owner(getclosurevars(rule).nonlocals["jvp_jaxpr_fun"])
+        return custom_jvp_rule_owner(_closure_value(rule, "jvp_jaxpr_fun"))
     return owner
 
 

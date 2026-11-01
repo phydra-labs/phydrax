@@ -1492,6 +1492,10 @@ def prepare_compact_cell_common_refinement(
         )
         coordinates = np.concatenate(vertices, axis=0)
         if kind == "polyhedron":
+            if faces is None:
+                raise ValueError(
+                    "Compact polyhedra require one authored face set per cell."
+                )
             width = max(row.shape[0] for row in vertices)
             connectivity = np.full((len(vertices), width), -1, dtype=np.int32)
             valid = np.zeros(connectivity.shape, dtype=np.bool_)

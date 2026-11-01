@@ -136,8 +136,13 @@ def facet_adjacency(
     match discretization:
         case UnstructuredFiniteVolumeDiscretization():
             dimension = discretization.cell_dimension
-            entity_sets = discretization.topology.entity_sets
+            topology = discretization.topology
             faces = discretization.face_block
+            if topology is None or faces is None:
+                raise ValueError(
+                    "Facet adjacency requires resident cell topology and a face block."
+                )
+            entity_sets = topology.entity_sets
             return FacetAdjacency(
                 faces.face_ids,
                 faces.owner_cells,
