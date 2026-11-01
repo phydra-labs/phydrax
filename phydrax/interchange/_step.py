@@ -81,6 +81,7 @@ from ._cad import (
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_assembly_identifier_losses,
+    cad_export_pole_identity_losses,
     cad_import_stage_losses,
     CadCodecInvariantError,
     CadExportPolicy,
@@ -4318,6 +4319,7 @@ def write_step(
             *approximation_losses,
             *writer.assembly_losses,
             *writer.surface_losses,
+            *cad_export_pole_identity_losses(surface_carriers, "STEP", "undeclared"),
             *cad_export_assembly_identifier_losses(geometry.assembly_graph, "STEP"),
         ),
     )
