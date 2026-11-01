@@ -732,13 +732,14 @@ PHX_MC_API int32_t phx_mc_triangle_dual_quads(
  * item index; each item writes only its own output slots, so results are
  * bit-identical for every parallelism.
  *
- * Exact integer kernels read and write 256-bit two's-complement words of 32
- * little-endian bytes. Every addition, product and shift is checked: an item
- * whose exact value leaves that range reports PHX_MC_RANGE_ERROR in its item
- * status, its outputs are unspecified, and the caller recomputes that item on
- * its own exact path. Other items are unaffected.
+ * Exact integer kernels read and write two's-complement words of
+ * 8 * word_limbs little-endian bytes, word_limbs in {4, 8, 16, 32, 64} (256 to
+ * 4096 bits) chosen by the caller per call. Every addition, product and shift
+ * is checked: an item whose exact value leaves the word range reports
+ * PHX_MC_RANGE_ERROR in its item status, its outputs are unspecified, and the
+ * caller retries it with wider words or recomputes it on its own exact path.
+ * Other items are unaffected.
  */
-#define PHX_MC_EXACT_WORD_BYTES 32
 enum phx_mc_bernstein_domain {
   PHX_MC_BERNSTEIN_SIMPLEX = 0, /* degree (n); controls ordered by compositions of n
                                    into dimension + 1 parts, first part descending */
@@ -768,7 +769,7 @@ PHX_MC_API int32_t phx_mc_bernstein_controls(
     int64_t count, int32_t domain, int32_t dimension, const int32_t* degrees,
     const int64_t* term_offsets, const int32_t* exponents, const uint8_t* numerators,
     const int64_t* control_offsets, uint8_t* controls, int64_t* denominators,
-    int64_t* extremes, int32_t* item_status, int32_t parallelism);
+    int64_t* extremes, int32_t* item_status, int32_t word_limbs, int32_t parallelism);
 /* Restricted controls of simplex Bernstein nets: item i has degree degrees[i],
  * `parts` = simplex dimension + 1, controls [control_offsets[i], ...) in
  * composition order and corners (count, parts, parts) words, row j holding the
@@ -778,7 +779,7 @@ PHX_MC_API int32_t phx_mc_bernstein_controls(
 PHX_MC_API int32_t phx_mc_simplex_bernstein_blossoms(
     int64_t count, int32_t parts, const int32_t* degrees, const int64_t* control_offsets,
     const uint8_t* controls, const uint8_t* corners, uint8_t* values, int64_t* extremes,
-    int32_t* item_status, int32_t parallelism);
+    int32_t* item_status, int32_t word_limbs, int32_t parallelism);
 /* Halving de Casteljau split of multi-index Bernstein nets along slots
  * (first, second): indices is (control_count, slot_count); nets, left and right
  * are (count, control_count, components) words. The left half keeps slot
@@ -787,7 +788,7 @@ PHX_MC_API int32_t phx_mc_bernstein_bisect(
     int64_t count, int64_t control_count, int32_t slot_count, int32_t components,
     const int32_t* indices, int32_t first, int32_t second, const uint8_t* nets,
     uint8_t* left, uint8_t* right, int32_t* exponent, int32_t* item_status,
-    int32_t parallelism);
+    int32_t word_limbs, int32_t parallelism);
 #define PHX_MC_SEPARATION_UNDECIDED 0
 #define PHX_MC_SEPARATION_SEPARATED 1
 #define PHX_MC_SEPARATION_NOT_SEPARATED 2
