@@ -122,11 +122,12 @@ def _product_is_exact(
 def _round_out_inexact(
     lower: HostArray, upper: HostArray, lower_exact: HostArray, upper_exact: HostArray, /
 ) -> Interval:
-    """Round out only endpoints whose binary64 operation was not exact."""
+    """Round inexact endpoints outward; either NaN makes the whole line."""
     widened = _round_out(lower, upper)
+    valid = ~(np.isnan(lower) | np.isnan(upper))
     return (
-        np.where(lower_exact, lower, widened[0]),
-        np.where(upper_exact, upper, widened[1]),
+        np.where(valid & lower_exact, lower, widened[0]),
+        np.where(valid & upper_exact, upper, widened[1]),
     )
 
 
@@ -168,9 +169,17 @@ def _native_float64(first: Interval, second: Interval, /) -> bool:
 
 def interval_add(first: Interval, second: Interval, /) -> Interval:
     shape = np.broadcast_shapes(np.shape(first[0]), np.shape(second[0]))
-    if np.all(np.asarray(second[0]) == 0) and np.all(np.asarray(second[1]) == 0):
+    if (
+        np.all(np.asarray(second[0]) == 0)
+        and np.all(np.asarray(second[1]) == 0)
+        and not any(np.any(np.isnan(value)) for value in first)
+    ):
         return np.broadcast_to(first[0], shape), np.broadcast_to(first[1], shape)
-    if np.all(np.asarray(first[0]) == 0) and np.all(np.asarray(first[1]) == 0):
+    if (
+        np.all(np.asarray(first[0]) == 0)
+        and np.all(np.asarray(first[1]) == 0)
+        and not any(np.any(np.isnan(value)) for value in second)
+    ):
         return np.broadcast_to(second[0], shape), np.broadcast_to(second[1], shape)
     if _native_float64(first, second):
         return float64_interval_sum(*first, *second, subtract=False)
@@ -187,10 +196,11 @@ def _host_interval_add(first: Interval, second: Interval, /) -> Interval:
             _sum_is_exact(first[0], second[0], lower),
             _sum_is_exact(first[1], second[1], upper),
         )
+    valid = ~(np.isnan(lower) | np.isnan(upper))
     return _sign_clamped(
         result,
-        (np.asarray(first[0]) >= 0.0) & (np.asarray(second[0]) >= 0.0),
-        (np.asarray(first[1]) <= 0.0) & (np.asarray(second[1]) <= 0.0),
+        valid & (np.asarray(first[0]) >= 0.0) & (np.asarray(second[0]) >= 0.0),
+        valid & (np.asarray(first[1]) <= 0.0) & (np.asarray(second[1]) <= 0.0),
     )
 
 
@@ -239,8 +249,6 @@ def _host_interval_multiply(first: Interval, second: Interval, /) -> Interval:
             np.where(zero, 0.0, np.multiply(left, right))
             for (left, right), zero in zip(pairs, zero_unbounded, strict=True)
         )
-        lower = np.minimum.reduce(products)
-        upper = np.maximum.reduce(products)
     invalid = np.logical_or.reduce(tuple(np.isnan(value) for value in products))
     exact = tuple(
         zero | _product_is_exact(left, right, product)
@@ -248,23 +256,15 @@ def _host_interval_multiply(first: Interval, second: Interval, /) -> Interval:
             pairs, products, zero_unbounded, strict=True
         )
     )
-    lower_exact = ~invalid & np.logical_or.reduce(
-        tuple(
-            flag & (product == lower)
-            for flag, product in zip(exact, products, strict=True)
-        )
+    # Bound every candidate before reducing: an exact zero tied with an
+    # underflowed nonzero product must not suppress its outward rounding.
+    bounds = tuple(
+        _round_out_inexact(product, product, flag, flag)
+        for product, flag in zip(products, exact, strict=True)
     )
-    upper_exact = ~invalid & np.logical_or.reduce(
-        tuple(
-            flag & (product == upper)
-            for flag, product in zip(exact, products, strict=True)
-        )
-    )
-    result = _round_out_inexact(
-        np.where(invalid, -np.inf, lower),
-        np.where(invalid, np.inf, upper),
-        lower_exact,
-        upper_exact,
+    result = (
+        np.where(invalid, -np.inf, np.minimum.reduce(tuple(pair[0] for pair in bounds))),
+        np.where(invalid, np.inf, np.maximum.reduce(tuple(pair[1] for pair in bounds))),
     )
     first_nonnegative = np.asarray(first[0]) >= 0.0
     first_nonpositive = np.asarray(first[1]) <= 0.0
@@ -272,10 +272,16 @@ def _host_interval_multiply(first: Interval, second: Interval, /) -> Interval:
     second_nonpositive = np.asarray(second[1]) <= 0.0
     return _sign_clamped(
         result,
-        (first_nonnegative & second_nonnegative)
-        | (first_nonpositive & second_nonpositive),
-        (first_nonnegative & second_nonpositive)
-        | (first_nonpositive & second_nonnegative),
+        ~invalid
+        & (
+            (first_nonnegative & second_nonnegative)
+            | (first_nonpositive & second_nonpositive)
+        ),
+        ~invalid
+        & (
+            (first_nonnegative & second_nonpositive)
+            | (first_nonpositive & second_nonnegative)
+        ),
     )
 
 
