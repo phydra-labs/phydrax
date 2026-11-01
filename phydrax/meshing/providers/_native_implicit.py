@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 import phydrax.discretization._cell_mesh as cell_mesh_owner
 
+from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
     IntervalBoxProgram,
@@ -1479,14 +1480,14 @@ def _nearest_scaffold_rows(
 ) -> np.ndarray:
     """Scaffold triangle with the nearest centroid for every carrier triangle.
 
-    The lowest scaffold row of least squared centroid distance wins. A k-d tree
-    proposes, per carrier triangle, every scaffold centroid within a widened
-    nearest distance; their squared distances are the same binary64
-    expressions as the exhaustive scan, so the chosen rows are too. Nonfinite
-    centroids keep the exhaustive scan.
+    The lowest scaffold row of least squared centroid distance wins. Packed-BVH
+    box rounds propose, per carrier triangle, every scaffold centroid within an
+    outward-rounded box of half-width ``r``; a carrier whose least candidate
+    distance is provably below ``r`` holds every centroid of least distance,
+    the others retry with ``2 r``. Candidate squared distances are the same
+    binary64 expressions as the exhaustive scan, so the chosen rows are too.
+    Nonfinite centroids keep the exhaustive scan.
     """
-    from scipy.spatial import cKDTree
-
     scaffold_centroids = np.mean(scaffold_vertices[scaffold_faces], axis=1)
     centroids = np.mean(vertices[faces], axis=1)
     if (
@@ -1504,20 +1505,66 @@ def _nearest_scaffold_rows(
             )
             rows[start : start + block.shape[0]] = np.argmin(squared, axis=1)
         return rows
-    tree = cKDTree(scaffold_centroids)
-    nearest, _ = tree.query(centroids)
-    # The tree distance is within a few ulps of the exact one; the widened ball
-    # holds every centroid whose exact squared distance can be the least.
-    radius = np.nextafter(nearest * (1.0 + 2.0**-30), np.inf) + np.finfo(np.float64).tiny
-    candidates = tree.query_ball_point(centroids, radius, return_sorted=True)
-    counts = np.asarray([len(row) for row in candidates], dtype=np.int64)
-    owners = np.repeat(np.arange(centroids.shape[0], dtype=np.int64), counts)
-    columns = np.concatenate([np.asarray(row, dtype=np.int64) for row in candidates])
-    squared = np.sum((centroids[owners] - scaffold_centroids[columns]) ** 2, axis=1)
-    least = np.minimum.reduceat(squared, np.concatenate(([0], np.cumsum(counts)[:-1])))
-    first = np.flatnonzero(squared == least[owners])
-    _, first_rows = np.unique(owners[first], return_index=True)
-    return columns[first[first_rows]]
+    scaffold_bvh = prepare_bvh(scaffold_centroids, scaffold_centroids, dtype=np.float64)
+    margin = 1.0 - 2.0**-40
+    # Each carrier starts at the larger of the mean centroid spacing and its
+    # distance to the scaffold box, and never needs more than the distance to
+    # an evenly spaced sample of centroids (widened so that bound is accepted).
+    lower, upper = (
+        np.min(scaffold_centroids, axis=0),
+        np.max(scaffold_centroids, axis=0),
+    )
+    spacing = float(np.linalg.norm(upper - lower)) / max(
+        1.0, scaffold_centroids.shape[0] ** (1.0 / 3.0)
+    )
+    outside = np.linalg.norm(centroids - np.clip(centroids, lower, upper), axis=1)
+    sample = scaffold_centroids[
+        np.unique(np.linspace(0, scaffold_centroids.shape[0] - 1, 64).astype(np.int64))
+    ]
+    cap = np.empty((centroids.shape[0],), dtype=np.float64)
+    for start in range(0, centroids.shape[0], 4096):
+        block = centroids[start : start + 4096]
+        cap[start : start + block.shape[0]] = np.sqrt(
+            np.min(np.sum((block[:, None, :] - sample[None, :, :]) ** 2, axis=2), axis=1)
+        )
+    cap = np.nextafter(cap * (1.0 + 2.0**-30), np.inf) + np.finfo(np.float64).tiny
+    radius = np.minimum(
+        np.maximum(max(spacing, float(np.finfo(np.float64).tiny)), outside), cap
+    )
+    rows = np.full((centroids.shape[0],), -1, dtype=np.int64)
+    pending = np.arange(centroids.shape[0], dtype=np.int64)
+    while pending.size:
+        points = centroids[pending]
+        reach = radius[pending][:, None]
+        query_bvh = prepare_bvh(
+            np.nextafter(points - reach, -np.inf),
+            np.nextafter(points + reach, np.inf),
+            dtype=np.float64,
+        )
+        owners_local, columns = bvh_overlap_pairs_host(
+            query_bvh, scaffold_bvh, include_touching=True
+        )
+        accepted = np.zeros((pending.size,), dtype=np.bool_)
+        if owners_local.size:
+            # Pairs arrive sorted by (carrier, scaffold row).
+            squared = np.sum(
+                (points[owners_local] - scaffold_centroids[columns]) ** 2, axis=1
+            )
+            present, starts = np.unique(owners_local, return_index=True)
+            least = np.minimum.reduceat(squared, starts)
+            # Every point of distance <= r * margin lies inside the query box.
+            limit = (radius[pending][present] * margin) ** 2 * margin
+            accepted[present] = least <= limit
+            least_by_owner = np.full((pending.size,), np.inf)
+            least_by_owner[present] = least
+            first = np.flatnonzero(
+                accepted[owners_local] & (squared == least_by_owner[owners_local])
+            )
+            winners, first_rows = np.unique(owners_local[first], return_index=True)
+            rows[pending[winners]] = columns[first[first_rows]]
+        pending = pending[~accepted]
+        radius[pending] = np.minimum(2.0 * radius[pending], cap[pending])
+    return rows
 
 
 def _remesh_implicit_carrier(
