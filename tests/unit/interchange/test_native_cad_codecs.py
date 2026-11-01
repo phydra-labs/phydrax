@@ -742,7 +742,19 @@ def test_independent_step_and_iges_fixtures_use_native_codecs(
     assert step.report.valid and iges.report.valid
     assert step.model.report.source_format == "step"
     assert iges.model.report.source_format == "iges"
-    assert step.coverage.pcurves_exact == 4
+    # The fixture supplies no p-curves: each of the 4 coedges is recovered once.
+    assert (
+        step.coverage.pcurves_from_file,
+        step.coverage.pcurves_recovered,
+        step.coverage.pcurves_absent,
+    ) == (0, 4, 0)
+    for imported in (step, iges):
+        geometry = imported.model.geometry
+        assert geometry is not None
+        coverage = imported.coverage
+        assert coverage.pcurves_from_file + coverage.pcurves_recovered + (
+            coverage.pcurves_absent
+        ) == len(geometry.coedge_edges)
     renamed_source = _STEP_SQUARE.replace(b"square.step", b"renamed.step")
     renamed_step = decode_step_bytes(renamed_source, _POLICY)
     source_geometry = step.model.geometry
@@ -894,6 +906,7 @@ def test_cad_stage_retains_proved_face_gaps_and_refuses_tighter_requirement() ->
                     geometry.coedge_senses[coedge],
                     geometry.pcurves[coedge],
                     f"coedge-{coedge}",
+                    origin="file",
                 )
                 for coedge in loop
             ]

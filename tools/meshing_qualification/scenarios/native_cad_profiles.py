@@ -154,7 +154,7 @@ def _ignored_step_entities(rationale: str, /) -> tuple[tuple[str, frozenset[str]
 def _require_geometric_losslessness(
     imported: phx.interchange.CadImportResult, /
 ) -> dict[str, object]:
-    """Require exact geometry and every source p-curve honored within tolerance.
+    """Require exact geometry, an exact p-curve for every coedge, and certified gaps.
 
     A declared loss is admitted only for ignored non-geometric STEP entities and
     for source tolerance declarations the native model cannot carry as its own
@@ -197,9 +197,19 @@ def _require_geometric_losslessness(
             f"Native {imported.format} import lost its exact B-Rep carriers."
         )
     coedges = len(geometry.coedge_edges)
-    if imported.coverage.pcurves_honored != coedges:
+    coverage = imported.coverage
+    origins = {
+        "from_file": coverage.pcurves_from_file,
+        "recovered_exact": coverage.pcurves_recovered,
+        "absent": coverage.pcurves_absent,
+    }
+    # Each model coedge's p-curve is the file's, recovered exactly from the
+    # source maps, or absent from the source and constructed exactly by the
+    # importer (natural boundaries, chart seams, pole edges); the counts are
+    # per coedge and must account for every one.
+    if sum(origins.values()) != coedges:
         raise RuntimeError(
-            f"Native {imported.format} import honored {imported.coverage.pcurves_honored} of {coedges} source p-curves."
+            f"Native {imported.format} import accounts for the p-curves of {sum(origins.values())} of {coedges} coedges: {origins!r}."
         )
     evidence = imported.tolerance_evidence
     if evidence is None:
@@ -233,7 +243,7 @@ def _require_geometric_losslessness(
         "status": status,
         "ignored_non_geometric_step_entities": ignored,
         "uncarried_source_tolerances": tolerance_records,
-        "pcurves_honored": imported.coverage.pcurves_honored,
+        "pcurve_origins": origins,
         "coedges": coedges,
         "maximum_certified_pcurve_gap": max(gap for _, gap, _ in gaps),
         "minimum_declared_tolerance": min(limit for _, _, limit in gaps),
@@ -409,8 +419,9 @@ def _roundtrip(
         "import_id": imported.result_id,
         "import_report_id": imported.report.report_id,
         "import_coverage": dict(imported.coverage.entity_counts),
-        "pcurves_honored": imported.coverage.pcurves_honored,
-        "pcurves_exact": imported.coverage.pcurves_exact,
+        "pcurves_from_file": imported.coverage.pcurves_from_file,
+        "pcurves_recovered": imported.coverage.pcurves_recovered,
+        "pcurves_absent": imported.coverage.pcurves_absent,
         "source_id": imported.model.source_id,
         "source_revision": imported.model.source_revision,
         "topology": _topology_record(imported.model),
@@ -618,8 +629,9 @@ def _external_case(
             "model_id": imported.model.model_id,
             "report_id": imported.report.report_id,
             "coverage": dict(imported.coverage.entity_counts),
-            "pcurves_honored": imported.coverage.pcurves_honored,
-            "pcurves_exact": imported.coverage.pcurves_exact,
+            "pcurves_from_file": imported.coverage.pcurves_from_file,
+            "pcurves_recovered": imported.coverage.pcurves_recovered,
+            "pcurves_absent": imported.coverage.pcurves_absent,
             "pcurve_fit": "disabled",
             "geometric_losslessness": source_losslessness,
         },

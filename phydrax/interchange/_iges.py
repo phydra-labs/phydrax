@@ -263,6 +263,7 @@ def _split_parameters(
                 f"iges.parameters.delimiter must match the declared delimiters; got {delimiter!r}",
             )
 
+
 def _integer(value: _Parameter, label: str, default: int | None = None) -> int:
     if value is None:
         if default is None:
@@ -442,6 +443,7 @@ def _global(lines: list[str]) -> tuple[str, str, list[_Parameter]]:
     )
     return parameter_delimiter, record_delimiter, [None, None, *values]
 
+
 def _units(values: list[_Parameter]) -> tuple[int, Fraction]:
     padded = values + [None] * max(0, 16 - len(values))
     scale = _real(padded[12], "G13", 1.0)
@@ -472,12 +474,6 @@ def _units(values: list[_Parameter]) -> tuple[int, Fraction]:
             f"iges.global.unit_name must agree with unit flag {flag}; got {name!r}",
         )
     return flag, _UNITS[flag][1]
-
-
-
-
-
-
 
 
 def _decode(data: bytes | mmap.mmap) -> _File:
@@ -680,9 +676,7 @@ class _Resolver:
             pending.append(
                 (
                     pointer,
-                    RigidPlacement.from_matrix(
-                        values, matrix.name, reflection=True
-                    ),
+                    RigidPlacement.from_matrix(values, matrix.name, reflection=True),
                 )
             )
             pointer = matrix.transform
@@ -755,8 +749,7 @@ class _Resolver:
                 )
             values = tuple(self._exact_real(matrix, index) for index in range(12))
             translation = tuple(
-                values[4 * row + 3] * self.exact_length_factor
-                for row in range(3)
+                values[4 * row + 3] * self.exact_length_factor for row in range(3)
             )
             rows = tuple(
                 tuple(values[4 * row + column] for column in range(3))
@@ -764,13 +757,7 @@ class _Resolver:
                 for row in range(3)
             ) + ((Fraction(0), Fraction(0), Fraction(0), Fraction(1)),)
             numeric = np.asarray(
-                [
-                    [
-                        float(rows[row][column])
-                        for column in range(4)
-                    ]
-                    for row in range(3)
-                ],
+                [[float(rows[row][column]) for column in range(4)] for row in range(3)],
                 dtype=np.float64,
             )
             RigidPlacement.from_matrix(numeric, matrix.name, reflection=True)
@@ -846,17 +833,13 @@ class _Resolver:
                 while frames:
                     composite, composite_placement = frames.pop()
                     self.active.pop()
-                    curve = place_curve(
-                        curve, composite_placement, composite.name
-                    )
+                    curve = place_curve(curve, composite_placement, composite.name)
                 return curve
         finally:
             while len(self.active) > active_base:
                 self.active.pop()
 
-    def _curve_leaf(
-        self, entry: _Entry, chain: tuple[str, ...], /
-    ) -> AbstractCurve:
+    def _curve_leaf(self, entry: _Entry, chain: tuple[str, ...], /) -> AbstractCurve:
         try:
             match entry.entity_type:
                 case 110:
@@ -873,15 +856,11 @@ class _Resolver:
                 case 100:
                     height = self.real(entry, 0) * self.factor
                     center = (
-                        np.asarray(
-                            (self.real(entry, 1), self.real(entry, 2))
-                        )
+                        np.asarray((self.real(entry, 1), self.real(entry, 2)))
                         * self.factor
                     )
                     start = (
-                        np.asarray(
-                            (self.real(entry, 3), self.real(entry, 4))
-                        )
+                        np.asarray((self.real(entry, 3), self.real(entry, 4)))
                         * self.factor
                     )
                     radius = float(np.linalg.norm(start - center))
@@ -956,11 +935,7 @@ class _Resolver:
 
     def _spline_curve(self, entry: _Entry, dimension: int) -> BSplineCurve:
         upper, degree = self.integer(entry, 0), self.integer(entry, 1)
-        if (
-            upper < degree
-            or degree < 1
-            or upper + degree + 2 > len(entry.parameters)
-        ):
+        if upper < degree or degree < 1 or upper + degree + 2 > len(entry.parameters):
             raise refuse(
                 "malformed",
                 entry.name,
@@ -1098,9 +1073,7 @@ class _Resolver:
                 generatrix = self.curve(generatrix_pointer, chain)
                 if isinstance(generatrix, LineCurve):
                     # IGES parameterizes a line on [0, 1], not by its length.
-                    length = self._range(
-                        self.file.entries[generatrix_pointer], chain
-                    )[1]
+                    length = self._range(self.file.entries[generatrix_pointer], chain)[1]
                     generatrix = LineCurve(
                         generatrix.origin, np.asarray(generatrix.direction) * length
                     )
@@ -1271,9 +1244,7 @@ class _Resolver:
                     start,
                     end,
                     label,
-                    parameter_range=self._range(
-                        self.file.entries[curve_pointer], chain
-                    ),
+                    parameter_range=self._range(self.file.entries[curve_pointer], chain),
                 )
             except ValueError as error:
                 raise refuse("inconsistent-geometry", label, str(error), chain) from error
@@ -1389,7 +1360,9 @@ class _Resolver:
         try:
             return (
                 transform_pcurve(
-                    result, factors, 1.0,
+                    result,
+                    factors,
+                    1.0,
                     (2.0 * np.pi, 0.0) if revolution else (0.0, 0.0),
                 ),
                 domain,
@@ -1400,8 +1373,11 @@ class _Resolver:
             ) from error
 
     def align_parameter_curve(
-        self, curve: AbstractCurve, domain: tuple[float, float],
-        edge: int, patch: AbstractSurfacePatch,
+        self,
+        curve: AbstractCurve,
+        domain: tuple[float, float],
+        edge: int,
+        patch: AbstractSurfacePatch,
     ) -> AbstractCurve:
         """Map the active file interval, not the full spline knot support, to the edge."""
         first, last = self.stage.edge_ranges[edge]
@@ -1416,9 +1392,7 @@ class _Resolver:
             world = np.asarray(
                 patch.evaluate(
                     curve.evaluate(
-                        jnp.asarray(
-                            lower + samples * (upper - lower), dtype=jnp.float64
-                        )
+                        jnp.asarray(lower + samples * (upper - lower), dtype=jnp.float64)
                     )
                 ),
                 dtype=np.float64,
@@ -1486,7 +1460,8 @@ class _Resolver:
                 )
             parameter = (
                 self.parameter_curve(self.integer(entry, position + 6), patch, chain)
-                if curves else None
+                if curves
+                else None
             )
             pcurve, domain = parameter if parameter is not None else (None, None)
             position += 5 + 2 * curves
@@ -1535,7 +1510,11 @@ class _Resolver:
                     pcurve = self.align_parameter_curve(pcurve, domain, edge, patch)
             coedges.append(
                 StagedCoedge(
-                    edge, 1 if agrees else -1, pcurve, f"{entry.name}[{len(coedges)}]"
+                    edge,
+                    1 if agrees else -1,
+                    pcurve,
+                    f"{entry.name}[{len(coedges)}]",
+                    origin="absent" if pcurve is None else "file",
                 )
             )
         self.active.pop()
@@ -1668,13 +1647,21 @@ class _Resolver:
         """Build a validated DAG whose identities derive only from D references."""
         definition_entries = tuple(
             sorted(
-                (entry for entry in self.file.entries.values() if entry.entity_type == 308),
+                (
+                    entry
+                    for entry in self.file.entries.values()
+                    if entry.entity_type == 308
+                ),
                 key=lambda entry: entry.number,
             )
         )
         instance_entries = tuple(
             sorted(
-                (entry for entry in self.file.entries.values() if entry.entity_type == 408),
+                (
+                    entry
+                    for entry in self.file.entries.values()
+                    if entry.entity_type == 408
+                ),
                 key=lambda entry: entry.number,
             )
         )
@@ -1682,7 +1669,7 @@ class _Resolver:
             graph = BRepAssemblyGraph.single_solids(len(self.stage.solids))
             self.stage.assembly_graph = graph
             return graph
-    
+
         definition_ids = {
             entry.number: f"iges-definition-D{entry.number}"
             for entry in definition_entries
@@ -1693,7 +1680,7 @@ class _Resolver:
         referenced_definitions: set[int] = set()
         instance_placements: dict[int, BRepAffinePlacement] = {}
         definition_placements: dict[int, BRepAffinePlacement] = {}
-    
+
         for instance in instance_entries:
             chain = (instance.name,)
             self.entry(instance.number, (), (408,))
@@ -1703,7 +1690,7 @@ class _Resolver:
             instance_placements[instance.number] = self._exact_instance_placement(
                 instance, chain
             )
-    
+
         for definition in definition_entries:
             chain = (definition.name,)
             self.entry(definition.number, (), (308,))
@@ -1743,7 +1730,7 @@ class _Resolver:
                     definition_links.append(target)
                     referenced_definitions.add(target)
             links[definition.number] = tuple(definition_links)
-    
+
         state: dict[int, int] = {}
         for root_number in definition_ids:
             if state.get(root_number, 0) == 2:
@@ -1776,7 +1763,7 @@ class _Resolver:
                         )
                     if child_state == 0:
                         stack.append((child, False))
-    
+
         definitions: list[BRepAssemblyDefinition] = []
         identity = BRepAffinePlacement.identity()
         solid_placements: dict[int, BRepAffinePlacement] = {}
@@ -1827,7 +1814,7 @@ class _Resolver:
             self.stage.provenance.append(
                 (f"assembly-definition:{definition_id}", definition.name)
             )
-    
+
         root_rows: list[tuple[int, BRepAssemblyUse]] = []
         for instance in instance_entries:
             if instance.number in referenced_entities:
@@ -1842,7 +1829,7 @@ class _Resolver:
             self.stage.provenance.append(
                 (f"assembly-use:{use.use_id}", f"root instance {instance.name}")
             )
-    
+
         for definition in definition_entries:
             if (
                 definition.number in referenced_definitions
@@ -1857,7 +1844,7 @@ class _Resolver:
             self.stage.provenance.append(
                 (f"assembly-use:{use_id}", f"root definition {definition.name}")
             )
-    
+
         for entry in sorted(
             (value for value in self.file.entries.values() if value.entity_type == 186),
             key=lambda value: value.number,
@@ -1882,22 +1869,20 @@ class _Resolver:
             self.stage.provenance.append(
                 (f"assembly-use:{use_id}", f"root solid {entry.name}")
             )
-    
+
         graph = BRepAssemblyGraph(
             tuple(use for _, use in sorted(root_rows, key=lambda row: row[0])),
             tuple(definitions),
             len(self.stage.solids),
         )
-    
+
         def orientation(placement: BRepAffinePlacement, /) -> int:
             a, b, c = placement.matrix[0][:3]
             d, e, f = placement.matrix[1][:3]
             g, h, i = placement.matrix[2][:3]
-            determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (
-                d * h - e * g
-            )
+            determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
             return 1 if determinant > 0 else -1
-    
+
         definition_map = {value.definition_id: value for value in graph.definitions}
         orientation_states: dict[str, set[int]] = {}
         pending: list[tuple[str, int, tuple[str, ...]]] = []
@@ -2039,7 +2024,15 @@ class _Resolver:
             else:
                 pcurve, domain = parameter
                 pcurve = self.align_parameter_curve(pcurve, domain, edge, patch)
-            coedges.append(StagedCoedge(edge, 1, pcurve, label))
+            coedges.append(
+                StagedCoedge(
+                    edge,
+                    1,
+                    pcurve,
+                    label,
+                    origin="absent" if pcurve is None else "file",
+                )
+            )
         return coedges
 
     def _admit_composite(self, pointer: int, chain: tuple[str, ...]) -> None:
@@ -2127,9 +2120,7 @@ class _Resolver:
             pending.extend((child, next_chain) for child in reversed(children))
         return result
 
-    def _range(
-        self, entry: _Entry, chain: tuple[str, ...] = ()
-    ) -> tuple[float, float]:
+    def _range(self, entry: _Entry, chain: tuple[str, ...] = ()) -> tuple[float, float]:
         """Parameter range of a native curve or a single-use composite chain."""
         seen: set[int] = set()
         current_chain = chain
@@ -2159,9 +2150,7 @@ class _Resolver:
                     "iges.composite_curve.references must be acyclic.",
                     current_chain,
                 )
-            entry = self.entry(
-                pointer, current_chain, (100, 102, 104, 110, 126)
-            )
+            entry = self.entry(pointer, current_chain, (100, 102, 104, 110, 126))
         current_chain = (*current_chain, entry.name)
         match entry.entity_type:
             case 110:
@@ -2359,8 +2348,12 @@ def _import(resource: CadResource, policy: CadImportPolicy, /) -> CadImportResul
         # Its physical unit conversion does not enter any gap admission path.
         resolution = _real(file.minimum_resolution, "G19")
         resolution_qualifiers = {
-            "minimum-coordinate-discernibility-source-units": _string(file.minimum_resolution),
-            "minimum-coordinate-discernibility-target-units": format(resolution * factor, ".17g"),
+            "minimum-coordinate-discernibility-source-units": _string(
+                file.minimum_resolution
+            ),
+            "minimum-coordinate-discernibility-target-units": format(
+                resolution * factor, ".17g"
+            ),
         }
     report = AdapterReport(
         AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
@@ -2373,7 +2366,8 @@ def _import(resource: CadResource, policy: CadImportPolicy, /) -> CadImportResul
             qualifiers={
                 "profile": _SCHEMA,
                 "artifact-sha256": digest,
-            } | resolution_qualifiers,
+            }
+            | resolution_qualifiers,
         ),
         coordinate_mapping=(
             f"IGES unit {unit_name} -> {policy.coordinate_contract.length_unit.symbol} "
@@ -2454,6 +2448,7 @@ def read_iges(
         trusted_root=trusted_root,
     )
 
+
 # ------------------------------------------------------------------ writer
 
 
@@ -2470,6 +2465,8 @@ def _real_text(value: float, /) -> str:
     if "." not in mantissa:
         mantissa += "."
     return mantissa + ("E" + exponent if exponent else "")
+
+
 def _fraction_text(value: Fraction, label: str, /) -> str:
     denominator = value.denominator
     twos = fives = 0
@@ -2497,7 +2494,6 @@ def _fraction_text(value: Fraction, label: str, /) -> str:
     return f"{sign}{text}"
 
 
-
 def _hollerith(text: str, /) -> str:
     if any(ord(character) < 32 or ord(character) > 126 for character in text):
         raise refuse(
@@ -2506,16 +2502,6 @@ def _hollerith(text: str, /) -> str:
             "iges.export.text must contain printable ASCII; got a nonprintable or non-ASCII character",
         )
     return f"{len(text)}H{text}"
-
-
-
-
-
-
-
-
-
-
 
 
 # IGES records contain 80 ASCII columns and one newline. Directory entries
@@ -2859,9 +2845,7 @@ class _IgesWriter:
                 end = np.asarray(
                     curve.evaluate(jnp.asarray(start_parameter, dtype=jnp.float64)),
                     dtype=np.float64,
-                ) + np.asarray(
-                    patch.direction
-                )
+                ) + np.asarray(patch.direction)
                 return self.add(122, [str(directrix), *self.reals(end)])
             case OffsetSurface():
                 if float(patch.distance) == 0.0:
@@ -2984,10 +2968,14 @@ class _IgesWriter:
             )
         match curve:
             case LineCurve():
-                uv = np.asarray(
-                    curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64)),
-                    dtype=np.float64,
-                ) @ matrix.T + shift
+                uv = (
+                    np.asarray(
+                        curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64)),
+                        dtype=np.float64,
+                    )
+                    @ matrix.T
+                    + shift
+                )
                 points = np.pad(uv, ((0, 0), (0, 1)))
                 output: AbstractCurve = BSplineCurve(
                     points,
@@ -3189,7 +3177,9 @@ class _IgesWriter:
         bounds = np.asarray(self.model.parameter_bounds)
         ranges = np.asarray(geometry.edge_ranges)
         for face, loops in enumerate(geometry.face_loops):
-            surface = self.surface(self.surface_carriers[face], bounds[face], f"face:{face}")
+            surface = self.surface(
+                self.surface_carriers[face], bounds[face], f"face:{face}"
+            )
             patch = self.surface_carriers[face]
             while isinstance(patch, OffsetSurface):
                 patch = patch.base
@@ -3225,9 +3215,7 @@ class _IgesWriter:
                     510,
                     [str(surface), str(len(loops)), "1", *loop_pointers],
                     form=1,
-                    entity_label=_iges_directory_label(
-                        self.model.physical_tags[face]
-                    )
+                    entity_label=_iges_directory_label(self.model.physical_tags[face])
                     or "",
                 )
             )
@@ -3325,9 +3313,7 @@ class _IgesWriter:
         a, b, c = matrix[0][:3]
         d, e, f = matrix[1][:3]
         g, h, i = matrix[2][:3]
-        determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (
-            d * h - e * g
-        )
+        determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
         if determinant <= 0:
             raise refuse(
                 "inexact-export",
@@ -3337,10 +3323,7 @@ class _IgesWriter:
         for first in range(3):
             for second in range(3):
                 dot = sum(
-                    (
-                        matrix[row][first] * matrix[row][second]
-                        for row in range(3)
-                    ),
+                    (matrix[row][first] * matrix[row][second] for row in range(3)),
                     Fraction(0),
                 )
                 expected = Fraction(1) if first == second else Fraction(0)
@@ -3386,9 +3369,7 @@ class _IgesWriter:
                         if use.definition_id is not None
                     )
                     depths[definition_id] = (
-                        0
-                        if not definition.uses
-                        else 1 + max(child_depths, default=0)
+                        0 if not definition.uses else 1 + max(child_depths, default=0)
                     )
                     state[definition_id] = 2
                     continue
@@ -3479,6 +3460,7 @@ class _IgesWriter:
                 record.root = True
         for use in graph.roots:
             use_instance(use).root = True
+
     def _text(self, extent: float) -> bytes:
         unit = self.model.coordinate_contract.length_unit
         meters = Fraction(unit.scale_to_reference)
@@ -3525,8 +3507,7 @@ class _IgesWriter:
         label = "Phydrax native exact B-Rep export"
         start_text = [label]
         start = [
-            text.ljust(72) + f"S{index + 1:7d}"
-            for index, text in enumerate(start_text)
+            text.ljust(72) + f"S{index + 1:7d}" for index, text in enumerate(start_text)
         ]
         if (
             len(start) > _MAXIMUM_RECORD_SEQUENCE
@@ -3604,6 +3585,7 @@ def _iges_line_pcurve_losses(geometry: BRepGeometry, /) -> tuple[AdapterLoss, ..
         if isinstance(explicit_carrier(pcurve), LineCurve)
     )
 
+
 def _iges_physical_tag_losses(model: BRepModel, /) -> tuple[AdapterLoss, ...]:
     return tuple(
         AdapterLoss(
@@ -3659,11 +3641,7 @@ def write_iges(
         extra_losses=(
             *writer.surface_losses,
             *writer.approximation_losses,
-            *(
-                ()
-                if model.geometry is None
-                else _iges_line_pcurve_losses(model.geometry)
-            ),
+            *(() if model.geometry is None else _iges_line_pcurve_losses(model.geometry)),
             *_iges_physical_tag_losses(model),
             *cad_export_assembly_identifier_losses(
                 None if model.geometry is None else model.geometry.assembly_graph,
