@@ -24,7 +24,9 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from ._exact_kernels import bvh_pair_blocks
 from ._jax_config import x64_enabled
+from ._meshcore import meshcore_available
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
@@ -1821,7 +1823,26 @@ def bvh_overlap_pair_blocks(
     test = _validate_host_pair_arguments(
         first, second, include_touching, absolute_tolerance, relative_tolerance
     )
-    return _host_pair_blocks(_host_arrays(first), _host_arrays(second), test)
+    first_arrays = _host_arrays(first)
+    second_arrays = _host_arrays(second)
+    if (
+        meshcore_available()
+        and first_arrays[0].shape[0] > 0
+        and second_arrays[0].shape[0] > 0
+        and first_arrays[5].shape[1] > 0
+        and second_arrays[5].shape[1] > 0
+    ):
+        # The native stream repeats this traversal block for block.
+        return bvh_pair_blocks(
+            first_arrays,
+            second_arrays,
+            include_touching=include_touching,
+            absolute_tolerance=float(absolute_tolerance),
+            relative_tolerance=float(relative_tolerance),
+            item_block=_HOST_ITEM_PAIR_BLOCK,
+            node_block=_HOST_NODE_PAIR_BLOCK,
+        )
+    return _host_pair_blocks(first_arrays, second_arrays, test)
 
 
 def bvh_overlap_pairs_host(

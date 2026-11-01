@@ -12,6 +12,10 @@ from fractions import Fraction
 
 import numpy as np
 
+from .._interpolation._bspline_extraction import (
+    PreparedSourceSpans,
+    RationalBSplineSurfaceSpan,
+)
 from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock, CellMesh
@@ -33,47 +37,33 @@ from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._curve_boundary import ParametricCurveBoundarySource, SegmentChartCurve
 from ._domain_boundary import MeshingDomainBoundarySource
 from ._embedding_state import MeshCertificateFinding
-from ._interval_enclosure import IntervalExtensionError, prepare_interval_function
-from ._meshing_domain import _outward_surface_parameter_box
+from ._interval_enclosure import IntervalExtensionError
+from ._meshing_domain import _outward_surface_parameter_box, SourcePreparation
 from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import SourceBoundaryChartWitness
-from .brep._patches import AbstractSurfacePatch
 
 
 def _exact_rational_span_interpolation_bounds(
-    surface: AbstractSurfacePatch,
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     charts: tuple[tuple[tuple[Fraction, Fraction], ...], ...],
     /,
 ) -> np.ndarray:
-    from ._meshing_domain import (
-        _exact_rational_surface_spans,
-        _exact_spline_interpolation_bounds,
-    )
+    from ._meshing_domain import _exact_spline_interpolation_bounds
 
-    spans = _exact_rational_surface_spans(surface)
-    if spans is None:
-        raise NotImplementedError(
-            "The source surface has no exact rational extraction spans."
-        )
     return _exact_spline_interpolation_bounds(
         np.asarray(charts, dtype=np.object_), spans, charts
     )
 
 
 def _exact_rational_surface_point_bounds(
-    surface: AbstractSurfacePatch,
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     chart: tuple[Fraction, Fraction],
     /,
 ) -> tuple[tuple[Fraction, Fraction], ...] | None:
-    from ._meshing_domain import _exact_rational_surface_spans
-
-    spans = _exact_rational_surface_spans(surface)
-    if spans is None:
-        return None
     u, v = chart
     enclosures = []
-    for span in spans:
+    for span in spans.spans:
         (u_lower, u_upper), (v_lower, v_upper) = span.parameter_bounds
         if not (u_lower <= u <= u_upper and v_lower <= v <= v_upper):
             continue
@@ -93,20 +83,15 @@ def _exact_rational_surface_point_bounds(
 
 
 def _exact_rational_surface_chart_breakpoints(
-    surface: AbstractSurfacePatch,
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     origin: tuple[Fraction, Fraction],
     direction: tuple[Fraction, Fraction],
     first: Fraction,
     last: Fraction,
     /,
 ) -> tuple[Fraction, ...] | None:
-    from ._meshing_domain import _exact_rational_surface_spans
-
-    spans = _exact_rational_surface_spans(surface)
-    if spans is None:
-        return None
     values = {first, last}
-    for span in spans:
+    for span in spans.spans:
         for axis in range(2):
             if direction[axis] == 0:
                 continue
@@ -1018,17 +1003,16 @@ def certify_domain_surface_charts(
     *,
     tolerance: float,
     plane_patches: frozenset[int] = frozenset(),
+    preparation: SourcePreparation | None = None,
 ) -> SourceChartFidelity:
     """Bound the two directed errors on complete affine material-chart pieces.
 
     Rows of ``plane_patches`` are charted in their patch's `exact_plane_chart`.
+    ``preparation`` is the caller's `SourcePreparation` of the source domain.
     """
     from ..discretization._cell_geometry import CellGeometrySpec as _CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh as _CellMesh
-    from ._domain_boundary import (
-        _has_exact_rational_surface_span_source,
-        exact_plane_chart,
-    )
+    from ._domain_boundary import exact_plane_chart
     from ._source_fidelity import (
         _affine_triangle_arguments,
         _affine_volume_triangle_arguments,
@@ -1059,6 +1043,7 @@ def certify_domain_surface_charts(
                 "Surface chart target row changes its actual global mesh-cell identity."
             )
     domain = source.domain
+    preparation = SourcePreparation.of(domain, preparation)
     elements, routes, _ = geometry.resolve(mesh)
     coefficients = geometry.source_coordinates()
     polyhedral = np.asarray(witness.target_face_vertex_global_ids).shape[0] != 0
@@ -1096,10 +1081,10 @@ def certify_domain_surface_charts(
                 exact_surface = plane_chart.coordinate_expressions()
             else:
                 exact_surface = exact_surface_coordinate_expressions(surface)
-            has_exact_span_source = False
+            spans = None
             unexpanded_exact_carrier = False
             if exact_surface is None:
-                has_exact_span_source = _has_exact_rational_surface_span_source(surface)
+                spans = preparation.surface_spans(surface)
                 unexpanded_exact_carrier = _has_unexpanded_exact_surface_carrier(surface)
         except (ArithmeticError, FloatingPointError, TypeError, ValueError) as error:
             for _ in rows:
@@ -1113,11 +1098,7 @@ def certify_domain_surface_charts(
                     )
                 )
             continue
-        if (
-            exact_surface is None
-            and unexpanded_exact_carrier
-            and not has_exact_span_source
-        ):
+        if exact_surface is None and unexpanded_exact_carrier and spans is None:
             for _ in rows:
                 findings.append(
                     MeshCertificateFinding(
@@ -1152,9 +1133,9 @@ def certify_domain_surface_charts(
             exact_surface_maps[patch] = exact_surface
         else:
             try:
-                if has_exact_span_source:
+                if spans is not None:
                     interpolation = _exact_rational_span_interpolation_bounds(
-                        surface, tuple(charts[row] for row in rows)
+                        spans, tuple(charts[row] for row in rows)
                     )
                     if (
                         interpolation.shape != (len(rows),)
@@ -1175,9 +1156,7 @@ def certify_domain_surface_charts(
                                 (u_interval[0], v_interval[0]),
                                 (u_interval[1], v_interval[1]),
                             )
-                            point_bounds = np.asarray(
-                                surface.bounding_box(parameter_box), dtype=np.float64
-                            )
+                            point_bounds = preparation.surface_box(surface, parameter_box)
                             if (
                                 point_bounds.shape != (2, 3)
                                 or np.any(~np.isfinite(point_bounds))
@@ -1204,7 +1183,7 @@ def certify_domain_surface_charts(
                 # Generic carriers are bounded once each row's budget is known.
                 interpolation = np.zeros((len(rows),), dtype=np.float64)
                 adaptive_patches.add(patch)
-                program = prepare_interval_function(surface.evaluate, 2)
+                program = preparation.derivative_program(surface, 0)
                 lower, upper = program.evaluate(
                     np.asarray(parameter_lowers, dtype=np.float64),
                     np.asarray(parameter_uppers, dtype=np.float64),
@@ -1481,6 +1460,7 @@ def certify_domain_surface_charts(
                     else Fraction(-1)
                     for _, endpoint_error, target_interpolation in pending
                 ),
+                preparation=preparation,
             )
         except (
             ArithmeticError,

@@ -20,9 +20,13 @@ from ..._interpolation import (
     ASTSCertificate,
     ASTSTransferPlan,
     LocalExtractedBernsteinRealization,
+    PreparedSourceSpans,
+    RationalBSplineSurfaceSpan,
     TMesh2D,
 )
+from ..._interpolation._bspline_extraction import _rational_bernstein_surface_span
 from ..._interpolation._tspline import _validated_asts_certificate
+from ..._owned_programs import run_owned_program
 from ...typing import checked, ConvertibleToArray
 from ._patches import AbstractSurfacePatch
 
@@ -457,7 +461,14 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
             )
 
     def validate_exact_transfer_chain(self, /) -> None:
-        """Revalidate the retained exact source-to-target geometry chain."""
+        """Check the retained exact source-to-target chain against its proof.
+
+        Construction proves the chain once (basis certificates, exact nested
+        routes, local basis inclusion, homogeneous geometry preservation) and
+        binds every proved input into `source_definition_id`. This check
+        refuses any retained value that no longer reproduces those identities
+        and does not prove the chain again.
+        """
         self.validate_source_bank()
         if len(self.transfer_meshes) != len(self.transfer_plans) + 1 or len(
             self.transfer_basis_certificates
@@ -465,29 +476,34 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
             raise ValueError(
                 "Retained T-spline transfer evidence does not cover its mesh chain."
             )
-        points = self.exact_source_control_points
-        weights = self.exact_source_weights
+        for basis_mesh, certificate in zip(
+            self.transfer_meshes, self.transfer_basis_certificates, strict=True
+        ):
+            if not _validated_asts_certificate(basis_mesh, certificate).passed:
+                raise ValueError(
+                    "Retained T-spline transfer evidence does not cover its mesh chain."
+                )
         for index, plan in enumerate(self.transfer_plans):
-            homogeneous = plan.apply_exact_homogeneous_geometry(points, weights)
-            plan.verify_exact_homogeneous_geometry_preservation(
-                self.transfer_meshes[index],
-                self.transfer_meshes[index + 1],
-                points,
-                weights,
-                homogeneous,
-                source_certificate=self.transfer_basis_certificates[index],
-                target_certificate=self.transfer_basis_certificates[index + 1],
+            plan.require_current_identity()
+            if (
+                plan.source_mesh_id != self.transfer_meshes[index].mesh_id
+                or plan.target_mesh_id != self.transfer_meshes[index + 1].mesh_id
+            ):
+                raise ValueError(
+                    "T-spline transfer plan does not match its retained mesh link."
+                )
+        if (
+            _surface_definition_id(
+                self.source_mesh.mesh_id,
+                self.mesh.mesh_id,
+                tuple(plan.plan_id for plan in self.transfer_plans),
+                tuple(basis_mesh.mesh_id for basis_mesh in self.transfer_meshes),
+                self.exact_source_control_points,
+                self.exact_source_weights,
+                self.exact_target_homogeneous,
             )
-            weights = tuple(row[-1] for row in homogeneous)
-            points = tuple(
-                tuple(value / weight for value in row[:-1])
-                for row, weight in zip(homogeneous, weights, strict=True)
-            )
-        expected_target = tuple(
-            tuple(weight * value for value in point) + (weight,)
-            for point, weight in zip(points, weights, strict=True)
-        )
-        if expected_target != self.exact_target_homogeneous:
+            != self.source_definition_id
+        ):
             raise ValueError(
                 "Retained exact T-spline target bank differs from its transfer chain."
             )
@@ -495,6 +511,47 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
     @property
     def basis_certificate(self, /) -> ASTSCertificate:
         return self.realization.basis_certificate
+
+    def prepare_spans(self, /) -> PreparedSourceSpans[RationalBSplineSurfaceSpan]:
+        """Extract the exact rational bicubic Bernstein pieces of this content.
+
+        Pure: every call revalidates the source bank and transfer chain and
+        extracts again. Consumers of long computations prepare once per
+        carrier and pass the result to every routine that restricts spans.
+        """
+        from ._carrier_pieces import carrier_content_id
+
+        self.validate_source_bank()
+        self.validate_exact_transfer_chain()
+        realization = self.realization
+        spans: list[RationalBSplineSurfaceSpan] = []
+        for extraction in realization.extractions:
+            homogeneous_controls = realization.exact_homogeneous_piece(
+                extraction.piece_id, self.exact_target_homogeneous
+            )
+            if len(homogeneous_controls) != 16:
+                raise ValueError(
+                    "A bicubic T-spline extraction must retain sixteen homogeneous controls."
+                )
+            homogeneous_net = tuple(
+                tuple(homogeneous_controls[u_index * 4 + v_index] for v_index in range(4))
+                for u_index in range(4)
+            )
+            u0, u1, v0, v1 = extraction.parameter_bounds
+            spans.append(
+                _rational_bernstein_surface_span(
+                    self.source_definition_id,
+                    (extraction.cell_id, extraction.piece_id),
+                    (3, 3),
+                    extraction.coefficient_row_ids,
+                    ((u0, u1), (v0, v1)),
+                    homogeneous_net,
+                    include_hessian=True,
+                )
+            )
+        if not spans:
+            raise ValueError("A T-spline source has no exact rational Bernstein spans.")
+        return PreparedSourceSpans(carrier_content_id(self), tuple(spans))
 
     def _current_geometry(self, /) -> tuple[Array, Array]:
         self.validate_source_bank()
@@ -512,13 +569,28 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
         values = eqx.error_if(
             values, jnp.any(~jnp.isfinite(values)), "T-spline parameters must be finite."
         )
-        control_points, weights = self._current_geometry()
+        self.validate_source_bank()
         leading = values.shape[:-1]
         points = values.reshape((-1, 2))
-        jet = self.realization.evaluate_rational(
-            points, control_points, weights, maximum_order=0
+        count = points.shape[0]
+        if count == 0:
+            return jnp.zeros((*leading, 3), dtype=jnp.float64)
+        # One owned program per patch and power-of-two point bucket; padding
+        # repeats the first (already checked) point and is sliced away.
+        bucket = 1 << (count - 1).bit_length()
+        padded = jnp.concatenate(
+            (points, jnp.broadcast_to(points[:1], (bucket - count, 2))), axis=0
         )
-        return jet.values.reshape((*leading, 3))
+        mapped = run_owned_program(
+            self, f"evaluate:{bucket}", TSplineSurfacePatch._evaluate_points, padded
+        )
+        return mapped[:count].reshape((*leading, 3))
+
+    def _evaluate_points(self, points: Array, /) -> Array:
+        control_points, weights = self._current_geometry()
+        return self.realization.evaluate_rational(
+            points, control_points, weights, maximum_order=0
+        ).values
 
     def is_c1_on(self, parameter_box: ConvertibleToArray, /) -> bool:
         self.validate_source_bank()

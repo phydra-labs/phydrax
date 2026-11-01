@@ -172,6 +172,15 @@ A compiled affine form provides `linear_system()` and explicit nullspace policy.
 General residuals expose `as_nonlinear_problem()`, matrix-free linearization,
 lagged/Picard operator factories, and a scalable adjoint solve.
 
+Outside an enclosing trace, `residual`, `full_residual`, `right_hand_side` and
+the linearization actions (`linearization_operator`,
+`block_linearization_operator` and their transposes) each run as one compiled
+program owned by the compiled problem. The program is traced on the first call,
+reused for later states, lifts and runtimes of the same shapes, and released
+with the problem. Op-by-op execution would keep every unfused quadrature
+intermediate resident and compile a new executable per call for each
+control-flow primitive. Inside `jit`, `grad` or `vmap` the methods run inline.
+
 `linear_system(storage="sparse")` hands exact sparse coordinates to
 `phydrax.linalg` instead of a matrix-free action. Strong Dirichlet constraints
 are eliminated exactly: `ConstraintMap.reduce_sparse_operator` keeps the

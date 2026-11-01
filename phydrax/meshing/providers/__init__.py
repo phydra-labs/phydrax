@@ -35,6 +35,7 @@ _DEFERRED_EXPORTS = {
     "NativeMeshingRoute": "._native_options",
     "NativeMeshingSource": "._native_source_type",
     "NativePeriodicSource": "._native_periodic",
+    "NativeSurfaceSchedule": "._native_schedules",
     "OmegaHAdaptationEvidence": "._omega_h",
     "OmegaHAdaptationResult": "._omega_h",
     "OmegaHClassification": "._omega_h",
@@ -112,6 +113,7 @@ if TYPE_CHECKING:
         NativeMeshingRoute as NativeMeshingRoute,
     )
     from ._native_periodic import NativePeriodicSource as NativePeriodicSource
+    from ._native_schedules import NativeSurfaceSchedule as NativeSurfaceSchedule
     from ._native_source_type import NativeMeshingSource as NativeMeshingSource
     from ._omega_h import (
         OmegaHAdaptationEvidence as OmegaHAdaptationEvidence,

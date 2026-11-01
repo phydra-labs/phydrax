@@ -812,6 +812,23 @@ def _gather_interval(
     operand: Interval, start_indices: Interval, params: Mapping[str, Any], /
 ) -> Interval:
     operand_lower, operand_upper = np.asarray(operand[0]), np.asarray(operand[1])
+    exact_lower, exact_upper = np.asarray(start_indices[0]), np.asarray(start_indices[1])
+    if (
+        operand_lower.shape == operand_upper.shape
+        and exact_lower.shape == exact_upper.shape
+        and exact_lower.dtype.kind in "iuf"
+        and np.array_equal(exact_lower, exact_upper)
+        and np.all(np.isfinite(exact_lower))
+        and np.all(exact_lower == np.floor(exact_lower))
+    ):
+        # Exactly known indices select the same entries from both endpoint
+        # arrays: the primitive itself, under every dimension layout and mode,
+        # is an exact selection.
+        indices = exact_lower.astype(np.int64)
+        return (
+            np.asarray(jax.lax.gather_p.bind(operand_lower, indices, **params)),
+            np.asarray(jax.lax.gather_p.bind(operand_upper, indices, **params)),
+        )
     index_lower, index_upper = _integer_index_interval(start_indices, 1)
     dimensions = params["dimension_numbers"]
     start_index_map = tuple(dimensions.start_index_map)
@@ -1231,6 +1248,16 @@ def _bspline_jet_interval(
     parameter_upper = np.asarray(parameters[1], dtype=np.float64)
     span_lower, span_upper = np.asarray(spans[0]), np.asarray(spans[1])
     shape = parameter_lower.shape
+    # Spans the batch shares (an explicit piece under ``vmap``) stay unbatched
+    # operands; the equation applies them to every parameter row.
+    if span_lower.shape == span_upper.shape and span_lower.shape != shape:
+        try:
+            broadcast = np.broadcast_shapes(span_lower.shape, shape) == shape
+        except ValueError:
+            broadcast = False
+        if broadcast:
+            span_lower = np.broadcast_to(span_lower, shape)
+            span_upper = np.broadcast_to(span_upper, shape)
     if (
         count <= degree
         or output_shape != (*shape, order_count, local)

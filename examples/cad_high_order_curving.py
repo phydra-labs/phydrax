@@ -27,7 +27,7 @@ import numpy as np
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
 
 import phydrax as phx
-from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.geometry.brep import BRepTessellationPolicy
 from phydrax.interchange import (
     CadImportPolicy,
     persist_occt_shape,

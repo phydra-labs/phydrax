@@ -28,6 +28,7 @@ from jaxtyping import PyTree
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._owned_programs import run_owned_program
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -2160,6 +2161,16 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         return MinimizationProblem(lambda state, args: self.potential(state, args))
 
     def full_residual(self, state: object, args: object = None, /) -> PyTree[Array]:
+        """Weak residual on the full space, one compiled program per problem."""
+        return run_owned_program(
+            self,
+            "full-residual",
+            CompiledFiniteElementProblem._full_residual,
+            state,
+            args,
+        )
+
+    def _full_residual(self, state: object, args: object, /) -> PyTree[Array]:
         from .fem._executor import execute_finite_element_residual
 
         full = self.full_space.validate(state)
@@ -2176,8 +2187,19 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
     def residual(self, state: object, args: object = None, /) -> PyTree[Array]:
+        """Reduced weak residual, one compiled program per problem.
+
+        Executed op by op, the quadrature workset keeps every unfused
+        intermediate of the cell metric and kernels resident, and each
+        control-flow primitive compiles a fresh executable per call.
+        """
+        return run_owned_program(
+            self, "residual", CompiledFiniteElementProblem._residual, state, args
+        )
+
+    def _residual(self, state: object, args: object, /) -> PyTree[Array]:
         context = self._execution_context(args)
-        full_residual = self.full_residual(self.expand(state, context), context)
+        full_residual = self._full_residual(self.expand(state, context), context)
         if len(self.form.field_names) == 1:
             constraint = self.constraints[0]
             if constraint is None:
@@ -2480,17 +2502,24 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             else OperatorProperties()
         )
         return FunctionLinearOperator(
-            lambda direction: jax.jvp(
-                lambda value: self.residual(value, context),
-                (state_,),
-                (direction,),
-            )[1],
+            lambda direction: run_owned_program(
+                self,
+                "linearization-action",
+                CompiledFiniteElementProblem._linearization_action,
+                state_,
+                direction,
+                context,
+            ),
             source=self.state_space,
             target=self.residual_space,
-            transpose_action=lambda cotangent: jax.vjp(
-                lambda value: self.residual(value, context),
+            transpose_action=lambda cotangent: run_owned_program(
+                self,
+                "linearization-transpose-action",
+                CompiledFiniteElementProblem._linearization_transpose_action,
                 state_,
-            )[1](cotangent)[0],
+                cotangent,
+                context,
+            ),
             properties=properties,
             operator_id=canonical_fingerprint(
                 {
@@ -2500,6 +2529,24 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 }
             ),
         )
+
+    def _linearization_action(
+        self, state: PyTree[Array], direction: PyTree[Array], args: object, /
+    ) -> PyTree[Array]:
+        def residual(value: PyTree[Array]) -> PyTree[Array]:
+            return self._residual(value, args)
+
+        _, image = jax.jvp(residual, (state,), (direction,))
+        return image
+
+    def _linearization_transpose_action(
+        self, state: PyTree[Array], cotangent: PyTree[Array], args: object, /
+    ) -> PyTree[Array]:
+        def residual(value: PyTree[Array]) -> PyTree[Array]:
+            return self._residual(value, args)
+
+        _, pullback = jax.vjp(residual, state)
+        return pullback(cotangent)[0]
 
     def block_dependency_graph(self, /) -> tuple[tuple[bool, ...], ...]:
         fields = self.form.field_names
@@ -2546,11 +2593,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 ) -> PyTree[Array]:
                     directions = list(self.state_space.zeros())
                     directions[column_index_] = direction
-                    image = jax.jvp(
-                        lambda value: self.residual(value, context),
-                        (state_,),
-                        (tuple(directions),),
-                    )[1]
+                    image = run_owned_program(
+                        self,
+                        "linearization-action",
+                        CompiledFiniteElementProblem._linearization_action,
+                        state_,
+                        tuple(directions),
+                        context,
+                    )
                     return image[row_index_]
 
                 row.append(
@@ -2824,16 +2874,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         context = self._execution_context(args)
         if _runtime_id(context) != discretization.default_runtime.runtime_id:
             return None
-        operators = []
-        mass, stiffness = discretization.assemble_field_operators(
-            self.form.field_name,
-            _finite_element_runtime(context),
-        )
+        # Classify every action before assembling, and assemble only the
+        # structural operators the form uses.
+        terms: list[tuple[bool, Array] | TensorDiffusionAction] = []
         for action in self.form.actions:
             if isinstance(action, TensorDiffusionAction):
-                operators.append(
-                    _assemble_tensor_diffusion_action(action, discretization, context)
-                )
+                terms.append(action)
             elif (
                 isinstance(action, DiffusionAction)
                 and action.domain is None
@@ -2841,7 +2887,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 and action.diffusivity.constant
                 and action.diffusivity.value.shape == ()
             ):
-                operators.append(action.diffusivity.value * stiffness)
+                terms.append((False, action.diffusivity.value))
             elif (
                 isinstance(action, MassAction)
                 and action.domain is None
@@ -2849,13 +2895,37 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 and action.coefficient.constant
                 and action.coefficient.value.shape == ()
             ):
-                operators.append(action.coefficient.value * mass)
+                terms.append((True, action.coefficient.value))
             elif isinstance(action, (SourceAction, BoundaryLoadAction)):
                 continue
             else:
                 return None
-        if not operators:
+        if not terms:
             return None
+        kinds = tuple(
+            sorted(
+                {term[0] for term in terms if not isinstance(term, TensorDiffusionAction)}
+            )
+        )
+        structural = (
+            dict(
+                zip(
+                    kinds,
+                    discretization._field_operators(
+                        self.form.field_name, _finite_element_runtime(context), kinds
+                    ),
+                    strict=True,
+                )
+            )
+            if kinds
+            else {}
+        )
+        operators = [
+            _assemble_tensor_diffusion_action(term, discretization, context)
+            if isinstance(term, TensorDiffusionAction)
+            else term[1] * structural[term[0]]
+            for term in terms
+        ]
         result = operators[0]
         for operator in operators[1:]:
             result = result + operator
@@ -3022,11 +3092,20 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         ``b`` is the inverse-Riesz image of ``-R(0)``. Under strong constraints
         it carries the eliminated lift columns ``-P^T (A g - f)``, so one prepared
         solve of `linear_system` serves every lift ``g`` supplied through a
-        `FiniteElementExecutionContext`.
+        `FiniteElementExecutionContext`. It runs as one compiled program per
+        problem.
         """
+        return run_owned_program(
+            self,
+            "right-hand-side",
+            CompiledFiniteElementProblem._right_hand_side,
+            args,
+        )
+
+    def _right_hand_side(self, args: object, /) -> PyTree[Array]:
         zero = self.state_space.zeros()
         return self.state_space.inverse_riesz(
-            jax.tree.map(lambda value: -value, self.residual(zero, args))
+            jax.tree.map(lambda value: -value, self._residual(zero, args))
         )
 
     def linear_system(

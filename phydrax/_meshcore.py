@@ -884,6 +884,32 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_I64, _I64, _P, _P, _P, _P, _I32, _P, _P, _I32, _I32, _P),
     ),
     "phx_mc_parallel_for": (_I32, (_I64, _I64, _I32, _ParallelChunkCallback, _P)),
+    "phx_mc_interval_bernstein_restrict": (
+        _I32,
+        (_I64, _I32, _I64, _P, _P, _P, _P, _P, _P, _I32),
+    ),
+    "phx_mc_bernstein_controls": (
+        _I32,
+        (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
+    ),
+    "phx_mc_simplex_bernstein_blossoms": (
+        _I32,
+        (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
+    ),
+    "phx_mc_bernstein_bisect": (
+        _I32,
+        (_I64, _I64, _I32, _I32, _P, _I32, _I32, _P, _P, _P, _P, _P, _I32, _I32),
+    ),
+    "phx_mc_separation_screen": (
+        _I32,
+        (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
+    ),
+    "phx_mc_bvh_pair_stream_create": (
+        _I32,
+        (_P, _P, _I32, _I32, _F64, _F64, _I64, _I64, _I32, _P),
+    ),
+    "phx_mc_bvh_pair_stream_next": (_I32, (_P, _I64, _I64, _P, _P, _P, _P)),
+    "phx_mc_bvh_pair_stream_free": (None, (_P,)),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_restricted_power_cells": (

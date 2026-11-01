@@ -41,6 +41,7 @@ set(PHX_MC_SOURCES
   src/tet_mesh_capi.cpp
   src/delaunay2d.cpp
   src/delaunay3d.cpp
+  src/exact_kernels.cpp
   src/feature_protection.cpp
   src/graph_partition.cpp
   src/hex_topology.cpp
@@ -82,6 +83,7 @@ set(PHX_MC_HEADERS
   src/exact_line.hpp
   src/exact_scalar.hpp
   src/expansion.hpp
+  src/wide_integer.hpp
   src/exact_tetrahedra_arrangement.inc
   src/facet_coverage.hpp
   src/reference_tetrahedron_clip.inc
@@ -175,6 +177,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_cdt2d)
   phx_mc_add_test(test_delaunay2d)
   phx_mc_add_test(test_delaunay3d)
+  phx_mc_add_test(test_exact_kernels)
   phx_mc_add_test(test_clip)
   phx_mc_add_test(test_capi_guard)
   phx_mc_add_test(test_cavity)

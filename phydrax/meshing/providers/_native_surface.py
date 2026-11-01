@@ -14,7 +14,6 @@ from fractions import Fraction
 from typing import final, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -27,7 +26,6 @@ from phydrax.geometry import ConstrainedDelaunayTriangulation
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._interval_enclosure import (
     IntervalExtensionError,
-    prepare_interval_function,
     PreparedIntervalFunction,
 )
 from phydrax.geometry._rational import fraction_endpoint
@@ -544,17 +542,15 @@ def _support_issues(
 def _validate_chart_trims(
     domain: domain_owner.MeshingDomain,
     selected: tuple[int, ...],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> None:
     for patch in selected:
         for loop in domain.patches[patch].loops:
             for use in loop:
                 try:
-                    bounds = np.asarray(
-                        use.pcurve.bounding_box(
-                            min(use.first, use.last), max(use.first, use.last)
-                        ),
-                        dtype=np.float64,
+                    bounds = preparation.curve_box(
+                        use.pcurve, min(use.first, use.last), max(use.first, use.last)
                     )
                 except (
                     ArithmeticError,
@@ -622,14 +618,14 @@ def _canonical_use_endpoints(
 
 def _curved_use_box_corners(
     use: domain_owner.PatchCurveUse,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[tuple[Fraction, Fraction], ...]:
     """Return the outward chart enclosure corners of one curved trim use."""
     if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
         return ()
-    bounds = np.asarray(
-        use.pcurve.bounding_box(min(use.first, use.last), max(use.first, use.last)),
-        dtype=np.float64,
+    bounds = preparation.curve_box(
+        use.pcurve, min(use.first, use.last), max(use.first, use.last)
     )
     return (
         (
@@ -1557,6 +1553,7 @@ def _chart_bounds(
     selected: tuple[int, ...],
     scope_ids: tuple[np.ndarray, ...],
     coordinate_contract: SpatialCoordinateContract,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> _SurfaceRootCells:
     from ...geometry.brep._patches import BSplineSurfacePatch
@@ -1634,7 +1631,7 @@ def _chart_bounds(
                 if isinstance(use, domain_owner.PatchCurveUse)
                 for point in (
                     *_canonical_use_endpoints(use),
-                    *_curved_use_box_corners(use),
+                    *_curved_use_box_corners(use, preparation),
                 )
             )
             lower = tuple(min(point[axis] for point in loop_points) for axis in range(2))
@@ -2035,10 +2032,29 @@ _FLIP_ANGLE_GAIN = 1.0e-6
 
 
 def _root_cell_row(
-    roots: tuple[_SurfaceRootChart, ...], points: list[_ChartUV], /
+    roots: tuple[_SurfaceRootChart, ...],
+    points: list[_ChartUV],
+    root_boxes: np.ndarray,
+    point_values: np.ndarray,
+    /,
 ) -> int | None:
-    """Row of the first convex root cell containing every chart point."""
-    for row, root in enumerate(roots):
+    """Row of the first convex root cell containing every chart point.
+
+    ``root_boxes`` (rows ``lower_u, upper_u, lower_v, upper_v`` rounded to
+    nearest) and ``point_values`` (the points rounded to nearest) screen out
+    root cells in binary64: rounding to nearest is monotone, so a strict
+    rounded comparison outside a box proves the exact point is outside it. Only
+    the remaining candidates take the exact convexity test, so the first
+    containing row is unchanged.
+    """
+    outside = (
+        (point_values[None, :, 0] < root_boxes[:, None, 0])
+        | (point_values[None, :, 0] > root_boxes[:, None, 1])
+        | (point_values[None, :, 1] < root_boxes[:, None, 2])
+        | (point_values[None, :, 1] > root_boxes[:, None, 3])
+    )
+    for row in np.flatnonzero(~np.any(outside, axis=1)).tolist():
+        root = roots[row]
         if all(
             root.orientation * _root_edge_cross(first, last, point) >= 0
             for first, last in zip(
@@ -2085,6 +2101,32 @@ def _flip_to_physical_angles(
     cell_angles = angles(triangles)
     sign = 1 if _root_edge_cross(*(chart.points[row] for row in triangles[0])) > 0 else -1
     roots = chart.root_cells if len(chart.root_cells) > 1 else ()
+    root_boxes = np.asarray(
+        [
+            [float(root.lower_u), float(root.upper_u)]
+            + [float(root.lower_v), float(root.upper_v)]
+            for root in roots
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 4))
+    point_values = np.asarray(
+        [[float(u), float(v)] for u, v in chart.points], dtype=np.float64
+    ).reshape((-1, 2))
+    # Chart points never move during flipping, so each cell's containing root
+    # row is resolved once for the whole routine.
+    cell_roots: dict[tuple[int, ...], int | None] = {}
+
+    def cell_root(cell: tuple[int, int, int], /) -> int | None:
+        key = tuple(sorted(cell))
+        if key not in cell_roots:
+            cell_roots[key] = _root_cell_row(
+                roots,
+                [chart.points[row] for row in cell],
+                root_boxes,
+                point_values[list(cell)],
+            )
+        return cell_roots[key]
+
     while True:
         cells_by_edge: dict[tuple[int, int], list[int]] = {}
         for index, triangle in enumerate(triangles):
@@ -2117,10 +2159,8 @@ def _flip_to_physical_angles(
             ):
                 continue
             if roots:
-                first_root = _root_cell_row(roots, [chart.points[row] for row in first])
-                if first_root is None or first_root != _root_cell_row(
-                    roots, [chart.points[row] for row in triangles[second_cell]]
-                ):
+                first_root = cell_root(first)
+                if first_root is None or first_root != cell_root(triangles[second_cell]):
                     continue
             new_angles = angles(candidates)
             if min(new_angles) <= old + _FLIP_ANGLE_GAIN:
@@ -2313,12 +2353,13 @@ def _surface_mapped_curve_bounds(
     pcurve: AbstractCurve,
     first: float,
     last: float,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Chart box of a p-curve interval and the box of its mapped image."""
-    chart_box = np.asarray(pcurve.bounding_box(first, last), dtype=np.float64)
+    chart_box = preparation.curve_box(pcurve, first, last)
     chart_box = _positive_surface_parameter_box(surface, chart_box)
-    return chart_box, np.asarray(surface.bounding_box(chart_box), dtype=np.float64)
+    return chart_box, preparation.surface_box(surface, chart_box)
 
 
 def _mapped_curve_is_c1(
@@ -2339,42 +2380,6 @@ def _mapped_curve_is_c1(
         else surface
     )
     return pcurve.is_c1_on(first, last) and source.is_c1_on(chart_box)
-
-
-_MAPPED_CURVE_HESSIAN_CAPACITY = 256
-_MAPPED_CURVE_HESSIANS: dict[
-    tuple[int, int],
-    tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
-] = {}
-
-
-def _mapped_curve_hessian(
-    surface: AbstractSurfacePatch, pcurve: AbstractCurve, /
-) -> PreparedIntervalFunction | None:
-    """Interval program of ``d^2/ds^2 surface(pcurve(s))``, if the maps trace.
-
-    One program is prepared per surface and p-curve source pair and reused by
-    every tessellation attempt; each entry holds both sources, so its identity
-    key cannot be reused by other sources while cached.
-    """
-    key = (id(surface), id(pcurve))
-    cached = _MAPPED_CURVE_HESSIANS.get(key)
-    if cached is not None and cached[0] is surface and cached[1] is pcurve:
-        return cached[2]
-
-    def mapped(parameter: jax.Array) -> jax.Array:
-        return surface.evaluate(pcurve.evaluate(parameter[0]))
-
-    try:
-        program = prepare_interval_function(
-            jax.jacfwd(jax.jacfwd(mapped)), 1, batch_capacity=1
-        )
-    except (IntervalExtensionError, NotImplementedError):
-        program = None
-    if len(_MAPPED_CURVE_HESSIANS) >= _MAPPED_CURVE_HESSIAN_CAPACITY:
-        del _MAPPED_CURVE_HESSIANS[next(iter(_MAPPED_CURVE_HESSIANS))]
-    _MAPPED_CURVE_HESSIANS[key] = (surface, pcurve, program)
-    return program
 
 
 def _second_order_chord_bound(
@@ -2422,14 +2427,18 @@ class _CurveChordBounds:
     box enclosure of the mapped curve (first order in the interval width) and
     the second-order interpolation bound of `_second_order_chord_bound`, so
     sampling converges at the curvature rate instead of to the tolerance
-    itself. Interval bounds are cached here; second-derivative programs are
-    shared per source pair by `_mapped_curve_hessian`.
+    itself. Interval bounds are cached here; boxes and second-derivative
+    programs come from the caller's source preparation.
     """
 
-    domain: domain_owner.MeshingDomain
+    preparation: domain_owner.SourcePreparation
     intervals: dict[tuple[int, Fraction, Fraction], tuple[float, float]] = field(
         default_factory=dict
     )
+
+    @property
+    def domain(self) -> domain_owner.MeshingDomain:
+        return self.preparation.domain
 
     def interval(
         self, curve: int, lower: Fraction, upper: Fraction, /
@@ -2466,7 +2475,7 @@ class _CurveChordBounds:
             interval_last = max(native_first, native_last)
             try:
                 chart_box, bounds = _surface_mapped_curve_bounds(
-                    surface, use.pcurve, interval_first, interval_last
+                    surface, use.pcurve, interval_first, interval_last, self.preparation
                 )
             except (ArithmeticError, NotImplementedError, TypeError, ValueError) as error:
                 raise _failure(
@@ -2482,7 +2491,7 @@ class _CurveChordBounds:
                 )
             use_deviation = _box_chord_bound(bounds, first, last)
             program = (
-                _mapped_curve_hessian(surface, use.pcurve)
+                self.preparation.mapped_curve_hessian(surface, use.pcurve)
                 if _mapped_curve_is_c1(
                     surface, use.pcurve, chart_box, interval_first, interval_last
                 )
@@ -2532,6 +2541,7 @@ def _curve_parameters(
     patch_sizes: np.ndarray,
     specification: SurfaceMeshingSpec,
     schedule: NativeSurfaceSchedule,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> dict[int, set[Fraction]]:
     sizes = {
@@ -2549,7 +2559,7 @@ def _curve_parameters(
                     hard_tolerances.get(int(identifier), math.inf),
                     feature.maximum_deviation,
                 )
-    chords = _CurveChordBounds(domain)
+    chords = _CurveChordBounds(preparation)
     for curve in curve_ids:
         selected_uses = tuple(
             (patch, use) for patch, use in domain.curve_uses(curve) if patch in sizes
@@ -2650,6 +2660,7 @@ def _pole_cap_bound(
     pole_fixed: float,
     ring_fixed: float,
     pole_point: np.ndarray,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> float:
     """Bound the distance from the pole of the cap between the pole and its ring.
@@ -2665,11 +2676,8 @@ def _pole_cap_bound(
 
     native_first = float(_use_source_parameter(use, lower))
     native_last = float(_use_source_parameter(use, upper))
-    chart_box = np.asarray(
-        use.pcurve.bounding_box(
-            min(native_first, native_last), max(native_first, native_last)
-        ),
-        dtype=np.float64,
+    chart_box = preparation.curve_box(
+        use.pcurve, min(native_first, native_last), max(native_first, native_last)
     )
     if (
         chart_box.shape != (2, 2)
@@ -2679,9 +2687,8 @@ def _pole_cap_bound(
         raise ValueError("Pole p-curve interval has no finite ordered chart box.")
     cap_box = np.array(chart_box, copy=True)
     cap_box[:, fixed_axis] = (min(pole_fixed, ring_fixed), max(pole_fixed, ring_fixed))
-    cap_bounds = np.asarray(
-        surface.bounding_box(_positive_surface_parameter_box(surface, cap_box)),
-        dtype=np.float64,
+    cap_bounds = preparation.surface_box(
+        surface, _positive_surface_parameter_box(surface, cap_box)
     )
     if cap_bounds.shape != (2, 3):
         raise ValueError("Pole surface chart boxes must realize finite 3D bounds.")
@@ -2694,7 +2701,7 @@ def _pole_cap_bound(
         for row, column in ((0, 0), (1, 0), (1, 1), (0, 1))
     )
     halves = tuple(
-        _surface_jacobian_bounds(surface, triangle)
+        _surface_jacobian_bounds(surface, triangle, preparation)
         for triangle in (
             (corners[0], corners[1], corners[2]),
             (corners[0], corners[2], corners[3]),
@@ -2727,6 +2734,7 @@ def _pole_ring_extent(
     fixed_axis: int,
     pole_fixed: float,
     inside_fixed: float,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> Fraction:
     """Largest graded ring offset as a fraction of the pole-to-interior chart span.
@@ -2738,9 +2746,8 @@ def _pole_ring_extent(
     loops = domain.patches[patch].loops
     use = loops[loop_index][use_index]
     free_axis = 1 - fixed_axis
-    strip = np.asarray(
-        use.pcurve.bounding_box(min(use.first, use.last), max(use.first, use.last)),
-        dtype=np.float64,
+    strip = preparation.curve_box(
+        use.pcurve, min(use.first, use.last), max(use.first, use.last)
     )
     low, high = float(strip[0, free_axis]), float(strip[1, free_axis])
     tolerance = 128.0 * np.finfo(np.float64).eps * max(abs(low), abs(high), 1.0)
@@ -2750,11 +2757,8 @@ def _pole_ring_extent(
         for other_use_index, other in enumerate(other_loop):
             if (other_loop_index, other_use_index) == (loop_index, use_index):
                 continue
-            box = np.asarray(
-                other.pcurve.bounding_box(
-                    min(other.first, other.last), max(other.first, other.last)
-                ),
-                dtype=np.float64,
+            box = preparation.curve_box(
+                other.pcurve, min(other.first, other.last), max(other.first, other.last)
             )
             if (
                 box[1, free_axis] <= low + tolerance
@@ -2937,6 +2941,7 @@ def _pole_sampling(
     specification: SurfaceMeshingSpec,
     schedule: NativeSurfaceSchedule,
     parameters_by_curve: dict[int, set[Fraction]],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> _PoleCharts:
     sizes = {
@@ -2952,11 +2957,8 @@ def _pole_sampling(
             for use_index, use in enumerate(loop):
                 if not isinstance(use, domain_owner.PatchPoleUse):
                     continue
-                pcurve_bounds = np.asarray(
-                    use.pcurve.bounding_box(
-                        min(use.first, use.last), max(use.first, use.last)
-                    ),
-                    dtype=np.float64,
+                pcurve_bounds = preparation.curve_box(
+                    use.pcurve, min(use.first, use.last), max(use.first, use.last)
                 )
                 if (
                     pcurve_bounds.shape != (2, 2)
@@ -3192,12 +3194,24 @@ def _pole_sampling(
                             <= edge_limit
                             and (
                                 fidelity_tolerance is None
-                                or float(np.max(domain.interpolation_bounds(patch, fans)))
+                                or float(
+                                    np.max(
+                                        domain.interpolation_bounds(
+                                            patch, fans, preparation=preparation
+                                        )
+                                    )
+                                )
                                 <= fidelity_tolerance
                             )
                             and (
                                 specification.maximum_normal_deviation is None
-                                or float(np.max(domain.normal_turn_bounds(patch, fans)))
+                                or float(
+                                    np.max(
+                                        domain.normal_turn_bounds(
+                                            patch, fans, preparation=preparation
+                                        )
+                                    )
+                                )
                                 <= specification.maximum_normal_deviation
                             )
                         )
@@ -3211,6 +3225,7 @@ def _pole_sampling(
                                 pole_fixed,
                                 ring_fixed,
                                 pole_point,
+                                preparation,
                             )
                             if cap_bound <= cap_limit:
                                 accepted_bounds[(interval_first, interval_last)] = (
@@ -3255,6 +3270,7 @@ def _pole_sampling(
                     fixed_axis,
                     pole_fixed,
                     inside_fixed,
+                    preparation,
                 )
                 result[(patch, loop_index, use_index)] = _PoleChart(
                     samples,
@@ -3645,7 +3661,7 @@ type _SeamRounds = Callable[
 
 
 def _cached_cell_bounds(
-    domain: domain_owner.MeshingDomain,
+    preparation: domain_owner.SourcePreparation,
     chart: _ChartMesh,
     parameters: np.ndarray,
     cache: dict[_CellBoundKey, tuple[float, float]],
@@ -3665,12 +3681,18 @@ def _cached_cell_bounds(
     missing = [row for row, key in enumerate(keys) if key not in cache]
     if missing:
         rows = np.asarray(missing, dtype=np.int64)
+        domain = preparation.domain
         deviations = np.asarray(
-            domain.interpolation_bounds(chart.patch, parameters[rows]), dtype=np.float64
+            domain.interpolation_bounds(
+                chart.patch, parameters[rows], preparation=preparation
+            ),
+            dtype=np.float64,
         )
         normals = (
             np.asarray(
-                domain.normal_turn_bounds(chart.patch, parameters[rows]),
+                domain.normal_turn_bounds(
+                    chart.patch, parameters[rows], preparation=preparation
+                ),
                 dtype=np.float64,
             )
             if normal_turns
@@ -3690,6 +3712,7 @@ def _refine_charts(
     sizes: np.ndarray,
     specification: SurfaceMeshingSpec,
     schedule: NativeSurfaceSchedule,
+    preparation: domain_owner.SourcePreparation,
     /,
     *,
     seam_rounds: _SeamRounds | None = None,
@@ -3743,7 +3766,7 @@ def _refine_charts(
     # Trim-edge chord bounds change only when a round splits a trim edge, and each
     # curve interval is bounded once. Unchanged cells keep their exact UV corners
     # and therefore their source bounds.
-    chords = _CurveChordBounds(domain)
+    chords = _CurveChordBounds(preparation)
     curve_bounds_by_chart = tuple(_chart_curve_bounds(chart, chords) for chart in charts)
     trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
     cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
@@ -3798,7 +3821,7 @@ def _refine_charts(
             count = len(chart.triangles)
             local_parameters = chart_parameters[offset : offset + count]
             deviations[offset : offset + count], normal_values = _cached_cell_bounds(
-                domain,
+                preparation,
                 chart,
                 local_parameters,
                 cell_bounds,
@@ -4157,7 +4180,7 @@ def _refine_charts(
         count = len(chart.triangles)
         parameters = triangle_parameters[offset : offset + count]
         deviations[offset : offset + count], normal_values = _cached_cell_bounds(
-            domain,
+            preparation,
             chart,
             parameters,
             cell_bounds,
@@ -5082,10 +5105,18 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             }
         )
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(
+        self, /, *, preparation: domain_owner.SourcePreparation | None = None
+    ) -> NativeMeshConstruction:
+        """Generate and certify the surface mesh.
+
+        ``preparation`` is the caller's `SourcePreparation` of this domain;
+        without one the domain is prepared for this execution alone.
+        """
         domain = self.domain
         domain.require_current(domain.source_id, domain.source_revision)
         self.boundary_source.require_current()
+        preparation = domain_owner.SourcePreparation.of(domain, preparation)
         curve_ids = _trim_curves(domain, self.selected_patches)
         parameters_by_curve = _curve_parameters(
             domain,
@@ -5094,6 +5125,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.size_values,
             self.specification,
             self.schedule,
+            preparation,
         )
         pole_charts = _pole_sampling(
             domain,
@@ -5102,6 +5134,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.specification,
             self.schedule,
             parameters_by_curve,
+            preparation,
         )
         _integrate_pole_ring_parameters(
             domain,
@@ -5147,6 +5180,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.size_values,
             self.specification,
             self.schedule,
+            preparation,
         )
         if (
             self.specification.quality_target is not None
@@ -5183,7 +5217,9 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         )
         geometry = CellGeometrySpec.affine(mesh)
         association_values = surface_associations(domain, mesh, construction)
-        boundary_cover = self.boundary_source.boundary_chart_cover()
+        boundary_cover = self.boundary_source.boundary_chart_cover(
+            preparation=preparation
+        )
         if not boundary_cover.complete:
             raise _failure(
                 "source boundary query could not certify complete trimmed-chart coverage",
@@ -5334,8 +5370,14 @@ def prepare_native_surface(
     options: NativeMeshingOptions,
     coordinate_contract: SpatialCoordinateContract,
     /,
+    *,
+    preparation: domain_owner.SourcePreparation | None = None,
 ) -> _PreparedNativeSurface:
-    """Prepare actual trimmed source charts for canonical mesh acceptance."""
+    """Prepare actual trimmed source charts for canonical mesh acceptance.
+
+    ``preparation`` is the caller's `SourcePreparation` of the source domain;
+    without one the domain is prepared for this call alone.
+    """
     if options.route not in (None, "parametric_surface"):
         raise ValueError(
             "Native surface preparation requires the parametric_surface route."
@@ -5347,6 +5389,7 @@ def prepare_native_surface(
         raise TypeError("parametric_surface requires a NativeSurfaceSchedule.")
     domain = _domain_for_source(source)
     domain.require_current(domain.source_id, domain.source_revision)
+    preparation = domain_owner.SourcePreparation.of(domain, preparation)
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
     if coordinate_contract.coordinate_system != "cartesian":
@@ -5367,10 +5410,10 @@ def prepare_native_surface(
             "; ".join(unsupported),
             category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
         )
-    _validate_chart_trims(domain, selected)
+    _validate_chart_trims(domain, selected, preparation)
     boundary_source = domain_boundary_owner.MeshingDomainBoundarySource(domain, selected)
     try:
-        cover = boundary_source.boundary_chart_cover()
+        cover = boundary_source.boundary_chart_cover(preparation=preparation)
     except (TypeError, ValueError) as error:
         raise _failure(
             f"source boundary query cannot retain its trim cover: {error}",
@@ -5384,7 +5427,7 @@ def prepare_native_surface(
             entity_ids=tuple(int(patch) for patch in selected),
         )
     size_values, _ = _size_field(domain, specification, selected, scope_ids)
-    roots = _chart_bounds(domain, selected, scope_ids, coordinate_contract)
+    roots = _chart_bounds(domain, selected, scope_ids, coordinate_contract, preparation)
     return _PreparedNativeSurface(
         domain,
         specification,

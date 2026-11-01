@@ -726,6 +726,125 @@ PHX_MC_API int32_t phx_mc_triangle_dual_quads(
     int64_t triangle_count, int64_t vertex_count, const int64_t* nodes,
     int64_t quad_capacity, int64_t* quads);
 
+/* ------------------------------------------------------------- exact kernels
+ * Batched exact and filtered kernels of Bernstein and box-pair proofs. Every
+ * batched kernel takes `parallelism` >= 1 and splits items into fixed chunks by
+ * item index; each item writes only its own output slots, so results are
+ * bit-identical for every parallelism.
+ *
+ * Exact integer kernels read and write two's-complement words of
+ * 8 * word_limbs little-endian bytes, word_limbs in {4, 8, 16, 32, 64} (256 to
+ * 4096 bits) chosen by the caller per call. Every addition, product and shift
+ * is checked: an item whose exact value leaves the word range reports
+ * PHX_MC_RANGE_ERROR in its item status, its outputs are unspecified, and the
+ * caller retries it with wider words or recomputes it on its own exact path.
+ * Other items are unaffected.
+ */
+enum phx_mc_bernstein_domain {
+  PHX_MC_BERNSTEIN_SIMPLEX = 0, /* degree (n); controls ordered by compositions of n
+                                   into dimension + 1 parts, first part descending */
+  PHX_MC_BERNSTEIN_BOX = 1,     /* degree (n_0..n_{d-1}); C order over control indices */
+  PHX_MC_BERNSTEIN_PRISM = 2    /* dimension 3, degree (triangle, line); triangle
+                                   compositions of 3 parts, then line index */
+};
+/* Interval de Casteljau restriction of Bernstein nets to [first, last] of [0, 1]
+ * along axis 0. lower/upper/out_* are (count, degree + 1, width). parameters is
+ * (count, 4): enclosures (last_lo, last_hi) of `last` and (ratio_lo, ratio_hi)
+ * of first / last. sides bit 0 applies the left split (last < 1), bit 1 the
+ * right split (first > 0). Each step encloses (1 - t) x_i + t x_{i+1} for t at
+ * the parameter endpoints, rounded to nearest, widened by
+ * 4 eps ((1 - t)|x_i| + t|x_{i+1}|) + 2^-1074 and stepped outward once. */
+PHX_MC_API int32_t phx_mc_interval_bernstein_restrict(
+    int64_t count, int32_t degree, int64_t width, const double* lower, const double* upper,
+    const double* parameters, const int32_t* sides, double* out_lower, double* out_upper,
+    int32_t parallelism);
+/* Exact Bernstein controls of polynomials sum_t N_t x^{e_t} / Q on a domain.
+ * Item i owns terms [term_offsets[i], term_offsets[i + 1]) with exponents
+ * (terms, dimension) and numerators (terms) words, degrees (count, degree_width)
+ * with degree_width 1 (simplex), dimension (box) or 2 (prism), and controls
+ * [control_offsets[i], control_offsets[i + 1]) of the domain's control count.
+ * Control c equals controls[c] / (Q * denominators[i]); extremes[i] holds the
+ * first local index of a least and of a greatest control. */
+PHX_MC_API int32_t phx_mc_bernstein_controls(
+    int64_t count, int32_t domain, int32_t dimension, const int32_t* degrees,
+    const int64_t* term_offsets, const int32_t* exponents, const uint8_t* numerators,
+    const int64_t* control_offsets, uint8_t* controls, int64_t* denominators,
+    int64_t* extremes, int32_t* item_status, int32_t word_limbs, int32_t parallelism);
+/* Restricted controls of simplex Bernstein nets: item i has degree degrees[i],
+ * `parts` = simplex dimension + 1, controls [control_offsets[i], ...) in
+ * composition order and corners (count, parts, parts) words, row j holding the
+ * integer barycentric weights of corner j over one common positive scale s.
+ * Output entry m (a composition of the degree: corner multiplicities) is the
+ * blossom at the corners times s^degree; extremes as for bernstein_controls. */
+PHX_MC_API int32_t phx_mc_simplex_bernstein_blossoms(
+    int64_t count, int32_t parts, const int32_t* degrees, const int64_t* control_offsets,
+    const uint8_t* controls, const uint8_t* corners, uint8_t* values, int64_t* extremes,
+    int32_t* item_status, int32_t word_limbs, int32_t parallelism);
+/* Halving de Casteljau split of multi-index Bernstein nets along slots
+ * (first, second): indices is (control_count, slot_count); nets, left and right
+ * are (count, control_count, components) words. The left half keeps slot
+ * `first`; outputs are numerators over 2^(*exponent) times the input scale. */
+PHX_MC_API int32_t phx_mc_bernstein_bisect(
+    int64_t count, int64_t control_count, int32_t slot_count, int32_t components,
+    const int32_t* indices, int32_t first, int32_t second, const uint8_t* nets,
+    uint8_t* left, uint8_t* right, int32_t* exponent, int32_t* item_status,
+    int32_t word_limbs, int32_t parallelism);
+#define PHX_MC_SEPARATION_UNDECIDED 0
+#define PHX_MC_SEPARATION_SEPARATED 1
+#define PHX_MC_SEPARATION_NOT_SEPARATED 2
+/* Filtered plane screen of point-set pairs: pair i has first points
+ * [first_offsets[i], first_offsets[i + 1]) and second points likewise, each a
+ * (points, dimension) interval box, and a binary64 normal (count, dimension).
+ * SEPARATED proves max n.b < min n.a over the boxes, NOT_SEPARATED proves
+ * max n.b >= min n.a for every point in the boxes, UNDECIDED leaves the exact
+ * decision to the caller. */
+PHX_MC_API int32_t phx_mc_separation_screen(
+    int64_t count, int32_t dimension, const int64_t* first_offsets,
+    const double* first_lower, const double* first_upper, const int64_t* second_offsets,
+    const double* second_lower, const double* second_upper, const double* normals,
+    int8_t* decisions, int32_t parallelism);
+/* Simultaneous traversal of two packed bounding-volume hierarchies yielding
+ * overlapping item pairs in bounded blocks. Arrays follow PackedBVH: node
+ * bounds (nodes, dimension), node_size (nodes) the descent key (the caller's
+ * sum of node extents), left/right/leaf (nodes), leaf items (leaves,
+ * leaf_width) with -1 padding, item bounds (items, dimension). The caller keeps
+ * every array alive and unchanged until phx_mc_bvh_pair_stream_free. Blocks
+ * follow the LIFO node-block traversal of the host reference: node blocks are
+ * split at node_block pairs, leaf pairs are tested in chunks of
+ * max(1, item_block / (leaf_width_a * leaf_width_b)), and every chunk with a hit
+ * is one block. A non-leaf node of the first tree descends when the second
+ * node is a leaf or node_size is not smaller. Boxes overlap when
+ * min(max) - max(min) > 0 on every axis or, with include_touching,
+ * >= -(atol + rtol * max(1, |bounds|)). */
+typedef struct phx_mc_bvh_tree_view {
+  int64_t node_count;
+  int64_t leaf_count;
+  int64_t leaf_width;
+  int64_t item_count;
+  const double* node_min;
+  const double* node_max;
+  const double* node_size;
+  const int64_t* left;
+  const int64_t* right;
+  const int64_t* leaf;
+  const int64_t* leaf_items;
+  const double* item_min;
+  const double* item_max;
+} phx_mc_bvh_tree_view;
+typedef struct phx_mc_bvh_pair_stream phx_mc_bvh_pair_stream;
+PHX_MC_API int32_t phx_mc_bvh_pair_stream_create(
+    const phx_mc_bvh_tree_view* first, const phx_mc_bvh_tree_view* second, int32_t dimension,
+    int32_t include_touching, double absolute_tolerance, double relative_tolerance,
+    int64_t item_block, int64_t node_block, int32_t parallelism,
+    phx_mc_bvh_pair_stream** stream);
+/* Copies whole blocks while they fit: pair_capacity must hold item_block pairs.
+ * block_ends receives the exclusive end of every copied block; *blocks == 0
+ * after a call means the traversal is complete. */
+PHX_MC_API int32_t phx_mc_bvh_pair_stream_next(
+    phx_mc_bvh_pair_stream* stream, int64_t pair_capacity, int64_t block_capacity,
+    int64_t* first_items, int64_t* second_items, int64_t* block_ends, int64_t* blocks);
+PHX_MC_API void phx_mc_bvh_pair_stream_free(phx_mc_bvh_pair_stream* stream);
+
 /* ------------------------------------------------ restricted power cells */
 #define PHX_MC_POWER_CELLS_SIZES 5
 enum phx_mc_power_failure_reason {

@@ -24,7 +24,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
-from .._bvh import bvh_overlap_pairs_host, prepare_bvh
+from .._bvh import _host_boxes_overlap, bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient2d, PredicateMode, PredicateSign
 from .._strict import StrictModule
@@ -61,6 +61,8 @@ _DEVIATION_QUANTUM = 2.0**-20
 _IMPROVEMENT = 1.0e-6
 # Candidate-pair padding of the source point location; exact signs decide.
 _LOCATION_TOLERANCE = 1.0e-9
+# Box tests below which point location skips the query tree (identical pairs).
+_DIRECT_LOCATION_TESTS = 1 << 16
 # Scale lanes batch represented backtracking steps; continuation has no fixed limit.
 _RELOCATION_SCALE_LANES = 8
 _MINIMUM_CAPACITY = 16
@@ -263,6 +265,10 @@ class _State(NamedTuple):
     # an orbit-locked split) and the absolute deck exponents of every member.
     orbit_keys: np.ndarray | None = None
     orbit_windings: np.ndarray | None = None
+    # Collapsed chart points (e.g. sphere poles): one group per point, ``-1`` for
+    # regular rows. Every copy in a group is one physical vertex; copies are
+    # fixed, and their protected incident edges are chart cuts (see ``_cuts``).
+    pole: np.ndarray | None = None
 
 
 class _Source(NamedTuple):
@@ -270,11 +276,92 @@ class _Source(NamedTuple):
     vertex_ids: np.ndarray
     cells: np.ndarray
     cell_tree: Any
+    # Binary64 bounding boxes of the location cells (the ``cell_tree`` items).
+    cell_lower: np.ndarray
+    cell_upper: np.ndarray
     cell_ids: np.ndarray
     edge_keys: np.ndarray
     block_count: int
     families: tuple[tuple[str, str], ...]
     periodic_cell: Any = None
+    # Source location cells: the source cells, then one notch per regular vertex
+    # between two cuts of a collapsed chart point (``_notches``). ``None`` means
+    # the source cells alone. ``cell_tree`` bounds the location cells.
+    locator_cells: np.ndarray | None = None
+    locator_ids: np.ndarray | None = None
+    # Optional exact metric field: ``(points, source rows (n, 3), weights (n, 3))``
+    # to the metric at chart points located in source cells (``_field_metric``).
+    metric_field: Any = None
+
+
+def _locator(source: _Source, /) -> tuple[np.ndarray, np.ndarray]:
+    """Source location cells and their tie-break IDs."""
+    if source.locator_cells is None or source.locator_ids is None:
+        return source.cells, source.cell_ids
+    return source.locator_cells, source.locator_ids
+
+
+def _field_metric(
+    source: _Source, points: np.ndarray, fallback: np.ndarray, mode: PredicateMode, /
+) -> np.ndarray:
+    """Metric of generated chart points from the source's exact metric field.
+
+    Without a field, or for points that round outside the source cells, the
+    interpolated ``fallback`` stands.
+    """
+    if source.metric_field is None or points.shape[0] == 0:
+        return fallback
+    cells, weights, located = _locate(source, points, mode)
+    if not np.any(located):
+        return fallback
+    result = np.array(fallback, dtype=np.float64, copy=True)
+    result[located] = source.metric_field(
+        points[located],
+        _locator(source)[0][cells[located]],
+        weights[located],
+    )
+    return result
+
+
+def _notches(
+    points: np.ndarray,
+    edges: np.ndarray,
+    cut: np.ndarray,
+    groups: np.ndarray,
+    mode: PredicateMode,
+    /,
+) -> np.ndarray:
+    """Chart gaps at collapsed chart points, as positively oriented triangles.
+
+    A regular vertex ``r`` between two cuts ``(a, r)`` and ``(r, b)`` to copies
+    ``a`` and ``b`` of one collapsed point bounds the chart gap ``(a, r, b)``.
+    The gap is a degenerate physical sliver (its copies are one point), so edits
+    of the free regular vertices may place chart points there; locating them in
+    the gap gives convex source rows over ``a``, ``r``, ``b``, which are the
+    collapsed point and ``r`` on the physical surface.
+    """
+    cut_edges = edges[cut]
+    first_copy = groups[cut_edges[:, 0]] >= 0
+    copy = np.where(first_copy, cut_edges[:, 0], cut_edges[:, 1])
+    regular = np.where(first_copy, cut_edges[:, 1], cut_edges[:, 0])
+    order = np.argsort(regular, kind="stable")
+    regular, copy = regular[order], copy[order]
+    rows, starts, sizes = np.unique(regular, return_index=True, return_counts=True)
+    pair = sizes == 2
+    first = copy[starts[pair]]
+    second = copy[starts[pair] + 1]
+    middle = rows[pair]
+    same = groups[first] == groups[second]
+    first, middle, second = first[same], middle[same], second[same]
+    forward = _orientation(points[first], points[middle], points[second], mode) == _OK
+    backward = _orientation(points[second], points[middle], points[first], mode) == _OK
+    triangles = np.concatenate(
+        (
+            np.stack((first, middle, second), axis=1)[forward],
+            np.stack((second, middle, first), axis=1)[backward & ~forward],
+        )
+    )
+    return triangles.astype(np.int64).reshape((-1, 3))
 
 
 class _Counts(NamedTuple):
@@ -337,6 +424,17 @@ def _orbit_groups(keys: np.ndarray, rows: np.ndarray, /) -> list[np.ndarray]:
     ordered = rows[np.argsort(keys[rows], kind="stable")]
     starts = np.flatnonzero(np.diff(keys[ordered]) != 0) + 1
     return np.split(ordered, starts)
+
+
+def _orbit_disagreement(
+    orbits: np.ndarray, values: np.ndarray, size: int, /
+) -> np.ndarray:
+    """Per orbit ``0..size-1``, whether its members' ``values`` are not all equal."""
+    reference = np.zeros((size,), dtype=values.dtype)
+    reference[orbits] = values
+    result = np.zeros((size,), dtype=np.bool_)
+    np.logical_or.at(result, orbits, values != reference[orbits])
+    return result
 
 
 def _exact_periodic_point(
@@ -584,7 +682,11 @@ def _collinear(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> np.
 
 
 def _barycentric(triangles: np.ndarray, points: np.ndarray, /) -> np.ndarray:
-    """Floating barycentric weights of ``points`` in ``(k, 3, 2)`` triangles."""
+    """Floating barycentric weights of ``points`` in ``(k, 3, 2)`` triangles.
+
+    A triangle whose binary64 area is zero (a sliver that only exact predicates
+    orient) has no floating barycentric coordinates; its weights are NaN.
+    """
     a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
 
     def cross(origin: Any, first: Any, second: Any) -> Any:
@@ -596,7 +698,12 @@ def _barycentric(triangles: np.ndarray, points: np.ndarray, /) -> np.ndarray:
     weights = np.stack(
         (cross(points, b, c), cross(points, c, a), cross(points, a, b)), axis=1
     )
-    return weights / total[:, None]
+    return np.divide(
+        weights,
+        total[:, None],
+        out=np.full_like(weights, np.nan),
+        where=total[:, None] != 0.0,
+    )
 
 
 def _normalized(weights: np.ndarray, /) -> np.ndarray:
@@ -832,6 +939,8 @@ def _initial_state(
     fixed_vertices: np.ndarray,
     mode: PredicateMode,
     /,
+    pole_groups: np.ndarray | None = None,
+    metric_field: Any = None,
 ) -> tuple[_State, _Source]:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
@@ -896,6 +1005,11 @@ def _initial_state(
         lineage_sources=np.arange(edges.shape[0], dtype=np.int64),
         lineage_ranks=np.zeros((edges.shape[0],), dtype=np.int64),
         next_vertex_id=int(np.max(vertex_ids)) + 1,
+        pole=(
+            None
+            if pole_groups is None or not np.any(pole_groups >= 0)
+            else pole_groups.copy()
+        ),
     )
     periodic = mesh.periodic_topology
     if periodic is not None:
@@ -920,21 +1034,38 @@ def _initial_state(
         orbit_keys = np.zeros((count, 2), dtype=np.int64)
         orbit_keys[:, 1] = lifted_ids[representatives[rows]]
         state = state._replace(orbit_keys=orbit_keys, orbit_windings=shifts[rows])
-    triangles = points[cells]
+    locator_cells = cells
+    locator_ids = cell_ids
+    if state.pole is not None:
+        notches = _notches(
+            points,
+            edges,
+            protected_edges & np.any(state.pole[edges] >= 0, axis=1),
+            state.pole,
+            mode,
+        )
+        locator_cells = np.concatenate((cells, notches))
+        locator_ids = np.concatenate(
+            (cell_ids, int(np.max(cell_ids)) + 1 + np.arange(notches.shape[0]))
+        )
+    triangles = points[locator_cells]
+    cell_lower = np.min(triangles, axis=1)
+    cell_upper = np.max(triangles, axis=1)
     source = _Source(
         points=points,
         vertex_ids=vertex_ids,
         cells=cells,
         cell_ids=cell_ids,
-        cell_tree=prepare_bvh(
-            np.min(triangles, axis=1),
-            np.max(triangles, axis=1),
-            dtype=jnp.float64,
-        ),
+        cell_tree=prepare_bvh(cell_lower, cell_upper, dtype=jnp.float64),
+        cell_lower=cell_lower,
+        cell_upper=cell_upper,
         edge_keys=entity_keys(mesh, 1),
         block_count=len(mesh.blocks),
         families=tuple((block.name, block.cell_kind) for block in mesh.blocks),
         periodic_cell=None if periodic is None else periodic.cell,
+        locator_cells=None if state.pole is None else locator_cells,
+        locator_ids=None if state.pole is None else locator_ids,
+        metric_field=metric_field,
     )
     return state, source
 
@@ -967,6 +1098,49 @@ def _edge_table(cells: np.ndarray, /) -> Any:
     return edges, codes, edge_cells, edge_apex, inverse.reshape((count, 3))
 
 
+def _cuts(state: _State, edges: np.ndarray, edge_protected: np.ndarray, /) -> np.ndarray:
+    """Chart cuts: protected edges at a copy of a collapsed chart point.
+
+    A collapsed chart point (a sphere pole) has one fixed copy per incident chart
+    cell, so the edges at a copy bound the chart: they are protected (never
+    split, collapsed, flipped, or measured). Each such edge is one physical edge
+    with its twin at a neighboring copy, so a cut guards only its copy: the
+    regular vertices around the point stay free, and the cuts follow their
+    edits (the protection records move with collapses and are re-derived from
+    the current cells whenever the topology is rebuilt).
+    """
+    if state.pole is None:
+        return np.zeros(edge_protected.shape, dtype=np.bool_)
+    return edge_protected & np.any(state.pole[edges] >= 0, axis=1)
+
+
+def _pole_pairs(state: _State, edges: np.ndarray, /) -> tuple[np.ndarray, int]:
+    """Sorted ``vertex * width + group`` codes of rows adjacent to a collapsed point."""
+    pole = state.pole
+    if pole is None:
+        return np.zeros((0,), dtype=np.int64), 1
+    width = int(np.max(pole)) + 1
+    ends = np.concatenate((edges[:, 0], edges[:, 1]))
+    others = np.concatenate((edges[:, 1], edges[:, 0]))
+    near = pole[others] >= 0
+    return np.unique(ends[near] * width + pole[others[near]]), width
+
+
+def _adjacent_to_group(
+    pairs: tuple[np.ndarray, int], rows: np.ndarray, groups: np.ndarray, /
+) -> np.ndarray:
+    """Whether each row is adjacent to some copy of its collapsed point group."""
+    codes, width = pairs
+    result = np.zeros(rows.shape, dtype=np.bool_)
+    valid = groups >= 0
+    if codes.size == 0 or not np.any(valid):
+        return result
+    query = rows[valid] * width + groups[valid]
+    position = np.minimum(np.searchsorted(codes, query), codes.size - 1)
+    result[valid] = codes[position] == query
+    return result
+
+
 def _vertex_classes(
     state: _State,
     edges: np.ndarray,
@@ -976,15 +1150,18 @@ def _vertex_classes(
     /,
 ) -> Any:
     count = state.points.shape[0]
-    classified = edges[edge_class > 0]
+    # Chart cuts classify and guard nothing at their regular end (``_cuts``).
+    cut = _cuts(state, edges, edge_protected)
+    featured = (edge_class > 0) & ~cut
+    classified = edges[featured]
     ends = classified.reshape((-1,))
     others = classified[:, ::-1].reshape((-1,))
-    labels = np.repeat(edge_class[edge_class > 0], 2)
+    labels = np.repeat(edge_class[featured], 2)
     incident = np.bincount(ends, minlength=count)
     low = _group_minimum(labels, ends, count, np.iinfo(np.int64).max)
     high = _group_maximum(labels, ends, count, -1)
     guarded = state.fixed.copy()
-    guarded[edges[edge_protected].reshape((-1,))] = True
+    guarded[edges[edge_protected & ~cut].reshape((-1,))] = True
     curve = (incident == 2) & (low == high) & ~guarded
     kind = np.where(curve, _CURVE, np.where(guarded | (incident > 0), _CORNER, _INTERIOR))
     order = np.argsort(ends, kind="stable")
@@ -1176,6 +1353,11 @@ def _append_vertices(
             None
             if state.orbit_windings is None or orbit_windings is None
             else np.concatenate((state.orbit_windings, orbit_windings))
+        ),
+        pole=(
+            None
+            if state.pole is None
+            else np.concatenate((state.pole, np.full((count,), -1, dtype=np.int64)))
         ),
     )
 
@@ -1451,7 +1633,12 @@ def _split_round(
     new_rows[chosen] = state.points.shape[0] + np.arange(chosen.size)
     weights = np.stack((1.0 - t[chosen], t[chosen]), axis=1)
     samples = np.stack((state.metric[first[chosen]], state.metric[second[chosen]]), 1)
-    split_metrics = np.array(_interpolate_metrics(samples, weights), dtype=np.float64)
+    split_metrics = _field_metric(
+        source,
+        middle[chosen],
+        np.array(_interpolate_metrics(samples, weights), dtype=np.float64),
+        mode,
+    )
     split_orbit_keys: np.ndarray | None = None
     split_orbit_windings: np.ndarray | None = None
     if periodic_context is not None:
@@ -1584,6 +1771,50 @@ def _collapse_link(
     return shared == 1 + (topology.edge_cells[edge, 1] >= 0)
 
 
+def _pole_link(
+    state: _State, topology: _Topology, edge: Any, removed: Any, kept: Any, /
+) -> np.ndarray:
+    """Link condition on the physical surface, where the copies of a collapsed
+    chart point are one vertex.
+
+    The physical common neighbors of the two ends (excluding the ends) must be
+    exactly the physical apexes of the edge, and a removed vertex may not meet
+    another copy of a kept collapsed point (that edge would become a loop).
+    Only candidates next to a collapsed point can differ from the chart link.
+    """
+    ok = np.ones(np.shape(removed), dtype=np.bool_)
+    pole = state.pole
+    if pole is None or ok.size == 0:
+        return ok
+    near = pole >= 0
+    near[topology.edges[np.any(near[topology.edges], axis=1)].reshape((-1,))] = True
+    offsets, values = topology.neighbor_offsets, topology.neighbor_values
+
+    def physical(row: int, /) -> tuple[int, int]:
+        group = int(pole[row])
+        return (1, group) if group >= 0 else (0, row)
+
+    for index in np.flatnonzero(near[removed] | near[kept]).tolist():
+        first, second = int(removed[index]), int(kept[index])
+        first_neighbors = values[offsets[first] : offsets[first + 1]].tolist()
+        second_neighbors = values[offsets[second] : offsets[second + 1]].tolist()
+        if pole[second] >= 0 and any(
+            row != second and pole[row] == pole[second] for row in first_neighbors
+        ):
+            ok[index] = False
+            continue
+        ends_physical = {physical(first), physical(second)}
+        common = (
+            {physical(row) for row in first_neighbors if row != second}
+            & {physical(row) for row in second_neighbors if row != first}
+        ) - ends_physical
+        apexes = {
+            physical(int(row)) for row in topology.edge_apex[int(edge[index])] if row >= 0
+        }
+        ok[index] = len(common) == len(apexes)
+    return ok
+
+
 def _band_excess(lengths: np.ndarray, /) -> np.ndarray:
     """Distance of ``ln L`` from the unit band ``[-ln sqrt(2), ln sqrt(2)]``."""
     return np.maximum(np.abs(np.log(lengths)) - np.log(_UPPER), 0.0)
@@ -1608,6 +1839,16 @@ def _collapse_geometry(
     fresh = (other != kept[neighbor]) & (
         _lookup(topology.codes, _codes(_sorted_pairs(kept[neighbor], other))) < 0
     )
+    if state.pole is not None:
+        # A new chart edge to a copy of a collapsed point the kept vertex already
+        # meets is an existing physical edge (a chart cut), not a new edge.
+        groups = np.full((points.shape[0],), -1, dtype=np.int64)
+        groups[: state.pole.size] = state.pole
+        fresh &= ~_adjacent_to_group(
+            _pole_pairs(state, topology.edges),
+            kept[neighbor],
+            groups[other],
+        )
     lengths = _metric_lengths(
         state.metric, points, np.stack((kept[neighbor][fresh], other[fresh]), axis=1)
     )
@@ -1637,7 +1878,9 @@ def _collapse_candidates(
     removed = np.concatenate((topology.edges[short, 0], topology.edges[short, 1]))
     kept = np.concatenate((topology.edges[short, 1], topology.edges[short, 0]))
     admissible = _collapse_admissible(topology, edge, removed, kept)
-    link = _collapse_link(topology, edge, removed, kept)
+    link = _collapse_link(topology, edge, removed, kept) & _pole_link(
+        state, topology, edge, removed, kept
+    )
     orientation, longest = _collapse_geometry(state, topology, removed, kept, mode)
     births = (state.source_rows[removed] < 0) | (state.source_rows[kept] < 0)
     within = _collapse_within_limit(births, longest, escape)
@@ -1799,10 +2042,16 @@ def _collapse_orphans(
     gone = removed_set | orphan_set
     targets: list[int] = []
     kept_edge_cells: list[int] = []
+    pole = state.pole
     for row in orphans:
+        twin = pole is not None and bool(pole[row] >= 0)
         # Each classified lifted edge of the row must keep a lifted member of
-        # its quotient edge (with its feature record) after the collapse.
-        for keys in state.feature_keys[np.any(state.feature_keys == row, axis=1)]:
+        # its quotient edge (with its feature record) after the collapse. A copy
+        # of a collapsed chart point has only chart cuts, each one physical edge
+        # with its twin at a neighboring copy, and retires onto any live copy.
+        for keys in (
+            () if twin else state.feature_keys[np.any(state.feature_keys == row, axis=1)]
+        ):
             edge = int(_lookup(topology.codes, _codes(keys[None, :]))[0])
             survivors = [
                 int(member)
@@ -1823,11 +2072,14 @@ def _collapse_orphans(
                 for cell in topology.edge_cells[survivors].reshape((-1,))
                 if cell >= 0
             )
+        candidates = (
+            np.flatnonzero(pole == pole[row])
+            if pole is not None and twin
+            else np.flatnonzero(context.vertex_orbits == context.vertex_orbits[row])
+        )
         members = [
             int(member)
-            for member in np.flatnonzero(
-                context.vertex_orbits == context.vertex_orbits[row]
-            ).tolist()
+            for member in candidates.tolist()
             if member not in gone
             and (state.source_rows[row] < 0 or state.source_rows[member] >= 0)
             and remaining(int(member)) > 0
@@ -1928,6 +2180,9 @@ def _periodic_cover_collapse(
         for row in np.concatenate((removed_rows, kept_rows)).tolist()
     ):
         return "stabilized"
+    if state.pole is not None and np.any(state.pole[kept_rows] >= 0):
+        # Deck images of a collapsed chart point copy are not formed here.
+        return "pole"
     removed_ball = _ball_cells(topology, removed_rows)
     if (
         np.any(topology.kind[removed_rows] != _INTERIOR)
@@ -1987,8 +2242,27 @@ def _periodic_cover_collapse(
         # into a quotient loop edge.
         return "loop"
     common = (removed_neighbors & kept_neighbors) - {removed_label, kept_label}
-    if len(common) != int(np.count_nonzero(topology.edge_cells[edges] >= 0)):
+    apex_count = int(np.count_nonzero(topology.edge_cells[edges] >= 0))
+    if len(common) != apex_count:
         return "link"
+    if state.pole is not None:
+        # The same link on the physical surface: copies of a collapsed chart
+        # point are one vertex.
+        pole = state.pole
+        pole_by_key = {
+            tuple(int(value) for value in keys[row]): int(pole[row])
+            for row in np.flatnonzero(pole >= 0).tolist()
+        }
+
+        def physical(label: tuple[int, ...], /) -> tuple[int, ...]:
+            group = pole_by_key.get(label[:key_width])
+            return label if group is None else (-1, group)
+
+        physical_common = {
+            physical(label) for label in removed_neighbors - {kept_label}
+        } & {physical(label) for label in kept_neighbors - {removed_label}}
+        if len(physical_common) != apex_count:
+            return "link"
 
     # A removed member's edge to a common neighbor becomes a new lifted member
     # of the kept orbit's existing quotient edge; it carries that edge's class.
@@ -2297,6 +2571,17 @@ def _collapse_round(
     best = np.minimum(found.status[:half], found.status[half:])
     counts = _tally(counts, np.where(best == _INADMISSIBLE, _INVALID, best))
     valid = np.flatnonzero(found.status == _OK)
+    if periodic_context is None and state.pole is not None:
+        # Without orbit retirement, a collapse may not empty a copy of a
+        # collapsed chart point (its only cell is an edge cell).
+        apexes = topology.edge_apex[found.edge[valid]]
+        rows = np.maximum(apexes, 0)
+        lone = (
+            (apexes >= 0)
+            & (state.pole[rows] >= 0)
+            & (np.diff(topology.ball_offsets)[rows] == 1)
+        )
+        valid = valid[~np.any(lone, axis=1)]
     if valid.size == 0 and periodic_context is None:
         return state, counts, 0
 
@@ -2571,6 +2856,9 @@ def _periodic_seam_flips(
             windings[x_a], orders
         ):
             continue
+        if state.pole is not None and (state.pole[x_a] >= 0 or state.pole[x_b] >= 0):
+            # Seam diagonals at a collapsed chart point copy are not formed.
+            continue
         diagonal_label = (*map(int, keys[x_b]), *far_b)
         if diagonal_label in _cover_labels(
             state, topology, np.flatnonzero(orbits == orbits[x_a]), x_a, orders
@@ -2778,6 +3066,16 @@ def _flip_candidates(
         _orientation(points[v], points[x0], points[x1], mode),
     )
     duplicate = _lookup(topology.codes, _codes(_sorted_pairs(x0, x1))) >= 0
+    if state.pole is not None:
+        # On the physical surface the copies of a collapsed chart point are one
+        # vertex: a diagonal may not join two copies or re-create a cut.
+        pairs = _pole_pairs(state, topology.edges)
+        first, second = state.pole[x0], state.pole[x1]
+        duplicate |= (
+            ((first >= 0) & (second >= 0))
+            | _adjacent_to_group(pairs, x1, first)
+            | _adjacent_to_group(pairs, x0, second)
+        )
     status = np.where(duplicate, _INVALID, status)
     # A quality flip may not create an edge the next metric pass must
     # immediately edit; a deviation flip only shortens the diagonal's deviation.
@@ -3015,12 +3313,15 @@ def _flip_round(
 def _relocation_targets(state: _State, topology: _Topology, vertices: Any, /) -> Any:
     """Spring displacement toward unit metric lengths and each vertex's badness.
 
-    Interior vertices use every neighbor; curve vertices only their two curve
-    neighbors, so the displacement stays on the straight curve line.
+    Interior vertices use every unprotected neighbor edge (a chart cut at a free
+    vertex is not measured); curve vertices only their two curve neighbors, so
+    the displacement stays on the straight curve line.
     """
     owner, position = _expand(topology.neighbor_offsets, vertices)
     other = topology.neighbor_values[position]
     edge = _lookup(topology.codes, _codes(_sorted_pairs(vertices[owner], other)))
+    measured = ~topology.edge_protected[edge]
+    owner, other, edge = owner[measured], other[measured], edge[measured]
     length = topology.lengths[edge]
     badness = _group_maximum(np.maximum(length, 1.0 / length), owner, vertices.size, 0.0)
     curve = topology.kind[vertices] == _CURVE
@@ -3050,7 +3351,7 @@ def _proposal_locations(
     """Best ball cell, its barycentric weights, and their minimum for each target.
 
     A target lies in its vertex ball exactly when its score is nonnegative; a
-    degenerate binary64 ball cell yields a non-finite score.
+    degenerate binary64 ball cell yields a NaN score and is ranked last.
     """
     owner, position = _expand(topology.ball_offsets, vertex)
     cell = topology.ball_cells[position]
@@ -3257,7 +3558,12 @@ def _backtracked_relocations(
 
         vertex_bank = np.tile(vertices, _RELOCATION_SCALE_LANES)
         target_rows = target_bank.reshape((-1, 2))
-        metric_rows = _proposal_metric(state, topology, vertex_bank, target_rows)
+        metric_rows = _field_metric(
+            source,
+            target_rows,
+            _proposal_metric(state, topology, vertex_bank, target_rows),
+            mode,
+        )
         status_rows, quality_rows = _proposal_checks(
             state, topology, vertex_bank, target_rows, metric_rows, mode
         )
@@ -3671,6 +3977,12 @@ def _relocation_round_periodic(
                     np.asarray((representative,), dtype=np.int64),
                     representative_target[None, :],
                 )[0]
+            representative_metric = _field_metric(
+                source,
+                representative_target[None, :],
+                representative_metric[None],
+                mode,
+            )[0]
             metric = np.stack(
                 [
                     _exact_periodic_metric(
@@ -3979,14 +4291,29 @@ def _locate(
     source: _Source, queries: np.ndarray, mode: PredicateMode, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Containing source cell and floating P1 weights for each supported query."""
-    triangles = source.points[source.cells]
-    points_tree = prepare_bvh(queries, queries, dtype=jnp.float64)
-    cell, query = bvh_overlap_pairs_host(
-        source.cell_tree,
-        points_tree,
-        include_touching=True,
-        relative_tolerance=_LOCATION_TOLERANCE,
-    )
+    location_cells, location_ids = _locator(source)
+    if queries.shape[0] * source.cell_lower.shape[0] <= _DIRECT_LOCATION_TESTS:
+        # Few queries: the tree's item predicate on every (cell, query) box pair
+        # gives the same pairs in the same (cell, query) order without building a
+        # query tree.
+        cell, query = np.nonzero(
+            _host_boxes_overlap(
+                source.cell_lower[:, None, :],
+                source.cell_upper[:, None, :],
+                queries[None, :, :],
+                queries[None, :, :],
+                True,
+                0.0,
+                _LOCATION_TOLERANCE,
+            )
+        )
+    else:
+        cell, query = bvh_overlap_pairs_host(
+            source.cell_tree,
+            prepare_bvh(queries, queries, dtype=jnp.float64),
+            include_touching=True,
+            relative_tolerance=_LOCATION_TOLERANCE,
+        )
     located = np.zeros((queries.shape[0],), dtype=np.bool_)
     located[query] = True
     cells = np.full((queries.shape[0],), -1, dtype=np.int64)
@@ -3994,7 +4321,7 @@ def _locate(
     if not np.any(located):
         return cells, chosen, located
     query_rows = np.flatnonzero(located)
-    corners = triangles[cell]
+    corners = source.points[location_cells[cell]]
     point = queries[query]
     result = orient2d(
         np.stack((corners[:, 1], corners[:, 2], corners[:, 0]), axis=1),
@@ -4009,7 +4336,7 @@ def _locate(
     grade = np.where(contained, 0, np.where(np.any(negative, axis=1), 2, 1))
     barycentric = _barycentric(corners, point)
     violation = np.where(grade == 0, 0.0, -np.min(barycentric, axis=1))
-    order = np.lexsort((source.cell_ids[cell], violation, grade, query))
+    order = np.lexsort((location_ids[cell], violation, grade, query))
     first = order[np.searchsorted(query[order], query_rows)]
     exact_zero = certain[first] & (signs[first] == PredicateSign.ZERO)
     cells[query_rows] = cell[first]
@@ -4020,7 +4347,7 @@ def _locate(
 def _exact_cell_barycentric(
     source: _Source, cell: int, query: tuple[Fraction, ...], /
 ) -> tuple[Fraction, ...]:
-    vertices = source.cells[cell]
+    vertices = _locator(source)[0][cell]
     corners = [
         tuple(Fraction(float(value)) for value in source.points[int(vertex)].tolist())
         for vertex in vertices.tolist()
@@ -4132,7 +4459,7 @@ def _located_stencil_bank(
                 raise ValueError("A target vertex lies outside the source domain.")
             cell, barycentric = image
             outside[row] = False
-        vertices = source.cells[cell]
+        vertices = _locator(source)[0][cell]
         entries: list[tuple[int, Fraction]] = []
         for vertex, exact_weight in zip(vertices.tolist(), barycentric, strict=True):
             if exact_weight == 0:
@@ -4306,6 +4633,13 @@ def _vertex_relations(state: Any, final: Any, /) -> Any:
             axis=1,
         )
         collapsed = collapsed[~retired]
+    if state.pole is not None:
+        # A retired copy of a collapsed chart point points at another copy: the
+        # physical vertex survives.
+        twin = state.pole[collapsed]
+        collapsed = collapsed[
+            ~((twin >= 0) & (twin == state.pole[state.collapse_to[collapsed]]))
+        ]
     survivor = _surviving(state)[collapsed]
     sources = np.concatenate((ids[rows], ids[collapsed]))
     targets = np.concatenate((ids[rows], final[survivor]))
@@ -4422,100 +4756,110 @@ def _periodic_state_context(
         edge_target_rows
     ]
     target_edge_vertices = np.asarray(_entity_vertex_rows(bound)[1], dtype=np.int64)
-    permutation_rows = tuple(
-        np.asarray(edge_map.corner_permutation_row(int(row)), dtype=np.int64)
-        for row in edge_target_rows
-    )
-    if any(row.shape != (2,) for row in permutation_rows):
+    permutation_offsets = np.asarray(edge_map.corner_permutation_offsets, dtype=np.int64)
+    permutation_values = np.asarray(edge_map.corner_permutations, dtype=np.int64)
+    if np.any(
+        permutation_offsets[edge_target_rows + 1] - permutation_offsets[edge_target_rows]
+        != 2
+    ):
         raise ValueError("Periodic metric edge permutations require two corners.")
-    edge_permutations = np.stack(permutation_rows, axis=0)
+    edge_permutations = permutation_values[
+        permutation_offsets[edge_target_rows][:, None] + np.arange(2)
+    ]
     canonical_target_vertices = target_edge_vertices[
         edge_target_rows[:, None], edge_permutations
     ]
     edge_canonical_vertices = order[canonical_target_vertices]
 
-    vertex_orbits = np.full((state.points.shape[0],), -1, dtype=np.int64)
+    count = state.points.shape[0]
+    vertex_orbits = np.full((count,), -1, dtype=np.int64)
     vertex_orbits[order] = np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
-    row_of = np.full((state.points.shape[0],), -1, dtype=np.int64)
+    row_of = np.full((count,), -1, dtype=np.int64)
     row_of[order] = np.arange(order.size, dtype=np.int64)
     fixed_generators = np.asarray(bound_periodic.vertex_fixed_generators, dtype=np.bool_)
     vertex_windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
     vertex_representatives = np.asarray(
         vertex_map.representative_lifted_rows, dtype=np.int64
     )
-    representative_state_rows = np.full((state.points.shape[0],), -1, dtype=np.int64)
+    representative_state_rows = np.full((count,), -1, dtype=np.int64)
     identity = tuple(
         tuple(
             Fraction(int(row == column)) for column in range(mesh.ambient_dimension + 1)
         )
         for row in range(mesh.ambient_dimension + 1)
     )
-    vertex_exact_isometries = [identity] * state.points.shape[0]
+    vertex_exact_isometries = [identity] * count
     # Rows acted on by the zero winding: their exact action is the identity, so
     # their orbit checks reduce to binary64 equality with the root.
-    vertex_identity = np.ones((state.points.shape[0],), dtype=np.bool_)
-    state_vertex_windings = np.zeros(
-        (state.points.shape[0], vertex_windings.shape[1]), dtype=np.int64
+    vertex_identity = np.ones((count,), dtype=np.bool_)
+    state_vertex_windings = np.zeros((count, vertex_windings.shape[1]), dtype=np.int64)
+    vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [()] * count
+    live = np.flatnonzero(vertex_orbits >= 0)
+    live_orbits = vertex_orbits[live]
+    target_rows = row_of[live]
+    representative_targets = vertex_representatives[live_orbits]
+    root_rows = order[representative_targets]
+    representative_state_rows[live] = root_rows
+    state_vertex_windings[live] = vertex_windings[target_rows]
+    windings = vertex_windings[target_rows] - vertex_windings[representative_targets]
+    # Per live row: 1 coordinates, 2 metric, 3 stabilizer; the first failing row
+    # in (orbit, row) order names the refusal.
+    failure = np.where(
+        np.any(state.points[live] != state.points[root_rows], axis=1),
+        1,
+        np.where(
+            np.any(state.metric[live] != state.metric[root_rows], axis=(1, 2)), 2, 0
+        ),
     )
-    vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [
-        ()
-    ] * state.points.shape[0]
-    for state_rows in _orbit_groups(vertex_orbits, np.flatnonzero(vertex_orbits >= 0)):
-        orbit = int(vertex_orbits[state_rows[0]])
-        target_rows = row_of[state_rows]
-        representative_target_row = int(vertex_representatives[orbit])
-        representative_winding = vertex_windings[representative_target_row]
-        representative_state_row = int(order[representative_target_row])
-        representative_state_rows[state_rows] = representative_state_row
-        representative_metric = state.metric[representative_state_row]
-        representative_point = state.points[representative_state_row]
-        for state_row, target_row in zip(state_rows, target_rows, strict=True):
-            state_vertex_windings[state_row] = vertex_windings[target_row]
-            winding = vertex_windings[target_row] - representative_winding
-            if np.any(winding):
-                exact_isometry = exact_periodic_element(bound_periodic.cell, winding)
-                vertex_exact_isometries[state_row] = exact_isometry
-                vertex_identity[state_row] = False
-                point_matches = np.array_equal(
-                    state.points[state_row],
-                    _exact_periodic_point(exact_isometry, representative_point),
-                )
-                metric_matches = np.array_equal(
-                    state.metric[state_row],
-                    _exact_periodic_metric(exact_isometry, representative_metric),
-                )
-            else:
-                point_matches = np.array_equal(
-                    state.points[state_row], representative_point
-                )
-                metric_matches = np.array_equal(
-                    state.metric[state_row], representative_metric
-                )
-            if not point_matches:
-                raise ValueError(
-                    "Periodic vertex coordinates must match their exact orbit action."
-                )
-            if not metric_matches:
-                raise ValueError(
-                    "Metric tensors must transform exactly over vertex orbits."
-                )
-            stabilizers = []
-            for generator in np.flatnonzero(fixed_generators[target_row]):
-                exponents = np.zeros((vertex_windings.shape[1],), dtype=np.int64)
-                exponents[generator] = 1
-                stabilizer = exact_periodic_element(bound_periodic.cell, exponents)
-                stabilizers.append(stabilizer)
-                if not np.array_equal(
-                    state.points[state_row],
-                    _exact_periodic_point(stabilizer, state.points[state_row]),
-                ) or not np.array_equal(
-                    state.metric[state_row],
-                    _exact_periodic_metric(stabilizer, state.metric[state_row]),
-                ):
-                    raise ValueError(
-                        "Periodic vertex coordinates and metrics must respect exact stabilizers."
-                    )
-            vertex_stabilizers[state_row] = tuple(stabilizers)
+    for position in np.flatnonzero(np.any(windings != 0, axis=1)).tolist():
+        state_row = int(live[position])
+        root_row = int(root_rows[position])
+        exact_isometry = exact_periodic_element(bound_periodic.cell, windings[position])
+        vertex_exact_isometries[state_row] = exact_isometry
+        vertex_identity[state_row] = False
+        if not np.array_equal(
+            state.points[state_row],
+            _exact_periodic_point(exact_isometry, state.points[root_row]),
+        ):
+            failure[position] = 1
+        elif not np.array_equal(
+            state.metric[state_row],
+            _exact_periodic_metric(exact_isometry, state.metric[root_row]),
+        ):
+            failure[position] = 2
+        else:
+            failure[position] = 0
+    for position in np.flatnonzero(
+        np.any(fixed_generators[target_rows], axis=1)
+    ).tolist():
+        if failure[position]:
+            continue
+        state_row = int(live[position])
+        stabilizers = []
+        for generator in np.flatnonzero(fixed_generators[target_rows[position]]):
+            exponents = np.zeros((vertex_windings.shape[1],), dtype=np.int64)
+            exponents[generator] = 1
+            stabilizer = exact_periodic_element(bound_periodic.cell, exponents)
+            stabilizers.append(stabilizer)
+            if not np.array_equal(
+                state.points[state_row],
+                _exact_periodic_point(stabilizer, state.points[state_row]),
+            ) or not np.array_equal(
+                state.metric[state_row],
+                _exact_periodic_metric(stabilizer, state.metric[state_row]),
+            ):
+                failure[position] = 3
+                break
+        vertex_stabilizers[state_row] = tuple(stabilizers)
+    if np.any(failure):
+        sequence = np.lexsort((live, live_orbits))
+        raise ValueError(
+            (
+                "Periodic vertex coordinates must match their exact orbit action.",
+                "Metric tensors must transform exactly over vertex orbits.",
+                "Periodic vertex coordinates and metrics must respect exact stabilizers.",
+            )[int(failure[sequence[failure[sequence] > 0][0]]) - 1]
+        )
     target_cell_ids = np.asarray(cell_map.lifted_entity_ids, dtype=np.int64)
     state_cell_ids = _cell_identifiers(state, source, final)
     cell_order = np.argsort(target_cell_ids, kind="stable")
@@ -4536,92 +4880,114 @@ def _periodic_state_context(
     )
     edge_representatives = np.asarray(edge_map.representative_lifted_rows, dtype=np.int64)
     edge_windings = np.asarray(edge_map.winding_shifts, dtype=np.int64)
-    edge_lengths = topology.lengths.copy()
     edge_member_windings = edge_windings[edge_target_rows]
-    edge_representative_rows = np.full((edge_representatives.size,), -1, dtype=np.int64)
-    # Evaluate each periodic scalar on its exact canonical lift; coordinate and
-    # tensor orbit consistency is independently checked above.
-    for rows in _orbit_groups(edge_orbits, np.arange(edge_orbits.size)):
-        orbit = int(edge_orbits[rows[0]])
-        if (
-            np.unique(topology.edge_class[rows]).size != 1
-            or np.unique(topology.edge_protected[rows]).size != 1
-        ):
-            raise ValueError("Periodic edge controls must agree over each orbit.")
-        representative_target_row = int(edge_representatives[orbit])
-        representative_row = int(edge_state_by_target[representative_target_row])
-        if representative_row < 0:
-            raise ValueError("Periodic edge orbit has no state representative.")
-        representative_vertices = edge_canonical_vertices[representative_row]
-        edge_representative_rows[orbit] = representative_row
-        representative_winding = edge_windings[representative_target_row]
-        for edge_row in rows:
-            target_row = int(edge_target_rows[edge_row])
-            winding = edge_windings[target_row] - representative_winding
-            isometry = (
-                exact_periodic_element(bound_periodic.cell, winding)
-                if np.any(winding)
-                else None
+    orbit_count = edge_representatives.size
+    orbit_rows = edge_state_by_target[edge_representatives]
+    edge_representative_rows = np.full((orbit_count,), -1, dtype=np.int64)
+    present = np.unique(edge_orbits)
+    edge_representative_rows[present] = orbit_rows[present]
+    # Per edge orbit: 1 controls disagree, 2 no state representative, 3 a
+    # member's corners miss the exact orbit action (first failing orbit raises).
+    edge_failure = np.zeros((orbit_count,), dtype=np.int64)
+    edge_failure[
+        _orbit_disagreement(edge_orbits, topology.edge_class, orbit_count)
+        | _orbit_disagreement(edge_orbits, topology.edge_protected, orbit_count)
+    ] = 1
+    edge_failure[(edge_failure == 0) & (orbit_rows < 0)] = 2
+    members = np.flatnonzero(edge_failure[edge_orbits] == 0)
+    member_orbits = edge_orbits[members]
+    # Only root-relative lifts are bit-consistent on non-dyadic lattices, so
+    # the edge action is checked through the vertex root: the composed exact
+    # element must reproduce each member corner.
+    member_windings = (
+        edge_windings[edge_target_rows[members]]
+        - edge_windings[edge_representatives[member_orbits]]
+    )
+    nontrivial = np.any(member_windings != 0, axis=1)
+    geometry = np.zeros((members.size,), dtype=np.bool_)
+    exact_corners: list[tuple[int, int, int]] = []
+    for corner in range(2):
+        representative_vertex = edge_canonical_vertices[orbit_rows[member_orbits], corner]
+        member_vertex = edge_canonical_vertices[members, corner]
+        root = representative_state_rows[member_vertex]
+        geometry |= root != representative_state_rows[representative_vertex]
+        simple = ~nontrivial & vertex_identity[representative_vertex]
+        geometry |= simple & (
+            np.any(state.points[member_vertex] != state.points[root], axis=1)
+            | np.any(state.metric[member_vertex] != state.metric[root], axis=(1, 2))
+        )
+        exact_corners.extend(
+            (
+                int(position),
+                int(representative_vertex[position]),
+                int(member_vertex[position]),
             )
-            member_vertices = edge_canonical_vertices[edge_row]
-            # Only root-relative lifts are bit-consistent on non-dyadic
-            # lattices, so the edge action is checked through the vertex root:
-            # the composed exact element must reproduce each member corner.
-            for representative_vertex, member_vertex in zip(
-                representative_vertices, member_vertices, strict=True
-            ):
-                root_row = int(representative_state_rows[member_vertex])
-                if root_row != int(representative_state_rows[representative_vertex]):
-                    raise ValueError(
-                        "Periodic edge geometry must respect its exact orbit action."
-                    )
-                if isometry is None and vertex_identity[representative_vertex]:
-                    consistent = np.array_equal(
-                        state.points[member_vertex], state.points[root_row]
-                    ) and np.array_equal(
-                        state.metric[member_vertex], state.metric[root_row]
-                    )
-                else:
-                    composite = (
-                        vertex_exact_isometries[representative_vertex]
-                        if isometry is None
-                        else _multiply(
-                            isometry, vertex_exact_isometries[representative_vertex]
-                        )
-                    )
-                    consistent = np.array_equal(
-                        state.points[member_vertex],
-                        _exact_periodic_point(composite, state.points[root_row]),
-                    ) and np.array_equal(
-                        state.metric[member_vertex],
-                        _exact_periodic_metric(composite, state.metric[root_row]),
-                    )
-                if not consistent:
-                    raise ValueError(
-                        "Periodic edge geometry must respect its exact orbit action."
-                    )
-        edge_lengths[rows] = topology.lengths[representative_row]
+            for position in np.flatnonzero(~simple & ~geometry)
+        )
+    for position, representative_vertex, member_vertex in exact_corners:
+        if geometry[position]:
+            continue
+        root_row = int(representative_state_rows[member_vertex])
+        composite = (
+            _multiply(
+                exact_periodic_element(bound_periodic.cell, member_windings[position]),
+                vertex_exact_isometries[representative_vertex],
+            )
+            if nontrivial[position]
+            else vertex_exact_isometries[representative_vertex]
+        )
+        geometry[position] = not (
+            np.array_equal(
+                state.points[member_vertex],
+                _exact_periodic_point(composite, state.points[root_row]),
+            )
+            and np.array_equal(
+                state.metric[member_vertex],
+                _exact_periodic_metric(composite, state.metric[root_row]),
+            )
+        )
+    edge_failure[np.unique(member_orbits[geometry])] = 3
+    if np.any(edge_failure[present]):
+        raise ValueError(
+            (
+                "Periodic edge controls must agree over each orbit.",
+                "Periodic edge orbit has no state representative.",
+                "Periodic edge geometry must respect its exact orbit action.",
+            )[int(edge_failure[present][edge_failure[present] > 0][0]) - 1]
+        )
+    # Evaluate each periodic scalar on its exact canonical lift; coordinate and
+    # tensor orbit consistency is checked above.
+    edge_lengths = topology.lengths[orbit_rows[edge_orbits]]
 
     cell_state_by_target = np.full((target_cell_ids.size,), -1, dtype=np.int64)
     cell_state_by_target[cell_target_rows] = np.arange(
         state_cell_ids.size, dtype=np.int64
     )
     cell_representatives = np.asarray(cell_map.representative_lifted_rows, dtype=np.int64)
-    cell_quality = _quality(edge_lengths[topology.cell_edges])
-    for rows in _orbit_groups(cell_orbits, np.arange(cell_orbits.size)):
-        orbit = int(cell_orbits[rows[0]])
-        if (
-            np.unique(state.cell_block[rows]).size != 1
-            or np.unique(state.cell_region[rows]).size != 1
-        ):
-            raise ValueError("Periodic cell controls must agree over each orbit.")
-        representative_row = int(cell_state_by_target[cell_representatives[orbit]])
-        if representative_row < 0:
-            raise ValueError("Periodic cell orbit has no state representative.")
-        cell_quality[rows] = cell_quality[representative_row]
-    for rows in _orbit_groups(vertex_orbits, np.flatnonzero(vertex_orbits >= 0)):
-        if np.unique(state.fixed[rows]).size != 1:
-            raise ValueError("Periodic fixed-vertex controls must agree over each orbit.")
+    cell_orbit_rows = cell_state_by_target[cell_representatives]
+    cell_failure = np.zeros((cell_representatives.size,), dtype=np.int64)
+    cell_failure[
+        _orbit_disagreement(cell_orbits, state.cell_block, cell_failure.size)
+        | _orbit_disagreement(cell_orbits, state.cell_region, cell_failure.size)
+    ] = 1
+    cell_failure[(cell_failure == 0) & (cell_orbit_rows < 0)] = 2
+    cell_present = np.unique(cell_orbits)
+    if np.any(cell_failure[cell_present]):
+        raise ValueError(
+            (
+                "Periodic cell controls must agree over each orbit.",
+                "Periodic cell orbit has no state representative.",
+            )[int(cell_failure[cell_present][cell_failure[cell_present] > 0][0]) - 1]
+        )
+    cell_quality = _quality(edge_lengths[topology.cell_edges])[
+        cell_orbit_rows[cell_orbits]
+    ]
+    if np.any(
+        _orbit_disagreement(
+            live_orbits, state.fixed[live], int(np.max(live_orbits, initial=-1)) + 1
+        )
+    ):
+        raise ValueError("Periodic fixed-vertex controls must agree over each orbit.")
     return _PeriodicContext(
         edge_orbits,
         np.asarray(edge_map.quotient_entity_ids, dtype=np.int64),
@@ -4675,7 +5041,9 @@ def _collapse_refusal(
                 state, topology, context, source, mode, members, removed, kept, 0, False
             )
             return refusal if isinstance(refusal, str) else "unselected"
-    if not np.all(_collapse_link(topology, members, removed, kept)):
+    if not np.all(_collapse_link(topology, members, removed, kept)) or not np.all(
+        _pole_link(state, topology, members, removed, kept)
+    ):
         return "link"
     status, longest = _collapse_geometry(state, topology, removed, kept, mode)
     if np.any(status != _OK):
@@ -4814,6 +5182,8 @@ def execute_local_metric_adaptation(
     predicate_mode: PredicateMode,
     topology_operations: bool,
     relocation: bool,
+    collapsed_groups: np.ndarray | None = None,
+    metric_field: Any = None,
 ) -> LocalMetricOutcome:
     """Adapt a planar triangle mesh until it meets the unit-mesh criterion or stalls.
 
@@ -4844,20 +5214,55 @@ def execute_local_metric_adaptation(
     lexicographic order on pairs of natural numbers, which is well-founded, so
     escapes are finitely many; an escape phase removes a vertex (orbit) per
     collapse, so it is finite; between escapes the regular passes run unchanged.
+
+    Collapsed chart points. ``collapsed_groups`` names, per vertex, the
+    collapsed chart point it copies (``-1`` for regular vertices), e.g. a sphere
+    pole with one copy per incident chart cell. Copies must be fixed, and their
+    protected edges are chart cuts (``_cuts``): the regular vertices around the
+    point stay free. Collapses and flips are decided on the physical surface,
+    where the copies are one vertex (``_pole_link``), and a copy that loses its
+    last cell retires onto a live copy.
+
+    ``metric_field`` optionally evaluates the exact metric at generated chart
+    points (split midpoints and relocation proposals) from their source
+    location, replacing log-Euclidean interpolation of the vertex metrics; a
+    singular chart such as a sphere pole needs it, because its pulled-back
+    metric is not log-Euclidean linear in the chart.
     """
     values = _validate_mesh(mesh, metric)
     _validate_controls(predicate_mode, topology_operations, relocation)
     vertex_count = mesh.coordinates.shape[0]
     edge_count = mesh.entity_set(1).entity_ids.shape[0]
     cell_count = mesh.entity_set(2).entity_ids.shape[0]
+    fixed = _boolean_array(fixed_vertices, vertex_count, "fixed_vertices")
+    groups = None
+    if collapsed_groups is not None:
+        groups = np.asarray(collapsed_groups)
+        if groups.shape != (vertex_count,) or groups.dtype.kind not in "iu":
+            raise ValueError(
+                f"collapsed_groups must be integer-valued with shape ({vertex_count},)."
+            )
+        groups = groups.astype(np.int64)
+        edges = np.asarray(mesh.connectivity.edges, dtype=np.int64)  # ty: ignore[unresolved-attribute]
+        if (
+            np.any(groups < -1)
+            or np.any(~fixed[groups >= 0])
+            or np.any(np.all(groups[edges] >= 0, axis=1))
+        ):
+            raise ValueError(
+                "Collapsed chart point copies must be fixed, grouped by nonnegative "
+                "IDs, and never adjacent to one another."
+            )
     state, source = _initial_state(
         mesh,
         values,
         _integer_array(cell_classes, cell_count, "cell_classes"),
         _integer_array(edge_classes, edge_count, "edge_classes"),
         _boolean_array(protected_edges, edge_count, "protected_edges"),
-        _boolean_array(fixed_vertices, vertex_count, "fixed_vertices"),
+        fixed,
         predicate_mode,
+        groups,
+        metric_field,
     )
     topologies = _StateTopologies(mesh, source, predicate_mode)
     topology, periodic_context = topologies(state)

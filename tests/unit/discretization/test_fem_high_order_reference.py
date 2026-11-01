@@ -4,6 +4,7 @@
 
 
 import math
+from fractions import Fraction
 from typing import Any
 
 import jax
@@ -493,3 +494,120 @@ def test_fem_high_order_reference_scenario_3() -> None:
     assert operator.minimum_mass_eigenvalue > 0.0
     assert operator.sbp_defect <= 3.0e-9
     assert operator.constant_defect <= 3.0e-9
+
+
+def _exact_reference_monomial(
+    kind: str, dimension: int, exponents: tuple[int, ...]
+) -> Fraction:
+
+    if kind == "tensor":
+        return Fraction(1, math.prod(power + 1 for power in exponents))
+    if kind == "simplex":
+        return Fraction(
+            math.prod(math.factorial(power) for power in exponents),
+            math.factorial(sum(exponents) + dimension),
+        )
+    if kind == "prism":
+        first, second, third = exponents
+        return Fraction(
+            math.factorial(first) * math.factorial(second),
+            math.factorial(first + second + 2) * (third + 1),
+        )
+    # Pyramid x = (1-h) f + h/2, y = (1-h) g + h/2, z = h with Jacobian (1-h)^2:
+    # integrate over f and g first, as polynomials in h with Fraction coefficients.
+    first, second, third = exponents
+
+    def multiply(
+        left: dict[int, Fraction], right: dict[int, Fraction]
+    ) -> dict[int, Fraction]:
+        result: dict[int, Fraction] = {}
+        for left_power, left_value in left.items():
+            for right_power, right_value in right.items():
+                power = left_power + right_power
+                result[power] = result.get(power, Fraction(0)) + left_value * right_value
+        return result
+
+    def power(base: dict[int, Fraction], exponent: int) -> dict[int, Fraction]:
+        result = {0: Fraction(1)}
+        for _ in range(exponent):
+            result = multiply(result, base)
+        return result
+
+    scale = {0: Fraction(1), 1: Fraction(-1)}
+    half = {1: Fraction(1, 2)}
+
+    def averaged(exponent: int) -> dict[int, Fraction]:
+        total: dict[int, Fraction] = {}
+        for index in range(exponent + 1):
+            term = multiply(power(scale, index), power(half, exponent - index))
+            factor = Fraction(math.comb(exponent, index), index + 1)
+            for key, value in term.items():
+                total[key] = total.get(key, Fraction(0)) + factor * value
+        return total
+
+    integrand = multiply(
+        multiply(averaged(first), averaged(second)),
+        multiply({third: Fraction(1)}, power(scale, 2)),
+    )
+    return sum((value / (key + 1) for key, value in integrand.items()), Fraction(0))
+
+
+def test_reference_rules_integrate_their_declared_degree_and_fail_one_higher() -> None:
+    from itertools import product
+
+    from phydrax.discretization.fem._generic import (
+        _reference_rule_exactness,
+        _reference_rule_layout,
+    )
+
+    for cell_kind in (
+        "interval",
+        "quadrilateral",
+        "hexahedron",
+        "triangle",
+        "tetrahedron",
+        "prism",
+        "pyramid",
+        "simplex:4",
+        "tensor:4",
+    ):
+        kind, dimension = _reference_rule_layout(cell_kind)
+        for polynomial_degree, geometry_degree in product(
+            range(4 if dimension < 4 else 3), (None, 1, 2)
+        ):
+            points, weights = _degree_aware_reference_rule(
+                cell_kind, polynomial_degree, geometry_degree=geometry_degree
+            )
+            points_ = np.asarray(points)
+            weights_ = np.asarray(weights)
+            exactness = _reference_rule_exactness(
+                cell_kind, polynomial_degree, geometry_degree
+            )
+            measure = (
+                0
+                if geometry_degree is None
+                else dimension * (geometry_degree - 1)
+                if kind == "simplex"
+                else dimension * geometry_degree - 1
+            )
+            assert exactness >= 2 * polynomial_degree + measure
+            failures = []
+            for exponents in product(range(exactness + 2), repeat=dimension):
+                total = sum(exponents)
+                if total > exactness + 1:
+                    continue
+                exact = float(_exact_reference_monomial(kind, dimension, exponents))
+                quadrature = float(
+                    np.sum(weights_ * np.prod(points_ ** np.asarray(exponents), axis=1))
+                )
+                error = abs(quadrature - exact)
+                if total <= exactness:
+                    assert error <= 1.0e-12 * max(1.0, abs(exact)), (
+                        cell_kind,
+                        polynomial_degree,
+                        geometry_degree,
+                        exponents,
+                    )
+                else:
+                    failures.append(error > 1.0e-10 * abs(exact))
+            assert any(failures), (cell_kind, polynomial_degree, geometry_degree)

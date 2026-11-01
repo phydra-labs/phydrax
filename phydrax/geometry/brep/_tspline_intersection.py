@@ -34,7 +34,6 @@ from .._interval_enclosure import (
     interval_subtract,
     prepare_interval_function,
 )
-from .._meshing_domain import _exact_rational_surface_spans
 from .._rational import fraction_down, fraction_up
 from ._intersection import (
     ParametricIntersectionPolicy,
@@ -63,7 +62,7 @@ class _SplineSource:
     """
 
     def __init__(self, patch: TSplineSurfacePatch | BSplineSurfacePatch, /) -> None:
-        spans = _exact_rational_surface_spans(patch)
+        spans = patch.prepare_spans().spans
         if not spans:
             raise ValueError(
                 "A spline source must extract exact rational Bernstein spans."

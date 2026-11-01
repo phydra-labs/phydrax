@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import cached_property, partial
+from functools import partial
 from math import atan2, gcd, lcm, tau, ulp
 from typing import cast, final, Literal, overload
 
@@ -24,6 +24,7 @@ from numpy.typing import NDArray
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import (
     bspline_jet_stencil,
+    PreparedSourceSpans,
     rational_bspline_curve_spans,
     rational_bspline_surface_spans,
     RationalBSplineCurveSpan,
@@ -41,7 +42,7 @@ from ...discretization._exact_algebraic_geometry import (
     rational_coefficient,
 )
 from ...typing import ConvertibleToArray, Dim, Float64, Scalar
-from .._interval_enclosure import Interval, PreparedIntervalFunction
+from .._interval_enclosure import Interval
 
 
 type _ExactSphereRevolutionWitness = tuple[
@@ -1496,7 +1497,7 @@ class OffsetCurve(AbstractCurve):
         ):
             return True
         base = self.base
-        spans = base.rational_spans() if isinstance(base, BSplineCurve) else ()
+        spans = base.prepare_spans().spans if isinstance(base, BSplineCurve) else ()
 
         def derivative(parameter: Array, /) -> Array:
             return jax.jvp(
@@ -1787,12 +1788,6 @@ class RuledSurface(AbstractSurfacePatch):
             upper = np.minimum(upper, np.maximum(first[1], second[1]))
         return np.stack((lower, upper))
 
-    @cached_property
-    def _prepared_derivative_program(self) -> PreparedIntervalFunction:
-        from .._interval_enclosure import prepare_interval_function
-
-        return prepare_interval_function(jax.jacfwd(self.evaluate), 2)
-
     def derivative_bounds(
         self, parameter_box: ConvertibleToArray, /, *, order: int = 1
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -1956,7 +1951,9 @@ class RuledSurface(AbstractSurfacePatch):
                 )
         elif not self.is_c1_on(box):
             raise NotImplementedError("Ruled surface rail continuity is not established.")
-        prepared = self._prepared_derivative_program
+        from .._interval_enclosure import prepare_interval_function
+
+        prepared = prepare_interval_function(jax.jacfwd(self.evaluate), 2)
         lower, upper = prepared.evaluate(box[0:1], box[1:2])
         return lower[0], upper[0]
 
@@ -5147,12 +5144,6 @@ def _exact_bspline_source_bank(
     return bank
 
 
-# Exact span extraction of a high-degree source dominates repeated source
-# enclosure queries; spans are shared per complete source definition.
-_SURFACE_SPAN_CAPACITY = 64
-_SURFACE_SPANS: dict[str, tuple[RationalBSplineSurfaceSpan, ...]] = {}
-
-
 def _stored_exact_bank(bank: object | None, represented: Array, name: str, /) -> object:
     """Return a stored exact bank, deriving it from concrete leaves on demand."""
     if bank is not None:
@@ -5456,20 +5447,18 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
             np.count_nonzero(knots == knot) >= degree for knot in np.unique(interior)
         )
 
-    def rational_spans(self) -> tuple[RationalBSplineSurfaceSpan, ...]:
-        """Exact rational Bernstein spans with Hessian nets, extracted once per definition.
+    def prepare_spans(self, /) -> PreparedSourceSpans[RationalBSplineSurfaceSpan]:
+        """Extract the exact rational Bernstein spans, with Hessian nets, of this content.
 
-        Exact consumers restrict these spans instead of re-extracting them;
-        each span prepares its interval nets on first use and keeps them.
-        The bank is keyed by the complete source definition, so equal sources
-        rebuilt as new patch values share one extraction.
+        Pure: every call extracts again. Consumers of long computations prepare
+        once per carrier and pass the result to every routine that restricts
+        spans (`bspline_surface_derivative_bounds`, source box enclosures).
         """
-        from ._carrier_pieces import carrier_payload
+        from ._carrier_pieces import carrier_content_id
 
-        key = canonical_fingerprint(carrier_payload(self))
-        spans = _SURFACE_SPANS.get(key)
-        if spans is None:
-            spans = rational_bspline_surface_spans(
+        return PreparedSourceSpans(
+            carrier_content_id(self),
+            rational_bspline_surface_spans(
                 np.asarray(self.control_points, dtype=np.float64).tolist(),
                 np.asarray(self.weights, dtype=np.float64).tolist(),
                 np.asarray(self.u_knots, dtype=np.float64).tolist(),
@@ -5481,11 +5470,8 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
                 exact_u_knots=self.exact_u_knots,
                 exact_v_knots=self.exact_v_knots,
                 include_hessian=True,
-            )
-            if len(_SURFACE_SPANS) >= _SURFACE_SPAN_CAPACITY:
-                del _SURFACE_SPANS[next(iter(_SURFACE_SPANS))]
-            _SURFACE_SPANS[key] = spans
-        return spans
+            ),
+        )
 
     def evaluate(self, parameters: Array, /) -> Array:
         values = jnp.asarray(parameters, dtype=self.control_points.dtype)
@@ -5503,54 +5489,92 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
     ) -> tuple[np.ndarray, np.ndarray]:
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("B-spline surface derivative bounds support order=1 only.")
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
-        from .._rational import fraction_down, fraction_up
+        return bspline_surface_derivative_bounds(
+            self, self.prepare_spans(), parameter_box
+        )
 
-        query = tuple(
-            tuple(Fraction.from_float(float(value)) for value in box[:, axis])
+
+def bspline_surface_derivative_bounds(
+    patch: BSplineSurfacePatch,
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
+    parameter_box: ConvertibleToArray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose the Jacobian columns of ``patch`` on a UV box from its prepared spans."""
+    from .._rational import fraction_down, fraction_up
+
+    box = np.asarray(patch.validate_parameter_box(parameter_box), dtype=np.float64)
+    query = tuple(
+        tuple(Fraction.from_float(float(value)) for value in box[:, axis])
+        for axis in range(2)
+    )
+    component_bounds: list[list[list[tuple[Fraction, Fraction]]]] = [
+        [[], []] for _ in range(3)
+    ]
+    for span in spans.spans:
+        span_bounds = span.parameter_bounds
+        restricted = tuple(
+            (
+                max(query[axis][0], span_bounds[axis][0]),
+                min(query[axis][1], span_bounds[axis][1]),
+            )
             for axis in range(2)
         )
-        spans = self.rational_spans()
-        component_bounds: list[list[list[tuple[Fraction, Fraction]]]] = [
-            [[], []] for _ in range(3)
-        ]
-        for span in spans:
-            span_bounds = span.parameter_bounds
-            restricted = tuple(
-                (
-                    max(query[axis][0], span_bounds[axis][0]),
-                    min(query[axis][1], span_bounds[axis][1]),
-                )
-                for axis in range(2)
-            )
-            if any(lower > upper for lower, upper in restricted):
-                continue
-            enclosure = span.enclose(restricted)
-            if not enclosure.positive_denominator:
-                raise ValueError(
-                    "A rational B-spline span denominator is not strictly positive."
-                )
-            for component in range(3):
-                component_bounds[component][0].append(enclosure.du_bounds[component])
-                component_bounds[component][1].append(enclosure.dv_bounds[component])
-        if any(
-            not axis_bounds for component in component_bounds for axis_bounds in component
-        ):
+        if any(lower > upper for lower, upper in restricted):
+            continue
+        enclosure = span.enclose(restricted)
+        if not enclosure.positive_denominator:
             raise ValueError(
-                "The derivative query box does not intersect the active spline domain."
+                "A rational B-spline span denominator is not strictly positive."
             )
-        lower = np.empty((3, 2), dtype=np.float64)
-        upper = np.empty((3, 2), dtype=np.float64)
-        for component, axes in enumerate(component_bounds):
-            for axis, intervals in enumerate(axes):
-                lower[component, axis] = fraction_down(
-                    min(bound[0] for bound in intervals)
-                )
-                upper[component, axis] = fraction_up(max(bound[1] for bound in intervals))
-        return lower, upper
+        for component in range(3):
+            component_bounds[component][0].append(enclosure.du_bounds[component])
+            component_bounds[component][1].append(enclosure.dv_bounds[component])
+    if any(
+        not axis_bounds for component in component_bounds for axis_bounds in component
+    ):
+        raise ValueError(
+            "The derivative query box does not intersect the active spline domain."
+        )
+    lower = np.empty((3, 2), dtype=np.float64)
+    upper = np.empty((3, 2), dtype=np.float64)
+    for component, axes in enumerate(component_bounds):
+        for axis, intervals in enumerate(axes):
+            lower[component, axis] = fraction_down(min(bound[0] for bound in intervals))
+            upper[component, axis] = fraction_up(max(bound[1] for bound in intervals))
+    return lower, upper
 
 
-_MINIMUM_QUERY_BUCKET = 8
+_QUERY_BUCKETS = (8, 64, 512, 4096)
+
+
+def bucketed_query_rows(
+    function: Callable[[Array], Array], rows: Array | np.ndarray, /
+) -> np.ndarray:
+    """Evaluate ``function`` on concrete query rows at a fixed set of batch shapes.
+
+    Every distinct batch shape compiles its own executable (several megabytes
+    for a spline jet program), and refinement queries vary in size every
+    round. Rows are padded on the host with copies of the last row to the next
+    bucket of `_QUERY_BUCKETS`; longer queries run in chunks of the largest
+    bucket. A row-wise ``function`` therefore compiles at most one executable
+    per bucket, independent of the query sizes a computation issues. Inputs
+    reach the device by transfer, which compiles nothing.
+    """
+    host = np.asarray(rows)
+    count = host.shape[0]
+    if count == 0:
+        return np.asarray(function(jax.device_put(host)))
+    chunk = _QUERY_BUCKETS[-1]
+    pieces = []
+    for start in range(0, count, chunk):
+        block = host[start : start + chunk]
+        size = block.shape[0]
+        bucket = next(value for value in _QUERY_BUCKETS if value >= size)
+        if bucket != size:
+            block = np.concatenate((block, np.repeat(block[-1:], bucket - size, axis=0)))
+        pieces.append(np.asarray(function(jax.device_put(block)))[:size])
+    return pieces[0] if len(pieces) == 1 else np.concatenate(pieces)
 
 
 def _bucketed_rows(
@@ -5559,22 +5583,16 @@ def _bucketed_rows(
     operands: tuple[Array, ...],
     /,
 ) -> Array:
-    """Evaluate concrete query rows at a power-of-two padded batch size.
+    """Evaluate concrete query rows through `bucketed_query_rows`.
 
-    Each distinct batch shape compiles its own executable, and refinement
-    queries vary in size every round; padding with copies of the last row on
-    the host bounds the compiled shapes to one per octave. Traced rows or
-    operands keep their shape, so enclosing programs see no padding operations.
+    Traced rows or operands keep their shape, so enclosing programs see no
+    padding operations.
     """
-    count = rows.shape[0]
-    if count == 0 or any(isinstance(value, Tracer) for value in (rows, *operands)):
+    if rows.shape[0] == 0 or any(
+        isinstance(value, Tracer) for value in (rows, *operands)
+    ):
         return function(rows)
-    bucket = max(_MINIMUM_QUERY_BUCKET, 1 << (count - 1).bit_length())
-    if bucket == count:
-        return function(rows)
-    host = np.asarray(rows)
-    padded = np.concatenate((host, np.repeat(host[-1:], bucket - count, axis=0)))
-    return jnp.asarray(np.asarray(function(jnp.asarray(padded)))[:count])
+    return jax.device_put(bucketed_query_rows(function, rows))
 
 
 def _bspline_surface_point(
@@ -5619,10 +5637,6 @@ def _bspline_surface_rows(
     return jax.vmap(
         lambda point: _bspline_surface_point(*arrays, point, u_degree, v_degree)
     )(parameters)
-
-
-_CURVE_SPAN_CAPACITY = 256
-_CURVE_SPANS: dict[str, tuple[RationalBSplineCurveSpan, ...]] = {}
 
 
 class BSplineCurve(AbstractCurve):
@@ -5773,18 +5787,18 @@ class BSplineCurve(AbstractCurve):
             float(self.knots[self.control_points.shape[0]]),
         )
 
-    def rational_spans(self) -> tuple[RationalBSplineCurveSpan, ...]:
-        """Exact rational Bernstein spans, extracted once per source definition.
+    def prepare_spans(self, /) -> PreparedSourceSpans[RationalBSplineCurveSpan]:
+        """Extract the exact rational Bernstein spans of this source content.
 
-        Exact consumers restrict these spans instead of re-extracting them;
-        each span prepares its interval nets on first use and keeps them.
+        Pure: every call extracts again. Consumers of long computations prepare
+        once per carrier and pass the result to `bspline_curve_bounds` and
+        `bspline_curve_derivative_bounds`.
         """
-        from ._carrier_pieces import carrier_payload
+        from ._carrier_pieces import carrier_content_id
 
-        key = canonical_fingerprint(carrier_payload(self))
-        spans = _CURVE_SPANS.get(key)
-        if spans is None:
-            spans = rational_bspline_curve_spans(
+        return PreparedSourceSpans(
+            carrier_content_id(self),
+            rational_bspline_curve_spans(
                 np.asarray(self.control_points).tolist(),
                 np.asarray(self.weights).tolist(),
                 np.asarray(self.knots).tolist(),
@@ -5792,11 +5806,8 @@ class BSplineCurve(AbstractCurve):
                 exact_control_points=self.exact_control_points,
                 exact_weights=self.exact_weights,
                 exact_knots=self.exact_knots,
-            )
-            if len(_CURVE_SPANS) >= _CURVE_SPAN_CAPACITY:
-                del _CURVE_SPANS[next(iter(_CURVE_SPANS))]
-            _CURVE_SPANS[key] = spans
-        return spans
+            ),
+        )
 
     def is_c1_on(self, first: float, last: float, /) -> bool:
         if not super().is_c1_on(first, last):
@@ -5808,91 +5819,14 @@ class BSplineCurve(AbstractCurve):
         )
 
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
-        from .._rational import fraction_down, fraction_up
-
-        if not np.isfinite(first) or not np.isfinite(last) or first > last:
-            raise ValueError("BSplineCurve bounds must be finite and ordered.")
-        lower = Fraction.from_float(float(first))
-        upper = Fraction.from_float(float(last))
-        spans = self.rational_spans()
-        component_bounds: list[list[tuple[Fraction, Fraction]]] = [
-            [] for _ in range(self.ambient_dimension)
-        ]
-        for span in spans:
-            span_lower, span_upper = span.parameter_bounds
-            first_ = max(lower, span_lower)
-            last_ = min(upper, span_upper)
-            if first_ > last_:
-                continue
-            enclosure = span.enclose((first_, last_))
-            for axis, value in enumerate(enclosure.value_bounds):
-                component_bounds[axis].append(value)
-        if any(not values for values in component_bounds):
-            raise ValueError(
-                "BSplineCurve bounds do not intersect its active source domain."
-            )
-        return np.asarray(
-            (
-                tuple(
-                    fraction_down(min(value[0] for value in values))
-                    for values in component_bounds
-                ),
-                tuple(
-                    fraction_up(max(value[1] for value in values))
-                    for values in component_bounds
-                ),
-            ),
-            dtype=np.float64,
-        )
+        return bspline_curve_bounds(self, self.prepare_spans(), first, last)
 
     def derivative_bounds(
         self, first: float, last: float, /, *, order: int = 1
     ) -> tuple[np.ndarray, np.ndarray]:
-        from .._rational import fraction_down, fraction_up
-
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("B-spline curve derivative bounds support order=1 only.")
-        if not self.is_c1_on(first, last):
-            raise NotImplementedError(
-                "A derivative bound across a non-C1 B-spline knot is unsupported."
-            )
-        lower, upper = Fraction.from_float(float(first)), Fraction.from_float(float(last))
-        spans = self.rational_spans()
-        component_bounds: list[list[tuple[Fraction, Fraction]]] = [
-            [] for _ in range(self.ambient_dimension)
-        ]
-        for span in spans:
-            span_lower, span_upper = span.parameter_bounds
-            first_, last_ = max(lower, span_lower), min(upper, span_upper)
-            if first_ > last_:
-                continue
-            enclosure = span.enclose((first_, last_))
-            if not enclosure.positive_denominator:
-                raise ValueError(
-                    "A rational B-spline curve denominator is not strictly positive."
-                )
-            for axis, value in enumerate(enclosure.first_derivative_bounds):
-                component_bounds[axis].append(value)
-        if any(not values for values in component_bounds):
-            raise ValueError(
-                "Derivative bounds do not intersect the active B-spline domain."
-            )
-        return (
-            np.asarray(
-                tuple(
-                    fraction_down(min(value[0] for value in values))
-                    for values in component_bounds
-                ),
-                dtype=np.float64,
-            ),
-            np.asarray(
-                tuple(
-                    fraction_up(max(value[1] for value in values))
-                    for values in component_bounds
-                ),
-                dtype=np.float64,
-            ),
-        )
+        return bspline_curve_derivative_bounds(self, self.prepare_spans(), first, last)
 
     @property
     def ambient_dimension(self) -> int:
@@ -5908,6 +5842,99 @@ class BSplineCurve(AbstractCurve):
             values.reshape((-1,)),
             arrays,
         ).reshape((*values.shape, self.control_points.shape[1]))
+
+
+def bspline_curve_bounds(
+    curve: BSplineCurve,
+    spans: PreparedSourceSpans[RationalBSplineCurveSpan],
+    first: float,
+    last: float,
+    /,
+) -> np.ndarray:
+    """Enclose ``curve`` on ``[first, last]`` from its prepared exact spans."""
+    from .._rational import fraction_down, fraction_up
+
+    if not np.isfinite(first) or not np.isfinite(last) or first > last:
+        raise ValueError("BSplineCurve bounds must be finite and ordered.")
+    lower = Fraction.from_float(float(first))
+    upper = Fraction.from_float(float(last))
+    component_bounds: list[list[tuple[Fraction, Fraction]]] = [
+        [] for _ in range(curve.ambient_dimension)
+    ]
+    for span in spans.spans:
+        span_lower, span_upper = span.parameter_bounds
+        first_ = max(lower, span_lower)
+        last_ = min(upper, span_upper)
+        if first_ > last_:
+            continue
+        enclosure = span.enclose((first_, last_))
+        for axis, value in enumerate(enclosure.value_bounds):
+            component_bounds[axis].append(value)
+    if any(not values for values in component_bounds):
+        raise ValueError("BSplineCurve bounds do not intersect its active source domain.")
+    return np.asarray(
+        (
+            tuple(
+                fraction_down(min(value[0] for value in values))
+                for values in component_bounds
+            ),
+            tuple(
+                fraction_up(max(value[1] for value in values))
+                for values in component_bounds
+            ),
+        ),
+        dtype=np.float64,
+    )
+
+
+def bspline_curve_derivative_bounds(
+    curve: BSplineCurve,
+    spans: PreparedSourceSpans[RationalBSplineCurveSpan],
+    first: float,
+    last: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose the first derivative of ``curve`` on ``[first, last]`` from its spans."""
+    from .._rational import fraction_down, fraction_up
+
+    if not curve.is_c1_on(first, last):
+        raise NotImplementedError(
+            "A derivative bound across a non-C1 B-spline knot is unsupported."
+        )
+    lower, upper = Fraction.from_float(float(first)), Fraction.from_float(float(last))
+    component_bounds: list[list[tuple[Fraction, Fraction]]] = [
+        [] for _ in range(curve.ambient_dimension)
+    ]
+    for span in spans.spans:
+        span_lower, span_upper = span.parameter_bounds
+        first_, last_ = max(lower, span_lower), min(upper, span_upper)
+        if first_ > last_:
+            continue
+        enclosure = span.enclose((first_, last_))
+        if not enclosure.positive_denominator:
+            raise ValueError(
+                "A rational B-spline curve denominator is not strictly positive."
+            )
+        for axis, value in enumerate(enclosure.first_derivative_bounds):
+            component_bounds[axis].append(value)
+    if any(not values for values in component_bounds):
+        raise ValueError("Derivative bounds do not intersect the active B-spline domain.")
+    return (
+        np.asarray(
+            tuple(
+                fraction_down(min(value[0] for value in values))
+                for values in component_bounds
+            ),
+            dtype=np.float64,
+        ),
+        np.asarray(
+            tuple(
+                fraction_up(max(value[1] for value in values))
+                for values in component_bounds
+            ),
+            dtype=np.float64,
+        ),
+    )
 
 
 def _bspline_curve_point(
@@ -5948,6 +5975,22 @@ def surface_differential(patch: AbstractSurfacePatch, parameters: Array, /) -> A
         parameters_.reshape((-1, 2))
     )
     return values.reshape((*leading, 3, 2))
+
+
+def surface_differential_rows(
+    patch: AbstractSurfacePatch, parameters: np.ndarray, /
+) -> np.ndarray:
+    """Host method: `surface_differential` at concrete UV rows, bucketed shapes.
+
+    Queries reach the compiled Jacobian programs only at the shapes of
+    `bucketed_query_rows`, so a computation issuing many differently sized
+    queries compiles a bounded set of executables.
+    """
+    host = np.asarray(parameters, dtype=np.float64)
+    values = bucketed_query_rows(
+        jax.vmap(jax.jacfwd(patch.evaluate)), host.reshape((-1, 2))
+    )
+    return values.reshape((*host.shape[:-1], 3, 2))
 
 
 def surface_jacobian(patch: AbstractSurfacePatch, parameters: Array, /) -> Array:
@@ -6246,6 +6289,9 @@ __all__ = [
     "BRepCurve",
     "BSplineCurve",
     "BSplineSurfacePatch",
+    "bspline_curve_bounds",
+    "bspline_curve_derivative_bounds",
+    "bspline_surface_derivative_bounds",
     "CircleCurve",
     "ConePatch",
     "CylinderPatch",

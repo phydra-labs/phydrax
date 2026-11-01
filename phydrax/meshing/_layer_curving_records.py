@@ -55,7 +55,10 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryQuery,
     SourceProjectionStatus,
 )
-from ..geometry._source_fidelity import validate_source_fidelity_witness
+from ..geometry._source_fidelity import (
+    certify_source_fidelity,
+    validate_source_fidelity_witness,
+)
 from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 from ..geometry._source_identity import source_entity_id
 from ..geometry._source_interpolation import exact_surface_coordinate_expressions
@@ -64,6 +67,7 @@ from ..geometry.brep._patches import surface_differential
 from ..geometry.implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
 from ..geometry.implicit._source_charts import (
     _AdaptiveImplicitBoundaryCarrier,
+    AdaptiveImplicitRootChartMap,
     AdaptiveImplicitSourceQuery,
     ImplicitRootChartEvidence,
 )
@@ -2139,6 +2143,13 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
         return self.implicit_root_trace.root_chart_witness_id
 
     def require_current(self, mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
+        """Require this computed evidence to answer ``mesh`` and ``geometry``.
+
+        Nothing is recomputed: source revision, frame and operand identities
+        must be the bound ones, and the retained fidelity proof must be the one
+        these operands determine (that proof validated the chart witness on
+        them). :meth:`revalidate` replays the witness, chart and root proofs.
+        """
         if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
             raise TypeError("require_current requires CellMesh and CellGeometrySpec.")
         query = self.source_query
@@ -2170,7 +2181,48 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "Layer source evidence is bound to different source or target operands."
             )
-        self.fidelity.require_current(mesh, geometry, query)
+        self.fidelity.require_inputs(
+            mesh,
+            geometry,
+            query,
+            tolerance=self.fidelity.tolerance,
+            maximum_normal_deviation=self.fidelity.maximum_normal_deviation,
+            witness=self.fidelity.witness,
+        )
+        if self.fidelity.status != "certified":
+            raise ValueError(
+                "Layer source evidence retains an uncertified fidelity proof."
+            )
+
+    def _replay_fidelity(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        root_charts: AdaptiveImplicitRootChartMap | None,
+        /,
+    ) -> None:
+        fresh = certify_source_fidelity(
+            mesh,
+            geometry,
+            self.source_query,
+            tolerance=self.fidelity.tolerance,
+            maximum_normal_deviation=self.fidelity.maximum_normal_deviation,
+            witness=self.fidelity.witness,
+            root_charts=root_charts,
+        )
+        if fresh.certificate_id != self.fidelity.certificate_id:
+            raise ValueError(
+                "Source fidelity proof does not reproduce its current source and map inputs."
+            )
+
+    def revalidate(self, mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
+        """Replay every retained source proof; stored identities are not proof authority."""
+        self.require_current(mesh, geometry)
+        query = self.source_query
+        if self.source_surface_charts is not None or self.mapped_chart_trace is not None:
+            # Adaptive implicit evidence replays its fidelity proof below, on the
+            # root charts it prepares for its own revalidation.
+            self._replay_fidelity(mesh, geometry, None)
         validate_source_fidelity_witness(mesh, geometry, query, self.chart_witness)
         if self.source_surface_charts is not None:
             if self.projection_trace is not None:
@@ -2498,10 +2550,14 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Adaptive implicit root-map evidence no longer revalidates."
                 )
-            for row, chart_row in enumerate(trace.chart_rows):
-                point = root_map.project_target(
-                    int(chart_row), trace.target_reference_points[row]
-                )
+            # The fidelity proof replays on the root charts just prepared for
+            # its own source and controls; they are never prepared twice.
+            self._replay_fidelity(mesh, geometry, root_map)
+            replayed = root_map.project_targets(
+                tuple(int(chart_row) for chart_row in trace.chart_rows),
+                trace.target_reference_points,
+            )
+            for row, point in enumerate(replayed):
                 if (
                     point.status != trace.statuses[row]
                     or point.source_cell_key != trace.source_cell_keys[row]
@@ -2518,6 +2574,7 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             local_dofs = trace.target_local_dofs
             target_points = trace.target_points
             reference_points = trace.target_reference_points
+        reference_nodes_by_block = {}
         for row, (node_row, cell_id, local_dof, reference) in enumerate(
             zip(rows, target_cells, local_dofs, reference_points, strict=True)
         ):
@@ -2527,14 +2584,17 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Layer source map names an absent target cell."
                 ) from error
-            reference_element = _face_reference_element(
-                elements[block_row], mesh.blocks[block_row].cell_kind
-            )
-            if not isinstance(reference_element, FiniteElementSpec):
-                raise ValueError(
-                    "Layer source map requires a canonical exact nodal element."
+            reference_nodes = reference_nodes_by_block.get(block_row)
+            if reference_nodes is None:
+                reference_element = _face_reference_element(
+                    elements[block_row], mesh.blocks[block_row].cell_kind
                 )
-            reference_nodes = lagrange_reference_node_data(reference_element)
+                if not isinstance(reference_element, FiniteElementSpec):
+                    raise ValueError(
+                        "Layer source map requires a canonical exact nodal element."
+                    )
+                reference_nodes = lagrange_reference_node_data(reference_element)
+                reference_nodes_by_block[block_row] = reference_nodes
             if local_dof < 0 or local_dof >= len(reference_nodes):
                 raise ValueError(
                     "Layer source map changed its target reference DOF identity."

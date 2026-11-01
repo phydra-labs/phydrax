@@ -17,6 +17,7 @@ import numpy as np
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 
+
 _CarrierT = TypeVar("_CarrierT", bound=StrictModule, covariant=True)
 
 
@@ -31,6 +32,11 @@ def carrier_payload(carrier: StrictModule, /) -> dict[str, object]:
     }
 
 
+def carrier_content_id(carrier: StrictModule, /) -> str:
+    """Content id of one complete immutable source definition."""
+    return canonical_fingerprint(carrier_payload(carrier))
+
+
 class CoefficientEnclosureSource(ABC):
     """Optional explicit source coefficients for interval source evaluators."""
 
@@ -39,7 +45,6 @@ class CoefficientEnclosureSource(ABC):
         self,
     ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], ...]:
         raise NotImplementedError
-
 
 
 @dataclass(frozen=True, slots=True)

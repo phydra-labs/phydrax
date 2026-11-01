@@ -27,7 +27,6 @@ from ._domain_coverage import PiecewiseLinearDomain
 from ._global_embedding import GlobalEmbeddingCertificate
 from ._meshing_domain import MeshingDomain
 from ._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryQuery
-from ._source_fidelity import validate_source_fidelity_witness
 from ._source_fidelity_certificate import SourceFidelityCertificate
 from .implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
@@ -1335,6 +1334,7 @@ def _cad_chart_partition(
     /,
 ) -> tuple[int, tuple[str, ...]]:
     from ._domain_boundary import exact_plane_chart, MeshingDomainBoundarySource
+    from ._meshing_domain import SourcePreparation
 
     if not isinstance(source, MeshingDomainBoundarySource) or not _same_domain(
         source.domain, domain
@@ -1411,12 +1411,13 @@ def _cad_chart_partition(
             "CAD boundary chart witness omits or adds an authored source patch.",
             status="violated",
         )
+    preparation = SourcePreparation(source.domain)
     for patch, plane in plane_by_patch.items():
         if plane:
             # A curved plane-chart trim is referenced by the target's boundary
             # chords, each separated from its source arc by a certified lens.
             declared_by_patch[patch] = source._trim_partition_reference_unchecked(
-                patch, tuple(targets_by_patch[patch]), plane=True
+                patch, tuple(targets_by_patch[patch]), preparation, plane=True
             )[0]
     plane_patches = frozenset(patch for patch, plane in plane_by_patch.items() if plane)
     for patch in source.patches:
@@ -3037,9 +3038,13 @@ def approximate_source_coverage(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     embedding: GlobalEmbeddingCertificate,
-    revalidate_fidelity: bool = True,
 ) -> SourceCoverageAttempt:
-    """Prove bounded oriented material coverage from source-chart homotopy data."""
+    """Prove bounded oriented material coverage from source-chart homotopy data.
+
+    The fidelity certificate must be current for these operands; its proof
+    validated its boundary-chart witness on them, so the witness is not
+    validated again.
+    """
 
     def fail(
         check: str,
@@ -3084,8 +3089,7 @@ def approximate_source_coverage(
         )
     try:
         embedding.binding.require(mesh, geometry)
-        if revalidate_fidelity:
-            fidelity.require_current(mesh, geometry, source)
+        fidelity.require_current(mesh, geometry, source)
     except (TypeError, ValueError, ArithmeticError) as error:
         return fail(
             "source_boundary_premise",
@@ -3193,14 +3197,6 @@ def approximate_source_coverage(
         return fail(
             "source_boundary_chart_identity",
             "Boundary chart witness binds another source revision.",
-            "violated",
-        )
-    try:
-        validate_source_fidelity_witness(mesh, geometry, source, witness)
-    except (TypeError, ValueError, ArithmeticError) as error:
-        return fail(
-            "source_boundary_chart_witness",
-            f"Boundary chart witness does not revalidate: {error}",
             "violated",
         )
     regions = np.asarray(cell_regions)
