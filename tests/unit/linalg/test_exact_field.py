@@ -154,6 +154,19 @@ def test_exact_sparse_rank_factorization_returns_canonical_nullspace() -> None:
     )
 
 
+def test_ordered_sparse_rank_factorization_matches_reduced_row_echelon_form() -> None:
+    matrix = (
+        {0: Fraction(1), 1: Fraction(2)},
+        {0: Fraction(2), 1: Fraction(4)},
+        {1: Fraction(1), 2: Fraction(1)},
+    )
+
+    factorization = factor_exact_sparse(matrix, 3, ordered=True)
+
+    assert factorization.evidence.pivot_columns == (0, 1)
+    assert factorization.nullspace_basis() == ((Fraction(2), Fraction(-1), Fraction(1)),)
+
+
 def test_exact_sparse_rank_factorization_preserves_radical_field() -> None:
     from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 
