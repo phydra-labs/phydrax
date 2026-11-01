@@ -1,11 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Native exact kernels reproduce their host references bit for bit."""
+"""Native exact kernels preserve exact results, enclosure and boundary safety."""
 
 from __future__ import annotations
 
 import random
+import weakref
 from fractions import Fraction
 from itertools import product
 from typing import Any
@@ -13,7 +14,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax import _bvh
+from phydrax import _bvh, _exact_kernels
 from phydrax._exact_kernels import (
     bisect_integer_nets,
     bvh_pair_blocks,
@@ -491,3 +492,192 @@ def test_float64_interval_kernels_are_bit_identical_to_the_host_operations() -> 
     )
     for native, host in zip(broadcast, reference, strict=True):
         assert native.tobytes() == np.asarray(host).tobytes()
+
+
+@pytest.mark.parametrize("dtype", (np.float32, np.int32, np.float64))
+@pytest.mark.parametrize("operation", ("product", "add", "subtract"))
+def test_interval_marshalling_normalizes_small_and_strided_buffers(
+    dtype: Any, operation: str
+) -> None:
+    first_lower = np.asarray(((1, 99, 2, 99),), dtype=dtype)[:, ::2]
+    first_upper = first_lower + 1
+    second_lower = np.asarray(2, dtype=dtype)
+    second_upper = np.asarray(((3,), (4,)), dtype=dtype)
+    arguments = (first_lower, first_upper, second_lower, second_upper)
+    if operation == "product":
+        lower, upper = _exact_kernels.float64_interval_product(*arguments)
+        expected = (first_lower * second_lower, first_upper * second_upper)
+    else:
+        subtract = operation == "subtract"
+        lower, upper = _exact_kernels.float64_interval_sum(*arguments, subtract=subtract)
+        expected = (
+            (first_lower - second_upper, first_upper - second_lower)
+            if subtract
+            else (first_lower + second_lower, first_upper + second_upper)
+        )
+    assert lower.shape == upper.shape == (2, 2)
+    assert lower.dtype == upper.dtype == np.float64
+    assert np.array_equal(lower, np.broadcast_to(expected[0], (2, 2)))
+    assert np.array_equal(upper, np.broadcast_to(expected[1], (2, 2)))
+
+
+def _small_host_tree(dimension: int = 2) -> tuple[np.ndarray, ...]:
+    return (
+        np.zeros((1, dimension)),
+        np.ones((1, dimension)),
+        np.asarray((-1,), dtype=np.int64),
+        np.asarray((-1,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+        np.asarray(((0, 1),), dtype=np.int64),
+        np.zeros((2, dimension)),
+        np.ones((2, dimension)),
+    )
+
+
+def _small_pair_stream(
+    first: tuple[np.ndarray, ...], second: tuple[np.ndarray, ...]
+) -> Any:
+    return bvh_pair_blocks(
+        first,
+        second,
+        include_touching=True,
+        absolute_tolerance=0.0,
+        relative_tolerance=0.0,
+        item_block=4,
+        node_block=1,
+    )
+
+
+@pytest.mark.parametrize("index", range(8))
+def test_bvh_rejects_small_dtypes_before_loading_native(
+    index: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = list(_small_host_tree())
+    tree[index] = tree[index].astype(np.float32 if index in (0, 1, 6, 7) else np.int32)
+    monkeypatch.setattr(
+        _exact_kernels,
+        "load_meshcore",
+        lambda: pytest.fail("invalid tree reached native loading"),
+    )
+    with pytest.raises(ValueError, match="float64.*int64"):
+        next(_small_pair_stream(tuple(tree), _small_host_tree()))
+
+
+@pytest.mark.parametrize(
+    ("index", "replacement"),
+    [
+        (0, np.zeros(2)),
+        (1, np.ones((1, 1))),
+        (1, np.ones((2, 2))),
+        (2, np.empty(0, dtype=np.int64)),
+        (3, np.empty(0, dtype=np.int64)),
+        (4, np.empty(0, dtype=np.int64)),
+        (2, np.full((1, 1), -1, dtype=np.int64)),
+        (5, np.empty((0, 2), dtype=np.int64)),
+        (5, np.empty((1, 0), dtype=np.int64)),
+        (5, np.asarray((0, 1), dtype=np.int64)),
+        (6, np.zeros((2, 1))),
+        (6, np.zeros(2)),
+        (7, np.ones((1, 2))),
+        (5, np.asarray(((0, 2),), dtype=np.int64)),
+    ],
+)
+def test_bvh_rejects_inconsistent_extents_before_loading_native(
+    index: int, replacement: np.ndarray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = list(_small_host_tree())
+    tree[index] = replacement
+    monkeypatch.setattr(
+        _exact_kernels,
+        "load_meshcore",
+        lambda: pytest.fail("invalid tree reached native loading"),
+    )
+    with pytest.raises(ValueError):
+        next(_small_pair_stream(tuple(tree), _small_host_tree()))
+
+
+def test_bvh_rejects_cross_tree_dimension_before_loading_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        _exact_kernels,
+        "load_meshcore",
+        lambda: pytest.fail("dimension mismatch reached native loading"),
+    )
+    with pytest.raises(ValueError, match="same dimension"):
+        next(_small_pair_stream(_small_host_tree(2), _small_host_tree(1)))
+
+
+@pytest.mark.parametrize("finish", ("close", "throw", "native_error", "exhaust"))
+def test_bvh_stream_retains_owners_and_frees_on_every_exit(
+    finish: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = _exact_kernels.load_meshcore()
+    original_view = _exact_kernels._tree_view
+    owners: list[weakref.ReferenceType[np.ndarray]] = []
+    freed: list[int] = []
+    calls = 0
+
+    def view(tree: tuple[np.ndarray, ...]) -> Any:
+        result, arrays = original_view(tree)
+        # Both are newly allocated, not kept alive by the caller's source tree.
+        owners.extend(weakref.ref(arrays[index]) for index in (0, 2))
+        return result, arrays
+
+    def advance(*args: Any) -> int:
+        nonlocal calls
+        assert all(owner() is not None for owner in owners)
+        calls += 1
+        if calls == 2 and finish == "native_error":
+            return int(_exact_kernels.MeshcoreStatus.ALLOCATION_FAILURE)
+        return library["phx_mc_bvh_pair_stream_next"](*args)
+
+    def free(handle: Any) -> None:
+        assert all(owner() is not None for owner in owners)
+        freed.append(handle.value)
+        library["phx_mc_bvh_pair_stream_free"](handle)
+
+    monkeypatch.setattr(_exact_kernels, "_tree_view", view)
+    monkeypatch.setattr(
+        _exact_kernels,
+        "load_meshcore",
+        lambda: {
+            "phx_mc_bvh_pair_stream_create": library["phx_mc_bvh_pair_stream_create"],
+            "phx_mc_bvh_pair_stream_next": advance,
+            "phx_mc_bvh_pair_stream_free": free,
+        },
+    )
+    tree = list(_small_host_tree())
+    tree[0] = np.zeros((1, 4))[:, ::2]
+    stream = _small_pair_stream(tuple(tree), tuple(tree))
+    block = next(stream)
+    assert list(zip(*block, strict=True)) == [(0, 0), (0, 1), (1, 0), (1, 1)]
+    saved = tuple(value.copy() for value in block)
+    if finish == "close":
+        stream.close()
+    elif finish == "throw":
+        with pytest.raises(RuntimeError, match="consumer failure"):
+            stream.throw(RuntimeError("consumer failure"))
+    elif finish == "native_error":
+        with pytest.raises(RuntimeError, match="bvh_pair_stream_next"):
+            next(stream)
+    else:
+        assert list(stream) == []
+    assert len(freed) == 1
+    assert all(owner() is None for owner in owners)
+    assert all(np.array_equal(a, b) for a, b in zip(block, saved, strict=True))
+
+
+def test_bvh_yielded_blocks_do_not_alias_reused_output_buffers() -> None:
+    tree = _bvh.prepare_bvh(np.zeros((80, 2)), np.ones((80, 2)), dtype=np.float64)
+    arrays = _bvh._host_arrays(tree)
+    stream = _small_pair_stream(arrays, arrays)
+    first = next(stream)
+    saved = tuple(value.copy() for value in first)
+    count = len(first[0])
+    for block in stream:
+        count += len(block[0])
+        assert not any(np.shares_memory(a, b) for a in first for b in block)
+        block[0][:] = -1
+    assert count == 80 * 80
+    assert all(np.array_equal(a, b) for a, b in zip(first, saved, strict=True))

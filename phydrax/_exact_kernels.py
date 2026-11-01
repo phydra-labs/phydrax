@@ -109,6 +109,9 @@ def float64_interval_product(
     unbounded endpoint contributes 0, a NaN endpoint product gives the whole
     line, an endpoint rounds outward only when its product is not error free,
     and a sign fixed by the operand signs is kept.
+
+    Inputs are converted to contiguous float64 buffers before borrowing their
+    addresses; the conversion owners remain live until the call returns.
     """
     endpoints, shape = _aligned_endpoints(
         first_lower, first_upper, second_lower, second_upper
@@ -139,6 +142,8 @@ def float64_interval_sum(
     Bit-identical to the host interval interpreter: an endpoint rounds outward
     only when its sum is not error free, a NaN endpoint widens to the whole
     line, and a sum of sign-fixed operands keeps that sign.
+
+    Inputs are converted to contiguous float64 buffers, as for the product.
     """
     endpoints, shape = _aligned_endpoints(
         first_lower, first_upper, second_lower, second_upper
@@ -159,11 +164,12 @@ def float64_interval_sum(
 def _aligned_endpoints(
     *endpoints: np.ndarray | np.generic,
 ) -> tuple[list[np.ndarray], tuple[int, ...]]:
-    shape = endpoints[0].shape
-    if any(value.shape != shape for value in endpoints):
-        endpoints = tuple(np.broadcast_arrays(*endpoints))
-        shape = endpoints[0].shape
-    return [np.ascontiguousarray(value) for value in endpoints], shape
+    converted = tuple(np.asarray(value, dtype=np.float64) for value in endpoints)
+    shape = converted[0].shape
+    if any(value.shape != shape for value in converted):
+        converted = tuple(np.broadcast_arrays(*converted))
+        shape = converted[0].shape
+    return [np.ascontiguousarray(value) for value in converted], shape
 
 
 def interval_bernstein_restrict(
@@ -703,6 +709,41 @@ class _TreeView(ctypes.Structure):
 
 
 def _tree_view(tree: HostTree, /) -> tuple[_TreeView, tuple[np.ndarray, ...]]:
+    if len(tree) != 8:
+        raise ValueError("host trees require eight arrays.")
+    for index, value in enumerate(tree):
+        dtype = np.float64 if index in (0, 1, 6, 7) else np.int64
+        if not isinstance(value, np.ndarray) or value.dtype != dtype:
+            raise ValueError("host tree bounds must be float64 and indices int64.")
+    node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = tree
+    if (
+        node_min.ndim != 2
+        or node_min.shape[0] < 1
+        or node_min.shape[1] < 1
+        or node_max.shape != node_min.shape
+    ):
+        raise ValueError("node bounds must share one nonempty (nodes, dimension) shape.")
+    node_count, dimension = node_min.shape
+    if any(value.shape != (node_count,) for value in (left, right, leaf)):
+        raise ValueError("node metadata must have one entry per node.")
+    if leaf_items.ndim != 2 or leaf_items.shape[1] < 1:
+        raise ValueError("leaf items must have shape (leaves, positive leaf width).")
+    if (
+        item_min.ndim != 2
+        or item_min.shape[1] != dimension
+        or item_max.shape != item_min.shape
+    ):
+        raise ValueError("item bounds must share the node dimension and one shape.")
+    if np.any(leaf >= leaf_items.shape[0]):
+        raise ValueError("node leaf indices exceed the leaf array.")
+    internal = leaf < 0
+    if any(
+        np.any((value[internal] < 0) | (value[internal] >= node_count))
+        for value in (left, right)
+    ):
+        raise ValueError("child indices exceed the node arrays.")
+    if np.any(leaf_items >= item_min.shape[0]):
+        raise ValueError("leaf item indices exceed the item bounds.")
     node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = (
         np.ascontiguousarray(value) for value in tree
     )
@@ -744,15 +785,19 @@ def bvh_pair_blocks(
     """Overlapping item pairs of two host trees in the reference's block sequence.
 
     Trees are ``(node_min, node_max, left, right, leaf, leaf_items, item_min,
-    item_max)`` float64/int64 host arrays. The yielded blocks equal the host
-    LIFO traversal's blocks one for one; the native stream exists only while
-    the generator runs and is released when it finishes or is closed.
+    item_max)`` float64/int64 host arrays; other dtypes and inconsistent
+    extents are rejected before entering native code. Source arrays must stay
+    unchanged during iteration. Contiguous owners are retained by the generator.
+    The yielded independent blocks equal the host LIFO traversal's blocks one
+    for one; the native stream is released when iteration finishes or is closed.
     """
-    library = load_meshcore()
     # The views and their arrays stay referenced by this frame for the
     # stream's lifetime.
     first_view, first_arrays = _tree_view(first)
     second_view, second_arrays = _tree_view(second)
+    if first_arrays[0].shape[1] != second_arrays[0].shape[1]:
+        raise ValueError("both host trees must have the same dimension.")
+    library = load_meshcore()
     leaf_pairs = int(first_view.leaf_width) * int(second_view.leaf_width)
     capacity = max(1, int(item_block) // leaf_pairs) * leaf_pairs
     block_capacity = 64
