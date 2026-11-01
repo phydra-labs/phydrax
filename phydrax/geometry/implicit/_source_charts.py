@@ -65,6 +65,7 @@ from ...linalg._exact import (
 from ...typing import ConvertibleToArray
 from .._source_identity import source_entity_id
 from ._adaptive_discovery import (
+    _evaluate_interval_boxes,
     _FieldEnclosures,
     _root_on_edges,
     AdaptiveImplicitBoundarySource,
@@ -4173,6 +4174,18 @@ def _distance_lower(
     return np.nextafter(np.sqrt(total), 0.0)
 
 
+def _box_value_bounds(
+    bounds: _FieldEnclosures, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Field value enclosures of boxes, without the gradient enclosures `boxes` adds."""
+    program = bounds._values
+    if bounds.selector == "interval" and program is not None:
+        value_lower, value_upper = _evaluate_interval_boxes(program, lower, upper)
+        return value_lower.reshape((-1,)), value_upper.reshape((-1,))
+    values = bounds.boxes(lower, upper)
+    return values.value_lower, values.value_upper
+
+
 def _box_face_pair_blocks(
     maps: _FaceMaps, lower: np.ndarray, upper: np.ndarray, reach: float, /
 ) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
@@ -4269,8 +4282,8 @@ def _source_to_mesh_bounds(
         if pending.shape[0] > _REVERSE_COVER_ROUND:
             queue.append(pending[_REVERSE_COVER_ROUND:])
             pending = pending[:_REVERSE_COVER_ROUND]
-        values = bounds.boxes(pending[:, 0], pending[:, 1])
-        definite = (values.value_lower > 0.0) | (values.value_upper < 0.0)
+        value_lower, value_upper = _box_value_bounds(bounds, pending[:, 0], pending[:, 1])
+        definite = (value_lower > 0.0) | (value_upper < 0.0)
         pending = pending[~definite]
         if not pending.shape[0]:
             continue

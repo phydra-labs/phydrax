@@ -32,7 +32,6 @@ from ._planar_primitives import (
     triangle_pair_separation,
 )
 from ._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryQuery
-from ._source_fidelity import validate_source_fidelity_witness
 from ._source_fidelity_certificate import SourceFidelityCertificate
 from .implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
@@ -3055,9 +3054,13 @@ def approximate_source_coverage(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     embedding: GlobalEmbeddingCertificate,
-    revalidate_fidelity: bool = True,
 ) -> SourceCoverageAttempt:
-    """Prove bounded oriented material coverage from source-chart homotopy data."""
+    """Prove bounded oriented material coverage from source-chart homotopy data.
+
+    The fidelity certificate must be current for these operands; its proof
+    validated its boundary-chart witness on them, so the witness is not
+    validated again.
+    """
 
     def fail(
         check: str,
@@ -3102,8 +3105,7 @@ def approximate_source_coverage(
         )
     try:
         embedding.binding.require(mesh, geometry)
-        if revalidate_fidelity:
-            fidelity.require_current(mesh, geometry, source)
+        fidelity.require_current(mesh, geometry, source)
     except (TypeError, ValueError, ArithmeticError) as error:
         return fail(
             "source_boundary_premise",
@@ -3211,14 +3213,6 @@ def approximate_source_coverage(
         return fail(
             "source_boundary_chart_identity",
             "Boundary chart witness binds another source revision.",
-            "violated",
-        )
-    try:
-        validate_source_fidelity_witness(mesh, geometry, source, witness)
-    except (TypeError, ValueError, ArithmeticError) as error:
-        return fail(
-            "source_boundary_chart_witness",
-            f"Boundary chart witness does not revalidate: {error}",
             "violated",
         )
     regions = np.asarray(cell_regions)

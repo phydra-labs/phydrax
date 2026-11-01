@@ -1759,6 +1759,8 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 "Stored global embedding must be a GlobalEmbeddingCertificate."
             )
         value.binding.require(value.binding.mesh, value.binding.geometry)
+        # Stored identities are not proof authority: renew the local proof.
+        value.validity.revalidate(value.binding.geometry, mesh=value.binding.mesh)
         if value.periodic_affine_degree is not None:
             PeriodicAffineTorusDegreeEvidence.from_stored_fields(
                 value.periodic_affine_degree

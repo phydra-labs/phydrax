@@ -1098,7 +1098,7 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
             raise ValueError("Periodic entity has no canonical corner permutation.")
         permutations = np.asarray([order for order, _ in variants], dtype=np.int32)
         for row, permutation in zip(group, permutations[found], strict=True):
-            corner_rows[row] = permutation
+            corner_rows[row] = np.asarray(permutation, dtype=np.int32)
     return PeriodicEntityOrbitMap(
         mesh,
         degree,
@@ -2432,24 +2432,48 @@ def stage_periodic_topology_edit(
         target_quotient_ids = target_layout.entity_ids[
             target_layout.orbit_rows[target_rows]
         ]
-        operations: list[list[tuple[int, int]]] = [
-            [] for _ in range(source_layout.orbit_rows.size)
-        ]
-        for source_row, target_id, kind in zip(
-            source_rows, target_quotient_ids, kinds, strict=True
+        if not _uniform_orbit_operations(
+            np.asarray(source_layout.orbit_rows, dtype=np.int64),
+            source_rows,
+            np.asarray(target_quotient_ids, dtype=np.int64),
+            kinds.astype(np.int64),
         ):
-            operations[int(source_row)].append((int(target_id), int(kind)))
-        touched_orbits = np.unique(source_layout.orbit_rows[source_rows])
-        for orbit in touched_orbits:
-            member_rows = np.flatnonzero(source_layout.orbit_rows == orbit)
-            signatures = [tuple(sorted(operations[int(row)])) for row in member_rows]
-            if not signatures[0] or any(
-                signature != signatures[0] for signature in signatures[1:]
-            ):
-                raise ValueError(
-                    "Periodic edit lineage must apply the same operation to every lifted entity orbit."
-                )
+            raise ValueError(
+                "Periodic edit lineage must apply the same operation to every lifted entity orbit."
+            )
     return bound
+
+
+def _uniform_orbit_operations(
+    orbit_rows: np.ndarray,
+    source_rows: np.ndarray,
+    target_ids: np.ndarray,
+    kinds: np.ndarray,
+    /,
+) -> bool:
+    """Whether every lifted member of each touched source orbit carries the same
+    nonempty multiset of ``(target quotient ID, kind)`` lineage operations.
+
+    Each member's sorted operations are compared position by position with
+    those of the orbit's first (lowest) lifted row.
+    """
+    count = orbit_rows.size
+    order = np.lexsort((kinds, target_ids, source_rows))
+    rows, targets, labels = source_rows[order], target_ids[order], kinds[order]
+    sizes = np.bincount(rows, minlength=count)
+    offsets = np.concatenate(((0,), np.cumsum(sizes)))
+    first = np.full((int(np.max(orbit_rows, initial=-1)) + 1,), count, dtype=np.int64)
+    np.minimum.at(first, orbit_rows, np.arange(count, dtype=np.int64))
+    members = np.flatnonzero(np.isin(orbit_rows, orbit_rows[source_rows]))
+    leaders = first[orbit_rows[members]]
+    if np.any(sizes[leaders] == 0) or np.any(sizes[members] != sizes[leaders]):
+        return False
+    position = np.arange(rows.size, dtype=np.int64) - offsets[rows]
+    leader_entry = offsets[first[orbit_rows[rows]]] + position
+    return bool(
+        np.array_equal(targets, targets[leader_entry])
+        and np.array_equal(labels, labels[leader_entry])
+    )
 
 
 def _periodic_geometry_after_reorder(

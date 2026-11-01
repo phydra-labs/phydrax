@@ -120,6 +120,46 @@ def _resolve_brep_row(
     return row, source_key
 
 
+class _BRepRowResolver:
+    """Resolve B-Rep occurrences of one domain once per distinct occurrence.
+
+    Association rows of one pass repeat a few source entities; each distinct
+    ``(dimension, index, occurrence)`` is resolved and keyed once, and the
+    resolver dies with the pass.
+    """
+
+    __slots__ = ("_domain", "_resolved")
+
+    def __init__(self, domain: MeshingDomain, /) -> None:
+        self._domain = domain
+        self._resolved: dict[tuple[int, int, tuple[str, ...]], tuple[int, str, str]] = {}
+
+    def __call__(
+        self, dimension: int, source_index: int, occurrence_path: tuple[str, ...], /
+    ) -> tuple[int, str, str]:
+        """Return the domain row, domain source key and B-Rep entity id."""
+        key = (dimension, source_index, occurrence_path)
+        resolved = self._resolved.get(key)
+        if resolved is None:
+            domain = self._domain
+            row, source_key = _resolve_brep_row(
+                domain, dimension, source_index, occurrence_path
+            )
+            resolved = (
+                row,
+                source_key,
+                brep_entity_id(
+                    domain.source_id,
+                    domain.source_revision,
+                    dimension,
+                    source_index,
+                    occurrence_path=occurrence_path,
+                ),
+            )
+            self._resolved[key] = resolved
+        return resolved
+
+
 def _association_for(
     surface: CellMeshingResult, dimension: int, /, *, required: bool
 ) -> GeometryAssociation | None:
@@ -339,6 +379,7 @@ def _cad_plc_data(
     vertex_dimensions_by_surface_row: list[int] = []
     vertex_indices_by_surface_row: list[int] = []
     vertex_parameters_by_surface_row: list[np.ndarray] = []
+    resolve = _BRepRowResolver(domain)
     for row, global_id in enumerate(mesh_vertex_ids.tolist()):
         try:
             association_row = vertex_association_rows[int(global_id)]
@@ -353,14 +394,7 @@ def _cad_plc_data(
                 "A CAD boundary vertex must resolve to a source vertex, curve, or face."
             )
         path = tuple(vertex_paths[association_row])
-        _, domain_key = _resolve_brep_row(domain, dimension, source_index, path)
-        expected_brep_id = brep_entity_id(
-            domain.source_id,
-            domain.source_revision,
-            dimension,
-            source_index,
-            occurrence_path=path,
-        )
+        _, domain_key, expected_brep_id = resolve(dimension, source_index, path)
         if vertex_association.source_entity_ids[association_row] != expected_brep_id:
             raise ValueError(
                 "CAD surface vertex association changed its B-Rep entity identity."
@@ -428,6 +462,7 @@ def _cad_plc_data(
     face_paths = face_association.source_occurrence_paths
     face_orientations = np.asarray(face_association.orientations, dtype=np.int64)
     face_domain_rows: dict[int, int] = {}
+    resolve = _BRepRowResolver(domain)
     for global_id, association_row in face_association_rows.items():
         dimension = int(face_dimensions[association_row])
         if dimension != 2:
@@ -436,14 +471,8 @@ def _cad_plc_data(
             )
         source_index = int(face_indices[association_row])
         path = tuple(face_paths[association_row])
-        domain_row, _ = _resolve_brep_row(domain, 2, source_index, path)
-        if face_association.source_entity_ids[association_row] != brep_entity_id(
-            domain.source_id,
-            domain.source_revision,
-            2,
-            source_index,
-            occurrence_path=path,
-        ):
+        domain_row, _, expected_brep_id = resolve(2, source_index, path)
+        if face_association.source_entity_ids[association_row] != expected_brep_id:
             raise ValueError("CAD surface face association changed its B-Rep identity.")
         orientation = int(face_orientations[association_row])
         if orientation not in (-1, 1):
@@ -550,21 +579,17 @@ def _cad_plc_data(
                 "CAD boundary charts require canonical surface edge incidence."
             )
         source_edge_keys: dict[tuple[int, int], tuple[str, tuple[str, ...]]] = {}
+        edge_global_ids = np.asarray(mesh.entity_set(1).entity_ids)
+        resolve = _BRepRowResolver(domain)
         for edge_row, edge in enumerate(connectivity_edges.tolist()):
-            global_id = int(np.asarray(mesh.entity_set(1).entity_ids)[edge_row])
+            global_id = int(edge_global_ids[edge_row])
             association_row = edge_rows.get(global_id)
             if association_row is None or int(edge_dimensions[association_row]) != 1:
                 continue
             source_index = int(edge_indices[association_row])
             path = tuple(edge_paths[association_row])
-            curve_row, curve_key = _resolve_brep_row(domain, 1, source_index, path)
-            if edge_association.source_entity_ids[association_row] != brep_entity_id(
-                domain.source_id,
-                domain.source_revision,
-                1,
-                source_index,
-                occurrence_path=path,
-            ):
+            curve_row, curve_key, expected_brep_id = resolve(1, source_index, path)
+            if edge_association.source_entity_ids[association_row] != expected_brep_id:
                 raise ValueError(
                     "CAD surface edge association changed its source curve identity."
                 )
@@ -724,14 +749,14 @@ def _surface_source_authorities(
         dimensions = np.asarray(face_association.source_dimensions, dtype=np.int64)
         indices = np.asarray(face_association.source_indices, dtype=np.int64)
         paths = face_association.source_occurrence_paths
+        resolve = _BRepRowResolver(domain)
         for cell_id, patch in zip(cell_ids.tolist(), root_patches.tolist(), strict=True):
             association_row = association_rows[int(cell_id)]
             if int(dimensions[association_row]) != 2:
                 raise ValueError(
                     "Surface chart cells must retain their B-Rep face association."
                 )
-            resolved_patch, _ = _resolve_brep_row(
-                domain,
+            resolved_patch, _, _ = resolve(
                 2,
                 int(indices[association_row]),
                 tuple(paths[association_row]),
@@ -2775,6 +2800,8 @@ def _brep_associations(
     vertex_brep_indices = np.asarray(source.vertex_brep_indices, dtype=np.int64)
     vertex_parameters = np.asarray(source.vertex_parameters, dtype=np.float64)
     result: list[GeometryAssociation] = []
+    resolve = _BRepRowResolver(source.domain)
+    association_ids: dict[tuple[int, int, tuple[str, ...]], str] = {}
     for association in native:
         target_dimension = next(
             dimension
@@ -2849,15 +2876,17 @@ def _brep_associations(
                 resolved[row] = bool(np.isfinite(residuals[row]))
             source_dimensions.append(dimension)
             source_indices.append(source_index)
-            source_ids.append(
-                brep_entity_id(
+            association_key = (dimension, source_index, entity_path)
+            association_id = association_ids.get(association_key)
+            if association_id is None:
+                association_id = association_ids[association_key] = brep_entity_id(
                     source.source_id,
                     source.source_revision,
                     dimension,
                     source_index,
                     occurrence_path=entity_path,
                 )
-            )
+            source_ids.append(association_id)
             occurrence_paths.append(entity_path)
             source_roles.append(
                 {
@@ -2873,10 +2902,10 @@ def _brep_associations(
                 orientations[row] = int(source_orientations[row])
             else:
                 orientations[row] = 0
-        for dimension, source_index, path in zip(
-            source_dimensions, source_indices, occurrence_paths, strict=True
+        for dimension, source_index, path in dict.fromkeys(
+            zip(source_dimensions, source_indices, occurrence_paths, strict=True)
         ):
-            _resolve_brep_row(source.domain, dimension, source_index, path)
+            resolve(dimension, source_index, path)
         if target_dimension != 2:
             region_sides = tuple((None, None) for _ in source_ids)
         result.append(
