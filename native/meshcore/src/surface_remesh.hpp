@@ -74,15 +74,27 @@
 //  * the passes run quality, regularization, quality.
 // The score of a triangle is floor(2^20 * min(1, angle_min / minimum_angle) *
 // min(1, (4/3) h / edge_max) * fold). Fold is the minimum over the triangle's
-// edges of min(1, (pi - turn) / (pi - allowed)), turn being the angle between
-// the unit normals of the triangle and its edge neighbor and allowed the
-// largest angle between normals of the two triangles' source cones (the angle
-// between their axes plus both half-angles, at most pi). A turn the source
-// admits scores full: genuine creases (an implicit CSG edge, an offset's
-// concave ridge) are kept. A turn beyond it is a fold the source does not
-// have; without this factor a folded cluster of well-shaped triangles scores
-// full, and two boundary triangles meeting at turn t bound every tetrahedron
-// on their edge to a dihedral angle of at most pi - t.
+// edges of two factors:
+//  * source-relative: min(1, (pi - turn) / (pi - allowed)), turn being the
+//    angle between the unit normals of the triangle and its edge neighbor and
+//    allowed the largest angle between normals of the two triangles' source
+//    cones (the angle between their axes plus both half-angles, at most pi).
+//    A turn the source admits scores full: genuine creases (an implicit CSG
+//    edge, an offset's concave ridge) are kept. A turn beyond it is a fold the
+//    source does not have; without this factor a folded cluster of
+//    well-shaped triangles scores full;
+//  * convex wedge: on a convex edge (the neighbor's far corner below the
+//    triangle's plane, seen from the enclosed solid) the solid wedge pi - turn
+//    bounds every tetrahedron on the edge to a dihedral angle of at most
+//    pi - turn. A wedge below the minimum angle scores (pi - turn) /
+//    minimum_angle unless the source forces it: forced, the smallest turn the
+//    two cones admit (the angle between their axes minus both half-angles, 0
+//    for an open cone), is at least pi - minimum_angle. Where the cones carry
+//    no information (near the source's medial axis an offset's cones open up)
+//    the source-relative factor admits any turn, and a fin of two well-shaped
+//    triangles closing a 1.6 degree convex wedge scored full.
+// The solid side is the side the input's normals point away from when its
+// enclosed volume is positive (edits keep orientation and embedding).
 // `unmet` counts surviving triangles below 2^20.
 #pragma once
 
@@ -133,6 +145,10 @@ class TriangleAdmission {
 
 // Largest angle between a unit vector of `first` and one of `second`, in [0, pi].
 double cone_separation(const NormalCone& first, const NormalCone& second);
+
+// Smallest angle between a unit vector of `first` and one of `second`, in
+// [0, pi]; 0 when either cone is open.
+double forced_turn(const NormalCone& first, const NormalCone& second);
 
 struct RemeshTargets {
   double edge_length = 0;              // h

@@ -45,7 +45,14 @@ def _dynamic_geometry_version(value: ArrayLike, /) -> Array:
 
 
 class ALEBoundaryContext(StrictModule, NonTrainableState):
-    """Immutable ALE face geometry, stage route, and wall kinematic evidence."""
+    """Immutable ALE face geometry, stage route, and wall kinematic evidence.
+
+    ``quadrature_grid_velocity`` is the instantaneous mesh velocity that the
+    wall kinematics certify; ``flux_grid_normal_velocity`` is the face's
+    swept-volume (discrete-GCL) grid-normal velocity that its flux transports
+    with (defaults to the instantaneous one), and moving walls reflect about it
+    so no volume crosses the discrete wall.
+    """
 
     face_point: Array
     outward_normal: Array
@@ -54,6 +61,7 @@ class ALEBoundaryContext(StrictModule, NonTrainableState):
     time: Array
     args: Any
     grid_normal_velocity: Array
+    flux_grid_normal_velocity: Array
     wall_normal_velocity: Array
     kinematic_defect: Array
     kinematic_tolerance: Array
@@ -82,6 +90,7 @@ class ALEBoundaryContext(StrictModule, NonTrainableState):
         motion_plan_id: str,
         absolute_tolerance: float,
         relative_tolerance: float,
+        flux_grid_normal_velocity: ArrayLike | None = None,
     ) -> None:
         topology_id = _canonical_ale_identity(topology_epoch_id, "topology_epoch_id")
         layout_id = _canonical_ale_identity(geometry_layout_id, "geometry_layout_id")
@@ -129,6 +138,20 @@ class ALEBoundaryContext(StrictModule, NonTrainableState):
             "ALE boundary normals must be nonzero.",
         )
         grid_normal = ein.contract("...i,...i->...", grid_velocity, normal)
+        flux_normal = (
+            grid_normal
+            if flux_grid_normal_velocity is None
+            else jnp.asarray(flux_grid_normal_velocity)
+        )
+        if flux_normal.shape != grid_normal.shape:
+            raise ValueError(
+                "ALE flux grid-normal velocity must have one entry per face point."
+            )
+        flux_normal = eqx.error_if(
+            flux_normal,
+            jnp.any(~jnp.isfinite(flux_normal)),
+            "ALE boundary context values must be finite.",
+        )
         wall_normal = ein.contract("...i,...i->...", wall_velocity_, normal)
         defect = jnp.abs(wall_normal - grid_normal)
         tolerance = absolute + relative * jnp.maximum(
@@ -142,6 +165,7 @@ class ALEBoundaryContext(StrictModule, NonTrainableState):
         self.time = time_
         self.args = args
         self.grid_normal_velocity = grid_normal
+        self.flux_grid_normal_velocity = flux_normal
         self.wall_normal_velocity = wall_normal
         self.kinematic_defect = defect
         self.kinematic_tolerance = tolerance
@@ -256,6 +280,9 @@ def _static_ale_exterior_state(
     state = eqx.error_if(
         jnp.asarray(interior),
         jnp.any(jnp.abs(context.grid_normal_velocity) > context.kinematic_tolerance)
+        | jnp.any(
+            jnp.abs(context.flux_grid_normal_velocity) > context.kinematic_tolerance
+        )
         | jnp.any(jnp.abs(context.wall_normal_velocity) > context.kinematic_tolerance),
         "Static ALE boundaries require zero grid-normal and wall-normal velocity; "
         "use MovingSlipWallBoundary for nonzero conforming motion.",

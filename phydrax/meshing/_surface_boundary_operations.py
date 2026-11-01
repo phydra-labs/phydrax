@@ -88,8 +88,6 @@ def created_weights(
     /,
 ) -> dict[int, SurfaceVertexWeights]:
     """Read exact created-vertex support from the accepted interpolation stencil."""
-    if not isinstance(vertex_stencil, lineage_owner.VertexInterpolationStencil):
-        raise TypeError("vertex_stencil must be VertexInterpolationStencil.")
     if (
         vertex_stencil.source_entity_set_id != source_mesh.entity_set(0).entity_set_id
         or vertex_stencil.target_entity_set_id != target.entity_set(0).entity_set_id

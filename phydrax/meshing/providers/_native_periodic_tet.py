@@ -135,8 +135,12 @@ def tet_mesh_periodic_state(
             np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
         )
     }
-    vertex_quotient_by_lifted_id = {
-        int(identifier): int(vertex_quotient_ids[vertex_lifted_to_quotient[row]])
+    # Quotient-cell corners name each vertex orbit by its representative lifted
+    # vertex, the key of the native orbit; quotient IDs are separate identities.
+    vertex_representative_by_lifted_id = {
+        int(identifier): int(
+            vertex_lifted_ids[vertex_rep_rows[vertex_lifted_to_quotient[row]]]
+        )
         for row, identifier in enumerate(vertex_lifted_ids)
     }
     vertex_winding_by_lifted_id = {
@@ -171,7 +175,10 @@ def tet_mesh_periodic_state(
         lifted_vertex_ids = lifted_vertex_ids[corner_permutation]
         try:
             representative_vertices = np.asarray(
-                [vertex_quotient_by_lifted_id[int(identifier)] for identifier in lifted_vertex_ids],
+                [
+                    vertex_representative_by_lifted_id[int(identifier)]
+                    for identifier in lifted_vertex_ids
+                ],
                 dtype=np.uint64,
             )
             winding = np.stack(

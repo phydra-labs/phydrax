@@ -186,6 +186,7 @@ class MovingSlipWallBoundary(AbstractConservationBoundary):
         geometry_version: ArrayLike,
         face_block_id: str,
         motion_plan_id: str,
+        flux_grid_normal_velocity: ArrayLike | None = None,
     ) -> ALEBoundaryContext:
         point = jnp.asarray(face_point)
         wall_velocity = _wall_velocity_value(
@@ -211,6 +212,7 @@ class MovingSlipWallBoundary(AbstractConservationBoundary):
             motion_plan_id=motion_plan_id,
             absolute_tolerance=self.absolute_tolerance,
             relative_tolerance=self.relative_tolerance,
+            flux_grid_normal_velocity=flux_grid_normal_velocity,
         )
 
     def exterior_state(
@@ -267,13 +269,13 @@ class MovingSlipWallBoundary(AbstractConservationBoundary):
             ),
             context.wall_velocity.shape,
         )
-        wall_velocity = eqx.error_if(
-            context.wall_velocity,
+        flux_normal = eqx.error_if(
+            context.flux_grid_normal_velocity,
             jnp.any(context.wall_velocity != expected_wall_velocity),
             "ALE boundary context wall velocity does not match its provider.",
         )
-        wall_velocity = eqx.error_if(
-            wall_velocity,
+        flux_normal = eqx.error_if(
+            flux_normal,
             jnp.any(context.kinematic_defect > context.kinematic_tolerance),
             "Moving wall normal velocity does not match grid normal velocity.",
         )
@@ -283,15 +285,11 @@ class MovingSlipWallBoundary(AbstractConservationBoundary):
                 "Euler-compatible primitive and conservative states must align."
             )
         velocity = _primitive_velocity(system, primitive)
-        relative_velocity = velocity - wall_velocity
+        # The certified wall moves with the face's swept-volume velocity in the
+        # discrete scheme: reflecting about it closes the wall to volume flux.
+        relative_normal = _normal_velocity(velocity, context.outward_normal) - flux_normal
         reflected_velocity = (
-            velocity
-            - 2.0
-            * _normal_velocity(
-                relative_velocity,
-                context.outward_normal,
-            )[..., None]
-            * context.outward_normal
+            velocity - 2.0 * relative_normal[..., None] * context.outward_normal
         )
         exterior_primitive = _with_primitive_velocity(
             system, primitive, reflected_velocity

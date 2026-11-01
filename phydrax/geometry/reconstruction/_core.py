@@ -419,6 +419,37 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
             + second * self.corners[2]
         )
 
+    @classmethod
+    def evaluate_stacked(
+        cls,
+        surfaces: Sequence[AbstractSurfacePatch],
+        owners: np.ndarray,
+        parameters: Array,
+        /,
+    ) -> Array:
+        """``surfaces[owners[row]].evaluate(parameters[row])`` for every row.
+
+        The corners are gathered on the host and the barycentric combination
+        runs with exactly `evaluate`'s operations, so every coordinate is
+        bit-identical to the per-patch evaluation.
+        """
+        stacked = []
+        for surface in surfaces:
+            if not isinstance(surface, cls):
+                raise TypeError(
+                    "Stacked evaluation requires reconstructed triangle charts."
+                )
+            stacked.append(np.asarray(surface.corners, dtype=np.float64))
+        corners = jnp.asarray(np.stack(stacked)[np.asarray(owners, dtype=np.int64)])
+        values = jnp.asarray(parameters, dtype=jnp.float64)
+        first = values[..., 0, None]
+        second = values[..., 1, None]
+        return (
+            (1.0 - first - second) * corners[:, 0]
+            + first * corners[:, 1]
+            + second * corners[:, 2]
+        )
+
 
 def _reconstructed_meshing_domain(
     source: GeometrySource,
@@ -747,10 +778,6 @@ class ReconstructedGeometrySource(GeometrySource):
         persistent_region_id: int | None = None,
         meshing_domain: MeshingDomain | None = None,
     ) -> None:
-        if not isinstance(source, GeometrySource):
-            raise TypeError("source must be a GeometrySource.")
-        if not isinstance(report, ReconstructionReport):
-            raise TypeError("report must be a ReconstructionReport.")
         feature = getattr(source, "feature_id", None)
         if not isinstance(feature, str) or not feature.strip():
             feature = f"{type(source).__module__}.{type(source).__qualname__}"

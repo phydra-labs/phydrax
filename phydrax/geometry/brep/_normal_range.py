@@ -20,7 +20,7 @@ from jax.typing import ArrayLike
 from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._validation import finite_real_scalar
-from .._atlas import TrimDomain
+from .._atlas import TrimDomain, TrimEnclosures
 from .._interval_enclosure import (
     Interval,
     interval_add,
@@ -562,7 +562,13 @@ def _exact_vertical(patch: AbstractSurfacePatch, direction: np.ndarray, /) -> bo
     )
 
 
-def _trim_excludes(model: BRepModel, face: int, box: np.ndarray, /) -> bool:
+def _trim_excludes(
+    model: BRepModel,
+    face: int,
+    box: np.ndarray,
+    enclosures: TrimEnclosures | None,
+    /,
+) -> bool:
     """Whether ``box`` is certified to lie outside the face trim."""
     domain: TrimDomain | None = model.trim_domains[face]
     if domain is None:
@@ -570,7 +576,7 @@ def _trim_excludes(model: BRepModel, face: int, box: np.ndarray, /) -> bool:
     bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     extent = bounds[1] - bounds[0]
     normalized = np.stack(((box[0] - bounds[0]) / extent, (box[1] - bounds[0]) / extent))
-    result = domain.classify_boxes(normalized[None, ...])
+    result = domain.classify_boxes(normalized[None, ...], enclosures=enclosures)
     return bool(np.asarray(result.resolved[0])) and not bool(np.asarray(result.inside[0]))
 
 
@@ -629,7 +635,9 @@ def _face_range(
     singular_axis = None if profile is None else 1
     cells: list[_Cell] = []
     root = bounds.copy()
-    if not _trim_excludes(model, face, root):
+    domain = model.trim_domains[face]
+    enclosures = None if domain is None else domain.prepare_enclosures()
+    if not _trim_excludes(model, face, root, enclosures):
         cells.append((root, _angle(patch, root, orientation, direction)))
 
     def unresolved_cell(
@@ -692,7 +700,7 @@ def _face_range(
         cells.extend(
             (child, angle)
             for child, angle in reversed(subdivide(box, axes))
-            if not _trim_excludes(model, face, child)
+            if not _trim_excludes(model, face, child, enclosures)
         )
     lower = min((angle[0] for _, angle in cells), default=0.0)
     upper = max((angle[1] for _, angle in cells), default=_PI)

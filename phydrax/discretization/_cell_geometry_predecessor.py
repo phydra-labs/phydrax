@@ -351,8 +351,6 @@ def prepare_cell_geometry_predecessor(
     /,
 ) -> CellGeometryPredecessor:
     """Match target cells only when their complete exact map and carrier agree."""
-    if not isinstance(source_validity, CellValidityCertificate):
-        raise TypeError("source_validity must be a CellValidityCertificate.")
     source_validity.require_bound(source_geometry, mesh=source_mesh)
     source_keys = _cell_keys(source_mesh, source_geometry)
     target_keys = _cell_keys(target_mesh, target_geometry)
@@ -394,8 +392,6 @@ def reuse_cell_geometry_validity(
     predecessor: CellGeometryPredecessor, /
 ) -> CellValidityCertificate:
     """Build target evidence from predecessor rows and fresh changed-cell proofs."""
-    if not isinstance(predecessor, CellGeometryPredecessor):
-        raise TypeError("predecessor must be a CellGeometryPredecessor.")
     predecessor.require_current()
     source_validity = predecessor.source_validity
     source_keys = _cell_keys(predecessor.source_mesh, predecessor.source_geometry)

@@ -132,8 +132,6 @@ class DxfExportResult(StrictModule, NonTrainableState):
 
     @checked
     def __init__(self, path: Path, report: AdapterReport) -> None:
-        if not isinstance(path, Path):
-            raise TypeError("DxfExportResult.path must be a pathlib.Path.")
         if not report.valid or report.target_format != "dxf":
             raise ValueError(
                 "DxfExportResult.report must describe a successful DXF export; got invalid conversion evidence."

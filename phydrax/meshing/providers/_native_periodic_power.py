@@ -2205,7 +2205,7 @@ def _owner_local_periodic_power_candidate(
                 ),
             )
             context = ExactPeriodicPowerSourceContext(
-                source.domain,
+                domain,
                 weights,
                 image_owners,
                 image_windings,

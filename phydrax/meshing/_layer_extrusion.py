@@ -244,8 +244,6 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         maximum_relative_volume_residual: float,
         /,
     ) -> None:
-        if not isinstance(partition, BRepPartitionResult):
-            raise TypeError("partition must be a BRepPartitionResult.")
         if not isinstance(control, BoundaryLayerControl) or (
             control.route is not BoundaryLayerRoute.EXACT_SWEEP
         ):

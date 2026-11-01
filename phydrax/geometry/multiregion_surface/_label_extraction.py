@@ -470,8 +470,6 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
         *,
         site_coordinates: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(plan, LabelFieldSurfaceExtractionPlan):
-            raise TypeError("plan must be a LabelFieldSurfaceExtractionPlan.")
         if len(grid_shape) != 3:
             raise ValueError("grid_shape must contain three dimensions.")
         shape: tuple[int, int, int] = (

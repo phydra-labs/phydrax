@@ -12,6 +12,9 @@ from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._tetra_metric import (
+    _prepare_native_state,
+    _split_phase,
+    _unit_metric_status,
     execute_tetra_metric_adaptation,
     TetraMetricOutcome,
     TetraMetricStatus,
@@ -20,7 +23,12 @@ from phydrax.meshing._topology_edit import entity_keys, TopologyEditBlock
 
 
 def _source(
-    shape: int = 3, /, *, nonuniform: bool = False, close_edge: bool = False
+    shape: int = 3,
+    /,
+    *,
+    nonuniform: bool = False,
+    close_edge: bool = False,
+    vertex_id_stride: int = 1,
 ) -> CellMeshingResult:
     vertex_rows = np.arange(shape**3, dtype=np.int64).reshape((shape,) * 3)
     axis = (
@@ -47,9 +55,10 @@ def _source(
             tetrahedron = np.asarray(
                 [vertex_rows[tuple(row)] for row in path], dtype=np.int32
             )
-            if np.linalg.det(
-                coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]]
-            ) < 0.0:
+            if (
+                np.linalg.det(coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]])
+                < 0.0
+            ):
                 tetrahedron[[1, 2]] = tetrahedron[[2, 1]]
             tetrahedra.append(tetrahedron)
     block = CellBlock(
@@ -61,7 +70,8 @@ def _source(
     mesh = CellMesh(
         coordinates,
         (block,),
-        vertex_global_ids=np.arange(shape**3, dtype=np.int64),
+        vertex_global_ids=100 * (vertex_id_stride - 1)
+        + vertex_id_stride * np.arange(shape**3, dtype=np.int64),
     )
     return certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -115,6 +125,65 @@ def test_nonperiodic_refinement_reaches_the_unit_metric() -> None:
     assert outcome.evidence.out_of_range_edges == 0
     assert outcome.evidence.minimum_metric_quality > 0.0
     assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+
+
+def test_graded_split_points_are_exact_dyadic_edge_points() -> None:
+    # A graded size places metric midpoints at full-precision parameters; such a
+    # split point leaves a source facet diagonal by rounding and its nested
+    # ancestry outgrows binary64. Short dyadic parameters keep every split exact.
+    source = _source()
+    mesh = source.mesh
+    sizes = 0.12 + 0.3 * np.asarray(mesh.coordinates[:, 0], dtype=np.float64)
+    metric = np.eye(3)[None] / (sizes * sizes)[:, None, None]
+    state = _prepare_native_state(
+        source,
+        metric,
+        cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
+        facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+        edge_classes=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.int64),
+        protected_edges=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.bool_),
+        fixed_vertices=np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_),
+    )
+    counters = dict.fromkeys(
+        (
+            "splits",
+            "rejected_topology",
+            "rejected_protected",
+            "rejected_uncertain",
+            "rejected_invalid",
+        ),
+        0,
+    )
+
+    applied = _split_phase(state, counters)
+
+    assert applied == counters["splits"] > 6
+    assert counters["rejected_uncertain"] == counters["rejected_invalid"] == 0
+    _, outside, _, longest, _ = _unit_metric_status(state)
+    assert outside > 0 and longest <= np.sqrt(2.0)
+    source_rows = {
+        int(identifier): row for row, identifier in enumerate(mesh.vertex_global_ids)
+    }
+    snapshot = state.snapshot
+    for identifier, point in zip(
+        np.asarray(snapshot.vertex_ids).tolist(), np.asarray(snapshot.points), strict=True
+    ):
+        stencil = state.vertex_stencils[int(identifier)]
+        exact = [
+            sum(
+                (
+                    weight * Fraction(float(mesh.coordinates[source_rows[key], axis]))
+                    for key, weight in stencil.items()
+                ),
+                Fraction(0),
+            )
+            for axis in range(3)
+        ]
+        assert [Fraction(float(value)) for value in point] == exact
+        assert all(
+            Fraction(float(weight)) == weight and weight.denominator.bit_count() == 1
+            for weight in stencil.values()
+        )
 
 
 def test_relocation_uses_live_native_vertices_and_exact_source_stencils() -> None:
@@ -201,10 +270,33 @@ def test_relocation_uses_live_native_vertices_and_exact_source_stencils() -> Non
     assert relocated > 0
 
 
-def test_coarsening_updates_live_topology_and_conserves_region_volume() -> None:
-    outcome = _adapt(
-        _source(4, close_edge=True), np.eye(3) * 5.76, relocation=False
+def test_relocation_is_invariant_under_sparse_vertex_ids() -> None:
+    # Relocation reads source tetrahedra by snapshot row: global vertex IDs that
+    # are not row positions must not change any relocated coordinate.
+    contiguous = _adapt(
+        _source(4, nonuniform=True),
+        np.eye(3) * 4.0,
+        topology_operations=False,
+        relocation=True,
     )
+    sparse = _adapt(
+        _source(4, nonuniform=True, vertex_id_stride=7),
+        np.eye(3) * 4.0,
+        topology_operations=False,
+        relocation=True,
+    )
+
+    assert sparse.evidence.status is contiguous.evidence.status
+    assert sparse.evidence.relocations == contiguous.evidence.relocations > 0
+    np.testing.assert_array_equal(
+        (np.asarray(sparse.edit.vertex_global_ids) - 600) // 7,
+        contiguous.edit.vertex_global_ids,
+    )
+    np.testing.assert_array_equal(sparse.edit.coordinates, contiguous.edit.coordinates)
+
+
+def test_coarsening_updates_live_topology_and_conserves_region_volume() -> None:
+    outcome = _adapt(_source(4, close_edge=True), np.eye(3) * 5.76, relocation=False)
 
     assert outcome.evidence.status is TetraMetricStatus.STALLED
     assert outcome.evidence.collapses > 0
@@ -241,9 +333,7 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
             mesh.coordinates[identifier],
         )
 
-    invalid = np.broadcast_to(
-        np.eye(3), (mesh.vertex_global_ids.size, 3, 3)
-    ).copy()
+    invalid = np.broadcast_to(np.eye(3), (mesh.vertex_global_ids.size, 3, 3)).copy()
     invalid[0, 0, 1] = 1.0
     with pytest.raises(ValueError, match="symmetric positive-definite"):
         _adapt(source, invalid)

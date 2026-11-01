@@ -17,6 +17,7 @@ moved coordinates is owned by :class:`MotionValidityPlan`.
 
 from __future__ import annotations
 
+import abc
 import math
 from collections.abc import Callable, Sequence
 from enum import IntFlag, StrEnum
@@ -34,6 +35,7 @@ from scipy.sparse.csgraph import connected_components
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
@@ -88,9 +90,35 @@ from ._generic import (
 from ._reference import lagrange_element
 
 
-MeshMonitor = Callable[[Array], Array]
 # Time-dependent monitors of ALE consumers: ``monitor(time, points, args)``.
 TimeMeshMonitor = Callable[[Array, Array, Any], ArrayLike]
+
+
+class AbstractMeshMonitor(StrictModule):
+    """Callable PyTree monitor ``M(points)`` of the ``MMPDE`` route.
+
+    ``__call__`` returns ``(vertices,)`` scalars or ``(vertices, dim, dim)``
+    symmetric positive definite tensors at every mesh vertex. Array fields are
+    the dynamic parameters (the route differentiates through them); the class
+    and its non-array fields are the static structure. A monitor of one class
+    with new array values therefore reuses the extension's compiled solve.
+    """
+
+    @abc.abstractmethod
+    def __call__(self, points: Array, /) -> Array:
+        raise NotImplementedError
+
+
+class _TimeBoundMeshMonitor(AbstractMeshMonitor):
+    """A time-dependent monitor bound to one time and argument tree."""
+
+    monitor: TimeMeshMonitor = eqx.field(static=True)
+    time: Array
+    args: Any
+
+    def __call__(self, points: Array, /) -> Array:
+        return jnp.asarray(self.monitor(self.time, points, self.args))
+
 
 # Huang (2001) meshing functional: theta balances alignment against
 # equidistribution and p > 1 strengthens equidistribution.
@@ -325,7 +353,11 @@ class FiniteElementMotionExtensionResult(StrictModule):
 
     ``status`` is the linear-solve status (one entry per coordinate column for
     ``HARMONIC``) or the nonlinear status of ``WINSLOW``/``MMPDE``; ``PRESCRIBED``
-    reports success.
+    reports success. Every route solves for the displacement divided by
+    ``displacement_scale`` (the largest prescribed boundary displacement), so
+    the solve tolerances are relative to the motion; ``residual_norm`` is the
+    route residual in unnormalized units (the normalized residual times the
+    scale).
     """
 
     displacement: Array
@@ -333,6 +365,7 @@ class FiniteElementMotionExtensionResult(StrictModule):
     status: Array
     iterations: Array
     residual_norm: Array
+    displacement_scale: Array
     route: FiniteElementMeshMotionRoute = eqx.field(static=True)
 
 
@@ -882,6 +915,7 @@ def _monitor_tensors(values: Array, count: int, dimension: int, /) -> Array:
 class _RouteArguments(StrictModule):
     boundary_points: Array
     monitor: Any
+    scale: Array
 
 
 class FiniteElementMotionExtension(StrictModule, NonTrainableState):
@@ -1077,28 +1111,39 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         self,
         boundary_points: Array,
         initial: Array,
-        monitor: MeshMonitor | None,
+        monitor: AbstractMeshMonitor | None,
+        scale: Array,
         /,
     ) -> Any:
+        """Root of the route's stationarity equation in normalized displacement.
+
+        The state is ``z = (x - x_ref) / scale`` and the residual is the
+        coordinate residual divided by ``scale``, so residual and step
+        criteria compare O(1) quantities for any boundary displacement size.
+        """
         energy = self.energy
         policy = self.policy
         count, dimension = self.reference_coordinates.shape
         representatives = self.interior_representatives
+        origin = self.reference_coordinates[representatives]
 
         def admissible(state: Any, arguments: Any) -> Any:
             # ty: ignore[unresolved-attribute]
-            return energy.admissible(self._points(state, arguments.boundary_points))
+            return energy.admissible(
+                self._points(origin + arguments.scale * state, arguments.boundary_points)
+            )
 
         match policy.route:
             case FiniteElementMeshMotionRoute.WINSLOW:
 
                 def residual(state: Any, arguments: Any) -> Any:
-                    return jax.grad(
+                    gradient = jax.grad(
                         # ty: ignore[unresolved-attribute]
                         lambda interior: energy.winslow(
                             self._points(interior, arguments.boundary_points)
                         )
-                    )(state)
+                    )(origin + arguments.scale * state)
+                    return gradient / arguments.scale
 
                 method = NewtonKrylov(linear_policy=policy.linear_policy())
             case FiniteElementMeshMotionRoute.MMPDE:
@@ -1112,7 +1157,8 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                         # ty: ignore[unresolved-attribute]
                         return energy.huang(points, values)
 
-                    points = self._points(state, arguments.boundary_points)
+                    coordinates = origin + arguments.scale * state
+                    points = self._points(coordinates, arguments.boundary_points)
                     values = _monitor_tensors(arguments.monitor(points), count, dimension)
                     # Huang–Kamenski balancing P = det(M)**((p - 1) / 2).
                     balance = determinant_small_linear(
@@ -1120,9 +1166,9 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                         energy.determinant_plan,
                         values[representatives],
                     ) ** (0.5 * (_MMPDE_EXPONENT - 1.0))
-                    return (balance[:, None] / policy.relaxation_time) * jax.grad(
-                        functional
-                    )(state)
+                    return (
+                        balance[:, None] / (policy.relaxation_time * arguments.scale)
+                    ) * jax.grad(functional)(coordinates)
 
                 method = PseudoTransient(
                     linear=policy.linear_policy(),
@@ -1134,7 +1180,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             residual,
             trial_validity=admissible,
             trial_validity_id="positive-corner-jacobians",
-            problem_id=f"{self.extension_id}:{policy.route.value}",
+            problem_id=f"{self.extension_id}:{policy.route.value}:normalized",
         )
         return implicit_root_result(
             problem,
@@ -1144,7 +1190,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             derivative_policy=ImplicitRootDerivativePolicy(
                 tangent_linear_policy=policy.linear_policy()
             ),
-            args=_RouteArguments(boundary_points, monitor),
+            args=_RouteArguments(boundary_points, monitor, scale),
         )
 
     def extend(
@@ -1152,19 +1198,34 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         boundary_displacement: ArrayLike,
         /,
         *,
-        monitor: MeshMonitor | None = None,
+        monitor: AbstractMeshMonitor | None = None,
     ) -> FiniteElementMotionExtensionResult:
-        """Every vertex displacement for one boundary displacement ``(boundary, dim)``."""
+        """Every vertex displacement for one boundary displacement ``(boundary, dim)``.
+
+        Outside an enclosing trace the solve runs as one compiled program owned
+        by this extension: repeated calls with new boundary values or new
+        monitor array values reuse it, and its executables are released with
+        the extension.
+        """
 
         route = self.policy.route
         if (monitor is None) == (route is FiniteElementMeshMotionRoute.MMPDE):
             raise ValueError("A monitor is required exactly for the MMPDE route.")
-        if monitor is not None and not callable(monitor):
-            raise TypeError("monitor must be callable.")
+        if monitor is not None and not isinstance(monitor, AbstractMeshMonitor):
+            raise TypeError("monitor must be an AbstractMeshMonitor.")
         reference = self.reference_coordinates
         boundary = jnp.asarray(boundary_displacement, dtype=reference.dtype)
         if boundary.shape != (self.boundary_indices.shape[0], reference.shape[1]):
             raise ValueError("boundary_displacement must have shape (boundary, dim).")
+        return run_owned_program(
+            self, "extend", FiniteElementMotionExtension._extend, boundary, monitor
+        )
+
+    def _extend(
+        self, boundary: Array, monitor: AbstractMeshMonitor | None, /
+    ) -> FiniteElementMotionExtensionResult:
+        route = self.policy.route
+        reference = self.reference_coordinates
         boundary_points = reference[self.boundary_indices] + boundary
         # Prescribed vertices of one periodic class must move as lattice copies.
         scale = jnp.maximum(
@@ -1174,6 +1235,17 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             jnp.abs(boundary - boundary[self.boundary_class_rows]) <= 1.0e-9 * scale
         )
         class_boundary = boundary[self.boundary_sources]
+        # Every route solves for the displacement normalized by the largest
+        # prescribed displacement, so the solver's absolute floors and step
+        # criteria are relative to the motion: a 1e-9 move converges like a
+        # unit move. The scale carries no derivative (the linear routes are
+        # homogeneous, and the nonlinear routes are rescaled consistently).
+        displacement_scale = jax.lax.stop_gradient(jnp.max(jnp.abs(class_boundary)))
+        solve_scale = jnp.where(
+            displacement_scale > 0.0,
+            displacement_scale,
+            jnp.ones_like(displacement_scale),
+        )
 
         def result(
             interior: Any,
@@ -1197,6 +1269,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                 status=jnp.asarray(status, dtype=jnp.int32),
                 iterations=jnp.asarray(iterations, dtype=jnp.int32),
                 residual_norm=jnp.asarray(residual_norm, dtype=reference.dtype),
+                displacement_scale=displacement_scale,
                 route=route,
             )
 
@@ -1214,27 +1287,28 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                 | FiniteElementMeshMotionRoute.LINEAR_ELASTICITY
             ):
                 # ty: ignore[unresolved-attribute]
-                interior, solved = self.linear.solve(class_boundary)
+                normalized, solved = self.linear.solve(class_boundary / solve_scale)
                 return result(
-                    interior,
+                    solve_scale * normalized,
                     jnp.all(solved.successful),
                     solved.status,
                     jnp.max(solved.diagnostics.iterations),
-                    jnp.max(solved.diagnostics.residual_norm),
+                    solve_scale * jnp.max(solved.diagnostics.residual_norm),
                 )
             case (
                 FiniteElementMeshMotionRoute.WINSLOW | FiniteElementMeshMotionRoute.MMPDE
             ):
                 # ty: ignore[unresolved-attribute]
-                harmonic, _ = self.linear.solve(class_boundary)
-                initial = reference[self.interior_representatives] + harmonic
-                root = self._stationary_route(boundary_points, initial, monitor)
+                harmonic, _ = self.linear.solve(class_boundary / solve_scale)
+                root = self._stationary_route(
+                    boundary_points, harmonic, monitor, solve_scale
+                )
                 return result(
-                    root.state - reference[self.interior_representatives],
+                    solve_scale * root.state,
                     root.successful,
                     root.status,
                     root.diagnostics.iterations,
-                    root.diagnostics.final_residual_norm,
+                    solve_scale * root.diagnostics.final_residual_norm,
                 )
             case _:
                 raise ValueError(f"Unsupported mesh motion route {route!r}.")
@@ -1245,7 +1319,7 @@ def _propose_coordinates(
     extension: FiniteElementMotionExtension,
     validity: MotionValidityPlan,
     boundary_displacement: Array,
-    monitor: MeshMonitor | None,
+    monitor: AbstractMeshMonitor | None,
     /,
 ) -> tuple[Array, FiniteElementMotionExtensionResult, MotionValidityEvidence]:
     extended = extension.extend(boundary_displacement, monitor=monitor)
@@ -1373,7 +1447,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
         /,
         *,
         numeric_version: str,
-        monitor: MeshMonitor | None = None,
+        monitor: AbstractMeshMonitor | None = None,
     ) -> FiniteElementMeshRealization:
         """Realize one design; ``monitor`` drives the MMPDE route."""
 
@@ -1444,6 +1518,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
 
 
 __all__ = [
+    "AbstractMeshMonitor",
     "FiniteElementBoundaryProvider",
     "FiniteElementBoundaryRealization",
     "FiniteElementMeshMotionEvidence",

@@ -141,7 +141,7 @@ def test_mesh_motion_routes_scenario_1() -> None:
     assert _certified(points, triangles, result.displacement)
 
 
-class _GaussianMonitor(eqx.Module):
+class _GaussianMonitor(D.AbstractMeshMonitor):
     amplitude: jax.Array
 
     def __call__(self, points: Any) -> Any:
@@ -181,6 +181,39 @@ def test_mmpde_concentrates_vertices_toward_the_monitor_peak() -> None:
     np.testing.assert_allclose(gradient, finite_difference, rtol=1.0e-4)
 
 
+def test_repeated_mmpde_solves_reuse_one_compiled_program() -> None:
+    """Eager solves compile once per extension; new monitor values reuse it."""
+
+    points, triangles, boundary = _square(6)
+    fixed = np.zeros_like(points[boundary])
+    extension = _extension(points, triangles, boundary, Route.MMPDE)
+    extension.extend(fixed, monitor=_GaussianMonitor(jnp.asarray(1.0)))
+    compiles: list[str] = []
+
+    def listener(event: str, duration_secs: float, **kwargs: str | int) -> None:
+        del duration_secs, kwargs
+        if event == "/jax/core/compile/backend_compile_duration":
+            compiles.append(event)
+
+    jax.monitoring.register_event_duration_secs_listener(listener)
+    try:
+        results = [
+            extension.extend(fixed, monitor=_GaussianMonitor(jnp.asarray(amplitude)))
+            for amplitude in (2.0, 5.0, 10.0)
+        ]
+    finally:
+        jax.monitoring.unregister_event_duration_listener(listener)
+    assert compiles == []
+    traced = eqx.filter_jit(extension.extend)(
+        fixed, monitor=_GaussianMonitor(jnp.asarray(10.0))
+    )
+    assert all(bool(result.successful) for result in results)
+    np.testing.assert_allclose(
+        results[-1].displacement, traced.displacement, rtol=0.0, atol=1.0e-12
+    )
+    assert not np.allclose(results[0].displacement, results[1].displacement)
+
+
 def test_winslow_boundary_derivative_matches_finite_differences() -> None:
     points, triangles, boundary = _square(4)
     edge = points[boundary]
@@ -205,7 +238,6 @@ def test_mesh_motion_routes_scenario_2() -> None:
         _extension(points, triangles, boundary, Route.PRESCRIBED)
     harmonic = _extension(points, triangles, boundary, Route.HARMONIC)
     with pytest.raises(ValueError, match="monitor"):
-        # ty: ignore[invalid-argument-type]
         harmonic.extend(np.zeros_like(points[boundary]), monitor=_GaussianMonitor(1.0))
     mmpde = _extension(points, triangles, boundary, Route.MMPDE)
     with pytest.raises(ValueError, match="monitor"):
@@ -230,6 +262,47 @@ def test_mesh_motion_routes_scenario_2() -> None:
     inverted = validity.evaluate(folded)
     assert int(inverted.status) & int(D.MotionValidityStatus.ORIENTATION_CHANGED)
     assert float(inverted.minimum_relative_jacobian) < 0.0
+
+
+@pytest.mark.parametrize(
+    "route", (Route.HARMONIC, Route.LINEAR_ELASTICITY, Route.WINSLOW, Route.MMPDE)
+)
+def test_every_route_converges_for_tiny_boundary_moves(route: Any) -> None:
+    """Solve criteria are relative to the motion, not absolute coordinate floors.
+
+    Every route solves for the displacement normalized by its largest boundary
+    entry (reported as `displacement_scale`), so a 1e-9 move converges like an
+    O(0.1) one and reports its residual in coordinate units.
+    """
+    points, triangles, boundary = _square(4)
+    edge = points[boundary]
+    direction = np.stack((0.2 * edge[:, 1], 0.1 * np.sin(np.pi * edge[:, 0])), 1)
+    interior = np.setdiff1d(np.arange(points.shape[0]), boundary)
+    extension = _extension(points, triangles, boundary, route)
+    # A uniform monitor: MMPDE then moves the interior only with the boundary.
+    monitor = _GaussianMonitor(jnp.asarray(0.0)) if route is Route.MMPDE else None
+    linear = route in (Route.HARMONIC, Route.LINEAR_ELASTICITY)
+    amplitudes = (1.0e-9, 1.0e-5, 1.0e-1) if linear else (1.0e-5, 1.0e-1)
+    responses = []
+    for amplitude in amplitudes:
+        result = extension.extend(amplitude * direction, monitor=monitor)
+        assert bool(result.successful), (amplitude, np.asarray(result.status))
+        np.testing.assert_allclose(
+            result.displacement_scale, amplitude * np.max(np.abs(direction)), rtol=1e-15
+        )
+        # The residual scales with the motion (MMPDE's carries 1 / tau).
+        assert float(result.residual_norm) <= 1.0e-6 * float(result.displacement_scale)
+        response = np.asarray(result.displacement)[interior] / amplitude
+        assert float(np.max(np.abs(response))) > 1.0e-3
+        responses.append(response)
+    if linear:
+        # Linear routes are homogeneous in the boundary data.
+        for response in responses[:-1]:
+            np.testing.assert_allclose(response, responses[-1], rtol=0.0, atol=1e-9)
+    else:
+        # A small move follows the route's linearization.
+        scale = float(np.max(np.abs(responses[-1])))
+        assert float(np.max(np.abs(responses[0] - responses[-1]))) < 0.2 * scale
 
 
 def _periodic_strip(count: Any) -> Any:

@@ -8,16 +8,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, product
 
 import numpy as np
 
 from ..discretization._cell_geometry import _coordinate_coefficient_identity
 from ..discretization._coordinate_enclosure import (
     add,
+    axes,
     bernstein_coefficients,
     bernstein_degree,
     BernsteinDomain,
+    compose_expression,
+    constant,
     derivative,
     evaluate_expression,
     Expression,
@@ -236,19 +239,176 @@ def prove_mapped_cell_injective(
         if controls is not None:
             return MappedInjectivityWitness(rows, projection_matrix, controls)
     # The centroid preconditioner fails on strongly curved cells; search a constant
-    # preconditioner against the Jacobian's own Bernstein control matrices.
-    for rows in combinations(range(ambient), dimension):
-        matrices = jacobian_control_matrices(
+    # preconditioner against the Jacobian's Bernstein control matrices, on uniform
+    # subdivisions of the reference domain when the whole-cell controls are too
+    # loose (their hull holds no common monotone direction).
+    for level in range(SUBDIVISION_LEVELS + 1):
+        if level and _child_maps(domain, dimension) is None:
+            break
+        for rows in combinations(range(ambient), dimension):
+            matrices = subdivided_jacobian_controls(
+                tuple(
+                    tuple(jacobian[row][axis] for axis in range(dimension))
+                    for row in rows
+                ),
+                domain,
+                dimension,
+                level,
+            )
+            if matrices is None:
+                return None
+            found = monotone_preconditioner(matrices)
+            if found is not None:
+                return MappedInjectivityWitness(rows, found[0], found[1])
+    return None
+
+
+SUBDIVISION_LEVELS = 2
+_HALF = Fraction(1, 2)
+_AffineMap = tuple[tuple[Fraction, ...], tuple[tuple[Fraction, ...], ...]]
+
+
+def subdivided_jacobian_controls(
+    jacobian: tuple[tuple[Expression, ...], ...],
+    domain: BernsteinDomain,
+    dimension: int,
+    level: int,
+    /,
+) -> tuple[_ExactMatrix, ...] | None:
+    """Jacobian control matrices over ``level`` uniform refinements of the domain.
+
+    Each piece's controls enclose the Jacobian values on that piece, so their
+    union encloses every value on the cell, more tightly as the level grows. A
+    domain without a uniform refinement keeps its whole-cell controls.
+    """
+    maps = _subdivision_maps(domain, dimension, level)
+    if maps is None:
+        return jacobian_control_matrices(jacobian, domain, dimension)
+    matrices: list[_ExactMatrix] = []
+    for offset, linear in maps:
+        arguments = _affine_arguments(offset, linear)
+        piece = jacobian_control_matrices(
             tuple(
-                tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
-            ),
+                tuple(compose_expression(entry, arguments) for entry in row)
+                for row in jacobian
+            )
+            if level
+            else jacobian,
             domain,
             dimension,
         )
-        found = None if matrices is None else monotone_preconditioner(matrices)
-        if found is not None:
-            return MappedInjectivityWitness(rows, found[0], found[1])
+        if piece is None:
+            return None
+        matrices.extend(piece)
+    return tuple(matrices)
+
+
+def _scaled_identity(
+    dimension: int, value: Fraction, /
+) -> tuple[tuple[Fraction, ...], ...]:
+    return tuple(
+        tuple(value if row == column else Fraction(0) for column in range(dimension))
+        for row in range(dimension)
+    )
+
+
+def _child_maps(domain: str, dimension: int, /) -> tuple[_AffineMap, ...] | None:
+    """One uniform refinement of the standard domain into affine children."""
+    zero = Fraction(0)
+    if domain == "box":
+        return tuple(
+            (offsets, _scaled_identity(dimension, _HALF))
+            for offsets in product((zero, _HALF), repeat=dimension)
+        )
+    triangle = (
+        ((zero, zero), _scaled_identity(2, _HALF)),
+        ((_HALF, zero), _scaled_identity(2, _HALF)),
+        ((zero, _HALF), _scaled_identity(2, _HALF)),
+        ((_HALF, _HALF), _scaled_identity(2, -_HALF)),
+    )
+    if domain == "simplex" and dimension == 1:
+        return (((zero,), ((_HALF,),)), ((_HALF,), ((_HALF,),)))
+    if domain == "simplex" and dimension == 2:
+        return triangle
+    if domain == "prism" and dimension == 3:
+        return tuple(
+            (
+                (*offset, height),
+                (
+                    (*linear[0], zero),
+                    (*linear[1], zero),
+                    (zero, zero, _HALF),
+                ),
+            )
+            for offset, linear in triangle
+            for height in (zero, _HALF)
+        )
     return None
+
+
+def _subdivision_maps(
+    domain: str, dimension: int, level: int, /
+) -> tuple[_AffineMap, ...] | None:
+    maps: tuple[_AffineMap, ...] = (
+        (
+            tuple(Fraction(0) for _ in range(dimension)),
+            _scaled_identity(dimension, Fraction(1)),
+        ),
+    )
+    if not level:
+        return maps
+    children = _child_maps(domain, dimension)
+    if children is None:
+        return None
+    for _ in range(level):
+        maps = tuple(
+            (
+                tuple(
+                    offset[row]
+                    + sum(
+                        (
+                            linear[row][inner] * child[0][inner]
+                            for inner in range(dimension)
+                        ),
+                        Fraction(0),
+                    )
+                    for row in range(dimension)
+                ),
+                tuple(
+                    tuple(
+                        sum(
+                            (
+                                linear[row][inner] * child[1][inner][column]
+                                for inner in range(dimension)
+                            ),
+                            Fraction(0),
+                        )
+                        for column in range(dimension)
+                    )
+                    for row in range(dimension)
+                ),
+            )
+            for offset, linear in maps
+            for child in children
+        )
+    return maps
+
+
+def _affine_arguments(
+    offset: tuple[Fraction, ...], linear: tuple[tuple[Fraction, ...], ...], /
+) -> tuple[Expression, ...]:
+    dimension = len(offset)
+    variables = axes(dimension)
+    arguments: list[Expression] = []
+    for row in range(dimension):
+        expression: Expression = constant(offset[row], dimension)
+        for column in range(dimension):
+            if linear[row][column]:
+                expression = add(
+                    expression, scale(variables[column], linear[row][column])
+                )
+        arguments.append(expression)
+    return tuple(arguments)
 
 
 _ExactMatrix = tuple[tuple[ExactScalar, ...], ...]
@@ -299,48 +459,84 @@ def _exact_determinant(matrix: _ExactMatrix, /) -> ExactScalar:
 
 
 def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
-    """Unit-norm ``M`` maximizing the least eigenvalue of every ``sym(M C_k)``.
+    """A box-bounded ``M`` maximizing ``min_k lambda_min(sym(M C_k))``, if positive.
 
-    The objective is concave in ``M``; candidates are the inverses of the mean
-    and of each control, refined by soft-min supergradient ascent. Floats only
-    propose ``M``; the caller decides positivity exactly.
+    The objective is concave in ``M`` (a minimum of least eigenvalues of linear
+    symmetric matrices). Kelley's cutting planes ``t <= v^T M C_k v`` at
+    least-eigenvalue vectors ``v`` give linear programs whose optima bound it
+    from above: an optimum ``t <= 0`` proves that no preconditioner exists;
+    otherwise every iterate cuts off the previous program point, and the search
+    stops once the attained margin is positive and within half the bound, or
+    the bound and the attained margin agree to binary64 resolution. Inverses
+    of the mean and of each control seed the cuts. Floats only propose ``M``;
+    the caller decides positivity exactly.
     """
-    if not np.all(np.isfinite(controls)):
+    from scipy.optimize import linprog
+
+    if controls.size == 0 or not np.all(np.isfinite(controls)):
         return None
+    magnitude = float(np.max(np.abs(controls)))
+    if magnitude == 0.0:
+        return None
+    controls = controls / magnitude
+    # sym(M C) positive definite forces sign(det C) = sign(det M) for every C.
+    determinants = np.linalg.det(controls)
+    if not (np.all(determinants > 0.0) or np.all(determinants < 0.0)):
+        return None
+    size = controls.shape[1]
 
     def margins(matrix: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
         products = matrix @ controls
         values, vectors = np.linalg.eigh(0.5 * (products + np.swapaxes(products, 1, 2)))
         return values[:, 0], vectors[:, :, 0]
 
+    def cuts(vectors: np.ndarray, selected: np.ndarray, /) -> list[np.ndarray]:
+        # Row of t - v^T M (C v) <= 0 over the unknowns (M row-major, t).
+        applied = np.einsum("kij,kj->ki", controls[selected], vectors[selected])
+        coefficients = np.einsum("ki,kj->kij", vectors[selected], applied)
+        return [np.concatenate((-row.ravel(), (1.0,))) for row in coefficients]
+
+    # Seeds only start the cuts (the program is complete from any seed).
+    seeds = controls[np.unique(np.linspace(0, len(controls) - 1, 8).astype(int))]
     starts = []
-    for matrix in (controls.mean(axis=0), *controls):
+    for matrix in (controls.mean(axis=0), *seeds):
         try:
             inverse = np.linalg.inv(matrix)
         except np.linalg.LinAlgError:
             continue
         if np.all(np.isfinite(inverse)):
-            starts.append(inverse / np.linalg.norm(inverse))
+            starts.append(inverse / np.max(np.abs(inverse)))
     if not starts:
         return None
-    current = max(starts, key=lambda matrix: float(np.min(margins(matrix)[0])))
-    best, best_margin = current, float(np.min(margins(current)[0]))
-    for step in range(400):
-        if best_margin > 0.0 and step >= 50:
-            break
-        values, vectors = margins(current)
-        spread = max(float(np.ptp(values)), 1.0e-12)
-        weights = np.exp(-(values - values.min()) / (0.05 * spread))
-        weights /= weights.sum()
-        gradient = np.einsum(
-            "k,ki,kj->ij", weights, vectors, np.einsum("kij,kj->ki", controls, vectors)
+    best = max(starts, key=lambda matrix: float(np.min(margins(matrix)[0])))
+    values, vectors = margins(best)
+    best_margin = float(np.min(values))
+    rows = cuts(vectors, np.arange(values.size))
+    objective = np.concatenate((np.zeros(size * size), (-1.0,)))
+    bounds = [(-1.0, 1.0)] * (size * size) + [(None, None)]
+    while True:
+        solution = linprog(
+            objective,
+            A_ub=np.asarray(rows),
+            b_ub=np.zeros(len(rows)),
+            bounds=bounds,
+            method="highs",
         )
-        current = current + 0.2 / np.sqrt(1.0 + step) * gradient
-        current = current / np.linalg.norm(current)
-        margin = float(np.min(margins(current)[0]))
-        if margin > best_margin:
-            best, best_margin = current, margin
-    return best if best_margin > 0.0 else None
+        point = solution.x
+        if not solution.success or point is None:
+            return best if best_margin > 0.0 else None
+        bound = float(point[-1])
+        if bound <= 0.0:
+            return None
+        candidate = np.asarray(point[:-1]).reshape(size, size)
+        values, vectors = margins(candidate)
+        if float(np.min(values)) > best_margin:
+            best, best_margin = candidate, float(np.min(values))
+        if best_margin > 0.0 and best_margin >= 0.5 * bound:
+            return best
+        if bound - best_margin <= 1.0e-12 * max(1.0, bound):
+            return best if best_margin > 0.0 else None
+        rows.extend(cuts(vectors, np.flatnonzero(values < bound)))
 
 
 def monotone_preconditioner(
@@ -403,4 +599,6 @@ __all__ = [
     "MappedInjectivityWitness",
     "monotone_preconditioner",
     "prove_mapped_cell_injective",
+    "SUBDIVISION_LEVELS",
+    "subdivided_jacobian_controls",
 ]

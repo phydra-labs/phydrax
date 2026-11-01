@@ -2248,8 +2248,9 @@ def _finite_element_source_basis(element: FiniteElementSpec, /) -> tuple[Express
     )
 
 
-# Root source bases keyed by element type and content identity; each is formed
-# once per process.
+# Reference element source bases (finite-element and layer-column) keyed by the
+# element's content identity, a static table of family, degree and layout.
+# Spline roots carry per-mesh extraction operators and are formed per call.
 _SOURCE_BASES: dict[tuple[str, str], tuple[Any, ...]] = {}
 
 
@@ -2258,8 +2259,8 @@ def coordinate_source_basis(
 ) -> tuple[Any, ...]:
     """Return exact root basis expressions without applying reference charts/actions.
 
-    The basis depends only on the element's content identity, so it is formed
-    once per element; every caller receives its own polynomial dictionaries.
+    Reference finite-element bases are formed once per reference element; every
+    caller receives its own polynomial dictionaries.
     """
     if isinstance(element, PerCellRestrictedCellGeometryElement):
         if cell_row is not None and not 0 <= int(cell_row) < len(element.target_cell_ids):
@@ -2273,10 +2274,9 @@ def coordinate_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_source_basis(element.source_element)
-    identity = getattr(element, "element_id", None)
-    if not isinstance(identity, str):
+    if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_source_basis(element)
-    key = (type(element).__name__, identity)
+    key = (type(element).__name__, element.element_id)
     basis = _SOURCE_BASES.get(key)
     if basis is None:
         basis = _root_source_basis(element)
@@ -2767,8 +2767,7 @@ def _finite_element_execution_basis(
         raise ValueError("Finite-element spec has no implemented native tabulator.")
 
 
-# Root execution bases keyed by element type and content identity, like
-# `_SOURCE_BASES`; each is formed once per process.
+# Reference element execution bases, keyed and scoped like `_SOURCE_BASES`.
 _EXECUTION_BASES: dict[tuple[str, str], tuple[Expression, ...]] = {}
 
 
@@ -2777,9 +2776,8 @@ def coordinate_execution_source_basis(
 ) -> tuple[Expression, ...]:
     """Return the native coefficient-shadow basis before reference composition.
 
-    The root basis depends only on the element's content identity, so it is
-    formed once per element; every caller receives its own polynomial
-    dictionaries.
+    Reference element bases are formed once per reference element; every caller
+    receives its own polynomial dictionaries.
     """
     if isinstance(
         element,
@@ -2790,10 +2788,9 @@ def coordinate_execution_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_execution_source_basis(element.source_element)
-    identity = getattr(element, "element_id", None)
-    if not isinstance(identity, str):
+    if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_execution_basis(element)
-    key = (type(element).__name__, identity)
+    key = (type(element).__name__, element.element_id)
     basis = _EXECUTION_BASES.get(key)
     if basis is None:
         basis = _root_execution_basis(element)
@@ -3589,6 +3586,10 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             dtype=np.float64,
         )
         point_values = np.asarray(coordinates, dtype=np.float64)
+        route_rows = [np.asarray(route, dtype=np.int64) for route in routes]
+        # A shared reference element tabulates each distinct reference point set
+        # once per block; cells requesting the same points reuse those values.
+        shared_tabulations: dict[tuple[int, bytes], np.ndarray] = {}
         for output_row, identifier in enumerate(identifiers.tolist()):
             owner = cell_rows.get(int(identifier))
             if owner is None:
@@ -3621,9 +3622,15 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         raise ValueError(
                             f"Coordinate element {type(element).__name__} has no reference evaluator."
                         )
-                    values, _ = tabulate(references[output_row])
+                    key = (block_index, references[output_row].tobytes())
+                    values = shared_tabulations.get(key)
+                    if values is None:
+                        values = np.asarray(
+                            tabulate(references[output_row])[0], dtype=np.float64
+                        )
+                        shared_tabulations[key] = values
             basis = np.asarray(values, dtype=np.float64)
-            dofs = np.asarray(routes[block_index], dtype=np.int64)[cell_row]
+            dofs = route_rows[block_index][cell_row]
             if basis.shape != (references.shape[1], dofs.size):
                 raise ValueError(
                     "Coordinate basis evaluation returned incompatible shape."
