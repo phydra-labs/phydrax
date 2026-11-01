@@ -1913,6 +1913,20 @@ high-order nodes the declared isometry of their source-side nodes
 certifies an existing high-order geometry, such as a Gmsh high-order output,
 without moving it.
 
+Constrained nodes without a finite projection frame are pinned to their foot
+during relaxation. Global embedding of curved maps (triangles in the plane,
+tetrahedra and prisms in space) proves that neighbours meet only in their
+declared shared stratum. Cells sharing a vertex or an edge are handled by exact
+Bernstein subdivision (tensor triangle-times-line pieces for prisms), using
+hull separation or stratum-residual cones. For cells sharing a facet, an exact
+affine glue places the second reference cell across the facet so that the union
+is convex; a constant preconditioner then makes the glued map strictly monotone
+at every (uniformly refined) Jacobian Bernstein control. Single-cell injectivity
+uses the same preconditioner. It is found by Kelley cutting planes, whose
+linear-program bound also proves when no preconditioner exists. Containment rays
+that meet a trim edge or a face tangentially are retried along the next fixed
+direction.
+
 `curve_layer_core_construction(construction, layers, source_surface_charts, policy=...)`
 builds a source-aware high-order mixed-cell map for a boundary-layer/core mesh.
 Parametric sources retain exact chart ancestry and projection traces; adaptive

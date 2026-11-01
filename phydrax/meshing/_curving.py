@@ -1817,6 +1817,11 @@ def curve_cell_mesh(
         coordinates, constrained_rows, projectors = _project_constrained(
             projection, moved, classes, pairs
         )
+        admissible = relaxed.converged or policy.accept_valid_nonconverged_relaxation
+        if not admissible and round_ < policy.relaxation_rounds:
+            # An intermediate candidate that may not replace the geometry needs
+            # no evidence; the last round's candidate is always certified.
+            continue
         candidate = _evidence(
             mesh,
             _geometry_with_exact_coordinate_bank(
@@ -1834,9 +1839,7 @@ def curve_cell_mesh(
             source_result=source_result,
             prior_transition=prior_transition,
         )
-        if candidate.accepted and (
-            relaxed.converged or policy.accept_valid_nonconverged_relaxation
-        ):
+        if candidate.accepted and admissible:
             accepted = (coordinates, candidate, round_)
     if accepted is not None:
         return HighOrderCurvingResult(
