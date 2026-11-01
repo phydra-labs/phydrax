@@ -396,3 +396,19 @@ def test_exact_expression_columns_deduplicate_and_refuse_malformed_terms() -> No
     for changed in malformed:
         with pytest.raises((TypeError, ValueError)):
             changed.decode()
+
+
+def test_rational_term_rows_share_only_within_one_decode() -> None:
+    from phydrax.meshing._archive_layer_columns import _decode_column, _encode_column
+
+    numerator = (((1,), Fraction(2, 3)),)
+    denominator = (((0,), Fraction(1)),)
+    distinct = (((0,), Fraction(4)),)
+    rows = (((numerator, denominator),), ((distinct, denominator),)) * 64
+    recipe = _encode_column(rows, "rational_terms")
+    restored = _decode_column(recipe, "rational_terms")
+    assert restored == rows
+    assert restored[0] is restored[2]
+    assert restored[1] is restored[3]
+    assert restored[0] is not restored[1]
+    assert _decode_column(recipe, "rational_terms")[0] is not restored[0]
