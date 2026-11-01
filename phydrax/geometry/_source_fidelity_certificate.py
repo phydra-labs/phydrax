@@ -231,28 +231,42 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         self.coverage = coverage
         self.status = status
         self.findings = tuple(findings)
-        self.certificate_id = canonical_fingerprint(
+        self.certificate_id = self._derived_certificate_id()
+
+    def _derived_certificate_id(self) -> str:
+        """The content identity these stored claims determine."""
+        values = tuple(
+            float(value)
+            for value in (
+                self.mesh_to_source_lower,
+                self.mesh_to_source_upper,
+                self.source_to_mesh_lower,
+                self.source_to_mesh_upper,
+            )
+        )
+        witness, coverage = self.witness, self.coverage
+        return canonical_fingerprint(
             {
                 "kind": "source-fidelity-certificate",
-                "binding": binding.binding_id,
+                "binding": self.binding.binding_id,
                 "source": (self.source_id, self.source_revision, self.domain_id),
-                "tolerance": tolerance_,
-                "maximum_normal_deviation": maximum_normal_,
-                "deviation_bounds": array_tree_fingerprint(bounds),
+                "tolerance": self.tolerance,
+                "maximum_normal_deviation": self.maximum_normal_deviation,
+                "deviation_bounds": array_tree_fingerprint(self.deviation_bounds),
                 "directed_bounds": tuple(
                     value if math.isfinite(value) else value.hex() for value in values
                 ),
                 "normal_bounds": None
-                if normal_bounds is None
-                else array_tree_fingerprint(normal_bounds),
-                "normal_lower": maximum_normal_deviation_lower,
+                if self.normal_deviation_bounds is None
+                else array_tree_fingerprint(self.normal_deviation_bounds),
+                "normal_lower": self.maximum_normal_deviation_lower,
                 "cells": self.source_cell_global_ids,
                 "patches": self.source_patch_ids,
                 "occurrences": self.source_occurrence_paths,
                 "witness": None if witness is None else witness.witness_id,
                 "coverage": None if coverage is None else coverage.cover_id,
-                "findings": tuple(finding.finding_id for finding in findings),
-                "status": status,
+                "findings": tuple(finding.finding_id for finding in self.findings),
+                "status": self.status,
             }
         )
 
@@ -263,6 +277,39 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         source: SourceBoundaryQuery,
         /,
     ) -> None:
+        """Require this computed proof to answer the current mesh, map and source.
+
+        Nothing is recomputed: the binding must match the current operands, the
+        operands must be the content this proof was computed from
+        (:meth:`require_inputs` with the retained tolerance, normal limit and
+        witness), and the stored status and identity must be the ones the
+        stored claims determine. :meth:`revalidate` recomputes the proof.
+        """
+        self.binding.require(mesh, geometry, source=source)
+        self.require_inputs(
+            mesh,
+            geometry,
+            source,
+            tolerance=self.tolerance,
+            maximum_normal_deviation=self.maximum_normal_deviation,
+            witness=self.witness,
+        )
+        if (
+            self.status != certificate_status(self.findings)
+            or self.certificate_id != self._derived_certificate_id()
+        ):
+            raise ValueError(
+                "Source fidelity certificate claims differ from its stored identity."
+            )
+
+    def revalidate(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: SourceBoundaryQuery,
+        /,
+    ) -> None:
+        """Recompute the proof; stored identities are not proof authority."""
         from ._source_fidelity import certify_source_fidelity
 
         self.binding.require(mesh, geometry, source=source)

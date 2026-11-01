@@ -10,6 +10,8 @@ from typing import Any
 
 import numpy as np
 
+from ..linalg._exact import solve_exact
+
 
 def _integer_matrix(values: Any, /) -> np.ndarray:
     array = np.asarray(values)
@@ -212,35 +214,18 @@ def invert_unimodular(values: Any, /) -> np.ndarray:
     if matrix.shape[0] != matrix.shape[1]:
         raise ValueError("Unimodular inversion requires a square matrix.")
     size = matrix.shape[0]
-    augmented = [
-        [Fraction(matrix[row, column]) for column in range(size)]
-        + [Fraction(int(row == column)) for column in range(size)]
-        for row in range(size)
-    ]
-    for column in range(size):
-        pivot = next(
-            (row for row in range(column, size) if augmented[row][column]),
-            None,
-        )
-        if pivot is None:
-            raise ValueError("Matrix is singular and not unimodular.")
-        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
-        scale = augmented[column][column]
-        augmented[column] = [value / scale for value in augmented[column]]
-        for row in range(size):
-            if row == column:
-                continue
-            factor = augmented[row][column]
-            augmented[row] = [
-                value - factor * pivot_value
-                for value, pivot_value in zip(
-                    augmented[row], augmented[column], strict=True
-                )
-            ]
+    rational_inverse = solve_exact(
+        [
+            [Fraction(matrix[row, column]) for column in range(size)]
+            for row in range(size)
+        ],
+        [[Fraction(int(row == column)) for column in range(size)] for row in range(size)],
+        singular_message="Matrix is singular and not unimodular.",
+    )
     inverse = np.empty((size, size), dtype=object)
     for row in range(size):
         for column in range(size):
-            value = augmented[row][size + column]
+            value = rational_inverse[row][column]
             if value.denominator != 1:
                 raise ValueError(
                     "Matrix inverse is not integral; matrix is not unimodular."

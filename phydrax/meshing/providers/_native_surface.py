@@ -2032,10 +2032,29 @@ _FLIP_ANGLE_GAIN = 1.0e-6
 
 
 def _root_cell_row(
-    roots: tuple[_SurfaceRootChart, ...], points: list[_ChartUV], /
+    roots: tuple[_SurfaceRootChart, ...],
+    points: list[_ChartUV],
+    root_boxes: np.ndarray,
+    point_values: np.ndarray,
+    /,
 ) -> int | None:
-    """Row of the first convex root cell containing every chart point."""
-    for row, root in enumerate(roots):
+    """Row of the first convex root cell containing every chart point.
+
+    ``root_boxes`` (rows ``lower_u, upper_u, lower_v, upper_v`` rounded to
+    nearest) and ``point_values`` (the points rounded to nearest) screen out
+    root cells in binary64: rounding to nearest is monotone, so a strict
+    rounded comparison outside a box proves the exact point is outside it. Only
+    the remaining candidates take the exact convexity test, so the first
+    containing row is unchanged.
+    """
+    outside = (
+        (point_values[None, :, 0] < root_boxes[:, None, 0])
+        | (point_values[None, :, 0] > root_boxes[:, None, 1])
+        | (point_values[None, :, 1] < root_boxes[:, None, 2])
+        | (point_values[None, :, 1] > root_boxes[:, None, 3])
+    )
+    for row in np.flatnonzero(~np.any(outside, axis=1)).tolist():
+        root = roots[row]
         if all(
             root.orientation * _root_edge_cross(first, last, point) >= 0
             for first, last in zip(
@@ -2082,6 +2101,32 @@ def _flip_to_physical_angles(
     cell_angles = angles(triangles)
     sign = 1 if _root_edge_cross(*(chart.points[row] for row in triangles[0])) > 0 else -1
     roots = chart.root_cells if len(chart.root_cells) > 1 else ()
+    root_boxes = np.asarray(
+        [
+            [float(root.lower_u), float(root.upper_u)]
+            + [float(root.lower_v), float(root.upper_v)]
+            for root in roots
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 4))
+    point_values = np.asarray(
+        [[float(u), float(v)] for u, v in chart.points], dtype=np.float64
+    ).reshape((-1, 2))
+    # Chart points never move during flipping, so each cell's containing root
+    # row is resolved once for the whole routine.
+    cell_roots: dict[tuple[int, ...], int | None] = {}
+
+    def cell_root(cell: tuple[int, int, int], /) -> int | None:
+        key = tuple(sorted(cell))
+        if key not in cell_roots:
+            cell_roots[key] = _root_cell_row(
+                roots,
+                [chart.points[row] for row in cell],
+                root_boxes,
+                point_values[list(cell)],
+            )
+        return cell_roots[key]
+
     while True:
         cells_by_edge: dict[tuple[int, int], list[int]] = {}
         for index, triangle in enumerate(triangles):
@@ -2114,10 +2159,8 @@ def _flip_to_physical_angles(
             ):
                 continue
             if roots:
-                first_root = _root_cell_row(roots, [chart.points[row] for row in first])
-                if first_root is None or first_root != _root_cell_row(
-                    roots, [chart.points[row] for row in triangles[second_cell]]
-                ):
+                first_root = cell_root(first)
+                if first_root is None or first_root != cell_root(triangles[second_cell]):
                     continue
             new_angles = angles(candidates)
             if min(new_angles) <= old + _FLIP_ANGLE_GAIN:

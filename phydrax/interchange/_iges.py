@@ -1511,7 +1511,11 @@ class _Resolver:
                     pcurve = self.align_parameter_curve(pcurve, domain, edge, patch)
             coedges.append(
                 StagedCoedge(
-                    edge, 1 if agrees else -1, pcurve, f"{entry.name}[{len(coedges)}]"
+                    edge,
+                    1 if agrees else -1,
+                    pcurve,
+                    f"{entry.name}[{len(coedges)}]",
+                    origin="absent" if pcurve is None else "file",
                 )
             )
         self.active.pop()
@@ -2021,7 +2025,15 @@ class _Resolver:
             else:
                 pcurve, domain = parameter
                 pcurve = self.align_parameter_curve(pcurve, domain, edge, patch)
-            coedges.append(StagedCoedge(edge, 1, pcurve, label))
+            coedges.append(
+                StagedCoedge(
+                    edge,
+                    1,
+                    pcurve,
+                    label,
+                    origin="absent" if pcurve is None else "file",
+                )
+            )
         return coedges
 
     def _admit_composite(self, pointer: int, chain: tuple[str, ...]) -> None:

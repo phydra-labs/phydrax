@@ -377,7 +377,7 @@ def form_to_vector(form: ArrayLike, value_spec: FormValueSpec, /) -> Array:
 # split into row chunks of at most this size, so their working set is bounded
 # whatever the batch. Each row is solved independently, so chunking does not
 # change any value.
-_MAPPING_SOLVE_ELEMENT_BUDGET = 1 << 21
+_MAPPING_SOLVE_ELEMENT_BUDGET = 1 << 19
 
 
 def _solve_mapping(matrix: Array, rhs: Array, /) -> Array:
