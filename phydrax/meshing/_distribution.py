@@ -14,6 +14,7 @@ and migrate cell data through explicit send/receive sparse relations.
 
 from __future__ import annotations
 
+import functools
 import operator
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -21,6 +22,7 @@ from math import prod
 from typing import Any, final, NamedTuple, TYPE_CHECKING, TypedDict
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -627,11 +629,41 @@ def _periodic_support_point_rows(
     return np.flatnonzero(found).astype(np.int64, copy=False)
 
 
+# Owner metadata travels as length-prefixed byte rows padded to a power of two,
+# so one compiled gather per device group and width bucket serves every dtype,
+# shape and call site.
+_OWNER_METADATA_AXIS = "owner_metadata"
+_OWNER_METADATA_MINIMUM_WIDTH = 64
+_OWNER_METADATA_HEADER = 8
+
+
+@functools.partial(jax.jit, static_argnums=0)
+def _owner_metadata_rows(mesh: Any, rows: Array, /) -> Array:
+    """Every member's byte row, replicated, from one row per member device."""
+    from jax.sharding import PartitionSpec
+
+    def gather(local: Array, /) -> Array:
+        return jax.lax.all_gather(local[0], _OWNER_METADATA_AXIS, axis=0, tiled=False)
+
+    return jax.shard_map(
+        gather,
+        mesh=mesh,
+        in_specs=PartitionSpec(_OWNER_METADATA_AXIS),
+        out_specs=PartitionSpec(),
+        check_vma=False,
+    )(rows)
+
+
 def _owner_group_allgather(
     local_values: ArrayLike, execution_group: Any, axis_name: str, /
 ) -> np.ndarray:
-    """Allgather only compact owner metadata on the registered execution group."""
-    import jax
+    """Allgather only compact owner metadata on the registered execution group.
+
+    Every member must contribute the same shape and dtype. The values travel
+    as exact bytes through the stable compiled gather ``_owner_metadata_rows``,
+    so repeated metadata exchanges reuse a few executables instead of
+    tracing and compiling one collective per call.
+    """
     from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
     from .._execution_runtime import ExecutionGroup
@@ -650,28 +682,39 @@ def _owner_group_allgather(
         raise ValueError(
             "Owner metadata collectives require one group device per member process."
         )
-    values = np.asarray(local_values)
+    values = np.ascontiguousarray(np.asarray(local_values))
     if values.ndim < 1 or values.dtype.hasobject:
         raise TypeError("Owner metadata must be a non-object array with a leading axis.")
-    mesh = Mesh(np.asarray(devices, dtype=object), (axis,))
-    partition = PartitionSpec(axis)
-    distributed = jax.make_array_from_process_local_data(
-        NamedSharding(mesh, partition),
-        values[None, ...],
-        global_shape=(len(devices), *values.shape),
+    payload = values.reshape(-1).view(np.uint8)
+    length = payload.size
+    width = max(
+        _OWNER_METADATA_MINIMUM_WIDTH,
+        1 << (_OWNER_METADATA_HEADER + length - 1).bit_length(),
     )
-
-    def gather(local: Array, /) -> Array:
-        return jax.lax.all_gather(local[0], axis, axis=0, tiled=False)
-
-    gathered = jax.shard_map(
-        gather,
-        mesh=mesh,
-        in_specs=partition,
-        out_specs=PartitionSpec(),
-        check_vma=False,
-    )(distributed)
-    return np.asarray(jax.device_get(gathered))
+    row = np.zeros((1, width), dtype=np.uint8)
+    row[0, :_OWNER_METADATA_HEADER] = np.frombuffer(
+        np.asarray(length, dtype="<u8").tobytes(), dtype=np.uint8
+    )
+    row[0, _OWNER_METADATA_HEADER : _OWNER_METADATA_HEADER + length] = payload
+    mesh = Mesh(np.asarray(devices, dtype=object), (_OWNER_METADATA_AXIS,))
+    distributed = jax.make_array_from_process_local_data(
+        NamedSharding(mesh, PartitionSpec(_OWNER_METADATA_AXIS)),
+        row,
+        global_shape=(len(devices), width),
+    )
+    rows = np.asarray(jax.device_get(_owner_metadata_rows(mesh, distributed)))
+    lengths = np.ascontiguousarray(rows[:, :_OWNER_METADATA_HEADER]).view("<u8")[:, 0]
+    if np.any(lengths != length):
+        raise ValueError(
+            "Owner metadata collectives require the same shape and dtype on every member."
+        )
+    return (
+        np.ascontiguousarray(
+            rows[:, _OWNER_METADATA_HEADER : _OWNER_METADATA_HEADER + length]
+        )
+        .view(values.dtype)
+        .reshape((len(devices), *values.shape))
+    )
 
 
 def _owner_group_differing_declarations(
