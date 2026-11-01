@@ -78,8 +78,6 @@ class ImplicitCavityAtlas(StrictModule, NonTrainableState):
             raise TypeError(
                 "Implicit cavity atlas requires CellMesh and CellGeometrySpec owners."
             )
-        if not isinstance(source_validity, CellValidityCertificate):
-            raise TypeError("source_validity must be CellValidityCertificate.")
         if set(region_occurrence_paths) != set(region_names) or set(
             source_fidelity_certificates
         ) != set(region_names):

@@ -1285,7 +1285,10 @@ def _node_residuals(
     projectors[face] = normals[face, :, None] * normals[face, None, :]
     vertex = classes.dimensions[rows] == 0
     projectors[vertex] = identity
-    projectors = np.where(np.isfinite(projectors), projectors, 0.0)
+    # A resolved foot without a finite frame (singular or frameless hit) pins the
+    # node to its foot; a zero projector would leave a constrained node free.
+    unframed = ~np.all(np.isfinite(projectors), axis=(1, 2))
+    projectors[unframed] = identity
     feet = np.where(np.isfinite(feet), feet, coordinates[rows])
     return rows, feet, residuals, projectors
 
@@ -1814,6 +1817,11 @@ def curve_cell_mesh(
         coordinates, constrained_rows, projectors = _project_constrained(
             projection, moved, classes, pairs
         )
+        admissible = relaxed.converged or policy.accept_valid_nonconverged_relaxation
+        if not admissible and round_ < policy.relaxation_rounds:
+            # An intermediate candidate that may not replace the geometry needs
+            # no evidence; the last round's candidate is always certified.
+            continue
         candidate = _evidence(
             mesh,
             _geometry_with_exact_coordinate_bank(
@@ -1831,9 +1839,7 @@ def curve_cell_mesh(
             source_result=source_result,
             prior_transition=prior_transition,
         )
-        if candidate.accepted and (
-            relaxed.converged or policy.accept_valid_nonconverged_relaxation
-        ):
+        if candidate.accepted and admissible:
             accepted = (coordinates, candidate, round_)
     if accepted is not None:
         return HighOrderCurvingResult(

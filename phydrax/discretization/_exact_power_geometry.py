@@ -3,7 +3,7 @@ from __future__ import annotations
 from fractions import Fraction
 from itertools import combinations, islice
 from types import SimpleNamespace
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,6 +23,10 @@ from ..typing import checked
 from ._cell_mesh import CellBlock, CellMesh
 from ._exact_algebraic_geometry import coefficient_payload
 from ._periodic_cell import PeriodicCell
+
+
+if TYPE_CHECKING:
+    from ..meshing._periodic import PeriodicPointOrbits
 
 
 ExactPoint3 = tuple[Fraction, Fraction, Fraction]
@@ -219,13 +223,12 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
     exact_image_weights: tuple[Fraction, ...] = eqx.field(static=True)
     context_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
-        periodic_source: Any,
-        source_weights: Any,
-        image_owners: Any,
-        image_windings: Any,
+        periodic_source: PeriodicPointOrbits,
+        source_weights: ArrayLike,
+        image_owners: ArrayLike,
+        image_windings: ArrayLike,
         /,
         *,
         weights_present: bool,

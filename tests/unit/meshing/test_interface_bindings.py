@@ -21,8 +21,9 @@ from phydrax.geometry.multiregion_surface import (
     seed_double_bubble,
 )
 from phydrax.geometry.surface import InterfaceSide
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 from phydrax.meshing import MeshInterfaceAttachment, MeshPart
+from phydrax.meshing._association import GeometryAssociationArchiveRecipe
 from phydrax.solver.coupling import (
     InterfaceBinding,
     InterfaceEndpoint,
@@ -49,23 +50,23 @@ def _rectangle(x0: float, x1: float) -> TopoDS_Face:
 def _plate_projection(width: float) -> phx.geometry.AbstractBRepProjection:
     """Two rectangles sharing the B-Rep edge x = 0; ``width`` sets the right one."""
     shape = BRepAlgoAPI_Fuse(_rectangle(-1.0, 0.0), _rectangle(0.0, width)).Shape()
-    model = model_from_occt_shape(
+    model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
             linear_deflection=0.05,
             angular_deflection=0.2,
         ),
-    )
+    ).model
     return phx.geometry.prepare_brep_projection(model, embedding=_EMBEDDING)
 
 
-def _entity_at(
+def _entity_index_at(
     projection: phx.geometry.AbstractBRepProjection,
     dimension: int,
     point: tuple[float, float],
-) -> str:
-    """The unique B-Rep entity of ``dimension`` passing through ``point``."""
+) -> int:
+    """Index of the unique B-Rep entity of ``dimension`` passing through ``point``."""
     count = int(np.asarray(projection.entity_counts)[dimension])
     projected = projection.project(
         np.repeat(np.asarray([point], dtype=np.float64), count, axis=0),
@@ -74,8 +75,20 @@ def _entity_at(
     )
     matches = np.flatnonzero(np.asarray(projected.residuals) < 1e-12)
     assert matches.size == 1
+    return int(matches[0])
+
+
+def _entity_at(
+    projection: phx.geometry.AbstractBRepProjection,
+    dimension: int,
+    point: tuple[float, float],
+) -> str:
+    """The ID of the unique B-Rep entity of ``dimension`` passing through ``point``."""
     return phx.geometry.brep_entity_id(
-        projection.source_id, projection.source_revision, dimension, int(matches[0])
+        projection.source_id,
+        projection.source_revision,
+        dimension,
+        _entity_index_at(projection, dimension, point),
     )
 
 
@@ -219,7 +232,7 @@ def test_two_sided_mesh_binding_orders_sides_by_authoritative_normal(
     projected = plate.projection.project(
         np.asarray([[0.0, 0.5]]),
         np.asarray([1], dtype=np.int64),
-        np.asarray([int(plate.wall_entity.rsplit(":", 1)[1])], dtype=np.int64),
+        np.asarray([_entity_index_at(plate.projection, 1, (0.0, 0.5))], dtype=np.int64),
     )
     tangent = np.asarray(projected.tangents)[0, 0]
     expected = int(np.sign(tangent[1]))
@@ -241,6 +254,12 @@ def test_two_sided_mesh_binding_orders_sides_by_authoritative_normal(
         sorted((plate.left.wall.patch_id, plate.left.region.zone_id))
     )
     binding.require_current(phx.meshing.MeshAssembly((plate.left.part, plate.right.part)))
+    # The recorded orientation witness survives the association's archive form.
+    for association in (plate.left.edges, plate.right.edges):
+        restored = GeometryAssociationArchiveRecipe.from_association(
+            association
+        ).restore()
+        np.testing.assert_array_equal(restored.orientations, association.orientations)
 
 
 def _oriented(plate: Plate) -> tuple[MeshInterfaceAttachment, MeshInterfaceAttachment]:
@@ -265,7 +284,9 @@ def _other_revision(plate: Plate) -> InterfaceBinding:
     # Same topology, same wall geometry, same entity index: only the revision differs.
     other = _plate_projection(1.5)
     entity = _entity_at(other, 1, (0.0, 0.5))
-    assert entity.rsplit(":", 2)[1:] == plate.wall_entity.rsplit(":", 2)[1:]
+    assert _entity_index_at(other, 1, (0.0, 0.5)) == _entity_index_at(
+        plate.projection, 1, (0.0, 0.5)
+    )
     assert other.source_revision != plate.projection.source_revision
     source = InterfaceSource(other.source_id, other.source_revision, (entity,))
     minus, plus = _oriented(plate)

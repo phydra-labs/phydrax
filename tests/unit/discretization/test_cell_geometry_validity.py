@@ -3,7 +3,6 @@
 #
 
 
-from collections import OrderedDict
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
@@ -172,28 +171,43 @@ def test_exact_positive_interval_rejects_collapsed_execution_map() -> None:
     certificate.require_current(geometry, mesh=mesh)
 
 
-def test_validity_require_current_reuses_a_proof_derived_in_process(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_validity_require_current_reproves_a_bound_certificate() -> None:
     mesh, geometry = _p3_triangle(0.5)
-    monkeypatch.setattr(validity_module, "_REPRODUCED", OrderedDict())
     certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
-    original = validity_module.certify_cell_geometry_validity
-    calls: list[str] = []
-
-    def counted(*args: Any, **kwargs: Any) -> Any:
-        calls.append("certify")
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(validity_module, "certify_cell_geometry_validity", counted)
     certificate.require_current(geometry, mesh=mesh)
-    assert calls == []
 
-    validity_module._REPRODUCED.clear()
-    certificate.require_current(geometry, mesh=mesh)
-    assert calls == ["certify"]
-    certificate.require_current(geometry, mesh=mesh)
-    assert calls == ["certify"]
+    lower = np.asarray(certificate.determinant_lower) * 0.5
+    forged = validity_module.CellValidityCertificate(
+        certificate.execution_status,
+        lower,
+        certificate.determinant_upper,
+        certificate.depth,
+        source_proof=validity_module._BlockCertificate(
+            np.asarray(certificate.source_status),
+            lower,
+            np.asarray(certificate.source_determinant_upper),
+            np.asarray(certificate.source_depth),
+        ),
+        maximum_coefficient_rounding_error=float(
+            certificate.maximum_coefficient_rounding_error
+        ),
+        maximum_element_coefficient_rounding_error=float(
+            certificate.maximum_element_coefficient_rounding_error
+        ),
+        apex_derivative_unique=np.asarray(certificate.apex_derivative_unique),
+        geometry=geometry,
+        mesh=mesh,
+        policy=certificate.policy,
+        block_names=certificate.block_names,
+        block_offsets=certificate.block_offsets,
+        unsupported_block_names=certificate.unsupported_block_names,
+        geometry_id=certificate.geometry_id,
+        geometry_layout_id=certificate.geometry_layout_id,
+        policy_id=certificate.policy_id,
+    )
+    forged.require_bound(geometry, mesh=mesh)
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        forged.require_current(geometry, mesh=mesh)
 
     _, other_geometry = _p3_triangle(0.25)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):

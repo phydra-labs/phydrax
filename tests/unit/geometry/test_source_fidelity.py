@@ -1924,3 +1924,43 @@ def test_source_fidelity_uses_exact_normal_offset_surface_coefficients() -> None
         mesh, geometry, source, tolerance=1.0e-14, witness=witness
     )
     assert bounded.status == "certified", bounded.findings
+
+
+def test_chart_overlap_candidates_agree_on_host_and_bvh_broad_phases(
+    monkeypatch,
+) -> None:
+    from phydrax.geometry import _source_fidelity
+
+    rng = np.random.default_rng(7)
+
+    def triangles(count: int, /):
+        corners = rng.integers(-40, 40, size=(count, 3, 2))
+        return tuple(
+            tuple(
+                (Fraction(int(x), 16), Fraction(int(y), 16)) for x, y in triangle
+            )
+            for triangle in corners
+        )
+
+    first, second = triangles(60), triangles(45)
+    first_boxes = _source_fidelity._triangle_chart_boxes(first)
+    second_boxes = _source_fidelity._triangle_chart_boxes(second)
+    pairs = _source_fidelity._triangle_overlap_candidate_pairs
+
+    def both(*arguments, self_pairs: bool):
+        host = pairs(*arguments, self_pairs=self_pairs)
+        with monkeypatch.context() as patch:
+            patch.setattr(_source_fidelity, "_DENSE_CHART_PAIRS", 0)
+            tree = pairs(*arguments, self_pairs=self_pairs)
+        return host, tree
+
+    host, tree = both(first, first, first_boxes, first_boxes, self_pairs=True)
+    assert host and host == tree and all(left < right for left, right in host)
+    host, tree = both(first, second, first_boxes, second_boxes, self_pairs=False)
+    assert host and host == tree
+    # Every pair with a positive-area overlap has meeting closed boxes.
+    candidates = set(host)
+    for left in range(len(first)):
+        for right in range(len(second)):
+            if _source_fidelity._intersection_area(first[left], second[right]) > 0:
+                assert (left, right) in candidates

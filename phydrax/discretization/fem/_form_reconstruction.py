@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import final
 
 import equinox as eqx
@@ -61,6 +62,24 @@ class FormAmbientDim(Dim):
     """Physical ambient coordinate axes."""
 
 
+# Query rows (point x candidate) whose basis is evaluated at once: the vmapped
+# cell-map evaluation materializes per-row geometry, so rows are processed in
+# chunks and the working set stays bounded whatever the number of points.
+_BASIS_ROW_BUDGET = 1 << 15
+
+
+def _row_chunked(
+    function: Callable[[Array, Array], Array], cells: Array, points: Array, /
+) -> Array:
+    rows = cells.shape[0]
+    parts = [
+        function(
+            cells[start : start + _BASIS_ROW_BUDGET],
+            points[start : start + _BASIS_ROW_BUDGET],
+        )
+        for start in range(0, rows, _BASIS_ROW_BUDGET)
+    ]
+    return parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
 
 
 @final
@@ -104,7 +123,9 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
             locator.cell_map,
             (PreparedFiniteElementCellMap, PreparedMappedCellMap),
         ):
-            raise TypeError("Form reconstruction requires a prepared coordinate cell map.")
+            raise TypeError(
+                "Form reconstruction requires a prepared coordinate cell map."
+            )
         if isinstance(locator.cell_map, PreparedMappedCellMap) and not isinstance(
             locator, PreparedMappedCellLocator
         ):
@@ -158,7 +179,9 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
     def _basis(self, cell: Array, reference: Array, /) -> Array:
         cell_map = self.locator.cell_map
         if not isinstance(cell_map, PreparedFiniteElementCellMap):
-            raise TypeError("Form reconstruction requires a prepared finite-element cell map.")
+            raise TypeError(
+                "Form reconstruction requires a prepared finite-element cell map."
+            )
         evaluation = cell_map.evaluate(
             self.locator.coordinates, cell[None], reference[None]
         )
@@ -172,9 +195,7 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
             self.cell_transforms[cell],
         )
 
-    def _mapped_geometry_jacobian(
-        self, cell_row: int, reference: Array, /
-    ) -> Array:
+    def _mapped_geometry_jacobian(self, cell_row: int, reference: Array, /) -> Array:
         locator = self.locator
         if not isinstance(locator, PreparedMappedCellLocator) or not isinstance(
             locator.cell_map, PreparedMappedCellMap
@@ -204,9 +225,7 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
             self.cell_transforms[cell_row],
         )
 
-    def _mapped_inverse_jacobian(
-        self, cell_row: int, reference: Array, /
-    ) -> Array:
+    def _mapped_inverse_jacobian(self, cell_row: int, reference: Array, /) -> Array:
         jacobian = self._mapped_geometry_jacobian(cell_row, reference)
         reference_dimension = jacobian.shape[1]
         if reference_dimension == jacobian.shape[0]:
@@ -235,27 +254,27 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
         reference = location.candidate_reference.reshape(
             (-1, self.locator.cell_map.reference_dimension)
         )
-        if (
-            isinstance(self.locator, PreparedMappedCellLocator)
-            and isinstance(self.locator.cell_map, PreparedMappedCellMap)
+        if isinstance(self.locator, PreparedMappedCellLocator) and isinstance(
+            self.locator.cell_map, PreparedMappedCellMap
         ):
             cell_ids = np.asarray(cells, dtype=np.int64)
             weights = jnp.zeros_like(self.element.tabulate(reference)[0])
             for cell_id in np.unique(cell_ids):
                 cell_row = int(cell_id)
-                rows = jnp.asarray(
-                    np.flatnonzero(cell_ids == cell_row), dtype=jnp.int32
-                )
+                rows = jnp.asarray(np.flatnonzero(cell_ids == cell_row), dtype=jnp.int32)
                 references = reference[rows]
+
                 def basis_fn(point: Array, /) -> Array:
                     return self._mapped_basis(cell_row, point)
+
                 if order == 0:
                     group_weights = jax.vmap(basis_fn)(references)
                 else:
                     axis = derivative.index(1)
-                    reference_gradient = jax.vmap(
-                        jax.jacfwd(basis_fn, argnums=0)
-                    )(references)
+                    reference_gradient = jax.vmap(jax.jacfwd(basis_fn, argnums=0))(
+                        references
+                    )
+
                     def inverse_jacobian_fn(point: Array, /) -> Array:
                         return self._mapped_inverse_jacobian(cell_row, point)
 
@@ -267,20 +286,23 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
                     )
                 weights = weights.at[rows].set(group_weights)
         elif order == 0:
-            weights = jax.vmap(self._basis)(cells, reference)
+            weights = _row_chunked(jax.vmap(self._basis), cells, reference)
         else:
             axis = derivative.index(1)
-            reference_gradient = jax.vmap(jax.jacfwd(self._basis, argnums=1))(
-                cells, reference
+            reference_gradient = _row_chunked(
+                jax.vmap(jax.jacfwd(self._basis, argnums=1)), cells, reference
             )
             cell_map = self.locator.cell_map
             if not isinstance(cell_map, PreparedFiniteElementCellMap):
                 raise TypeError(
                     "Form reconstruction requires a prepared finite-element cell map."
                 )
-            inverse = cell_map.evaluate(
-                self.locator.coordinates, cells, reference
-            ).inverse_jacobian
+            coordinates = self.locator.coordinates
+
+            def inverse_jacobian(rows: Array, points: Array, /) -> Array:
+                return cell_map.evaluate(coordinates, rows, points).inverse_jacobian
+
+            inverse = _row_chunked(inverse_jacobian, cells, reference)
             weights = contract("plvr,pr->plv", reference_gradient, inverse[:, :, axis])
         weights = weights.reshape((*candidates.shape, self.element.local_dof_count, -1))
         if side is not None and side.side == "average":

@@ -419,6 +419,37 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
             + second * self.corners[2]
         )
 
+    @classmethod
+    def evaluate_stacked(
+        cls,
+        surfaces: Sequence[AbstractSurfacePatch],
+        owners: np.ndarray,
+        parameters: Array,
+        /,
+    ) -> Array:
+        """``surfaces[owners[row]].evaluate(parameters[row])`` for every row.
+
+        The corners are gathered on the host and the barycentric combination
+        runs with exactly `evaluate`'s operations, so every coordinate is
+        bit-identical to the per-patch evaluation.
+        """
+        stacked = []
+        for surface in surfaces:
+            if not isinstance(surface, cls):
+                raise TypeError(
+                    "Stacked evaluation requires reconstructed triangle charts."
+                )
+            stacked.append(np.asarray(surface.corners, dtype=np.float64))
+        corners = jnp.asarray(np.stack(stacked)[np.asarray(owners, dtype=np.int64)])
+        values = jnp.asarray(parameters, dtype=jnp.float64)
+        first = values[..., 0, None]
+        second = values[..., 1, None]
+        return (
+            (1.0 - first - second) * corners[:, 0]
+            + first * corners[:, 1]
+            + second * corners[:, 2]
+        )
+
 
 def _reconstructed_meshing_domain(
     source: GeometrySource,
@@ -428,6 +459,7 @@ def _reconstructed_meshing_domain(
     entity_ids: tuple[np.ndarray, ...],
     region_id: int | None,
     edges: np.ndarray | None,
+    retained: MeshingDomain | None,
     /,
 ) -> MeshingDomain | None:
     if not isinstance(source, MeshRegion) or region_id is None or edges is None:
@@ -442,7 +474,123 @@ def _reconstructed_meshing_domain(
         entity_ids,
         region_id,
         ("reconstructed_vertex", "reconstructed_edge", "reconstructed_triangle"),
+        retained,
     )
+
+
+_TRIANGLE_CHART_CORNERS = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+
+
+def _triangle_complex_uses(
+    faces: np.ndarray, edges: np.ndarray, /
+) -> list[tuple[tuple[int, np.ndarray, np.ndarray, int], ...]]:
+    """Per face, the three trim uses ``(edge row, chart start, chart end, sense)``."""
+    edge_rows = {
+        tuple(sorted((int(first), int(last)))): row
+        for row, (first, last) in enumerate(edges.tolist())
+    }
+    uses = []
+    for face in faces.tolist():
+        face_uses = []
+        for local in range(3):
+            first_vertex = int(face[local])
+            last_vertex = int(face[(local + 1) % 3])
+            edge_row = edge_rows[tuple(sorted((first_vertex, last_vertex)))]
+            curve_first, curve_last = (int(value) for value in edges[edge_row])
+            sense = 1 if (first_vertex, last_vertex) == (curve_first, curve_last) else -1
+            face_uses.append(
+                (
+                    edge_row,
+                    _TRIANGLE_CHART_CORNERS[face.index(curve_first)],
+                    _TRIANGLE_CHART_CORNERS[face.index(curve_last)],
+                    sense,
+                )
+            )
+        uses.append(tuple(face_uses))
+    return uses
+
+
+def _triangle_complex_domain_reproduces(
+    domain: MeshingDomain,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    edges: np.ndarray,
+    source_id: str,
+    source_revision: str,
+    binding_id: str,
+    entity_ids: tuple[np.ndarray, ...],
+    region_id: int | None,
+    source_kinds: tuple[str, str, str],
+    /,
+) -> bool:
+    """Whether a retained domain is exactly the construction of these inputs.
+
+    Every construction argument is compared with the content the domain
+    retained: identity strings, entity indices, region, curve rows, corner
+    points, triangle chart corners, and each trim use. The domain's own
+    content fingerprint is checked by ``MeshingDomain.require_current``.
+    """
+    from .._meshing_domain import PatchCurveUse
+
+    if (
+        domain.source_id != source_id
+        or domain.source_revision != source_revision
+        or domain.authority_id != binding_id
+        or domain.brep_authority is not None
+        or domain.accuracy != "exact_represented"
+        or domain.source_kinds != source_kinds
+        or domain.source_indices
+        != tuple(
+            tuple(int(value) for value in identifiers.tolist())
+            for identifiers in entity_ids
+        )
+        or domain.region_source_indices != (() if region_id is None else (region_id,))
+        or tuple((region.name, region.boundary) for region in domain.regions)
+        != (
+            ()
+            if region_id is None
+            else (
+                (
+                    "reconstructed_region",
+                    tuple((row, 1) for row in range(faces.shape[0])),
+                ),
+            )
+        )
+        or tuple((curve.start, curve.end) for curve in domain.curves)
+        != tuple((int(first), int(last)) for first, last in edges.tolist())
+        or domain.corner_points.shape != vertices.shape
+        or not np.array_equal(domain.corner_points, vertices)
+        or len(domain.patches) != faces.shape[0]
+    ):
+        return False
+    corners = []
+    for patch in domain.patches:
+        surface = patch.surface
+        if type(surface) is not _ReconstructedTrianglePatch:
+            return False
+        corners.append(np.asarray(surface.corners))
+    if not np.array_equal(np.stack(corners), vertices[faces]):
+        return False
+    for patch, expected in zip(
+        domain.patches, _triangle_complex_uses(faces, edges), strict=True
+    ):
+        if len(patch.loops) != 1 or len(patch.loops[0]) != 3:
+            return False
+        for use, (edge_row, uv_first, uv_last, sense) in zip(
+            patch.loops[0], expected, strict=True
+        ):
+            if (
+                type(use) is not PatchCurveUse
+                or type(use.pcurve) is not LineCurve
+                or (use.curve, use.first, use.last, use.sense)
+                != (edge_row, 0.0, 1.0, sense)
+                or not np.array_equal(np.asarray(use.pcurve.origin), uv_first)
+                or not np.array_equal(
+                    np.asarray(use.pcurve.direction), uv_last - uv_first
+                )
+            ):
+                return False
+    return True
 
 
 def _triangle_complex_meshing_domain(
@@ -455,45 +603,59 @@ def _triangle_complex_meshing_domain(
     entity_ids: tuple[np.ndarray, ...],
     region_id: int | None,
     source_kinds: tuple[str, str, str],
+    retained: MeshingDomain | None,
     /,
 ) -> MeshingDomain:
-    """Exact affine-chart domain of a triangle complex; open sheets own no region."""
+    """Exact affine-chart domain of a triangle complex; open sheets own no region.
+
+    A retained domain is reused only when it reproduces these exact inputs;
+    otherwise the domain is rebuilt.
+    """
     from .._meshing_domain import (
-        MeshingDomain,
         MeshingDomainCurve,
         MeshingDomainRegion,
         MeshingSurfacePatch,
         PatchCurveUse,
     )
 
-    edge_rows = {
-        tuple(sorted((int(first), int(last)))): row
-        for row, (first, last) in enumerate(edges.tolist())
-    }
+    if retained is not None and _triangle_complex_domain_reproduces(
+        retained,
+        vertices,
+        faces,
+        edges,
+        source_id,
+        source_revision,
+        binding_id,
+        entity_ids,
+        region_id,
+        source_kinds,
+    ):
+        return retained
     curves = tuple(
         MeshingDomainCurve(int(first), int(last)) for first, last in edges.tolist()
     )
-    chart_corners = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
-    patches = []
-    for face in faces.tolist():
-        uses = []
-        for local in range(3):
-            first_vertex = int(face[local])
-            last_vertex = int(face[(local + 1) % 3])
-            edge_row = edge_rows[tuple(sorted((first_vertex, last_vertex)))]
-            curve_first, curve_last = (int(value) for value in edges[edge_row])
-            uv_first = chart_corners[face.index(curve_first)]
-            uv_last = chart_corners[face.index(curve_last)]
-            pcurve = LineCurve(uv_first, uv_last - uv_first)
-            sense = 1 if (first_vertex, last_vertex) == (curve_first, curve_last) else -1
-            uses.append(PatchCurveUse(edge_row, pcurve, 0.0, 1.0, sense=sense))
-        patches.append(
-            MeshingSurfacePatch(
-                _ReconstructedTrianglePatch(vertices[face]), (tuple(uses),)
-            )
+    patches = tuple(
+        MeshingSurfacePatch(
+            _ReconstructedTrianglePatch(vertices[face]),
+            (
+                tuple(
+                    PatchCurveUse(
+                        edge_row,
+                        LineCurve(uv_first, uv_last - uv_first),
+                        0.0,
+                        1.0,
+                        sense=sense,
+                    )
+                    for edge_row, uv_first, uv_last, sense in face_uses
+                ),
+            ),
         )
+        for face, face_uses in zip(
+            faces.tolist(), _triangle_complex_uses(faces, edges), strict=True
+        )
+    )
     return MeshingDomain(
-        tuple(patches),
+        patches,
         curves,
         vertices.shape[0],
         source_id=source_id,
@@ -581,7 +743,13 @@ def _scope_entity_ids_by_mesh_row(
 
 
 class ReconstructedGeometrySource(GeometrySource):
-    """Geometry, persistent topology identity, and provenance of a reconstruction."""
+    """Geometry, persistent topology identity, and provenance of a reconstruction.
+
+    ``meshing_domain`` passes a domain built for an earlier construction (for
+    example by a currentness proof that rebuilds this source from its retained
+    inputs). It is reused only when its content is exactly the construction of
+    the recomputed inputs; otherwise the domain is rebuilt.
+    """
 
     source: GeometrySource
     report: ReconstructionReport = eqx.field(static=True)
@@ -608,11 +776,8 @@ class ReconstructedGeometrySource(GeometrySource):
         persistent_edge_ids: ArrayLike | None = None,
         persistent_facet_ids: ArrayLike | None = None,
         persistent_region_id: int | None = None,
+        meshing_domain: MeshingDomain | None = None,
     ) -> None:
-        if not isinstance(source, GeometrySource):
-            raise TypeError("source must be a GeometrySource.")
-        if not isinstance(report, ReconstructionReport):
-            raise TypeError("report must be a ReconstructionReport.")
         feature = getattr(source, "feature_id", None)
         if not isinstance(feature, str) or not feature.strip():
             feature = f"{type(source).__module__}.{type(source).__qualname__}"
@@ -661,6 +826,7 @@ class ReconstructedGeometrySource(GeometrySource):
             entity_ids,
             region_id,
             edges,
+            meshing_domain,
         )
         id_banks, key_banks, set_ids = _reconstructed_scope_banks(
             domain, source_id, source_revision

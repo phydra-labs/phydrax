@@ -133,6 +133,7 @@ from ._separating_normals import (
 )
 from ._stratum_subdivision import (
     glued_face_monotone,
+    glued_facet_monotone,
     StratumSubdivisionCache,
     subdivided_stratum_separation,
 )
@@ -4356,29 +4357,23 @@ def _stratum_residuals(
     """
     if not shared_ids:
         return ()
-    if len(cell.coordinates) != 3 or not cell.corner_images:
+    ambient = len(cell.coordinates)
+    if ambient not in (2, 3) or not cell.corner_images:
         return None
     if len(shared_ids) == 1:
         point = cell.corner_images[cell.vertex_ids.index(shared_ids[0])]
-        if len(point) != 3:
+        if len(point) != ambient:
             return None
         return tuple(
             subtract(
-                _physical_linear_form(
-                    cast(
-                        tuple[
-                            CoordinateExactScalar,
-                            CoordinateExactScalar,
-                            CoordinateExactScalar,
-                        ],
-                        tuple(Fraction(int(index == axis)) for index in range(3)),
-                    )
-                ),
-                constant(point[axis], 3),
+                {tuple(int(index == axis) for index in range(ambient)): Fraction(1)},
+                constant(point[axis], ambient),
             )
-            for axis in range(3)
+            for axis in range(ambient)
         )
     if len(shared_ids) == 2:
+        if ambient != 3:
+            return None
         arguments = _trace_arguments(cell, shared_ids)
         if arguments is None:
             return None
@@ -4781,17 +4776,21 @@ def _nonperiodic_contacts(
                         )
                     )
                     continue
-                if (
-                    trace is True
-                    and len(shared) == 3
-                    and glued_face_monotone(first_cell, second_cell, shared)
-                ):
-                    if proof_values is not None:
-                        proof_values.append(
-                            f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
-                            "glued-face-monotone-map"
-                        )
-                    continue
+                if trace is True and len(shared) >= first_cell.dimension:
+                    glued = (
+                        "glued-face-monotone-map"
+                        if glued_face_monotone(first_cell, second_cell, shared)
+                        else "glued-facet-monotone-map"
+                        if glued_facet_monotone(first_cell, second_cell, shared)
+                        else None
+                    )
+                    if glued is not None:
+                        if proof_values is not None:
+                            proof_values.append(
+                                f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                                f"{glued}"
+                            )
+                        continue
                 if trace is True and len(shared) <= 2:
                     stratum_key = tuple(sorted(shared))
                     if stratum_key not in stratum_residuals:

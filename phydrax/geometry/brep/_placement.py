@@ -99,8 +99,6 @@ def materialize_brep_occurrences(
     Source assembly occurrence paths remain on the source side of the returned
     association graph.
     """
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
     geometry = model.geometry
     if not model.topology.num_solids:
         raise ValueError(

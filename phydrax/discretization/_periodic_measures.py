@@ -59,8 +59,6 @@ def periodic_orbit_measures(
     geometry: CellGeometrySpec | None = None,
 ) -> PeriodicMeasureReport:
     """Integrate affine simplex measures once per quotient top-cell orbit."""
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be a CellMesh.")
     topology = mesh.periodic_topology
     if not isinstance(topology, PeriodicMeshTopology):
         raise ValueError("mesh must retain a PeriodicMeshTopology descriptor.")

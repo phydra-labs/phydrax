@@ -83,7 +83,6 @@ class BRepProjectionPolicy(StrictModule, NonTrainableState):
     classifier_tolerance: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         *,
@@ -135,7 +134,6 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
     occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         source_id: str,

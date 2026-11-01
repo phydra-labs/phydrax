@@ -2232,6 +2232,9 @@ def _import(
     policy: CadImportPolicy,
     unit: UnitDefinition,
     /,
+    *,
+    source_format: str = _FORMAT,
+    source_digest: str | None = None,
 ) -> CadImportResult:
     unit_meters = Fraction(unit.scale_to_reference)
     factor = length_factor(unit_meters, policy.coordinate_contract)
@@ -2252,12 +2255,12 @@ def _import(
     resolver.stage_solid_definitions()
     resolver.walk(decoded.root, RigidPlacement.identity(), ())
     resolver.assembly_graph()
-    digest = resource.digest
+    digest = resource.digest if source_digest is None else source_digest
     identity = resource.source_path or f"brep-text-{digest[:16]}"
     model = resolver.stage.publish(
         coordinate_contract=policy.coordinate_contract,
         source_id=identity,
-        source_format=_FORMAT,
+        source_format=source_format,
         source_digest=digest,
         import_policy_id=policy.policy_id,
         tessellation=policy.tessellation,
@@ -2347,10 +2350,23 @@ def decode_brep_text_resource(
     /,
     *,
     source_length_unit: UnitDefinition,
+    source_format: str = _FORMAT,
+    source_digest: str | None = None,
 ) -> CadImportResult:
-    """Decode one mapped or caller-owned BRep text resource."""
+    """Decode one mapped or caller-owned BRep text resource.
+
+    ``source_format`` and ``source_digest`` declare the identity of the source
+    the text serializes when it is a bridge carrier (an in-memory shape); the
+    digest defaults to the resource bytes.
+    """
     try:
-        return _import(resource, policy, source_length_unit)
+        return _import(
+            resource,
+            policy,
+            source_length_unit,
+            source_format=source_format,
+            source_digest=source_digest,
+        )
     except CadInterchangeError:
         raise
     except (

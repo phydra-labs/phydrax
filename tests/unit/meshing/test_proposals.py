@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._cell_mesh import SimplicialConnectivity
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
     AnalyticImplicitProfile,
@@ -43,7 +44,9 @@ from phydrax.meshing.providers._native_implicit import (
     normalize_analytic_implicit_source,
 )
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
+from phydrax.meshing.providers._native_sources import NativeImplicitSource
 from tests._ported_models import full_port, in_order, PortedAffine
+from tests.unit.meshing.test_device_tetra_metric import _source as _tetrahedral_source
 from tests.unit.meshing.test_native_implicit_routes import _geometry_and_grid
 
 
@@ -747,6 +750,93 @@ def test_learned_features_cannot_be_reused_after_source_geometry_changes() -> No
         proposer.propose(moved, features)
 
 
+def test_tetrahedral_marking_size_and_metric_proposals_use_native_volume_routes() -> None:
+    source = _tetrahedral_source()
+    cell_ids = np.asarray(source.mesh.entity_set(3).entity_ids, dtype=np.int64)
+    scores = np.zeros(cell_ids.shape, dtype=np.float64)
+    scores[[5, 0, 3]] = (2.0, 0.5, -1.0)
+    marking = MeshMarkingProposal(
+        source, mesh_proposal_scope(source, 3), scores, proposer_id="tetra-marker"
+    )
+    transaction = prepare_mesh_proposal(source, marking, _policy(source))
+    np.testing.assert_array_equal(
+        transaction.projection.marked_cell_ids, np.sort(cell_ids[[0, 5]])
+    )
+    adaptation = transaction.adaptation
+    assert adaptation is not None
+    assert adaptation.route is phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+    assert adaptation.transition is not None
+    _assert_exact_constant_stencil(adaptation.transition.vertex_stencil)
+    refined = transaction.commit(source)
+    assert refined.mesh.entity_set(3).count > cell_ids.size
+
+    scope = mesh_proposal_scope(source, 0)
+    count = scope.entity_ids.size
+    order = np.argsort(np.asarray(source.mesh.vertex_global_ids))
+    points = np.asarray(source.mesh.coordinates)[order]
+    edges = np.argsort(order)[np.asarray(source.mesh.connectivity.edges)]
+    sizes = np.full((count,), 0.3, dtype=np.float64)
+    sizes[:2] = (50.0, -1.0)
+    projection = project_mesh_proposal(
+        source,
+        MeshSizeProposal(source, scope, sizes, proposer_id="tetra-size"),
+        _policy(source, maximum_gradation=1.2),
+    )
+    field = projection.size_field
+    assert field is not None
+    projected = np.asarray(field.values)
+    assert np.all(projected >= 0.1 - 1e-12) and np.all(projected <= 2.0 + 1e-12)
+    assert projected[1] == 0.1 and projected[0] < 2.0
+    _assert_graded(projected, points, edges, 1.2)
+    transaction = prepare_mesh_proposal(
+        source,
+        MeshSizeProposal(source, scope, np.full((count,), 0.3), proposer_id="tetra-size"),
+        _policy(source),
+    )
+    adaptation = transaction.adaptation
+    assert adaptation is not None and adaptation.metric is not None
+    assert adaptation.route is phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D
+    assert adaptation.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
+
+    tensor = np.diag((1.0 / 0.25**2, 1.0 / 0.3**2, 1.0 / 0.35**2))
+    raw = np.broadcast_to(tensor, (count, 3, 3)).copy()
+    raw[0, 0, 1] += 1.0
+    raw[1, 2, 2] = -4.0
+    projection = project_mesh_proposal(
+        source,
+        MeshMetricProposal(source, scope, raw, proposer_id="tetra-metric"),
+        _policy(source, maximum_anisotropy=4.0, maximum_gradation=1.5),
+    )
+    metric = projection.metric
+    assert metric is not None
+    values = np.asarray(metric.values)
+    assert values.shape == (count, 3, 3)
+    np.testing.assert_allclose(values, values.swapaxes(-1, -2), atol=1e-12)
+    eigenvalues = np.linalg.eigvalsh(values)
+    assert np.all(eigenvalues >= 0.25 - 1e-10)
+    assert np.all(eigenvalues <= 100.0 + 1e-10)
+    assert np.all(eigenvalues[:, -1] / eigenvalues[:, 0] <= 16.0 + 1e-10)
+    evidence = projection.metric_evidence
+    assert evidence is not None and evidence.passed
+    assert evidence.symmetrized_count == 1 and evidence.projected_tensor_count == 1
+    transaction = prepare_mesh_proposal(
+        source,
+        MeshMetricProposal(
+            source,
+            scope,
+            np.broadcast_to(tensor, (count, 3, 3)),
+            proposer_id="tetra-metric",
+        ),
+        _policy(source, maximum_anisotropy=4.0),
+    )
+    adaptation = transaction.adaptation
+    assert adaptation is not None and adaptation.metric is not None
+    assert adaptation.route is phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D
+    assert adaptation.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
+
+
 def test_implicit_marking_proposals_preserve_region_boundary_and_field(
     _implicit_volume_source: tuple[Any, Any, Any],
 ) -> None:
@@ -797,6 +887,7 @@ def test_implicit_marking_proposals_preserve_region_boundary_and_field(
     )
     assert adaptation.transition is not None
     stencil = adaptation.transition.vertex_stencil
+    assert stencil is not None
     _assert_exact_constant_stencil(stencil)
     conserved = stencil.apply(
         source.mesh.vertex_global_ids,
@@ -813,7 +904,10 @@ def test_implicit_size_proposals_use_three_dimensional_metric_adaptation(
 ) -> None:
     profile, source, _ = _implicit_volume_source
     coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
-    edges = np.asarray(source.mesh.connectivity.edges, dtype=np.int64)
+    # Native PLC volumes are 3-simplex blocks with simplicial entity incidence.
+    connectivity = source.mesh.connectivity
+    assert isinstance(connectivity, SimplicialConnectivity)
+    edges = np.asarray(connectivity.entities[1], dtype=np.int64)
     lengths = np.linalg.norm(coordinates[edges[:, 1]] - coordinates[edges[:, 0]], axis=1)
     size = max(_policy(source).minimum_size, 0.6 * float(np.median(lengths)))
     proposal = MeshSizeProposal(
@@ -830,6 +924,8 @@ def test_implicit_size_proposals_use_three_dimensional_metric_adaptation(
 
     assert target.certification is not None
     authority = target.certification.inputs.feature_source
+    assert isinstance(authority, NativeImplicitSource)
+    assert authority.authoring_profile is not None
     assert authority.authoring_profile.profile_id == profile.profile_id
     regions = target.certification.inputs.cell_regions
     assert regions is not None
@@ -870,6 +966,8 @@ def test_implicit_surface_metric_proposals_preserve_exact_source_classes(
 
     assert target.certification is not None
     authority = target.certification.inputs.feature_source
+    assert isinstance(authority, NativeImplicitSource)
+    assert authority.authoring_profile is not None
     assert authority.authoring_profile.profile_id == profile.profile_id
     assert target.boundary is not None
     assert target.boundary.metadata.source_id == profile.source_id
@@ -886,6 +984,7 @@ def test_implicit_surface_metric_proposals_preserve_exact_source_classes(
     )
     assert adaptation.transition is not None
     stencil = adaptation.transition.vertex_stencil
+    assert stencil is not None
     _assert_exact_constant_stencil(stencil)
     conserved = stencil.apply(
         source.mesh.vertex_global_ids,

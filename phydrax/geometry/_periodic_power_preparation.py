@@ -523,7 +523,6 @@ class PeriodicPowerPreparation(StrictModule, NonTrainableState):
         value.validate_restored()
         return value
 
-    @checked
     def validate_restored(self, /) -> None:
         """Rebuild the source law and authenticate every retained host bank."""
         group = _validate_group(self.periodic_group)

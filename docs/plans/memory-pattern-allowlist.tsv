@@ -47,7 +47,7 @@ phydrax/atomistic/interchange/_uma_checkpoint.py	_worker_bytes	payload-read-byte
 phydrax/atomistic/interchange/_uma_worker.py	_execute	payload-read-bytes	external-provider: Parent admits the source by max_source_bytes (default 4GiB) and stages its exact byte_size/sha256; the worker verifies them and parses the seekable torch.save ZIP.
 phydrax/chemistry/electronic_structure/_response.py	MeanFieldResponsePlan.nuclear_hessian	dense-derivative	output-size: MeanFieldHessianResult explicitly returns raw and symmetrized dense position Hessians and response evidence.
 phydrax/control/games/_local_lq.py	suggest_local_affine_game_policy.derivatives_at_step	dense-derivative	output-size: Dense A/B/Q/R/N blocks are retained in LocalQuadraticGame and consumed by the finite-horizon Nash LQ solver.
-phydrax/discretization/_adaptive_simplex.py	maubach_bisection_tables	array-cache	bounded/static: Closed supported simplex dimensions 2 and 3.
+phydrax/discretization/_adaptive_simplex.py	bisection_label_tables	array-cache	bounded/static: Closed supported simplex dimensions 2 and 3.
 phydrax/discretization/_motion_validity.py	reference_corner_frames	array-cache	bounded/static: Closed seven-reference-cell-kind table domain.
 phydrax/discretization/bem/_rwg.py	_rwg_element	array-cache	bounded/static: Keyless singleton fixed triangle form element, maxsize=1.
 phydrax/discretization/fem/_mortar.py	_total_degree_tabulation	inverse-by-identity	bounded/static: Facet dimension is 1 or 2 and polynomial degree is below 32, giving at most 528 nodes for dense nodal tabulation.

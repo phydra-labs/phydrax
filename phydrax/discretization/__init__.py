@@ -411,8 +411,11 @@ _DEFERRED_EXPORTS = {
     "SideTraceProvider": "._side_actions",
     "SideTraceQuantity": "._side_actions",
     "AbstractCellLocator": "._cell_locator",
+    "CellInverseRefusal": "._cell_locator",
+    "CellLocationRefusalError": "._cell_locator",
     "CellLocationResult": "._cell_locator",
     "CellLocationStatus": "._cell_locator",
+    "InverseRefusalReason": "._cell_locator",
     "LocatedCellMap": "._cell_locator",
     "MappedLocationPolicy": "._mapped_locator",
     "PreparedMappedCellMap": "._mapped_locator",
@@ -826,6 +829,7 @@ _DEFERRED_EXPORTS = {
     "FiniteElementMeshRealization": ".fem",
     "FiniteElementMotionExtension": ".fem",
     "FiniteElementMotionExtensionResult": ".fem",
+    "AbstractMeshMonitor": ".fem",
     "FiniteElementPartitionCostEvidence": ".fem",
     "FiniteElementPeriodicFacetPair": ".fem",
     "FiniteElementPeriodicTransform": ".fem",
@@ -2666,8 +2670,11 @@ if TYPE_CHECKING:
     )
     from ._cell_locator import (
         AbstractCellLocator,
+        CellInverseRefusal,
+        CellLocationRefusalError,
         CellLocationResult,
         CellLocationStatus,
+        InverseRefusalReason,
         LocatedCellMap,
     )
     from ._cell_mesh import (
@@ -3284,6 +3291,7 @@ if TYPE_CHECKING:
         prepare_explicit_polygon_h1_reconstruction,
     )
     from .fem import (
+        AbstractMeshMonitor,
         affine_dof_constraint,
         assemble_masked_finite_element,
         AttachmentActionReactionCertificate,
@@ -6106,6 +6114,7 @@ __all__ = [
     "FiniteElementMeshRealization",
     "FiniteElementMotionExtension",
     "FiniteElementMotionExtensionResult",
+    "AbstractMeshMonitor",
     "FiniteElementDirichletConstraint",
     "FiniteElementDiscretization",
     "FiniteElementDofMap",
@@ -7119,6 +7128,9 @@ __all__ = [
     "PrescribedGridVelocityPlan",
     "PrescribedGridVelocityResult",
     "CellLocationResult",
+    "CellInverseRefusal",
+    "CellLocationRefusalError",
+    "InverseRefusalReason",
     "AbstractCellLocator",
     "CellLocationStatus",
     "LocatedCellMap",

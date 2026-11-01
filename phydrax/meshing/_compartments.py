@@ -347,8 +347,6 @@ def prepare_compartment_plc(
     come from categorical voxel adjacency; no extracted mesh row or centroid
     determines source identity or material ownership.
     """
-    if not isinstance(source, CompartmentMeshingSource):
-        raise TypeError("source must be a CompartmentMeshingSource.")
     if source.outer_geometry is not None:
         raise ValueError(
             "A mapped outer geometry needs a source-to-lattice coverage proof before image PLC construction."
@@ -395,11 +393,14 @@ def prepare_compartment_plc(
                         interface_id, first_region, second_region = interface
                         interface_key = interface_id
                         facet_interface_id = interface_id
+                    # Row (positive, negative): the right-hand normal of the
+                    # unreversed loop points from `own` to `other`, so the
+                    # loop turns when `own` is the positive (second) region.
                     sides = (
                         region_index[second_region],
                         region_index[first_region],
                     )
-                    reverse = (first_region == region_ids[own]) ^ reflected
+                    reverse = (second_region == region_ids[own]) ^ reflected
                     facet_name = source_entity_id(
                         source.source_id,
                         source.source_revision,

@@ -384,6 +384,36 @@ def test_device_coarsening_undoes_barycentric_subdivision_like_the_host() -> Non
         np.testing.assert_array_equal(np.asarray(device.hierarchy.tags), (0, 0))
 
 
+def test_device_marked_tetrahedron_bisection_matches_the_host() -> None:
+    # Tangential jitter breaks the matching condition of the longest-edge labels,
+    # so both routes label the source by marked tetrahedra.
+    grid = _kuhn_grid(2)
+    points = np.asarray(grid.coordinates)
+    free = (points > 0.0) & (points < 1.0)
+    shift = np.random.default_rng(0).uniform(-0.2, 0.2, points.shape)
+    source = _certified(
+        CellMesh.from_tetrahedra(points + np.where(free, shift, 0.0), _cells(grid))
+    )
+    host_route = MeshAdaptationRoute.NATIVE_BISECTION
+    device_route = MeshAdaptationRoute.DEVICE_BISECTION
+    marks = np.sort(_cell_ids(source.mesh))[::5]
+    host = _adapt(host_route, source, marks)
+    device = _adapt(device_route, source, marks)
+    assert host.evidence.initially_compatible is False
+    assert not host.evidence.uniform_refinement_applied
+    _assert_same_target(host, device)
+    marks = np.sort(_cell_ids(host.target.mesh))[::3]
+    host = _adapt(host_route, host.target, marks, hierarchy=host.hierarchy)
+    device = _adapt(device_route, device.target, marks, hierarchy=device.hierarchy)
+    _assert_same_target(host, device)
+    _assert_conforming(device.target.mesh, 1.0)
+    every = np.sort(_cell_ids(host.target.mesh))
+    host = _adapt(host_route, host.target, (), every, hierarchy=host.hierarchy)
+    device = _adapt(device_route, device.target, (), every, hierarchy=device.hierarchy)
+    _assert_same_target(host, device)
+    assert device.target.mesh.topology_id == source.mesh.topology_id
+
+
 def test_device_adaptation_scenario_2() -> None:
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     source = _certified(

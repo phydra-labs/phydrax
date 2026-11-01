@@ -49,25 +49,45 @@ def _require_compartment_mesh_binding(
     for identifier in source.scope_entity_ids(3).tolist():
         key, occurrence = source.source_entity_key_for_scope(3, int(identifier))
         if key not in compartments:
-            raise ValueError("Compartment source region keys must identify declared compartments.")
+            raise ValueError(
+                "Compartment source region keys must identify declared compartments."
+            )
         identity = (key, occurrence)
         if identity in source_regions:
             raise ValueError("Compartment source region identities must be unique.")
         source_regions[identity] = key
         source_regions_by_scope_id[int(identifier)] = key
     if set(source_regions.values()) != compartment_ids:
-        raise ValueError("Compartment source scopes must cover every declared compartment.")
+        raise ValueError(
+            "Compartment source scopes must cover every declared compartment."
+        )
 
     mesh = result.mesh
     if (
         mesh.topological_dimension != 3
         or mesh.ambient_dimension != 3
         or not mesh.blocks
-        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+        or any(
+            block.cell_kind not in ("tetrahedron", "simplex:3") for block in mesh.blocks
+        )
     ):
-        raise ValueError("Neurofluid bulk results must contain three-dimensional tetrahedra.")
-    if result.boundary is None or result.boundary.model_id != source.outer_surface.model_id:
-        raise ValueError("Bulk mesh boundary must match the compartment source outer surface.")
+        raise ValueError(
+            "Neurofluid bulk results must contain three-dimensional tetrahedra."
+        )
+    # The bulk boundary is the mesh exterior: a conforming refinement of the
+    # outer surface (its size target refines the exterior), bound to it by
+    # source identity and provenance.
+    outer = source.outer_surface
+    boundary = result.boundary
+    if (
+        boundary is None
+        or boundary.metadata.source_id != outer.metadata.source_id
+        or boundary.metadata.source_revision != outer.metadata.source_revision
+        or outer.model_id not in boundary.metadata.provenance
+    ):
+        raise ValueError(
+            "Bulk mesh boundary must refine the compartment source outer surface."
+        )
     cell_set = mesh.entity_set(3)
     cell_ids = np.asarray(cell_set.entity_ids, dtype=np.int64)
     cell_associations = tuple(
@@ -87,8 +107,7 @@ def _require_compartment_mesh_binding(
         or not np.array_equal(np.sort(targets), np.sort(cell_ids))
         or not np.all(np.asarray(association.resolved, dtype=np.bool_))
         or np.any(np.asarray(association.ambiguous, dtype=np.bool_))
-        or association.source_roles
-        != (GeometrySourceEntityRole.REGION,) * targets.size
+        or association.source_roles != (GeometrySourceEntityRole.REGION,) * targets.size
     ):
         raise ValueError(
             "Bulk cell associations must exactly identify regions in this compartment source revision."
@@ -102,14 +121,18 @@ def _require_compartment_mesh_binding(
     ):
         compartment_id = source_regions.get((source_id, occurrence))
         if compartment_id is None:
-            raise ValueError("Bulk cells must associate with declared source compartment regions.")
+            raise ValueError(
+                "Bulk cells must associate with declared source compartment regions."
+            )
         cell_compartments[int(target)] = compartment_id
     if set(cell_compartments.values()) != compartment_ids:
         raise ValueError("Bulk source associations must represent every compartment.")
 
     certification = result.certification
     if certification is None:
-        raise ValueError("Neurofluid bulk results require computed source-region coverage certification.")
+        raise ValueError(
+            "Neurofluid bulk results require computed source-region coverage certification."
+        )
     certification.require_passed()
     inputs = certification.inputs
     domain = inputs.domain
@@ -125,7 +148,9 @@ def _require_compartment_mesh_binding(
         or inputs.cell_regions is None
         or coverage is None
     ):
-        raise ValueError("Neurofluid bulk certification must bind this source's volume regions.")
+        raise ValueError(
+            "Neurofluid bulk certification must bind this source's volume regions."
+        )
     domain_region_ids = tuple(domain.region_ids)
     if (
         len(set(domain_region_ids)) != len(domain_region_ids)
@@ -139,7 +164,9 @@ def _require_compartment_mesh_binding(
             np.asarray(inputs.cell_regions, dtype=np.int64),
         )
     ):
-        raise ValueError("Neurofluid bulk certification must preserve the source's certified region table.")
+        raise ValueError(
+            "Neurofluid bulk certification must preserve the source's certified region table."
+        )
     certified_cell_ids = np.asarray(inputs.cell_global_ids, dtype=np.int64)
     certified_region_indices = np.asarray(inputs.cell_regions, dtype=np.int64)
     if (
@@ -147,7 +174,9 @@ def _require_compartment_mesh_binding(
         or certified_region_indices.shape != cell_ids.shape
         or not np.array_equal(np.sort(certified_cell_ids), np.sort(cell_ids))
     ):
-        raise ValueError("Neurofluid bulk certification must assign every target cell exactly once.")
+        raise ValueError(
+            "Neurofluid bulk certification must assign every target cell exactly once."
+        )
     certified_compartments = {
         int(cell_id): domain_region_ids[int(region)]
         for cell_id, region in zip(
@@ -175,24 +204,34 @@ def _require_compartment_mesh_binding(
             or scope.entity_dimension != 3
             or scope.entity_set_id != cell_set.entity_set_id
         ):
-            raise ValueError("Bulk material zones must bind declared source compartments and mesh cells.")
+            raise ValueError(
+                "Bulk material zones must bind declared source compartments and mesh cells."
+            )
+        identifiers = {int(value) for value in np.asarray(scope.entity_ids).tolist()}
+        if zone_cell_ids & identifiers:
+            raise ValueError("Bulk material zones must partition cells without overlap.")
+        if any(
+            cell_compartments.get(identifier) != material_id for identifier in identifiers
+        ):
+            raise ValueError(
+                "Bulk material assignments must match source-region cell associations."
+            )
         expected_role = None
         try:
             expected_role = RegionRole(compartments[material_id].material_role)
         except ValueError:
             pass
         if expected_role is not None and zone.region_role is not expected_role:
-            raise ValueError("Bulk material zone roles must match the source material role.")
-        identifiers = {int(value) for value in np.asarray(scope.entity_ids).tolist()}
-        if zone_cell_ids & identifiers:
-            raise ValueError("Bulk material zones must partition cells without overlap.")
-        if any(cell_compartments.get(identifier) != material_id for identifier in identifiers):
-            raise ValueError("Bulk material assignments must match source-region cell associations.")
+            raise ValueError(
+                "Bulk material zone roles must match the source material role."
+            )
         zone_cell_ids.update(identifiers)
         zone_material_by_id[zone.zone_id] = material_id
         zone_ids_by_material.setdefault(material_id, set()).add(zone.zone_id)
     if zone_cell_ids != set(cell_ids) or set(zone_ids_by_material) != compartment_ids:
-        raise ValueError("Bulk material zones must cover exactly the source-associated cells.")
+        raise ValueError(
+            "Bulk material zones must cover exactly the source-associated cells."
+        )
 
     source_facets = {
         source.source_entity_key_for_scope(2, int(identifier))
@@ -205,7 +244,9 @@ def _require_compartment_mesh_binding(
         if value.target_entity_set_id == face_set.entity_set_id
     )
     if len(face_associations) != 1:
-        raise ValueError("Bulk interfaces require one source association for every mesh face.")
+        raise ValueError(
+            "Bulk interfaces require one source association for every mesh face."
+        )
     face_association = face_associations[0]
     face_targets = np.asarray(face_association.target_global_ids, dtype=np.int64)
     face_ids = np.asarray(face_set.entity_ids, dtype=np.int64)
@@ -231,25 +272,34 @@ def _require_compartment_mesh_binding(
     ):
         identity = (source_id, occurrence)
         if (
-            role is GeometrySourceEntityRole.FACET and identity not in source_facets
-        ) or (
-            role is GeometrySourceEntityRole.REGION and identity not in source_regions
-        ) or role not in (
-            GeometrySourceEntityRole.FACET,
-            GeometrySourceEntityRole.REGION,
+            (role is GeometrySourceEntityRole.FACET and identity not in source_facets)
+            or (
+                role is GeometrySourceEntityRole.REGION and identity not in source_regions
+            )
+            or role
+            not in (
+                GeometrySourceEntityRole.FACET,
+                GeometrySourceEntityRole.REGION,
+            )
         ):
-            raise ValueError("Bulk faces must associate with actual source facets or regions.")
+            raise ValueError(
+                "Bulk faces must associate with actual source facets or regions."
+            )
         face_row_by_id[int(target)] = row
     mesh_adjacencies: set[tuple[str, str]] = set()
     for first, second in face_association.source_region_sides:
         if first is None or second is None:
             continue
         if first not in compartment_ids or second not in compartment_ids:
-            raise ValueError("Bulk face sides must identify declared source compartments.")
+            raise ValueError(
+                "Bulk face sides must identify declared source compartments."
+            )
         if first != second:
             mesh_adjacencies.add((first, second) if first < second else (second, first))
     if mesh_adjacencies != set(source.compartments.observed_adjacencies):
-        raise ValueError("Bulk source-face adjacency must match the observed label adjacency.")
+        raise ValueError(
+            "Bulk source-face adjacency must match the observed label adjacency."
+        )
 
     source_interfaces = {
         value.definition.interface_id: value.definition
@@ -261,12 +311,16 @@ def _require_compartment_mesh_binding(
     for interface_id, definition in source_interfaces.items():
         matches = patches_by_name.get(interface_id)
         if matches is None or len(matches) != 1:
-            raise ValueError("Bulk mesh must retain each extracted source interface exactly once.")
+            raise ValueError(
+                "Bulk mesh must retain each extracted source interface exactly once."
+            )
         patch = matches[0]
         endpoints = (definition.first_compartment_id, definition.second_compartment_id)
         side_pair = patch.source_adjacent_region_ids
         if side_pair is None or set(side_pair) != set(endpoints):
-            raise ValueError("Bulk interface sides must match its declared source endpoints.")
+            raise ValueError(
+                "Bulk interface sides must match its declared source endpoints."
+            )
         for identifier in np.asarray(patch.scope.entity_ids, dtype=np.int64).tolist():
             row = face_row_by_id.get(int(identifier))
             if row is None or (
@@ -283,7 +337,9 @@ def _require_compartment_mesh_binding(
             if identifier in zone_material_by_id
         }
         if adjacent_materials != set(endpoints):
-            raise ValueError("Bulk interface adjacency must match its source compartment endpoints.")
+            raise ValueError(
+                "Bulk interface adjacency must match its source compartment endpoints."
+            )
 
     for evidence in result.region_boundary_evidence:
         scope = evidence.source_scope
@@ -295,20 +351,26 @@ def _require_compartment_mesh_binding(
             or scope.entity_set_id != source.scope_entity_set_id(3)
             or scope.entity_ids.shape != (1,)
         ):
-            raise ValueError("Bulk region-boundary evidence must bind this compartment source.")
+            raise ValueError(
+                "Bulk region-boundary evidence must bind this compartment source."
+            )
         compartment_id = source_regions_by_scope_id.get(int(scope.entity_ids[0]))
         if (
             compartment_id is None
             or compartment_id != evidence.source_region_id
             or evidence.material_id != compartment_id
         ):
-            raise ValueError("Bulk region-boundary evidence must preserve source material identity.")
+            raise ValueError(
+                "Bulk region-boundary evidence must preserve source material identity."
+            )
         try:
             expected_role = RegionRole(compartments[compartment_id].material_role)
         except ValueError:
             expected_role = None
         if expected_role is not None and evidence.role is not expected_role:
-            raise ValueError("Bulk region-boundary evidence must preserve the source material role.")
+            raise ValueError(
+                "Bulk region-boundary evidence must preserve the source material role."
+            )
 
 
 @dataclass(frozen=True, slots=True)

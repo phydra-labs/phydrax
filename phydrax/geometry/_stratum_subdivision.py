@@ -32,18 +32,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fractions import Fraction
+from itertools import combinations, product
+from typing import cast
 
 import numpy as np
 
 from ..discretization._coordinate_enclosure import (
     bernstein_coefficients,
     bernstein_degree,
+    BernsteinDomain,
     compose_expression,
+    derivative,
+    evaluate_expression,
     ExactScalar,
     Expression,
 )
 from ..discretization._exact_algebraic_geometry import RadicalElement
 from ._embedding_cells import EmbeddingCell
+from ._mapped_embedding import (
+    monotone_preconditioner,
+    subdivided_jacobian_controls,
+    SUBDIVISION_LEVELS,
+)
 
 
 _Index = tuple[int, ...]
@@ -65,20 +75,29 @@ def _sign(value: ExactScalar, /) -> int:
 
 @dataclass(frozen=True)
 class _Piece:
-    """Reference sub-simplex with exact physical and residual Bernstein controls."""
+    """Reference sub-cell with exact physical and residual Bernstein controls.
 
+    A piece is a product of barycentric groups: one simplex group for a
+    triangle or tetrahedron, a triangle group and a line group for a prism.
+    Control indices concatenate the group multi-indices; ``vertices[slot]`` is
+    the reference point of that group vertex and ``on_stratum[slot]`` whether it
+    lies on the shared stratum (a product of group faces).
+    """
+
+    groups: tuple[int, ...]
     vertices: tuple[_Barycentric, ...]
     on_stratum: tuple[bool, ...]
     geometry: _Controls
-    geometry_degree: int
+    geometry_degree: tuple[int, ...]
     residual: _Controls
-    residual_degree: int
+    residual_degree: tuple[int, ...]
     points: np.ndarray
-    corners: np.ndarray
+    corners: dict[tuple[int, ...], np.ndarray]
 
     @property
     def diameter(self) -> float:
-        differences = self.corners[:, None, :] - self.corners[None, :, :]
+        corners = np.asarray(list(self.corners.values()))
+        differences = corners[:, None, :] - corners[None, :, :]
         return float(np.sqrt(np.max(np.sum(differences * differences, axis=-1))))
 
 
@@ -102,19 +121,54 @@ def _compositions(total: int, parts: int, /) -> tuple[_Index, ...]:
     )
 
 
+def _group_slots(groups: tuple[int, ...], /) -> tuple[tuple[int, ...], ...]:
+    slots: list[tuple[int, ...]] = []
+    start = 0
+    for size in groups:
+        slots.append(tuple(range(start, start + size)))
+        start += size
+    return tuple(slots)
+
+
+def _control_indices(
+    groups: tuple[int, ...], degree: tuple[int, ...], /
+) -> tuple[_Index, ...]:
+    """Concatenated group indices in `bernstein_coefficients` order.
+
+    A simplex orders its compositions; a prism orders triangle compositions, then
+    line powers ``l`` of the line parameter as the group index ``(L - l, l)``.
+    """
+    if len(groups) == 1:
+        return _compositions(degree[0], groups[0])
+    triangle, line = degree
+    return tuple(
+        (*beta, line - power, power)
+        for beta in _compositions(triangle, 3)
+        for power in range(line + 1)
+    )
+
+
+def _domain(groups: tuple[int, ...], /) -> BernsteinDomain:
+    return "simplex" if len(groups) == 1 else "prism"
+
+
 def _controls(
-    polynomials: tuple[Expression, ...], degree: int, dimension: int, /
+    polynomials: tuple[Expression, ...],
+    groups: tuple[int, ...],
+    degree: tuple[int, ...],
+    dimension: int,
+    /,
 ) -> _Controls | None:
     columns: list[tuple[ExactScalar, ...]] = []
     for polynomial in polynomials:
         if not isinstance(polynomial, dict):
             return None
         columns.append(
-            bernstein_coefficients(polynomial, "simplex", dimension, degree=(degree,))
+            bernstein_coefficients(polynomial, _domain(groups), dimension, degree=degree)
         )
     return {
         index: tuple(column[row] for column in columns)
-        for row, index in enumerate(_compositions(degree, dimension + 1))
+        for row, index in enumerate(_control_indices(groups, degree))
     }
 
 
@@ -125,28 +179,76 @@ def _float_points(controls: _Controls, /) -> np.ndarray:
     )
 
 
-def _corner_points(controls: _Controls, degree: int, parts: int, /) -> np.ndarray:
-    return np.asarray(
-        [
-            [
-                float(value)
-                for value in controls[
-                    tuple(degree * int(slot == vertex) for slot in range(parts))
-                ]
-            ]
-            for vertex in range(parts)
-        ],
-        dtype=np.float64,
-    )
+def _corner_points(
+    controls: _Controls, groups: tuple[int, ...], degree: tuple[int, ...], /
+) -> dict[tuple[int, ...], np.ndarray]:
+    """Corner images keyed by their slot per group (one slot of every group)."""
+    group_slots = _group_slots(groups)
+    corners: dict[tuple[int, ...], np.ndarray] = {}
+    for choice in product(*group_slots):
+        index = tuple(
+            degree[group] * int(slot in choice)
+            for group, slots in enumerate(group_slots)
+            for slot in slots
+        )
+        corners[choice] = np.asarray(
+            [float(value) for value in controls[index]], dtype=np.float64
+        )
+    return corners
 
 
-def _degree(polynomials: tuple[Expression, ...], dimension: int, /) -> int | None:
-    degree = 0
+def _degree(
+    polynomials: tuple[Expression, ...], groups: tuple[int, ...], dimension: int, /
+) -> tuple[int, ...] | None:
+    degree = [1] * len(groups)
     for polynomial in polynomials:
         if not isinstance(polynomial, dict):
             return None
-        degree = max(degree, bernstein_degree(polynomial, "simplex", dimension)[0])
-    return max(degree, 1)
+        least = bernstein_degree(polynomial, _domain(groups), dimension)
+        degree = [
+            max(value, minimum) for value, minimum in zip(degree, least, strict=True)
+        ]
+    return tuple(degree)
+
+
+def _reference_slots(
+    cell: EmbeddingCell, /
+) -> tuple[tuple[int, ...], tuple[tuple[int, ...], ...]] | None:
+    """Piece groups and every corner's slot per group, or ``None``."""
+    dimension = cell.dimension
+    references = [
+        tuple(Fraction(value) for value in point) for point in cell.reference_vertices
+    ]
+    if any(len(point) != dimension for point in references):
+        return None
+
+    def simplex_slot(values: tuple[Fraction, ...], /) -> int | None:
+        if not any(values):
+            return 0
+        if sorted(values) == [0] * (len(values) - 1) + [1]:
+            return values.index(Fraction(1)) + 1
+        return None
+
+    if cell.kind in _PIECE_KINDS and len(references) == dimension + 1:
+        slots = [
+            slot
+            for slot in (simplex_slot(point) for point in references)
+            if slot is not None
+        ]
+        if sorted(slots) != list(range(dimension + 1)):
+            return None
+        return (dimension + 1,), tuple((slot,) for slot in slots)
+    if cell.kind == "prism" and dimension == 3 and len(references) == 6:
+        corners: list[tuple[int, ...]] = []
+        for point in references:
+            triangle = simplex_slot(point[:2])
+            if triangle is None or point[2] not in (0, 1):
+                return None
+            corners.append((triangle, 3 + int(point[2])))
+        if sorted(corners) != sorted(product(range(3), (3, 4))):
+            return None
+        return (3, 2), tuple(corners)
+    return None
 
 
 def _root_piece(
@@ -156,50 +258,57 @@ def _root_piece(
     /,
 ) -> _Piece | None:
     dimension = cell.dimension
-    parts = dimension + 1
     if (
-        cell.kind not in _PIECE_KINDS
-        or dimension not in (2, 3)
-        or len(cell.coordinates) != 3
-        or len(cell.vertex_ids) != parts
+        dimension not in (2, 3)
+        or len(cell.coordinates) not in (2, 3)
+        or len(cell.coordinates) < dimension
+        or len(cell.vertex_ids) != len(cell.reference_vertices)
     ):
         return None
-    slots: list[int] = []
-    for reference in cell.reference_vertices:
-        values = tuple(Fraction(value) for value in reference)
-        if len(values) != dimension:
-            return None
-        if not any(values):
-            slots.append(0)
-        elif sorted(values) == [0] * (dimension - 1) + [1]:
-            slots.append(values.index(Fraction(1)) + 1)
-        else:
-            return None
-    if sorted(slots) != list(range(parts)):
+    layout = _reference_slots(cell)
+    if layout is None:
         return None
-    on_stratum = [False] * parts
-    for local, slot in enumerate(slots):
-        on_stratum[slot] = cell.vertex_ids[local] in shared_ids
-    geometry_degree = _degree(cell.coordinates, dimension)
+    groups, corner_slots = layout
+    slot_count = sum(groups)
+    # The stratum must be a product of group faces: a corner lies on it exactly
+    # when each of its slots does.
+    on_stratum = [False] * slot_count
+    corner_on = {
+        slots: cell.vertex_ids[local] in shared_ids
+        for local, slots in enumerate(corner_slots)
+    }
+    for slots, on in corner_on.items():
+        if on:
+            for slot in slots:
+                on_stratum[slot] = True
+    if any(
+        on != all(on_stratum[slot] for slot in slots) for slots, on in corner_on.items()
+    ):
+        return None
+    geometry_degree = _degree(cell.coordinates, groups, dimension)
     if geometry_degree is None:
         return None
-    geometry = _controls(cell.coordinates, geometry_degree, dimension)
+    geometry = _controls(cell.coordinates, groups, geometry_degree, dimension)
     if geometry is None:
         return None
     composed = tuple(
         compose_expression(residual, cell.coordinates) for residual in residuals
     )
-    residual_degree = _degree(composed, dimension) if composed else 1
+    residual_degree = (
+        _degree(composed, groups, dimension) if composed else (1,) * len(groups)
+    )
     if residual_degree is None:
         return None
-    residual = _controls(composed, residual_degree, dimension) if composed else {}
+    residual = _controls(composed, groups, residual_degree, dimension) if composed else {}
     if residual is None:
         return None
     vertices = tuple(
-        tuple(Fraction(int(slot == vertex)) for slot in range(parts))
-        for vertex in range(parts)
+        tuple(Fraction(int(slot == vertex)) for slot in slots)
+        for slots in _group_slots(groups)
+        for vertex in slots
     )
     return _Piece(
+        groups,
         vertices,
         tuple(on_stratum),
         geometry,
@@ -207,14 +316,14 @@ def _root_piece(
         residual,
         residual_degree,
         _float_points(geometry),
-        _corner_points(geometry, geometry_degree, parts),
+        _corner_points(geometry, groups, geometry_degree),
     )
 
 
 def _bisect_controls(
-    controls: _Controls, degree: int, first: int, second: int, /
+    controls: _Controls, first: int, second: int, /
 ) -> tuple[_Controls, _Controls]:
-    """Exact de Casteljau halves along edge ``(first, second)``.
+    """Exact de Casteljau halves along edge ``(first, second)`` of one group.
 
     The left half keeps vertex ``first`` and moves ``second`` to the midpoint;
     the right half keeps ``second`` and moves ``first`` there.
@@ -257,11 +366,9 @@ def _bisect(piece: _Piece, first: int, second: int, /) -> tuple[_Piece, _Piece]:
         for left, right in zip(piece.vertices[first], piece.vertices[second], strict=True)
     )
     middle_on_stratum = piece.on_stratum[first] and piece.on_stratum[second]
-    geometry = _bisect_controls(piece.geometry, piece.geometry_degree, first, second)
+    geometry = _bisect_controls(piece.geometry, first, second)
     residual = (
-        _bisect_controls(piece.residual, piece.residual_degree, first, second)
-        if piece.residual
-        else ({}, {})
+        _bisect_controls(piece.residual, first, second) if piece.residual else ({}, {})
     )
     children: list[_Piece] = []
     for moved, geometry_controls, residual_controls in (
@@ -278,6 +385,7 @@ def _bisect(piece: _Piece, first: int, second: int, /) -> tuple[_Piece, _Piece]:
         )
         children.append(
             _Piece(
+                piece.groups,
                 vertices,
                 on_stratum,
                 geometry_controls,
@@ -285,9 +393,7 @@ def _bisect(piece: _Piece, first: int, second: int, /) -> tuple[_Piece, _Piece]:
                 residual_controls,
                 piece.residual_degree,
                 _float_points(geometry_controls),
-                _corner_points(
-                    geometry_controls, piece.geometry_degree, len(piece.vertices)
-                ),
+                _corner_points(geometry_controls, piece.groups, piece.geometry_degree),
             )
         )
     return children[0], children[1]
@@ -304,13 +410,34 @@ def _children(
     if cached is not None:
         return cached
     corners = piece.corners
+
+    def length(pair: tuple[int, int], /) -> float:
+        # The longest physical image of this group edge over the other groups.
+        return max(
+            float(
+                np.sum(
+                    (
+                        point
+                        - corners[
+                            tuple(pair[1] if slot == pair[0] else slot for slot in choice)
+                        ]
+                    )
+                    ** 2
+                )
+            )
+            for choice, point in corners.items()
+            if pair[0] in choice
+        )
+
     first, second = max(
         (
             (left, right)
-            for left in range(len(piece.vertices))
-            for right in range(left + 1, len(piece.vertices))
+            for slots in _group_slots(piece.groups)
+            for left in slots
+            for right in slots
+            if left < right
         ),
-        key=lambda pair: float(np.sum((corners[pair[0]] - corners[pair[1]]) ** 2)),
+        key=length,
     )
     result = _bisect(piece, first, second)
     cache.children[memo_key] = result
@@ -323,7 +450,10 @@ def _strict_direction(vectors: np.ndarray, /) -> np.ndarray | None:
     Rows are normalized first. The mean is tried, then Gilbert's least-norm
     iteration (stopping at the first strictly positive direction), then in two
     or three dimensions the sum of the extreme rays of the closed dual cone,
-    which is interior to it whenever the open dual cone is nonempty.
+    which is interior to it whenever the open dual cone is nonempty. Rows have
+    one to three columns (physical control differences, at most three stratum
+    residuals); in one dimension the normalized mean is positive exactly when a
+    direction exists, so the routine is complete for every caller.
     """
     if vectors.size == 0 or not np.all(np.isfinite(vectors)):
         return None
@@ -389,7 +519,9 @@ def _exactly_positive(direction: np.ndarray | None, vectors: list[_Vector], /) -
 
 
 def _hull_separated(first: _Piece, second: _Piece, /) -> bool:
-    differences = (first.points[:, None, :] - second.points[None, :, :]).reshape(-1, 3)
+    differences = (first.points[:, None, :] - second.points[None, :, :]).reshape(
+        -1, first.points.shape[1]
+    )
     direction = _strict_direction(differences)
     if direction is None:
         return False
@@ -467,8 +599,8 @@ def subdivided_stratum_separation(
         pieces.append(piece)
     scale = max(
         1.0,
-        float(np.max(np.abs(pieces[0].corners))),
-        float(np.max(np.abs(pieces[1].corners))),
+        float(np.max(np.abs(pieces[0].points))),
+        float(np.max(np.abs(pieces[1].points))),
     )
     keys = ((first.global_id, stratum), (second.global_id, stratum))
     cones = hulls = 0
@@ -496,6 +628,9 @@ _Matrix = tuple[tuple[ExactScalar, ...], ...]
 
 
 def _determinant(matrix: _Matrix, /) -> ExactScalar:
+    if len(matrix) == 2:
+        (a, b), (c, d) = matrix
+        return a * d - b * c
     (a, b, c), (d, e, f), (g, h, i) = matrix
     return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 
@@ -504,58 +639,66 @@ def _inverse(matrix: _Matrix, /) -> _Matrix | None:
     determinant = _determinant(matrix)
     if not _sign(determinant):
         return None
-    (a, b, c), (d, e, f), (g, h, i) = matrix
-    adjugate = (
-        (e * i - f * h, c * h - b * i, b * f - c * e),
-        (f * g - d * i, a * i - c * g, c * d - a * f),
-        (d * h - e * g, b * g - a * h, a * e - b * d),
-    )
+    if len(matrix) == 2:
+        (a, b), (c, d) = matrix
+        adjugate: _Matrix = ((d, -b), (-c, a))
+    else:
+        (a, b, c), (d, e, f), (g, h, i) = matrix
+        adjugate = (
+            (e * i - f * h, c * h - b * i, b * f - c * e),
+            (f * g - d * i, a * i - c * g, c * d - a * f),
+            (d * h - e * g, b * g - a * h, a * e - b * d),
+        )
     return tuple(tuple(value / determinant for value in row) for row in adjugate)
 
 
 def _product(first: _Matrix, second: _Matrix, /) -> _Matrix:
+    size = len(first)
     return tuple(
         tuple(
             sum(
-                (first[row][inner] * second[inner][column] for inner in range(3)),
+                (first[row][inner] * second[inner][column] for inner in range(size)),
                 Fraction(0),
             )
-            for column in range(3)
+            for column in range(size)
         )
-        for row in range(3)
+        for row in range(size)
     )
 
 
 def _positive_definite_symmetric_part(matrix: _Matrix, /) -> bool:
+    """Sylvester's criterion on the leading minors of the symmetric part."""
+    size = len(matrix)
     symmetric = tuple(
-        tuple((matrix[row][column] + matrix[column][row]) / 2 for column in range(3))
-        for row in range(3)
+        tuple((matrix[row][column] + matrix[column][row]) / 2 for column in range(size))
+        for row in range(size)
     )
-    return (
-        _sign(symmetric[0][0]) > 0
-        and _sign(symmetric[0][0] * symmetric[1][1] - symmetric[0][1] * symmetric[1][0])
-        > 0
-        and _sign(_determinant(symmetric)) > 0
-    )
+    if _sign(symmetric[0][0]) <= 0:
+        return False
+    leading = symmetric[0][0] * symmetric[1][1] - symmetric[0][1] * symmetric[1][0]
+    if _sign(leading) <= 0:
+        return False
+    return size == 2 or _sign(_determinant(symmetric)) > 0
 
 
 def _edge_matrix(points: tuple[tuple[ExactScalar, ...], ...], origin: int, /) -> _Matrix:
-    """Columns ``points[k] - points[origin]`` over the other three vertices."""
-    others = [index for index in range(4) if index != origin]
+    """Columns ``points[k] - points[origin]`` over the other simplex vertices."""
+    others = [index for index in range(len(points)) if index != origin]
     return tuple(
         tuple(points[column][row] - points[origin][row] for column in others)
-        for row in range(3)
+        for row in range(len(points) - 1)
     )
 
 
 def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
     """Bernstein controls of the reference Jacobian on the unit reference simplex."""
+    dimension = cell.dimension
     entries: list[list[dict[_Index, ExactScalar]]] = []
     for expression in cell.coordinates:
         if not isinstance(expression, dict):
             return None
         row: list[dict[_Index, ExactScalar]] = []
-        for axis in range(3):
+        for axis in range(dimension):
             derivative: dict[_Index, ExactScalar] = {}
             for exponent, coefficient in expression.items():
                 if exponent[axis]:
@@ -565,20 +708,28 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
                     derivative[lowered] = derivative.get(lowered, Fraction(0)) + (
                         coefficient * exponent[axis]
                     )
-            row.append(derivative or {(0, 0, 0): Fraction(0)})
+            row.append(derivative or {(0,) * dimension: Fraction(0)})
         entries.append(row)
     degree = max(
         1,
-        max(bernstein_degree(entry, "simplex", 3)[0] for row in entries for entry in row),
+        max(
+            bernstein_degree(entry, "simplex", dimension)[0]
+            for row in entries
+            for entry in row
+        ),
     )
     columns = [
-        [bernstein_coefficients(entry, "simplex", 3, degree=(degree,)) for entry in row]
+        [
+            bernstein_coefficients(entry, "simplex", dimension, degree=(degree,))
+            for entry in row
+        ]
         for row in entries
     ]
     count = len(columns[0][0])
     return tuple(
         tuple(
-            tuple(columns[row][column][index] for column in range(3)) for row in range(3)
+            tuple(columns[row][column][index] for column in range(dimension))
+            for row in range(dimension)
         )
         for index in range(count)
     )
@@ -587,6 +738,7 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
 def _glued_monotone(
     first: EmbeddingCell, second: EmbeddingCell, shared: set[int], /
 ) -> bool:
+    dimension = first.dimension
     first_opposite = next(
         index
         for index, identifier in enumerate(first.vertex_ids)
@@ -618,7 +770,7 @@ def _glued_monotone(
     offset = tuple(
         second.corner_images[second_opposite][axis]
         - first.corner_images[first_opposite][axis]
-        for axis in range(3)
+        for axis in range(dimension)
     )
     weights = _apply(first_inverse, _apply(metric, offset))
     total = sum(weights, Fraction(0))
@@ -634,16 +786,16 @@ def _glued_monotone(
     scaled = tuple(value * total / clipped_total for value in clipped)
     glued = tuple(
         first_reference[first_opposite][axis] + _apply(first_edges, scaled)[axis]
-        for axis in range(3)
+        for axis in range(dimension)
     )
     reference_by_id = dict(zip(first.vertex_ids, first_reference, strict=True))
-    second_others = [index for index in range(4) if index != second_opposite]
+    second_others = [index for index in range(dimension + 1) if index != second_opposite]
     images = tuple(
         tuple(
             reference_by_id[second.vertex_ids[column]][row] - glued[row]
             for column in second_others
         )
-        for row in range(3)
+        for row in range(dimension)
     )
     glue = _inverse(_product(images, second_inverse))
     if glue is None:
@@ -652,53 +804,75 @@ def _glued_monotone(
     second_controls = _jacobian_controls(second)
     if first_controls is None or second_controls is None:
         return False
-    return all(
-        _positive_definite_symmetric_part(_product(metric, control))
-        for control in first_controls
-    ) and all(
-        _positive_definite_symmetric_part(_product(metric, _product(control, glue)))
-        for control in second_controls
+    glued_controls = (
+        *first_controls,
+        *(_product(control, glue) for control in second_controls),
     )
+    if all(
+        _positive_definite_symmetric_part(_product(metric, control))
+        for control in glued_controls
+    ):
+        return True
+    # Any constant preconditioner proves monotonicity; search one when the
+    # corner-affine inverse fails on strongly curved cells.
+    return monotone_preconditioner(glued_controls) is not None
 
 
 def _apply(
     matrix: _Matrix, vector: tuple[ExactScalar, ...], /
 ) -> tuple[ExactScalar, ...]:
     return tuple(
-        sum((matrix[row][inner] * vector[inner] for inner in range(3)), Fraction(0))
-        for row in range(3)
+        sum(
+            (matrix[row][inner] * vector[inner] for inner in range(len(vector))),
+            Fraction(0),
+        )
+        for row in range(len(matrix))
     )
+
+
+_STANDARD_SIMPLICES = {
+    2: ((0, 0), (0, 1), (1, 0)),
+    3: ((0, 0, 0), (0, 0, 1), (0, 1, 0), (1, 0, 0)),
+}
 
 
 def glued_face_monotone(
     first: EmbeddingCell, second: EmbeddingCell, shared_ids: tuple[int, ...], /
 ) -> bool:
-    """Prove two face-sharing polynomial tetrahedra meet only in their shared face.
+    """Prove two facet-sharing full-dimensional simplices meet only in their facet.
 
-    One cell's reference is glued to the other's across the shared face by an
-    affine map ``phi`` fixing the face corners and sending the glued cell's
-    opposite corner to a point ``P`` across the face plane whose segment to the
-    other opposite corner crosses the closed face triangle, so the glued
-    reference domain ``D`` is convex (``P`` is the preimage of the opposite
-    corner's image under the corner-affine map ``A``, clipped into that cone).
-    When ``A^{-1} DH`` has a positive definite symmetric part at every Bernstein
+    Applies to tetrahedra in space and triangles in the plane. One cell's
+    reference is glued to the other's across the shared facet by an affine map
+    ``phi`` fixing the facet corners and sending the glued cell's opposite
+    corner to a point ``P`` across the facet hyperplane whose segment to the
+    other opposite corner crosses the closed facet, so the glued reference
+    domain ``D`` is convex (``P`` is the preimage of the opposite corner's image
+    under the corner-affine map ``A``, clipped into that cone). When
+    ``A^{-1} DH`` has a positive definite symmetric part at every Bernstein
     control of the glued map's Jacobian on both cells, then
     ``(x - y) . A^{-1}(H(x) - H(y)) > 0`` along every segment of ``D``; ``H`` is
-    injective and the two images meet exactly in the image of the face. The
-    caller has proved equal face traces; both gluing orders are tried.
+    injective and the two images meet exactly in the image of the facet. The
+    caller has proved equal facet traces; both gluing orders are tried.
     """
     shared = set(shared_ids)
-    if len(shared) != 3 or any(
-        cell.kind not in _SIMPLEX_KINDS
-        or cell.dimension != 3
-        or len(cell.vertex_ids) != 4
-        or len(cell.coordinates) != 3
-        or len(cell.corner_images) != 4
-        or not shared <= set(cell.vertex_ids)
-        for cell in (first, second)
+    dimension = first.dimension
+    kinds = _SIMPLEX_KINDS if dimension == 3 else ("triangle", "simplex:2")
+    if (
+        dimension not in _STANDARD_SIMPLICES
+        or len(shared) != dimension
+        or any(
+            cell.kind not in kinds
+            or cell.dimension != dimension
+            or len(cell.vertex_ids) != dimension + 1
+            or len(cell.coordinates) != dimension
+            or len(cell.corner_images) != dimension + 1
+            or any(len(point) != dimension for point in cell.corner_images)
+            or not shared <= set(cell.vertex_ids)
+            for cell in (first, second)
+        )
     ):
         return False
-    standard = ((0, 0, 0), (0, 0, 1), (0, 1, 0), (1, 0, 0))
+    standard = _STANDARD_SIMPLICES[dimension]
     if any(
         tuple(
             sorted(
@@ -715,8 +889,259 @@ def glued_face_monotone(
     )
 
 
+_Point = tuple[Fraction, ...]
+
+
+def _plane(points: list[_Point], /) -> tuple[_Point, Fraction] | None:
+    """Normal and offset of the hyperplane through ``dimension`` points."""
+    origin = points[0]
+    if len(origin) == 2:
+        edge = tuple(value - base for value, base in zip(points[1], origin, strict=True))
+        normal: _Point = (edge[1], -edge[0])
+    else:
+        first = tuple(value - base for value, base in zip(points[1], origin, strict=True))
+        second = tuple(
+            value - base for value, base in zip(points[2], origin, strict=True)
+        )
+        normal = (
+            first[1] * second[2] - first[2] * second[1],
+            first[2] * second[0] - first[0] * second[2],
+            first[0] * second[1] - first[1] * second[0],
+        )
+    if not any(normal):
+        return None
+    return normal, sum((a * b for a, b in zip(normal, origin, strict=True)), Fraction(0))
+
+
+def _halfspaces(points: list[_Point], /) -> dict[frozenset[int], tuple[_Point, Fraction]]:
+    """Facets ``n . x <= c`` of a convex polytope keyed by their vertex set."""
+    facets: dict[frozenset[int], tuple[_Point, Fraction]] = {}
+    for subset in combinations(range(len(points)), len(points[0])):
+        plane = _plane([points[index] for index in subset])
+        if plane is None:
+            continue
+        normal, offset = plane
+        values = [
+            sum((a * b for a, b in zip(normal, point, strict=True)), Fraction(0)) - offset
+            for point in points
+        ]
+        if all(value >= 0 for value in values):
+            normal, offset = tuple(-value for value in normal), -offset
+        elif not all(value <= 0 for value in values):
+            continue
+        key = frozenset(index for index, value in enumerate(values) if value == 0)
+        facets.setdefault(key, (normal, offset))
+    return facets
+
+
+def _side(plane: tuple[_Point, Fraction], point: _Point, /) -> Fraction:
+    normal, offset = plane
+    return sum((a * b for a, b in zip(normal, point, strict=True)), Fraction(0)) - offset
+
+
+def _cell_jacobian_controls(
+    cell: EmbeddingCell, level: int, /
+) -> tuple[_Matrix, ...] | None:
+    jacobian = tuple(
+        tuple(derivative(expression, axis) for axis in range(cell.dimension))
+        for expression in cell.coordinates
+    )
+    return subdivided_jacobian_controls(
+        jacobian, cell.proof_domain, cell.dimension, level
+    )
+
+
+def _glued_facet(
+    first: EmbeddingCell, second: EmbeddingCell, shared: tuple[int, ...], /
+) -> bool:
+    dimension = first.dimension
+    first_points = [
+        tuple(Fraction(value) for value in point) for point in first.reference_vertices
+    ]
+    second_points = [
+        tuple(Fraction(value) for value in point) for point in second.reference_vertices
+    ]
+    first_by_id = dict(zip(first.vertex_ids, first_points, strict=True))
+    second_by_id = dict(zip(second.vertex_ids, second_points, strict=True))
+    basis = next(
+        (
+            subset
+            for subset in combinations(shared, dimension)
+            if _plane([second_by_id[identifier] for identifier in subset]) is not None
+        ),
+        None,
+    )
+    if basis is None:
+        return False
+
+    def centroid(points: list[_Point], /) -> _Point:
+        return tuple(
+            sum(values, Fraction(0)) / len(points) for values in zip(*points, strict=True)
+        )
+
+    def image(cell: EmbeddingCell, point: _Point, /) -> np.ndarray:
+        return np.asarray(
+            [
+                float(evaluate_expression(expression, point))
+                for expression in cell.coordinates
+            ]
+        )
+
+    inside = centroid(
+        [point for identifier, point in second_by_id.items() if identifier not in shared]
+    )
+    # The glue sends second's off-facet centroid onto the ray from first's
+    # off-facet centroid through the facet centroid: across the facet, and for
+    # simplices and prisms with the union convex (an apex over the facet, or a
+    # prism over a convex quadrilateral). Floats only scale the ray to match the
+    # physical depths of both cells.
+    facet_center = centroid([first_by_id[identifier] for identifier in shared])
+    first_inside = centroid(
+        [point for identifier, point in first_by_id.items() if identifier not in shared]
+    )
+    center_image = image(first, facet_center)
+    depth = float(np.linalg.norm(image(first, first_inside) - center_image))
+    if not np.isfinite(depth) or depth == 0.0:
+        return False
+    ratio = float(np.linalg.norm(image(second, inside) - center_image)) / depth
+    if not np.isfinite(ratio) or ratio <= 0.0:
+        return False
+    scale = Fraction(ratio).limit_denominator(2**20)
+    if scale <= 0:
+        return False
+    glued_inside = tuple(
+        center + scale * (center - base)
+        for center, base in zip(facet_center, first_inside, strict=True)
+    )
+    source = _edge_columns([second_by_id[identifier] for identifier in basis], inside)
+    destination = _edge_columns(
+        [first_by_id[identifier] for identifier in basis], glued_inside
+    )
+    source_inverse = _inverse(source)
+    if source_inverse is None:
+        return False
+    matrix = _product(destination, source_inverse)
+    matrix_inverse = _inverse(matrix)
+    if matrix_inverse is None:
+        return False
+    anchor_source = second_by_id[basis[0]]
+    anchor = first_by_id[basis[0]]
+
+    def glue(point: _Point, /) -> _Point:
+        moved = _apply(
+            matrix,
+            tuple(value - base for value, base in zip(point, anchor_source, strict=True)),
+        )
+        # Rational reference points under a rational glue stay rational.
+        return tuple(
+            cast(Fraction, base + value)
+            for base, value in zip(anchor, moved, strict=True)
+        )
+
+    if any(
+        glue(second_by_id[identifier]) != first_by_id[identifier] for identifier in shared
+    ):
+        return False
+    glued_points = [glue(point) for point in second_points]
+    first_facets = _halfspaces(first_points)
+    glued_facets = _halfspaces(glued_points)
+    first_shared = frozenset(first.vertex_ids.index(identifier) for identifier in shared)
+    glued_shared = frozenset(second.vertex_ids.index(identifier) for identifier in shared)
+    if first_shared not in first_facets or glued_shared not in glued_facets:
+        return False
+    # Opposite sides of the shared facet, and each polytope inside every other
+    # facet halfspace of the other: then the union is the convex intersection
+    # of those halfspaces.
+    if any(
+        _side(first_facets[first_shared], glued_points[index]) <= 0
+        for index in range(len(glued_points))
+        if index not in glued_shared
+    ):
+        return False
+    if any(
+        _side(plane, point) > 0
+        for key, plane in first_facets.items()
+        if key != first_shared
+        for point in glued_points
+    ) or any(
+        _side(plane, point) > 0
+        for key, plane in glued_facets.items()
+        if key != glued_shared
+        for point in first_points
+    ):
+        return False
+    # Whole-cell controls first, then uniformly refined ones, which enclose the
+    # Jacobian more tightly (one constant preconditioner serves every piece).
+    for level in range(SUBDIVISION_LEVELS + 1):
+        first_controls = _cell_jacobian_controls(first, level)
+        second_controls = _cell_jacobian_controls(second, level)
+        if first_controls is None or second_controls is None:
+            return False
+        if (
+            monotone_preconditioner(
+                (
+                    *first_controls,
+                    *(_product(control, matrix_inverse) for control in second_controls),
+                )
+            )
+            is not None
+        ):
+            return True
+    return False
+
+
+def _edge_columns(points: list[_Point], extra: _Point, /) -> _Matrix:
+    """Columns ``points[k] - points[0]`` (k >= 1) and ``extra - points[0]``."""
+    columns = [
+        *(
+            tuple(a - b for a, b in zip(point, points[0], strict=True))
+            for point in points[1:]
+        ),
+        tuple(a - b for a, b in zip(extra, points[0], strict=True)),
+    ]
+    return tuple(
+        tuple(column[row] for column in columns) for row in range(len(points[0]))
+    )
+
+
+def glued_facet_monotone(
+    first: EmbeddingCell, second: EmbeddingCell, shared_ids: tuple[int, ...], /
+) -> bool:
+    """Prove two facet-sharing simplices or prisms meet only in their shared facet.
+
+    An exact affine glue ``phi`` maps the second reference cell onto the far
+    side of the shared facet of the first, matching the facet corners by vertex
+    identity (the caller has proved equal facet traces, so ``H`` -- the first
+    map, and the second composed with ``phi^-1`` -- is continuous). The union
+    ``D`` is convex when the two polytopes lie on opposite sides of the facet
+    and each satisfies every other facet inequality of the other. A constant
+    ``M`` with ``sym(M C)`` positive definite at every Bernstein control ``C``
+    of ``DH`` then makes ``H`` strictly monotone, hence injective, on ``D``; the
+    two images meet exactly in the image of the facet.
+    """
+    dimension = first.dimension
+    shared = tuple(sorted(set(shared_ids)))
+    if (
+        dimension not in (2, 3)
+        or len(shared) < dimension
+        or any(
+            cell.dimension != dimension
+            or cell.kind not in (*_PIECE_KINDS, "prism")
+            or cell.pyramid_normalizations is not None
+            or len(cell.coordinates) != dimension
+            or len(cell.reference_vertices) != len(cell.vertex_ids)
+            or not set(shared) <= set(cell.vertex_ids)
+            or any(not isinstance(expression, dict) for expression in cell.coordinates)
+            for cell in (first, second)
+        )
+    ):
+        return False
+    return _glued_facet(first, second, shared) or _glued_facet(second, first, shared)
+
+
 __all__ = [
     "glued_face_monotone",
+    "glued_facet_monotone",
     "StratumSubdivisionCache",
     "subdivided_stratum_separation",
 ]

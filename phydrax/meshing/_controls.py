@@ -1136,7 +1136,6 @@ class BlockInterfaceControl(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         first_block: str,
