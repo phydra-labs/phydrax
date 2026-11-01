@@ -7,6 +7,9 @@
   filtering selected source occurrences, and uses exact rational spline corner
   bounds rather than widened numerical point boxes. Surface feature tolerances
   are applied per selected patch, with hard and soft obligations distinguished.
+- Staged native archive reads reject malformed column payloads and inconsistent
+  local record identities even in unselected fields, before returning prerequisite
+  data or replaying scientific proofs.
 - Finite-element and finite-volume field queries now bind compiled geometry
   through the same content identity; default finite-volume simplex location uses
   the supported block's cell count.

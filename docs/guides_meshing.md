@@ -220,6 +220,11 @@ embedding witnesses and surface cell tags as array columns (a value table with
 int64 row indices, or UTF-8 text with offsets), so manifests stay within the
 canonical `MODEL_ARCHIVE_LIMITS`; the decoder rebuilds each record through its
 constructor and requires its stored identity.
+Staged prerequisite reads also validate unselected column records and their local
+content identities. Each raw subtree must reproduce its admitted recipe before
+column decoding; the reader discards unrequested records rather than rebuilding
+their enclosing target geometry. Selecting one field never bypasses malformed
+columns elsewhere, and admission still does not certify stored mathematics.
 Missing continuous fidelity witnesses produce an unresolved certificate with
 unbounded directed deviation evidence. Those bounds remain infinity; they are
 not replaced with finite estimates or accepted merely because mesh samples agree.

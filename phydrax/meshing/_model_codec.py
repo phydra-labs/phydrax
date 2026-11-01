@@ -20,11 +20,12 @@ from .._array_archive import (
 )
 from .._model._artifacts import artifact_value, artifact_value_id
 from .._model._structure import (
+    _recipe_array_nodes,
+    _row_record_recipe_types,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
     AnalyticImplicitProfileArchiveRecipe,
     DistributedFiniteElementTransferArchiveRecipe,
     expand_shared_model_archive_recipe,
-    _recipe_array_nodes,
     FiniteElementAcceptedStateArchiveRecipe,
     FiniteVolumeOversetPartSpecArchiveRecipe,
     FiniteVolumeOversetPolicyArchiveRecipe,
@@ -1688,6 +1689,78 @@ def read_model_archive(
     return {"kind": _MODEL_KIND, "model_recipe": recipe}, arrays
 
 
+def _validate_archive_columns(
+    recipe: dict[str, Any],
+    payloads: dict[int, Any],
+    limits: ArrayArchiveLimits | None,
+    /,
+) -> None:
+    """Admit every column record without rebuilding its enclosing geometry."""
+    from .._archive_columns import (
+        ExactTensorArchiveRecipe,
+        IntegerRowsArchiveRecipe,
+        StaticColumnArchiveRecipe,
+        TextColumnArchiveRecipe,
+        TextRowsArchiveRecipe,
+    )
+    from ._archive_layer_columns import (
+        ExactExpressionRowsArchiveRecipe,
+        ImplicitChartRowsArchiveRecipe,
+    )
+
+    row_types = _row_record_recipe_types()
+    column_types = frozenset(
+        (
+            ExactTensorArchiveRecipe,
+            IntegerRowsArchiveRecipe,
+            StaticColumnArchiveRecipe,
+            TextColumnArchiveRecipe,
+            TextRowsArchiveRecipe,
+            ExactExpressionRowsArchiveRecipe,
+            ImplicitChartRowsArchiveRecipe,
+        )
+    )
+    seen: set[int] = set()
+    pending: list[Any] = [recipe]
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, dict):
+            owner = (
+                artifact_value(node["type"]) if node.get("kind") == "namedtuple" else None
+            )
+            if owner in row_types or owner in column_types:
+                arrays = {
+                    f"{_MODEL_ARRAYS}/{index:06d}": payloads[id(array)]
+                    for index, array in enumerate(_recipe_array_nodes(node))
+                }
+                value = model_from_array_recipe(
+                    node,
+                    arrays,
+                    prefix=_MODEL_ARRAYS,
+                    limits=limits,
+                    validate=False,
+                    restore_rows=False,
+                )
+                if type(value) is not owner or model_structure_recipe(value) != node:
+                    raise ValueError(
+                        "Restored column fields differ from the exact recipe."
+                    )
+                if owner in column_types:
+                    value.decode()
+                else:
+                    restore_row_record_recipes(value)
+                # Restore validates each column and local content identity.
+                # Retain no unrequested record or decoded exact coordinate bank.
+                del value
+            else:
+                pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+
+
 def read_model_archive_fields(
     path: str | Path,
     /,
@@ -1732,6 +1805,7 @@ def read_model_archive_fields(
             id(node): arrays[f"{_MODEL_ARRAYS}/{index:06d}"]
             for index, node in enumerate(nodes)
         }
+        _validate_archive_columns(recipe, payloads, limits)
         selected = {}
         for name in fields:
             subtree = subtrees[name]
@@ -1740,9 +1814,17 @@ def read_model_archive_fields(
                 f"{_MODEL_ARRAYS}/{index:06d}": payloads[id(node)]
                 for index, node in enumerate(subnodes)
             }
-            selected[name] = model_from_array_recipe(
-                subtree, subarrays, prefix=_MODEL_ARRAYS, limits=limits, validate=False
+            raw = model_from_array_recipe(
+                subtree,
+                subarrays,
+                prefix=_MODEL_ARRAYS,
+                limits=limits,
+                validate=False,
+                restore_rows=False,
             )
+            if model_structure_recipe(raw) != subtree:
+                raise ValueError("Restored selected fields differ from the exact recipe.")
+            selected[name] = restore_row_record_recipes(raw)
         return selected
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise ArrayArchiveCorruptionError(

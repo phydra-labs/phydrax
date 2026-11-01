@@ -8,12 +8,12 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax._array_archive import ArrayArchiveCorruptionError
 from phydrax._archive_columns import (
     ExactTensorArchiveRecipe,
     StaticColumnArchiveRecipe,
     TextRowsArchiveRecipe,
 )
+from phydrax._array_archive import ArrayArchiveCorruptionError
 from phydrax._model._structure import model_recipe_array_inventory
 from phydrax.discretization._nested_reference_types import NestedReferenceWitnesses
 from phydrax.geometry.implicit._source_charts import ImplicitRootChartEvidence
@@ -27,6 +27,7 @@ from phydrax.meshing._layer_curving_records import LayerColumnProjectionIdentity
 from phydrax.meshing._model_codec import (
     MODEL_ARCHIVE_LIMITS,
     read_model_archive,
+    read_model_archive_fields,
     read_model_artifact,
     write_model_archive,
     write_model_artifact,
@@ -214,6 +215,50 @@ def test_malformed_layer_columns_refuse_before_owner_replay(
             limits=MODEL_ARCHIVE_LIMITS,
         )
     assert not replayed
+
+
+@pytest.mark.parametrize("change", ("index", "identity"))
+def test_selected_fields_reject_unselected_column_corruption(
+    tmp_path: Path, change: str
+) -> None:
+    source = write_model_artifact(
+        tmp_path / "source.phx", _composition(_identity()), limits=MODEL_ARCHIVE_LIMITS
+    )
+    assert read_model_archive_fields(
+        source,
+        expected_type=Composition,
+        fields=("boundary_id",),
+        limits=MODEL_ARCHIVE_LIMITS,
+    ) == {"boundary_id": "column-archive"}
+    manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
+    inventory = model_recipe_array_inventory(
+        manifest["model_recipe"], prefix="model/leaves", limits=MODEL_ARCHIVE_LIMITS
+    )
+    entry = next(
+        item
+        for item in inventory
+        if (
+            "source_wall_cell_ids" in item.path
+            if change == "identity"
+            else "source_column_identities" in item.path and item.shape == (9,)
+        )
+    )
+    values = arrays[entry.name].copy()
+    values[0] += 10
+    arrays[entry.name] = values
+    changed = write_model_archive(
+        tmp_path / "changed.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            changed,
+            expected_type=Composition,
+            fields=("boundary_id",),
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
 
 
 def test_implicit_primitive_columns_preserve_every_field_and_refuse_misalignment() -> (
