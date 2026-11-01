@@ -34,7 +34,7 @@ from ..._polynomial._orthogonal import (
 from ..._strict import StrictModule
 from ...ein import contract
 from ...exterior._form_type import FormProxy, FormTwist, FormType, FormValueSpec
-from ...linalg._exact import determinant_exact, solve_exact
+from ...linalg._exact import determinant_exact, matmul_exact, solve_exact
 from ...typing import parse
 from .._reference_cell import reference_cell_topology
 from ._reference import FiniteElementSpec
@@ -2093,9 +2093,11 @@ class FormBasis(StrictModule):
         """Return the exact local moment action of the exterior derivative."""
         self._require_exterior_derivative_target(target)
         target_component_count = comb(self.dimension, self.form_degree + 1)
+        dof_count = self.local_dof_count
+        coefficients = self.exact_coefficients
         derivatives = [
             [
-                [Fraction(0) for _ in range(self.local_dof_count)]
+                [Fraction(0) for _ in range(dof_count)]
                 for _ in range(target_component_count)
             ]
             for _ in target.exponents
@@ -2103,24 +2105,16 @@ class FormBasis(StrictModule):
         for index, component, lower, output, factor in _polynomial_derivative_terms(
             self.exponents, target.exponents, self.dimension, self.form_degree
         ):
-            for dof in range(self.local_dof_count):
-                derivatives[lower][output][dof] += (
-                    factor * self.exact_coefficients[index][component][dof]
-                )
-        return tuple(
-            tuple(
-                sum(
-                    (
-                        target.exact_functional_moments[row][monomial][component]
-                        * derivatives[monomial][component][column]
-                        for monomial in range(len(target.exponents))
-                        for component in range(target_component_count)
-                    ),
-                    Fraction(0),
-                )
-                for column in range(self.local_dof_count)
-            )
-            for row in range(target.local_dof_count)
+            row = derivatives[lower][output]
+            source = coefficients[index][component]
+            for dof in range(dof_count):
+                row[dof] += factor * source[dof]
+        return matmul_exact(
+            [
+                [value for components in moments for value in components]
+                for moments in target.exact_functional_moments
+            ],
+            [row for components in derivatives for row in components],
         )
 
     def permutation_matrix(self, vertices: tuple[int, ...], /) -> Array:
