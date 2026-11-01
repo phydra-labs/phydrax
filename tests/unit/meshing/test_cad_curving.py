@@ -462,6 +462,8 @@ def test_cad_curving_scenario_2() -> None:
 
 
 def test_bisection_of_curved_p2_mesh_keeps_exact_coordinate_map_equality() -> None:
+    from phydrax.discretization._cell_geometry import PerCellRestrictedCellGeometryElement
+
     # The curved map keeps exact rationals for nodes it did not move (straight
     # edge midpoints); bisected children restrict that exact bank, so the
     # nested-restriction transition proves exact coordinate-map equality.
@@ -499,7 +501,9 @@ def test_bisection_of_curved_p2_mesh_keeps_exact_coordinate_map_equality() -> No
     assert adaptation.status is phx.meshing.MeshAdaptationStatus.COMPLETE
     assert target.restriction_source is not None
     assert target.exact_coordinate_bank == bank
-    assert max(int(element.degree) for element in target.elements) == 2
+    for element in target.elements:
+        assert isinstance(element, PerCellRestrictedCellGeometryElement)
+        assert element.degree == 2
 
 
 def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> None:

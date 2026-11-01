@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, product
@@ -32,7 +33,7 @@ from ..discretization._coordinate_enclosure import (
     subtract,
 )
 from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
-from ..linalg._exact import solve_exact
+from ..linalg._exact import determinant_small_algebra, solve_exact
 from ._embedding_cells import EmbeddingCell
 
 
@@ -672,34 +673,92 @@ def monotone_preconditioner(
         tuple(Fraction(round(float(value) / scale * 2.0**30)) for value in row)
         for row in proposal
     )
+    integer_matrix = tuple(tuple(int(value) for value in row) for row in matrix)
     minors: list[list[str]] = [[] for _ in range(size)]
     for control in controls:
-        product = tuple(
-            tuple(
-                sum(
-                    (
-                        matrix[row][inner] * control[inner][column]
-                        for inner in range(size)
-                    ),
-                    Fraction(0),
-                )
-                for column in range(size)
-            )
-            for row in range(size)
-        )
-        symmetric = tuple(
-            tuple(
-                (product[row][column] + product[column][row]) / 2
-                for column in range(size)
-            )
-            for row in range(size)
-        )
-        for order in range(1, size + 1):
-            minor = _exact_determinant(tuple(row[:order] for row in symmetric[:order]))
+        values = _rational_leading_minors(integer_matrix, control)
+        if values is None:
+            values = _leading_minors(matrix, control)
+        for order, minor in enumerate(values):
             if _sign(minor) <= 0:
                 return None
-            minors[order - 1].append(repr(_coordinate_coefficient_identity(minor)))
+            minors[order].append(repr(_coordinate_coefficient_identity(minor)))
     return matrix, tuple(tuple(values) for values in minors)
+
+
+def _leading_minors(
+    matrix: _ExactMatrix, control: _ExactMatrix, /
+) -> tuple[ExactScalar, ...]:
+    """Leading principal minors of ``sym(M C)`` in exact scalars."""
+    size = len(control)
+    product = tuple(
+        tuple(
+            sum(
+                (matrix[row][inner] * control[inner][column] for inner in range(size)),
+                Fraction(0),
+            )
+            for column in range(size)
+        )
+        for row in range(size)
+    )
+    symmetric = tuple(
+        tuple(
+            (product[row][column] + product[column][row]) / 2 for column in range(size)
+        )
+        for row in range(size)
+    )
+    return tuple(
+        _exact_determinant(tuple(row[:order] for row in symmetric[:order]))
+        for order in range(1, size + 1)
+    )
+
+
+def _rational_leading_minors(
+    matrix: tuple[tuple[int, ...], ...], control: _ExactMatrix, /
+) -> tuple[Fraction, ...] | None:
+    """`_leading_minors` of a rational control over one shared denominator.
+
+    With ``C = N / d`` (integer ``N``), ``2 d sym(M C) = M N + (M N)^T`` is an
+    integer matrix, and its order-``k`` minor over ``(2 d)^k`` is the exact
+    minor. ``None`` when an entry is not rational.
+    """
+    rational_rows: list[tuple[Fraction, ...]] = []
+    for row in control:
+        rational_row: list[Fraction] = []
+        for value in row:
+            if not isinstance(value, Fraction | int):
+                return None
+            rational_row.append(Fraction(value))
+        rational_rows.append(tuple(rational_row))
+    denominator = math.lcm(*(value.denominator for row in rational_rows for value in row))
+    numerators = tuple(
+        tuple(value.numerator * (denominator // value.denominator) for value in row)
+        for row in rational_rows
+    )
+    size = len(control)
+    product = tuple(
+        tuple(
+            sum(matrix[row][inner] * numerators[inner][column] for inner in range(size))
+            for column in range(size)
+        )
+        for row in range(size)
+    )
+    doubled = tuple(
+        tuple(product[row][column] + product[column][row] for column in range(size))
+        for row in range(size)
+    )
+    return tuple(
+        Fraction(
+            determinant_small_algebra(
+                tuple(row[:order] for row in doubled[:order]),
+                add=int.__add__,
+                subtract=int.__sub__,
+                multiply=int.__mul__,
+            ),
+            (2 * denominator) ** order,
+        )
+        for order in range(1, size + 1)
+    )
 
 
 __all__ = [

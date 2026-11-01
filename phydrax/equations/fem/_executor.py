@@ -22,7 +22,6 @@ from ...discretization._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
-from ...discretization._cell_geometry import PerCellRestrictedCellGeometryElement
 from ...discretization._cell_mesh import SimplicialConnectivity
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._local_variational import (
@@ -231,17 +230,10 @@ def _cell_metric(
     local_cells: Array,
     reference: PreparedFiniteElementReference,
     coordinates: Array,
+    tabulation: tuple[Array, Array],
     /,
 ) -> FiniteElementMetricData:
-    coordinate_element = discretization.coordinate_elements[block_index]
-    points = reference.volume_rule.points
-    if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
-        coordinate_basis, coordinate_gradients = coordinate_element.tabulate_cells(
-            np.asarray(local_cells), points
-        )
-    else:
-        # ty: ignore[unresolved-attribute]
-        coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
+    coordinate_basis, coordinate_gradients = tabulation
     coordinate_routes = discretization.coordinate_dofs[block_index][local_cells]
     cell_coordinates = coordinates[coordinate_routes]
     metric = FiniteElementMetricData(
@@ -535,27 +527,41 @@ def _cell_coefficient_values(
 def _workset_domain(
     action: FiniteElementAction,
     discretization: FiniteElementDiscretization,
-    entity_indices: ArrayLike | tuple[int, ...],
+    workset: CompiledWorkset,
     /,
 ) -> IntegrationDomain:
+    """The action's integration domain restricted to one block workset.
+
+    Lowering selects the workset rows from the action domain in domain order,
+    so the workset's entity, owner, neighbor and local-entity routes are the
+    restricted domain rows. They are substituted as arrays (no host
+    conversion), so the restriction also runs inside compiled programs. The
+    restriction carries no neighbor trace maps or periodic faces (facet
+    executors read those from the workset); its identity fields are the
+    action domain's.
+    """
     domain = _action_domain(action, discretization)
-    requested = np.asarray(entity_indices, dtype=np.int32)
-    source = np.asarray(domain.entity_indices, dtype=np.int32)
-    rows_by_entity = {int(entity): row for row, entity in enumerate(source)}
-    rows = np.asarray(
-        tuple(rows_by_entity[int(entity)] for entity in requested),
-        dtype=np.int32,
-    )
-    return IntegrationDomain(
-        domain.kind,
-        requested,
-        domain.support_id,
-        domain.entity_set_id,
-        owner_cells=np.asarray(domain.owner_cells)[rows],
-        neighbor_cells=np.asarray(domain.neighbor_cells)[rows],
-        owner_local_entities=np.asarray(domain.owner_local_entities)[rows],
-        neighbor_local_entities=np.asarray(domain.neighbor_local_entities)[rows],
-        selection_id=domain.selection_id,
+    count = workset.entity_indices.shape[0]
+    return eqx.tree_at(
+        lambda value: (
+            value.entity_indices,
+            value.owner_cells,
+            value.neighbor_cells,
+            value.owner_local_entities,
+            value.neighbor_local_entities,
+            value.neighbor_trace_permutations,
+            value.periodic_face_mask,
+        ),
+        domain,
+        (
+            jnp.asarray(workset.entity_indices, dtype=jnp.int32),
+            jnp.asarray(workset.owner_cells, dtype=jnp.int32),
+            jnp.asarray(workset.neighbor_cells, dtype=jnp.int32),
+            jnp.asarray(workset.owner_local_entities, dtype=jnp.int32),
+            jnp.asarray(workset.neighbor_local_entities, dtype=jnp.int32),
+            jnp.empty((count, 0), dtype=jnp.int32),
+            jnp.zeros((count,), dtype=jnp.bool_),
+        ),
     )
 
 
@@ -859,6 +865,217 @@ def _prepared_local_volume_residual(
         0.0,
     )
     return output_field, dofs, local
+
+
+# Quadrature rows (cells times points) of one block of the blocked
+# prepared-local volume residual: every per-point intermediate of a block
+# (metric, Jacobian inverse, gradients, fluxes) is bounded by this many rows.
+_PREPARED_LOCAL_BLOCK_POINT_ROWS = 1 << 16
+
+# Structural actions whose per-cell residual depends only on that cell's rows.
+_BLOCKED_VOLUME_ACTIONS = (
+    DiffusionAction,
+    TensorDiffusionAction,
+    MassAction,
+    SourceAction,
+)
+
+
+def _restricted_workset_rows(
+    workset: CompiledWorkset, rows: Array, /
+) -> CompiledWorkset | None:
+    """``workset`` restricted to entity ``rows``; ``None`` if not restrictable.
+
+    Restricts every entity-leading route of the workset, its local region,
+    the region's finite-element geometry actions and its finite-element
+    reference actions (per-cell tabulations and coefficient transforms only;
+    shared tabulations stay shared). Identities, static metadata (such as the
+    geometry entity count) and the region's integration domain, which volume
+    execution does not read, are the parent's; the restriction only feeds
+    array execution.
+    """
+    from ...discretization.fem._local_provider import (
+        FiniteElementGeometryActions,
+        FiniteElementReferenceActions,
+    )
+
+    region = workset.local_region
+    if region is None or not isinstance(
+        region.geometry_actions, FiniteElementGeometryActions
+    ):
+        return None
+    geometry = region.geometry_actions
+    per_cell_geometry = geometry.coordinate_basis.ndim == 3
+    geometry = eqx.tree_at(
+        lambda value: (
+            value.coordinate_gathers,
+            value.coordinate_basis,
+            value.coordinate_gradients,
+            value.coordinate_hessians,
+        ),
+        geometry,
+        (
+            geometry.coordinate_gathers[rows],
+            geometry.coordinate_basis[rows]
+            if per_cell_geometry
+            else geometry.coordinate_basis,
+            geometry.coordinate_gradients[rows]
+            if per_cell_geometry
+            else geometry.coordinate_gradients,
+            geometry.coordinate_hessians[rows]
+            if per_cell_geometry and geometry.coordinate_hessians.size
+            else geometry.coordinate_hessians,
+        ),
+    )
+    references = []
+    for reference in region.reference_actions:
+        if not isinstance(reference, FiniteElementReferenceActions):
+            return None
+        per_cell = reference.basis_values.ndim == 3
+        references.append(
+            eqx.tree_at(
+                lambda value: (
+                    value.basis_values,
+                    value.basis_gradients,
+                    value.basis_hessians,
+                    value.coefficient_transform,
+                ),
+                reference,
+                (
+                    reference.basis_values[rows] if per_cell else reference.basis_values,
+                    reference.basis_gradients[rows]
+                    if per_cell
+                    else reference.basis_gradients,
+                    reference.basis_hessians[rows]
+                    if per_cell and reference.basis_hessians.size
+                    else reference.basis_hessians,
+                    reference.coefficient_transform[rows]
+                    if reference.coefficient_transform.size
+                    else reference.coefficient_transform,
+                ),
+            )
+        )
+    region = eqx.tree_at(
+        lambda value: (
+            value.field_gathers,
+            value.neighbor_gathers,
+            value.reference_actions,
+            value.geometry_actions,
+            value.entity_indices,
+            value.owner_cells,
+            value.neighbor_cells,
+            value.owner_local_entities,
+            value.neighbor_local_entities,
+            value.trace_permutations,
+            value.valid,
+        ),
+        region,
+        (
+            tuple(route[rows] for route in region.field_gathers),
+            tuple(route[rows] for route in region.neighbor_gathers),
+            tuple(references),
+            geometry,
+            region.entity_indices[rows],
+            region.owner_cells[rows],
+            region.neighbor_cells[rows],
+            region.owner_local_entities[rows],
+            region.neighbor_local_entities[rows],
+            region.trace_permutations[rows],
+            region.valid[rows],
+        ),
+    )
+    return eqx.tree_at(
+        lambda value: (
+            value.local_region,
+            value.entity_indices,
+            value.owner_cells,
+            value.neighbor_cells,
+            value.owner_local_entities,
+            value.neighbor_local_entities,
+            value.owner_permutations,
+            value.neighbor_permutations,
+            value.neighbor_trace_permutations,
+            value.gathers,
+            value.neighbor_gathers,
+            value.valid,
+        ),
+        workset,
+        (
+            region,
+            workset.entity_indices[rows],
+            workset.owner_cells[rows],
+            workset.neighbor_cells[rows],
+            workset.owner_local_entities[rows],
+            workset.neighbor_local_entities[rows],
+            workset.owner_permutations[rows],
+            workset.neighbor_permutations[rows],
+            workset.neighbor_trace_permutations[rows],
+            tuple((name, route[rows]) for name, route in workset.gathers),
+            tuple((name, route[rows]) for name, route in workset.neighbor_gathers),
+            workset.valid[rows],
+        ),
+    )
+
+
+def _blocked_prepared_local_volume_residual(
+    action: FiniteElementAction,
+    discretization: AbstractPreparedLocalDiscretization,
+    workset: CompiledWorkset,
+    state_by_field: dict[str, Array],
+    context: FiniteElementExecutionContext,
+    /,
+) -> tuple[str, Array, Array]:
+    """Local residual rows of a prepared-local volume workset, block by block.
+
+    Structural actions on finite-element regions run as one scan over
+    power-of-two blocks of cells, so the per-point working set is bounded by
+    `_PREPARED_LOCAL_BLOCK_POINT_ROWS` instead of growing with the mesh. Each
+    cell's local quadrature contraction is retained (the tail block repeats
+    the last cell and its rows are dropped). The caller scatters all rows
+    once in their original order, preserving global accumulation ordering.
+    """
+    from ...discretization.fem._local_provider import FiniteElementGeometryActions
+
+    count = int(workset.entity_indices.shape[0])
+    region = workset.local_region
+    if region is None or not isinstance(
+        region.geometry_actions, FiniteElementGeometryActions
+    ):
+        return _prepared_local_volume_residual(
+            action, discretization, workset, state_by_field, context
+        )
+    point_count = int(region.geometry_actions.reference_weights.shape[0])
+    block = 1 << max(
+        0, (_PREPARED_LOCAL_BLOCK_POINT_ROWS // max(point_count, 1)).bit_length() - 1
+    )
+    if count <= block or not isinstance(action, _BLOCKED_VOLUME_ACTIONS):
+        return _prepared_local_volume_residual(
+            action, discretization, workset, state_by_field, context
+        )
+    blocks = -(-count // block)
+    rows = jnp.minimum(jnp.arange(blocks * block, dtype=jnp.int32), count - 1).reshape(
+        (blocks, block)
+    )
+    if _restricted_workset_rows(workset, rows[0]) is None:
+        return _prepared_local_volume_residual(
+            action, discretization, workset, state_by_field, context
+        )
+
+    def block_rows(carry: None, block_indices: Array, /) -> tuple[None, Array]:
+        restricted = cast(
+            CompiledWorkset, _restricted_workset_rows(workset, block_indices)
+        )
+        return carry, _prepared_local_volume_residual(
+            action, discretization, restricted, state_by_field, context
+        )[2]
+
+    _, local = jax.lax.scan(block_rows, None, rows)
+    output_field = _action_output_fields(action)[0]
+    return (
+        output_field,
+        dict(workset.gathers)[output_field],
+        local.reshape((blocks * block,) + local.shape[2:])[:count],
+    )
 
 
 def _prepared_local_functional_value_and_residual(
@@ -1362,7 +1579,7 @@ def _accumulate_finite_element_workset(
                     with_residual=True,
                 )
             else:
-                output_field, dofs, local = _prepared_local_volume_residual(
+                output_field, dofs, local = _blocked_prepared_local_volume_residual(
                     action,
                     discretization,
                     workset,
@@ -1391,11 +1608,7 @@ def _accumulate_finite_element_workset(
             domain = (
                 _action_domain(action, discretization)
                 if len(discretization.mesh.blocks) == 1
-                else _workset_domain(
-                    action,
-                    discretization,
-                    workset.entity_index_values,
-                )
+                else _workset_domain(action, discretization, workset)
             )
             if domain.kind == "cell":
                 _accumulate_cell_functional_residual(
@@ -1431,11 +1644,7 @@ def _accumulate_finite_element_workset(
         domain = (
             _action_domain(action, discretization)
             if len(discretization.mesh.blocks) == 1
-            else _workset_domain(
-                action,
-                discretization,
-                workset.entity_index_values,
-            )
+            else _workset_domain(action, discretization, workset)
         )
         if isinstance(action, PreparedOperatorAction):
             if len(discretization.mesh.blocks) != 1:
@@ -1565,6 +1774,7 @@ def _accumulate_finite_element_workset(
                 local_cells,
                 reference,
                 _runtime_coordinates(context),
+                workset.coordinate_tabulations[0],
             )
             physical_points = metric.physical_points
             factorized_without_test_gradients = workset.signature.local_kernel in (
@@ -2153,23 +2363,8 @@ def _facet_point_permutations(
                 "Compiled neighbor trace permutation width does not match the rule."
             )
         if isinstance(connectivity, HexahedralConnectivity):
-            points = np.asarray(facet_reference.points)
-            normal = np.asarray(facet_reference.normals[0])
-            tangential_axes = tuple(
-                axis for axis in range(points.shape[1]) if abs(normal[axis]) < 0.5
-            )
-            if len(tangential_axes) != 2:
-                raise ValueError("Hexahedral facet must have two tangential axes.")
-            widths = tuple(
-                np.unique(np.round(points[:, axis], decimals=14)).size
-                for axis in tangential_axes
-            )
-            owner_to_canonical = jnp.asarray(
-                connectivity.cell_face_permutations(*widths)
-            )[
-                workset.owner_cells,
-                workset.owner_local_entities,
-            ]
+            routes = workset.owner_point_permutations[local_facet]
+            owner_to_canonical = routes[jnp.arange(count), workset.owner_local_entities]
         else:
             identity = jnp.arange(facet_reference.points.shape[0], dtype=jnp.int32)
             owner_to_canonical = jnp.where(
@@ -2186,19 +2381,12 @@ def _facet_point_permutations(
         )(supplied)
         return jnp.take_along_axis(owner_to_canonical, inverse_supplied, axis=1)
     if isinstance(connectivity, HexahedralConnectivity):
-        points = np.asarray(facet_reference.points)
-        normal = np.asarray(facet_reference.normals[0])
-        tangential_axes = tuple(
-            axis for axis in range(points.shape[1]) if abs(normal[axis]) < 0.5
+        routes = (
+            workset.neighbor_point_permutations
+            if neighbor
+            else workset.owner_point_permutations
         )
-        if len(tangential_axes) != 2:
-            raise ValueError("Hexahedral facet must have two tangential axes.")
-        widths = tuple(
-            np.unique(np.round(points[:, axis], decimals=14)).size
-            for axis in tangential_axes
-        )
-        routes = connectivity.cell_face_permutations(*widths)
-        return jnp.asarray(routes)[cells, int(local_facet)]
+        return routes[local_facet][:, local_facet]
     raw = workset.neighbor_permutations if neighbor else workset.owner_permutations
     if raw.ndim == 1:
         identity = jnp.arange(facet_reference.points.shape[0], dtype=jnp.int32)
@@ -2287,9 +2475,12 @@ def _prepared_facet_side(
         normal = scaled_normal / surface_jacobian[..., None]
         physical_weights = surface_jacobian * facet.weights[None, :]
     else:
-        coordinate_element = discretization.coordinate_elements[block_index]
-        # ty: ignore[unresolved-attribute]
-        coordinate_basis, coordinate_gradients = coordinate_element.tabulate(facet.points)
+        tabulations = (
+            workset.neighbor_coordinate_tabulations
+            if neighbor
+            else workset.coordinate_tabulations
+        )
+        coordinate_basis, coordinate_gradients = tabulations[local_facet]
         coordinate_routes = discretization.coordinate_dofs[block_index][local_cells]
         metric = FiniteElementMetricData(
             coordinate_basis,
@@ -3538,11 +3729,7 @@ def _execute_finite_element_functional(
             domain = (
                 _action_domain(action, discretization)
                 if len(discretization.mesh.blocks) == 1
-                else _workset_domain(
-                    action,
-                    discretization,
-                    workset.entity_index_values,
-                )
+                else _workset_domain(action, discretization, workset)
             )
             if domain.kind == "cell":
                 if residual_by_field is None or accumulation is None:

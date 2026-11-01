@@ -4845,7 +4845,9 @@ def _nonperiodic_contacts(
                         "glued-face-monotone-map"
                         if glued_face_monotone(first_cell, second_cell, shared)
                         else "glued-facet-monotone-map"
-                        if glued_facet_monotone(first_cell, second_cell, shared)
+                        if glued_facet_monotone(
+                            first_cell, second_cell, shared, subdivision_cache
+                        )
                         else None
                     )
                     if glued is not None:

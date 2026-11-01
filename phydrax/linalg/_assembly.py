@@ -185,7 +185,7 @@ SparseAssemblyKind: TypeAlias = Literal[
 
 
 class SparseAssemblyPolicy(StrictModule):
-    """Explicit output and symbolic-workspace limits for exact sparse assembly."""
+    """Optional caller limits, defaulting to index/address representability."""
 
     max_nnz: int = eqx.field(static=True)
     max_bytes: int = eqx.field(static=True)
@@ -196,10 +196,10 @@ class SparseAssemblyPolicy(StrictModule):
     def __init__(
         self,
         *,
-        max_nnz: int = 1_000_000,
-        max_bytes: int = 128 * 1024 * 1024,
-        max_contributions: int = 4_000_000,
-        max_workspace_bytes: int = 256 * 1024 * 1024,
+        max_nnz: int = int(np.iinfo(np.int32).max) - 1,
+        max_bytes: int = int(np.iinfo(np.intp).max),
+        max_contributions: int = int(np.iinfo(np.int32).max) - 1,
+        max_workspace_bytes: int = int(np.iinfo(np.intp).max),
         materialization: MaterializationPolicy | None = None,
     ) -> None:
         limits = {
@@ -804,6 +804,10 @@ def _canonical_order(
     columns_ = np.asarray(columns, dtype=np.int64).reshape((-1,))
     if rows_.shape != columns_.shape:
         raise ValueError("Sparse contribution rows and columns must match.")
+    if max(shape, default=0) >= np.iinfo(np.int32).max:
+        raise LinearCapabilityError(
+            "Sparse assembly currently requires 32-bit route indices."
+        )
     _check_contribution_budget(policy, rows_.size, arrays=8)
     if rows_.size == 0:
         empty = np.zeros((0,), dtype=np.int64)
@@ -839,11 +843,19 @@ def _check_contribution_budget(
     arrays: int,
 ) -> None:
     count = int(contributions)
+    if count < 0 or count >= np.iinfo(np.int32).max:
+        raise LinearCapabilityError(
+            "Sparse assembly currently requires 32-bit contribution indices."
+        )
     if count > policy.max_contributions:
         raise LinearCapabilityError(
             f"Sparse assembly requires {count} symbolic contributions, exceeding the limit {policy.max_contributions}."
         )
     required = count * int(arrays) * np.dtype(np.int64).itemsize
+    if required > np.iinfo(np.intp).max:
+        raise LinearCapabilityError(
+            "Sparse symbolic construction exceeds addressable workspace."
+        )
     if required > policy.max_workspace_bytes:
         raise LinearCapabilityError(
             f"Sparse symbolic construction requires {required} workspace bytes, "

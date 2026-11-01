@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from typing import Literal, Never
 
 import numpy as np
+import numpy.typing as npt
+import pytest
 import scipy.optimize
 
 from phydrax.discretization._coordinate_enclosure import (
@@ -118,7 +121,12 @@ def _p(x: float, y: float, z: float, /) -> _Point:
     return Fraction(x), Fraction(y), Fraction(z)
 
 
-def _layer_prism(global_id: int, ids: tuple[int, ...], base: tuple, /) -> EmbeddingCell:
+def _layer_prism(
+    global_id: int,
+    ids: tuple[int, ...],
+    base: tuple[tuple[float, float], ...],
+    /,
+) -> EmbeddingCell:
     corners = (*(_p(*point, 0) for point in base), *(_p(*point, 1) for point in base))
     return _cell(global_id, "prism", ids, corners, _bend())
 
@@ -130,20 +138,23 @@ def test_curved_prisms_sharing_a_quadrilateral_meet_only_in_it() -> None:
     # The glued second prism completes a convex quadrilateral base: one
     # constant preconditioner makes the glued map monotone.
     neighbour = _layer_prism(1, (1, 6, 2, 4, 7, 5), ((1, 0), (1, 1), (0, 1)))
-    assert glued_facet_monotone(_FIRST, neighbour, (1, 2, 4, 5))
+    # One proof cache: the first prism's Jacobian controls serve both contacts.
+    cache = StratumSubdivisionCache()
+    assert glued_facet_monotone(_FIRST, neighbour, (1, 2, 4, 5), cache)
     # A positively oriented neighbour folded back over the first prism is refused.
     folded = _layer_prism(2, (1, 2, 6, 4, 5, 7), ((1, 0), (0, 1), (0.25, 0.25)))
-    assert not glued_facet_monotone(_FIRST, folded, (1, 2, 4, 5))
+    assert not glued_facet_monotone(_FIRST, folded, (1, 2, 4, 5), cache)
 
 
 def test_curved_tetrahedron_on_a_prism_cap_meets_it_only_in_the_cap() -> None:
     corners = (_p(0, 0, 1), _p(1, 0, 1), _p(0, 1, 1), _p(0.25, 0.25, 1.5))
     cap = _cell(3, "simplex:3", (3, 4, 5, 8), corners, _bend())
-    assert glued_facet_monotone(_FIRST, cap, (3, 4, 5))
+    cache = StratumSubdivisionCache()
+    assert glued_facet_monotone(_FIRST, cap, (3, 4, 5), cache)
     # A positively oriented tetrahedron sunk into the prism overlaps it.
     sunk = (corners[0], corners[2], corners[1], _p(0.25, 0.25, 0.5))
     inverted = _cell(4, "simplex:3", (3, 5, 4, 8), sunk, _bend())
-    assert not glued_facet_monotone(_FIRST, inverted, (3, 4, 5))
+    assert not glued_facet_monotone(_FIRST, inverted, (3, 4, 5), cache)
 
 
 def test_prism_and_tetrahedron_sharing_a_vertex_are_separated_by_subdivision() -> None:
@@ -212,7 +223,7 @@ _STALLED_CONTROLS = (
 
 
 def test_preconditioner_search_stops_when_cuts_fall_below_lp_feasibility(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     controls = np.asarray(_STALLED_VALUES, dtype=np.float64)[
         np.asarray(_STALLED_CONTROLS)
@@ -220,12 +231,30 @@ def test_preconditioner_search_stops_when_cuts_fall_below_lp_feasibility(
     programs = 0
     linprog = scipy.optimize.linprog
 
-    def counted(*args, **kwargs):
+    def counted(
+        objective: npt.NDArray[np.float64],
+        *,
+        A_ub: npt.NDArray[np.float64],
+        b_ub: npt.NDArray[np.float64],
+        bounds: list[tuple[float | None, float | None]],
+        method: Literal["highs"],
+        options: dict[str, float],
+    ) -> scipy.optimize.OptimizeResult:
         nonlocal programs
         programs += 1
         # The stall runs thousands of programs; a converged search needs few.
         assert programs <= 100, "the cutting-plane search did not stop"
-        return linprog(*args, **kwargs)
+        assert set(options) == {"primal_feasibility_tolerance"}
+        return linprog(
+            objective,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            bounds=bounds,
+            method=method,
+            options={
+                "primal_feasibility_tolerance": options["primal_feasibility_tolerance"]
+            },
+        )
 
     monkeypatch.setattr(scipy.optimize, "linprog", counted)
     proposal = _float_search_preconditioner(controls)
@@ -235,21 +264,25 @@ def test_preconditioner_search_stops_when_cuts_fall_below_lp_feasibility(
     assert programs > 1
 
 
-def _exact_controls(*matrices) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+def _exact_controls(
+    *matrices: tuple[tuple[int | Fraction, ...], ...],
+) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
     return tuple(
         tuple(tuple(Fraction(value) for value in row) for row in matrix)
         for matrix in matrices
     )
 
 
-def _floats(controls) -> np.ndarray:
+def _floats(
+    controls: tuple[tuple[tuple[Fraction, ...], ...], ...],
+) -> npt.NDArray[np.float64]:
     return np.asarray(
         [[[float(value) for value in row] for row in matrix] for matrix in controls]
     )
 
 
 def test_singular_control_hull_refutes_preconditioners_without_programs(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # det(I) = det(R) = 1, yet (I + R) / 2 = diag(0, 0, 1) is singular: no M
     # keeps every convex combination nonsingular, so none makes sym(M C) definite.
@@ -259,7 +292,15 @@ def test_singular_control_hull_refutes_preconditioners_without_programs(
         ((1, Fraction(1, 2), 0), (0, 1, 0), (0, 0, 1)),
     )
 
-    def refuse(*args, **kwargs):
+    def refuse(
+        objective: npt.NDArray[np.float64],
+        *,
+        A_ub: npt.NDArray[np.float64],
+        b_ub: npt.NDArray[np.float64],
+        bounds: list[tuple[float | None, float | None]],
+        method: Literal["highs"],
+        options: dict[str, float],
+    ) -> Never:
         raise AssertionError("the exact refutation must precede the programs")
 
     monkeypatch.setattr(scipy.optimize, "linprog", refuse)
