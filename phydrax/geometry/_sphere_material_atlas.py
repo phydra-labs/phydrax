@@ -557,10 +557,6 @@ class SphereMaterialCellAtlas(StrictModule, NonTrainableState):
             raise ValueError(
                 "Sphere material atlas requires a two-dimensional surface mesh in 3D."
             )
-        if not isinstance(geometry, CellGeometrySpec):
-            raise TypeError("geometry must be CellGeometrySpec.")
-        if not isinstance(source_validity, CellValidityCertificate):
-            raise TypeError("source_validity must be CellValidityCertificate.")
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise ValueError(
                 "Sphere material atlas requires triangular surface incidence."
@@ -627,8 +623,6 @@ class SphereMaterialCellAtlas(StrictModule, NonTrainableState):
             raise ValueError(
                 "Sphere material atlas requires certified whole-cell validity."
             )
-        if not isinstance(source_embedding, GlobalEmbeddingCertificate):
-            raise TypeError("source_embedding must be GlobalEmbeddingCertificate.")
         source_embedding.binding.require(mesh, geometry)
         if source_embedding.status != "certified":
             raise ValueError("Sphere material atlas requires certified global embedding.")

@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
 from ..discretization._cell_complex import TetrahedralConnectivity
+from ..discretization._cell_mesh import SimplicialConnectivity
 from ..geometry._source_boundary_records import (
     SourceBoundaryProjectionQuery,
     SourceProjectionStatus,
@@ -42,7 +43,14 @@ from ._association_routes import (
 )
 from ._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
 from ._result import CellMeshingResult
+from ._topology_edit import key_rows
 from .providers._native_sources import NativeImplicitSource
+
+
+# Outward local faces (opposite vertices 0..3) of a positively oriented tetrahedron.
+_OUTWARD_TETRAHEDRON_FACES = np.asarray(
+    ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64
+)
 
 
 @final
@@ -239,8 +247,14 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 "Implicit association transfer requires a surface or volume carrier in three dimensions."
             )
-        expected = "triangle" if mesh.topological_dimension == 2 else "tetrahedron"
-        if not mesh.blocks or any(block.cell_kind != expected for block in mesh.blocks):
+        expected = (
+            ("triangle",)
+            if mesh.topological_dimension == 2
+            else ("tetrahedron", "simplex:3")
+        )
+        if not mesh.blocks or any(
+            block.cell_kind not in expected for block in mesh.blocks
+        ):
             raise ValueError(
                 "Implicit association transfer requires triangular or tetrahedral simplex blocks."
             )
@@ -433,9 +447,13 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 "Implicit association transfer requires a surface or volume carrier in three dimensions."
             )
-        target_kind = "triangle" if target.topological_dimension == 2 else "tetrahedron"
+        target_kinds = (
+            ("triangle",)
+            if target.topological_dimension == 2
+            else ("tetrahedron", "simplex:3")
+        )
         if not target.blocks or any(
-            block.cell_kind != target_kind for block in target.blocks
+            block.cell_kind not in target_kinds for block in target.blocks
         ):
             raise ValueError(
                 "Implicit association transfer requires triangular or tetrahedral simplex blocks."
@@ -597,13 +615,16 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             record = lineage.entity_lineage(2)
             old_ids = np.asarray(record.source_global_ids, dtype=np.int64)
             new_ids = np.asarray(record.target_global_ids, dtype=np.int64)
+            # Lineage parents of each target cell, in lineage-row order.
+            lineage_parents: dict[int, list[int]] = {}
+            for parent, child in zip(old_ids.tolist(), new_ids.tolist(), strict=True):
+                lineage_parents.setdefault(child, []).append(parent)
             tags_by_id: dict[int, str] = {}
             for identifier in target_ids.tolist():
-                parents = old_ids[new_ids == identifier]
                 rows = tuple(
-                    parent_rows[int(parent)]
-                    for parent in parents.tolist()
-                    if int(parent) in parent_rows
+                    parent_rows[parent]
+                    for parent in lineage_parents.get(identifier, ())
+                    if parent in parent_rows
                 )
                 if not rows and identifier in parent_rows:
                     rows = (parent_rows[identifier],)
@@ -628,13 +649,28 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             )
             surface_mesh = target
         elif target.topological_dimension == 3:
-            connectivity = target.connectivity
-            if not isinstance(connectivity, TetrahedralConnectivity):
-                raise ValueError(
-                    "Implicit volume boundary remapping requires tetrahedral face incidence."
-                )
+            match target.connectivity:
+                case TetrahedralConnectivity() as connectivity:
+                    face_rows = np.asarray(connectivity.faces, dtype=np.int64)
+                case SimplicialConnectivity() as connectivity:
+                    face_rows = np.asarray(connectivity.entities[2], dtype=np.int64)
+                case _:
+                    raise ValueError(
+                        "Implicit volume boundary remapping requires tetrahedral face incidence."
+                    )
             boundary_rows = np.flatnonzero(boundary_mask(target, 2))
-            faces = np.asarray(connectivity.faces, dtype=np.int64)[boundary_rows]
+            # Canonical face rows are vertex sorted; orient each boundary face
+            # outward from its unique, positively oriented owner tetrahedron.
+            cells = np.concatenate(
+                [np.asarray(block.vertices, dtype=np.int64) for block in target.blocks]
+            )
+            local_faces = cells[:, _OUTWARD_TETRAHEDRON_FACES].reshape((-1, 3))
+            owners = key_rows(
+                np.sort(local_faces, axis=1), np.sort(face_rows[boundary_rows], axis=1)
+            )
+            if np.any(owners < 0):
+                raise ValueError("Implicit target boundary faces must bound one cell.")
+            faces = local_faces[owners]
             face_ids = np.asarray(target.entity_set(2).entity_ids, dtype=np.int64)[
                 boundary_rows
             ]

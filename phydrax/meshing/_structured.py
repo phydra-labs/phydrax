@@ -182,7 +182,6 @@ def _checked_shape(shape: tuple[int, ...], /) -> tuple[int, ...]:
     return shape
 
 
-@checked
 def logical_cell_bank(shape: tuple[int, ...], /) -> np.ndarray:
     """Build C-order quad/hex connectivity with the reference corner ordering."""
     _checked_shape(shape)
@@ -449,8 +448,6 @@ def construct_structured_block(
     optimization_steps: int = 0,
 ) -> StructuredConstruction:
     """Build a transfinite quad/hex block and its shared high-order map."""
-    if not isinstance(block, TransfiniteBlock):
-        raise TypeError("block must be a TransfiniteBlock.")
     if (
         isinstance(geometry_degree, bool)
         or not isinstance(geometry_degree, int)

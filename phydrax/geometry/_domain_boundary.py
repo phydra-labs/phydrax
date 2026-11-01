@@ -635,10 +635,6 @@ class CurvedTrimLens(NamedTuple):
     parameter_bound: Fraction
 
 
-_CHAIN_PARAMETER_REFINEMENTS = 14
-_POLE_SLIVER_PIECE_LIMIT = 256
-
-
 def _target_boundary_successors(
     triangles: tuple[_Triangle2, ...], /
 ) -> dict[_Point2, list[_Point2]]:
@@ -722,7 +718,11 @@ def _chain_parameters(
     width = (high - low) / count
     offsets = np.linspace(-1.0, 1.0, 17, dtype=np.float64)
     rows = np.arange(targets.shape[0])
-    for _ in range(_CHAIN_PARAMETER_REFINEMENTS):
+    # Each round shrinks the candidate spacing ``width / 8`` eightfold; refinement
+    # ends at binary64 resolution of the parameter, where candidates stop being
+    # distinct values.
+    resolution = float(np.spacing(max(abs(low), abs(high))))
+    while width / 8.0 > resolution:
         candidates = np.clip(parameters[:, None] + width * offsets[None], low, high)
         distance = np.sum((evaluate(candidates) - targets[:, None]) ** 2, axis=-1)
         parameters = candidates[rows, np.argmin(distance, axis=1)]
@@ -1360,14 +1360,11 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         extents = (upper[0] - lower[0], upper[1] - lower[1])
         long_axis = 0 if extents[0] >= extents[1] else 1
         short = extents[1 - long_axis]
-        pieces = (
-            _POLE_SLIVER_PIECE_LIMIT
-            if short <= 0.0
-            else min(
-                _POLE_SLIVER_PIECE_LIMIT,
-                max(1, math.ceil(extents[long_axis] / short)),
+        if not short > 0.0:
+            raise ValueError(
+                "Collapsed pole sliver has no positive chart extent across its long axis."
             )
-        )
+        pieces = max(1, math.ceil(extents[long_axis] / short))
         cuts = np.linspace(lower[long_axis], upper[long_axis], pieces + 1)
         cuts[0], cuts[-1] = lower[long_axis], upper[long_axis]
         bounds = np.empty((2, 3), dtype=np.float64)

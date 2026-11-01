@@ -46,7 +46,7 @@ from ..typing import checked
 from ._cad_occt import (
     _occt_modules,
     explore_unique,
-    model_from_occt_shape,
+    import_occt_shape,
     read_occt_shape,
     shape_index,
 )
@@ -825,12 +825,12 @@ def _bound_shape(model: BRepModel, source: str | Path | TopoDS_Shape, /) -> Topo
         )
     # The report records the absolute curve-surface tolerance, i.e. the import
     # policy's relative tolerance times the source scale.
-    native_source = model_from_occt_shape(
+    native_source = import_occt_shape(
         shape,
         coordinate_contract=model.coordinate_contract,
         source_id=model.source_id,
         relative_geometric_tolerance=tolerance / scale,
-    )
+    ).model
     if native_source.source_revision != model.source_revision:
         raise ValueError(
             "prepare_occt_projection.source must reconstruct the exact native physical source_revision; "

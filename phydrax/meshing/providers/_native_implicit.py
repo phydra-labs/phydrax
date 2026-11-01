@@ -362,10 +362,6 @@ def normalize_analytic_implicit_source(
     identity from coordinates. With a ``specification``, discovery runs at the
     policy the route resolves for it, so the route reuses this discovery.
     """
-    if not isinstance(profile, AnalyticImplicitProfile):
-        raise TypeError("profile must be an AnalyticImplicitProfile.")
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
     if policy is not None and not isinstance(policy, AdaptiveImplicitSurfacePolicy):
         raise TypeError("policy must be an AdaptiveImplicitSurfacePolicy or None.")
     try:

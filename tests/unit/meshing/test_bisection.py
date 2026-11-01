@@ -5,7 +5,7 @@
 
 import itertools
 from fractions import Fraction
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import pytest
@@ -418,3 +418,254 @@ def test_uniform_barycentric_refinement_keeps_exact_reference_ancestry() -> None
     assert sum(np.asarray(group.target_cell_ids).size for group in maps) == sum(
         block.cell_count for block in target.blocks
     )
+
+
+type _Point = tuple[Fraction, ...]
+type _Edge = frozenset[_Point]
+
+
+class _MarkedTetrahedron(NamedTuple):
+    """One tetrahedron of the direct Arnold-Mukherjee-Pouly marked bisection."""
+
+    vertices: frozenset[_Point]
+    refinement_edge: _Edge
+    face_marks: dict[frozenset[_Point], _Edge]
+    flagged: bool
+
+
+def _midpoint(first: _Point, second: _Point) -> _Point:
+    return tuple((a + b) / 2 for a, b in zip(first, second, strict=True))
+
+
+def _marked_tetrahedra(points: np.ndarray, cells: np.ndarray) -> list[_MarkedTetrahedron]:
+    """Initial marking: every face and tetrahedron marks its longest edge.
+
+    Ties are broken by the ascending vertex-ID pair, so neighbors share face marks.
+    """
+
+    exact = [tuple(Fraction(int(value)) for value in point) for point in points]
+    order = {point: index for index, point in enumerate(exact)}
+
+    def rank(edge: tuple[_Point, _Point]) -> tuple[Fraction, int, int]:
+        low, high = sorted(edge, key=order.__getitem__)
+        length = sum(((a - b) ** 2 for a, b in zip(low, high, strict=True)), Fraction(0))
+        return -length, order[low], order[high]
+
+    def longest(simplex: tuple[_Point, ...]) -> _Edge:
+        return frozenset(min(itertools.combinations(simplex, 2), key=rank))
+
+    tetrahedra = []
+    for cell in cells:
+        corners = tuple(exact[int(vertex)] for vertex in cell)
+        marks = {
+            frozenset(face): longest(face) for face in itertools.combinations(corners, 3)
+        }
+        tetrahedra.append(
+            _MarkedTetrahedron(frozenset(corners), longest(corners), marks, False)
+        )
+    return tetrahedra
+
+
+def _marked_kind(tetrahedron: _MarkedTetrahedron) -> str:
+    first, second = tuple(tetrahedron.refinement_edge)
+    others = tetrahedron.vertices - tetrahedron.refinement_edge
+    first_mark = tetrahedron.face_marks[others | {first}]
+    second_mark = tetrahedron.face_marks[others | {second}]
+    if first_mark == second_mark:
+        return "opposite"
+    if first_mark & second_mark:
+        planar = first in first_mark and second in second_mark
+        return "planar" if planar else "adjacent"
+    return "mixed"
+
+
+def _marked_children(tetrahedron: _MarkedTetrahedron) -> list[_MarkedTetrahedron]:
+    """Bisect the refinement edge; children mark inherited and new faces by AMP."""
+
+    first, second = tuple(tetrahedron.refinement_edge)
+    others = tetrahedron.vertices - tetrahedron.refinement_edge
+    middle = _midpoint(first, second)
+    planar = _marked_kind(tetrahedron) == "planar"
+    refinement = {
+        keep: tetrahedron.face_marks[others | {keep}] for keep in (first, second)
+    }
+    children = []
+    for keep in (first, second):
+        marks = {others | {keep}: refinement[keep]}
+        for other in others:
+            marks[frozenset((keep, middle, other))] = frozenset((keep, other))
+        if planar and tetrahedron.flagged:
+            (common,) = refinement[first] & refinement[second]
+            marks[others | {middle}] = frozenset((middle, common))
+        else:
+            marks[others | {middle}] = others
+        children.append(
+            _MarkedTetrahedron(
+                others | {keep, middle},
+                refinement[keep],
+                marks,
+                planar and not tetrahedron.flagged,
+            )
+        )
+    return children
+
+
+def _marked_refinement(
+    leaves: list[_MarkedTetrahedron], marked: list[int], midpoints: set[_Point]
+) -> list[_MarkedTetrahedron]:
+    """Bisect the marked leaves, then every leaf with a hanging edge midpoint."""
+
+    while marked:
+        midpoints |= {_midpoint(*tuple(leaves[row].refinement_edge)) for row in marked}
+        chosen = set(marked)
+        leaves = [leaf for row, leaf in enumerate(leaves) if row not in chosen] + [
+            child for row in marked for child in _marked_children(leaves[row])
+        ]
+        marked = [
+            row
+            for row, leaf in enumerate(leaves)
+            if any(
+                _midpoint(first, second) in midpoints
+                for first, second in itertools.combinations(leaf.vertices, 2)
+            )
+        ]
+    return leaves
+
+
+def _exact_cells(mesh: CellMesh) -> set[frozenset[_Point]]:
+    points = np.asarray(mesh.coordinates)
+    return {
+        frozenset(
+            tuple(Fraction(float(value)) for value in points[vertex]) for vertex in cell
+        )
+        for cell in _cells(mesh)
+    }
+
+
+def _oriented_tetrahedra(points: np.ndarray, cells: np.ndarray) -> CellMesh:
+    cells = np.asarray(cells, dtype=np.int32).copy()
+    negative = _signed_measures(points, cells) < 0.0
+    cells[negative] = cells[negative][:, [1, 0, 2, 3]]
+    return CellMesh.from_tetrahedra(np.asarray(points, dtype=np.float64), cells)
+
+
+def _uniform_bisection(mesh: CellMesh, refine: np.ndarray, hierarchy: Any) -> Any:
+    return execute_bisection(
+        mesh,
+        np.asarray(refine, dtype=np.int64),
+        np.empty((0,), dtype=np.int64),
+        hierarchy=hierarchy,
+        compatibility=BisectionCompatibility.REJECT,
+        protected_edges=np.empty((0, 2), dtype=np.int64),
+        protected_vertices=np.empty((0,), dtype=np.int64),
+        cell_classes=np.zeros((mesh.entity_set(3).count,), dtype=np.int64),
+        facet_classes=np.zeros((mesh.entity_set(2).count,), dtype=np.int64),
+    )
+
+
+def test_marked_tetrahedron_bisection_equals_the_direct_marked_tetrahedron_algorithm() -> (
+    None
+):
+    # Integer lattice with integer jitter: every bisection vertex is an exact
+    # dyadic point, so target cells compare exactly with the direct algorithm.
+    lattice = np.rint(np.asarray(_kuhn_grid(2).coordinates) * 32.0).astype(np.int64)
+    points = lattice + np.random.default_rng(4).integers(-6, 7, size=lattice.shape)
+    mesh = _oriented_tetrahedra(points.astype(np.float64), _cells(_kuhn_grid(2)))
+    leaves = _marked_tetrahedra(np.asarray(mesh.coordinates), _cells(mesh))
+    kinds = {_marked_kind(leaf) for leaf in leaves}
+    assert kinds == {"planar", "mixed", "adjacent", "opposite"}
+    corner = tuple(Fraction(int(value)) for value in points[0])
+    midpoints: set[_Point] = set()
+    hierarchy = None
+    for generation in range(9):
+        if generation == 0:
+            marked = list(range(len(leaves)))
+            refine = np.sort(_cell_ids(mesh))
+        else:
+            marked = [row for row, leaf in enumerate(leaves) if corner in leaf.vertices]
+            at_corner = np.all(np.asarray(mesh.coordinates) == points[0], axis=1)
+            refine = np.sort(_cell_ids(mesh)[np.any(at_corner[_cells(mesh)], axis=1)])
+        leaves = _marked_refinement(leaves, marked, midpoints)
+        outcome = _uniform_bisection(mesh, refine, hierarchy)
+        if generation == 0:
+            assert outcome.evidence.initially_compatible is False
+            assert outcome.evidence.incompatible_facets > 0
+            assert not outcome.evidence.uniform_refinement_applied
+        mesh, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version=f"marked-generation-{generation}"
+        )
+        hierarchy = outcome.hierarchy
+        assert _exact_cells(mesh) == {leaf.vertices for leaf in leaves}
+
+
+def _jittered_kuhn_grid(size: int, amplitude: float, seed: int) -> CellMesh:
+    """Kuhn grid of the unit cube with every vertex moved within its boundary stratum."""
+
+    grid = _kuhn_grid(size)
+    points = np.asarray(grid.coordinates)
+    free = (points > 0.0) & (points < 1.0)
+    shift = np.random.default_rng(seed).uniform(-amplitude, amplitude, points.shape)
+    return _oriented_tetrahedra(points + np.where(free, shift / size, 0.0), _cells(grid))
+
+
+def test_marked_tetrahedra_refine_and_coarsen_a_mesh_violating_the_matching_condition() -> (
+    None
+):
+    source = _certified(_jittered_kuhn_grid(2, 0.4, 0))
+    result = _adapt(source, (0, 5, 17, 30))
+    evidence = result.evidence
+    assert evidence.initially_compatible is False
+    assert evidence.incompatible_facets > 0
+    assert not evidence.uniform_refinement_applied
+    assert evidence.bisections >= 4
+    assert _adapt(source, (0, 5, 17, 30)).result_id == result.result_id
+    for _ in range(3):
+        _assert_conforming(result.target.mesh, 1.0)
+        _assert_boundary_on_unit_box(result.target.mesh)
+        result = _adapt(
+            result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
+        )
+    _assert_conforming(result.target.mesh, 1.0)
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    restored = _adapt(
+        result.target,
+        (),
+        np.sort(_cell_ids(result.target.mesh)),
+        hierarchy=result.hierarchy,
+    )
+    assert restored.target.mesh.topology_id == source.mesh.topology_id
+    np.testing.assert_array_equal(
+        restored.target.mesh.coordinates, source.mesh.coordinates
+    )
+
+
+def _similarity_classes(mesh: CellMesh) -> set[tuple[float, ...]]:
+    corners = np.asarray(mesh.coordinates)[_cells(mesh)]
+    pairs = np.asarray(tuple(itertools.combinations(range(4), 2)))
+    squared = np.sort(
+        np.sum((corners[:, pairs[:, 0]] - corners[:, pairs[:, 1]]) ** 2, axis=2), axis=1
+    )
+    return {tuple(np.round(row / row[-1], 9).tolist()) for row in squared}
+
+
+def test_marked_tetrahedron_descendants_have_finitely_many_similarity_classes() -> None:
+    # One adjacent and one opposite marked tetrahedron sharing an incompatible face.
+    points = np.asarray(
+        [(27, 5, 2), (27, 0, 17), (2, 9, 15), (13, 12, 0), (0, 3, 0)], dtype=np.float64
+    )
+    mesh = _oriented_tetrahedra(points, np.asarray([(0, 1, 2, 3), (0, 1, 2, 4)]))
+    hierarchy, generations = None, []
+    for generation in range(9):
+        outcome = _uniform_bisection(mesh, np.sort(_cell_ids(mesh)), hierarchy)
+        if generation == 0:
+            assert outcome.evidence.initially_compatible is False
+            assert {4, 5} <= set(
+                np.asarray(outcome.hierarchy.record_parent_tags).tolist()
+            )
+        mesh, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version=f"uniform-generation-{generation}"
+        )
+        hierarchy = outcome.hierarchy
+        generations.append(_similarity_classes(mesh))
+    assert len(_cells(mesh)) > 2 * 2**12
+    assert set().union(*generations[6:]) <= set().union(*generations[:6])

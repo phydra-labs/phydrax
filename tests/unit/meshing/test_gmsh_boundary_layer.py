@@ -33,7 +33,7 @@ def _persist(shape: Any, path: Any, **options: Any) -> Any:
             linear_deflection=options.get("linear_deflection", 0.01),
             angular_deflection=options.get("angular_deflection", 0.1),
         ),
-    )
+    ).model
 
 
 def _ball_in_box(path: Any) -> Any:

@@ -12,7 +12,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
-from ..typing import checked, parse
+from ..typing import parse
 
 
 NativeHexGridRoute = Literal["balanced_grid", "frame_grid"]
@@ -28,7 +28,6 @@ class NativeHexGridSchedule(StrictModule, NonTrainableState):
     maximum_aspect_ratio: float = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         route: NativeHexGridRoute,

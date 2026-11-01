@@ -111,8 +111,6 @@ def mapped_reference_associations(
     /,
 ) -> tuple[GeometryAssociation, ...]:
     """Bind every exactly restricted target cell to its unique mapped root region."""
-    if not isinstance(domain, MappedReferenceDomain):
-        raise TypeError("domain must be MappedReferenceDomain.")
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
         raise TypeError("mesh and geometry must be CellMesh and CellGeometrySpec.")
     if mesh.topological_dimension != domain.reference_mesh.topological_dimension:
@@ -164,8 +162,6 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
 
     @checked
     def __init__(self, domain: MappedReferenceDomain, /) -> None:
-        if not isinstance(domain, MappedReferenceDomain):
-            raise TypeError("domain must be MappedReferenceDomain.")
         self.domain = domain
         self.transfer_id = canonical_fingerprint(
             {"kind": "mapped-reference-association-transfer", "domain": domain.domain_id}

@@ -291,7 +291,6 @@ class EmptyLocalCellMeshAuthority(StrictModule, NonTrainableState):
     ambient_dimension: int = eqx.field(static=True)
     authority_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         source_topology_id: str,

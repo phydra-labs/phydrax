@@ -22,7 +22,7 @@ from OCP.TopoDS import TopoDS_Face
 import phydrax as phx
 from phydrax.geometry.brep._constructors import BRepTessellationPolicy
 from phydrax.geometry.surface import InterfaceSide
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 from phydrax.solver.coupling import InterfaceBinding, InterfaceEndpoint, InterfaceSource
 
 
@@ -54,14 +54,14 @@ def grid(x0: float, x1: float, count: int) -> phx.discretization.CellMesh:
 
 
 shape = BRepAlgoAPI_Fuse(rectangle(-1.0, 0.0), rectangle(0.0, 1.0)).Shape()
-model = model_from_occt_shape(
+model = import_occt_shape(
     shape,
     coordinate_contract=CONTRACT,
     tessellation=BRepTessellationPolicy(
         linear_deflection=0.05,
         angular_deflection=0.2,
     ),
-)
+).model
 projection = phx.geometry.prepare_brep_projection(
     model,
     embedding=phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),

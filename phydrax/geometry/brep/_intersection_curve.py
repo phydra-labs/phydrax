@@ -48,8 +48,6 @@ class SurfaceRegion(StrictModule):
 
     @checked
     def __init__(self, patch: AbstractSurfacePatch, parameter_box: ArrayLike) -> None:
-        if not isinstance(patch, AbstractSurfacePatch):
-            raise TypeError("SurfaceRegion.patch must be an AbstractSurfacePatch.")
         box = np.asarray(parameter_box, dtype=np.float64)
         if box.shape != (2, 2):
             raise ValueError("SurfaceRegion.parameter_box must have shape (2, 2).")
@@ -2453,7 +2451,13 @@ def _implicit_chart_derivative_bounds(
         raise ValueError(
             "IntersectionPCurve derivative interval is unresolved at a singular chart."
         )
-    rhs = interval_multiply((-jacobian_upper[:, axis], -jacobian_lower[:, axis]), rate)
+    rhs_lower, rhs_upper = interval_multiply(
+        (-jacobian_upper[:, axis], -jacobian_lower[:, axis]), rate
+    )
+    rhs = (
+        np.asarray(rhs_lower, dtype=np.float64),
+        np.asarray(rhs_upper, dtype=np.float64),
+    )
 
     def precondition(
         values: tuple[np.ndarray, np.ndarray], /
@@ -2476,9 +2480,9 @@ def _implicit_chart_derivative_bounds(
 
     product_lower, product_upper = precondition(matrix)
     identity = np.eye(3)
-    error_lower, error_upper = interval_subtract(
-        (identity, identity), (product_lower, product_upper)
-    )
+    error_bounds = interval_subtract((identity, identity), (product_lower, product_upper))
+    error_lower = np.asarray(error_bounds[0], dtype=np.float64)
+    error_upper = np.asarray(error_bounds[1], dtype=np.float64)
     contraction = Fraction(0)
     for row in range(3):
         contraction = max(
@@ -3438,8 +3442,6 @@ class IntersectionPCurve(AbstractCurve):
         last: float | None = None,
         reversed: bool = False,
     ) -> None:
-        if not isinstance(curve, IntersectionCurve):
-            raise TypeError("IntersectionPCurve.curve must be an IntersectionCurve.")
         side_ = parse(side, IntersectionSide, "side")
         first_ = 0.0 if first is None else float(first)
         last_ = float(curve.num_charts) if last is None else float(last)

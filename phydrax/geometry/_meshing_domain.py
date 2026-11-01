@@ -608,6 +608,40 @@ def _placed_rational_surface_span(
     )
 
 
+_PLACED_SPAN_CAPACITY = 64
+_PLACED_SPANS: dict[
+    int,
+    tuple[
+        tuple[RationalBSplineSurfaceSpan, ...],
+        BRepAffinePlacement,
+        tuple[RationalBSplineSurfaceSpan, ...],
+    ],
+] = {}
+
+
+def _placed_rational_surface_spans(
+    source_spans: tuple[RationalBSplineSurfaceSpan, ...],
+    placement: BRepAffinePlacement,
+    /,
+) -> tuple[RationalBSplineSurfaceSpan, ...]:
+    """Place one source span bank once and keep the placed bank with it.
+
+    The entry holds the source bank itself, so its identity key cannot be
+    reused by another bank while cached; placed spans keep their prepared
+    interval nets across consumers.
+    """
+    cached = _PLACED_SPANS.get(id(source_spans))
+    if cached is not None and cached[0] is source_spans and cached[1] == placement:
+        return cached[2]
+    placed = tuple(
+        _placed_rational_surface_span(span, placement) for span in source_spans
+    )
+    if len(_PLACED_SPANS) >= _PLACED_SPAN_CAPACITY:
+        del _PLACED_SPANS[next(iter(_PLACED_SPANS))]
+    _PLACED_SPANS[id(source_spans)] = (source_spans, placement, placed)
+    return placed
+
+
 def _exact_rational_surface_spans(
     surface: AbstractSurfacePatch, /
 ) -> tuple[RationalBSplineSurfaceSpan, ...] | None:
@@ -615,10 +649,7 @@ def _exact_rational_surface_spans(
         source_spans = _exact_rational_surface_spans(surface.source)
         if source_spans is None:
             return None
-        return tuple(
-            _placed_rational_surface_span(span, surface.placement)
-            for span in source_spans
-        )
+        return _placed_rational_surface_spans(source_spans, surface.placement)
     if isinstance(surface, BSplineSurfacePatch):
         return surface.rational_spans()
     from .brep._tspline import TSplineSurfacePatch
@@ -2084,8 +2115,6 @@ class MeshingDomain(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_brep(cls, model: BRepModel, /) -> MeshingDomain:
-        if not isinstance(model, BRepModel):
-            raise TypeError("MeshingDomain.from_brep requires a BRepModel.")
         geometry = model.geometry
         occurrences = tuple(geometry.assembly_graph.iter_occurrences())
         if occurrences:

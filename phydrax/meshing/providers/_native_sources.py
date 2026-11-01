@@ -1048,8 +1048,6 @@ class NativePlanarSource(StrictModule, NonTrainableState):
         embedded_vertex_entity_ids: ArrayLike | None = None,
         embedded_edge_entity_ids: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(region, PlanarMeshRegion):
-            raise TypeError("region must be a PlanarMeshRegion.")
         if embedded is not None and not isinstance(embedded, SegmentMesh):
             raise TypeError("embedded must be a SegmentMesh or None.")
         source = normalized_identifier(region.feature_id, "source_id")
@@ -2409,8 +2407,6 @@ class NativePlcSource(StrictModule, NonTrainableState):
     ) -> None:
         source = normalized_identifier(source_id, "source_id")
         revision = normalized_identifier(source_revision, "source_revision")
-        if not isinstance(complex_, PiecewiseLinearComplex):
-            raise TypeError("complex_ must be a PiecewiseLinearComplex.")
         complex_id = complex_.complex_id
         scope_id_banks, scope_key_banks, scope_set_ids = _prepare_plc_scope_banks(
             complex_, source, revision
@@ -2600,8 +2596,6 @@ class NativePolyhedralSource(StrictModule, NonTrainableState):
     ) -> None:
         source = normalized_identifier(source_id, "source_id")
         revision = normalized_identifier(source_revision, "source_revision")
-        if not isinstance(complex_, PiecewiseLinearComplex):
-            raise TypeError("complex_ must be a PiecewiseLinearComplex.")
         complex_id = complex_.complex_id
         scope_id_banks, scope_key_banks, scope_set_ids = _prepare_plc_scope_banks(
             complex_, source, revision
@@ -2714,10 +2708,6 @@ class NativeMappedHexSource(StrictModule, NonTrainableState):
         *,
         plc_vertex_root_global_ids: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(reference, NativePlcSource):
-            raise TypeError("reference must be a NativePlcSource.")
-        if not isinstance(domain, MappedReferenceDomain):
-            raise TypeError("domain must be a MappedReferenceDomain.")
         if (reference.source_id, reference.source_revision) != (
             domain.source_id,
             domain.source_revision,
@@ -2893,8 +2883,6 @@ class NativeImplicitSource(StrictModule, NonTrainableState):
         discovery: AdaptiveImplicitSurface | None = None,
         authoring_profile: AnalyticImplicitProfile | None = None,
     ) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be a CompiledGeometry.")
         if geometry.ambient_dimension != 3 or geometry.kind is not GeometryKind.REGION:
             raise ValueError("NativeImplicitSource requires a bounded 3D region source.")
         if grid is not None and not isinstance(grid, PreparedTensorGrid):
@@ -3408,12 +3396,8 @@ class NativeSweepSource(StrictModule, NonTrainableState):
         root_correspondence: cell_geometry_owner.CellGeometryRestrictionSource
         | None = None,
     ) -> None:
-        if not isinstance(profile, CellMesh):
-            raise TypeError("profile must be a CellMesh.")
         if profile.topological_dimension != 2 or profile.ambient_dimension != 3:
             raise ValueError("sweep profile must be an ambient-3 surface mesh.")
-        if not isinstance(control, SweepControl):
-            raise TypeError("control must be a SweepControl.")
         geometry = (
             cell_geometry_owner.CellGeometrySpec.affine(profile)
             if profile_geometry is None
@@ -3622,13 +3606,9 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         mapped_domain: MappedReferenceDomain | None = None,
         core_power_source: NativePolyhedralSource | None = None,
     ) -> None:
-        if not isinstance(layers, BoundaryLayerMesh):
-            raise TypeError("layers must be a BoundaryLayerMesh.")
         source_wall = layers.source_wall
         wall_association = layers.wall_association
         column_index = np.asarray(layers.column_index)
-        if not isinstance(complex_, PiecewiseLinearComplex):
-            raise TypeError("complex_ must be a PiecewiseLinearComplex.")
         if not isinstance(source_wall, CellMesh):
             raise TypeError("source_wall must be the original wall CellMesh.")
         if source_wall.topological_dimension != 2 or source_wall.ambient_dimension != 3:

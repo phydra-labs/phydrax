@@ -19,7 +19,6 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
 from ._periodic_cell import PeriodicCell
 
 
@@ -355,7 +354,6 @@ class PeriodicIsometryGroup(StrictModule, NonTrainableState):
     group_id: str = eqx.field(static=True)
     _exact_generators: tuple[ExactIsometry, ...] = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         generators: ArrayLike,

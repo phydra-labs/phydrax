@@ -82,7 +82,6 @@ class DistributedWeightedCSRGraph(StrictModule, NonTrainableState):
     owner_ranks: Array
     vertex_count: int = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         offsets: ArrayLike,

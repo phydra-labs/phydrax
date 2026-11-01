@@ -134,7 +134,7 @@ def test_fem_high_order_hexahedral_topology_scenario_1() -> None:
 
     assert np.allclose(gathered, expected, rtol=1.0e-12, atol=1.0e-12)
     assert np.allclose(
-        dof_map.evaluate_coordinates(mesh, mesh.coordinates),
+        dof_map.evaluate_coordinates(mesh.coordinates),
         dof_map.dof_coordinates,
     )
     mesh = _two_hex_mesh()

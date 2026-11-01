@@ -1111,7 +1111,13 @@ so seam edges stay unclassified. A collapse removes every lifted member of the
 vertex orbit onto exact deck images of the kept vertex; a lifted member row the
 collapse empties is retired onto another member of its orbit, keeping the
 quotient vertex and the feature/lineage records of its quotient edges. Seam
-edge orbits flip across the seam. When the route stalls it refuses with
+edge orbits flip across the seam. The device route collapses on the lifted
+cover when the edge orbit's members remove every copy of the removed vertex;
+landing on only some copies of the kept vertex additionally requires the exact
+quotient link condition (every vertex a pure-translation deck image; no new
+edge `(orbit k, orbit x, t_x - t_k)` may already exist at another kept copy or
+close a quotient loop), and the balls of all kept copies join the collapse's
+independence footprint. When the route stalls it refuses with
 `COMPLIANCE_FAILED`: the message reports `status=stalled`, and the
 `MeshingFailureEvidence` holds each remaining edge's metric length and refusal
 reasons.
@@ -1210,6 +1216,14 @@ metric edits use exact interpolation ancestry and are committed only after
 whole-orbit closure. `periodic_orbit_closure` and
 `stage_periodic_topology_edit` are the explicit APIs for orbit-complete
 periodic topology transitions.
+Across such an edit, an entity that keeps its identity key (vertex ID, sorted
+vertex IDs, or cell ID) keeps its lifted ID, and its quotient entity keeps its
+quotient ID. Removed quotient IDs are retired. New lifted edges and faces and
+new quotient entities take consecutive IDs from the lineage allocator
+(`allocator_next_ids`) in canonical key order, so a native tetra mesh never
+sees a retired identity again. An edit may change the star of one lifted copy
+of a vertex orbit and leave the other copies alone. Every copy must still
+carry its exact winding and image.
 
 ### Periodic quotient embedding proofs
 
@@ -1350,9 +1364,20 @@ bound to the source vertices). Routes:
 
 - `NATIVE_BISECTION`: Maubach/Stevenson tagged-simplex bisection of triangle
   (newest-vertex bisection) and tetrahedron meshes. The initial refinement edge
-  is the longest edge (ties by global IDs); an incompatible initial labelling is
-  rejected unless `BisectionCompatibility.UNIFORM_REFINEMENT` explicitly requests
-  one barycentric compatibility refinement. That subdivision is recorded in the
+  is the longest edge (ties by global IDs). A triangle labelling that violates
+  the matching condition is rejected unless
+  `BisectionCompatibility.UNIFORM_REFINEMENT` explicitly requests one barycentric
+  compatibility refinement. An incompatible tetrahedral labelling under the
+  default `REJECT` is instead relabelled as Arnold–Mukherjee–Pouly marked
+  tetrahedra: every face marks its longest edge under the same strict global
+  order, so neighbors agree on shared faces and the conformity closure of any
+  conforming tetrahedral mesh terminates without the matching condition.
+  Planar, mixed and flagged-planar marked tetrahedra are Maubach tags 2, 3 and
+  1; adjacent and opposite ones carry tags 4 and 5, whose children are tag 2.
+  The evidence then reports `initially_compatible=False` with
+  `uniform_refinement_applied=False`, and the hierarchy persists the tags, so
+  later refinement and coarsening continue the same forest (device bisection
+  included). The barycentric subdivision is recorded in the
   `BisectionHierarchy` as a refinement level (each source cell, its exact block
   row, its (d+1)! children, and its created edge, face, and center vertices). The
   conformity closure is vectorized per iteration; coarsening removes complete
@@ -1373,13 +1398,24 @@ bound to the source vertices). Routes:
   diagonal without lowering their quality pair; a relocation likewise when it
   raises its star's minimum quality or keeps it and strictly improves the
   worst-first quantized deviations of its edges. Neither rule creates vertices,
-  so each phase terminates. Orientation decisions use the policy's predicate
-  mode; unresolved filtered signs reject the operation. The status is COMPLETE
-  when the unit-mesh criterion holds, STALLED or NUMERICAL_STOP otherwise; a
-  stalled `LocalMetricEvidence.stalled_edges` lists every remaining edge (one per
-  quotient orbit) with its metric length and refusal reasons, for example
-  `collapse=hysteresis+inadmissible;flip=invalid`. `RelocationMeshAdaptation`
-  moves vertices only.
+  so each phase terminates. A full pass that applies nothing outside the unit
+  criterion is a stall; it runs one escape phase of the split/collapse
+  hysteresis that admits every collapse up to metric length 2, births included
+  (the next split phase splits the long edges). The escape stands when the run
+  then reaches the unit criterion or a stall whose potential
+  `(out-of-band edges, sum of floor(band excess of |ln L| / 2^-20))` is
+  strictly lower (which may escape again); otherwise the run returns the
+  escaped stall's state. Escaped stall potentials strictly decrease in the
+  well-founded lexicographic order on pairs of natural numbers, so escapes are
+  finitely many and no pass cap is needed. Orientation decisions use the
+  policy's predicate mode; unresolved filtered signs reject the operation. The
+  status is COMPLETE when the unit-mesh criterion holds, STALLED or
+  NUMERICAL_STOP otherwise; a stalled `LocalMetricEvidence.stalled_edges`
+  lists every remaining edge (one per quotient orbit) with its metric length
+  and refusal reasons, for example `collapse=hysteresis+inadmissible;flip=invalid`
+  (`hysteresis`: above the split threshold, and the escape did not lower the
+  stall potential; `long`: above 2). `RelocationMeshAdaptation` moves vertices
+  only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
   and hierarchy of `NATIVE_BISECTION` byte for byte. The device passes coarsen
@@ -1701,7 +1737,9 @@ and FILTERED_DEVICE orientation predicates. An operation whose predicate is
 unresolved is never applied and the pass reports `NEEDS_HOST_RESOLUTION`; there
 is no host callback inside the passes. The commit reuses the host metric edit
 assembly, so the result carries the same lineage kinds and vertex stencil as
-`NATIVE_METRIC_2D`.
+`NATIVE_METRIC_2D`. The collapse length admission and the stall escape with its
+potential are the host route's; the compiled loop carries the escaped stall's
+state and restores it when the next stall does not lower the potential.
 
 `prepare_device_metric_adaptation(source, request, policy=...)` binds a
 `MetricMeshAdaptation` or `RelocationMeshAdaptation` to a `DeviceMetricState`
@@ -1770,12 +1808,12 @@ rank replay, and coarsening back to the original roots; run it with `pytest -n 0
 ```python
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeSphere
 
-from phydrax.interchange import model_from_occt_shape
+from phydrax.interchange import import_occt_shape
 
 shape = BRepPrimAPI_MakeSphere(1.0).Shape()
-model = model_from_occt_shape(
+model = import_occt_shape(
     shape, coordinate_contract=phx.SpatialCoordinateContract.si()
-)
+).model
 # An octahedron inscribed in the unit sphere, turned off its seam and poles.
 c, s = np.cos(0.3), np.sin(0.3)
 turn = np.asarray(((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0)))
@@ -2069,9 +2107,15 @@ trusted native refinement or optimization and returns a
 `MeshProposalTransaction`. Safety audit and compliance are separate evidence;
 rejection or rollback retains the accepted source.
 
-The native size/metric proposal route performs one triangle-refinement step.
-It does not claim anisotropic adaptation or that requested final sizes were
-achieved. Use an appropriate external metric provider for those requests.
+Native marking, size, and metric proposals require one simplex block: T3
+triangles (planar or embedded surfaces) or T4 tetrahedra (`tetrahedron` or the
+native PLC `simplex:3` block). Positive marks execute native triangle or
+tetrahedron bisection. Vertex sizes are clamped
+and graded over the mesh edges, then executed as the isotropic metric
+`I / h**2`; vertex metric tensors are symmetrized, projected SPD, bounded, and
+graded. Both execute through `NATIVE_METRIC_2D`, `NATIVE_METRIC_SURFACE`, or
+`NATIVE_METRIC_3D` toward the unit-mesh criterion; compliance reports any
+unmet target rather than claiming it.
 Mesh promotion does not implicitly transfer PDE fields: consume the exposed
 transition/transfer through the solver topology transaction.
 
@@ -2235,6 +2279,46 @@ caps. The band bounds and the interpolation error are unchanged; the
 input-to-envelope bound (`bounds[0]`) is recomputed on the remeshed vertices.
 `remesh_counters` reports splits, collapses, flips, relocations, and the
 surviving triangles still below the quality target.
+
+A triangle's quantized score is its shape (minimum angle over 30 degrees,
+capped at 1) times its size (`4/3 h` over its longest edge, capped at 1) times a
+source-relative fold factor. Each admission reports a certified source normal
+cone per triangle: for the envelope, the directions from every source point
+that can be nearest to some point of the triangle; for an implicit zero set,
+the gradient enclosure over the triangle widened by the tilt the surface
+tolerance allows. Two triangles sharing an edge may turn against each other by
+up to the largest angle between normals of their two cones (the angle between
+the axes plus both half-angles). A turn within that separation scores full, so
+genuine creases the source has (an implicit CSG lens edge, an offset's concave
+ridge) are kept; a turn beyond it is a fold the source does not have and lowers
+the score by `(pi - turn) / (pi - allowed)`, so the quality pass removes it.
+Without this factor a folded cluster of well-shaped envelope triangles scores
+full, and two boundary triangles meeting at turn `t` bound every tetrahedron on
+their edge to a dihedral angle of at most `pi - t`. Cones are computed only for
+edges turning beyond the cheap lower bound of both cones' half-angles or closing
+a convex wedge sharper than the minimum angle.
+
+Near the source's medial axis an offset's cones open up and carry no
+information, so the source-relative factor admits any turn there. The score
+therefore also holds every convex edge (seen from the enclosed solid) to a
+solid wedge `pi - turn` of at least the minimum angle, scoring
+`(pi - turn) / minimum_angle` below it, unless the two cones force the sharper
+wedge (the angle between their axes minus both half-angles is at least
+`pi - minimum_angle`). On torus:1 a partial relocation had folded a valence-3
+envelope vertex into a fin closing a 1.6 degree convex wedge inside the inner
+offset tube (minor radius about `h`): every tetrahedron on that edge was bounded
+to a 1.6 degree dihedral angle, and the volume stages kept 5 slivers that no
+volume operation could improve while the envelope faces stay protected.
+
+A quality edit for one triangle tries, in order: a split of an over-long longest
+edge, flips of its edges, a collapse of its shortest edge, relocation of each
+corner to its star centroid or its projection, relocation of each corner part
+of the way toward its star centroid (1/2 down to 2^-10 of the move) or toward
+its equilateral apex over the opposite edge (the full move down to 2^-10), and
+a midpoint split. A full move that lifts the triangle can push another star
+triangle below it where a shorter one does not; the reconstruction profiles'
+last sub-target envelope triangles, inside a band with about `0.7 h` of slack,
+were such local limits of the edit list, not limits of the source.
 
 The remesher is a source-agnostic native substrate: the topology operations,
 quality acceptance, and manifold and self-intersection checks are shared, and

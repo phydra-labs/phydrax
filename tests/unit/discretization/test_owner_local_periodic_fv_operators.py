@@ -799,34 +799,76 @@ def _periodic_box_with_obstacle(component_names: tuple[str, ...], /) -> Any:
     return plan
 
 
+def _box_with_obstacle(component_names: tuple[str, ...], /) -> Any:
+    """The same square-hole mesh as a nonperiodic box with fixed outer walls."""
+    n = 6
+    grid = np.asarray(
+        [(i / n, j / n) for j in range(n + 1) for i in range(n + 1)], dtype=np.float64
+    )
+
+    def vertex(i: int, j: int, /) -> int:
+        return j * (n + 1) + i
+
+    triangles = []
+    for j in range(n):
+        for i in range(n):
+            if 2 <= i < 4 and 2 <= j < 4:
+                continue
+            ll, lr = vertex(i, j), vertex(i + 1, j)
+            ul, ur = vertex(i, j + 1), vertex(i + 1, j + 1)
+            triangles.extend(((ll, lr, ur), (ll, ur, ul)))
+    used = np.unique(np.asarray(triangles))
+    rows = np.full((grid.shape[0],), -1, dtype=np.int64)
+    rows[used] = np.arange(used.size)
+    outer = [rows[[vertex(k, j), vertex(k + 1, j)]] for k in range(n) for j in (0, n)]
+    outer += [rows[[vertex(i, k), vertex(i, k + 1)]] for k in range(n) for i in (0, n)]
+    obstacle = [
+        rows[[vertex(i, 2 + k), vertex(i, 3 + k)]] for k in range(2) for i in (2, 4)
+    ]
+    obstacle += [
+        rows[[vertex(2 + k, j), vertex(3 + k, j)]] for k in range(2) for j in (2, 4)
+    ]
+    return phx.discretization.UnstructuredFiniteVolumePlan(
+        grid[used],
+        triangles=rows[np.asarray(triangles)],
+        boundary_patches={"obstacle": np.asarray(obstacle), "outer": np.asarray(outer)},
+        component_names=component_names,
+    )
+
+
 _OBSTACLE_CENTER = np.asarray((0.5, 0.5))
-_OBSTACLE_VELOCITY = np.asarray((0.04, -0.03))
-# Nilpotent shear rate: ``det(I + t S) == 1``, so the obstacle keeps its area.
-_OBSTACLE_SHEAR = np.asarray(((0.0, 0.6), (0.0, 0.0)))
+_OBSTACLE_RATE = 2.0
 
 
-def _sheared_obstacle(time: Any, vertices: Any, args: Any) -> Any:
-    """Obstacle boundary: area-preserving shear about its centre plus a drift.
+def _rotating_obstacle(time: Any, vertices: Any, args: Any) -> Any:
+    """The obstacle rotates rigidly about its centre; outer walls stay fixed.
 
-    The motion is affine in time, as fixed-connectivity SSPRK geometry needs
-    for its stage volumes to match the coordinates.
+    Vertex trajectories are circular, so cell volumes are not polynomial in
+    time: stage volumes match the coordinates only through swept volumes.
     """
     del args
     center = jnp.asarray(_OBSTACLE_CENTER)
-    rate = (
-        jnp.asarray(_OBSTACLE_VELOCITY)
-        + (vertices - center) @ jnp.asarray(_OBSTACLE_SHEAR).T
+    angle = _OBSTACLE_RATE * time
+    rotation = jnp.asarray(
+        ((jnp.cos(angle), -jnp.sin(angle)), (jnp.sin(angle), jnp.cos(angle)))
     )
-    return vertices + time * rate
+    on_obstacle = jnp.max(jnp.abs(vertices - center), axis=-1) < 0.25
+    return jnp.where(
+        on_obstacle[:, None], center + (vertices - center) @ rotation.T, vertices
+    )
 
 
 def _obstacle_wall_velocity(time: Any, points: Any, normal: Any, args: Any) -> Any:
-    """Wall velocity at current points (``S @ S == 0`` inverts the shear)."""
-    del normal, args
-    relative = (
-        points - jnp.asarray(_OBSTACLE_CENTER) - jnp.asarray(_OBSTACLE_VELOCITY) * time
-    )
-    return jnp.asarray(_OBSTACLE_VELOCITY) + relative @ jnp.asarray(_OBSTACLE_SHEAR).T
+    """Rigid rotation velocity ``omega x (x - c)`` at the current wall points."""
+    del time, normal, args
+    relative = points - jnp.asarray(_OBSTACLE_CENTER)
+    return _OBSTACLE_RATE * jnp.stack((-relative[..., 1], relative[..., 0]), axis=-1)
+
+
+def _obstacle_plan(topology: str, component_names: tuple[str, ...], /) -> Any:
+    if topology == "periodic":
+        return _periodic_box_with_obstacle(component_names)
+    return _box_with_obstacle(component_names)
 
 
 def test_periodic_fe_extension_moves_seam_twins_as_lattice_copies() -> None:
@@ -840,7 +882,7 @@ def test_periodic_fe_extension_moves_seam_twins_as_lattice_copies() -> None:
     geometry = plan.prepare()
     motion = phx.discretization.FixedConnectivityMotionPlan(
         plan,
-        _sheared_obstacle,
+        _rotating_obstacle,
         mapping_id="periodic-obstacle-harmonic",
         motion_policy=phx.discretization.FiniteElementMeshMotionPolicy(),
     )
@@ -866,61 +908,98 @@ def test_periodic_fe_extension_moves_seam_twins_as_lattice_copies() -> None:
             float(np.sum(np.asarray(geometry.cell_volumes))),
             rtol=1e-12,
         )
+
+
+@pytest.mark.parametrize("route", ("harmonic", "linear_elasticity"))
+@pytest.mark.parametrize("topology", ("periodic", "nonperiodic"))
+def test_rotating_obstacle_stage_volumes_are_coordinate_volumes(
+    topology: str, route: str
+) -> None:
+    """The discrete GCL holds at every SSPRK stage for a non-affine trajectory.
+
+    Stage face rates are swept volumes between the realized stage positions,
+    so the stage volume recurrence reproduces the coordinate volumes of those
+    positions at rounding, for a rotating obstacle and for interior positions
+    produced by an iterative elasticity solve alike.
+    """
+    system = phx.equations.EulerSystem(2)
+    plan = _obstacle_plan(topology, system.component_names)
+    motion = phx.discretization.FixedConnectivityMotionPlan(
+        plan,
+        _rotating_obstacle,
+        mapping_id=f"{topology}-rotating-obstacle-{route}",
+        motion_policy=phx.discretization.FiniteElementMeshMotionPolicy(
+            route=phx.discretization.FiniteElementMeshMotionRoute(route)
+        ),
+    )
+    start = motion.evaluate_plan(jnp.asarray(0.3)).prepare()
     step = motion.prepare_ssprk33_step(
-        0.0,
-        2.0e-3,
-        "periodic-obstacle-epoch",
+        0.3,
+        5.0e-3,
+        f"{topology}-rotating-obstacle-epoch",
         0,
         0,
-        prior_effective_cell_volumes=geometry.cell_volumes,
+        prior_effective_cell_volumes=start.cell_volumes,
     )
     assert bool(step.passed)
+    scale = float(np.max(np.asarray(start.cell_volumes)))
     for name in ("stage_1", "stage_2", "stage_3", "accepted_geometry"):
         metrics = getattr(step, name)
-        # Discrete GCL: rate-advanced volumes are the coordinate volumes (to the
-        # extension's Krylov tolerance).
         np.testing.assert_allclose(
             np.asarray(metrics.effective_cell_volumes),
             np.asarray(metrics.coordinate_effective_cell_volumes),
             rtol=0.0,
-            atol=1e-12,
+            atol=1e-13 * scale,
         )
+        assert float(np.max(np.asarray(metrics.evidence.gcl_identity_defect))) == 0.0
+    # The interior really deforms: cell volumes change along the step.
+    change = np.asarray(step.accepted_geometry.coordinate_effective_cell_volumes) - (
+        np.asarray(start.cell_volumes)
+    )
+    assert float(np.max(np.abs(change))) > 1.0e-6 * scale
     for name in ("g1", "g2", "g3"):
-        rates = np.asarray(getattr(step, name))
-        assert float(np.max(np.abs(rates))) > 1.0e-4
-        # An area-preserving obstacle in a closed periodic box keeps the fluid
-        # volume: the seam faces carry no net volume.
-        np.testing.assert_allclose(np.sum(rates), 0.0, atol=1e-13)
+        # The rigid obstacle keeps the fluid volume of the box.
+        np.testing.assert_allclose(
+            np.sum(np.asarray(getattr(step, name))), 0.0, atol=1e-13
+        )
 
 
-def test_periodic_obstacle_runtime_holds_gcl_and_conserves_mass() -> None:
-    """The ALE runtime advances the quotient motion with seams as interior faces.
+@pytest.mark.parametrize("route", ("harmonic", "linear_elasticity"))
+@pytest.mark.parametrize("topology", ("periodic", "nonperiodic"))
+def test_rotating_obstacle_runtime_holds_gcl_and_conserves_mass(
+    topology: str, route: str
+) -> None:
+    """The ALE runtime advances a rotating obstacle conservatively.
 
     The runtime's effective volumes are the coordinate volumes of the moved
-    periodic plan (the discrete GCL), and Euler with a moving slip wall keeps
-    its mass in the closed periodic box.
+    plan (the discrete GCL), and Euler with a moving slip wall keeps its mass:
+    the wall reflects about the swept-volume grid velocity its flux uses.
     """
     system = phx.equations.EulerSystem(2)
-    plan = _periodic_box_with_obstacle(system.component_names)
+    plan = _obstacle_plan(topology, system.component_names)
     geometry = plan.prepare()
+    policies: dict[str, Any] = {
+        "obstacle": phx.discretization.MovingSlipWallBoundary(
+            _obstacle_wall_velocity,
+            wall_velocity_provider_id="rotating-obstacle-wall",
+        )
+    }
+    if topology == "nonperiodic":
+        policies["outer"] = phx.discretization.SlipWallBoundary()
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
-        geometry.boundary_patch_names,
-        {
-            "obstacle": phx.discretization.MovingSlipWallBoundary(
-                _obstacle_wall_velocity,
-                wall_velocity_provider_id="periodic-obstacle-wall",
-            )
-        },
+        geometry.boundary_patch_names, policies
     )
     motion = phx.discretization.FixedConnectivityMotionPlan(
         plan,
-        _sheared_obstacle,
-        mapping_id="periodic-obstacle-runtime",
-        motion_policy=phx.discretization.FiniteElementMeshMotionPolicy(),
+        _rotating_obstacle,
+        mapping_id=f"{topology}-rotating-obstacle-runtime-{route}",
+        motion_policy=phx.discretization.FiniteElementMeshMotionPolicy(
+            route=phx.discretization.FiniteElementMeshMotionRoute(route)
+        ),
     )
     dynamics: Any = phx.equations.compile_conservation_problem(
         phx.equations.ConservationProblemIR(
-            "periodic-obstacle-runtime", "state", system, boundaries
+            "rotating-obstacle-runtime", "state", system, boundaries
         ),
         geometry,
         phx.discretization.UnstructuredFiniteVolumeMethodPlan(
@@ -933,7 +1012,7 @@ def test_periodic_obstacle_runtime_holds_gcl_and_conserves_mass() -> None:
         dynamics, phx.discretization.FluxPositivityPlan()
     )
     state = _euler_state(system, np.asarray(geometry.cell_centers), np.eye(2))
-    current = runtime.initialize_state(jnp.asarray(state), 0.0, 2.0e-3)
+    current = runtime.initialize_state(jnp.asarray(state), 0.0, 5.0e-3)
     before = np.asarray(current.content_state.conservative_content)
     for _ in range(2):
         result = runtime.advance(current)
@@ -946,11 +1025,11 @@ def test_periodic_obstacle_runtime_holds_gcl_and_conserves_mass() -> None:
     # Discrete GCL: rate-advanced volumes are the moved plan's coordinate volumes.
     moved = motion.evaluate_plan(jnp.asarray(content.time)).prepare()
     np.testing.assert_allclose(
-        volumes, np.asarray(moved.cell_volumes), rtol=0.0, atol=1e-12
+        volumes, np.asarray(moved.cell_volumes), rtol=0.0, atol=1e-14
     )
     np.testing.assert_allclose(
         np.sum(volumes), np.sum(np.asarray(geometry.cell_volumes)), rtol=1e-13
     )
-    # Every seam is an interior face and the slip wall carries no mass.
+    # Seams are interior faces and both walls carry no mass.
     np.testing.assert_allclose(np.sum(after[:, 0]), np.sum(before[:, 0]), rtol=1e-13)
     assert float(np.max(np.abs(after - before))) > 1e-5

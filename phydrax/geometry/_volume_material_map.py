@@ -558,8 +558,6 @@ class EulerianVolumeOverlapMap(StrictModule, NonTrainableState):
                     unmatched_source_rows=error.unmatched_source_rows,
                     unmatched_target_rows=error.unmatched_target_rows,
                 ) from error
-        if not isinstance(source_map, MaterialSourceMapCapability):
-            raise TypeError("source_map must be MaterialSourceMapCapability.")
         source_map = MaterialSourceMapCapability.revalidate(source_map)
         if not isinstance(refinement, PreparedCommonRefinement):
             raise TypeError("refinement must be PreparedCommonRefinement.")
@@ -1133,10 +1131,6 @@ class VolumeMaterialMap(StrictModule, NonTrainableState):
         ):
             raise TypeError(
                 "Material map endpoints require canonical mesh and geometry owners."
-            )
-        if not isinstance(deformation, VolumeMaterialDeformation):
-            raise TypeError(
-                "A Lagrangian material map requires VolumeMaterialDeformation."
             )
         deformation.require_bound(
             source_mesh, source_geometry, target_mesh, target_geometry

@@ -73,7 +73,7 @@ _DEFERRED_EXPORTS = {
     "shape_index": "._cad_occt",
     "shape_digest": "._cad_occt",
     "read_occt_shape": "._cad_occt",
-    "model_from_occt_shape": "._cad_occt",
+    "import_occt_shape": "._cad_occt",
     "persist_occt_shape": "._cad_occt",
     "PreparedOcctProjection": "._cad_occt_projection",
     "prepare_occt_projection": "._cad_occt_projection",
@@ -388,7 +388,7 @@ if TYPE_CHECKING:
     from ._cad_io import decode_cad_bytes, read_cad, read_cad_file
     from ._cad_occt import (
         explore_unique,
-        model_from_occt_shape,
+        import_occt_shape,
         persist_occt_shape,
         read_occt_shape,
         shape_digest,
@@ -614,7 +614,7 @@ __all__ = [
     "decode_step_resource",
     "encode_dxf",
     "explore_unique",
-    "model_from_occt_shape",
+    "import_occt_shape",
     "persist_occt_shape",
     "prepare_occt_projection",
     "read_brep_text",

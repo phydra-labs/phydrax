@@ -784,11 +784,17 @@ def _import_cad_surface(
     payload_bytes = points.nbytes + faces.nbytes
     if payload_bytes > policy.maximum_data_bytes:
         raise SurfaceResourceLimitError("CAD tessellation exceeds decoded data capacity.")
+    # The codec's own import losses (dropped records, synthesized boundaries,
+    # chart-closure repairs, source tolerances) stay visible on this boundary.
     losses = _loss_permission(
         (
             "cad_exact_geometry_tessellated_for_authoritative_cell_mesh",
             "generated_tessellation_global_ids",
             "source_entity_names_and_presentation_metadata_not_carried_by_cell_mesh",
+            *(
+                f"cad_import:{loss.category}:{loss.path}"
+                for loss in cad_result.report.losses
+            ),
         ),
         policy.allow_lossy,
     )
