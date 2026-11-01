@@ -2628,12 +2628,21 @@ class BRepGeometry(StrictModule):
         self.geometry_id = _brep_geometry_identity(self)
 
     def require_current(self, /) -> None:
-        # Stale content is diagnosed by identity before the rebuild re-runs
-        # constructor invariants that edited content may also violate.
+        """Refuse geometry whose content changed after its identity was recorded.
+
+        Construction validated the content this identity names, so an unchanged
+        identity keeps that validation; :meth:`revalidate` re-runs it.
+        """
         if _brep_geometry_identity(self) != self.geometry_id:
             raise ValueError(
                 "BRepGeometry content has changed since its source identity was recorded."
             )
+
+    def revalidate(self, /) -> None:
+        """Re-run every constructor invariant on this content and require its identity."""
+        # Stale content is diagnosed by identity before the rebuild re-runs
+        # constructor invariants that edited content may also violate.
+        self.require_current()
         rebuilt = BRepGeometry(
             vertex_points=self.vertex_points,
             vertex_exact_points=self.vertex_exact_points,
@@ -3515,7 +3524,8 @@ class BRepModel(StrictModule):
 
         for patch in patches_:
             _validate_surface_source_shadows(patch)
-        geometry.require_current()
+        # A model accepts geometry it did not construct: renew its invariants.
+        geometry.revalidate()
         # Free vertex and edge roots are faceless sources; only solids need faces.
         if not patches_ and geometry.topology.num_solids:
             raise ValueError("A faceless BRepModel cannot contain solids.")
