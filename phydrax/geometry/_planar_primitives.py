@@ -6,10 +6,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from fractions import Fraction
 from functools import reduce
 from math import gcd, lcm
 from typing import TypeAlias
+
+import numpy as np
+
+from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 
 
 Point: TypeAlias = tuple[Fraction, Fraction]
@@ -194,18 +200,296 @@ def segment_overlap(
     )
 
 
+def interiors_separated(first: Polygon, second: Polygon, /) -> bool:
+    """Whether an edge line of either triangle exactly separates their interiors.
+
+    Two convex polygons have disjoint interiors exactly when a supporting line
+    of one of their edges leaves the other polygon in its closed outer half
+    plane, so this decides zero overlap area without clipping.
+    """
+    for inner, outer in ((first, second), (second, first)):
+        orientation = signed_area2(inner)
+        if orientation == 0:
+            return True
+        for index in range(3):
+            start, end = inner[index], inner[(index + 1) % 3]
+            if all(cross(start, end, point) * orientation <= 0 for point in outer):
+                return True
+    return False
+
+
+type PolygonBoxes = tuple[np.ndarray, np.ndarray]
+type _Interval = tuple[np.ndarray, np.ndarray]
+
+# Banks with at most this many candidate pairs test every box pair at once on
+# the host; larger banks use the packed BVH. Both report every pair of closed
+# boxes that meet, so the exact findings do not depend on the choice.
+_DENSE_BOX_PAIRS = 1 << 16
+
+
+def _float_down(value: Fraction, /) -> float:
+    result = float(value)
+    return result if Fraction(result) <= value else float(np.nextafter(result, -np.inf))
+
+
+def _float_up(value: Fraction, /) -> float:
+    result = float(value)
+    return result if Fraction(result) >= value else float(np.nextafter(result, np.inf))
+
+
+def polygon_boxes(polygons: Sequence[Polygon], /) -> PolygonBoxes | None:
+    """Outward-rounded binary64 boxes of exact planar polygons (None if unbounded)."""
+    if not polygons:
+        return None
+    lower = np.empty((len(polygons), 2), dtype=np.float64)
+    upper = np.empty_like(lower)
+    try:
+        for row, polygon in enumerate(polygons):
+            for axis in range(2):
+                lower[row, axis] = _float_down(min(point[axis] for point in polygon))
+                upper[row, axis] = _float_up(max(point[axis] for point in polygon))
+    except OverflowError:
+        return None
+    if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
+        return None
+    return lower, upper
+
+
+def box_overlap_pairs(
+    first_count: int,
+    second_count: int,
+    first_boxes: PolygonBoxes | None,
+    second_boxes: PolygonBoxes | None,
+    /,
+    *,
+    self_pairs: bool,
+) -> np.ndarray:
+    """Pairs (first row, second row) whose closed boxes meet, ``(P, 2)`` in row order.
+
+    Disjoint closed boxes have zero intersection area, so these pairs carry
+    every positive-area overlap; self pairs keep first row < second row.
+    Without boxes every pair is a candidate.
+    """
+    if self_pairs and first_count != second_count:
+        raise ValueError("Self-overlap banks must be the same polygon bank.")
+    if first_count == 0 or second_count == 0:
+        return np.empty((0, 2), dtype=np.int64)
+    if first_boxes is None or second_boxes is None:
+        if self_pairs:
+            rows, columns = np.triu_indices(first_count, k=1)
+        else:
+            rows, columns = np.indices((first_count, second_count)).reshape((2, -1))
+        return np.column_stack((rows, columns)).astype(np.int64, copy=False)
+    first_lower, first_upper = first_boxes
+    second_lower, second_upper = second_boxes
+    if first_count * second_count <= _DENSE_BOX_PAIRS:
+        meets = np.all(
+            (first_lower[:, None, :] <= second_upper[None, :, :])
+            & (second_lower[None, :, :] <= first_upper[:, None, :]),
+            axis=2,
+        )
+        if self_pairs:
+            meets = np.triu(meets, k=1)
+        return np.argwhere(meets).astype(np.int64, copy=False)
+    first_bvh = prepare_bvh(first_lower, first_upper, dtype=np.float64)
+    second_bvh = (
+        first_bvh
+        if self_pairs
+        else prepare_bvh(second_lower, second_upper, dtype=np.float64)
+    )
+    blocks: list[np.ndarray] = []
+    for first_ids, second_ids in bvh_overlap_pair_blocks(
+        first_bvh, second_bvh, include_touching=True
+    ):
+        if self_pairs:
+            keep = first_ids < second_ids
+            first_ids, second_ids = first_ids[keep], second_ids[keep]
+        if first_ids.size:
+            blocks.append(
+                np.column_stack((first_ids, second_ids)).astype(np.int64, copy=False)
+            )
+    if not blocks:
+        return np.empty((0, 2), dtype=np.int64)
+    pairs = np.concatenate(blocks, axis=0)
+    return pairs[np.lexsort((pairs[:, 1], pairs[:, 0]))]
+
+
+@dataclass(frozen=True, slots=True)
+class _TriangleBank:
+    """Outward binary64 corner enclosures ``(rows, 3, 2)`` and exact corner identities."""
+
+    lower: np.ndarray
+    upper: np.ndarray
+    corners: np.ndarray
+    valid: np.ndarray
+
+
+def _triangle_bank(
+    polygons: Sequence[Polygon], identities: dict[Point, int], /
+) -> _TriangleBank:
+    count = len(polygons)
+    lower = np.zeros((count, 3, 2), dtype=np.float64)
+    upper = np.zeros((count, 3, 2), dtype=np.float64)
+    corners = np.full((count, 3), -1, dtype=np.int64)
+    valid = np.zeros(count, dtype=np.bool_)
+    for row, polygon in enumerate(polygons):
+        if len(polygon) != 3:
+            continue
+        try:
+            for corner, point in enumerate(polygon):
+                corners[row, corner] = identities.setdefault(point, len(identities))
+                for axis in range(2):
+                    lower[row, corner, axis] = _float_down(point[axis])
+                    upper[row, corner, axis] = _float_up(point[axis])
+        except OverflowError:
+            continue
+        valid[row] = True
+    valid &= np.all(np.isfinite(lower) & np.isfinite(upper), axis=(1, 2))
+    return _TriangleBank(lower, upper, corners, valid)
+
+
+def _interval_subtract(first: _Interval, second: _Interval, /) -> _Interval:
+    return (
+        np.nextafter(first[0] - second[1], -np.inf),
+        np.nextafter(first[1] - second[0], np.inf),
+    )
+
+
+def _interval_multiply(first: _Interval, second: _Interval, /) -> _Interval:
+    products = np.stack(
+        (
+            first[0] * second[0],
+            first[0] * second[1],
+            first[1] * second[0],
+            first[1] * second[1],
+        )
+    )
+    # NaN products (0 * inf) propagate and leave the sign undecided.
+    return (
+        np.nextafter(np.min(products, axis=0), -np.inf),
+        np.nextafter(np.max(products, axis=0), np.inf),
+    )
+
+
+def _interval_cross(
+    first: tuple[_Interval, _Interval],
+    second: tuple[_Interval, _Interval],
+    third: tuple[_Interval, _Interval],
+    /,
+) -> _Interval:
+    """Enclosure of `cross` from per-pair coordinate intervals ``(x, y)``."""
+    edge_x = _interval_subtract(second[0], first[0])
+    edge_y = _interval_subtract(second[1], first[1])
+    point_x = _interval_subtract(third[0], first[0])
+    point_y = _interval_subtract(third[1], first[1])
+    return _interval_subtract(
+        _interval_multiply(edge_x, point_y), _interval_multiply(edge_y, point_x)
+    )
+
+
+def _bank_corner(
+    bank: _TriangleBank, rows: np.ndarray, corner: int, /
+) -> tuple[_Interval, _Interval]:
+    return (
+        (bank.lower[rows, corner, 0], bank.upper[rows, corner, 0]),
+        (bank.lower[rows, corner, 1], bank.upper[rows, corner, 1]),
+    )
+
+
+def _directed_separation(
+    inner: _TriangleBank,
+    inner_rows: np.ndarray,
+    outer: _TriangleBank,
+    outer_rows: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pairs an edge line of ``inner`` provably separates / provably none does."""
+    inner_corners = [_bank_corner(inner, inner_rows, corner) for corner in range(3)]
+    outer_corners = [_bank_corner(outer, outer_rows, corner) for corner in range(3)]
+    orientation = _interval_cross(*inner_corners)
+    positive = orientation[0] > 0.0
+    signed = positive | (orientation[1] < 0.0)
+    separates = np.zeros(inner_rows.size, dtype=np.bool_)
+    every_edge_meets = np.ones(inner_rows.size, dtype=np.bool_)
+    inner_ids = inner.corners[inner_rows]
+    outer_ids = outer.corners[outer_rows]
+    for index in range(3):
+        following = (index + 1) % 3
+        closed_outside = np.ones(inner_rows.size, dtype=np.bool_)
+        some_inside = np.zeros(inner_rows.size, dtype=np.bool_)
+        for point in range(3):
+            value = _interval_cross(
+                inner_corners[index], inner_corners[following], outer_corners[point]
+            )
+            # An exactly shared corner lies on the edge line: its term is 0.
+            on_line = (outer_ids[:, point] == inner_ids[:, index]) | (
+                outer_ids[:, point] == inner_ids[:, following]
+            )
+            nonpositive = np.where(positive, value[1] <= 0.0, value[0] >= 0.0)
+            strictly_positive = np.where(positive, value[0] > 0.0, value[1] < 0.0)
+            closed_outside &= nonpositive | on_line
+            some_inside |= strictly_positive & ~on_line
+        separates |= closed_outside
+        every_edge_meets &= some_inside
+    return signed & separates, signed & every_edge_meets
+
+
+def triangle_pair_separation(
+    first: Sequence[Polygon],
+    second: Sequence[Polygon],
+    pairs: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Binary64 screen of `interiors_separated` over ``(first row, second row)`` pairs.
+
+    Returns int8 per pair: 1 when an edge line provably separates the
+    interiors, 0 when provably no edge line of either triangle does, and -1
+    when the outward-rounded interval evaluation of the exact edge predicate
+    leaves it undecided (the exact test decides those). A corner shared exactly
+    by both triangles contributes an exactly zero edge term. Non-triangles and
+    nonrepresentable corners are undecided.
+    """
+    rows = np.asarray(pairs, dtype=np.int64).reshape((-1, 2))
+    decisions = np.full(rows.shape[0], -1, dtype=np.int8)
+    if rows.shape[0] == 0:
+        return decisions
+    identities: dict[Point, int] = {}
+    first_bank = _triangle_bank(first, identities)
+    second_bank = first_bank if second is first else _triangle_bank(second, identities)
+    valid = first_bank.valid[rows[:, 0]] & second_bank.valid[rows[:, 1]]
+    selected = np.flatnonzero(valid)
+    if selected.size == 0:
+        return decisions
+    first_rows, second_rows = rows[selected, 0], rows[selected, 1]
+    forward, forward_meets = _directed_separation(
+        first_bank, first_rows, second_bank, second_rows
+    )
+    backward, backward_meets = _directed_separation(
+        second_bank, second_rows, first_bank, first_rows
+    )
+    separated = forward | backward
+    decisions[selected[separated]] = 1
+    decisions[selected[forward_meets & backward_meets & ~separated]] = 0
+    return decisions
+
+
 __all__ = [
     "Point",
     "Polygon",
+    "PolygonBoxes",
     "area2",
+    "box_overlap_pairs",
     "cross",
+    "interiors_separated",
     "intersection",
     "line_key",
     "oriented_polygon",
     "plane_key",
     "plane_orientation",
+    "polygon_boxes",
     "project_polygon",
     "projection_axes",
     "segment_overlap",
     "signed_area2",
+    "triangle_pair_separation",
 ]
