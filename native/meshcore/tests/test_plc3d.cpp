@@ -332,6 +332,11 @@ void test_source_witness_carriers_report_exact_deviation() {
   const double tiny_parameter[2] = {0x1p-501, 0.0};
   PHX_CHECK(!source_parameters_valid(SourceStratum::kSegment, tiny_parameter));
   PHX_CHECK(!source_parameters_valid(SourceStratum::kNone, segment_parameters));
+  // Plane witnesses use the owning mesh's declared affine chart, not these
+  // three simplex corners, even when their parameters happen to be bounded.
+  PHX_CHECK(!source_parameters_valid(SourceStratum::kPlane, facet_parameters));
+  PHX_CHECK(!source_point(facet, SourceStratum::kPlane, facet_parameters, exact_facet));
+  PHX_CHECK(!on_source_entity(facet, SourceStratum::kPlane, a));
 }
 
 void test_incremental_triangulation_owns_closed_adjacency() {
@@ -2337,6 +2342,118 @@ void test_recover_plc_removes_a_closed_cavity() {
   }
 }
 
+void test_grouped_material_interface_with_cavity_recovers_missing_planar_surface() {
+  // Unchanged native_family_matrix._cavity_plc: two unit boxes, a shared
+  // material interface and an exact-dyadic half-unit cavity in the right box.
+  // The interface is planar but is not initially a mesh surface. Grouping
+  // polygons must not bypass the facet recovery needed to construct it.
+  const std::array<double, 60> points{
+      0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0,
+      0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1,
+      2, 0, 0, 2, 1, 0, 2, 0, 1, 2, 1, 1,
+      1.25, .25, .25, 1.75, .25, .25, 1.25, .75, .25, 1.75, .75, .25,
+      1.25, .25, .75, 1.75, .25, .75, 1.25, .75, .75, 1.75, .75, .75};
+  const std::array<int32_t, 68> vertices{
+      0, 2, 3, 1, 1, 3, 9, 8,
+      4, 5, 7, 6, 5, 10, 11, 7,
+      0, 1, 5, 4, 1, 8, 10, 5,
+      2, 6, 7, 3, 3, 7, 11, 9,
+      0, 4, 6, 2, 8, 9, 11, 10,
+      1, 3, 7, 5,
+      12, 14, 15, 13, 16, 17, 19, 18, 12, 13, 17, 16,
+      14, 18, 19, 15, 12, 16, 18, 14, 13, 15, 19, 17};
+  const std::array<int32_t, 17> facets{0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2,
+                                       3, 3, 3, 3, 3, 3};
+  const std::array<int32_t, 8> regions{-1, 0, -1, 1, 1, 0, 1, -1};
+  std::array<int64_t, 18> offsets{};
+  for (std::size_t row = 0; row < offsets.size(); ++row) offsets[row] = 4 * row;
+  PlcInput input;
+  input.point_count = 20;
+  input.points = points.data();
+  input.polygon_count = 17;
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = vertices.data();
+  input.polygon_facets = facets.data();
+  input.facet_count = 4;
+  input.facet_regions = regions.data();
+  input.policy = BoundaryPolicy::kConforming;
+  PlcRecovery result;
+  const int32_t status = recover_plc(input, result);
+  if (status != PHX_MC_OK) {
+    std::fprintf(stderr, "grouped material cavity recovery: status=%d reason=%d first=(%d,%lld)\n",
+                 status, result.failure.reason, result.failure.first_kind,
+                 static_cast<long long>(result.failure.first));
+  }
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  PHX_CHECK(!result.tets.empty());
+  std::array<Expansion, 2> six_volumes;
+  std::map<std::array<int32_t, 3>, int> face_masks;
+  for (std::size_t cell = 0; cell < result.tet_regions.size(); ++cell) {
+    const int32_t region = result.tet_regions[cell];
+    PHX_CHECK(region == 0 || region == 1);
+    if (region != 0 && region != 1) return;
+    const int32_t* tet = result.tets.data() + 4 * cell;
+    const Expansion volume = orient3d_exact(
+        result.points.data() + 3 * tet[0], result.points.data() + 3 * tet[1],
+        result.points.data() + 3 * tet[2], result.points.data() + 3 * tet[3]);
+    PHX_CHECK(volume.sign() > 0);
+    six_volumes[region] = six_volumes[region] + volume;
+    for (int slot = 0; slot < 4; ++slot) {
+      int32_t face[3];
+      oriented_facet(tet, slot, face);
+      face_masks[sorted_face(face)] |= 1 << region;
+    }
+  }
+  PHX_CHECK((six_volumes[0] - Expansion(6.0)).sign() == 0);
+  PHX_CHECK((six_volumes[1] - Expansion(5.25)).sign() == 0);
+  std::array<Expansion, 17> twice_areas;
+  for (std::size_t row = 0; row < result.face_sources.size(); ++row) {
+    const int32_t* face = result.faces.data() + 3 * row;
+    const int32_t facet = result.face_sources[row];
+    PHX_CHECK(facet >= 0 && facet < 4);
+    PHX_CHECK(face_masks[sorted_face(face)] == (facet == 0 ? 1 : facet == 2 ? 3 : 2));
+    int matches = 0;
+    for (std::size_t polygon = 0; polygon < facets.size(); ++polygon) {
+      if (facets[polygon] != facet) continue;
+      const double* first = points.data() + 3 * vertices[4 * polygon];
+      const double* second = points.data() + 3 * vertices[4 * polygon + 1];
+      const double* third = points.data() + 3 * vertices[4 * polygon + 2];
+      int axis = 0;
+      while (first[axis] != second[axis] || first[axis] != third[axis]) ++axis;
+      bool contained = true;
+      for (int corner = 0; corner < 3; ++corner) {
+        const double* point = result.points.data() + 3 * face[corner];
+        contained = contained && point[axis] == first[axis];
+        for (int direction = 0; direction < 3; ++direction) {
+          double lower = first[direction], upper = first[direction];
+          for (int vertex = 1; vertex < 4; ++vertex) {
+            const double coordinate = points[3 * vertices[4 * polygon + vertex] + direction];
+            lower = std::min(lower, coordinate);
+            upper = std::max(upper, coordinate);
+          }
+          contained = contained && lower <= point[direction] && point[direction] <= upper;
+        }
+      }
+      if (!contained) continue;
+      ++matches;
+      const int x = (axis + 1) % 3, y = (axis + 2) % 3;
+      Expansion area;
+      for (int corner = 0; corner < 3; ++corner) {
+        const double* a = result.points.data() + 3 * face[corner];
+        const double* b = result.points.data() + 3 * face[(corner + 1) % 3];
+        area = area + Expansion::product(a[x], b[y]) - Expansion::product(a[y], b[x]);
+      }
+      PHX_CHECK(area.sign() != 0);
+      twice_areas[polygon] = twice_areas[polygon] + (area.sign() < 0 ? -area : area);
+    }
+    PHX_CHECK(matches == 1);
+  }
+  for (std::size_t polygon = 0; polygon < facets.size(); ++polygon) {
+    PHX_CHECK((twice_areas[polygon] - Expansion(polygon < 11 ? 2.0 : 0.5)).sign() == 0);
+  }
+}
+
 // Point 1455 of a 1552-point CAD PLC under FIXED: its ear-clipped wedge has
 // no constrained Delaunay fill and no cavity vertex sees every wall, but a
 // Steiner-free fill exists; the exhaustive search must find it. Vertices are
@@ -2733,6 +2850,7 @@ int main() {
   test_recover_plc_handles_sliver_geometry_and_explicit_fixed_edge();
   test_recover_plc_nonconvex_prism();
   test_recover_plc_removes_a_closed_cavity();
+  test_grouped_material_interface_with_cavity_recovers_missing_planar_surface();
   test_recover_plc_corner_scaffold_tracks_inserted_points_and_region_interface();
   test_offset_tie_envelope_recovers_under_both_policies();
   test_suppression_wedge_without_delaunay_fill_is_searched();

@@ -276,6 +276,10 @@ bool source_parameters_valid(SourceStratum stratum, const double* parameters) {
     case SourceStratum::kFacet:
       return parameter_admissible(parameters[0]) && parameter_admissible(parameters[1]) &&
              (Expansion::sum(parameters[0], parameters[1]) - Expansion(1.0)).sign() <= 0;
+    // Declared planes have unrestricted chart coordinates and are realized
+    // through TetMesh::plane_carrier, not this bounded simplex interface.
+    case SourceStratum::kPlane:
+      return false;
     case SourceStratum::kNone:
       return false;
   }
@@ -358,6 +362,10 @@ bool on_source_entity(const double* const* corners, SourceStratum stratum,
       int side = 0;
       return locate_on_triangle(position, triangle, side) != kFeatureNone;
     }
+    // A declared plane cannot be established from simplex corners: its
+    // authority and admission tolerance belong to the owning TetMesh.
+    case SourceStratum::kPlane:
+      return false;
     case SourceStratum::kNone:
       return false;
   }
