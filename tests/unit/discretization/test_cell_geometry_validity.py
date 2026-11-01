@@ -242,6 +242,15 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     assert stale_identity.certificate_id == certificate.certificate_id
     with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
         D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=stale_identity)
+    wrong_dtype = eqx.tree_at(
+        lambda value: value.depth,
+        certificate,
+        np.asarray(certificate.depth, dtype=np.int16),
+    )
+    assert wrong_dtype.certificate_id == certificate.certificate_id
+    np.testing.assert_array_equal(wrong_dtype.depth, certificate.depth)
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=wrong_dtype)
 
     _, other_geometry = _p3_triangle(0.25)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):

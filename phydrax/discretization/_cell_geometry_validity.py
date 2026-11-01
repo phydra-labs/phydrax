@@ -723,7 +723,9 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             or fresh.invalid_count != self.invalid_count
             or fresh.unresolved_count != self.unresolved_count
             or any(
-                not np.array_equal(
+                np.asarray(getattr(fresh, name)).dtype
+                != np.asarray(getattr(self, name)).dtype
+                or not np.array_equal(
                     np.asarray(getattr(fresh, name)), np.asarray(getattr(self, name))
                 )
                 for name in (
