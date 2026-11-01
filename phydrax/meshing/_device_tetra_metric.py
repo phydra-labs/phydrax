@@ -459,7 +459,7 @@ def _execute_device_tetra_metric_route(
                 state, kind, name, counters, PredicateMode.EXACT
             )
         if prepared.policy.relocation:
-            applied += _relocation_phase(state, counters, PredicateMode.EXACT)
+            applied += _relocation_phase(state, counters)
         total_applied += applied
         if applied == 0:
             status = TetraMetricStatus.STALLED
