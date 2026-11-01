@@ -73,19 +73,17 @@ def _entity_vertex_rows(mesh: CellMesh, /) -> tuple[tuple[np.ndarray, ...], ...]
         np.asarray((index,), dtype=np.int64) for index in range(mesh.coordinates.shape[0])
     )
     if isinstance(connectivity, IntervalConnectivity):
-        cells = tuple(
-            np.asarray(row, dtype=np.int64) for row in connectivity.cell_vertices
-        )
+        cells = tuple(np.asarray(connectivity.cell_vertices, dtype=np.int64))
         return vertices, cells
     if isinstance(connectivity, PolygonalConnectivity):
-        edges = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.edges)
+        edges = tuple(np.asarray(connectivity.edges, dtype=np.int64))
         values = np.asarray(connectivity.cell_vertices, dtype=np.int64)
         valid = np.asarray(connectivity.cell_vertex_valid, dtype=np.bool_)
         cells = tuple(values[row, :][valid[row, :]] for row in range(values.shape[0]))
         return vertices, edges, cells
     if isinstance(connectivity, TetrahedralConnectivity):
-        edges = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.edges)
-        faces = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.faces)
+        edges = tuple(np.asarray(connectivity.edges, dtype=np.int64))
+        faces = tuple(np.asarray(connectivity.faces, dtype=np.int64))
         cells = tuple(
             np.asarray(row, dtype=np.int64)
             for block in mesh.blocks
@@ -93,8 +91,8 @@ def _entity_vertex_rows(mesh: CellMesh, /) -> tuple[tuple[np.ndarray, ...], ...]
         )
         return vertices, edges, faces, cells
     if isinstance(connectivity, HexahedralConnectivity):
-        edges = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.edges)
-        faces = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.faces)
+        edges = tuple(np.asarray(connectivity.edges, dtype=np.int64))
+        faces = tuple(np.asarray(connectivity.faces, dtype=np.int64))
         cells = tuple(
             np.asarray(row, dtype=np.int64)
             for block in mesh.blocks
@@ -148,33 +146,33 @@ def _orientation_orders(
     return tuple((order, sign) for order, sign in result.items())
 
 
-def _interleaved_key(
+def _interleaved_keys(
     identifiers: np.ndarray,
     exponents: np.ndarray,
     fixed: np.ndarray,
     order: tuple[int, ...],
     orders: np.ndarray,
     /,
-) -> tuple[tuple[int, ...], np.ndarray]:
-    ranked_ids = identifiers[np.asarray(order, dtype=np.int64)]
-    ranked_exp = exponents[np.asarray(order, dtype=np.int64)].copy()
-    ranked_fixed = fixed[np.asarray(order, dtype=np.int64)]
-    ranked_exp[ranked_fixed] = 0
+) -> tuple[np.ndarray, np.ndarray]:
+    """Interleaved ``(id, relative winding)`` keys of all rows in one corner order."""
+    ranking = np.asarray(order, dtype=np.int64)
+    ranked_ids = identifiers[:, ranking]
+    ranked_fixed = fixed[:, ranking]
+    ranked_exp = np.where(ranked_fixed, 0, exponents[:, ranking])
     # A deck shift moves only vertices outside the generator's fixed set, so
     # the anchor must be a moving vertex and fixed windings stay zero.
-    movable = np.flatnonzero(~np.any(ranked_fixed, axis=1))
-    anchor = (
-        ranked_exp[movable[0]].copy()
-        if movable.size
-        else np.zeros((ranked_exp.shape[1],), dtype=ranked_exp.dtype)
+    movable = ~np.any(ranked_fixed, axis=2)
+    first = np.argmax(movable, axis=1)
+    rows = np.arange(identifiers.shape[0])
+    anchors = np.where(
+        movable[rows, first][:, None],
+        ranked_exp[rows, first],
+        np.zeros((), dtype=ranked_exp.dtype),
     )
-    relative = reduce_periodic_exponents(ranked_exp - anchor, orders)
+    relative = reduce_periodic_exponents(ranked_exp - anchors[:, None, :], orders)
     relative[ranked_fixed] = 0
-    key = tuple(
-        int(value)
-        for value in np.concatenate((ranked_ids[:, None], relative), axis=1).reshape(-1)
-    )
-    return key, anchor
+    keys = np.concatenate((ranked_ids[:, :, None], relative), axis=2)
+    return keys.reshape((identifiers.shape[0], -1)).astype(np.int64), anchors
 
 
 def _canonical_forms(
@@ -186,27 +184,37 @@ def _canonical_forms(
     *,
     simplex: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Lexicographically least key over the orientation orders, row by row.
+
+    The first least variant supplies the sign and anchor; every variant with
+    the least key must carry the same sign.
+    """
     count, arity = identifiers.shape
+    variants = _orientation_orders(arity, simplex=simplex)
+    rows = np.arange(count)
     keys = np.empty((count, arity * (orders.size + 1)), dtype=np.int64)
     signs = np.empty((count,), dtype=np.int32)
     anchors = np.empty((count, orders.size), dtype=np.int64)
-    variants = _orientation_orders(arity, simplex=simplex)
-    for row in range(count):
-        candidates = []
-        for permutation, sign in variants:
-            key, anchor = _interleaved_key(
-                identifiers[row], shifts[row], fixed[row], permutation, orders
-            )
-            candidates.append((key, sign, anchor))
-        key, sign, anchor = min(candidates, key=lambda item: item[0])
-        same = tuple(item for item in candidates if item[0] == key)
-        if len({item[1] for item in same}) != 1:
+    candidates = []
+    for index, (permutation, sign) in enumerate(variants):
+        key, anchor = _interleaved_keys(identifiers, shifts, fixed, permutation, orders)
+        candidates.append((key, sign))
+        if index == 0:
+            keys[:] = key
+            signs[:] = sign
+            anchors[:] = anchor
+            continue
+        differs = key != keys
+        column = np.argmax(differs, axis=1)
+        smaller = differs[rows, column] & (key[rows, column] < keys[rows, column])
+        keys[smaller] = key[smaller]
+        signs[smaller] = sign
+        anchors[smaller] = anchor[smaller]
+    for key, sign in candidates:
+        if np.any(np.all(key == keys, axis=1) & (signs != sign)):
             raise ValueError(
                 "Periodic entity has an orientation-reversing stabilizer in the quotient."
             )
-        keys[row] = key
-        signs[row] = sign
-        anchors[row] = anchor
     return keys, signs, anchors
 
 
@@ -964,7 +972,8 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         self.lifted_topology_id = lifted.topology_id
         self.allocator_next_ids = allocator
         self.periodic_topology_id = self._content_id()
-        self.validate_restored()
+        # The identity was just computed from these tables; check their structure.
+        self._validate_tables()
 
     def _content_id(self) -> str:
         return canonical_fingerprint(
@@ -999,6 +1008,14 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         )
 
     def validate_restored(self, /) -> None:
+        """Re-validate a stored descriptor: its structural tables and identity."""
+        self._validate_tables()
+        if self._content_id() != self.periodic_topology_id:
+            raise ValueError(
+                "Stored periodic topology identity does not authenticate its structural tables."
+            )
+
+    def _validate_tables(self, /) -> None:
         if (self.coordinate_source_map_id is None) != (
             self.coordinate_shadow_fingerprint is None
         ) or (
@@ -1076,18 +1093,17 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 reps[quotient_left:quotient_right] >= right - left
             ):
                 raise ValueError("Quotient representatives escape their lifted degree.")
-            lifted_members = orbit[left:right]
-            for quotient_row, lifted_row in enumerate(reps[quotient_left:quotient_right]):
-                absolute_quotient = quotient_left + quotient_row
-                absolute_lifted = left + int(lifted_row)
-                if lifted_members[int(lifted_row)] != absolute_quotient:
-                    raise ValueError(
-                        "Stored quotient representative does not belong to its orbit."
-                    )
-                if np.any(orbit_shifts[absolute_lifted] != 0):
-                    raise ValueError(
-                        "Stored quotient representative must have zero relative winding."
-                    )
+            local = reps[quotient_left:quotient_right]
+            if np.any(
+                orbit[left:right][local] != np.arange(quotient_left, quotient_right)
+            ):
+                raise ValueError(
+                    "Stored quotient representative does not belong to its orbit."
+                )
+            if np.any(orbit_shifts[left + local] != 0):
+                raise ValueError(
+                    "Stored quotient representative must have zero relative winding."
+                )
         keys = np.asarray(self.entity_key_offsets, dtype=np.int64)
         values = np.asarray(self.entity_key_values, dtype=np.int64)
         corners = np.asarray(self.corner_shifts, dtype=np.int64)
@@ -1100,10 +1116,6 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             or corners.shape[1] != rank
         ):
             raise ValueError("Stored periodic corner/key tables are malformed.")
-        if self._content_id() != self.periodic_topology_id:
-            raise ValueError(
-                "Stored periodic topology identity does not authenticate its structural tables."
-            )
 
     @classmethod
     @checked
@@ -1226,7 +1238,6 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         blocks: tuple[CellBlock | PolyhedralBlock, ...],
         /,
     ) -> None:
-        self.validate_restored()
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         bound_topology_id = canonical_fingerprint(
@@ -1282,7 +1293,6 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             )
 
     def require_coordinates(self, coordinates: ArrayLike, /) -> None:
-        self.validate_restored()
         if self.coordinate_source_map_id is None:
             _validate_vertex_orbits(
                 coordinates,

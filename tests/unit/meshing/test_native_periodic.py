@@ -244,7 +244,7 @@ def test_native_periodic_route_adapts_skew_winding_orbits_to_size(
         failure,
         mesh,
         outcome,
-        ((0.6631, "collapse=hysteresis+hysteresis;flip=invalid"),),
+        ((0.6532, "collapse=hysteresis+hysteresis;flip=invalid"),),
     )
     vertex_map = periodic_entity_orbit_map(target, 0)
     assert vertex_map.quotient_entity_ids.size > source_orbits.point_ids.size
