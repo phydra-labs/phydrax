@@ -15,7 +15,7 @@ definitions and uses as a shared graph without expanding occurrences.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import atan2, isfinite, pi
 from pathlib import Path
@@ -408,11 +408,16 @@ def _rational_affine_pcurve(
 
 @dataclass(frozen=True, slots=True)
 class CadCoverage:
-    """Admitted entity counts and exact or source-supplied p-curve coverage."""
+    """Admitted entity counts and the p-curve origin of every model coedge.
+
+    ``pcurves_from_file + pcurves_recovered + pcurves_absent`` is the number of
+    model coedges; see `PCurveOrigin` for the categories.
+    """
 
     entity_counts: tuple[tuple[str, int], ...]
-    pcurves_honored: int
-    pcurves_exact: int
+    pcurves_from_file: int
+    pcurves_recovered: int
+    pcurves_absent: int
     degenerate_edges: int
     natural_boundaries: int
 
@@ -439,8 +444,9 @@ class CadCoverage:
                     f"CadCoverage.entity_counts must contain nonnegative integer counts; got {count!r}"
                 )
         for name, value in (
-            ("pcurves_honored", self.pcurves_honored),
-            ("pcurves_exact", self.pcurves_exact),
+            ("pcurves_from_file", self.pcurves_from_file),
+            ("pcurves_recovered", self.pcurves_recovered),
+            ("pcurves_absent", self.pcurves_absent),
             ("degenerate_edges", self.degenerate_edges),
             ("natural_boundaries", self.natural_boundaries),
         ):
@@ -1001,8 +1007,9 @@ class CadImportResult:
                         "entity_counts": [
                             list(pair) for pair in self.coverage.entity_counts
                         ],
-                        "pcurves_honored": self.coverage.pcurves_honored,
-                        "pcurves_exact": self.coverage.pcurves_exact,
+                        "pcurves_from_file": self.coverage.pcurves_from_file,
+                        "pcurves_recovered": self.coverage.pcurves_recovered,
+                        "pcurves_absent": self.coverage.pcurves_absent,
                         "degenerate_edges": self.coverage.degenerate_edges,
                         "natural_boundaries": self.coverage.natural_boundaries,
                     },
@@ -1969,14 +1976,27 @@ def _validate_curve_parameter_range(
 # ------------------------------------------------------------------- staging
 
 
+PCurveOrigin: TypeAlias = Literal["file", "recovered", "absent"]
+"""Where one coedge's p-curve comes from.
+
+``"file"``: the source file supplied it (possibly split at exact source
+subdivisions or moved by whole native periods). ``"recovered"``: the file
+supplied none and it was recovered exactly from algebraic source maps.
+``"absent"``: the source has no p-curve for this use at all; the use and its
+p-curve are constructed by the importer (natural boundaries, chart seams and
+pole edges).
+"""
+
+
 @dataclass(slots=True)
 class StagedCoedge:
-    """One oriented edge use with an optional file p-curve (on the edge parameter)."""
+    """One oriented edge use with an optional p-curve (on the edge parameter)."""
 
     edge: int
     sense: int
     pcurve: AbstractCurve | None
     label: str
+    origin: PCurveOrigin = field(kw_only=True)
 
 
 @dataclass(slots=True)
@@ -2028,8 +2048,8 @@ class CadStage:
     solids: list[list[int]] = field(default_factory=list)
     assembly_graph: BRepAssemblyGraph | None = None
     provenance: list[tuple[str, str]] = field(default_factory=list)
-    pcurves_honored: int = 0
-    pcurves_exact: int = 0
+    # Per published model coedge, the origin of its p-curve (set by `publish`).
+    pcurve_origins: tuple[PCurveOrigin, ...] = ()
     degenerate_edges: int = 0
     natural_boundaries: int = 0
     native_phases: dict[
@@ -2402,10 +2422,10 @@ class CadStage:
             top_curve = PeriodicPCurve(ring_source, patch, (0, 1))
         self.natural_boundaries += 1
         return [
-            StagedCoedge(bottom, 1, bottom_curve, label),
-            StagedCoedge(seam, 1, right, label),
-            StagedCoedge(top, -1, top_curve, label),
-            StagedCoedge(seam, -1, left, label),
+            StagedCoedge(bottom, 1, bottom_curve, label, origin="absent"),
+            StagedCoedge(seam, 1, right, label, origin="absent"),
+            StagedCoedge(top, -1, top_curve, label, origin="absent"),
+            StagedCoedge(seam, -1, left, label, origin="absent"),
         ]
 
     # ------------------------------------------------------------ resolution
@@ -2515,13 +2535,18 @@ class CadStage:
             )
         return pcurve
 
-    def _coedge_pcurve(self, face: StagedFace, coedge: StagedCoedge, /) -> AbstractCurve:
+    def _coedge_pcurve(
+        self, face: StagedFace, coedge: StagedCoedge, /
+    ) -> tuple[StagedCoedge, AbstractCurve]:
+        """The coedge's own p-curve, or one recovered exactly from source maps.
+
+        A recovered p-curve returns the use tagged ``origin="recovered"``.
+        """
         edge = coedge.edge
         curve_index = self.edge_curves[edge]
         curve = None if curve_index == -1 else self.curves[curve_index]
         if coedge.pcurve is not None:
-            self.pcurves_honored += 1
-            return coedge.pcurve
+            return coedge, coedge.pcurve
         if curve is None:
             raise refuse(
                 "inconsistent-geometry",
@@ -2535,8 +2560,7 @@ class CadStage:
             raise refuse(
                 "inconsistent-geometry", coedge.label, str(error), (face.label,)
             ) from error
-        self.pcurves_exact += 1
-        return recovered
+        return replace(coedge, origin="recovered"), recovered
 
     def _ends(self, coedge: StagedCoedge, pcurve: AbstractCurve, /) -> np.ndarray:
         first, last = self.edge_ranges[coedge.edge]
@@ -2559,8 +2583,8 @@ class CadStage:
         previous_end: np.ndarray | None = None
         previous_source: tuple[StagedCoedge, AbstractCurve] | None = None
         traces: dict[int, AbstractCurve] = {}
-        for coedge in loop:
-            pcurve = self._coedge_pcurve(face, coedge)
+        for staged in loop:
+            coedge, pcurve = self._coedge_pcurve(face, staged)
             pcurve = self._canonical_native_sheet(
                 pcurve, face.patch, self.edge_ranges[coedge.edge]
             )
@@ -2910,7 +2934,7 @@ class CadStage:
         edge = self.degenerate(vertex, 0.0, _TWO_PI if native_period else 1.0)
         if native_period:
             self.native_phase(edge, face.patch, 0 if moving == 0 else 1)
-        return StagedCoedge(edge, sense, None, neighbor.label), pcurve
+        return StagedCoedge(edge, sense, None, neighbor.label, origin="absent"), pcurve
 
     def _canonical_degenerate_coedges(
         self,
@@ -2951,7 +2975,7 @@ class CadStage:
                 (
                     position,
                     edge,
-                    StagedCoedge(edge, sense, None, coedge.label),
+                    replace(coedge, sense=sense, pcurve=None),
                     canonical,
                     moving,
                     native_period,
@@ -3021,25 +3045,27 @@ class CadStage:
                         return Fraction(quarter if quarter < 3 else -1, 4), sense
         return None
 
-    def _ring_pcurve(self, face: StagedFace, coedge: StagedCoedge, /) -> AbstractCurve:
+    def _ring_pcurve(
+        self, face: StagedFace, coedge: StagedCoedge, /
+    ) -> tuple[StagedCoedge, AbstractCurve]:
         curve = self.curves[self.edge_curves[coedge.edge]]
-        pcurve = self._coedge_pcurve(face, coedge)
+        resolved, pcurve = self._coedge_pcurve(face, coedge)
         frame = self._ring_frame_phase(face.patch, curve)
         if (
             coedge.pcurve is not None
             or frame is None
             or not isinstance(pcurve, LineCurve)
         ):
-            return pcurve
+            return resolved, pcurve
         phase, sense = frame
         if not phase:
-            return pcurve
+            return resolved, pcurve
         # A rational affine map of a native period keeps its irrational atom.
         # The source frame, not the rounded atan2 recovery, owns this phase.
         source = LineCurve(
             (0.0, float(pcurve.origin[1])), (float(Fraction(sense) / phase), 0.0)
         )
-        return _rational_affine_pcurve(
+        return resolved, _rational_affine_pcurve(
             PeriodicPCurve(source, face.patch, (1, 0)),
             ((phase, Fraction()), (Fraction(), Fraction(1))),
             (Fraction(), Fraction()),
@@ -3215,11 +3241,9 @@ class CadStage:
                     if children is None:
                         refined.append(coedge)
                         continue
-                    pcurve = self._ring_pcurve(face, coedge)
+                    resolved, pcurve = self._ring_pcurve(face, coedge)
                     for child in children if coedge.sense > 0 else reversed(children):
-                        refined.append(
-                            StagedCoedge(child, coedge.sense, pcurve, coedge.label)
-                        )
+                        refined.append(replace(resolved, edge=child, pcurve=pcurve))
                 loops.append(refined)
             face.loops = loops
         for face, phases in plans:
@@ -3272,6 +3296,7 @@ class CadStage:
                         sense,
                         PeriodicPCurve(seam_source, face.patch, (1, 0)),
                         label,
+                        origin="absent",
                     ),
                     *rings[1],
                     StagedCoedge(
@@ -3279,6 +3304,7 @@ class CadStage:
                         -sense,
                         PeriodicPCurve(seam_source, face.patch, (0, 0)),
                         label,
+                        origin="absent",
                     ),
                 ]
             ]
@@ -3308,7 +3334,9 @@ class CadStage:
                 or self.edge_vertices[edge][0] != self.edge_vertices[edge][1]
             ):
                 return None
-        curves = [self._coedge_pcurve(face, ring) for ring in rings]
+        tagged = [self._coedge_pcurve(face, ring) for ring in rings]
+        rings = [ring for ring, _ in tagged]
+        curves = [curve for _, curve in tagged]
         coefficients = [
             _affine_curve_coefficients(explicit_carrier(curve), _ZERO_UV)
             for curve in curves
@@ -3373,14 +3401,14 @@ class CadStage:
             return [
                 resolved[0],
                 (
-                    StagedCoedge(seam, sense, None, label),
+                    StagedCoedge(seam, sense, None, label, origin="absent"),
                     PeriodicPCurve(
                         seam_source, face.patch, (first_turns[0], first_turns[1])
                     ),
                 ),
                 resolved[1],
                 (
-                    StagedCoedge(seam, -sense, None, label),
+                    StagedCoedge(seam, -sense, None, label, origin="absent"),
                     PeriodicPCurve(
                         seam_source, face.patch, (second_turns[0], second_turns[1])
                     ),
@@ -3404,8 +3432,7 @@ class CadStage:
             for index, area in enumerate(areas):
                 if area * (1.0 if index == 0 else -1.0) < 0.0:
                     loops[index] = [
-                        (StagedCoedge(c.edge, -c.sense, c.pcurve, c.label), p)
-                        for c, p in reversed(loops[index])
+                        (replace(c, sense=-c.sense), p) for c, p in reversed(loops[index])
                     ]
                     areas[index] = -area
         if face.outer_known:
@@ -3967,6 +3994,7 @@ class CadStage:
         coedge_senses: list[int] = []
         face_loops: list[tuple[tuple[int, ...], ...]] = []
         coedge_labels: list[str] = []
+        origins: list[PCurveOrigin] = []
         for loops, _ in resolved:
             indexed = []
             for loop in loops:
@@ -3976,9 +4004,11 @@ class CadStage:
                     coedge_edges.append(coedge.edge)
                     coedge_senses.append(coedge.sense)
                     coedge_labels.append(coedge.label)
+                    origins.append(coedge.origin)
                     ids.append(len(pcurves) - 1)
                 indexed.append(tuple(ids))
             face_loops.append(tuple(indexed))
+        self.pcurve_origins = tuple(origins)
         self._bind_native_phase_surfaces(resolved)
         edge_roots, coedge_roots = self._native_phase_roots(
             pcurves, coedge_edges, face_loops
@@ -4089,10 +4119,12 @@ class CadStage:
             ) from error
 
     def coverage(self, entity_counts: dict[str, int], /) -> CadCoverage:
+        """Entity counts and the p-curve origin of every published model coedge."""
         return CadCoverage(
             tuple(sorted(entity_counts.items())),
-            self.pcurves_honored,
-            self.pcurves_exact,
+            self.pcurve_origins.count("file"),
+            self.pcurve_origins.count("recovered"),
+            self.pcurve_origins.count("absent"),
             self.degenerate_edges,
             self.natural_boundaries,
         )
