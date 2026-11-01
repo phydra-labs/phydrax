@@ -1228,10 +1228,6 @@ def _tensor_bernstein_derivative(
 # smallest subnormal covers gradual underflow.
 _INTERVAL_ROUNDING = 4.0 * float(np.finfo(np.float64).eps)
 _INTERVAL_UNDERFLOW = float(np.finfo(np.float64).smallest_subnormal)
-# Restricted group bounds of one surface span per (group, exact relative box).
-type SpanRestrictions = dict[
-    tuple[str, tuple[ExactScalar, ...]], tuple[tuple[Fraction, Fraction], ...]
-]
 
 
 def _binary64_down(value: Fraction, /) -> float:
@@ -1572,29 +1568,16 @@ class RationalBSplineSurfaceSpan:
         self,
         name: str,
         relative_bounds: tuple[ExactScalar, ExactScalar, ExactScalar, ExactScalar],
-        restrictions: SpanRestrictions | None,
         /,
     ) -> tuple[tuple[Fraction, Fraction], ...]:
-        """Outward-rounded bounds of one prepared net group on a relative sub-box.
-
-        ``restrictions`` is the restriction memo a `PreparedSourceSpans` owns
-        for this span; without it the restriction is computed for this query.
-        """
-        key = (name, relative_bounds)
-        if restrictions is not None:
-            restricted = restrictions.get(key)
-            if restricted is not None:
-                return restricted
+        """Outward-rounded bounds of one prepared net group on a relative sub-box."""
         net = self._interval_nets.get(name)
         if net is None:
             net = _interval_tensor_stack(self._exact_group(name))
             self._interval_nets[name] = net
-        restricted = _interval_component_bounds(
+        return _interval_component_bounds(
             *_interval_tensor_restrict(net, *relative_bounds)
         )
-        if restrictions is not None:
-            restrictions[key] = restricted
-        return restricted
 
     def _derivative_data(
         self,
@@ -1602,7 +1585,6 @@ class RationalBSplineSurfaceSpan:
         /,
         *,
         include_hessian: bool,
-        restrictions: SpanRestrictions | None,
     ) -> _RationalSurfaceDerivativeData:
         if len(parameter_bounds) != 2 or any(
             len(axis_bounds) != 2 for axis_bounds in parameter_bounds
@@ -1632,7 +1614,7 @@ class RationalBSplineSurfaceSpan:
             relative_lower_v,
             relative_upper_v,
         )
-        homogeneous_bounds = self._bounds("homogeneous", relative_bounds, restrictions)
+        homogeneous_bounds = self._bounds("homogeneous", relative_bounds)
         # Every restricted weight is a convex combination of the span weights.
         denominator_bounds = (
             max(homogeneous_bounds[-1][0], self.positive_denominator_lower_bound),
@@ -1644,11 +1626,11 @@ class RationalBSplineSurfaceSpan:
         )
         du_bounds = tuple(
             _positive_quotient_bounds(bounds, denominator_squared_bounds)
-            for bounds in self._bounds("du", relative_bounds, restrictions)
+            for bounds in self._bounds("du", relative_bounds)
         )
         dv_bounds = tuple(
             _positive_quotient_bounds(bounds, denominator_squared_bounds)
-            for bounds in self._bounds("dv", relative_bounds, restrictions)
+            for bounds in self._bounds("dv", relative_bounds)
         )
         duu_bounds = None
         duv_bounds = None
@@ -1665,7 +1647,7 @@ class RationalBSplineSurfaceSpan:
             duu_bounds, duv_bounds, dvv_bounds = (
                 tuple(
                     _positive_quotient_bounds(bounds, denominator_cubed_bounds)
-                    for bounds in self._bounds(name, relative_bounds, restrictions)
+                    for bounds in self._bounds(name, relative_bounds)
                 )
                 for name in ("duu", "duv", "dvv")
             )
@@ -1685,12 +1667,8 @@ class RationalBSplineSurfaceSpan:
         self,
         parameter_bounds: Sequence[Sequence[ExactScalar | int | float]],
         /,
-        *,
-        restrictions: SpanRestrictions | None = None,
     ) -> RationalBSplineSurfaceDerivativeEnclosure:
-        data = self._derivative_data(
-            parameter_bounds, include_hessian=False, restrictions=restrictions
-        )
+        data = self._derivative_data(parameter_bounds, include_hessian=False)
         return RationalBSplineSurfaceDerivativeEnclosure(
             self.source_id,
             self.span_indices,
@@ -1705,12 +1683,8 @@ class RationalBSplineSurfaceSpan:
         self,
         parameter_bounds: Sequence[Sequence[ExactScalar | int | float]],
         /,
-        *,
-        restrictions: SpanRestrictions | None = None,
     ) -> RationalBSplineSurfaceHessianEnclosure:
-        data = self._derivative_data(
-            parameter_bounds, include_hessian=True, restrictions=restrictions
-        )
+        data = self._derivative_data(parameter_bounds, include_hessian=True)
         if data.duu_bounds is None or data.duv_bounds is None or data.dvv_bounds is None:
             raise RuntimeError(
                 "Exact Hessian bounds require prepared Hessian numerators."
@@ -1732,12 +1706,8 @@ class RationalBSplineSurfaceSpan:
         self,
         parameter_bounds: Sequence[Sequence[ExactScalar | int | float]],
         /,
-        *,
-        restrictions: SpanRestrictions | None = None,
     ) -> RationalBSplineSurfaceSpanEnclosure:
-        data = self._derivative_data(
-            parameter_bounds, include_hessian=False, restrictions=restrictions
-        )
+        data = self._derivative_data(parameter_bounds, include_hessian=False)
         value_bounds = tuple(
             _positive_quotient_bounds(bounds, data.denominator_bounds)
             for bounds in data.homogeneous_bounds[:-1]
@@ -1950,19 +1920,10 @@ class PreparedSourceSpans[SpanT: (RationalBSplineCurveSpan, RationalBSplineSurfa
     from. Carriers build this artifact on request without keeping it; a
     consumer that runs a long computation prepares it once per carrier, owns
     it for the computation's lifetime and passes it to every routine.
-    ``restrictions[row]`` memoizes the restricted bounds of ``spans[row]`` per
-    exact relative box: refinement and certification query the same cell
-    boxes, so each restriction runs once while the consumer holds the spans.
     """
 
     source_id: str
     spans: tuple[SpanT, ...]
-    restrictions: tuple[SpanRestrictions, ...] = field(
-        init=False, repr=False, compare=False
-    )
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "restrictions", tuple({} for _ in self.spans))
 
 
 def _matches_binary64_shadow(numeric: object, exact: ExactScalar, /) -> bool:
