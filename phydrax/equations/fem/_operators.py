@@ -53,20 +53,23 @@ class FiniteElementMetricData(StrictModule):
         gradients = jnp.asarray(coordinate_gradients)
         coordinates = jnp.asarray(cell_coordinates)
         weights = jnp.asarray(reference_weights)
+        # Shared charts tabulate (q, i); exact per-cell charts tabulate (cell, q, i).
+        cells = "c" if basis.ndim == 3 else ""
         if (
-            basis.ndim != 2
-            or gradients.ndim != 3
+            basis.ndim not in (2, 3)
+            or gradients.ndim != basis.ndim + 1
             or coordinates.ndim != 3
-            or gradients.shape[:2] != basis.shape
-            or coordinates.shape[1] != basis.shape[1]
-            or weights.shape != (basis.shape[0],)
+            or gradients.shape[: basis.ndim] != basis.shape
+            or coordinates.shape[1] != basis.shape[-1]
+            or (cells and basis.shape[0] != coordinates.shape[0])
+            or weights.shape != (basis.shape[-2],)
         ):
             raise ValueError("Coordinate basis, routes, and reference weights disagree.")
         dimension = gradients.shape[-1]
         if coordinates.shape[-1] != dimension or dimension < 1:
             raise ValueError("Cell metrics require nonempty square geometry.")
-        physical_points = ein.contract("qi,cid->cqd", basis, coordinates)
-        jacobian = ein.contract("qir,cid->cqdr", gradients, coordinates)
+        physical_points = ein.contract(f"{cells}qi,cid->cqd", basis, coordinates)
+        jacobian = ein.contract(f"{cells}qir,cid->cqdr", gradients, coordinates)
         inverse_jacobian, inverse_metric, measure, _, successful = (
             cell_jacobian_inverse_and_measure(jacobian)
         )

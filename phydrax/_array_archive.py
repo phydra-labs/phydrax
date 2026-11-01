@@ -117,8 +117,12 @@ def _admit_array_for_archive(
     /,
 ) -> int:
     dtype = array.dtype
-    if dtype.hasobject or dtype.metadata is not None:
-        raise TypeError(f"Archive array {name!r} has an unsupported dtype.")
+    if dtype.hasobject:
+        raise TypeError(f"Archive array {name!r} cannot have object dtype.")
+    if dtype.metadata is not None:
+        raise TypeError(
+            f"Archive array {name!r} dtype carries metadata the archive cannot record."
+        )
     if limits is None:
         if dtype.kind not in _CORE_ARRAY_DTYPE_KINDS:
             raise TypeError(f"Archive array {name!r} dtype is not in the core format.")
@@ -127,8 +131,10 @@ def _admit_array_for_archive(
             raise ValueError(f"Archive array {name!r} exceeds addressable metadata.")
     else:
         if (
-            ((dtype.fields is not None or dtype.subdtype is not None)
-             and not limits.allow_structured_dtypes)
+            (
+                (dtype.fields is not None or dtype.subdtype is not None)
+                and not limits.allow_structured_dtypes
+            )
             or dtype.kind not in limits.allowed_dtype_kinds
             or dtype.itemsize > limits.max_dtype_itemsize
         ):
@@ -144,7 +150,11 @@ def _admit_array_for_archive(
             raise ValueError(f"Archive array {name!r} exceeds the axis-length limit.")
         if extent and elements > maximum_addressable // extent:
             raise ValueError(f"Archive array {name!r} exceeds addressable elements.")
-        if limits is not None and extent and elements > limits.max_array_elements // extent:
+        if (
+            limits is not None
+            and extent
+            and elements > limits.max_array_elements // extent
+        ):
             raise ValueError(f"Archive array {name!r} exceeds the element limit.")
         elements *= extent
     if limits is not None and elements > limits.max_array_elements:
@@ -271,7 +281,10 @@ def _prepare_arrays(
             raise TypeError("Archive array names must be non-empty strings.")
         source = np.asarray(arrays[name])
         elements = _admit_array_for_archive(source, policy, name)
-        if policy is not None and total_elements > policy.max_total_array_elements - elements:
+        if (
+            policy is not None
+            and total_elements > policy.max_total_array_elements - elements
+        ):
             raise ValueError("Archive arrays exceed the aggregate element limit.")
         total_elements += elements
         encoded_name = name.encode("utf-8")
@@ -283,7 +296,10 @@ def _prepare_arrays(
             raise ValueError(f"Archive array {name!r} exceeds the member byte limit.")
         if total_bytes > sys.maxsize - sink.byte_count:
             raise ValueError("Archive arrays exceed addressable total bytes.")
-        if policy is not None and total_bytes > policy.max_aggregate_bytes - sink.byte_count:
+        if (
+            policy is not None
+            and total_bytes > policy.max_aggregate_bytes - sink.byte_count
+        ):
             raise ValueError("Archive exceeds the aggregate member byte limit.")
         total_bytes += sink.byte_count
         entries[name] = _ArrayEvidence(
@@ -437,7 +453,9 @@ def _write_prepared_array_archive(
         manifest_payload.decode("utf-8"),
         None if policy is None else policy.max_manifest_nesting,
     )
-    if policy is not None and total_member_bytes > policy.max_aggregate_bytes - len(manifest_payload):
+    if policy is not None and total_member_bytes > policy.max_aggregate_bytes - len(
+        manifest_payload
+    ):
         raise ValueError("Archive exceeds the aggregate member byte limit.")
     if total_member_bytes > sys.maxsize - len(manifest_payload):
         raise ValueError("Archive exceeds addressable payload bytes.")
@@ -446,11 +464,7 @@ def _write_prepared_array_archive(
     # This is a writer extent check, not an application resource quota.
     publication_extent = total_member_bytes + len(manifest_payload) + 98
     for index in range(len(prepared.entries) + 1):
-        member_name = (
-            "manifest.json"
-            if index == 0
-            else f"arrays/{index - 1:06d}.npy"
-        )
+        member_name = "manifest.json" if index == 0 else f"arrays/{index - 1:06d}.npy"
         publication_extent += 140 + 2 * len(member_name.encode("utf-8"))
     if publication_extent > sys.maxsize:
         raise ValueError("Archive exceeds addressable container bytes.")
@@ -605,8 +619,12 @@ def _validate_zip_container(
         if entries_on_disk != entry_count:
             raise ArrayArchiveCorruptionError("Archive ZIP directory counts disagree.")
         directory_end_limit = end_offset
-    if any(value > sys.maxsize for value in (entry_count, directory_size, directory_offset)):
-        raise ArrayArchiveCorruptionError("Archive ZIP directory exceeds addressable extents.")
+    if any(
+        value > sys.maxsize for value in (entry_count, directory_size, directory_offset)
+    ):
+        raise ArrayArchiveCorruptionError(
+            "Archive ZIP directory exceeds addressable extents."
+        )
     if limits is not None:
         if entry_count > limits.max_members:
             raise ArrayArchiveCorruptionError("Archive exceeds the member count limit.")
@@ -853,8 +871,14 @@ def _read_npy_metadata(
                 "Archive array shape exceeds the axis-length limit."
             )
         if extent and elements > maximum_addressable // extent:
-            raise ArrayArchiveCorruptionError("Archive array exceeds addressable elements.")
-        if limits is not None and extent and elements > limits.max_array_elements // extent:
+            raise ArrayArchiveCorruptionError(
+                "Archive array exceeds addressable elements."
+            )
+        if (
+            limits is not None
+            and extent
+            and elements > limits.max_array_elements // extent
+        ):
             raise ArrayArchiveCorruptionError("Archive array exceeds the element limit.")
         elements *= extent
     if limits is not None and elements > limits.max_array_elements:
@@ -865,16 +889,17 @@ def _read_npy_metadata(
         raise ArrayArchiveCorruptionError(
             "Archive array dtype metadata is invalid."
         ) from error
+    if dtype.hasobject:
+        raise ArrayArchiveCorruptionError(
+            "Archive array object dtype is not admitted; loading it would unpickle."
+        )
     if limits is None:
         invalid_dtype = (
-            dtype.hasobject
-            or dtype.metadata is not None
-            or dtype.kind not in _CORE_ARRAY_DTYPE_KINDS
+            dtype.metadata is not None or dtype.kind not in _CORE_ARRAY_DTYPE_KINDS
         )
     else:
         invalid_dtype = (
-            dtype.hasobject
-            or (
+            (
                 (dtype.fields is not None or dtype.subdtype is not None)
                 and not limits.allow_structured_dtypes
             )
@@ -1168,7 +1193,9 @@ def _canonical_member_name(name: str, /) -> bool:
     if not filename.endswith(".npy"):
         return False
     digits = filename[:-4]
-    return len(digits) >= 6 and digits.isdigit() and (len(digits) == 6 or digits[0] != "0")
+    return (
+        len(digits) >= 6 and digits.isdigit() and (len(digits) == 6 or digits[0] != "0")
+    )
 
 
 def _unique_json_object(

@@ -20,7 +20,7 @@ from OCP.gp import gp_Pnt
 from OCP.TopoDS import TopoDS_Face
 
 import phydrax as phx
-from phydrax.geometry.brep._constructors import BRepTessellationPolicy
+from phydrax.geometry.brep import BRepTessellationPolicy
 from phydrax.geometry.surface import InterfaceSide
 from phydrax.interchange import import_occt_shape
 from phydrax.solver.coupling import InterfaceBinding, InterfaceEndpoint, InterfaceSource
