@@ -114,6 +114,9 @@ def test_pack_and_restore_reuse_one_validated_descriptor_tree(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(_structure, "_descriptor_tree", counted)
+    with pytest.raises(ValueError, match="prefix"):
+        _structure.model_recipe_array_inventory(recipe, prefix="")
+    assert calls == 0
     arrays = _structure.pack_model_array_tree(value, recipe, prefix="model/leaves")
     assert calls == 1
     restored = _structure.model_from_array_recipe(

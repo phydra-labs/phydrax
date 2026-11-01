@@ -2596,6 +2596,8 @@ def model_recipe_array_inventory(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> tuple[ModelRecipeArray, ...]:
     """Return the exact dynamic array inventory without allocating arrays."""
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError("Recipe array prefix must be non-empty.")
 
     path_leaves, _ = jax.tree_util.tree_flatten_with_path(
         _descriptor_tree(recipe, limits)
