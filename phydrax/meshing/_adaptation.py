@@ -17,7 +17,7 @@ import dataclasses
 import time
 from enum import StrEnum
 from fractions import Fraction
-from typing import Any, final, NamedTuple, TypeAlias
+from typing import Any, assert_never, final, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -98,6 +98,7 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryPointWitness,
     SurfaceEnvelopeDistanceWitness,
 )
+from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry._source_fidelity_certificate import SourceFidelityWitness
 from ..geometry._volume_material_deformation import (
     MaterialReferenceDeclaration,
@@ -128,7 +129,7 @@ from ._bisection import (
     execute_bisection,
 )
 from ._canonical import certify_cell_mesh
-from ._certification_inputs import MeshCertificationInputs
+from ._certification_inputs import MeshCertificationInputs, validate_fidelity_witnesses
 from ._device_metric import DeviceMetricEvidence
 from ._device_tetra_metric import DeviceTetraMetricEvidence
 from ._distribution import (
@@ -179,6 +180,7 @@ from ._result import CellMeshingResult, MeshingComplianceReport
 from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
 from ._surface_association_transfer import SurfaceAssociationTransfer
 from ._surface_metric import (
+    SurfaceMetricGeometryRelation,
     SurfaceMetricOutcome,
     SurfaceMetricStatus,
     target_surface_source,
@@ -3088,10 +3090,27 @@ def _restricted_target_geometry(
             block_parent_reference_maps=target_parent_maps,
             carrier_geometry=ancestry.carrier_geometry,
         )
+    # The target routes index the source coordinate rows, so an exact source bank
+    # (e.g. a curved map's exact edge midpoints) restricts row for row.
+    bank = source.geometry.exact_coordinate_bank
+    source_map = None
+    if bank is not None:
+        from ._curving import _exact_coordinate_bank_source_map
+
+        source_map = _exact_coordinate_bank_source_map(
+            target,
+            target.mesh_id,
+            target.numeric_version,
+            ("adaptation-restriction", str(source.geometry.source_map_id)),
+            bank,
+            np.asarray(source.geometry.coordinates, dtype=np.float64),
+        )
     geometry = CellGeometrySpec(
         target_elements,
         target_routes,
         source.geometry.coordinates,
+        source_map=source_map,
+        source_mesh=None if source_map is None else target,
         restriction_source=restriction,
     )
     return target, geometry, reference_maps, None
@@ -4582,15 +4601,21 @@ def _renew_transition_certification_inputs(
     mixed_coarsening_maps: tuple[MixedCoarseningMap, ...] = (),
     coverage_renewal: PolyhedralCoverageRenewal | None = None,
     fidelity_witness_override: SourceFidelityWitness | None = None,
-) -> MeshCertificationInputs | None:
-    """Rebuild target-bound acceptance inputs without reducing retained claims."""
+) -> tuple[MeshCertificationInputs, tuple[ValidatedSourceFidelityWitness, ...]] | None:
+    """Rebuild target-bound acceptance inputs without reducing retained claims.
+
+    Returns the inputs and the validations of their fidelity witnesses on
+    ``target``; each witness is validated once here and the validations are
+    handed on to target acceptance, which does not repeat them.
+    """
     report = source.certification
     if report is None:
         if coverage_renewal is not None:
             raise ValueError("Coverage renewal requires retained source certification.")
         return None
-    report.require_passed()
-    report.revalidate(source.mesh, source.geometry)
+    # The source acceptance is checked against its retained premises, not
+    # recomputed: only the target's claims are proved anew below.
+    report.require_current(source.mesh, source.geometry)
     original = report.inputs
     regions = _transition_regions(original, target, lineage)
     if coverage_renewal is not None and fidelity_witness_override is not None:
@@ -4661,7 +4686,10 @@ def _renew_transition_certification_inputs(
         )
         for query, witness, tolerance in original.scoped_fidelity
     )
-    return MeshCertificationInputs(
+    validated = validate_fidelity_witnesses(
+        target, geometry, original.source, fidelity, scoped
+    )
+    inputs = MeshCertificationInputs(
         target,
         geometry,
         original.schedule,
@@ -4678,7 +4706,9 @@ def _renew_transition_certification_inputs(
         fidelity_witness=fidelity,
         feature_source=original.feature_source,
         source_coverage_witness=coverage,
+        validated=validated,
     )
+    return inputs, validated
 
 
 def _compose_material_reference_maps(
@@ -5386,12 +5416,26 @@ def _finalize_native(
             geometry = _quotient_chart_target_geometry(mesh, quotient_bank)
     transition_geometry = None
     surface_chart_witness = None
+    linear_transfer = True
     if surface_metric_outcome is not None:
-        transition_geometry = _surface_metric_geometry_transition(
-            source, mesh, surface_metric_outcome
-        )
-        mesh = transition_geometry.target_mesh
-        geometry = transition_geometry.target_geometry
+        relation = surface_metric_outcome.geometry.relation
+        match relation:
+            case SurfaceMetricGeometryRelation.NESTED_REFERENCE:
+                transition_geometry = _surface_metric_geometry_transition(
+                    source, mesh, surface_metric_outcome
+                )
+                mesh = transition_geometry.target_mesh
+                geometry = transition_geometry.target_geometry
+            case SurfaceMetricGeometryRelation.EXACT_PROJECTION:
+                # Target vertices are exact source projections and cells need not nest
+                # in source cells: the record binds the changed coordinate map without
+                # reference maps, the target chart witness certifies source fidelity,
+                # and the vertex stencil transfer preserves constants but not ambient
+                # linear functions of the moved vertices.
+                transition_geometry = _transition_geometry_record(source, mesh, geometry)
+                linear_transfer = False
+            case _:
+                assert_never(relation)
         reference_maps = surface_metric_outcome.geometry.reference_maps
         edit = edit._replace(coordinates=np.asarray(mesh.coordinates, dtype=np.float64))
         surface_chart_witness = _rebind_surface_metric_witness(
@@ -5472,7 +5516,7 @@ def _finalize_native(
         surface_source = target_surface_source(
             surface_source, mesh, geometry, associations, surface_metric_outcome
         )
-    certification_inputs = _renew_transition_certification_inputs(
+    renewed_inputs = _renew_transition_certification_inputs(
         source,
         mesh,
         geometry,
@@ -5491,6 +5535,9 @@ def _finalize_native(
             and source.certification.inputs.fidelity_witness is not None
             else None
         ),
+    )
+    certification_inputs, validated_witnesses = (
+        (None, ()) if renewed_inputs is None else renewed_inputs
     )
     layer_curving_evidence = None
     if source.layer_curving_evidence is not None:
@@ -5531,6 +5578,7 @@ def _finalize_native(
             prepared.policy.audit_policy, certification_inputs
         ),
         certification_inputs=certification_inputs,
+        validated_witnesses=validated_witnesses,
         patches=patches,
         zones=zones,
         labels=labels,
@@ -5586,7 +5634,7 @@ def _finalize_native(
                 source.mesh.vertex_global_ids,
                 source_topology_id=source.mesh.topology_id,
                 target_topology_id=target.mesh.topology_id,
-                preserves_linear=True,
+                preserves_linear=linear_transfer,
                 conservative=conservative,
                 source_coordinates=source.mesh.coordinates,
                 target_coordinates=target.mesh.coordinates,
@@ -6286,13 +6334,16 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         if association_transfer is not None and source.associations
         else ()
     )
-    certification_inputs = _renew_transition_certification_inputs(
+    renewed_inputs = _renew_transition_certification_inputs(
         source,
         mesh,
         target_geometry,
         lineage,
         reference_maps=hp_reference_maps,
         transition=hp_geometry_transition,
+    )
+    certification_inputs, validated_witnesses = (
+        (None, ()) if renewed_inputs is None else renewed_inputs
     )
     target = certify_cell_mesh(
         mesh,
@@ -6302,6 +6353,7 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
             prepared.policy.audit_policy, certification_inputs
         ),
         certification_inputs=certification_inputs,
+        validated_witnesses=validated_witnesses,
         patches=patches,
         zones=zones,
         labels=labels,

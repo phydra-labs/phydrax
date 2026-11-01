@@ -70,10 +70,12 @@ from ..linalg import (
     adjoint,
     ArraySpace,
     assemble_diagonal,
+    assemble_sparse,
     BlockLinearOperator,
     BlockSpace,
     ConstraintMap,
     DualSpace,
+    EuclideanPairing,
     FunctionLinearOperator,
     IdentityLinearOperator,
     KernelCertificate,
@@ -1546,6 +1548,36 @@ def _assemble_tensor_diffusion_action(
     )
 
 
+def _merged_properties(
+    declared: OperatorProperties, structural: OperatorProperties, /
+) -> OperatorProperties:
+    """Union of declared and structural claims, keeping the stronger evidence."""
+    names = (
+        "diagonal",
+        "triangular",
+        "self_adjoint",
+        "positive_definite",
+        "positive_semidefinite",
+        "block_diagonal",
+    )
+    claims = {
+        name: True
+        for name in names
+        if getattr(declared, name) or getattr(structural, name)
+    }
+    evidence = {}
+    for name in claims:
+        for source in (declared, structural):
+            if source.certifies(name):
+                evidence[name] = source.evidence_for(name)
+                break
+    return OperatorProperties(
+        **claims,
+        rank=declared.rank if declared.rank is not None else structural.rank,
+        evidence=evidence,
+    )
+
+
 def _dirichlet_rows(
     constraint: AbstractDiscreteDirichletConstraint, layout: DofLayout, /
 ) -> Array:
@@ -2746,10 +2778,45 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     def _structural_affine_operator(
         self, args: object = None, /
     ) -> AbstractLinearOperator | None:
+        if self.constraint is not None:
+            return None
+        return self._structural_full_operator(args)
+
+    def _sparse_affine_operator(
+        self, args: object = None, /
+    ) -> SparseCoordinateOperator | None:
+        """Exact sparse storage of the affine operator on the state space.
+
+        Strong coordinate-selection (Dirichlet) constraints are eliminated from
+        the structural full operator without densifying it; returns ``None``
+        when no structural sparse lowering or sparse elimination exists.
+        """
+        full = self._structural_full_operator(args)
+        if full is None:
+            return None
+        if self.constraint is None:
+            assembled = assemble_sparse(full)
+            if not isinstance(assembled, SparseCoordinateOperator):
+                raise TypeError("Sparse assembly did not produce coordinate storage.")
+            return assembled
+        if self.constraint.coordinate_selection() is None:
+            return None
+        return self.constraint.reduce_sparse_operator(full)
+
+    def _assembly_operator(self, args: object = None, /) -> AbstractLinearOperator:
+        """Operator for explicit sparse assembly, eliminating selection constraints."""
+        if self.constraint is not None:
+            sparse = self._sparse_affine_operator(args)
+            if sparse is not None:
+                return sparse
+        return self.affine_operator(args)
+
+    def _structural_full_operator(
+        self, args: object = None, /
+    ) -> AbstractLinearOperator | None:
         if (
             self.execution_policy.realization != "sparse"
             or len(self.form.field_names) != 1
-            or self.constraint is not None
         ):
             return None
         # Sparse realization is offered only by finite-element local providers.
@@ -2807,10 +2874,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
     def to_scipy_csr(self, args: object = None, /) -> sp.csr_array:
-        """Assemble exact sparse coordinates and convert them directly to SciPy CSR."""
+        """Assemble exact sparse coordinates and convert them directly to SciPy CSR.
+
+        Strong Dirichlet constraints are eliminated sparsely: the result is the
+        free-by-free block on the state space.
+        """
         import scipy.sparse as sp
 
-        operator = self.affine_operator(args)
+        operator = self._assembly_operator(args)
         plan = plan_sparse_assembly(operator)
         if plan.uses_materialization:
             raise ValueError(
@@ -2840,7 +2911,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         *,
         policy: SparseAssemblyPolicy | None = None,
     ) -> SparseAssemblyPlan:
-        return plan_sparse_assembly(self.affine_operator(args), policy)
+        return plan_sparse_assembly(self._assembly_operator(args), policy)
 
     def prepare_sparse_assembly(
         self,
@@ -2850,7 +2921,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         plan: SparseAssemblyPlan | None = None,
         policy: SparseAssemblyPolicy | None = None,
     ) -> PreparedSparseAssembly:
-        operator = self.affine_operator(args)
+        operator = self._assembly_operator(args)
         selected_plan = plan_sparse_assembly(operator, policy) if plan is None else plan
         return prepare_sparse_assembly(selected_plan, operator)
 
@@ -2884,8 +2955,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             # Rigid-body modes read FE DOF coordinates; this default is FE-only.
             discretization = cast(FiniteElementDiscretization, self.discretization)
             coordinates = discretization.dof_maps[self.field_index].evaluate_coordinates(
-                discretization.mesh,
-                discretization.default_runtime.coordinates,
+                discretization.default_runtime.coordinates
             )
             modes = []
             for component in range(dimension):
@@ -2946,27 +3016,87 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
         return None
 
+    def right_hand_side(self, args: object = None, /) -> PyTree[Array]:
+        """Return ``b`` of the affine system ``A z = b`` on the state space.
+
+        ``b`` is the inverse-Riesz image of ``-R(0)``. Under strong constraints
+        it carries the eliminated lift columns ``-P^T (A g - f)``, so one prepared
+        solve of `linear_system` serves every lift ``g`` supplied through a
+        `FiniteElementExecutionContext`.
+        """
+        zero = self.state_space.zeros()
+        return self.state_space.inverse_riesz(
+            jax.tree.map(lambda value: -value, self.residual(zero, args))
+        )
+
     def linear_system(
         self,
         args: object = None,
         /,
         *,
         nullspace_policy: NullspacePolicy | None = None,
+        storage: Literal["action", "sparse"] = "action",
     ) -> tuple[LinearSystem, object]:
-        raw_operator = self.affine_operator(args)
+        """Return the affine system ``A z = b`` on the (reduced) state space.
+
+        ``storage="action"`` exposes ``A`` as a matrix-free action.
+        ``storage="sparse"`` hands exact sparse coordinates to the solver: the
+        structural sparse operator, with strong Dirichlet coordinates eliminated
+        (free-by-free block kept sparse, constrained columns moved into ``b``
+        through the lift). It suits sparse direct methods, the native sparse
+        factorization (`SparseFactorizationPreconditionerBuilder`) and
+        preconditioned Krylov methods; prepare it once and reuse the factor for
+        many right-hand sides from `right_hand_side`. It refuses forms without a
+        structural sparse lowering, matrix-free realization, non-Euclidean
+        state spaces, and constraints that are not coordinate selections.
+        """
+        if storage not in ("action", "sparse"):
+            raise ValueError("storage must be 'action' or 'sparse'.")
         properties = self.form.declared_properties
-        primal_operator = FunctionLinearOperator(
-            lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
-            source=self.state_space,
-            target=self.state_space,
-            properties=properties,
-            operator_id=canonical_fingerprint(
-                {
-                    "kind": "riesz-finite-element-affine-operator",
-                    "compilation": self.compilation_id,
-                }
-            ),
-        )
+        primal_operator: AbstractLinearOperator
+        if storage == "sparse":
+            state_space = self.state_space
+            if not isinstance(state_space, ArraySpace) or not isinstance(
+                state_space.pairing, EuclideanPairing
+            ):
+                raise ValueError(
+                    "Sparse linear systems require one Euclidean array state space."
+                )
+            sparse = self._sparse_affine_operator(args)
+            if sparse is None:
+                raise ValueError(
+                    "Sparse linear systems require sparse realization of one field "
+                    "with structural sparse actions on the default runtime and, "
+                    "when constrained, a strong coordinate-selection constraint."
+                )
+            primal_operator = SparseCoordinateOperator(
+                sparse.relation,
+                sparse.coefficients,
+                source=state_space,
+                target=state_space,
+                properties=_merged_properties(properties, sparse.properties),
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "sparse-finite-element-affine-operator",
+                        "compilation": self.compilation_id,
+                        "operator": sparse.operator_id,
+                    }
+                ),
+            )
+        else:
+            raw_operator = self.affine_operator(args)
+            primal_operator = FunctionLinearOperator(
+                lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
+                source=self.state_space,
+                target=self.state_space,
+                properties=properties,
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "riesz-finite-element-affine-operator",
+                        "compilation": self.compilation_id,
+                    }
+                ),
+            )
         if nullspace_policy is None and _pure_neumann_sipg(self.form):
             constant_modes = _sipg_constant_subspace(
                 self.form,
@@ -3008,10 +3138,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     compatibility="error",
                     gauge="minimum-norm",
                 )
-        zero = self.state_space.zeros()
-        right_hand_side = self.state_space.inverse_riesz(
-            jax.tree.map(lambda value: -value, self.residual(zero, args))
-        )
+        right_hand_side = self.right_hand_side(args)
         return (
             LinearSystem(
                 primal_operator,

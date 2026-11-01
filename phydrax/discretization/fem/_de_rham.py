@@ -3561,7 +3561,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             cell_map = PreparedFiniteElementCellMap(self.discretization, block_index)
             for cell, cell_vertices in enumerate(np.asarray(block.vertices)):
                 geometry = cell_map.evaluate(
-                    self.mesh.coordinates,
+                    self.discretization.default_runtime.coordinates,
                     jnp.full((points.shape[0],), cell, dtype=jnp.int32),
                     points,
                 )

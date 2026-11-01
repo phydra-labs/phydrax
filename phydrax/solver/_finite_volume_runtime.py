@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._owned_programs import run_owned_program
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
@@ -95,6 +96,53 @@ from ._finite_volume_topology_events import (
 
 
 _TreeT = TypeVar("_TreeT")
+
+
+def _run_runtime_program(
+    runtime: Any, phase: str, method: Callable[..., _TreeT], /, *operands: Any
+) -> _TreeT:
+    """Run one advance phase as the runtime's owned compiled program.
+
+    Op by op, every stage conditional and motion-route root solve of a step
+    compiles and caches a new executable; the owned program is traced once
+    per runtime and released with it. A multi-device owner-local group runs
+    its stage collectives eagerly (``collective_branch``), so its steps stay
+    op by op.
+    """
+    group = getattr(runtime, "owner_local_execution_group", None)
+    if group is not None and len(group.devices) > 1:
+        return method(runtime, *operands)
+    return run_owned_program(runtime, phase, method, *operands)
+
+
+def _fold_retry_attempts(
+    attempt: Callable[[Any, _TreeT], _TreeT], carry: _TreeT, maximum_retries: int, /
+) -> _TreeT:
+    """Apply ``attempt(retry, carry)`` for ``retry = 1..maximum_retries``.
+
+    Every attempt evaluates and selects exactly as an unrolled retry sequence.
+    Inside a traced program the attempts are one loop body instead of one
+    copy per retry; the loop has static bounds, so it stays
+    reverse-differentiable. Op-by-op (eager collective) steps keep the plain
+    attempt sequence.
+    """
+    if not any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(carry)):
+        for retry in range(1, maximum_retries + 1):
+            carry = attempt(retry, carry)
+        return carry
+    if maximum_retries < 1:
+        return carry
+    dynamic, static = eqx.partition(carry, eqx.is_array)
+
+    def body(retry: Array, dynamic_carry: Any, /) -> Any:
+        output = attempt(retry, eqx.combine(dynamic_carry, static))
+        output_dynamic, output_static = eqx.partition(output, eqx.is_array)
+        if not eqx.tree_equal(output_static, static):
+            raise RuntimeError("A retry attempt changed the static step structure.")
+        return output_dynamic
+
+    dynamic = jax.lax.fori_loop(1, maximum_retries + 1, body, dynamic)
+    return eqx.combine(dynamic, static)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1361,6 +1409,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
     )
     embedded_redistribution: ConservativeSmallCellRedistributionPlan | None
     embedded_stage_template: FiniteVolumeStageMetrics | None
+    overset_stage_base: FiniteVolumeStageMetrics | None
     sliding_plan: PeriodicSlidingInterfacePlan | None
     sliding_initial_coupling: PeriodicSlidingCoupling | None
     initial_topology_epoch: TopologyEpoch = eqx.field(static=True)
@@ -1867,6 +1916,19 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         self.static_flux_rate_block_templates = static_flux_rate_block_templates
         self.embedded_redistribution = embedded_redistribution
         self.embedded_stage_template = embedded_stage_template
+        # Stationary overset stages share one static lowering; its route
+        # fingerprints are host work, so it is prepared once here and every
+        # step only binds time, version and the active-cell masks.
+        self.overset_stage_base = (
+            lower_static_unstructured_stage_metrics(
+                dynamics.discretization, topology_epoch_id=topology_epoch_id
+            )
+            if isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+            and dynamics.coupling.overset is not None
+            and embedded_redistribution is None
+            and dynamics.coupling.motion is None
+            else None
+        )
         self.sliding_plan = sliding_plan
         self.sliding_initial_coupling = sliding_initial_coupling
         self.initial_topology_epoch = initial_topology_epoch
@@ -7329,34 +7391,32 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             and self.dynamics.coupling.motion is None
         ):
             self.precision.validate_state(stage_average)
-            valid = self._active_state_is_admissible(
-                stage_average,
-                content_state.active_cell_mask,
-            )
-            if self.owner_local_decision_provider is not None:
-                valid = self.owner_local_decision_provider(valid)
             return self._refresh_sliding_after_accept(
                 runtime_state,
-                self._advance_overset(runtime_state, average, valid, args),
+                _run_runtime_program(
+                    self,
+                    "overset-advance",
+                    PreparedFiniteVolumeRuntime._advance_overset,
+                    runtime_state,
+                    average,
+                    stage_average,
+                    args,
+                ),
                 args,
             )
         if self.embedded_redistribution is not None:
-            average = eqx.error_if(
-                average,
-                jnp.any(content_state.active_cell_mask != self.active_cell_mask)
-                | jnp.any(
-                    content_state.effective_cell_volumes != self._effective_cell_volumes()
-                ),
-                "Embedded runtime content must retain certified fluid ownership.",
-            )
             self.precision.validate_state(stage_average)
-            valid = self._active_state_is_admissible(
-                stage_average,
-                content_state.active_cell_mask,
-            )
             return self._refresh_sliding_after_accept(
                 runtime_state,
-                self._advance_embedded(runtime_state, average, valid, args),
+                _run_runtime_program(
+                    self,
+                    "embedded-advance",
+                    PreparedFiniteVolumeRuntime._advance_embedded,
+                    runtime_state,
+                    average,
+                    stage_average,
+                    args,
+                ),
                 args,
             )
         if (
@@ -7374,7 +7434,15 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 valid = self.owner_local_decision_provider(valid)
             return self._refresh_sliding_after_accept(
                 runtime_state,
-                self._advance_ale(runtime_state, average, valid, args),
+                _run_runtime_program(
+                    self,
+                    "ale-advance",
+                    PreparedFiniteVolumeRuntime._advance_ale,
+                    runtime_state,
+                    average,
+                    valid,
+                    args,
+                ),
                 args,
             )
         average = eqx.error_if(
@@ -7393,6 +7461,38 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         valid = jnp.all(self.dynamics.system.admissible(stage_average))
         if self.owner_local_decision_provider is not None:
             valid = self.owner_local_decision_provider(valid)
+
+        if self.stage_flux_provider is None:
+            selected = _run_runtime_program(
+                self,
+                "static-advance",
+                PreparedFiniteVolumeRuntime._advance_static,
+                runtime_state,
+                average,
+                stage_average,
+                valid,
+                args,
+            )
+        else:
+            selected = self._advance_static(
+                runtime_state, average, stage_average, valid, args
+            )
+        return self._refresh_sliding_after_accept(
+            runtime_state,
+            selected,
+            args,
+        )
+
+    def _advance_static(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        average: Array,
+        stage_average: Array,
+        valid: Array,
+        args: Any,
+        /,
+    ) -> FiniteVolumeAdvanceResult:
+        content_state = runtime_state.content_state
 
         def valid_branch(_: None) -> FiniteVolumeAdvanceResult:
             return self._advance_valid(runtime_state, average, args)
@@ -7470,11 +7570,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 lambda _: invalid_result,
                 operand=None,
             )
-        return self._refresh_sliding_after_accept(
-            runtime_state,
-            selected,
-            args,
-        )
+        return selected
 
     def advance_prescribed(
         self,
@@ -7574,7 +7670,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         self,
         runtime_state: FiniteVolumeRuntimeState,
         original_average: Array,
-        initial_valid: Array,
+        stage_average: Array,
         args: Any,
         /,
     ) -> FiniteVolumeAdvanceResult:
@@ -7587,6 +7683,11 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise TypeError("Overset advancement requires unstructured dynamics.")
 
         original_content = runtime_state.content_state
+        initial_valid = self._active_state_is_admissible(
+            stage_average, original_content.active_cell_mask
+        )
+        if self.owner_local_decision_provider is not None:
+            initial_valid = self.owner_local_decision_provider(initial_valid)
         attempted = self.precision.decision(runtime_state.step_size)
         zero = jnp.asarray(0.0, dtype=jnp.dtype(self.precision.reduction_dtype))
         active_density = jnp.where(
@@ -7615,11 +7716,9 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         accepted_stage_ledgers = None
 
         def stage_at(stage_time: Array, version: Array) -> FiniteVolumeStageMetrics:
-            base = lower_static_unstructured_stage_metrics(
-                dynamics.discretization,
-                time=self.precision.decision(stage_time),
-                topology_epoch_id=original_content.topology_epoch_id,
-            )
+            base = self.overset_stage_base
+            if base is None:
+                raise TypeError("Overset advancement requires a prepared stage base.")
             face_blocks = tuple(
                 eqx.tree_at(
                     lambda block: block.layout.active_mask,
@@ -7666,7 +7765,17 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 old,
             )
 
-        for retry in range(self.policy.maximum_retries + 1):
+        def attempt(retry: Any, carry: tuple[Any, ...], /) -> tuple[Any, ...]:
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+            ) = carry
             stage_metrics = (
                 stage_at(runtime_state.time, original_content.geometry_version),
                 stage_at(
@@ -7708,7 +7817,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 ),
                 lambda _: zero_candidate,
             )
-            if retry == 0:
+            if accepted_flux_ledger is None or accepted_stage_ledgers is None:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals
                 accepted_stage_ledgers = zero_candidate.stage_rate_ledgers
             record = ~accepted
@@ -7746,6 +7855,42 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             current_dt = self.precision.decision(
                 current_dt * self.policy.reduction_factor
             )
+            return (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+            )
+
+        # The first attempt forms the evidence envelope; later attempts run as
+        # one loop body, so the program holds two attempts for any retry budget.
+        carry = attempt(
+            0,
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+            ),
+        )
+        (
+            accepted,
+            accepted_content,
+            accepted_dt,
+            retries,
+            last_report,
+            current_dt,
+            accepted_flux_ledger,
+            accepted_stage_ledgers,
+        ) = _fold_retry_attempts(attempt, carry, self.policy.maximum_retries)
 
         if accepted_flux_ledger is None or accepted_stage_ledgers is None:
             raise RuntimeError("Overset retry loop did not form its evidence envelope.")
@@ -7817,7 +7962,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         self,
         runtime_state: FiniteVolumeRuntimeState,
         original_average: Array,
-        initial_valid: Array,
+        stage_average: Array,
         args: Any,
         /,
     ) -> FiniteVolumeAdvanceResult:
@@ -7835,6 +7980,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             ConservativeSmallCellRedistributionPlan,
         ):
             raise TypeError("Embedded advancement requires prepared redistribution.")
+        original_content = runtime_state.content_state
+        original_average = eqx.error_if(
+            original_average,
+            jnp.any(original_content.active_cell_mask != self.active_cell_mask)
+            | jnp.any(
+                original_content.effective_cell_volumes != self._effective_cell_volumes()
+            ),
+            "Embedded runtime content must retain certified fluid ownership.",
+        )
+        initial_valid = self._active_state_is_admissible(
+            stage_average, original_content.active_cell_mask
+        )
         embedded_metrics = dynamics.coupling.embedded_metrics
         embedded_boundaries = dynamics.coupling.embedded_boundaries
         if embedded_metrics is None or not isinstance(
@@ -7845,8 +8002,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         embedded_stage_template = self.embedded_stage_template
         if not isinstance(embedded_stage_template, FiniteVolumeStageMetrics):
             raise TypeError("Embedded advancement requires a prepared stage template.")
-
-        original_content = runtime_state.content_state
 
         def stage_at(stage_time: Array) -> FiniteVolumeStageMetrics:
             return eqx.tree_at(
@@ -7909,7 +8064,21 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 old,
             )
 
-        for retry in range(self.policy.maximum_retries + 1):
+        def attempt(retry: Any, carry: tuple[Any, ...], /) -> tuple[Any, ...]:
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+                recorded_stage_metrics,
+                recorded_stage_rates,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+            ) = carry
             stage_1 = stage_at(runtime_state.time)
             stage_2 = stage_at(self.precision.decision(runtime_state.time + current_dt))
             stage_3 = stage_at(
@@ -7991,7 +8160,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 ),
                 lambda _: zero_candidate,
             )
-            if retry == 0:
+            if recorded_stage_metrics is None:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals
                 accepted_stage_ledgers = zero_candidate.stage_rate_ledgers
                 recorded_stage_metrics = stage_metrics
@@ -8067,6 +8236,54 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             current_dt = self.precision.decision(
                 current_dt * self.policy.reduction_factor
             )
+            return (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+                recorded_stage_metrics,
+                recorded_stage_rates,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+            )
+
+        # The first attempt forms the evidence envelope; later attempts run as
+        # one loop body, so the program holds two attempts for any retry budget.
+        carry = attempt(
+            0,
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                None,
+                None,
+                None,
+                recorded_stage_rates,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+            ),
+        )
+        (
+            accepted,
+            accepted_content,
+            accepted_dt,
+            retries,
+            last_report,
+            current_dt,
+            accepted_flux_ledger,
+            accepted_stage_ledgers,
+            recorded_stage_metrics,
+            recorded_stage_rates,
+            recorded_maximum_rate,
+            recorded_cfl_step,
+        ) = _fold_retry_attempts(attempt, carry, self.policy.maximum_retries)
 
         minimum_reached = current_dt < self.precision.decision(
             self.policy.minimum_step_size
@@ -8180,9 +8397,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             secondary_reduction_factor=zero,
         )
         current_dt = self.precision.decision(attempted)
-        accepted_flux_ledger = None
-        accepted_stage_ledgers = None
-        recorded_geometry = None
         recorded_maximum_rate = zero
         recorded_cfl_step = jnp.asarray(jnp.inf, dtype=zero.dtype)
         recorded_geometry_reduction = jnp.asarray(1.0, dtype=zero.dtype)
@@ -8199,7 +8413,22 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 old,
             )
 
-        for retry in range(self.policy.maximum_retries + 1):
+        def attempt(retry: Any, carry: tuple[Any, ...], /) -> tuple[Any, ...]:
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+                recorded_geometry,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+                recorded_geometry_reduction,
+                minimum_geometry_reduction,
+            ) = carry
             geometry = motion.prepare_ssprk33_step(
                 runtime_state.time,
                 current_dt,
@@ -8249,7 +8478,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 lambda _: zero_candidate,
                 operand=None,
             )
-            if retry == 0:
+            if recorded_geometry is None:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals
                 recorded_geometry = geometry
                 accepted_stage_ledgers = zero_candidate.stage_rate_ledgers
@@ -8334,6 +8563,58 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 geometry_reduction.astype(current_dt.dtype),
             )
             current_dt = self.precision.decision(current_dt * retry_factor)
+            return (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+                recorded_geometry,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+                recorded_geometry_reduction,
+                minimum_geometry_reduction,
+            )
+
+        # The first attempt forms the evidence envelope; later attempts run as
+        # one loop body, so the program holds two attempts for any retry budget.
+        carry = attempt(
+            0,
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                None,
+                None,
+                None,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+                recorded_geometry_reduction,
+                minimum_geometry_reduction,
+            ),
+        )
+        carry = _fold_retry_attempts(attempt, carry, self.policy.maximum_retries)
+        (
+            accepted,
+            accepted_content,
+            accepted_dt,
+            retries,
+            last_report,
+            current_dt,
+            accepted_flux_ledger,
+            accepted_stage_ledgers,
+            recorded_geometry,
+            recorded_maximum_rate,
+            recorded_cfl_step,
+            recorded_geometry_reduction,
+            minimum_geometry_reduction,
+        ) = carry
 
         minimum_reached = current_dt < self.precision.decision(
             self.policy.minimum_step_size

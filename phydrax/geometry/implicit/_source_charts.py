@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Generator, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from functools import partial
+from functools import cache, partial
 from typing import Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from ..._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -74,6 +75,7 @@ from ._analytic_profile import AnalyticImplicitProfile
 
 
 if TYPE_CHECKING:
+    from ...geometry._source_fidelity import ValidatedSourceFidelityWitness
     from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
 type Interval = tuple[float, float]
 type GridCorner = tuple[int, int, int]
@@ -125,9 +127,6 @@ type IntervalDerivative3x2 = tuple[
     IntervalVector2,
     IntervalVector2,
 ]
-type PhysicalPoint3 = tuple[Fraction, Fraction, Fraction]
-# Target map values: P3 Lagrange coordinate bases carry quadratic radicals.
-type ExactPoint3 = tuple[ExactScalar, ExactScalar, ExactScalar]
 type RootCorner = tuple[GridEdge, np.ndarray, float] | None
 
 
@@ -216,6 +215,7 @@ class _PreparedFace:
     source_parameters: TriangleReference
     cell_expressions: Polynomial3
     face_expressions: Polynomial3
+    face_enclosure: _FaceEnclosure
     pieces: tuple[_PieceProof, ...]
     root_corner_points: tuple[RootCorner, ...]
     projected_axes: tuple[int, int, int]
@@ -432,8 +432,8 @@ class AdaptiveImplicitRootChartMap:
                 _, root_point, root_error = root_corner
                 return ImplicitRootChartPoint(
                     np.array(root_point, copy=True),
-                    float(np.nextafter(root_error, np.inf)),
-                    float(np.nextafter(root_error, np.inf)),
+                    math.nextafter(root_error, math.inf),
+                    math.nextafter(root_error, math.inf),
                     face.source_cell_key,
                     face.root_edge_keys,
                     "certified_root_chart",
@@ -525,26 +525,28 @@ class AdaptiveImplicitRootChartMap:
 
 def _interval_add(first: Interval, second: Interval, /) -> Interval:
     return (
-        float(np.nextafter(first[0] + second[0], -np.inf)),
-        float(np.nextafter(first[1] + second[1], np.inf)),
+        math.nextafter(first[0] + second[0], -math.inf),
+        math.nextafter(first[1] + second[1], math.inf),
     )
 
 
 def _interval_scale(value: Interval, scalar: float, /) -> Interval:
     products = (value[0] * scalar, value[1] * scalar)
     return (
-        float(np.nextafter(min(products), -np.inf)),
-        float(np.nextafter(max(products), np.inf)),
+        math.nextafter(min(products), -math.inf),
+        math.nextafter(max(products), math.inf),
     )
 
 
 def _interval_multiply(first: Interval, second: Interval, /) -> Interval:
-    products = tuple(a * b for a in first for b in second)
-    if any(math.isnan(value) for value in products):
+    a, b = first
+    c, d = second
+    ac, ad, bc, bd = a * c, a * d, b * c, b * d
+    if ac != ac or ad != ad or bc != bc or bd != bd:
         return (-math.inf, math.inf)
     return (
-        float(np.nextafter(min(products), -np.inf)),
-        float(np.nextafter(max(products), np.inf)),
+        math.nextafter(min(ac, ad, bc, bd), -math.inf),
+        math.nextafter(max(ac, ad, bc, bd), math.inf),
     )
 
 
@@ -556,8 +558,8 @@ def _interval_divide(numerator: Interval, denominator: Interval, /) -> Interval:
     if denominator[0] <= 0.0 <= denominator[1]:
         return (-math.inf, math.inf)
     reciprocal = (
-        float(np.nextafter(1.0 / denominator[1], -np.inf)),
-        float(np.nextafter(1.0 / denominator[0], np.inf)),
+        math.nextafter(1.0 / denominator[1], -math.inf),
+        math.nextafter(1.0 / denominator[0], math.inf),
     )
     return _interval_multiply(numerator, reciprocal)
 
@@ -572,8 +574,8 @@ def _interval_vector_norm_bounds(
         maximum = max(abs(lower), abs(upper))
         lower_squares.append(minimum * minimum)
         upper_squares.append(maximum * maximum)
-    lower = float(np.nextafter(math.sqrt(max(0.0, math.fsum(lower_squares))), 0.0))
-    upper = float(np.nextafter(math.sqrt(math.fsum(upper_squares)), np.inf))
+    lower = math.nextafter(math.sqrt(max(0.0, math.fsum(lower_squares))), 0.0)
+    upper = math.nextafter(math.sqrt(math.fsum(upper_squares)), math.inf)
     return lower, upper
 
 
@@ -588,17 +590,15 @@ def _exact_interval(value: ExactScalar) -> tuple[float, float]:
         return (-math.inf, math.inf)
     exact = Fraction.from_float(represented)
     return (
-        represented if exact <= value else float(np.nextafter(represented, -np.inf)),
-        represented if exact >= value else float(np.nextafter(represented, np.inf)),
+        represented if exact <= value else math.nextafter(represented, -math.inf),
+        represented if exact >= value else math.nextafter(represented, math.inf),
     )
 
 
-def _rational_bounds(value: ExactScalar, /) -> tuple[Fraction, Fraction]:
-    """Exact rational enclosure of a rational or quadratic-radical scalar."""
-    return (value, value) if isinstance(value, Fraction) else value.interval()
-
-
 def _poly_interval(expression: Polynomial, triangle: TriangleReference) -> Interval:
+    controls = _simplex_controls(expression)
+    if controls is not None:
+        return _restricted_bounds(controls, triangle)
     arguments = _triangle_arguments(triangle)
     restricted = compose_expression(expression, arguments)
     if not isinstance(restricted, dict):
@@ -606,6 +606,144 @@ def _poly_interval(expression: Polynomial, triangle: TriangleReference) -> Inter
             "Implicit source chart target maps must be polynomial coordinate maps."
         )
     return polynomial_bounds(restricted, "simplex", 2)
+
+
+# A standard-triangle Bernstein control index: the exponents of the barycentric
+# weights of the corners (0, 0), (1, 0) and (0, 1).
+type _ControlIndex = tuple[int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _SimplexControls:
+    """Exact standard-triangle Bernstein controls as integers over one denominator.
+
+    A polynomial restricted to a subtriangle ``(A, B, C)`` has the blossom
+    values ``b(A^a, B^b, C^c)`` as its Bernstein controls, which integer de
+    Casteljau steps with the corners' common-denominator barycentric weights
+    give exactly. An invertible affine restriction keeps the least degree, so
+    these are the controls whose extremes `polynomial_bounds` rounds outward
+    for the composed polynomial.
+    """
+
+    degree: int
+    numerators: dict[_ControlIndex, int]
+    denominator: int
+
+
+@cache
+def _control_indices(degree: int, /) -> tuple[_ControlIndex, ...]:
+    return tuple(
+        (degree - first - second, first, second)
+        for first in range(degree + 1)
+        for second in range(degree + 1 - first)
+    )
+
+
+def _simplex_controls(expression: Polynomial, /) -> _SimplexControls | None:
+    """Standard-triangle Bernstein controls of a rational bivariate polynomial.
+
+    ``u^a v^b`` contributes ``j! k! (n-a-b)! / ((j-a)! (k-b)! n!)`` to control
+    ``(i, j, k)``. Non-rational coefficients return ``None``.
+    """
+    terms: list[tuple[int, int, Fraction]] = []
+    for exponent, coefficient in expression.items():
+        if not isinstance(coefficient, Fraction) or len(exponent) != 2:
+            return None
+        if coefficient:
+            terms.append((exponent[0], exponent[1], coefficient))
+    degree = max((first + second for first, second, _ in terms), default=0)
+    factorial = math.factorial
+    controls: dict[_ControlIndex, Fraction] = {}
+    for index in _control_indices(degree):
+        _, along_u, along_v = index
+        total = Fraction(0)
+        for first, second, coefficient in terms:
+            if first <= along_u and second <= along_v:
+                total += coefficient * Fraction(
+                    factorial(along_u)
+                    * factorial(along_v)
+                    * factorial(degree - first - second),
+                    factorial(along_u - first)
+                    * factorial(along_v - second)
+                    * factorial(degree),
+                )
+        controls[index] = total
+    denominator = math.lcm(*(value.denominator for value in controls.values()))
+    return _SimplexControls(
+        degree,
+        {
+            index: value.numerator * (denominator // value.denominator)
+            for index, value in controls.items()
+        },
+        denominator,
+    )
+
+
+def _restricted_bounds(
+    controls: _SimplexControls, triangle: TriangleReference, /
+) -> Interval:
+    """`polynomial_bounds` of the polynomial restricted to a rational subtriangle."""
+    degree = controls.degree
+    if degree == 0 or triangle == _STANDARD_TRIANGLE:
+        values = tuple(controls.numerators.values())
+        scale = controls.denominator
+    else:
+        common = math.lcm(*(value.denominator for point in triangle for value in point))
+        corners = []
+        for first, second in triangle:
+            scaled_first = first.numerator * (common // first.denominator)
+            scaled_second = second.numerator * (common // second.denominator)
+            corners.append(
+                (common - scaled_first - scaled_second, scaled_first, scaled_second)
+            )
+        # Nets after applying a nondecreasing corner sequence ending at `last`.
+        nets: list[tuple[int, dict[_ControlIndex, int]]] = [(0, controls.numerators)]
+        for remaining in range(degree - 1, -1, -1):
+            indices = _control_indices(remaining)
+            following: list[tuple[int, dict[_ControlIndex, int]]] = []
+            for last, net in nets:
+                for corner in range(last, 3):
+                    weight_0, weight_1, weight_2 = corners[corner]
+                    following.append(
+                        (
+                            corner,
+                            {
+                                (i, j, k): weight_0 * net[(i + 1, j, k)]
+                                + weight_1 * net[(i, j + 1, k)]
+                                + weight_2 * net[(i, j, k + 1)]
+                                for i, j, k in indices
+                            },
+                        )
+                    )
+            nets = following
+        values = tuple(net[(0, 0, 0)] for _, net in nets)
+        scale = controls.denominator * common**degree
+    return (
+        _ratio_endpoint(min(values), scale, upper=False),
+        _ratio_endpoint(max(values), scale, upper=True),
+    )
+
+
+_MAXIMUM_FLOAT = float(np.finfo(np.float64).max)
+
+
+def _ratio_endpoint(numerator: int, scale: int, /, *, upper: bool) -> float:
+    """``coefficient_endpoint(Fraction(numerator, scale), saturate=True)`` for ``scale > 0``.
+
+    Integer true division rounds to nearest, so one exact comparison of the
+    rounded quotient with the ratio fixes the directed endpoint.
+    """
+    try:
+        rounded = numerator / scale
+    except OverflowError:
+        if numerator > 0:
+            return math.inf if upper else _MAXIMUM_FLOAT
+        return -_MAXIMUM_FLOAT if upper else -math.inf
+    rounded_numerator, rounded_denominator = rounded.as_integer_ratio()
+    excess = rounded_numerator * scale - numerator * rounded_denominator
+    if upper:
+        return rounded if excess >= 0 else math.nextafter(rounded, math.inf)
+    return rounded if excess <= 0 else math.nextafter(rounded, -math.inf)
 
 
 def _triangle_arguments(
@@ -626,15 +764,6 @@ def _triangle_arguments(
     )
 
 
-def _restrict_polynomial(
-    expression: Polynomial, triangle: TriangleReference, /
-) -> Polynomial:
-    restricted = compose_expression(expression, _triangle_arguments(triangle))
-    if not isinstance(restricted, dict):
-        raise TypeError("Implicit source chart target maps must remain polynomial.")
-    return restricted
-
-
 @dataclass(frozen=True, slots=True)
 class _EnclosedPolynomial:
     """A face polynomial on the standard triangle as rational centre plus error.
@@ -650,12 +779,16 @@ class _EnclosedPolynomial:
     center: Polynomial
     radii: dict[tuple[int, ...], float]
     error: float
+    # Exact Bernstein controls of `center`, built on the first enclosure.
+    controls: list[_SimplexControls | None] = field(
+        default_factory=list, compare=False, repr=False
+    )
 
 
 def _coefficient_error(radii: dict[tuple[int, ...], float], /) -> float:
     if not radii:
         return 0.0
-    return float(np.nextafter(math.fsum(radii.values()), np.inf))
+    return math.nextafter(math.fsum(radii.values()), math.inf)
 
 
 def _enclose_polynomial(expression: Polynomial, /) -> _EnclosedPolynomial:
@@ -676,7 +809,7 @@ def _enclose_polynomial(expression: Polynomial, /) -> _EnclosedPolynomial:
         center[exponent] = Fraction.from_float(middle)
         radius = max(middle - lower, upper - middle)
         if radius > 0.0:
-            radii[exponent] = float(np.nextafter(radius, np.inf))
+            radii[exponent] = math.nextafter(radius, math.inf)
     return _EnclosedPolynomial(center, radii, _coefficient_error(radii))
 
 
@@ -685,7 +818,7 @@ def _enclosed_derivative(value: _EnclosedPolynomial, axis: int, /) -> _EnclosedP
     for exponent, radius in value.radii.items():
         if exponent[axis]:
             lowered = (*exponent[:axis], exponent[axis] - 1, *exponent[axis + 1 :])
-            radii[lowered] = float(np.nextafter(radius * exponent[axis], np.inf))
+            radii[lowered] = math.nextafter(radius * exponent[axis], math.inf)
     return _EnclosedPolynomial(
         derivative(value.center, axis), radii, _coefficient_error(radii)
     )
@@ -695,8 +828,8 @@ def _widen(value: Interval, error: float, /) -> Interval:
     if error == 0.0:
         return value
     return (
-        float(np.nextafter(value[0] - error, -np.inf)),
-        float(np.nextafter(value[1] + error, np.inf)),
+        math.nextafter(value[0] - error, -math.inf),
+        math.nextafter(value[1] + error, math.inf),
     )
 
 
@@ -704,7 +837,12 @@ def _enclosed_interval(
     value: _EnclosedPolynomial, triangle: TriangleReference, /
 ) -> Interval:
     """Enclose an enclosed face polynomial over a subtriangle of the standard triangle."""
-    return _widen(_poly_interval(value.center, triangle), value.error)
+    if not value.controls:
+        value.controls.append(_simplex_controls(value.center))
+    controls = value.controls[0]
+    if controls is None:
+        return _widen(_poly_interval(value.center, triangle), value.error)
+    return _widen(_restricted_bounds(controls, triangle), value.error)
 
 
 @dataclass(frozen=True, slots=True)
@@ -726,6 +864,9 @@ class _FaceEnclosure:
     # Reference directions (columns) whose physical tangents are orthonormal at
     # the face centroid, kept only for ill-conditioned (needle) faces.
     conditioner: FractionMatrix2 | None
+    # Per coordinate, the conditioned tangent columns ``[P_u, P_v] K e_j`` with
+    # their outward-rounded radical-coefficient error; empty without ``K``.
+    conditioned_tangents: tuple[tuple[_EnclosedPolynomial, _EnclosedPolynomial], ...]
 
 
 # Faces whose centroid tangent condition number exceeds this get conditioned
@@ -796,11 +937,43 @@ def _enclose_face(expressions: Polynomial3, /) -> _FaceEnclosure:
         )
 
     tangents = (tangent(first), tangent(second), tangent(third))
+    conditioner = _tangent_conditioner(tangents)
+    conditioned: list[tuple[_EnclosedPolynomial, _EnclosedPolynomial]] = []
+    if conditioner is not None:
+        zero = Fraction(0)
+        for tangent_u, tangent_v in tangents:
+            columns: list[_EnclosedPolynomial] = []
+            for column in range(2):
+                first_weight = conditioner[0][column]
+                second_weight = conditioner[1][column]
+                # The weights are binary64 values, so these outward-rounded
+                # products bound the radical-coefficient error exactly.
+                error = _interval_add(
+                    _interval_scale(
+                        (tangent_u.error, tangent_u.error), abs(float(first_weight))
+                    ),
+                    _interval_scale(
+                        (tangent_v.error, tangent_v.error), abs(float(second_weight))
+                    ),
+                )[1]
+                columns.append(
+                    _EnclosedPolynomial(
+                        {
+                            exponent: tangent_u.center.get(exponent, zero) * first_weight
+                            + tangent_v.center.get(exponent, zero) * second_weight
+                            for exponent in set(tangent_u.center) | set(tangent_v.center)
+                        },
+                        {},
+                        error,
+                    )
+                )
+            conditioned.append((columns[0], columns[1]))
     return _FaceEnclosure(
         (first, second, third),
         tangents,
         (curvature(first), curvature(second), curvature(third)),
-        _tangent_conditioner(tangents),
+        conditioner,
+        tuple(conditioned),
     )
 
 
@@ -819,78 +992,34 @@ def _restricted_face(
 ) -> tuple[
     tuple[np.ndarray, np.ndarray], IntervalDerivative3x2, IntervalDerivative3x2 | None
 ]:
-    """Restrict each face coordinate once to a piece; enclose it and its gradient.
+    """Enclose each face coordinate and its gradient over a piece.
 
-    With ``R = C(a + E s)`` for the piece corners ``a, b, c`` and
-    ``E = [b - a, c - a]``, the chain rule ``[R_s, R_t] = [C_u, C_v] E`` gives
-    the restricted derivatives ``[C_u, C_v](a + E s) = [R_s, R_t] E^-1``
-    exactly, so one composition per coordinate serves the value and both
-    derivatives. A face conditioner ``K`` also yields ``[C_u, C_v] K``, each
-    column enclosed from its own exact polynomial.
+    The restriction ``R = C(a + E s)`` to the piece corners ``a, b, c`` has
+    ``[C_u, C_v](a + E s) = [R_s, R_t] E^-1`` exactly, so the face's own
+    derivative polynomials restricted to the piece are the piece derivatives.
+    A face conditioner ``K`` also yields ``[C_u, C_v] K``, each column
+    enclosed from its own exact polynomial.
     """
     a, b, c = triangle
-    e00, e01 = b[0] - a[0], c[0] - a[0]
-    e10, e11 = b[1] - a[1], c[1] - a[1]
-    determinant = e00 * e11 - e01 * e10
-    if determinant == 0:
+    if (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]) == 0:
         raise ValueError("Implicit chart pieces must be nondegenerate triangles.")
     lower: list[float] = []
     upper: list[float] = []
     derivatives: list[IntervalVector2] = []
-    conditioned: list[IntervalVector2] = []
     for value, (tangent_u, tangent_v) in zip(face.values, face.tangents, strict=True):
-        restricted = _restrict_polynomial(value.center, triangle)
-        low, high = _widen(polynomial_bounds(restricted, "simplex", 2), value.error)
+        low, high = _enclosed_interval(value, triangle)
         lower.append(low)
         upper.append(high)
-        along_s = derivative(restricted, 0)
-        along_t = derivative(restricted, 1)
-        exponents = set(along_s) | set(along_t)
-        zero = Fraction(0)
-        derivative_u: Polynomial = {
-            exponent: (
-                along_s.get(exponent, zero) * e11 - along_t.get(exponent, zero) * e10
-            )
-            / determinant
-            for exponent in exponents
-        }
-        derivative_v: Polynomial = {
-            exponent: (
-                along_t.get(exponent, zero) * e00 - along_s.get(exponent, zero) * e01
-            )
-            / determinant
-            for exponent in exponents
-        }
         derivatives.append(
             (
-                _widen(polynomial_bounds(derivative_u, "simplex", 2), tangent_u.error),
-                _widen(polynomial_bounds(derivative_v, "simplex", 2), tangent_v.error),
+                _enclosed_interval(tangent_u, triangle),
+                _enclosed_interval(tangent_v, triangle),
             )
         )
-        if face.conditioner is not None:
-            columns: list[Interval] = []
-            for column in range(2):
-                first_weight = face.conditioner[0][column]
-                second_weight = face.conditioner[1][column]
-                directional: Polynomial = {
-                    exponent: derivative_u[exponent] * first_weight
-                    + derivative_v[exponent] * second_weight
-                    for exponent in exponents
-                }
-                # The weights are binary64 values, so these outward-rounded
-                # products bound the radical-coefficient error exactly.
-                error = _interval_add(
-                    _interval_scale(
-                        (tangent_u.error, tangent_u.error), abs(float(first_weight))
-                    ),
-                    _interval_scale(
-                        (tangent_v.error, tangent_v.error), abs(float(second_weight))
-                    ),
-                )[1]
-                columns.append(
-                    _widen(polynomial_bounds(directional, "simplex", 2), error)
-                )
-            conditioned.append((columns[0], columns[1]))
+    conditioned = tuple(
+        (_enclosed_interval(first, triangle), _enclosed_interval(second, triangle))
+        for first, second in face.conditioned_tangents
+    )
     return (
         (np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)),
         (derivatives[0], derivatives[1], derivatives[2]),
@@ -911,16 +1040,6 @@ def _evaluate_exact_polynomial(
             "Certified implicit target maps require exact algebraic coordinate values."
         )
     return value
-
-
-def _physical_point3(values: np.ndarray, /) -> PhysicalPoint3:
-    if values.shape != (3,):
-        raise ValueError("A physical implicit source sample must have three coordinates.")
-    return (
-        Fraction.from_float(float(values[0])),
-        Fraction.from_float(float(values[1])),
-        Fraction.from_float(float(values[2])),
-    )
 
 
 def _prepare_barycentric_solver(
@@ -1055,13 +1174,13 @@ def _normal_angle_bounds(
     if denominator[0] <= 0.0:
         return 0.0, math.pi
     cosines = tuple(numerator / divisor for numerator in dot for divisor in denominator)
-    cosine_lower = float(np.nextafter(min(cosines), -np.inf))
-    cosine_upper = float(np.nextafter(max(cosines), np.inf))
+    cosine_lower = math.nextafter(min(cosines), -math.inf)
+    cosine_upper = math.nextafter(max(cosines), math.inf)
     cosine_lower = min(1.0, max(-1.0, cosine_lower))
     cosine_upper = min(1.0, max(-1.0, cosine_upper))
     return (
-        float(np.nextafter(math.acos(cosine_upper), 0.0)),
-        float(np.nextafter(math.acos(cosine_lower), np.inf)),
+        math.nextafter(math.acos(cosine_upper), 0.0),
+        math.nextafter(math.acos(cosine_lower), math.inf),
     )
 
 
@@ -1663,8 +1782,8 @@ def _taylor_value_interval(
         magnitude = max(abs(value[0]), abs(value[1]))
         lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
         return (
-            float(np.nextafter(lower, -np.inf)) if lower > 0.0 else 0.0,
-            float(np.nextafter(magnitude * magnitude, np.inf)),
+            math.nextafter(lower, -math.inf) if lower > 0.0 else 0.0,
+            math.nextafter(magnitude * magnitude, math.inf),
         )
 
     quadratic = sum_interval(
@@ -1844,8 +1963,8 @@ def _face_piece_steps(
         else:
             lower *= 2.0
         root_parameters = (
-            float(np.nextafter(lower, -np.inf)),
-            float(np.nextafter(upper, np.inf)),
+            math.nextafter(lower, -math.inf),
+            math.nextafter(upper, math.inf),
         )
     if not (math.isfinite(root_parameters[0]) and math.isfinite(root_parameters[1])):
         return None, "implicit root-chart normal tube is not finitely enclosed", True
@@ -1853,8 +1972,8 @@ def _face_piece_steps(
     if exact_on_source:
         gradient_q = gradient_p
         directional_derivative = (
-            float(np.nextafter(gradient_norm[0] ** 2, 0.0)),
-            float(np.nextafter(gradient_norm[1] ** 2, np.inf)),
+            math.nextafter(gradient_norm[0] ** 2, 0.0),
+            math.nextafter(gradient_norm[1] ** 2, math.inf),
         )
     else:
         # A bracket that misses a strict endpoint sign widens on the failing
@@ -1985,8 +2104,8 @@ def _face_piece_steps(
                     -1.25 * value_low / directional_derivative[0],
                 )
             root_parameters = (
-                float(np.nextafter(lower, -np.inf)),
-                float(np.nextafter(upper, np.inf)),
+                math.nextafter(lower, -math.inf),
+                math.nextafter(upper, math.inf),
             )
     maximum_root_parameter = max(-root_parameters[0], root_parameters[1])
     if not exact_on_source:
@@ -2090,16 +2209,11 @@ def _face_piece_steps(
         for axis in range(3)
     )
     if directional_upper > 0.0:
-        lower_distance = float(
-            np.nextafter(
-                f_abs_lower * gradient_norm[0] / directional_upper,
-                0.0,
-            )
+        lower_distance = math.nextafter(
+            f_abs_lower * gradient_norm[0] / directional_upper, 0.0
         )
-    upper_distance = float(
-        np.nextafter(
-            max(-root_parameters[0], root_parameters[1]) * gradient_norm[1], np.inf
-        )
+    upper_distance = math.nextafter(
+        max(-root_parameters[0], root_parameters[1]) * gradient_norm[1], math.inf
     )
     # A limit of pi admits every normal; the angle enclosure itself may round
     # past the binary64 pi.
@@ -2159,12 +2273,12 @@ def _face_piece_steps(
             maximum_root_parameter,
             max(-root_parameters[0], root_parameters[1]),
             (
-                max(0.0, float(np.nextafter(value_low, -np.inf))),
-                float(np.nextafter(value_high, np.inf)),
+                max(0.0, math.nextafter(value_low, -math.inf)),
+                math.nextafter(value_high, math.inf),
             ),
             (lower_distance, upper_distance),
             target_normal,
-            float(np.nextafter(chart_jacobian, 0.0)),
+            math.nextafter(chart_jacobian, 0.0),
             gradient_norm[0],
             gradient_norm[1],
             directional_derivative[0],
@@ -2311,6 +2425,10 @@ def _chord_errors(
             _enclosed_derivative(along_uv, 1),
             _enclosed_derivative(along_vv, 1),
         )
+        if all(not third.center and not third.error for third in thirds):
+            # A coordinate of degree at most two has an exact chord mean.
+            rows.append((0.0, 0.0))
+            continue
         row: list[float] = []
         for column in range(2):
             total = Fraction(0)
@@ -2335,17 +2453,13 @@ def _chord_errors(
                                 center.get(exponent, Fraction(0)) + weight * coefficient
                             )
                         if third.error:
-                            error = float(
-                                np.nextafter(
-                                    error
-                                    + float(
-                                        np.nextafter(
-                                            _exact_interval(abs(weight))[1] * third.error,
-                                            np.inf,
-                                        )
-                                    ),
-                                    np.inf,
-                                )
+                            error = math.nextafter(
+                                error
+                                + math.nextafter(
+                                    _exact_interval(abs(weight))[1] * third.error,
+                                    math.inf,
+                                ),
+                                math.inf,
                             )
                     magnitude = (
                         max(
@@ -2377,11 +2491,11 @@ def _interval_hull(values: Sequence[Interval], /) -> Interval:
 
 def _interval_square(value: Interval, /) -> Interval:
     lower, upper = value
-    largest = float(np.nextafter(max(lower * lower, upper * upper), np.inf))
+    largest = math.nextafter(max(lower * lower, upper * upper), math.inf)
     if lower <= 0.0 <= upper:
         return 0.0, largest
     smallest = min(abs(lower), abs(upper))
-    return max(0.0, float(np.nextafter(smallest * smallest, 0.0))), largest
+    return max(0.0, math.nextafter(smallest * smallest, 0.0)), largest
 
 
 def _transversal_injectivity(
@@ -2549,26 +2663,20 @@ def _transversal_injectivity(
             # |(I + tH)^-1 g - g|_inf <= rho / (1 - rho) |g|_inf with
             # rho = |t| ||H||_inf bounds the direction of the inverted form
             # det[A_u, A_v, (I + t1 H)^-1 grad f(P2)] without its t1 expansion.
-            contraction = float(
-                np.nextafter(
-                    max(-parameters[0], parameters[1])
-                    * max(
-                        sum(max(abs(entry[0]), abs(entry[1])) for entry in row)
-                        for row in face_hessian
-                    ),
-                    np.inf,
-                )
+            contraction = math.nextafter(
+                max(-parameters[0], parameters[1])
+                * max(
+                    sum(max(abs(entry[0]), abs(entry[1])) for entry in row)
+                    for row in face_hessian
+                ),
+                math.inf,
             )
             if math.isfinite(contraction) and contraction < 1.0:
-                perturbation = float(
-                    np.nextafter(
-                        contraction
-                        / float(np.nextafter(1.0 - contraction, 0.0))
-                        * max(
-                            max(abs(entry[0]), abs(entry[1])) for entry in face_gradient
-                        ),
-                        np.inf,
-                    )
+                perturbation = math.nextafter(
+                    contraction
+                    / math.nextafter(1.0 - contraction, 0.0)
+                    * max(max(abs(entry[0]), abs(entry[1])) for entry in face_gradient),
+                    math.inf,
                 )
                 direction: IntervalVector3 = (
                     _interval_add(face_gradient[0], (-perturbation, perturbation)),
@@ -2600,7 +2708,7 @@ def _transversal_injectivity(
                 ),
             )
             if best > 0.0:
-                return float(np.nextafter(best / scale, 0.0)), ()
+                return math.nextafter(best / scale, 0.0), ()
         root_boxes = np.asarray(
             [[list(bounds) for bounds in piece.root_box] for piece in pieces],
             dtype=np.float64,
@@ -2665,7 +2773,7 @@ def _transversal_injectivity(
                 blocking.add(row)
         if blocking:
             return 0.0, tuple(sorted(blocking))
-        return float(np.nextafter(lower / scale, 0.0)), ()
+        return math.nextafter(lower / scale, 0.0), ()
 
     return margin
 
@@ -2988,11 +3096,11 @@ def _box_distance_lower(point: np.ndarray, box: IntervalVector3, /) -> float:
     gaps = []
     for axis in range(3):
         gap = max(box[axis][0] - float(point[axis]), float(point[axis]) - box[axis][1])
-        gaps.append(float(np.nextafter(gap, 0.0)) if gap > 0.0 else 0.0)
-    squared = float(
-        np.nextafter(math.fsum(float(np.nextafter(gap * gap, 0.0)) for gap in gaps), 0.0)
+        gaps.append(math.nextafter(gap, 0.0) if gap > 0.0 else 0.0)
+    squared = math.nextafter(
+        math.fsum(math.nextafter(gap * gap, 0.0) for gap in gaps), 0.0
     )
-    return max(0.0, float(np.nextafter(math.sqrt(max(squared, 0.0)), 0.0)))
+    return max(0.0, math.nextafter(math.sqrt(max(squared, 0.0)), 0.0))
 
 
 def _point_exclusion_steps(
@@ -3171,15 +3279,15 @@ def _build_face(
         cell_key,
         root_edges,
         status,
-        float(np.nextafter(residual_upper, np.inf)),
-        float(np.nextafter(target_to_root_lower, 0.0)),
-        float(np.nextafter(target_to_root_upper, np.inf)),
+        math.nextafter(residual_upper, math.inf),
+        math.nextafter(target_to_root_lower, 0.0),
+        math.nextafter(target_to_root_upper, math.inf),
         (
-            float(np.nextafter(normal_lower, 0.0)),
-            float(np.nextafter(normal_upper, np.inf)),
+            math.nextafter(normal_lower, 0.0),
+            math.nextafter(normal_upper, math.inf),
         ),
-        float(np.nextafter(jacobian_lower, 0.0)),
-        float(np.nextafter(injectivity_margin, 0.0)),
+        math.nextafter(jacobian_lower, 0.0),
+        math.nextafter(injectivity_margin, 0.0),
         min(piece.source_gradient_lower for piece in pieces),
         detail,
     )
@@ -3212,6 +3320,7 @@ def _build_face(
         source_parameters,
         cell_expressions,
         target_expressions,
+        face,
         pieces,
         tuple(root_corners),
         projected_axes,
@@ -3219,6 +3328,47 @@ def _build_face(
         max(piece.maximum_root_parameter for piece in pieces),
         evidence,
     )
+
+
+def _edge_polynomial(
+    expression: Polynomial, start: TrianglePoint, stop: TrianglePoint, /
+) -> Expression:
+    """``expression(start + s (stop - start))`` as an exact univariate map.
+
+    Rational coefficients expand binomially into the canonical form
+    `compose_expression` returns; other coefficients compose there.
+    """
+    first_start, second_start = start
+    first_step, second_step = stop[0] - first_start, stop[1] - second_start
+    result: dict[int, Fraction] = {}
+    for (first_power, second_power), coefficient in expression.items():
+        if not isinstance(coefficient, Fraction):
+            return compose_expression(
+                expression,
+                (
+                    {(0,): first_start, (1,): first_step},
+                    {(0,): second_start, (1,): second_step},
+                ),
+            )
+        for first_order in range(first_power + 1):
+            first_term = (
+                math.comb(first_power, first_order)
+                * first_start ** (first_power - first_order)
+                * first_step**first_order
+            )
+            if not first_term:
+                continue
+            for second_order in range(second_power + 1):
+                term = (
+                    first_term
+                    * math.comb(second_power, second_order)
+                    * second_start ** (second_power - second_order)
+                    * second_step**second_order
+                )
+                if term:
+                    power = first_order + second_order
+                    result[power] = result.get(power, Fraction(0)) + coefficient * term
+    return {(power,): value for power, value in result.items() if value}
 
 
 def _shared_edge_map_issues(
@@ -3307,22 +3457,9 @@ def _shared_edge_map_issues(
                 start_corner, stop_corner = second_corner, first_corner
             start_uv = standard[start_corner]
             stop_uv = standard[stop_corner]
-            argument_u: Polynomial = {
-                (0,): start_uv[0],
-                (1,): stop_uv[0] - start_uv[0],
-            }
-            argument_v: Polynomial = {
-                (0,): start_uv[1],
-                (1,): stop_uv[1] - start_uv[1],
-            }
-            first_map = compose_expression(
-                face.face_expressions[0], (argument_u, argument_v)
-            )
-            second_map = compose_expression(
-                face.face_expressions[1], (argument_u, argument_v)
-            )
-            third_map = compose_expression(
-                face.face_expressions[2], (argument_u, argument_v)
+            first_map, second_map, third_map = (
+                _edge_polynomial(expression, start_uv, stop_uv)
+                for expression in face.face_expressions
             )
             if (
                 not isinstance(first_map, dict)
@@ -3373,6 +3510,36 @@ def prepare_adaptive_implicit_root_charts(
     `frame_id` may be supplied only by the caller that owns the exact spatial
     coordinate contract. No frame is inferred from field values or source IDs.
     """
+    return _prepare_root_charts(
+        mesh,
+        geometry,
+        source,
+        witness,
+        frame_id=frame_id,
+        tolerance=tolerance,
+        maximum_normal_deviation=maximum_normal_deviation,
+        target_rows=None,
+    )
+
+
+def _prepare_root_charts(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: AdaptiveImplicitSourceQuery,
+    witness: SourceBoundaryChartWitness,
+    /,
+    *,
+    frame_id: str | None,
+    tolerance: float | None,
+    maximum_normal_deviation: float | None,
+    target_rows: tuple[tuple[int, int], ...] | None,
+) -> AdaptiveImplicitRootChartMap:
+    """`prepare_adaptive_implicit_root_charts` body.
+
+    ``target_rows`` are the witness's target chart rows from a caller that has
+    already validated this mesh, geometry, source and witness; ``None``
+    validates them and derives the rows here.
+    """
     from ...geometry._source_fidelity import (
         _surface_target_chart_rows,
         validate_source_fidelity_witness,
@@ -3410,7 +3577,8 @@ def prepare_adaptive_implicit_root_charts(
             raise ValueError(
                 "Implicit root charts require a smooth field or an exact profile singular set disjoint from the certified zero-set cover."
             )
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    if target_rows is None:
+        validate_source_fidelity_witness(mesh, geometry, source, witness)
     if (
         surface.cover is None
         or not surface.cover.complete
@@ -3441,9 +3609,10 @@ def prepare_adaptive_implicit_root_charts(
             "Implicit root charts require a continuous interval Hessian enclosure."
         ) from error
     bounds = surface.volume.bounds
-    target_rows, _, _ = _surface_target_chart_rows(
-        mesh, geometry, None, witness, full_source=False
-    )
+    if target_rows is None:
+        target_rows, _, _ = _surface_target_chart_rows(
+            mesh, geometry, None, witness, full_source=False
+        )
     if len(target_rows) != len(witness.source_chart_ids):
         raise ValueError(
             "Implicit target chart rows do not align with the retained source witness."
@@ -3493,7 +3662,7 @@ def _doubling_steps(start: float, maximum_step: float, /) -> list[float]:
     """The coordinate-spacing doubling sequence inside a normal tube; never empty."""
     steps = [start]
     while True:
-        next_step = float(np.nextafter(steps[-1] * 2.0, np.inf))
+        next_step = math.nextafter(steps[-1] * 2.0, math.inf)
         if not math.isfinite(next_step) or next_step <= steps[-1]:
             break
         if next_step > maximum_step:
@@ -3696,149 +3865,489 @@ def _lift_points(
     return lifted
 
 
-def _nearest_center_squared(
-    sample: PhysicalPoint3,
-    sample_value: np.ndarray,
-    centers: Sequence[ExactPoint3],
-    center_lower: np.ndarray,
-    center_upper: np.ndarray,
-    /,
-) -> ExactScalar:
-    """Return the exact ``min_i |c_i - s|^2``, evaluating only the possible minimizers.
-
-    Each exact centre lies in its outward-rounded coordinate box, so the box gap
-    and the farthest box corner bound ``|c_i - s|^2`` below and above up to a
-    few binary64 roundings, which the relative ``1e-12`` and the absolute
-    ``1e-280`` slack cover. A centre whose lower bound exceeds the least upper
-    bound is farther than some other centre exactly, so the minimum over the
-    survivors is the minimum over all centres.
-    """
-    below = center_lower - sample_value
-    above = sample_value - center_upper
-    gap = np.maximum(np.maximum(below, above), 0.0)
-    far = np.maximum(np.abs(below), np.abs(above))
-    lower = np.sum(gap * gap, axis=1) * (1.0 - 1.0e-12)
-    upper = np.sum(far * far, axis=1) * (1.0 + 1.0e-12)
-    rows = np.flatnonzero(lower <= float(np.min(upper)) + 1.0e-280)
-    return min(_squared_distance(sample, centers[int(row)]) for row in rows)
+# Monomials of a bivariate target face map of degree at most three.
+_MONOMIALS: tuple[tuple[int, int], ...] = (
+    (0, 0),
+    (1, 0),
+    (0, 1),
+    (2, 0),
+    (1, 1),
+    (0, 2),
+    (3, 0),
+    (2, 1),
+    (1, 2),
+    (0, 3),
+)
+# A possible-zero box that halving has shrunk below this fraction of the
+# tolerance without being proved near the mesh or zero-free is refused.
+_REVERSE_COVER_FLOOR = 2.0**-24
+# Possible-zero boxes decided per interval evaluation round.
+_REVERSE_COVER_ROUND = 8192
 
 
-def _squared_distance(sample: PhysicalPoint3, point: ExactPoint3, /) -> ExactScalar:
-    total: ExactScalar = Fraction(0)
-    for axis in range(3):
-        offset = point[axis] - sample[axis]
-        total = total + offset * offset
-    return total
+@dataclass(frozen=True, slots=True)
+class _FaceMaps:
+    """Binary64 coefficient enclosures of every target face map and their boxes."""
+
+    # Nearest coefficients, used only to choose a face parameter to enclose.
+    middle: np.ndarray
+    # Outward coefficient enclosures (faces, coordinates, monomials) and each
+    # coordinate's radical-coefficient error over the standard triangle.
+    lower: np.ndarray
+    upper: np.ndarray
+    error: np.ndarray
+    box_lower: np.ndarray
+    box_upper: np.ndarray
+    bvh: PackedBVH
 
 
-def _evaluate_exact_point(
-    expressions: Polynomial3, parameter: TrianglePoint, /
-) -> ExactPoint3:
-    return (
-        _evaluate_exact_polynomial(expressions[0], parameter),
-        _evaluate_exact_polynomial(expressions[1], parameter),
-        _evaluate_exact_polynomial(expressions[2], parameter),
-    )
-
-
-def _nearest_target_chart_bounds(
-    sample: PhysicalPoint3,
-    expressions: Polynomial3,
-    enclosure: _FaceEnclosure,
-    threshold: Fraction,
-    /,
-) -> tuple[Fraction, Fraction, bool]:
-    """Bound one source point's distance to a complete nonlinear target triangle."""
-    from ...linalg._hermitian_spectral import fraction_sqrt_interval
-
-    if threshold < 0:
-        return Fraction(0), Fraction(1 << 1024), False
-    pending: list[TriangleReference] = [_STANDARD_TRIANGLE]
-    lower_squared_rows: list[Fraction] = []
-    center: TrianglePoint = (Fraction(1, 3), Fraction(1, 3))
-    best_upper_squared = _squared_distance(
-        sample, _evaluate_exact_point(expressions, center)
-    )
-    unresolved = False
-    center_upper = fraction_sqrt_interval(_rational_bounds(best_upper_squared)[1])[1]
-    if center_upper <= threshold:
-        return Fraction(0), center_upper, True
-    candidate_parameters: tuple[TrianglePoint, ...] = (
-        (Fraction(0), Fraction(0)),
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1)),
-        (Fraction(1, 3), Fraction(1, 3)),
-    )
-    while pending:
-        triangle = pending.pop()
-        intervals: IntervalVector3 = (
-            _enclosed_interval(enclosure.values[0], triangle),
-            _enclosed_interval(enclosure.values[1], triangle),
-            _enclosed_interval(enclosure.values[2], triangle),
+def _face_maps(faces: Sequence[_PreparedFace], /) -> _FaceMaps:
+    count = len(faces)
+    columns = {monomial: column for column, monomial in enumerate(_MONOMIALS)}
+    middle = np.zeros((count, 3, len(_MONOMIALS)), dtype=np.float64)
+    lower = np.zeros_like(middle)
+    upper = np.zeros_like(middle)
+    error = np.zeros((count, 3), dtype=np.float64)
+    box_lower = np.empty((count, 3), dtype=np.float64)
+    box_upper = np.empty((count, 3), dtype=np.float64)
+    for row, face in enumerate(faces):
+        for axis, value in enumerate(face.face_enclosure.values):
+            for exponent, coefficient in value.center.items():
+                column = columns[(exponent[0], exponent[1])]
+                middle[row, axis, column] = float(coefficient)
+                lower[row, axis, column], upper[row, axis, column] = _exact_interval(
+                    coefficient
+                )
+            error[row, axis] = value.error
+        box_lower[row], box_upper[row] = _enclosed_box(
+            face.face_enclosure, _STANDARD_TRIANGLE
         )
-        if any(not math.isfinite(value) for interval in intervals for value in interval):
-            unresolved = True
-            continue
-        lower_squared = Fraction(0)
-        for axis, (lower, upper) in enumerate(intervals):
-            low_exact = Fraction.from_float(lower)
-            high_exact = Fraction.from_float(upper)
-            gap = max(Fraction(0), low_exact - sample[axis], sample[axis] - high_exact)
-            lower_squared += gap * gap
-        lower_distance = fraction_sqrt_interval(lower_squared)[0]
-        if lower_distance > threshold:
-            lower_squared_rows.append(lower_squared)
-            continue
-        candidate_solver = _prepare_barycentric_solver(triangle)
-        corner, first, second = triangle
-        for parameter in candidate_parameters:
-            if not all(
-                value >= 0
-                for value in _barycentric(parameter, triangle, solver=candidate_solver)
-            ):
-                continue
-            # The triangle's restricted map at ``parameter``, evaluated directly.
-            point = _evaluate_exact_point(
-                expressions,
+    return _FaceMaps(
+        middle,
+        lower,
+        upper,
+        error,
+        box_lower,
+        box_upper,
+        prepare_bvh(box_lower, box_upper, dtype=np.float64),
+    )
+
+
+def _monomial_values(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
+    one = np.ones_like(first)
+    return np.stack(
+        (
+            one,
+            first,
+            second,
+            first * first,
+            first * second,
+            second * second,
+            first * first * first,
+            first * first * second,
+            first * second * second,
+            second * second * second,
+        ),
+        axis=-1,
+    )
+
+
+def _inside_standard_triangle(
+    first: np.ndarray, second: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Clamp binary64 parameters into the closed standard triangle exactly.
+
+    ``second`` stays two ulps below the rounded ``1 - first``, so the exact
+    sum of both parameters never exceeds one.
+    """
+    first = np.clip(np.nan_to_num(first, nan=0.0), 0.0, 1.0)
+    second = np.clip(np.nan_to_num(second, nan=0.0), 0.0, 1.0)
+    total = first + second
+    over = total > 1.0
+    first = np.where(over, first / np.where(over, total, 1.0), first)
+    second = np.where(over, second / np.where(over, total, 1.0), second)
+    first = np.clip(first, 0.0, 1.0)
+    second = np.clip(
+        np.minimum(second, np.nextafter(np.nextafter(1.0 - first, 0.0), 0.0)), 0.0, 1.0
+    )
+    return first, second
+
+
+def _nearest_face_parameters(
+    maps: _FaceMaps, faces: np.ndarray, points: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Parameters of the face points nearest the query points, by Gauss-Newton.
+
+    Only the choice of the enclosed face point depends on these; their accuracy
+    never enters a bound.
+    """
+    coefficients = maps.middle[faces]
+    first = np.full((faces.shape[0],), 1.0 / 3.0)
+    second = np.full((faces.shape[0],), 1.0 / 3.0)
+    zero = np.zeros_like(first)
+    one = np.ones_like(first)
+    for _ in range(8):
+        residual = np.einsum(
+            "nam,nm->na", coefficients, _monomial_values(first, second)
+        ) - (points)
+        along_first = np.einsum(
+            "nam,nm->na",
+            coefficients,
+            np.stack(
                 (
-                    corner[0]
-                    + (first[0] - corner[0]) * parameter[0]
-                    + (second[0] - corner[0]) * parameter[1],
-                    corner[1]
-                    + (first[1] - corner[1]) * parameter[0]
-                    + (second[1] - corner[1]) * parameter[1],
+                    zero,
+                    one,
+                    zero,
+                    2.0 * first,
+                    second,
+                    zero,
+                    3.0 * first * first,
+                    2.0 * first * second,
+                    second * second,
+                    zero,
                 ),
+                axis=-1,
+            ),
+        )
+        along_second = np.einsum(
+            "nam,nm->na",
+            coefficients,
+            np.stack(
+                (
+                    zero,
+                    zero,
+                    one,
+                    zero,
+                    first,
+                    2.0 * second,
+                    zero,
+                    first * first,
+                    2.0 * first * second,
+                    3.0 * second * second,
+                ),
+                axis=-1,
+            ),
+        )
+        a11 = np.sum(along_first * along_first, axis=1)
+        a12 = np.sum(along_first * along_second, axis=1)
+        a22 = np.sum(along_second * along_second, axis=1)
+        b1 = -np.sum(along_first * residual, axis=1)
+        b2 = -np.sum(along_second * residual, axis=1)
+        determinant = a11 * a22 - a12 * a12
+        valid = np.isfinite(determinant) & (determinant > 0.0)
+        safe = np.where(valid, determinant, 1.0)
+        first, second = _inside_standard_triangle(
+            first + np.where(valid, (b1 * a22 - b2 * a12) / safe, 0.0),
+            second + np.where(valid, (a11 * b2 - a12 * b1) / safe, 0.0),
+        )
+    return first, second
+
+
+def _face_point_enclosures(
+    maps: _FaceMaps,
+    faces: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Outward enclosures ``(n, 3)`` of exact face points at standard-triangle parameters."""
+
+    def product(
+        left: tuple[np.ndarray, np.ndarray], right: tuple[np.ndarray, np.ndarray], /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # Both factors are nonnegative.
+        return (
+            np.nextafter(left[0] * right[0], -np.inf),
+            np.nextafter(left[1] * right[1], np.inf),
+        )
+
+    one = (np.ones_like(first), np.ones_like(first))
+    along_first = (first, first)
+    along_second = (second, second)
+    first_squared = product(along_first, along_first)
+    mixed = product(along_first, along_second)
+    second_squared = product(along_second, along_second)
+    monomials = (
+        one,
+        along_first,
+        along_second,
+        first_squared,
+        mixed,
+        second_squared,
+        product(first_squared, along_first),
+        product(first_squared, along_second),
+        product(along_first, second_squared),
+        product(second_squared, along_second),
+    )
+    coefficient_lower = maps.lower[faces]
+    coefficient_upper = maps.upper[faces]
+    lower = np.zeros((faces.shape[0], 3), dtype=np.float64)
+    upper = np.zeros((faces.shape[0], 3), dtype=np.float64)
+    for column, (monomial_lower, monomial_upper) in enumerate(monomials):
+        products = np.stack(
+            (
+                coefficient_lower[:, :, column] * monomial_lower[:, None],
+                coefficient_lower[:, :, column] * monomial_upper[:, None],
+                coefficient_upper[:, :, column] * monomial_lower[:, None],
+                coefficient_upper[:, :, column] * monomial_upper[:, None],
             )
-            squared = _squared_distance(sample, point)
-            if squared < best_upper_squared:
-                best_upper_squared = squared
-        upper_distance = fraction_sqrt_interval(_rational_bounds(best_upper_squared)[1])[
-            1
-        ]
-        if upper_distance <= threshold:
-            return Fraction(0), upper_distance, True
-        if lower_squared >= best_upper_squared:
-            lower_squared_rows.append(lower_squared)
+        )
+        lower = np.nextafter(
+            lower + np.nextafter(np.min(products, axis=0), -np.inf), -np.inf
+        )
+        upper = np.nextafter(
+            upper + np.nextafter(np.max(products, axis=0), np.inf), np.inf
+        )
+    errors = maps.error[faces]
+    return (
+        np.nextafter(lower - errors, -np.inf),
+        np.nextafter(upper + errors, np.inf),
+    )
+
+
+def _distance_upper(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    point_lower: np.ndarray,
+    point_upper: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Upper bounds of ``|x - q|`` over ``x`` in each box and ``q`` in each point box."""
+    extent = np.maximum(
+        np.nextafter(upper - point_lower, np.inf),
+        np.nextafter(point_upper - lower, np.inf),
+    )
+    squared = np.nextafter(extent * extent, np.inf)
+    total = np.zeros((lower.shape[0],), dtype=np.float64)
+    for axis in range(3):
+        total = np.nextafter(total + squared[:, axis], np.inf)
+    return np.nextafter(np.sqrt(total), np.inf)
+
+
+def _distance_lower(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    other_lower: np.ndarray,
+    other_upper: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Lower bounds of the distance between paired boxes."""
+    gap = np.maximum(
+        np.maximum(
+            np.nextafter(other_lower - upper, -np.inf),
+            np.nextafter(lower - other_upper, -np.inf),
+        ),
+        0.0,
+    )
+    squared = np.nextafter(gap * gap, 0.0)
+    total = np.zeros((lower.shape[0],), dtype=np.float64)
+    for axis in range(3):
+        total = np.maximum(np.nextafter(total + squared[:, axis], -np.inf), 0.0)
+    return np.nextafter(np.sqrt(total), 0.0)
+
+
+def _box_face_pair_blocks(
+    maps: _FaceMaps, lower: np.ndarray, upper: np.ndarray, reach: float, /
+) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
+    """Blocks of ``(box, face)`` pairs whose boxes come within ``reach`` in every coordinate.
+
+    A face missing a box's pairs is farther than ``reach`` from the whole box.
+    Blocks stream, so no query materializes all pairs at once.
+    """
+    if lower.shape[0] == 0:
+        return
+    reached = prepare_bvh(
+        np.nextafter(lower - reach, -np.inf),
+        np.nextafter(upper + reach, np.inf),
+        dtype=np.float64,
+    )
+    for faces, boxes in bvh_overlap_pair_blocks(maps.bvh, reached, include_touching=True):
+        yield np.asarray(boxes, dtype=np.int64), np.asarray(faces, dtype=np.int64)
+
+
+def _box_face_distance_lower(
+    maps: _FaceMaps, lower: np.ndarray, upper: np.ndarray, reach: float, /
+) -> np.ndarray:
+    """Per box, the least lower distance to the face boxes within ``reach``; else ``inf``."""
+    nearest = np.full((lower.shape[0],), np.inf, dtype=np.float64)
+    for boxes, faces in _box_face_pair_blocks(maps, lower, upper, reach):
+        np.minimum.at(
+            nearest,
+            boxes,
+            _distance_lower(
+                lower[boxes], upper[boxes], maps.box_lower[faces], maps.box_upper[faces]
+            ),
+        )
+    return nearest
+
+
+def _witness_distance_lower(
+    maps: _FaceMaps, points: np.ndarray, errors: np.ndarray, tolerance: float, /
+) -> float:
+    """The largest certified distance from a retained source root to the target mesh.
+
+    Faces outside a reach ``r`` are farther than ``r`` from a root, so its
+    distance is the least lower distance to the faces within ``r`` once that is
+    below ``r``, and at least ``r`` when nothing comes within ``r``. The reach
+    doubles from a small fraction of the tolerance until one of these holds or
+    it exceeds the tolerance, so each query only meets the faces near a root.
+    """
+    nearest = np.empty((points.shape[0],), dtype=np.float64)
+    pending = np.arange(points.shape[0])
+    reach = tolerance * 2.0**-6
+    while pending.shape[0]:
+        found = _box_face_distance_lower(maps, points[pending], points[pending], reach)
+        settled = (found < reach) | (reach > tolerance)
+        nearest[pending[settled]] = np.minimum(found[settled], reach)
+        pending = pending[~settled]
+        reach = math.nextafter(2.0 * reach, math.inf)
+    return float(
+        np.max(np.maximum(np.nextafter(nearest - errors, -np.inf), 0.0), initial=0.0)
+    )
+
+
+def _source_to_mesh_bounds(
+    surface: AdaptiveImplicitSurface, maps: _FaceMaps, tolerance: float, /
+) -> tuple[float, float]:
+    """Certified lower and upper bounds of the zero set's distance to the target mesh.
+
+    The retained cover proves every box outside its possible-zero boxes
+    sign-definite. Each possible-zero box is accepted once one exact face point
+    ``q`` has ``max_{x in box} |x - q| <= tolerance``, is dropped once its own
+    enclosure is sign-definite, and is otherwise halved, so only boxes along
+    the zero set refine and only down to the tolerance scale. A box farther
+    than the tolerance from every face box whose corners certify a sign change
+    holds a zero point beyond the tolerance (the violated lower bound). The
+    upper bound is infinite once a box reaches the refinement floor undecided.
+    Retained source roots bound the distance from below.
+    """
+    cover = surface.cover
+    if cover is None:
+        return 0.0, math.inf
+    bounds = surface.volume.bounds
+    lower_bound = _witness_distance_lower(
+        maps,
+        np.asarray(surface.boundary_witnesses, dtype=np.float64).reshape((-1, 3)),
+        np.asarray(surface.boundary_errors, dtype=np.float64).reshape((-1,)),
+        tolerance,
+    )
+    upper_bound = 0.0
+    floor = tolerance * _REVERSE_COVER_FLOOR
+    pending = np.asarray(cover.boxes[cover.possible_zero_mask], dtype=np.float64)
+    # Boxes are decided in bounded rounds, so one interval evaluation and its
+    # face pairs never hold more than `_REVERSE_COVER_ROUND` boxes.
+    queue = [pending]
+    while queue:
+        pending = queue.pop()
+        if pending.shape[0] > _REVERSE_COVER_ROUND:
+            queue.append(pending[_REVERSE_COVER_ROUND:])
+            pending = pending[:_REVERSE_COVER_ROUND]
+        values = bounds.boxes(pending[:, 0], pending[:, 1])
+        definite = (values.value_lower > 0.0) | (values.value_upper < 0.0)
+        pending = pending[~definite]
+        if not pending.shape[0]:
             continue
-        children = _split_triangle(triangle)
-        if children is None:
-            unresolved = True
-            lower_squared_rows.append(lower_squared)
-            continue
-        pending.extend(reversed(children))
-    nearest_lower_squared = min(lower_squared_rows, default=Fraction(0))
-    nearest_lower = fraction_sqrt_interval(nearest_lower_squared)[0]
-    nearest_upper = fraction_sqrt_interval(_rational_bounds(best_upper_squared)[1])[1]
-    if nearest_lower > threshold:
-        return nearest_lower, nearest_upper, True
-    return nearest_lower, nearest_upper, not unresolved
+        box_lower, box_upper = pending[:, 0], pending[:, 1]
+        radius = _distance_upper(
+            box_lower,
+            box_upper,
+            0.5 * box_lower + 0.5 * box_upper,
+            0.5 * box_lower + 0.5 * box_upper,
+        )
+        # Acceptance tries the faces nearest each small box's centre: the
+        # centre's reach doubles from a small fraction of the tolerance until
+        # some face box comes within it, so each query meets only nearby faces.
+        reach = np.full((pending.shape[0],), np.inf, dtype=np.float64)
+        trial = np.flatnonzero(radius <= tolerance)
+        centers = 0.5 * box_lower + 0.5 * box_upper
+        search = tolerance * 2.0**-6
+        while trial.shape[0] and search <= 2.0 * tolerance:
+            found = np.zeros((trial.shape[0],), dtype=np.bool_)
+            for boxes, faces in _box_face_pair_blocks(
+                maps, centers[trial], centers[trial], search
+            ):
+                found[boxes] = True
+                rows = trial[boxes]
+                first, second = _nearest_face_parameters(maps, faces, centers[rows])
+                point_lower, point_upper = _face_point_enclosures(
+                    maps, faces, first, second
+                )
+                np.minimum.at(
+                    reach,
+                    rows,
+                    _distance_upper(
+                        box_lower[rows], box_upper[rows], point_lower, point_upper
+                    ),
+                )
+            trial = trial[~found]
+            search = math.nextafter(2.0 * search, math.inf)
+        accepted = reach <= tolerance
+        if np.any(accepted):
+            upper_bound = max(upper_bound, float(np.max(reach[accepted])))
+        near = accepted.copy()
+        undecided = np.flatnonzero(~accepted)
+        for boxes, _faces in _box_face_pair_blocks(
+            maps, box_lower[undecided], box_upper[undecided], tolerance
+        ):
+            near[undecided[boxes]] = True
+        far = ~near & ~accepted
+        for row in np.flatnonzero(far):
+            corners = np.where(
+                np.asarray(
+                    [[(index >> axis) & 1 for axis in range(3)] for index in range(8)]
+                )
+                == 0,
+                box_lower[row],
+                box_upper[row],
+            )
+            corner_lower, corner_upper = bounds.point_values(corners)
+            if np.any(corner_lower > 0.0) and np.any(corner_upper < 0.0):
+                # A certified zero lies in a box farther than the tolerance
+                # from every face box: the reverse tolerance is violated.
+                count = maps.box_lower.shape[0]
+                beyond = float(
+                    np.min(
+                        _distance_lower(
+                            np.broadcast_to(box_lower[row], (count, 3)),
+                            np.broadcast_to(box_upper[row], (count, 3)),
+                            maps.box_lower,
+                            maps.box_upper,
+                        )
+                    )
+                )
+                return max(lower_bound, beyond), math.inf
+        remaining = pending[~accepted]
+        middle = 0.5 * remaining[:, 0] + 0.5 * remaining[:, 1]
+        splittable = np.all(
+            (remaining[:, 0] < middle) & (middle < remaining[:, 1]), axis=1
+        ) & (radius[~accepted] > floor)
+        if not np.all(splittable):
+            upper_bound = math.inf
+        remaining, middle = remaining[splittable], middle[splittable]
+        children = []
+        for index in range(8):
+            choice = np.asarray(
+                [(index >> axis) & 1 for axis in range(3)], dtype=np.bool_
+            )
+            children.append(
+                np.stack(
+                    (
+                        np.where(choice, middle, remaining[:, 0]),
+                        np.where(choice, remaining[:, 1], middle),
+                    ),
+                    axis=1,
+                )
+            )
+        if remaining.shape[0]:
+            queue.append(np.concatenate(children, axis=0))
+    return lower_bound, upper_bound
 
 
 def certify_adaptive_implicit_charts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: AdaptiveImplicitSourceQuery,
-    witness: SourceBoundaryChartWitness,
+    witness: SourceBoundaryChartWitness | ValidatedSourceFidelityWitness,
     /,
     *,
     tolerance: float,
@@ -3851,16 +4360,19 @@ def certify_adaptive_implicit_charts(
     mesh, geometry, source, witness and controls; it is checked against them
     and used instead of preparing the charts again.
     """
-    from ..._bvh import bvh_nearest_items, prepare_bvh
     from ...geometry._source_fidelity import (
         _surface_target_chart_rows,
         _unresolved_fidelity,
         validate_source_fidelity_witness,
     )
     from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
-    from ...linalg._hermitian_spectral import fraction_sqrt_interval
 
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    chart_witness = validate_source_fidelity_witness(
+        mesh, geometry, source, witness
+    ).witness
+    if not isinstance(chart_witness, SourceBoundaryChartWitness):
+        raise TypeError("witness must be SourceBoundaryChartWitness.")
+    witness = chart_witness
     if root_charts is not None:
         root_charts.require_request(
             mesh,
@@ -3873,13 +4385,18 @@ def certify_adaptive_implicit_charts(
         root_map = root_charts
     else:
         try:
-            root_map = prepare_adaptive_implicit_root_charts(
+            target_rows, _, _ = _surface_target_chart_rows(
+                mesh, geometry, None, witness, full_source=False
+            )
+            root_map = _prepare_root_charts(
                 mesh,
                 geometry,
                 source,
                 witness,
+                frame_id=None,
                 tolerance=tolerance,
                 maximum_normal_deviation=maximum_normal_deviation,
+                target_rows=target_rows,
             )
         except (ArithmeticError, IndexError, TypeError, ValueError) as error:
             return _unresolved_fidelity(
@@ -3958,7 +4475,6 @@ def certify_adaptive_implicit_charts(
                     )
                 )
     adaptive, _ = _source_authority(source)
-    source_radius = tolerance * 0.5
     if tolerance <= 0.0:
         return _unresolved_fidelity(
             mesh,
@@ -3980,15 +4496,12 @@ def certify_adaptive_implicit_charts(
                 ]
             ),
         )
-    samples = adaptive.boundary_cover(source_radius)
+    cover = adaptive.surface.cover
     if (
-        not samples.complete
-        or samples.semantics != "certified"
-        or samples.points.ndim != 2
-        or samples.points.shape[0] == 0
-        or np.any(~np.isfinite(samples.points))
-        or np.any(samples.covering_radius > source_radius)
-        or np.any(samples.point_error < 0.0)
+        cover is None
+        or not cover.complete
+        or not cover.certified
+        or not np.any(cover.possible_zero_mask)
     ):
         return _unresolved_fidelity(
             mesh,
@@ -4005,118 +4518,14 @@ def certify_adaptive_implicit_charts(
                         "implicit_source_cover",
                         "unresolved",
                         "source_facet",
-                        detail="The current adaptive source root cover is incomplete at the requested physical radius.",
+                        detail="The current adaptive source root cover is incomplete.",
                     )
                 ]
             ),
         )
-    sample_points = np.asarray(samples.points, dtype=np.float64)
-    sample_exact: tuple[PhysicalPoint3, ...] = tuple(
-        _physical_point3(sample_points[row]) for row in range(sample_points.shape[0])
+    source_to_mesh_lower, source_to_mesh_upper = _source_to_mesh_bounds(
+        adaptive.surface, _face_maps(root_map._faces), float(tolerance)
     )
-    target_rows, _, _ = _surface_target_chart_rows(
-        mesh, geometry, None, witness, full_source=False
-    )
-    target_maps: list[Polynomial3] = []
-    target_map_enclosures: list[_FaceEnclosure] = []
-    target_map_boxes: list[tuple[np.ndarray, np.ndarray]] = []
-    target_map_centers: list[ExactPoint3] = []
-    center_parameter: TrianglePoint = (Fraction(1, 3), Fraction(1, 3))
-    target = _target_map_source(mesh, geometry)
-    for row, (block_index, cell_row) in enumerate(target_rows):
-        cell_expressions = _target_cell_coordinate_expressions(
-            target, block_index, cell_row
-        )
-        reference_corners = _reference_triangle(
-            _token_chart(witness.target_reference_rational_tokens[row])
-        )
-        mapped = _triangle_coordinate_expressions(cell_expressions, reference_corners)
-        enclosure = _enclose_face(mapped)
-        target_maps.append(mapped)
-        target_map_enclosures.append(enclosure)
-        target_map_boxes.append(_enclosed_box(enclosure, _STANDARD_TRIANGLE))
-        target_map_centers.append(_evaluate_exact_point(mapped, center_parameter))
-    box_lower = np.asarray([box[0] for box in target_map_boxes], dtype=np.float64)
-    box_upper = np.asarray([box[1] for box in target_map_boxes], dtype=np.float64)
-    target_bvh = prepare_bvh(box_lower, box_upper, dtype=np.float64)
-    center_intervals = [
-        [_exact_interval(value) for value in center] for center in target_map_centers
-    ]
-    center_lower = np.asarray(
-        [[value[0] for value in center] for center in center_intervals],
-        dtype=np.float64,
-    )
-    center_upper = np.asarray(
-        [[value[1] for value in center] for center in center_intervals],
-        dtype=np.float64,
-    )
-    source_to_mesh_lower = Fraction(0)
-    source_to_mesh_upper = Fraction(0)
-    for sample_row, sample in enumerate(sample_exact):
-        point_error = Fraction.from_float(float(samples.point_error[sample_row]))
-        cover_radius = Fraction.from_float(float(samples.covering_radius[sample_row]))
-        threshold = Fraction.from_float(float(tolerance)) - point_error - cover_radius
-        sample_float = np.asarray(
-            tuple(float(value) for value in sample), dtype=np.float64
-        )
-        center_upper_squared = _nearest_center_squared(
-            sample, sample_float, target_map_centers, center_lower, center_upper
-        )
-        nearest_upper = fraction_sqrt_interval(_rational_bounds(center_upper_squared)[1])[
-            1
-        ]
-        first_gap = np.nextafter(box_lower - sample_float, -np.inf)
-        second_gap = np.nextafter(sample_float - box_upper, -np.inf)
-        gap = np.maximum(np.maximum(first_gap, second_gap), 0.0)
-        squared = np.nextafter(gap * gap, 0.0)
-        squared_sum = np.maximum(
-            0.0, np.nextafter(squared[:, 0] + squared[:, 1] + squared[:, 2], -np.inf)
-        )
-        lower_distances = np.nextafter(np.sqrt(squared_sum), 0.0)
-        nearest_lower = (
-            Fraction.from_float(float(np.min(lower_distances)))
-            if lower_distances.size
-            else Fraction(0)
-        )
-        if nearest_upper > threshold:
-            candidate_count = 1
-            processed: set[int] = set()
-            covered = False
-            while True:
-                nearest = bvh_nearest_items(
-                    target_bvh,
-                    sample_float,
-                    k=candidate_count,
-                )
-                candidate_rows = np.asarray(nearest.items, dtype=np.int64).reshape(-1)
-                for raw_row in candidate_rows:
-                    row = int(raw_row)
-                    if row < 0 or row >= len(target_maps) or row in processed:
-                        continue
-                    processed.add(row)
-                    if Fraction.from_float(float(lower_distances[row])) > threshold:
-                        continue
-                    lower, upper, _resolved = _nearest_target_chart_bounds(
-                        sample, target_maps[row], target_map_enclosures[row], threshold
-                    )
-                    nearest_lower = min(nearest_lower, lower)
-                    nearest_upper = min(nearest_upper, upper)
-                    if upper <= threshold:
-                        nearest_lower = Fraction(0)
-                        nearest_upper = upper
-                        covered = True
-                        break
-                if covered or candidate_count >= len(target_maps):
-                    break
-                candidate_count = min(len(target_maps), 2 * candidate_count)
-        source_to_mesh_lower = max(
-            source_to_mesh_lower,
-            max(Fraction(0), nearest_lower - point_error),
-        )
-        source_to_mesh_upper = max(
-            source_to_mesh_upper,
-            nearest_upper + point_error + cover_radius,
-        )
     per_face = np.asarray(
         [
             (
@@ -4131,22 +4540,22 @@ def certify_adaptive_implicit_charts(
         [item.source_normal_deviation_bounds[1] for item in root_map.chart_evidence],
         dtype=np.float64,
     )
-    if source_to_mesh_lower > Fraction.from_float(float(tolerance)):
+    if source_to_mesh_lower > tolerance:
         findings.append(
             MeshCertificateFinding(
                 "source_fidelity_tolerance",
                 "violated",
                 "source_sample",
-                detail="A certified adaptive source sample is farther than the requested tolerance from every target chart.",
+                detail="A certified adaptive source root is farther than the requested tolerance from every target chart.",
             )
         )
-    elif source_to_mesh_upper > Fraction.from_float(float(tolerance)):
+    elif source_to_mesh_upper > tolerance:
         findings.append(
             MeshCertificateFinding(
                 "source_fidelity_tolerance",
                 "unresolved",
                 "source_sample",
-                detail="The complete adaptive source cover does not yet prove the reverse source-to-target tolerance.",
+                detail="The local adaptive source cover does not yet prove the reverse source-to-target tolerance.",
             )
         )
     binding = MeshCertificateBinding(
@@ -4178,10 +4587,10 @@ def certify_adaptive_implicit_charts(
         maximum_normal_deviation,
         per_face,
         # Distances are nonnegative: rounding a zero lower bound down stays at 0.
-        max(0.0, float(np.nextafter(float(forward_lower), -np.inf))),
-        float(np.nextafter(float(forward_upper), np.inf)),
-        max(0.0, float(np.nextafter(float(source_to_mesh_lower), -np.inf))),
-        float(np.nextafter(float(source_to_mesh_upper), np.inf)),
+        max(0.0, math.nextafter(float(forward_lower), -math.inf)),
+        math.nextafter(float(forward_upper), math.inf),
+        max(0.0, math.nextafter(float(source_to_mesh_lower), -math.inf)),
+        math.nextafter(float(source_to_mesh_upper), math.inf),
         normal_bounds,
         max(
             (item.source_normal_deviation_bounds[0] for item in root_map.chart_evidence),

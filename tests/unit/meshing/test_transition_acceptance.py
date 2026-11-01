@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import collections
 from fractions import Fraction
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -31,6 +33,7 @@ from phydrax.discretization.finite_volume._remap_csr_view import material_csr_ro
 from phydrax.discretization.finite_volume._unstructured import (
     UnstructuredFiniteVolumePlan,
 )
+from phydrax.geometry import _source_fidelity as source_fidelity_module
 from phydrax.geometry._common_root_volume_overlap import CommonRootVolumeWitness
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
@@ -1078,6 +1081,53 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
     assert coarsened_witness.source_piece_ids == original.source_piece_ids
     assert coarsened_witness.geometry_entity_ids == original.geometry_entity_ids
     assert coarsened_witness.occurrence_paths == original.occurrence_paths
+
+
+def test_refinement_validates_each_fidelity_witness_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    domain, source = tiny_chart_source()
+    assert source.certification is not None
+    original = source.certification.inputs.fidelity_witness
+    assert original is not None
+    validations: collections.Counter[tuple[str, str]] = collections.Counter()
+    validate = source_fidelity_module._validate_source_fidelity_witness
+
+    def counted(
+        mesh: CellMesh, geometry: Any, query: Any, witness: Any, /, **options: Any
+    ) -> None:
+        validations[(witness.witness_id, mesh.mesh_id)] += 1
+        validate(mesh, geometry, query, witness, **options)
+
+    monkeypatch.setattr(
+        source_fidelity_module, "_validate_source_fidelity_witness", counted
+    )
+    cell_ids = np.concatenate(
+        tuple(
+            np.asarray(block.global_ids, dtype=np.int64) for block in source.mesh.blocks
+        )
+    )
+    refined = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(cell_ids),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
+                association_transfer=phx.meshing.SurfaceAssociationTransfer(domain),
+            ),
+        )
+    )
+    certification = refined.target.certification
+    assert certification is not None and certification.passed
+    target_witness = certification.inputs.fidelity_witness
+    assert target_witness is not None
+    # The retained source acceptance is checked, not recomputed, and the
+    # target witness is validated once and handed on to target acceptance.
+    assert validations == {
+        (original.witness_id, source.mesh.mesh_id): 1,
+        (target_witness.witness_id, refined.target.mesh.mesh_id): 1,
+    }
 
 
 def _certified_curve_edge_triangle() -> tuple[

@@ -1,3 +1,4 @@
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -460,6 +461,47 @@ def test_cad_curving_scenario_2() -> None:
     assert straight.maximum_residual > 0.01
 
 
+def test_bisection_of_curved_p2_mesh_keeps_exact_coordinate_map_equality() -> None:
+    # The curved map keeps exact rationals for nodes it did not move (straight
+    # edge midpoints); bisected children restrict that exact bank, so the
+    # nested-restriction transition proves exact coordinate-map equality.
+    projection = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
+    mesh = _cylinder_mesh(2, 2)
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    source = phx.meshing.certify_cell_mesh(mesh, _CONTRACT, associations=(association,))
+    curved = phx.meshing.curve_cell_mesh(
+        mesh,
+        association,
+        projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1),
+        source_result=source,
+    )
+    assert curved.status is _STATUS.CURVED and curved.cell_result is not None
+    bank = curved.geometry.exact_coordinate_bank
+    assert bank is not None
+    # Some exact nodes are not binary64 values: Fraction(float) would differ.
+    assert any(value != Fraction(float(value)) for row in bank for value in row)
+    first_cell = int(np.asarray(mesh.blocks[0].global_ids)[0])
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            curved.cell_result,
+            phx.meshing.MarkedMeshAdaptation(np.asarray((first_cell,), dtype=np.int64)),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION,
+                association_transfer=phx.meshing.BRepAssociationTransfer(
+                    projection, policy=_POLICY
+                ),
+            ),
+        )
+    )
+    target = adaptation.target.geometry
+
+    assert adaptation.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert target.restriction_source is not None
+    assert target.exact_coordinate_bank == bank
+    assert max(int(element.degree) for element in target.elements) == 2
+
+
 def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> None:
     projection = _plate_projection()
     mesh = _plate_mesh((0.8, 0.8))
@@ -521,9 +563,11 @@ def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted
 
     budget = (phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED,)
     assert projected.status is _STATUS.CURVED and projected.accepted_round == 0
-    # The relaxed candidate is valid but not converged: the projection stays.
+    # The relaxed candidate is not converged: the projection stays, and it is the
+    # last fully certified candidate.
     assert retained.status is _STATUS.CURVED and retained.accepted_round == 0
-    assert retained.candidate.accepted and retained.relaxation_statuses == budget
+    assert retained.candidate is retained.evidence
+    assert retained.relaxation_statuses == budget
     np.testing.assert_array_equal(
         retained.geometry.coordinates, projected.geometry.coordinates
     )

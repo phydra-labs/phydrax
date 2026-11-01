@@ -93,8 +93,10 @@ def test_iga_single_patch_scenario_1() -> None:
         cubic.coefficient_count,
     )
 
+
 def test_nonuniform_raw_weights_survive_runtime_refresh() -> None:
-    grid = iga.BSplineGrid.open_uniform(2, 1)
+    # Two quadratic intervals carry the four control rows the 4x4 weights name.
+    grid = iga.BSplineGrid.open_uniform(2, 2)
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
     control_points = jnp.stack((xx, yy), axis=-1)
@@ -112,7 +114,9 @@ def test_nonuniform_raw_weights_survive_runtime_refresh() -> None:
     refreshed = prepared.prepare_runtime(
         refreshed_geometry, numeric_version="awkward-scaled-raw-weights"
     )
-    np.testing.assert_array_equal(np.asarray(refreshed.weights), np.asarray(raw_weights * 3.7))
+    np.testing.assert_array_equal(
+        np.asarray(refreshed.weights), np.asarray(raw_weights * 3.7)
+    )
     assert refreshed.runtime_id != prepared.default_runtime.runtime_id
 
     region = prepared.prepare_local_regions(

@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax.custom_derivatives import SymbolicZero
 from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
@@ -146,6 +147,44 @@ def _bspline_jets_raw(
     return jets.reshape(parameters.shape + (maximum_order + 1, degree + 1))
 
 
+def _jets_jvp(
+    jets_function: jax.custom_jvp[Array],
+    degree: int,
+    maximum_order: int,
+    primals: tuple[Array, Array, Array],
+    tangents: tuple[Array, Array, Array],
+    /,
+) -> tuple[Array, Array]:
+    """Differentiate basis jets through the next-order jet of the same span.
+
+    Values come from the jet function itself and query tangents from its
+    next-order jet, so every derivative stays a jet equation that program
+    walkers (interval enclosure) can treat as one span-local basis jet. Knot
+    tangents, when present, differentiate the de Boor recursion directly.
+    """
+    knots, parameters, spans = primals
+    knot_tangent, parameter_tangent, _span_tangent = tangents
+    jets = jets_function(knots, parameters, spans, degree, maximum_order)
+    if isinstance(parameter_tangent, SymbolicZero):
+        parameter_tangent = jnp.zeros_like(parameters)
+    extended_jets = jets_function(knots, parameters, spans, degree, maximum_order + 1)
+    tangent = extended_jets[..., 1:, :] * parameter_tangent[..., None, None]
+    if not isinstance(knot_tangent, SymbolicZero):
+        _, knot_component = jax.jvp(
+            lambda knot_values: _bspline_jets_raw(
+                knot_values,
+                parameters,
+                spans,
+                degree,
+                maximum_order,
+            ),
+            (knots,),
+            (knot_tangent,),
+        )
+        tangent = tangent + knot_component
+    return jets, tangent
+
+
 @partial(jax.custom_jvp, nondiff_argnums=(3, 4))
 def _bspline_jets(
     knots: Array,
@@ -154,6 +193,12 @@ def _bspline_jets(
     degree: int,
     maximum_order: int,
 ) -> Array:
+    """Basis jets of the span that knot search selects for each parameter.
+
+    Callers pass ``searchsorted(knots, parameter, side="right") - 1`` clipped
+    to the active span range, for parameters inside the active interval, so
+    ``knots[span] <= parameter <= knots[span + 1]``.
+    """
     return _bspline_jets_raw(
         knots,
         parameters,
@@ -163,42 +208,58 @@ def _bspline_jets(
     )
 
 
-@_bspline_jets.defjvp
-def _bspline_jets_jvp(
+@partial(jax.custom_jvp, nondiff_argnums=(3, 4))
+def _bspline_piece_jets(
+    knots: Array,
+    parameters: Array,
+    spans: Array,
     degree: int,
     maximum_order: int,
-    primals: tuple[Array, Array, Array],
-    tangents: tuple[Array, Array, Array],
-) -> tuple[Array, Array]:
-    knots, parameters, spans = primals
-    knot_tangent, parameter_tangent, _span_tangent = tangents
-    jets = _bspline_jets_raw(
+) -> Array:
+    """Basis jets of each given span's polynomial piece at any parameter."""
+    return _bspline_jets_raw(
         knots,
         parameters,
         spans,
         degree,
         maximum_order,
     )
-    extended_jets = _bspline_jets(
-        knots,
-        parameters,
-        spans,
-        degree,
-        maximum_order + 1,
-    )
-    parameter_component = extended_jets[..., 1:, :] * parameter_tangent[..., None, None]
-    _, knot_component = jax.jvp(
-        lambda knot_values: _bspline_jets_raw(
-            knot_values,
-            parameters,
-            spans,
-            degree,
-            maximum_order,
-        ),
-        (knots,),
-        (knot_tangent,),
-    )
-    return jets, parameter_component + knot_component
+
+
+def _bspline_jets_jvp(
+    degree: int,
+    maximum_order: int,
+    primals: tuple[Array, Array, Array],
+    tangents: tuple[Array, Array, Array],
+) -> tuple[Array, Array]:
+    return _jets_jvp(_bspline_jets, degree, maximum_order, primals, tangents)
+
+
+def _bspline_piece_jets_jvp(
+    degree: int,
+    maximum_order: int,
+    primals: tuple[Array, Array, Array],
+    tangents: tuple[Array, Array, Array],
+) -> tuple[Array, Array]:
+    return _jets_jvp(_bspline_piece_jets, degree, maximum_order, primals, tangents)
+
+
+_bspline_jets.defjvp(_bspline_jets_jvp, symbolic_zeros=True)
+_bspline_piece_jets.defjvp(_bspline_piece_jets_jvp, symbolic_zeros=True)
+
+
+def bspline_jet_rule_alignment(rule: object, /) -> bool | None:
+    """Classify a staged custom-JVP rule as a B-spline basis-jet equation.
+
+    ``True``: spans were found by knot search, so each parameter lies in its
+    nonempty span. ``False``: spans are given polynomial pieces, evaluated at
+    any parameter. ``None``: not a basis-jet rule.
+    """
+    if rule is _bspline_jets_jvp:
+        return True
+    if rule is _bspline_piece_jets_jvp:
+        return False
+    return None
 
 
 class BSplineJetStencil(StrictModule):
@@ -382,7 +443,14 @@ def bspline_jet_stencil(
                 "Explicit B-spline spans are not aligned with their queries.",
             )
     spans_ = jax.lax.stop_gradient(spans_)
-    jets = _bspline_jets(
+    # Searched spans contain their (clipped or checked) queries; explicit or
+    # extrapolated spans name polynomial pieces evaluated anywhere.
+    jets_function = (
+        _bspline_jets
+        if spans is None and bounds != "extrapolate"
+        else _bspline_piece_jets
+    )
+    jets = jets_function(
         knots_,
         query_eval,
         spans_,

@@ -829,6 +829,7 @@ _DEFERRED_EXPORTS = {
     "FiniteElementMeshRealization": ".fem",
     "FiniteElementMotionExtension": ".fem",
     "FiniteElementMotionExtensionResult": ".fem",
+    "AbstractMeshMonitor": ".fem",
     "FiniteElementPartitionCostEvidence": ".fem",
     "FiniteElementPeriodicFacetPair": ".fem",
     "FiniteElementPeriodicTransform": ".fem",
@@ -3290,6 +3291,7 @@ if TYPE_CHECKING:
         prepare_explicit_polygon_h1_reconstruction,
     )
     from .fem import (
+        AbstractMeshMonitor,
         affine_dof_constraint,
         assemble_masked_finite_element,
         AttachmentActionReactionCertificate,
@@ -6112,6 +6114,7 @@ __all__ = [
     "FiniteElementMeshRealization",
     "FiniteElementMotionExtension",
     "FiniteElementMotionExtensionResult",
+    "AbstractMeshMonitor",
     "FiniteElementDirichletConstraint",
     "FiniteElementDiscretization",
     "FiniteElementDofMap",

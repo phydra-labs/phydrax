@@ -9,13 +9,13 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
-from typing import get_args, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
 import jax
 import numpy as np
 from jax.typing import ArrayLike
 
-from .._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
+from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
 from ..discretization._cell_geometry_validity import cell_geometry_id
@@ -222,7 +222,16 @@ def _intersection_area(first: Triangle2, second: Triangle2, /) -> Fraction:
     return _polygon_area2(_polygon_intersection(first, second)) / 2
 
 
-def _triangle_chart_bvh(triangles: tuple[Triangle2, ...], /) -> PackedBVH | None:
+type _ChartBoxes = tuple[np.ndarray, np.ndarray]
+
+# Banks with at most this many candidate pairs test every box pair at once on
+# the host; larger banks use the packed BVH. Both report every pair of closed
+# boxes that meet, so the exact findings do not depend on the choice.
+_DENSE_CHART_PAIRS = 1 << 16
+
+
+def _triangle_chart_boxes(triangles: tuple[Triangle2, ...], /) -> _ChartBoxes | None:
+    """Outward-rounded binary64 boxes of exact chart triangles (None if unbounded)."""
     if not triangles:
         return None
     lower = np.empty((len(triangles), 2), dtype=np.float64)
@@ -235,24 +244,29 @@ def _triangle_chart_bvh(triangles: tuple[Triangle2, ...], /) -> PackedBVH | None
                 return None
             lower[row, axis] = low
             upper[row, axis] = high
-    return prepare_bvh(lower, upper, dtype=np.float64)
+    return lower, upper
 
 
 def _triangle_overlap_candidate_pairs(
     first: tuple[Triangle2, ...],
     second: tuple[Triangle2, ...],
-    first_bvh: PackedBVH | None,
-    second_bvh: PackedBVH | None,
+    first_boxes: _ChartBoxes | None,
+    second_boxes: _ChartBoxes | None,
     /,
     *,
     self_pairs: bool,
 ) -> tuple[tuple[int, int], ...]:
+    """Pairs (first row, second row) whose closed boxes meet, in row order.
+
+    Disjoint closed boxes have zero intersection area, so these pairs carry
+    every positive-area overlap; self pairs keep first row < second row.
+    """
     if self_pairs:
         if len(first) != len(second):
             raise ValueError("Self-overlap chart banks must be the same triangle bank.")
     elif not first or not second:
         return ()
-    if first_bvh is None or second_bvh is None:
+    if first_boxes is None or second_boxes is None:
         candidates = (
             (
                 (left, right)
@@ -267,6 +281,24 @@ def _triangle_overlap_candidate_pairs(
             )
         )
         return tuple(candidates)
+    first_lower, first_upper = first_boxes
+    second_lower, second_upper = second_boxes
+    if len(first) * len(second) <= _DENSE_CHART_PAIRS:
+        meets = np.all(
+            (first_lower[:, None, :] <= second_upper[None, :, :])
+            & (second_lower[None, :, :] <= first_upper[:, None, :]),
+            axis=2,
+        )
+        if self_pairs:
+            meets = np.triu(meets, k=1)
+        rows, columns = np.nonzero(meets)
+        return tuple(zip(rows.tolist(), columns.tolist(), strict=True))
+    first_bvh = prepare_bvh(first_lower, first_upper, dtype=np.float64)
+    second_bvh = (
+        first_bvh
+        if self_pairs
+        else prepare_bvh(second_lower, second_upper, dtype=np.float64)
+    )
     blocks: list[np.ndarray] = []
     for first_ids, second_ids in bvh_overlap_pair_blocks(
         first_bvh, second_bvh, include_touching=True
@@ -445,7 +477,17 @@ def _query_source_corner_rows(source: MeshingDomainBoundarySource, /) -> frozens
 def _reconstructed_domain_query(
     source: SourceBoundaryQuery, /
 ) -> MeshingDomainBoundarySource:
-    from .reconstruction._boundary import ReconstructedTriangleBoundarySource
+    """The query's prepared whole-domain boundary query, checked current.
+
+    The query proved at construction that its source's persistent domain covers
+    exactly its physical triangles; that proof holds while the source still
+    reproduces the query's triangles and retains a domain of the same content.
+    """
+    from .reconstruction._boundary import (
+        domain_binds_source,
+        reconstructed_triangle_arrays,
+        ReconstructedTriangleBoundarySource,
+    )
     from .reconstruction._core import ReconstructedGeometrySource
     from .reconstruction._sheet import AuthoredTriangleSheet
 
@@ -460,12 +502,9 @@ def _reconstructed_domain_query(
             "Reconstructed boundary source must retain ReconstructedGeometrySource "
             "or AuthoredTriangleSheet."
         )
-    fresh = ReconstructedTriangleBoundarySource(source.source)
-    if (
-        source.source_id != fresh.source_id
-        or source.source_revision != fresh.source_revision
-        or not np.array_equal(source._vertices, fresh._vertices)
-        or not np.array_equal(source._faces, fresh._faces)
+    vertices, faces = reconstructed_triangle_arrays(source.source)
+    if not np.array_equal(source._vertices, vertices) or not np.array_equal(
+        source._faces, faces
     ):
         raise ValueError(
             "Reconstructed triangle query no longer reproduces its source mesh."
@@ -475,50 +514,21 @@ def _reconstructed_domain_query(
         raise ValueError(
             "Reconstructed source has no authoritative persistent MeshingDomain."
         )
-    if (
-        domain.source_id != source.source_id
-        or domain.source_revision != source.source_revision
-        or not np.array_equal(
-            np.asarray(domain.source_indices[2], dtype=np.int64),
-            np.asarray(source.source.persistent_facet_ids, dtype=np.int64),
-        )
-        or not np.array_equal(np.asarray(domain.corner_points), source._vertices)
-    ):
+    if not domain_binds_source(domain, source.source, source._vertices):
         raise ValueError(
             "Reconstructed MeshingDomain changes persistent source vertex/facet IDs."
         )
-    query = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
-    original_cover = source.boundary_chart_cover()
-    domain_cover = query.boundary_chart_cover()
-    if (
-        not original_cover.complete
-        or not domain_cover.complete
-        or original_cover.semantics != "certified"
-        or domain_cover.semantics != "certified"
-        or np.any(original_cover.deviation_bounds != 0.0)
-        or np.any(domain_cover.deviation_bounds != 0.0)
-    ):
-        raise ValueError(
-            "Reconstructed source charts lack complete exact physical coverage."
-        )
-
-    def triangle_keys(values: np.ndarray) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
-        return tuple(
-            sorted(
-                tuple(
-                    sorted(
-                        tuple(Fraction.from_float(float(value)) for value in point)
-                        for point in triangle
-                    )
-                )
-                for triangle in values
+    query = source.domain_query
+    if query is None:
+        raise ValueError(source.domain_refusal)
+    if domain is not query.domain:
+        if domain.domain_id != query.domain.domain_id:
+            raise ValueError(
+                "Reconstructed source no longer retains the MeshingDomain its query "
+                "was proven against."
             )
-        )
-
-    if triangle_keys(original_cover.simplices) != triangle_keys(domain_cover.simplices):
-        raise ValueError(
-            "Reconstructed query and persistent source domain cover different physical triangles."
-        )
+        domain.require_current()
+    query.require_current()
     return query
 
 
@@ -526,9 +536,13 @@ def _partition_findings(
     source: MeshingDomainBoundarySource,
     witness: SurfaceChartWitness | SourceBoundaryChartWitness,
     /,
+    *,
+    checked_current: bool = False,
 ) -> tuple[MeshCertificateFinding, ...]:
-    # Currentness fingerprints the whole domain: check once, not per patch.
-    source.require_current()
+    # Currentness fingerprints the whole domain: check once, not per patch, and
+    # not again when the caller has just checked this source current.
+    if not checked_current:
+        source.require_current()
     domain = source.domain
     if isinstance(witness, SurfaceChartWitness):
         patches = np.asarray(witness.patches, dtype=np.int64)
@@ -598,23 +612,23 @@ def _partition_findings(
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
         target_area = sum(target_areas, Fraction(0))
-        source_bvh = _triangle_chart_bvh(declared)
-        target_bvh = _triangle_chart_bvh(target)
+        source_boxes = _triangle_chart_boxes(declared)
+        target_boxes = _triangle_chart_boxes(target)
         source_overlap = any(
             _intersection_area(declared[first], declared[second]) > 0
             for first, second in _triangle_overlap_candidate_pairs(
-                declared, declared, source_bvh, source_bvh, self_pairs=True
+                declared, declared, source_boxes, source_boxes, self_pairs=True
             )
         )
         target_overlap = any(
             _intersection_area(target[first], target[second]) > 0
             for first, second in _triangle_overlap_candidate_pairs(
-                target, target, target_bvh, target_bvh, self_pairs=True
+                target, target, target_boxes, target_boxes, self_pairs=True
             )
         )
         target_covered = [Fraction(0) for _ in target]
         for target_row, source_row in _triangle_overlap_candidate_pairs(
-            target, declared, target_bvh, source_bvh, self_pairs=False
+            target, declared, target_boxes, source_boxes, self_pairs=False
         ):
             target_covered[target_row] += _intersection_area(
                 target[target_row], declared[source_row]
@@ -1007,14 +1021,84 @@ def _validate_piecewise_linear_chart_witness(
         raise ValueError("PWL chart witness changes source/target orientation ancestry.")
 
 
+_VALIDATION_TOKEN = object()
+
+
+@final
+class ValidatedSourceFidelityWitness:
+    """A source-fidelity witness validated against exact operand objects.
+
+    Only :func:`validate_source_fidelity_witness` creates it. It binds the mesh,
+    coordinate map, source query and witness by object identity; all four are
+    immutable, so handing it on together with those same objects proves the
+    validation without repeating it. Any other operand is validated again.
+    """
+
+    __slots__ = ("geometry", "mesh", "source", "witness")
+
+    def __init__(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: SourceBoundaryQuery,
+        witness: SourceFidelityWitness,
+        /,
+        *,
+        token: object,
+    ) -> None:
+        if token is not _VALIDATION_TOKEN:
+            raise TypeError(
+                "Validated witnesses are created only by validate_source_fidelity_witness."
+            )
+        self.mesh = mesh
+        self.geometry = geometry
+        self.source = source
+        self.witness = witness
+
+    def binds(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: SourceBoundaryQuery,
+        /,
+    ) -> bool:
+        """Whether this validation was made against exactly these operands."""
+        return self.mesh is mesh and self.geometry is geometry and self.source is source
+
+
 def validate_source_fidelity_witness(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    witness: SourceFidelityWitness | ValidatedSourceFidelityWitness,
+    /,
+) -> ValidatedSourceFidelityWitness:
+    """Revalidate witness identity and its actual source/target mathematical premises.
+
+    A :class:`ValidatedSourceFidelityWitness` made for these exact operands is
+    returned unchanged; for other operands its witness is validated again.
+    """
+    if isinstance(witness, ValidatedSourceFidelityWitness):
+        if witness.binds(mesh, geometry, source):
+            return witness
+        witness = witness.witness
+    _validate_source_fidelity_witness(mesh, geometry, source, witness)
+    return ValidatedSourceFidelityWitness(
+        mesh, geometry, source, witness, token=_VALIDATION_TOKEN
+    )
+
+
+def _validate_source_fidelity_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
     witness: SourceFidelityWitness,
     /,
+    *,
+    domain_coverage: SourceBoundaryChartCover | None = None,
 ) -> None:
-    """Revalidate witness identity and its actual source/target mathematical premises."""
+    # `domain_coverage`: the domain source's chart cover, already computed by a
+    # caller that holds it (a reconstructed query's prepared domain cover).
     if not isinstance(source, SourceBoundaryQuery):
         raise TypeError("source must implement SourceBoundaryQuery.")
     if not isinstance(witness, get_args(SourceFidelityWitness.__value__)):
@@ -1236,7 +1320,7 @@ def validate_source_fidelity_witness(
                 "Reconstructed chart witness changes its persistent source scope."
             )
         _, charts, _ = _surface_source_chart_rows(domain_source, witness)
-        findings = _partition_findings(domain_source, witness)
+        findings = _partition_findings(domain_source, witness, checked_current=True)
         if any(finding.status != "certified" for finding in findings):
             raise ValueError(
                 "Reconstructed source chart witness is not a complete exact partition."
@@ -1275,7 +1359,13 @@ def validate_source_fidelity_witness(
             else:
                 domain_source.require_current()
             patch_rows, charts, _ = _surface_source_chart_rows(domain_source, witness)
-            findings = _partition_findings(domain_source, witness)
+            findings = _partition_findings(
+                domain_source,
+                witness,
+                checked_current=not isinstance(
+                    source, SurfaceNativeRestrictionBoundarySource
+                ),
+            )
             if any(finding.status != "certified" for finding in findings):
                 raise ValueError(
                     "Surface source chart witness is not a complete exact partition."
@@ -1293,7 +1383,11 @@ def validate_source_fidelity_witness(
                 raise ValueError(
                     "Surface source chart witness changes target/source chart orientation."
                 )
-            coverage = domain_source.boundary_chart_cover()
+            coverage = (
+                domain_source.boundary_chart_cover()
+                if domain_coverage is None
+                else domain_coverage
+            )
             if (
                 not coverage.complete
                 or coverage.semantics != "certified"
@@ -1315,6 +1409,7 @@ def validate_source_fidelity_witness(
 
 
 __all__ = [
+    "ValidatedSourceFidelityWitness",
     "certify_source_fidelity",
     "polyhedral_face_triangle_vertex_ids",
     "validate_source_fidelity_witness",
@@ -3374,6 +3469,14 @@ def _require_reference_chart_partition(
 ) -> None:
     if not triangles or any(_area2(triangle) == 0 for triangle in triangles):
         raise ValueError("Target reference chart pieces must be nondegenerate triangles.")
+    # Pieces that are exactly the domain's own triangles (equal exact vertex
+    # sets, any orientation) partition it: every caller's domain triangles are
+    # nondegenerate and interior-disjoint.
+    pieces = sorted(tuple(sorted(triangle)) for triangle in triangles)
+    if pieces == sorted(tuple(sorted(triangle)) for triangle in domain) and len(
+        set(pieces)
+    ) == len(pieces):
+        return
     for triangle in triangles:
         covered_area = sum(
             (_intersection_area(triangle, source) for source in domain), Fraction(0)
@@ -4755,8 +4858,10 @@ def _certify_surface_envelope_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
-    _validate_surface_envelope_witness(mesh, geometry, source, witness)
+    if validated is None or not validated.binds(mesh, geometry, source):
+        _validate_surface_envelope_witness(mesh, geometry, source, witness)
     source_to_mesh_upper = Fraction.from_float(float(witness.bounds[0]))
     mesh_to_source_upper = Fraction.from_float(float(witness.bounds[1]))
     mesh_to_source_lower = Fraction.from_float(float(witness.bounds[2]))
@@ -4957,12 +5062,17 @@ def _certify_domain_surface_chart_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    domain_coverage: SourceBoundaryChartCover | None = None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._source_interpolation import certify_domain_surface_charts
 
     domain_source = _surface_query_root(source)
 
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    if validated is None or not validated.binds(mesh, geometry, source):
+        _validate_source_fidelity_witness(
+            mesh, geometry, source, witness, domain_coverage=domain_coverage
+        )
     patch_rows, charts, plane_patches = _surface_source_chart_rows(domain_source, witness)
     target_rows, _, _ = _surface_target_chart_rows(mesh, geometry, domain_source, witness)
     evidence = certify_domain_surface_charts(
@@ -4975,7 +5085,11 @@ def _certify_domain_surface_chart_fidelity(
         tolerance=tolerance,
         plane_patches=plane_patches,
     )
-    coverage = domain_source.boundary_chart_cover()
+    coverage = (
+        domain_source.boundary_chart_cover()
+        if domain_coverage is None
+        else domain_coverage
+    )
     findings = [*coverage.findings, *evidence.findings]
     if not coverage.complete or coverage.semantics != "certified" or coverage.findings:
         findings.append(
@@ -5105,6 +5219,7 @@ def _certify_reconstructed_chart_fidelity(
     maximum_normal_deviation: float | None,
 ) -> SourceFidelityCertificate:
     domain_source = _reconstructed_domain_query(source)
+    # The query's prepared cover of exactly this domain source.
     domain_certificate = _certify_domain_surface_chart_fidelity(
         mesh,
         geometry,
@@ -5112,6 +5227,7 @@ def _certify_reconstructed_chart_fidelity(
         witness,
         tolerance=tolerance,
         maximum_normal_deviation=maximum_normal_deviation,
+        domain_coverage=source.domain_cover,
     )
     coverage = source.boundary_chart_cover()
     binding = MeshCertificateBinding(
@@ -5152,6 +5268,7 @@ def _certify_curve_chart_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._curve_boundary import ParametricCurveBoundarySource
     from ._source_interpolation import certify_parametric_curve_chart
@@ -5160,7 +5277,9 @@ def _certify_curve_chart_fidelity(
         raise TypeError(
             "A one-dimensional source chart witness requires a parametric curve source."
         )
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     target_rows = _curve_target_chart_rows(mesh, witness)
     evidence = certify_parametric_curve_chart(
         mesh, geometry, source, witness, target_rows, tolerance
@@ -5217,6 +5336,7 @@ def _certify_piecewise_linear_curve_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
     from ._source_interpolation import certify_piecewise_linear_curve_charts
@@ -5226,7 +5346,9 @@ def _certify_piecewise_linear_curve_fidelity(
         or source.entity_dimension != 1
     ):
         raise TypeError("PWL edge fidelity requires a one-dimensional boundary query.")
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     target_rows = _curve_target_chart_rows(mesh, witness)
     evidence = certify_piecewise_linear_curve_charts(
         mesh, geometry, source, witness, target_rows, tolerance
@@ -5283,13 +5405,16 @@ def _certify_piecewise_linear_surface_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._mapped_reference_interpolation import certify_surface_chart_maps
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 
     if not isinstance(source, PiecewiseLinearBoundarySource):
         raise TypeError("PWL source fidelity requires PiecewiseLinearBoundarySource.")
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     target_rows, _, _ = _surface_target_chart_rows(
         mesh,
         geometry,
@@ -5356,6 +5481,7 @@ def _certify_mapped_root_chart_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._mapped_reference_boundary import MappedReferenceBoundarySource
     from ._mapped_reference_interpolation import (
@@ -5365,7 +5491,9 @@ def _certify_mapped_root_chart_fidelity(
 
     if not isinstance(source, MappedReferenceBoundarySource):
         raise TypeError("Mapped-root fidelity requires MappedReferenceBoundarySource.")
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     coverage = None
     if witness.chart_dimension == 2:
         target_rows, _, _ = _surface_target_chart_rows(
@@ -5458,14 +5586,20 @@ def certify_source_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None = None,
-    witness: SourceFidelityWitness | None = None,
+    witness: SourceFidelityWitness | ValidatedSourceFidelityWitness | None = None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> SourceFidelityCertificate:
     """Certify continuous physical source fidelity from one typed witness.
 
     ``root_charts`` passes adaptive implicit root charts the caller already
     prepared for exactly this request; other sources and witnesses refuse it.
+    A :class:`ValidatedSourceFidelityWitness` for exactly these operands is not
+    validated again.
     """
+    validated = None
+    if isinstance(witness, ValidatedSourceFidelityWitness):
+        validated = witness
+        witness = validated.witness
     if root_charts is not None:
         from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
         from .implicit._source_charts import _AdaptiveImplicitBoundaryCarrier
@@ -5513,6 +5647,7 @@ def certify_source_fidelity(
             witness,
             tolerance=tolerance_,
             maximum_normal_deviation=normal_limit,
+            validated=validated,
         )
     if isinstance(witness, SourceBoundaryPointWitness):
         return _certify_source_point_fidelity(
@@ -5535,6 +5670,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    validated=validated,
                 )
             if witness.chart_dimension == 2:
                 return _certify_piecewise_linear_surface_fidelity(
@@ -5544,6 +5680,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    validated=validated,
                 )
             raise ValueError("PWL chart fidelity supports only edge and face strata.")
         from ._mapped_reference_boundary import MappedReferenceBoundarySource
@@ -5556,6 +5693,7 @@ def certify_source_fidelity(
                 witness,
                 tolerance=tolerance_,
                 maximum_normal_deviation=normal_limit,
+                validated=validated,
             )
         if witness.chart_dimension == 1:
             return _certify_curve_chart_fidelity(
@@ -5565,6 +5703,7 @@ def certify_source_fidelity(
                 witness,
                 tolerance=tolerance_,
                 maximum_normal_deviation=normal_limit,
+                validated=validated,
             )
         if witness.chart_dimension == 2:
             try:
@@ -5579,6 +5718,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    validated=validated,
                 )
         from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
@@ -5607,7 +5747,7 @@ def certify_source_fidelity(
                     mesh,
                     geometry,
                     source,
-                    witness,
+                    witness if validated is None else validated,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
                     root_charts=root_charts,

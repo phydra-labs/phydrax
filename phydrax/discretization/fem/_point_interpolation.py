@@ -448,9 +448,7 @@ def prepare_finite_element_point_interpolation(
         )
         weights = weights.reshape((cells.size, element.local_dof_count, *value_shape))
     routes = np.asarray(dof_map.cell_dofs[block_index])[cells]
-    dof_positions = np.asarray(
-        dof_map.evaluate_coordinates(discretization.mesh, realized.coordinates)
-    )
+    dof_positions = np.asarray(dof_map.evaluate_coordinates(realized.coordinates))
     return PreparedFiniteElementPointInterpolation(
         discretization,
         field_name,

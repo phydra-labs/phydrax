@@ -1,4 +1,6 @@
 import io
+from fractions import Fraction
+from itertools import islice
 from typing import Any
 
 import equinox as eqx
@@ -33,6 +35,7 @@ from phydrax.geometry.brep._assembly import (
 )
 from phydrax.geometry.brep._constructors import (
     brep_box,
+    brep_extrusion,
     brep_planar_face,
     brep_sphere,
     brep_torus,
@@ -42,6 +45,7 @@ from phydrax.geometry.brep._constructors import (
     ProfilePlane,
 )
 from phydrax.geometry.brep._model import BRepGeometry, BRepModel
+from phydrax.geometry.brep._projection import _containment_ray_directions
 from phydrax.interchange import import_occt_shape, prepare_occt_projection
 
 
@@ -300,9 +304,9 @@ def test_closed_revolution_containment_is_exact_with_unresolved_boundary(
 
 
 def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
-    # From the axis point (0, 0, 1) the first ray direction meets the cylinder
-    # exactly on the top rim (height 1 + sqrt(2) * sqrt(3) / sqrt(6) = 2); that
-    # ray is not decisive, the next transversal direction decides containment.
+    # Axis, rim-height and cap-plane points: exact ray parity against the
+    # cylinder wall and both caps decides interior and exterior points, and
+    # points on the wall, a cap or the rim stay unresolved.
     model = import_occt_shape(
         BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape(),
         coordinate_contract=_CONTRACT,
@@ -326,6 +330,60 @@ def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
     assert contains(boundary) == [None] * len(boundary)
     located = projection.locate_solids(np.asarray(inside, dtype=np.float64))
     assert np.asarray(located.status).tolist() == [_STATUS.UNIQUE] * len(inside)
+
+
+def test_containment_rays_continue_past_degenerate_sequence_prefix() -> None:
+    # A prism whose vertical edges lie exactly on the first four sequence
+    # directions from the origin: each of those rays leaves the solid through a
+    # trim edge, so containment is decided only by a later direction.
+    degenerate = 4
+    directions = list(islice(_containment_ray_directions(), degenerate))
+    vertices: list[tuple[Fraction, Fraction]] = []
+    for direction in directions:
+        planar = np.hypot(float(direction[0]), float(direction[1]))
+        # Dyadic scales keep every vertex an exact double on its ray.
+        scale = Fraction(round(1024.0 / planar), 1024)
+        vertices.append((scale * direction[0], scale * direction[1]))
+    vertices += [(Fraction(-1), Fraction(-1, 4)), (Fraction(-1, 4), Fraction(-1))]
+    vertices.sort(key=lambda vertex: np.arctan2(float(vertex[1]), float(vertex[0])))
+    for index, vertex in enumerate(vertices):
+        after = vertices[(index + 1) % len(vertices)]
+        later = vertices[(index + 2) % len(vertices)]
+        turn = (after[0] - vertex[0]) * (later[1] - after[1]) - (after[1] - vertex[1]) * (
+            later[0] - after[0]
+        )
+        assert turn > 0
+    model = brep_extrusion(
+        PlanarProfile(
+            ProfilePlane((0.0, 0.0, -4.0)),
+            ProfileLoop.polygon([(float(u), float(v)) for u, v in vertices]),
+        ),
+        (0.0, 0.0, 8.0),
+        coordinate_contract=_CONTRACT,
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    carriers = projection._ray_carriers(0)
+    assert carriers is not None
+    origin = (Fraction(0), Fraction(0), Fraction(0))
+    assert [
+        projection._ray_parity(carriers, origin, direction) for direction in directions
+    ] == [None] * degenerate
+
+    def contains(points: Any) -> list[bool | None]:
+        return [
+            projection._contains_solid(np.asarray(point, dtype=np.float64), 0)
+            for point in points
+        ]
+
+    corner = (float(vertices[0][0]), float(vertices[0][1]))
+    beyond = tuple(float(2 * vertices[1][axis] - vertices[0][axis]) for axis in (0, 1))
+    assert contains([(0.0, 0.0, 0.0)]) == [True]
+    # Outside points; the last two lie in the plane of a cap and of a side face.
+    assert contains([(0.0, 0.0, 5.0), (8.0, 0.0, 4.0), (*beyond, 0.0)]) == [False] * 3
+    assert (
+        contains([(0.0, 0.0, 4.0), (*corner, 1.0), (*corner, -4.0), (0.0, 0.0, -4.0)])
+        == [None] * 4
+    )
 
 
 def test_brep_projection_scenario_2() -> None:
