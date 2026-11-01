@@ -242,7 +242,6 @@ class MeshMetricField(StrictModule, NonTrainableState):
             }
         )
 
-
     @classmethod
     @checked
     def from_stored_fields(
@@ -266,8 +265,11 @@ class MeshMetricField(StrictModule, NonTrainableState):
             or rebuilt_values.dtype != stored_values.dtype
             or not np.array_equal(rebuilt_values, stored_values)
         ):
-            raise ValueError("Stored metric field differs from its exact validated tensor bank.")
+            raise ValueError(
+                "Stored metric field differs from its exact validated tensor bank."
+            )
         return rebuilt
+
 
 class MeshMetricSamples(StrictModule, NonTrainableState):
     """Untrusted square tensors bound to one scope.
@@ -1047,8 +1049,8 @@ def _anisotropic_gradation_kernel(
         combined = _canonical_intersection(candidates, candidate_valid)
         needs_growth = _maximum_growth(current, combined) > 1.0 + tolerance
         within_bounds = _within_bounds(combined, bounds)
-        accept = needs_growth & within_bounds & jnp.any(
-            combined != current, axis=(-2, -1)
+        accept = (
+            needs_growth & within_bounds & jnp.any(combined != current, axis=(-2, -1))
         )
         updated = jnp.where(accept[:, None, None], combined, current)
         blocked = jnp.any(needs_growth & ~within_bounds)
@@ -1492,6 +1494,23 @@ def combine_mesh_metrics(
     return MetricCombinationResult(field, evidence)
 
 
+# Row buckets of the metric programs: every call compiles one executable per
+# power-of-two row count (at least the floor) instead of one per row count.
+# Each output row depends only on its own input row.
+_MINIMUM_ROW_BUCKET = 8
+
+
+def _row_bucket(count: int, /) -> int:
+    return max(_MINIMUM_ROW_BUCKET, 1 << (count - 1).bit_length())
+
+
+def _pad_rows(values: Array, bucket: int, /) -> Array:
+    """Pad axis 0 to ``bucket`` rows with copies of the last row."""
+    return jnp.concatenate(
+        (values, jnp.repeat(values[-1:], bucket - values.shape[0], axis=0))
+    )
+
+
 @jax.jit
 def _log_euclidean_mean(tensors: Array, weights: Array, /) -> Array:
     logarithm = hermitian_log(tensors)
@@ -1530,7 +1549,16 @@ def interpolate_mesh_metric(values: ArrayLike, weights: ArrayLike, /) -> Array:
         or coefficients.shape != tensors.shape[:-2]
     ):
         raise ValueError("values must be (..., k, d, d) and weights (..., k).")
-    return _log_euclidean_mean(tensors, coefficients)
+    batch = tensors.shape[:-3]
+    count = math.prod(batch)
+    if count == 0 or not batch:
+        return _log_euclidean_mean(tensors, coefficients)
+    bucket = _row_bucket(count)
+    mean = _log_euclidean_mean(
+        _pad_rows(tensors.reshape((count, *tensors.shape[-3:])), bucket),
+        _pad_rows(coefficients.reshape((count, coefficients.shape[-1])), bucket),
+    )
+    return mean[:count].reshape((*batch, *mean.shape[1:]))
 
 
 @jax.jit
@@ -1568,7 +1596,10 @@ def metric_edge_lengths(
         raise ValueError(
             "values (n, d, d), coordinates (n, d), and integer edges (e, 2) are required."
         )
-    return _edge_lengths(tensors, points, pairs)
+    count = pairs.shape[0]
+    if count == 0:
+        return _edge_lengths(tensors, points, pairs)
+    return _edge_lengths(tensors, points, _pad_rows(pairs, _row_bucket(count)))[:count]
 
 
 class HessianMetricEvidence(StrictModule, NonTrainableState):

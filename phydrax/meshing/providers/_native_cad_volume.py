@@ -2768,6 +2768,12 @@ def _brep_associations(
             strict=True,
         )
     }
+    # Host banks indexed per association row below (device arrays would issue
+    # one eager gather per row).
+    input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
+    vertex_brep_dimensions = np.asarray(source.vertex_brep_dimensions, dtype=np.int64)
+    vertex_brep_indices = np.asarray(source.vertex_brep_indices, dtype=np.int64)
+    vertex_parameters = np.asarray(source.vertex_parameters, dtype=np.float64)
     result: list[GeometryAssociation] = []
     for association in native:
         target_dimension = next(
@@ -2784,7 +2790,9 @@ def _brep_associations(
         parameters = np.full(
             (len(association.source_entity_ids), 2), np.nan, dtype=np.float64
         )
-        orientations = np.asarray(association.orientations, dtype=np.int8).copy()
+        source_orientations = np.asarray(association.orientations, dtype=np.int8)
+        orientations = source_orientations.copy()
+        target_ids = np.asarray(association.target_global_ids, dtype=np.int64)
         residuals = np.asarray(association.residuals, dtype=np.float64).copy()
         resolved = np.ones((len(association.source_entity_ids),), dtype=np.bool_)
         region_sides = tuple(association.source_region_sides)
@@ -2804,18 +2812,18 @@ def _brep_associations(
                 GeometrySourceEntityRole.FACET: 2,
                 GeometrySourceEntityRole.REGION: 3,
             }[role]
-            target_id = int(association.target_global_ids[row])
+            target_id = int(target_ids[row])
             if target_dimension == 0:
                 mesh_vertex = vertex_rows[target_id]
-                input_vertex = int(construction.input_vertices[mesh_vertex])
+                input_vertex = int(input_vertices[mesh_vertex])
                 if input_vertex >= 0:
-                    dimension = int(source.vertex_brep_dimensions[input_vertex])
-                    source_index = int(source.vertex_brep_indices[input_vertex])
+                    dimension = int(vertex_brep_dimensions[input_vertex])
+                    source_index = int(vertex_brep_indices[input_vertex])
                     entity_path = source.plc_source.complex.vertex_occurrence_paths[
                         input_vertex
                     ]
                     if dimension in (1, 2):
-                        parameters[row] = source.vertex_parameters[input_vertex]
+                        parameters[row] = vertex_parameters[input_vertex]
                 else:
                     dimension, source_index, entity_path = _source_entity_for_plc(
                         source_maps, plc_dimension, identifier, path
@@ -2860,9 +2868,9 @@ def _brep_associations(
                 }[dimension]
             )
             if target_dimension == 2 and dimension == 2:
-                orientations[row] = int(association.orientations[row])
+                orientations[row] = int(source_orientations[row])
             elif target_dimension == 1 and dimension == 1:
-                orientations[row] = int(association.orientations[row])
+                orientations[row] = int(source_orientations[row])
             else:
                 orientations[row] = 0
         for dimension, source_index, path in zip(

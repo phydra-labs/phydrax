@@ -14,7 +14,6 @@ from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 import numpy as np
 from jax.typing import ArrayLike
 
-from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
 from ..discretization._cell_geometry_validity import cell_geometry_id
@@ -55,9 +54,12 @@ from ._mesh_certificates import (
 from ._meshing_domain import MeshingDomain, SourcePreparation
 from ._planar_primitives import (
     area2 as _polygon_area2,
-    cross as _polygon_cross,
+    box_overlap_pairs,
+    interiors_separated,
     intersection as _polygon_intersection,
+    polygon_boxes,
     signed_area2 as _polygon_signed_area2,
+    triangle_pair_separation,
 )
 from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import (
@@ -195,125 +197,45 @@ def _area2(polygon: tuple[Point2, ...], /) -> Fraction:
     return _polygon_signed_area2(polygon) / 2
 
 
-def _interiors_separated(first: Triangle2, second: Triangle2, /) -> bool:
-    """Whether an edge line of either triangle exactly separates their interiors.
-
-    Two convex polygons have disjoint interiors exactly when a supporting line
-    of one of their edges leaves the other polygon in its closed outer half
-    plane, so this decides zero overlap area without clipping.
-    """
-    for inner, outer in ((first, second), (second, first)):
-        orientation = _polygon_signed_area2(inner)
-        if orientation == 0:
-            return True
-        for index in range(3):
-            start, end = inner[index], inner[(index + 1) % 3]
-            if all(
-                _polygon_cross(start, end, point) * orientation <= 0 for point in outer
-            ):
-                return True
-    return False
-
-
 def _intersection_area(first: Triangle2, second: Triangle2, /) -> Fraction:
-    if _interiors_separated(first, second):
+    if interiors_separated(first, second):
         return Fraction(0)
     return _polygon_area2(_polygon_intersection(first, second)) / 2
 
 
-type _ChartBoxes = tuple[np.ndarray, np.ndarray]
-
-# Banks with at most this many candidate pairs test every box pair at once on
-# the host; larger banks use the packed BVH. Both report every pair of closed
-# boxes that meet, so the exact findings do not depend on the choice.
-_DENSE_CHART_PAIRS = 1 << 16
-
-
-def _triangle_chart_boxes(triangles: tuple[Triangle2, ...], /) -> _ChartBoxes | None:
-    """Outward-rounded binary64 boxes of exact chart triangles (None if unbounded)."""
-    if not triangles:
-        return None
-    lower = np.empty((len(triangles), 2), dtype=np.float64)
-    upper = np.empty_like(lower)
-    for row, triangle in enumerate(triangles):
-        for axis in range(2):
-            low = fraction_endpoint(min(point[axis] for point in triangle), upper=False)
-            high = fraction_endpoint(max(point[axis] for point in triangle), upper=True)
-            if not math.isfinite(low) or not math.isfinite(high):
-                return None
-            lower[row, axis] = low
-            upper[row, axis] = high
-    return lower, upper
-
-
-def _triangle_overlap_candidate_pairs(
+def _screened_intersection_areas(
     first: tuple[Triangle2, ...],
     second: tuple[Triangle2, ...],
-    first_boxes: _ChartBoxes | None,
-    second_boxes: _ChartBoxes | None,
     /,
     *,
     self_pairs: bool,
-) -> tuple[tuple[int, int], ...]:
-    """Pairs (first row, second row) whose closed boxes meet, in row order.
+) -> Iterator[tuple[int, int, Fraction]]:
+    """Exact intersection areas of every box-meeting pair, in row order.
 
-    Disjoint closed boxes have zero intersection area, so these pairs carry
-    every positive-area overlap; self pairs keep first row < second row.
+    Disjoint closed boxes have zero intersection area. The binary64 interval
+    screen decides the exact edge-line separation test for whole pair blocks;
+    separated pairs have zero area, provably overlapping pairs clip directly,
+    and only undecided pairs run the exact separation test first.
     """
-    if self_pairs:
-        if len(first) != len(second):
-            raise ValueError("Self-overlap chart banks must be the same triangle bank.")
-    elif not first or not second:
-        return ()
-    if first_boxes is None or second_boxes is None:
-        candidates = (
-            (
-                (left, right)
-                for left in range(len(first))
-                for right in range(left + 1, len(first))
-            )
-            if self_pairs
-            else (
-                (left, right)
-                for left in range(len(first))
-                for right in range(len(second))
-            )
-        )
-        return tuple(candidates)
-    first_lower, first_upper = first_boxes
-    second_lower, second_upper = second_boxes
-    if len(first) * len(second) <= _DENSE_CHART_PAIRS:
-        meets = np.all(
-            (first_lower[:, None, :] <= second_upper[None, :, :])
-            & (second_lower[None, :, :] <= first_upper[:, None, :]),
-            axis=2,
-        )
-        if self_pairs:
-            meets = np.triu(meets, k=1)
-        rows, columns = np.nonzero(meets)
-        return tuple(zip(rows.tolist(), columns.tolist(), strict=True))
-    first_bvh = prepare_bvh(first_lower, first_upper, dtype=np.float64)
-    second_bvh = (
-        first_bvh
-        if self_pairs
-        else prepare_bvh(second_lower, second_upper, dtype=np.float64)
+    pairs = box_overlap_pairs(
+        len(first),
+        len(second),
+        polygon_boxes(first),
+        polygon_boxes(second),
+        self_pairs=self_pairs,
     )
-    blocks: list[np.ndarray] = []
-    for first_ids, second_ids in bvh_overlap_pair_blocks(
-        first_bvh, second_bvh, include_touching=True
-    ):
-        if self_pairs:
-            keep = first_ids < second_ids
-            first_ids, second_ids = first_ids[keep], second_ids[keep]
-        if first_ids.size:
-            blocks.append(
-                np.column_stack((first_ids, second_ids)).astype(np.int64, copy=False)
+    decisions = triangle_pair_separation(first, second, pairs)
+    for (left, right), decision in zip(pairs.tolist(), decisions.tolist(), strict=True):
+        if decision == 1:
+            yield left, right, Fraction(0)
+        elif decision == 0:
+            yield (
+                left,
+                right,
+                _polygon_area2(_polygon_intersection(first[left], second[right])) / 2,
             )
-    if not blocks:
-        return ()
-    pairs = np.concatenate(blocks, axis=0)
-    order = np.lexsort((pairs[:, 1], pairs[:, 0]))
-    return tuple((int(pairs[row, 0]), int(pairs[row, 1])) for row in order)
+        else:
+            yield left, right, _intersection_area(first[left], second[right])
 
 
 def _surface_source_chart_rows(
@@ -612,27 +534,23 @@ def _partition_findings(
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
         source_area = sum(source_areas, Fraction(0))
         target_area = sum(target_areas, Fraction(0))
-        source_boxes = _triangle_chart_boxes(declared)
-        target_boxes = _triangle_chart_boxes(target)
         source_overlap = any(
-            _intersection_area(declared[first], declared[second]) > 0
-            for first, second in _triangle_overlap_candidate_pairs(
-                declared, declared, source_boxes, source_boxes, self_pairs=True
+            area > 0
+            for _, _, area in _screened_intersection_areas(
+                declared, declared, self_pairs=True
             )
         )
         target_overlap = any(
-            _intersection_area(target[first], target[second]) > 0
-            for first, second in _triangle_overlap_candidate_pairs(
-                target, target, target_boxes, target_boxes, self_pairs=True
+            area > 0
+            for _, _, area in _screened_intersection_areas(
+                target, target, self_pairs=True
             )
         )
         target_covered = [Fraction(0) for _ in target]
-        for target_row, source_row in _triangle_overlap_candidate_pairs(
-            target, declared, target_boxes, source_boxes, self_pairs=False
+        for target_row, _, area in _screened_intersection_areas(
+            target, declared, self_pairs=False
         ):
-            target_covered[target_row] += _intersection_area(
-                target[target_row], declared[source_row]
-            )
+            target_covered[target_row] += area
         target_outside = any(
             covered != area
             for covered, area in zip(target_covered, target_areas, strict=True)

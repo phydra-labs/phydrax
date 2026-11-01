@@ -2187,12 +2187,10 @@ def _size_field(
     return sizes, (report.report_id,)
 
 
-def _source_curve_point(
-    domain: domain_owner.MeshingDomain,
-    curve: int,
-    parameter: Fraction,
-    /,
-) -> np.ndarray:
+def _curve_owner_use(
+    domain: domain_owner.MeshingDomain, curve: int, /
+) -> tuple[int, domain_owner.PatchCurveUse]:
+    """The patch and authored p-curve use owning a source curve's parameter."""
     owner = tuple(int(value) for value in domain.curve_owners[curve].tolist())
     if owner == (-1, -1, -1):
         raise _failure(
@@ -2208,11 +2206,31 @@ def _source_curve_point(
             category=MeshingFailureCategory.INVALID_SOURCE,
             entity_ids=(int(curve),),
         )
+    return patch, use
+
+
+def _use_point(
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    use: domain_owner.PatchCurveUse,
+    parameter: Fraction,
+    /,
+) -> np.ndarray:
     uv = _use_chart_point(use, parameter)
     return domain.evaluate(
         np.asarray((patch,), dtype=np.int64),
         np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
     )[0]
+
+
+def _source_curve_point(
+    domain: domain_owner.MeshingDomain,
+    curve: int,
+    parameter: Fraction,
+    /,
+) -> np.ndarray:
+    patch, use = _curve_owner_use(domain, curve)
+    return _use_point(domain, patch, use, parameter)
 
 
 def _box_chord_bound(
@@ -2385,13 +2403,16 @@ class _CurveChordBounds:
     the second-order interpolation bound of `_second_order_chord_bound`, so
     sampling converges at the curvature rate instead of to the tolerance
     itself. Interval bounds are cached here; boxes and second-derivative
-    programs come from the caller's source preparation.
+    programs come from the caller's source preparation. Physical points of
+    p-curve uses are evaluated once per (use, parameter): adjacent intervals
+    share endpoints, and the source curve point is its owner use's point.
     """
 
     preparation: domain_owner.SourcePreparation
     intervals: dict[tuple[int, Fraction, Fraction], tuple[float, float]] = field(
         default_factory=dict
     )
+    use_points: dict[tuple[int, int, Fraction], np.ndarray] = field(default_factory=dict)
 
     @property
     def domain(self) -> domain_owner.MeshingDomain:
@@ -2407,12 +2428,30 @@ class _CurveChordBounds:
             self.intervals[key] = cached
         return cached
 
+    def _point(
+        self,
+        patch: int,
+        use: domain_owner.PatchCurveUse,
+        parameter: Fraction,
+        /,
+    ) -> np.ndarray:
+        key = (patch, id(use), parameter)
+        point = self.use_points.get(key)
+        if point is None:
+            point = self.use_points[key] = _use_point(self.domain, patch, use, parameter)
+        return point
+
+    def _curve_point(self, curve: int, parameter: Fraction, /) -> np.ndarray:
+        """`_source_curve_point` through the per-use point memo."""
+        patch, use = _curve_owner_use(self.domain, curve)
+        return self._point(patch, use, parameter)
+
     def _interval(
         self, curve: int, lower: Fraction, upper: Fraction, /
     ) -> tuple[float, float]:
         domain = self.domain
-        first = _source_curve_point(domain, curve, lower)
-        last = _source_curve_point(domain, curve, upper)
+        first = self._curve_point(curve, lower)
+        last = self._curve_point(curve, upper)
         deviation = 0.0
         length = 0.0
         uses = domain.curve_uses(curve)
@@ -2456,19 +2495,7 @@ class _CurveChordBounds:
             )
             if program is not None:
                 endpoints = tuple(
-                    domain.evaluate(
-                        np.asarray((patch,), dtype=np.int64),
-                        np.asarray(
-                            [
-                                [
-                                    float(value)
-                                    for value in _use_chart_point(use, parameter)
-                                ]
-                            ],
-                            dtype=np.float64,
-                        ),
-                    )[0]
-                    for parameter in (lower, upper)
+                    self._point(patch, use, parameter) for parameter in (lower, upper)
                 )
                 use_deviation = min(
                     use_deviation,

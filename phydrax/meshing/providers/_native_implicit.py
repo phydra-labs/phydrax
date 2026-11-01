@@ -1477,17 +1477,47 @@ def _nearest_scaffold_rows(
     faces: np.ndarray,
     /,
 ) -> np.ndarray:
-    """Scaffold triangle with the nearest centroid for every carrier triangle."""
+    """Scaffold triangle with the nearest centroid for every carrier triangle.
+
+    The lowest scaffold row of least squared centroid distance wins. A k-d tree
+    proposes, per carrier triangle, every scaffold centroid within a widened
+    nearest distance; their squared distances are the same binary64
+    expressions as the exhaustive scan, so the chosen rows are too. Nonfinite
+    centroids keep the exhaustive scan.
+    """
+    from scipy.spatial import cKDTree
+
     scaffold_centroids = np.mean(scaffold_vertices[scaffold_faces], axis=1)
     centroids = np.mean(vertices[faces], axis=1)
-    rows = np.empty((faces.shape[0],), dtype=np.int64)
-    for start in range(0, faces.shape[0], 512):
-        block = centroids[start : start + 512]
-        squared = np.sum(
-            (block[:, None, :] - scaffold_centroids[None, :, :]) ** 2, axis=2
+    if (
+        centroids.shape[0] == 0
+        or scaffold_centroids.shape[0] == 0
+        or not (
+            np.all(np.isfinite(scaffold_centroids)) and np.all(np.isfinite(centroids))
         )
-        rows[start : start + block.shape[0]] = np.argmin(squared, axis=1)
-    return rows
+    ):
+        rows = np.empty((faces.shape[0],), dtype=np.int64)
+        for start in range(0, faces.shape[0], 512):
+            block = centroids[start : start + 512]
+            squared = np.sum(
+                (block[:, None, :] - scaffold_centroids[None, :, :]) ** 2, axis=2
+            )
+            rows[start : start + block.shape[0]] = np.argmin(squared, axis=1)
+        return rows
+    tree = cKDTree(scaffold_centroids)
+    nearest, _ = tree.query(centroids)
+    # The tree distance is within a few ulps of the exact one; the widened ball
+    # holds every centroid whose exact squared distance can be the least.
+    radius = np.nextafter(nearest * (1.0 + 2.0**-30), np.inf) + np.finfo(np.float64).tiny
+    candidates = tree.query_ball_point(centroids, radius, return_sorted=True)
+    counts = np.asarray([len(row) for row in candidates], dtype=np.int64)
+    owners = np.repeat(np.arange(centroids.shape[0], dtype=np.int64), counts)
+    columns = np.concatenate([np.asarray(row, dtype=np.int64) for row in candidates])
+    squared = np.sum((centroids[owners] - scaffold_centroids[columns]) ** 2, axis=1)
+    least = np.minimum.reduceat(squared, np.concatenate(([0], np.cumsum(counts)[:-1])))
+    first = np.flatnonzero(squared == least[owners])
+    _, first_rows = np.unique(owners[first], return_index=True)
+    return columns[first[first_rows]]
 
 
 def _remesh_implicit_carrier(
