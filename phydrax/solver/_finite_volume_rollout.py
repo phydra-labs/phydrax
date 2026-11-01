@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
+from .._owned_programs import run_owned_program
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -159,6 +160,17 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
         initial_state: FiniteVolumeRuntimeState,
         args: Any = None,
         /,
+    ) -> FiniteVolumeRolloutResult:
+        return run_owned_program(
+            self,
+            "rollout",
+            AdaptiveFiniteVolumeRolloutPlan._rollout,
+            initial_state,
+            args,
+        )
+
+    def _rollout(
+        self, initial_state: FiniteVolumeRuntimeState, args: Any, /
     ) -> FiniteVolumeRolloutResult:
         retain_states = self.retention != "final"
 
@@ -306,6 +318,17 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         args: Any = None,
         /,
     ) -> FiniteVolumeRolloutResult:
+        return run_owned_program(
+            self,
+            "rollout",
+            ScheduledFiniteVolumeRolloutPlan._rollout,
+            initial_state,
+            args,
+        )
+
+    def _rollout(
+        self, initial_state: FiniteVolumeRuntimeState, args: Any, /
+    ) -> FiniteVolumeRolloutResult:
         initial_time = jnp.asarray(initial_state.time)
         tolerance = (
             32.0
@@ -424,6 +447,27 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         epsilon_ = float(epsilon)
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
+        return run_owned_program(
+            self,
+            "gradient-report",
+            ScheduledFiniteVolumeRolloutPlan._gradient_report,
+            loss,
+            initial_state,
+            direction,
+            epsilon_,
+            args,
+        )
+
+    def _gradient_report(
+        self,
+        loss: RolloutLoss,
+        initial_state: FiniteVolumeRuntimeState,
+        direction: Array,
+        epsilon_: float,
+        args: Any,
+        /,
+    ) -> FiniteVolumeGradientReport:
+        initial_content = initial_state.content_state.conservative_content
 
         def objective(content: Array) -> Array:
             content_state = initial_state.content_state.with_content(content)
@@ -440,10 +484,13 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
                 sliding_shift=initial_state.sliding_shift,
                 sliding_event_id=initial_state.sliding_event_id,
             )
-            return loss(self.rollout(runtime, args).final_state, args)
+            return loss(self._rollout(runtime, args).final_state, args)
 
-        _, directional = jax.jvp(objective, (initial_content,), (direction,))
-        gradient = jax.grad(objective)(initial_content)
+        # One linearized rollout serves the forward derivative and, transposed,
+        # the reverse one (``jax.grad`` is this transpose of the linearization).
+        primal, linear = jax.linearize(objective, initial_content)
+        directional = linear(direction)
+        (gradient,) = jax.linear_transpose(linear, initial_content)(jnp.ones_like(primal))
         reverse = jnp.vdot(gradient, direction)
         finite_difference = (
             objective(initial_content + epsilon_ * direction)
