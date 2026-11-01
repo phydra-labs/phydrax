@@ -2718,8 +2718,6 @@ def periodic_delaunay_mesh(
     initial_margin: float = 1.0,
 ) -> PeriodicMeshConstruction:
     """Construct a real periodic quotient Delaunay mesh with the native kernel."""
-    if not isinstance(source, PeriodicPointOrbits):
-        raise TypeError("source must be PeriodicPointOrbits.")
     if np.asarray(source.point_ids).size == 0:
         raise ValueError("Global periodic Delaunay requires at least one authored point.")
     dimension = source.ambient_dimension

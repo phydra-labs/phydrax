@@ -34,7 +34,7 @@ from ...geometry._surface_source_support import SurfaceSourceCharts
 from ...geometry.brep._model import BRepGeometry, BRepModel
 from ...geometry.brep._patches import PlanePatch
 from ...geometry.brep._projection_contracts import brep_entity_id
-from ...typing import checked
+from ...typing import checked, parse
 from .._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -831,10 +831,7 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
             domain = MeshingDomain.from_brep(domain)
         if not isinstance(domain, MeshingDomain):
             raise TypeError("domain must be BRepModel or authoritative MeshingDomain.")
-        if not isinstance(surface, CellMeshingResult):
-            raise TypeError("surface must be an accepted CellMeshingResult.")
-        if boundary not in ("fixed", "conforming"):
-            raise ValueError("boundary must be 'fixed' or 'conforming'.")
+        boundary = parse(boundary, PlcBoundaryPolicy, "boundary")
         surface_source, accepted_query = _surface_source_authorities(surface, domain)
         if (
             fidelity_source is not None

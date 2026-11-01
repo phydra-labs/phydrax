@@ -34,8 +34,6 @@ def periodic_quotient_edge_squared_lengths(
     /,
 ) -> tuple[np.ndarray, np.ndarray, tuple[Fraction, ...]]:
     """Exact squared lengths of each quotient edge, preserving its winding action."""
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be a CellMesh.")
     topology = mesh.periodic_topology
     if not isinstance(topology, PeriodicMeshTopology):
         raise ValueError("mesh must retain PeriodicMeshTopology.")

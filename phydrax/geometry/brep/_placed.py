@@ -185,8 +185,6 @@ class PlacedSurface(AbstractSurfacePatch):
         *,
         affine: BRepAffinePlacement | None = None,
     ) -> None:
-        if not isinstance(definition, AbstractSurfacePatch):
-            raise TypeError("PlacedSurface.definition must be an AbstractSurfacePatch.")
         self.rotation, self.translation = validate_pose(rotation, translation)
         self.affine = _exact_affine(self.rotation, self.translation, affine)
         self.definition = definition

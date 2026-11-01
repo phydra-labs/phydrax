@@ -1489,8 +1489,6 @@ def generate_integer_grid_hexes(
     maximum_size: float | None = None,
 ) -> _MappedRootIntegerGrid:
     """Build conforming source-root tensor subdivisions from physical Jacobian bounds."""
-    if not isinstance(domain, MappedReferenceDomain):
-        raise TypeError("domain must be MappedReferenceDomain.")
     if not isinstance(frame, PreparedSourceHexFrame) or not isinstance(
         connection, SourceBlockConnection
     ):
@@ -2128,12 +2126,6 @@ def realize_mapped_grid_hexes(
     /,
 ) -> MappedGridHexConstruction:
     """Compose each integer source-root cell through its exact curved map."""
-    if not isinstance(grid, _MappedRootIntegerGrid):
-        raise TypeError("grid must be an internal mapped root integer grid.")
-    if not isinstance(domain, MappedReferenceDomain):
-        raise TypeError("domain must be MappedReferenceDomain.")
-    if not isinstance(frame, PreparedSourceHexFrame):
-        raise TypeError("frame must be PreparedSourceHexFrame.")
     if (
         grid.domain_id != domain.domain_id
         or grid.reference_mesh_id != domain.reference_mesh.mesh_id

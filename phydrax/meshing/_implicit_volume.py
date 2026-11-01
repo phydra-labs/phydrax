@@ -2715,14 +2715,6 @@ def prepare_restricted_implicit_volume(
     /,
 ) -> PreparedRestrictedImplicitVolume:
     """Prepare the real established-reach restricted-Delaunay profile route."""
-    if not isinstance(profile, AnalyticImplicitProfile):
-        raise TypeError("profile must be an AnalyticImplicitProfile.")
-    if not isinstance(specification, VolumeMeshingSpec):
-        raise TypeError("specification must be a VolumeMeshingSpec.")
-    if not isinstance(schedule, NativeVolumeSchedule):
-        raise TypeError("schedule must be a NativeVolumeSchedule.")
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
     issues = _support_issues(profile, specification)
     if issues:
         raise _failure(

@@ -203,8 +203,6 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
         transfer_meshes: Sequence[TMesh2D] | None = None,
         transfer_basis_certificates: Sequence[ASTSCertificate] | None = None,
     ) -> None:
-        if not isinstance(mesh, TMesh2D):
-            raise TypeError("mesh must be a TMesh2D.")
         source_mesh_ = mesh if source_mesh is None else source_mesh
         if not isinstance(source_mesh_, TMesh2D):
             raise TypeError("source_mesh must be a TMesh2D or None.")

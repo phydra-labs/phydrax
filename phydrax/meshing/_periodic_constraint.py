@@ -28,8 +28,6 @@ def bind_periodic_entity_pairs(
     Coordinate proximity never creates correspondence. IDs select the paired
     rows; coordinates only verify the declared transform against those rows.
     """
-    if not isinstance(constraint, PeriodicConstraint):
-        raise TypeError("constraint must be PeriodicConstraint.")
     if (
         constraint.source_scope.source_id != constraint.target_scope.source_id
         or constraint.source_scope.source_revision

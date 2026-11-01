@@ -572,8 +572,6 @@ def brep_mass_properties(
     explicit per-occurrence status and an infinite interval; no tessellation or
     sample-derived finite estimate is published.
     """
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
     if not x64_enabled():
         raise ValueError(
             "BRepMassProperties.precision must retain binary64 enclosures; got JAX x64 disabled."

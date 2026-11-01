@@ -253,8 +253,6 @@ def volume_support_issues(
     source: NativePlcSource, specification: VolumeMeshingSpec, /
 ) -> list[str]:
     """Return unmet constrained-volume requirements in stable validation order."""
-    if not isinstance(source, NativePlcSource):
-        raise TypeError("source must be NativePlcSource.")
     issues = [
         *_target_support(specification),
         *_source_binding_issues(source, specification),

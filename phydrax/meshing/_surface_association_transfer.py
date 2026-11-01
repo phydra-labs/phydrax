@@ -281,8 +281,6 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
 
     @checked
     def __init__(self, domain: MeshingDomain, /) -> None:
-        if not isinstance(domain, MeshingDomain):
-            raise TypeError("domain must be MeshingDomain.")
         self.domain = domain
         domain.require_current(domain.source_id, domain.source_revision)
         self.transfer_id = canonical_fingerprint(
