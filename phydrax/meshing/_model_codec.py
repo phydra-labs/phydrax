@@ -446,6 +446,8 @@ def _register_model_archive_types() -> None:
         ShardedOwnerDirectoryData,
         ShardedOwnerDirectoryWitness,
     )
+    from ._distribution_forest import SimplexForestRecords
+    from ._distribution_migration import OwnerLocalMigrationState
     from ._dual_extraction import _RestrictedCoordinateMap
     from ._hex_cut_generation import _CutCoordinateMap
     from ._hex_cut_preparation import BalancedCutGridPlan
@@ -718,6 +720,8 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", LayerCurvingSourceEvidence),
         ("phydrax.meshing", BoundaryLayerCollisionPolicy),
         ("phydrax.meshing", BoundaryLayerEvidence),
+        ("phydrax.meshing", SimplexForestRecords),
+        ("phydrax.meshing", OwnerLocalMigrationState),
         ("phydrax.meshing", CellMeshTransition),
         ("phydrax.meshing", EntityLineage),
         ("phydrax.meshing", EntityLineageKind),
@@ -903,6 +907,8 @@ def restore_model_archive_value(
     from ..linalg._spaces import ArraySpaceArchiveRecipe
     from ..sparse._linear import SparseCoordinateOperator
     from ..sparse._relation import EdgeRelation
+    from ._distribution_forest import SimplexForestRecords
+    from ._distribution_migration import OwnerLocalMigrationState
 
     _register_model_archive_types()
 
@@ -967,6 +973,34 @@ def restore_model_archive_value(
         return rebuilt
 
     def restore(item: Any, /) -> Any:
+        if type(item) is SimplexForestRecords:
+            forest = SimplexForestRecords(
+                item.cell_ids,
+                item.cell_owner_ranks,
+                dict(item.cell_fields),
+                item.vertex_ids,
+                item.vertex_owner_ranks,
+                dict(item.vertex_fields),
+                item.protected_edge_ids,
+                item.dimension,
+                item.ambient_dimension,
+                item.next_vertex_id,
+                item.next_cell_id,
+            )
+            if forest.forest_id != item.forest_id:
+                raise ValueError("Stored simplex forest identity does not reproduce.")
+            return forest
+        if type(item) is OwnerLocalMigrationState:
+            state = OwnerLocalMigrationState(
+                restore(item.forest),
+                cell_payloads=dict(item.cell_payloads),
+                vertex_payloads=dict(item.vertex_payloads),
+            )
+            if state.state_id != item.state_id:
+                raise ValueError(
+                    "Stored owner-local migration identity does not reproduce."
+                )
+            return state
         if type(item) is SparseCoordinateOperatorArchiveRecipe:
             if not isinstance(item.accumulation_dtype, np.dtype):
                 raise TypeError("Stored sparse accumulation dtype must be a NumPy dtype.")
