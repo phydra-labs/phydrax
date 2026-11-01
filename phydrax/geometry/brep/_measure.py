@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from numbers import Integral
-from typing import Literal, final
+from typing import final, Literal
 
 import equinox as eqx
 import jax
@@ -38,17 +38,16 @@ from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_integer
-from ...typing import Bool, Dim, Float64, Scope, Size, as_array, checked, parse
-from .._atlas import TrimDomain
+from ...typing import as_array, Bool, checked, Dim, Float64, parse, Scope, Size
+from .._atlas import TrimDomain, TrimEnclosures
 from .._interval_enclosure import (
-    Interval,
-    IntervalExtensionError,
-    PreparedIntervalFunction,
     interval_add,
     interval_divide,
     interval_multiply,
     interval_subtract,
+    IntervalExtensionError,
     prepare_interval_function,
+    PreparedIntervalFunction,
 )
 from .._rational import (
     fraction_down,
@@ -64,6 +63,7 @@ from ._exact import rational_determinant
 from ._model import BRepEntityId, BRepModel
 from ._patches import AbstractSurfacePatch, ExactLineCurve, LineCurve, PlanePatch
 
+
 type BRepMassMeasureStatus = Literal["certified", "unsupported", "unresolved"]
 type _ScalarInterval = tuple[np.float64, np.float64]
 
@@ -72,6 +72,7 @@ type _ScalarInterval = tuple[np.float64, np.float64]
 class _VolumeCell:
     face: int
     domain: TrimDomain
+    enclosures: TrimEnclosures
     function: PreparedIntervalFunction
     box: np.ndarray
     contribution: _ScalarInterval
@@ -270,15 +271,9 @@ def _point_interval(value: float, /) -> _ScalarInterval:
     return point, point
 
 
-
-
 def _cell_area(box: np.ndarray, /) -> _ScalarInterval:
-    width_u = interval_subtract(
-        _point_interval(box[1, 0]), _point_interval(box[0, 0])
-    )
-    width_v = interval_subtract(
-        _point_interval(box[1, 1]), _point_interval(box[0, 1])
-    )
+    width_u = interval_subtract(_point_interval(box[1, 0]), _point_interval(box[0, 0]))
+    width_v = interval_subtract(_point_interval(box[1, 1]), _point_interval(box[0, 1]))
     return _finite_interval(interval_multiply(width_u, width_v))
 
 
@@ -297,7 +292,7 @@ def _classification_box(
 
 def _prepare_face_integrator(
     model: BRepModel, face: int, /
-) -> tuple[TrimDomain, PreparedIntervalFunction]:
+) -> tuple[TrimDomain, TrimEnclosures, PreparedIntervalFunction]:
     domain = model.trim_domains[face]
     if domain is None or domain.numeric_only:
         raise _MeasureFailure(
@@ -321,20 +316,23 @@ def _prepare_face_integrator(
             "unsupported",
             f"source face {face} cannot prepare an interval integral: {error}",
         ) from error
-    return domain, function
+    return domain, domain.prepare_enclosures(), function
 
 
 def _volume_cell_contribution(
     model: BRepModel,
     face: int,
     domain: TrimDomain,
+    enclosures: TrimEnclosures,
     function: PreparedIntervalFunction,
     box: np.ndarray,
     /,
 ) -> _ScalarInterval:
     try:
         classification_box = _classification_box(model, face, domain, box)
-        classification = domain.classify_boxes(classification_box[None, :, :])
+        classification = domain.classify_boxes(
+            classification_box[None, :, :], enclosures=enclosures
+        )
         lower, upper = function.evaluate(box[0][None, :], box[1][None, :])
     except IntervalExtensionError as error:
         raise _MeasureFailure(
@@ -366,7 +364,7 @@ def _volume_cell_contribution(
 def _initial_face_cells(
     model: BRepModel, face: int, subdivisions: int, /
 ) -> list[_VolumeCell]:
-    domain, function = _prepare_face_integrator(model, face)
+    domain, enclosures, function = _prepare_face_integrator(model, face)
     parameter_bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
     cells = []
     for u_index in range(subdivisions):
@@ -406,9 +404,12 @@ def _initial_face_cells(
                 _VolumeCell(
                     face,
                     domain,
+                    enclosures,
                     function,
                     box,
-                    _volume_cell_contribution(model, face, domain, function, box),
+                    _volume_cell_contribution(
+                        model, face, domain, enclosures, function, box
+                    ),
                 )
             )
     return cells
@@ -461,19 +462,31 @@ def _split_volume_cell(
             _VolumeCell(
                 cell.face,
                 cell.domain,
+                cell.enclosures,
                 cell.function,
                 first_box,
                 _volume_cell_contribution(
-                    model, cell.face, cell.domain, cell.function, first_box
+                    model,
+                    cell.face,
+                    cell.domain,
+                    cell.enclosures,
+                    cell.function,
+                    first_box,
                 ),
             ),
             _VolumeCell(
                 cell.face,
                 cell.domain,
+                cell.enclosures,
                 cell.function,
                 second_box,
                 _volume_cell_contribution(
-                    model, cell.face, cell.domain, cell.function, second_box
+                    model,
+                    cell.face,
+                    cell.domain,
+                    cell.enclosures,
+                    cell.function,
+                    second_box,
                 ),
             ),
         )
@@ -543,9 +556,7 @@ def _solid_volume_enclosure(
         cells.extend(split)
 
 
-def _placement_volume_factor(
-    occurrence: BRepAssemblyOccurrence, /
-) -> _ScalarInterval:
+def _placement_volume_factor(occurrence: BRepAssemblyOccurrence, /) -> _ScalarInterval:
     matrix = occurrence.placement.matrix
     rows = tuple(tuple(matrix[row][column] for column in range(3)) for row in range(3))
     determinant = rational_determinant(*rows)
