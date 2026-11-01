@@ -890,15 +890,15 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_bernstein_controls": (
         _I32,
-        (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
+        (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
     ),
     "phx_mc_simplex_bernstein_blossoms": (
         _I32,
-        (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _I32),
+        (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
     ),
     "phx_mc_bernstein_bisect": (
         _I32,
-        (_I64, _I64, _I32, _I32, _P, _I32, _I32, _P, _P, _P, _P, _P, _I32),
+        (_I64, _I64, _I32, _I32, _P, _I32, _I32, _P, _P, _P, _P, _P, _I32, _I32),
     ),
     "phx_mc_separation_screen": (
         _I32,
