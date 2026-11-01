@@ -172,6 +172,39 @@ A compiled affine form provides `linear_system()` and explicit nullspace policy.
 General residuals expose `as_nonlinear_problem()`, matrix-free linearization,
 lagged/Picard operator factories, and a scalable adjoint solve.
 
+`linear_system(storage="sparse")` hands exact sparse coordinates to
+`phydrax.linalg` instead of a matrix-free action. Strong Dirichlet constraints
+are eliminated exactly: `ConstraintMap.reduce_sparse_operator` keeps the
+free-by-free block `P^T A P` sparse, and the constrained columns enter the
+right-hand side through the lift. Solve it with a sparse direct method, the
+native complete factor (`SparseFactorizationPreconditionerBuilder` under `PCG`
+for declared SPD forms, `GMRES` with an LU factor otherwise), or preconditioned
+Krylov such as `IncompleteCholeskyPreconditionerBuilder`. `linalg.prepare`
+factors once; `right_hand_side(context)` assembles the right-hand side for
+another lift (`FiniteElementExecutionContext(runtime, lift=...)`) and
+`solve_many` reuses the factor for all of them. Solve status, residuals, and
+iterations are in the result diagnostics; factor status and minimum pivot are
+on the prepared preconditioner; `estimate_condition_number(system.operator)`
+gives conditioning bounds. Forms without structural sparse actions,
+matrix-free realization, and constraints that are not coordinate selections
+refuse this route.
+
+```python
+system, rhs = problem.linear_system(storage="sparse")
+policy = phx.linalg.LinearSolvePolicy(
+    phx.linalg.PCG(),
+    preconditioning=phx.linalg.PreconditioningPolicy(
+        phx.linalg.SparseFactorizationPreconditionerBuilder(
+            phx.linalg.SparseFactorizationPolicy(
+                "cholesky", ordering="nested-dissection"
+            )
+        )
+    ),
+)
+prepared = phx.linalg.prepare(system, policy)
+u = problem.expand(phx.linalg.solve(prepared, rhs).value)
+```
+
 `as_dae_system()` includes dynamic geometry, time, lift, and lift-rate terms.
 `as_second_order_system()` adds configuration, velocity, acceleration, and
 lift-acceleration semantics. `as_generalized_eigenproblem()` returns native
@@ -180,15 +213,7 @@ constrained stiffness/mass operators.
 `FiniteElementExecutionPolicy` independently selects matrix-free versus sparse
 realization, dense/partial/sum-factorized/collocated local kernels, and
 fast/deterministic/compensated residual accumulation. Sparse execution uses the
-existing `SparseAssemblyPlan` prepare/refresh lifecycle. With a strong Dirichlet
-constraint, constant scalar diffusion, mass and tensor-diffusion forms keep the
-free-DOF restriction `P^T A P` as coordinate storage on the reduced state space,
-with self-adjoint, semidefinite and (for a positive mass term) definite
-properties by construction. `linear_system()` hands that `SparseLinearMap` to
-`phydrax.linalg` directly when its topology is host data, so `SparseLU`,
-`SparseCholesky` and certified Krylov routes apply. The automatic route stays a
-sparse Krylov solve and never factors densely. Under tracing it keeps the same
-matrix-free action with those properties.
+existing `SparseAssemblyPlan` prepare/refresh lifecycle.
 
 ## Materials, compatible methods, and hierarchy
 

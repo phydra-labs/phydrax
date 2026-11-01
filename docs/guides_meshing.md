@@ -796,6 +796,24 @@ without a depth cap. Certification takes the prepared root charts explicitly
 (`root_charts=`) and checks them against its operands. Interval products take an
 exact zero times an unbounded side as zero (IEEE 1788).
 
+The reverse bound, from the zero set to the mesh, is proved locally. The
+retained discovery cover already shows that every box outside its possible-zero
+boxes is sign-definite. Each possible-zero box is handled in one of three ways:
+
+- It is accepted once one exact face point `q` satisfies
+  `max_{x in box} |x - q| <= tol`. The face parameter of `q` is chosen by
+  Gauss–Newton, and `q` is enclosed from outward-rounded coefficients.
+- It is dropped once its own enclosure is sign-definite.
+- Otherwise it is halved.
+
+Refinement therefore follows the zero set down to the tolerance scale only.
+Its cost grows with the surface area divided by `tol^2`, not with the domain
+volume. The source is never rediscovered globally. A far box, farther than
+`tol` from every face box (found by a BVH box query), whose corners certify a
+sign change contains a zero point beyond the tolerance: the bound is violated.
+A box that halving shrinks below `2^-24 tol` while still undecided leaves the
+bound unresolved. The retained source roots give the lower bound.
+
 Native curve meshing binds each `SegmentMesh` edge to a `SegmentChartCurve`: the
 exact affine map of the edge onto its declared chart parameter range. Its rational
 coefficients make chart fidelity an exact polynomial bound per target edge, and its

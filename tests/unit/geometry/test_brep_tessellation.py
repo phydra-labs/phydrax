@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._fingerprint import canonical_fingerprint
 from phydrax._interpolation import TMesh2D
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep._assembly import (
@@ -291,7 +292,17 @@ def test_direct_native_tessellation_smoke_and_source_identity() -> None:
     assert source.source_revision == source_revision
     assert source.geometry.geometry_id == geometry_id
     assert realized.source_revision == source_revision
-    assert realized.model_id == source.model_id
+    # The physical source keeps its identity; a tessellated model is a distinct
+    # query representation of it (source revision plus tessellation identity).
+    assert source.model_id == source_revision
+    assert realized.model_id != source.model_id
+    assert realized.model_id == canonical_fingerprint(
+        {
+            "kind": "brep-model",
+            "source_revision": source_revision,
+            "query_representation": realized.require_tessellation().tessellation_id,
+        }
+    )
     assert realized.tessellation is not None
     assert np.max(np.asarray(realized.tessellation.deviation_bounds)) <= 0.02
     assert np.max(np.asarray(realized.tessellation.normal_bounds)) <= 0.2

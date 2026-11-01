@@ -21,7 +21,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array, core as jax_core
+from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
@@ -70,10 +70,12 @@ from ..linalg import (
     adjoint,
     ArraySpace,
     assemble_diagonal,
+    assemble_sparse,
     BlockLinearOperator,
     BlockSpace,
     ConstraintMap,
     DualSpace,
+    EuclideanPairing,
     FunctionLinearOperator,
     IdentityLinearOperator,
     KernelCertificate,
@@ -85,7 +87,6 @@ from ..linalg import (
     plan_sparse_assembly,
     prepare_sparse_assembly,
     PreparedSparseAssembly,
-    PropertyEvidence,
     solve,
     SparseAssemblyPlan,
     SparseAssemblyPolicy,
@@ -1547,111 +1548,33 @@ def _assemble_tensor_diffusion_action(
     )
 
 
-def _concrete_real_sign(scale: Array, /) -> float | None:
-    """Sign of one concrete real scale; ``None`` when traced or complex."""
-    if isinstance(scale, jax_core.Tracer) or not jnp.isrealobj(scale):
-        return None
-    return float(np.sign(np.asarray(scale)))
-
-
-def _dirichlet_reduced_sparse_operator(
-    terms: Sequence[tuple[Array | None, SparseLinearMap]],
-    constraint: ConstraintMap,
-    /,
-    *,
-    operator_id: str,
-) -> SparseLinearMap | None:
-    """Restrict summed full-field coordinate storage to strong-Dirichlet free DOFs.
-
-    The strong Dirichlet prolongation ``P`` is a unit selection of the free
-    coordinates, so ``P^T (sum_k s_k A_k) P`` keeps every route of ``A_k`` whose
-    row and column are both free, renumbered into reduced coordinates. Routes
-    touching a constrained coordinate stay as invalid slots, so the storage has
-    the full operators' fixed capacity and the restriction is traceable.
-    Congruence by an injective selection preserves self-adjointness,
-    semidefiniteness and definiteness of each nonnegatively scaled term.
-    """
-    prolongation = constraint.prolongation
-    if not isinstance(prolongation, SparseCoordinateOperator) or not isinstance(
-        prolongation.relation, EdgeRelation
-    ):
-        return None
-    selection = prolongation.relation
-    reduced_size = selection.source_size
-    full_size = selection.target_size
-    reduced_index = (
-        jnp.full((full_size,), -1, dtype=jnp.int32)
-        .at[jnp.where(selection.valid, selection.target_indices, full_size)]
-        .set(selection.source_indices.astype(jnp.int32), mode="drop")
+def _merged_properties(
+    declared: OperatorProperties, structural: OperatorProperties, /
+) -> OperatorProperties:
+    """Union of declared and structural claims, keeping the stronger evidence."""
+    names = (
+        "diagonal",
+        "triangular",
+        "self_adjoint",
+        "positive_definite",
+        "positive_semidefinite",
+        "block_diagonal",
     )
-    sources, targets, valid, coefficients = [], [], [], []
-    self_adjoint = True
-    semidefinite = True
-    definite = False
-    for scale, operator in terms:
-        relation = operator.relation
-        if (
-            not isinstance(relation, EdgeRelation)
-            or operator.batch_shape
-            or relation.source_size != full_size
-            or relation.target_size != full_size
-        ):
-            return None
-        sign = 1.0 if scale is None else _concrete_real_sign(scale)
-        properties = operator.properties
-        self_adjoint = (
-            self_adjoint
-            and properties.certifies("self_adjoint")
-            and (scale is None or jnp.isrealobj(scale))
-        )
-        semidefinite = (
-            semidefinite
-            and sign is not None
-            and sign >= 0.0
-            and (
-                properties.certifies("positive_semidefinite")
-                or properties.certifies("positive_definite")
-            )
-        )
-        definite = definite or (
-            sign is not None and sign > 0.0 and properties.certifies("positive_definite")
-        )
-        row = reduced_index[relation.target_indices]
-        column = reduced_index[relation.source_indices]
-        free = relation.valid & (row >= 0) & (column >= 0)
-        sources.append(jnp.where(free, column, 0))
-        targets.append(jnp.where(free, row, 0))
-        valid.append(free)
-        coefficients.append(
-            operator.coefficients if scale is None else scale * operator.coefficients
-        )
-    semidefinite = self_adjoint and semidefinite
-    definite = semidefinite and definite
-    claims: dict[str, PropertyEvidence] = {
-        name: "construction"
-        for name, claimed in (
-            ("self_adjoint", self_adjoint),
-            ("positive_semidefinite", semidefinite),
-            ("positive_definite", definite),
-        )
-        if claimed
+    claims = {
+        name: True
+        for name in names
+        if getattr(declared, name) or getattr(structural, name)
     }
-    return SparseLinearMap(
-        EdgeRelation(
-            jnp.concatenate(sources),
-            jnp.concatenate(targets),
-            source_size=reduced_size,
-            target_size=reduced_size,
-            valid=jnp.concatenate(valid),
-        ),
-        jnp.concatenate(coefficients),
-        properties=OperatorProperties(
-            self_adjoint=self_adjoint,
-            positive_semidefinite=semidefinite,
-            positive_definite=definite,
-            evidence=claims,
-        ),
-        operator_id=operator_id,
+    evidence = {}
+    for name in claims:
+        for source in (declared, structural):
+            if source.certifies(name):
+                evidence[name] = source.evidence_for(name)
+                break
+    return OperatorProperties(
+        **claims,
+        rank=declared.rank if declared.rank is not None else structural.rank,
+        evidence=evidence,
     )
 
 
@@ -2855,36 +2778,61 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     def _structural_affine_operator(
         self, args: object = None, /
     ) -> AbstractLinearOperator | None:
+        if self.constraint is not None:
+            return None
+        return self._structural_full_operator(args)
+
+    def _sparse_affine_operator(
+        self, args: object = None, /
+    ) -> SparseCoordinateOperator | None:
+        """Exact sparse storage of the affine operator on the state space.
+
+        Strong coordinate-selection (Dirichlet) constraints are eliminated from
+        the structural full operator without densifying it; returns ``None``
+        when no structural sparse lowering or sparse elimination exists.
+        """
+        full = self._structural_full_operator(args)
+        if full is None:
+            return None
+        if self.constraint is None:
+            assembled = assemble_sparse(full)
+            if not isinstance(assembled, SparseCoordinateOperator):
+                raise TypeError("Sparse assembly did not produce coordinate storage.")
+            return assembled
+        if self.constraint.coordinate_selection() is None:
+            return None
+        return self.constraint.reduce_sparse_operator(full)
+
+    def _assembly_operator(self, args: object = None, /) -> AbstractLinearOperator:
+        """Operator for explicit sparse assembly, eliminating selection constraints."""
+        if self.constraint is not None:
+            sparse = self._sparse_affine_operator(args)
+            if sparse is not None:
+                return sparse
+        return self.affine_operator(args)
+
+    def _structural_full_operator(
+        self, args: object = None, /
+    ) -> AbstractLinearOperator | None:
         if (
             self.execution_policy.realization != "sparse"
             or len(self.form.field_names) != 1
         ):
-            return None
-        constraint = self.constraint
-        if constraint is not None and self.dirichlet_rows[0] is None:
-            # Only strong Dirichlet constraints are unit selections by construction;
-            # general affine prolongations keep the linearized program.
             return None
         # Sparse realization is offered only by finite-element local providers.
         discretization = cast(FiniteElementDiscretization, self.discretization)
         context = self._execution_context(args)
         if _runtime_id(context) != discretization.default_runtime.runtime_id:
             return None
-        # ``None`` scales keep a term's own storage and properties unscaled.
-        terms: list[tuple[Array | None, SparseLinearMap]] = []
+        operators = []
         mass, stiffness = discretization.assemble_field_operators(
             self.form.field_name,
             _finite_element_runtime(context),
         )
         for action in self.form.actions:
             if isinstance(action, TensorDiffusionAction):
-                terms.append(
-                    (
-                        None,
-                        _assemble_tensor_diffusion_action(
-                            action, discretization, context
-                        ),
-                    )
+                operators.append(
+                    _assemble_tensor_diffusion_action(action, discretization, context)
                 )
             elif (
                 isinstance(action, DiffusionAction)
@@ -2893,7 +2841,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 and action.diffusivity.constant
                 and action.diffusivity.value.shape == ()
             ):
-                terms.append((jnp.asarray(action.diffusivity.value), stiffness))
+                operators.append(action.diffusivity.value * stiffness)
             elif (
                 isinstance(action, MassAction)
                 and action.domain is None
@@ -2901,28 +2849,13 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 and action.coefficient.constant
                 and action.coefficient.value.shape == ()
             ):
-                terms.append((jnp.asarray(action.coefficient.value), mass))
+                operators.append(action.coefficient.value * mass)
             elif isinstance(action, (SourceAction, BoundaryLoadAction)):
                 continue
             else:
                 return None
-        if not terms:
+        if not operators:
             return None
-        if constraint is not None:
-            return _dirichlet_reduced_sparse_operator(
-                terms,
-                constraint,
-                operator_id=canonical_fingerprint(
-                    {
-                        "kind": "finite-element-dirichlet-reduced-affine-operator",
-                        "compilation": self.compilation_id,
-                        "runtime": _runtime_id(context),
-                    }
-                ),
-            )
-        operators = [
-            operator if scale is None else scale * operator for scale, operator in terms
-        ]
         result = operators[0]
         for operator in operators[1:]:
             result = result + operator
@@ -2941,10 +2874,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
     def to_scipy_csr(self, args: object = None, /) -> sp.csr_array:
-        """Assemble exact sparse coordinates and convert them directly to SciPy CSR."""
+        """Assemble exact sparse coordinates and convert them directly to SciPy CSR.
+
+        Strong Dirichlet constraints are eliminated sparsely: the result is the
+        free-by-free block on the state space.
+        """
         import scipy.sparse as sp
 
-        operator = self.affine_operator(args)
+        operator = self._assembly_operator(args)
         plan = plan_sparse_assembly(operator)
         if plan.uses_materialization:
             raise ValueError(
@@ -2974,7 +2911,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         *,
         policy: SparseAssemblyPolicy | None = None,
     ) -> SparseAssemblyPlan:
-        return plan_sparse_assembly(self.affine_operator(args), policy)
+        return plan_sparse_assembly(self._assembly_operator(args), policy)
 
     def prepare_sparse_assembly(
         self,
@@ -2984,7 +2921,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         plan: SparseAssemblyPlan | None = None,
         policy: SparseAssemblyPolicy | None = None,
     ) -> PreparedSparseAssembly:
-        operator = self.affine_operator(args)
+        operator = self._assembly_operator(args)
         selected_plan = plan_sparse_assembly(operator, policy) if plan is None else plan
         return prepare_sparse_assembly(selected_plan, operator)
 
@@ -3079,41 +3016,80 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
         return None
 
+    def right_hand_side(self, args: object = None, /) -> PyTree[Array]:
+        """Return ``b`` of the affine system ``A z = b`` on the state space.
+
+        ``b`` is the inverse-Riesz image of ``-R(0)``. Under strong constraints
+        it carries the eliminated lift columns ``-P^T (A g - f)``, so one prepared
+        solve of `linear_system` serves every lift ``g`` supplied through a
+        `FiniteElementExecutionContext`.
+        """
+        zero = self.state_space.zeros()
+        return self.state_space.inverse_riesz(
+            jax.tree.map(lambda value: -value, self.residual(zero, args))
+        )
+
     def linear_system(
         self,
         args: object = None,
         /,
         *,
         nullspace_policy: NullspacePolicy | None = None,
+        storage: Literal["action", "sparse"] = "action",
     ) -> tuple[LinearSystem, object]:
-        raw_operator = self.affine_operator(args)
+        """Return the affine system ``A z = b`` on the (reduced) state space.
+
+        ``storage="action"`` exposes ``A`` as a matrix-free action.
+        ``storage="sparse"`` hands exact sparse coordinates to the solver: the
+        structural sparse operator, with strong Dirichlet coordinates eliminated
+        (free-by-free block kept sparse, constrained columns moved into ``b``
+        through the lift). It suits sparse direct methods, the native sparse
+        factorization (`SparseFactorizationPreconditionerBuilder`) and
+        preconditioned Krylov methods; prepare it once and reuse the factor for
+        many right-hand sides from `right_hand_side`. It refuses forms without a
+        structural sparse lowering, matrix-free realization, non-Euclidean
+        state spaces, and constraints that are not coordinate selections.
+        """
+        if storage not in ("action", "sparse"):
+            raise ValueError("storage must be 'action' or 'sparse'.")
+        properties = self.form.declared_properties
         primal_operator: AbstractLinearOperator
-        structural = (
-            isinstance(raw_operator, SparseLinearMap)
-            and self.state_space.compatible(raw_operator.source)
-            and self.state_space.compatible(raw_operator.target)
-        )
-        if structural and not any(
-            isinstance(indices, jax_core.Tracer)
-            for indices in (
-                raw_operator.relation.source_indices,
-                raw_operator.relation.valid,
+        if storage == "sparse":
+            state_space = self.state_space
+            if not isinstance(state_space, ArraySpace) or not isinstance(
+                state_space.pairing, EuclideanPairing
+            ):
+                raise ValueError(
+                    "Sparse linear systems require one Euclidean array state space."
+                )
+            sparse = self._sparse_affine_operator(args)
+            if sparse is None:
+                raise ValueError(
+                    "Sparse linear systems require sparse realization of one field "
+                    "with structural sparse actions on the default runtime and, "
+                    "when constrained, a strong coordinate-selection constraint."
+                )
+            primal_operator = SparseCoordinateOperator(
+                sparse.relation,
+                sparse.coefficients,
+                source=state_space,
+                target=state_space,
+                properties=_merged_properties(properties, sparse.properties),
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "sparse-finite-element-affine-operator",
+                        "compilation": self.compilation_id,
+                        "operator": sparse.operator_id,
+                    }
+                ),
             )
-        ):
-            # Host-topology coordinate storage on the state space itself has the
-            # identity Riesz map; keep it so solves select sparse direct or
-            # certified Krylov routes. Traced topology has no storage plan.
-            primal_operator = raw_operator
         else:
+            raw_operator = self.affine_operator(args)
             primal_operator = FunctionLinearOperator(
                 lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
                 source=self.state_space,
                 target=self.state_space,
-                properties=(
-                    raw_operator.properties
-                    if structural
-                    else self.form.declared_properties
-                ),
+                properties=properties,
                 operator_id=canonical_fingerprint(
                     {
                         "kind": "riesz-finite-element-affine-operator",
@@ -3162,10 +3138,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     compatibility="error",
                     gauge="minimum-norm",
                 )
-        zero = self.state_space.zeros()
-        right_hand_side = self.state_space.inverse_riesz(
-            jax.tree.map(lambda value: -value, self.residual(zero, args))
-        )
+        right_hand_side = self.right_hand_side(args)
         return (
             LinearSystem(
                 primal_operator,

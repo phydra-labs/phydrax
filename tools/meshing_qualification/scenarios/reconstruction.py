@@ -180,18 +180,13 @@ def _affine_harmonic_solve(
         ),
         execution_policy=phx.equations.FiniteElementExecutionPolicy(realization="sparse"),
     )
-    operator, rhs = problem.linear_system()
-    # The oracle is roundoff reproduction of affine data, so the reduced stiffness
-    # is kept as coordinate storage and factorized by the native sparse LU. The
-    # matrix-free alternative applies the linearized residual program per Krylov
-    # step and holds its whole quadrature workset per step. The right-hand side
-    # is the residual program at the lift, so the affine reproduction below checks
-    # the assembled storage against it; the residual is read from the storage.
-    if not isinstance(operator.operator, phx.sparse.SparseLinearMap):
-        raise RuntimeError(
-            f"{form_id} FE system did not lower to sparse coordinate storage: "
-            f"{type(operator.operator).__name__}."
-        )
+    # The oracle is roundoff reproduction of affine data, so the Dirichlet-reduced
+    # stiffness is handed over as sparse coordinates and factorized by the native
+    # sparse LU. The matrix-free action applies the linearized residual program per
+    # Krylov step and holds its whole quadrature workset per step. The right-hand
+    # side is the residual program at the lift, so the affine reproduction below
+    # checks the stored coordinates against it; the residual is read from them.
+    operator, rhs = problem.linear_system(storage="sparse")
     prepared = phx.linalg.prepare(
         operator,
         phx.linalg.LinearSolvePolicy(phx.linalg.SparseLU(provider="jax-cpu")),
