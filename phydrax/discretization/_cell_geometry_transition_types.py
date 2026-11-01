@@ -9,7 +9,11 @@ import equinox as eqx
 import numpy as np
 from jax import Array
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    LazyCanonicalSequence,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
@@ -589,6 +593,83 @@ def _lattice_map_equality(
     )
 
 
+_ZERO = Fraction(0)
+
+
+def exact_linear_combinations(
+    basis: Sequence[Expression],
+    coefficients: Sequence[Sequence[ExactScalar]],
+    /,
+) -> tuple[Expression, ...]:
+    """``linear_combinations`` term for term.
+
+    Rational coefficients over rational-coefficient polynomial dictionaries are
+    combined inline in the same accumulation and cancellation order; any other
+    datum uses the general combination.
+    """
+    if any(type(function) is not dict for function in basis) or any(
+        type(value) is not Fraction for row in coefficients for value in row
+    ):
+        return linear_combinations(basis, coefficients)
+    if any(len(row) != len(basis) for row in coefficients):
+        raise ValueError("linear-combination rows must align with the basis width.")
+    result = []
+    for row in coefficients:
+        combined: dict[tuple[int, ...], ExactScalar] = {}
+        for function, scalar in zip(basis, row, strict=True):
+            if not scalar:
+                continue
+            for index, term in function.items():
+                product = scalar * term
+                if not product:
+                    continue
+                updated = combined.get(index, _ZERO) + product
+                if updated:
+                    combined[index] = updated
+                else:
+                    combined.pop(index, None)
+        result.append(combined)
+    return tuple(result)
+
+
+def _structurally_equal_maps(
+    input_parts: _CellMapParts,
+    mapped_parts: _CellMapParts,
+    arguments: Sequence[Expression],
+    equal_bases: dict[tuple[int, int], bool],
+    /,
+) -> bool:
+    """Whether ``input map`` and ``mapped map o arguments`` are one composition.
+
+    Both maps are ``sum_i c_i b_i(chart(x))``; equal coefficient rows, equal
+    bases and equal polynomial charts (the mapped chart being ``arguments``
+    itself) make them the same map. ``False`` decides nothing.
+    """
+    input_chart, input_basis, input_coefficients = input_parts
+    mapped_chart, mapped_basis, mapped_coefficients = mapped_parts
+    if mapped_chart is not None or input_coefficients != mapped_coefficients:
+        return False
+    if any(type(value) is not dict for value in arguments):
+        return False
+    if input_chart is None:
+        if tuple(arguments) != axes(len(arguments)):
+            return False
+    elif len(input_chart) != len(arguments) or any(
+        type(value) is not dict or value != argument
+        for value, argument in zip(input_chart, arguments, strict=True)
+    ):
+        return False
+    key = (id(input_basis), id(mapped_basis))
+    equal = equal_bases.get(key)
+    if equal is None:
+        equal = len(input_basis) == len(mapped_basis) and all(
+            type(first) is dict and type(second) is dict and first == second
+            for first, second in zip(input_basis, mapped_basis, strict=True)
+        )
+        equal_bases[key] = equal
+    return equal
+
+
 def _require_exact_reference_group(
     source_maps: _ExactCellMaps,
     target_maps: _ExactCellMaps,
@@ -600,7 +681,9 @@ def _require_exact_reference_group(
 ) -> None:
     """Prove each witnessed reference map composes one endpoint map into the other.
 
-    ``exact`` is the validated exact corner bank of ``witnesses``.
+    ``exact`` is the validated exact corner bank of ``witnesses``. A map that is
+    structurally the same composition is equal; the others are decided on a
+    unisolvent lattice or symbolically.
     """
     shapes = _reference_shape_polynomials(witnesses.target_cell_kind)
     target_ids = np.asarray(witnesses.target_cell_ids, dtype=np.int64).tolist()
@@ -611,26 +694,28 @@ def _require_exact_reference_group(
         input_maps, mapped_maps = target_maps, source_maps
     source_dimension = reference_cell_topology(witnesses.source_cell_kind).dimension
     argument_bank = witnesses.source_reference_chart_arguments
+    # Basis tuples are memoized per block by the endpoint maps, so their
+    # identities key the per-call basis comparison.
+    equal_bases: dict[tuple[int, int], bool] = {}
     for row, (input_id, mapped_id, reference_vertices) in enumerate(
         zip(target_ids, source_ids, exact, strict=True)
     ):
         if argument_bank is not None:
             arguments = tuple(argument_bank[row])
         else:
-            arguments = tuple(
-                linear_combinations(
-                    shapes,
-                    (
-                        tuple(
-                            reference_vertices[corner][axis]
-                            for corner in range(len(shapes))
-                        ),
-                    ),
-                )[0]
-                for axis in range(source_dimension)
+            arguments = exact_linear_combinations(
+                shapes,
+                tuple(
+                    tuple(
+                        reference_vertices[corner][axis] for corner in range(len(shapes))
+                    )
+                    for axis in range(source_dimension)
+                ),
             )
         mapped_parts = mapped_maps.parts(mapped_id)
         input_parts = input_maps.parts(input_id)
+        if _structurally_equal_maps(input_parts, mapped_parts, arguments, equal_bases):
+            continue
         equal = (
             _lattice_map_equality(
                 input_parts, mapped_parts, arguments, witnesses.target_cell_kind
@@ -712,10 +797,24 @@ def _nested_reference_groups(
 def _reference_map_identity(
     value: ReferenceCellMapWitnesses | tuple[ReferenceCellMapWitnesses, ...] | None,
     /,
+    *,
+    exact_banks: tuple[tuple[tuple[tuple[Fraction, ...], ...], ...], ...] | None = None,
 ) -> str | None:
+    """Identity of retained reference maps.
+
+    ``exact_banks`` are the groups' banks as just validated by the caller;
+    without them each group is validated here.
+    """
     if value is None:
         return None
     groups = _reference_map_groups(value)
+    banks = (
+        tuple(exact_reference_cell_vertices(group) for group in groups)
+        if exact_banks is None
+        else exact_banks
+    )
+    if len(banks) != len(groups):
+        raise ValueError("Validated exact banks must align with the reference maps.")
     return canonical_fingerprint(
         {
             "kind": "reference-cell-map-witness-groups",
@@ -725,18 +824,20 @@ def _reference_map_identity(
                     "source_cells": array_tree_fingerprint(group.source_cell_ids),
                     "target_kind": group.target_cell_kind,
                     "source_kind": group.source_cell_kind,
-                    "exact_vertices": tuple(
-                        tuple(
-                            tuple(str(coordinate) for coordinate in point)
-                            for point in cell
+                    "exact_vertices": LazyCanonicalSequence(
+                        lambda bank=bank: (
+                            tuple(
+                                tuple(str(coordinate) for coordinate in point)
+                                for point in cell
+                            )
+                            for cell in bank
                         )
-                        for cell in exact_reference_cell_vertices(group)
                     ),
                     "chart_arguments": reference_chart_arguments_identity(
                         group.source_reference_chart_arguments
                     ),
                 }
-                for group in groups
+                for group, bank in zip(groups, banks, strict=True)
             ),
         }
     )
@@ -1344,8 +1445,10 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
         )
         map_count = 0
         seen_target_ids: set[int] = set()
+        validated_banks = []
         for group in _reference_map_groups(reference_map):
             exact = exact_reference_cell_vertices(group)
+            validated_banks.append(exact)
             source_ids = np.asarray(group.source_cell_ids, dtype=np.int64)
             target_ids = np.asarray(group.target_cell_ids, dtype=np.int64)
             if any(
@@ -1453,7 +1556,9 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Bounded reconstruction evidence differs from its retained endpoint-map bounds."
                 )
-        reference_map_id = _reference_map_identity(reference_map)
+        reference_map_id = _reference_map_identity(
+            reference_map, exact_banks=tuple(validated_banks)
+        )
         refinement_id = _nested_map_identity(refinement)
         coarsening_id = _nested_map_identity(coarsening)
         if (

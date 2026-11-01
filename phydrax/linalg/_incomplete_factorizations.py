@@ -227,7 +227,7 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
                 )
             )
         itemsize = setup_operator.sparse_storage().values.dtype.itemsize
-        factor_entries = plan.factor_indices.size
+        factor_entries = plan.factor_size
         cost = PreconditionerCostEstimate(
             component=self.builder_id,
             storage_bytes=plan.factor_bytes,

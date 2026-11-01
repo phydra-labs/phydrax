@@ -558,6 +558,32 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     def all_certified(self) -> bool:
         return self.certified_valid_count == self.status.shape[0]
 
+    def stage_summary(self) -> dict[str, dict[int, int]]:
+        """Cells decided per proof stage, derived from the recorded depths.
+
+        Not identity-bearing: it is computed from fields the certificate id
+        already binds. For the execution and source proofs, ``{depth: count}``
+        counts decided (certified-valid or invalid) cells by depth: 0 is the
+        exact affine determinant or the first Bernstein control-net screen, and
+        ``k`` is ``k`` Bernstein subdivision levels. Unresolved cells are counted
+        under key ``-1``.
+        """
+        summary: dict[str, dict[int, int]] = {}
+        for name, status, depth in (
+            ("execution", self.execution_status, self.depth),
+            ("source", self.source_status, self.source_depth),
+        ):
+            status_ = np.asarray(status)
+            depth_ = np.where(
+                status_ == CellValidityStatus.UNRESOLVED, -1, np.asarray(depth)
+            )
+            levels, counts = np.unique(depth_, return_counts=True)
+            summary[name] = {
+                int(level): int(count)
+                for level, count in zip(levels.tolist(), counts.tolist(), strict=True)
+            }
+        return summary
+
     def require_bound(
         self,
         geometry: CellGeometrySpec,

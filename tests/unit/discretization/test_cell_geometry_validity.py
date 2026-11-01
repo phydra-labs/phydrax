@@ -176,6 +176,9 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
     certificate.require_current(geometry, mesh=mesh)
     certificate.revalidate(geometry, mesh=mesh)
+    summary = certificate.stage_summary()
+    for proof in ("execution", "source"):
+        assert sum(summary[proof].values()) == certificate.status.shape[0]
 
     lower = np.asarray(certificate.determinant_lower) * 0.5
     forged = validity_module.CellValidityCertificate(

@@ -345,7 +345,9 @@ class AdaptiveImplicitRootChartMap:
             results.append(None)
             lifts.append(query)
         for index, lifted in zip(
-            lift_rows, _lift_points(self.source, self._bounds, lifts), strict=True
+            lift_rows,
+            _lift_points(self._surface, self.frame_id, self._bounds, lifts),
+            strict=True,
         ):
             results[index] = lifted
         return tuple(result for result in results if result is not None)
@@ -589,10 +591,13 @@ def _exact_interval(value: ExactScalar) -> tuple[float, float]:
     represented = float(value)
     if not math.isfinite(represented):
         return (-math.inf, math.inf)
-    exact = Fraction.from_float(represented)
+    numerator, denominator = represented.as_integer_ratio()
+    left = numerator * value.denominator
+    right = value.numerator * denominator
+    sign = (left > right) - (left < right)
     return (
-        represented if exact <= value else math.nextafter(represented, -math.inf),
-        represented if exact >= value else math.nextafter(represented, math.inf),
+        represented if sign <= 0 else math.nextafter(represented, -math.inf),
+        represented if sign >= 0 else math.nextafter(represented, math.inf),
     )
 
 
@@ -3711,7 +3716,8 @@ def _doubling_steps(start: float, maximum_step: float, /) -> list[float]:
 
 
 def _lift_points(
-    source: AdaptiveImplicitSourceQuery,
+    surface: AdaptiveImplicitSurface,
+    frame_id: str,
     bounds: _FieldEnclosures,
     requests: Sequence[tuple[np.ndarray, _PreparedFace, float]],
     /,
@@ -3724,16 +3730,16 @@ def _lift_points(
     opposite one closes the bracket. Requests sharing a point are lifted once
     over the widest tube and each keeps exactly the single-request outcome; all
     interval queries are batched, which leaves every enclosure unchanged.
+    ``surface`` and ``frame_id`` are the source authority the caller's map
+    resolved once at preparation.
     """
     if not requests:
         return []
-    adaptive, frame_id = _source_authority(source)
     if not frame_id:
         raise ValueError(
             "Implicit root-chart point evaluation requires a bound source frame."
         )
-    geometry = adaptive.surface.geometry
-    surface = adaptive.surface
+    geometry = surface.geometry
     unique_rows: dict[bytes, int] = {}
     points: list[np.ndarray] = []
     widest: list[float] = []

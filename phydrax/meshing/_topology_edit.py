@@ -804,15 +804,26 @@ def reference_cell_maps_from_edit(
         tuple[str, str],
         list[tuple[int, int, tuple[tuple[Fraction, ...], ...]]],
     ] = {}
+    # A corner's exact source-reference point depends only on its target vertex
+    # stencil and the parent cell, so children of one parent share it.
+    corner_points: dict[tuple[int, int], tuple[Fraction, ...]] = {}
     for target_id, (target_kind, child_vertices) in target_records.items():
         source_id = parents[target_id]
         parent = source_records.get(source_id)
         if parent is None:
             raise ValueError("Nested target cell references an absent source parent.")
         source_kind, parent_vertices, parent_reference_vertices = parent
-        parent_slots = {identifier: row for row, identifier in enumerate(parent_vertices)}
+        parent_slots: dict[int, int] | None = None
         exact_vertices = []
         for target_vertex in child_vertices:
+            point = corner_points.get((source_id, target_vertex))
+            if point is not None:
+                exact_vertices.append(point)
+                continue
+            if parent_slots is None:
+                parent_slots = {
+                    identifier: row for row, identifier in enumerate(parent_vertices)
+                }
             stencil_row = vertex_rows[target_vertex]
             active = _stencil_row(stencils, stencil_row)
             if not active:
@@ -829,18 +840,18 @@ def reference_cell_maps_from_edit(
                 raise ValueError(
                     "Exact reference ancestry requires source rows whose exact weights sum to one."
                 )
-            exact_vertices.append(
-                tuple(
-                    sum(
-                        (
-                            accumulated[corner] * parent_reference_vertices[corner][axis]
-                            for corner in range(len(parent_vertices))
-                        ),
-                        Fraction(0),
-                    )
-                    for axis in range(dimension)
+            point = tuple(
+                sum(
+                    (
+                        accumulated[corner] * parent_reference_vertices[corner][axis]
+                        for corner in range(len(parent_vertices))
+                    ),
+                    Fraction(0),
                 )
+                for axis in range(dimension)
             )
+            corner_points[source_id, target_vertex] = point
+            exact_vertices.append(point)
         grouped.setdefault((target_kind, source_kind), []).append(
             (target_id, source_id, tuple(exact_vertices))
         )
