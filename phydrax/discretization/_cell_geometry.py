@@ -3586,6 +3586,10 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             dtype=np.float64,
         )
         point_values = np.asarray(coordinates, dtype=np.float64)
+        route_rows = [np.asarray(route, dtype=np.int64) for route in routes]
+        # A shared reference element tabulates each distinct reference point set
+        # once per block; cells requesting the same points reuse those values.
+        shared_tabulations: dict[tuple[int, bytes], np.ndarray] = {}
         for output_row, identifier in enumerate(identifiers.tolist()):
             owner = cell_rows.get(int(identifier))
             if owner is None:
@@ -3618,9 +3622,15 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         raise ValueError(
                             f"Coordinate element {type(element).__name__} has no reference evaluator."
                         )
-                    values, _ = tabulate(references[output_row])
+                    key = (block_index, references[output_row].tobytes())
+                    values = shared_tabulations.get(key)
+                    if values is None:
+                        values = np.asarray(
+                            tabulate(references[output_row])[0], dtype=np.float64
+                        )
+                        shared_tabulations[key] = values
             basis = np.asarray(values, dtype=np.float64)
-            dofs = np.asarray(routes[block_index], dtype=np.int64)[cell_row]
+            dofs = route_rows[block_index][cell_row]
             if basis.shape != (references.shape[1], dofs.size):
                 raise ValueError(
                     "Coordinate basis evaluation returned incompatible shape."
