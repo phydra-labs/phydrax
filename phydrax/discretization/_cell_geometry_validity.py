@@ -592,6 +592,36 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         *,
         mesh: CellMesh | None = None,
     ) -> None:
+        """Require this computed proof to answer ``geometry`` (and ``mesh``).
+
+        Nothing is recomputed: the operands must be the content this proof was
+        computed from (:meth:`require_bound`) and the stored counts must be the
+        ones its status array determines. :meth:`revalidate` recomputes both
+        proofs.
+        """
+        self.require_bound(geometry, mesh=mesh)
+        status = np.asarray(self.status)
+        if (
+            self.policy.policy_id != self.policy_id
+            or int(np.count_nonzero(status == CellValidityStatus.CERTIFIED_VALID))
+            != self.certified_valid_count
+            or int(np.count_nonzero(status == CellValidityStatus.INVALID))
+            != self.invalid_count
+            or int(np.count_nonzero(status == CellValidityStatus.UNRESOLVED))
+            != self.unresolved_count
+        ):
+            raise ValueError(
+                "Validity certificate claims differ from its stored statuses or policy."
+            )
+
+    def revalidate(
+        self,
+        geometry: CellGeometrySpec,
+        /,
+        *,
+        mesh: CellMesh | None = None,
+    ) -> None:
+        """Recompute both proofs; stored identities are not proof authority."""
         self.require_bound(geometry, mesh=mesh)
         fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
         if fresh.certificate_id != self.certificate_id:
