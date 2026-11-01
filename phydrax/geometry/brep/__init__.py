@@ -42,7 +42,9 @@ _DEFERRED_EXPORTS = {
     "BRepImportReport": "._model",
     "BRepModel": "._model",
     "BRepNormalRange": "._normal_range",
+    "BRepNormalSingularity": "._normal_range",
     "BRepNormalStatus": "._normal_range",
+    "BRepNormalUnresolvedReason": "._normal_range",
     "brep_normal_ranges": "._normal_range",
     "BRepMassMeasureStatus": "._measure",
     "BRepMassProperties": "._measure",
@@ -223,7 +225,9 @@ if TYPE_CHECKING:
     from ._normal_range import (
         brep_normal_ranges as brep_normal_ranges,
         BRepNormalRange as BRepNormalRange,
+        BRepNormalSingularity as BRepNormalSingularity,
         BRepNormalStatus as BRepNormalStatus,
+        BRepNormalUnresolvedReason as BRepNormalUnresolvedReason,
     )
     from ._offset_result import BRepOffsetResult as BRepOffsetResult
     from ._partition import (

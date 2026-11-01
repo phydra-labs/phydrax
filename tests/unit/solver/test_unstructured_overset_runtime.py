@@ -542,6 +542,31 @@ def test_unstructured_overset_runtime_scenario_1() -> None:
     assert prepared.overset_epoch_id == "stale-epoch"
 
 
+def test_repeated_overset_advances_reuse_one_compiled_step() -> None:
+    """The stationary overset step compiles once per runtime and is reused."""
+
+    system, discretization, _, _, runtime = _compiled()
+    state = runtime.initialize_state(_nonuniform_state(system, discretization), 0.0, 1e-3)
+    state = runtime.advance(state).runtime_state
+    compiles: list[str] = []
+
+    def listener(event: str, duration_secs: float, **kwargs: str | int) -> None:
+        del duration_secs, kwargs
+        if event == "/jax/core/compile/backend_compile_duration":
+            compiles.append(event)
+
+    jax.monitoring.register_event_duration_secs_listener(listener)
+    try:
+        for _ in range(3):
+            result = runtime.advance(state)
+            assert bool(np.asarray(result.accepted))
+            state = result.runtime_state
+    finally:
+        jax.monitoring.unregister_event_duration_listener(listener)
+    assert compiles == []
+    assert int(np.asarray(state.accepted_step)) == 4
+
+
 def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl() -> None:
     route_rates = []
     route_speeds = []

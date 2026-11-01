@@ -237,37 +237,49 @@ def _implicit_root_edge_row(
     )
 
 
-def _implicit_root_witness_row(
+def _implicit_root_witness_rows(
     root_witness: SourceBoundaryChartWitness,
     target_witness: SourceBoundaryChartWitness,
-    target_row: int,
+    source_wall_cell_ids: Sequence[int],
     /,
-) -> int:
-    cell_key = tuple(
-        int(value) for value in target_witness.implicit_cell_keys[target_row]
-    )
-    root_edges = tuple(
-        tuple(tuple(int(value) for value in endpoint) for endpoint in edge)
-        for edge in target_witness.implicit_root_edge_keys[target_row]
-    )
-    matches = tuple(
-        row
-        for row in range(len(root_witness.source_chart_ids))
-        if root_witness.source_chart_ids[row]
-        == target_witness.source_chart_ids[target_row]
-        and tuple(int(value) for value in root_witness.implicit_cell_keys[row])
-        == cell_key
-        and tuple(
-            tuple(tuple(int(value) for value in endpoint) for endpoint in edge)
-            for edge in root_witness.implicit_root_edge_keys[row]
-        )
-        == root_edges
-    )
-    if len(matches) != 1:
+) -> tuple[int, ...]:
+    """Bind each target chart to the root-witness row of its own source-wall cell.
+
+    A remeshed wall seeds several cells with one discovery triangle, so the
+    chart, cell key, and root edges alone do not name a root row. The layer
+    column of every target chart retains its exact source-wall cell; that cell's
+    row is the target's root piece, and it must carry the target's root chart.
+    """
+    if len(source_wall_cell_ids) != len(target_witness.source_chart_ids):
         raise ValueError(
-            "Adaptive target chart has no unique retained source-wall root witness."
+            "Adaptive target charts and their source-wall cells are not aligned."
         )
-    return matches[0]
+    root_rows = {
+        int(cell_id): row for row, cell_id in enumerate(root_witness.cell_global_ids)
+    }
+    if len(root_rows) != len(root_witness.source_chart_ids):
+        raise ValueError("Implicit source-wall root-cell IDs are not unique.")
+    result: list[int] = []
+    for target_row, cell_id in enumerate(source_wall_cell_ids):
+        row = root_rows.get(int(cell_id))
+        if (
+            row is None
+            or root_witness.source_chart_ids[row]
+            != target_witness.source_chart_ids[target_row]
+            or not np.array_equal(
+                root_witness.implicit_cell_keys[row],
+                target_witness.implicit_cell_keys[target_row],
+            )
+            or not np.array_equal(
+                root_witness.implicit_root_edge_keys[row],
+                target_witness.implicit_root_edge_keys[target_row],
+            )
+        ):
+            raise ValueError(
+                "Adaptive target chart differs from its source-wall cell's retained root witness."
+            )
+        result.append(row)
+    return tuple(result)
 
 
 def _mapped_reference_chart_rows(
@@ -1901,21 +1913,19 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Adaptive implicit evidence requires its current source-wall root chart authority."
                 )
-            root_chart_rows = tuple(
-                _implicit_root_witness_row(root_witness, chart_witness, row)
-                for row in range(len(chart_witness.source_chart_ids))
+            _implicit_root_witness_rows(
+                root_witness,
+                chart_witness,
+                tuple(int(value) for value in chart_column_identity.source_wall_cell_ids),
             )
             root_vertex_ids = set(int(value) for value in root_cell_vertices.reshape(-1))
-            for row, root_row in enumerate(root_chart_rows):
-                if (
-                    int(chart_column_identity.source_wall_cell_ids[row])
-                    != int(root_witness.cell_global_ids[root_row])
-                    or not set(chart_column_identity.source_column_root_vertex_ids[row])
-                    <= root_vertex_ids
-                ):
-                    raise ValueError(
-                        "Implicit chart column ancestry changed its source-wall root cell."
-                    )
+            if any(
+                not set(column_roots) <= root_vertex_ids
+                for column_roots in chart_column_identity.source_column_root_vertex_ids
+            ):
+                raise ValueError(
+                    "Implicit chart column ancestry changed its source-wall root cell."
+                )
             standard_chart = (
                 (Fraction(0), Fraction(0)),
                 (Fraction(1), Fraction(0)),
@@ -2419,16 +2429,14 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Implicit layer evidence changed its source-wall root-chart authority."
                 )
-            root_chart_rows = tuple(
-                _implicit_root_witness_row(root_witness, self.chart_witness, row)
-                for row in range(len(self.chart_witness.source_chart_ids))
+            root_chart_rows = _implicit_root_witness_rows(
+                root_witness,
+                self.chart_witness,
+                tuple(
+                    int(value)
+                    for value in self.chart_column_identity.source_wall_cell_ids
+                ),
             )
-            root_cell_rows = {
-                int(cell_id): row
-                for row, cell_id in enumerate(root_witness.cell_global_ids)
-            }
-            if len(root_cell_rows) != len(root_witness.source_chart_ids):
-                raise ValueError("Implicit source-wall root-cell IDs are not unique.")
             root_vertex_ids = set(int(value) for value in root_vertices.reshape(-1))
             for row, chart_row in enumerate(trace.chart_rows):
                 chart_index = int(chart_row)
@@ -2442,8 +2450,6 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     != int(trace.target_cell_global_ids[row])
                     or _column_identity_row(trace.column_identity, row)
                     != _column_identity_row(self.chart_column_identity, chart_index)
-                    or int(self.chart_column_identity.source_wall_cell_ids[chart_index])
-                    != int(root_witness.cell_global_ids[root_index])
                     or trace.source_cell_keys[row]
                     != tuple(
                         int(value)

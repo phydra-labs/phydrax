@@ -1335,6 +1335,7 @@ def _cad_chart_partition(
     /,
 ) -> tuple[int, tuple[str, ...]]:
     from ._domain_boundary import exact_plane_chart, MeshingDomainBoundarySource
+    from ._meshing_domain import SourcePreparation
 
     if not isinstance(source, MeshingDomainBoundarySource) or not _same_domain(
         source.domain, domain
@@ -1411,12 +1412,13 @@ def _cad_chart_partition(
             "CAD boundary chart witness omits or adds an authored source patch.",
             status="violated",
         )
+    preparation = SourcePreparation(source.domain)
     for patch, plane in plane_by_patch.items():
         if plane:
             # A curved plane-chart trim is referenced by the target's boundary
             # chords, each separated from its source arc by a certified lens.
             declared_by_patch[patch] = source._trim_partition_reference_unchecked(
-                patch, tuple(targets_by_patch[patch]), plane=True
+                patch, tuple(targets_by_patch[patch]), preparation, plane=True
             )[0]
     plane_patches = frozenset(patch for patch, plane in plane_by_patch.items() if plane)
     for patch in source.patches:

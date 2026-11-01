@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from math import hypot
 from numbers import Integral, Real
-from typing import Any, TYPE_CHECKING
+from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -3406,30 +3406,18 @@ def _validate_model_source_bindings(
         )
 
 
-_BOUND_SOURCE_REVISION_CAPACITY = 256
-_BOUND_SOURCE_REVISIONS: dict[str, None] = {}
+@final
+@dataclass(frozen=True, slots=True)
+class BRepSourceBindingProof:
+    """Evidence that the source bindings of one source revision were proved.
 
-
-def _require_source_bindings(
-    source_revision: str,
-    geometry: BRepGeometry,
-    patches: tuple[AbstractSurfacePatch, ...],
-    parameter_bounds: np.ndarray,
-    trim_domains: tuple[TrimDomain | None, ...],
-    /,
-) -> None:
-    """Replay the source binding proof once per source revision.
-
-    The revision fingerprints every binding input (geometry with its declared
-    face gaps, patch definitions, parameter bounds and trims), so equal content
-    rebuilt as new model values, and later currency checks, reuse one proof.
+    `BRepModel.binding_proof` issues it for a constructed model, whose
+    construction replayed the binding proof of exactly that revision. A model
+    rebuilt from the same source content passes it back instead of replaying
+    the proof; the constructor checks it against the revision it computes.
     """
-    if source_revision in _BOUND_SOURCE_REVISIONS:
-        return
-    _validate_model_source_bindings(geometry, patches, parameter_bounds, trim_domains)
-    if len(_BOUND_SOURCE_REVISIONS) >= _BOUND_SOURCE_REVISION_CAPACITY:
-        del _BOUND_SOURCE_REVISIONS[next(iter(_BOUND_SOURCE_REVISIONS))]
-    _BOUND_SOURCE_REVISIONS[source_revision] = None
+
+    source_revision: str
 
 
 def _brep_model_id(source_revision: str, tessellation: BRepTessellation | None, /) -> str:
@@ -3505,6 +3493,7 @@ class BRepModel(StrictModule):
         trim_domains: tuple[TrimDomain | None, ...] | None = None,
         tessellation: BRepTessellation | None = None,
         tessellation_certificate: SourceFidelityCertificate | None = None,
+        binding_proof: BRepSourceBindingProof | None = None,
     ) -> None:
         """Validate the source model and, when given, its derived tessellation.
 
@@ -3512,7 +3501,10 @@ class BRepModel(StrictModule):
         ``tessellate_brep_model`` returned with ``tessellation``. It must bind
         exactly the tessellation's mesh, coordinate map, source domain, witness
         and deflection policy; the model then reuses it instead of recomputing
-        the proof. Without it the proof is recomputed.
+        the proof. Without it the proof is recomputed. ``binding_proof`` is the
+        `binding_proof` of a model of the same source revision; it must name
+        exactly the revision computed here, and the source binding proof is
+        then not replayed.
         """
         if coordinate_contract.spatial_id != report.coordinate_contract.spatial_id:
             raise ValueError("The model and report coordinate contracts must match.")
@@ -3584,7 +3576,15 @@ class BRepModel(StrictModule):
             coordinate_contract,
             report,
         )
-        _require_source_bindings(source_revision, geometry, patches_, bounds_host, trims)
+        if binding_proof is None:
+            _validate_model_source_bindings(geometry, patches_, bounds_host, trims)
+        elif (
+            not isinstance(binding_proof, BRepSourceBindingProof)
+            or binding_proof.source_revision != source_revision
+        ):
+            raise ValueError(
+                "binding_proof must prove the source bindings of exactly this source revision."
+            )
         if tessellation is not None and not isinstance(tessellation, BRepTessellation):
             raise TypeError("tessellation must be a BRepTessellation or None.")
         self.geometry = geometry
@@ -3608,7 +3608,17 @@ class BRepModel(StrictModule):
         elif tessellation_certificate is not None:
             raise ValueError("A tessellation certificate requires its tessellation.")
 
+    @property
+    def binding_proof(self, /) -> BRepSourceBindingProof:
+        """Proof that this model's source revision has validated source bindings."""
+        return BRepSourceBindingProof(self.source_revision)
+
     def require_current(self, /) -> None:
+        """Refuse a model whose source content changed after construction.
+
+        Construction proved the source bindings of the recorded revision, so an
+        unchanged revision keeps that proof.
+        """
         self.geometry.require_current()
         from ._patches import _validate_surface_source_shadows
 
@@ -3631,9 +3641,6 @@ class BRepModel(StrictModule):
             raise ValueError(
                 "BRepModel content has changed since its source revision was recorded."
             )
-        _require_source_bindings(
-            current_revision, self.geometry, self.patches, bounds, self.trim_domains
-        )
 
     @staticmethod
     def _validate_tessellation(
@@ -4283,5 +4290,6 @@ __all__ = [
     "BRepQualifiedIncidence",
     "BRepImportReport",
     "BRepModel",
+    "BRepSourceBindingProof",
     "BRepTopology",
 ]

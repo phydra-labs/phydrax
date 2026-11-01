@@ -88,7 +88,13 @@ by fixed-count bisection and lowered to one shared factor per face. The accepted
 time-averaged SSPRK face flux is exposed to diagnostics and AMR flux registers.
 
 `PreparedFiniteVolumeRuntime` applies positivity at every SSPRK3 stage and retries a
-rejected step with a reduced timestep according to `FiniteVolumeStepPolicy`.
+rejected step with a reduced timestep according to `FiniteVolumeStepPolicy`. An untraced
+`advance` of a static (without a stage-flux provider), fixed-topology ALE, stationary
+overset or embedded runtime runs each
+step as one compiled program owned by the runtime: it is traced on the first step, reused
+by later steps and released with the runtime. Host-side stage setup (static overset stage
+routes, embedded stage templates) is prepared once with the runtime. Inside an enclosing
+trace the step runs inline; multi-device owner-local groups step their collectives eagerly.
 
 Statuses are bounded and machine-readable:
 

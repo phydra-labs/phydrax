@@ -172,6 +172,39 @@ A compiled affine form provides `linear_system()` and explicit nullspace policy.
 General residuals expose `as_nonlinear_problem()`, matrix-free linearization,
 lagged/Picard operator factories, and a scalable adjoint solve.
 
+`linear_system(storage="sparse")` hands exact sparse coordinates to
+`phydrax.linalg` instead of a matrix-free action. Strong Dirichlet constraints
+are eliminated exactly: `ConstraintMap.reduce_sparse_operator` keeps the
+free-by-free block `P^T A P` sparse, and the constrained columns enter the
+right-hand side through the lift. Solve it with a sparse direct method, the
+native complete factor (`SparseFactorizationPreconditionerBuilder` under `PCG`
+for declared SPD forms, `GMRES` with an LU factor otherwise), or preconditioned
+Krylov such as `IncompleteCholeskyPreconditionerBuilder`. `linalg.prepare`
+factors once; `right_hand_side(context)` assembles the right-hand side for
+another lift (`FiniteElementExecutionContext(runtime, lift=...)`) and
+`solve_many` reuses the factor for all of them. Solve status, residuals, and
+iterations are in the result diagnostics; factor status and minimum pivot are
+on the prepared preconditioner; `estimate_condition_number(system.operator)`
+gives conditioning bounds. Forms without structural sparse actions,
+matrix-free realization, and constraints that are not coordinate selections
+refuse this route.
+
+```python
+system, rhs = problem.linear_system(storage="sparse")
+policy = phx.linalg.LinearSolvePolicy(
+    phx.linalg.PCG(),
+    preconditioning=phx.linalg.PreconditioningPolicy(
+        phx.linalg.SparseFactorizationPreconditionerBuilder(
+            phx.linalg.SparseFactorizationPolicy(
+                "cholesky", ordering="nested-dissection"
+            )
+        )
+    ),
+)
+prepared = phx.linalg.prepare(system, policy)
+u = problem.expand(phx.linalg.solve(prepared, rhs).value)
+```
+
 `as_dae_system()` includes dynamic geometry, time, lift, and lift-rate terms.
 `as_second_order_system()` adds configuration, velocity, acceleration, and
 lift-acceleration semantics. `as_generalized_eigenproblem()` returns native

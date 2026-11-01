@@ -9,6 +9,12 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._archive_columns import (
+    ExactTensorArchiveRecipe,
+    IntegerRowsArchiveRecipe,
+    StaticColumnArchiveRecipe,
+    TextColumnArchiveRecipe,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -496,6 +502,107 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
         ):
             raise IndexError("surface chart row is out of range.")
         return _exact_chart_from_tokens(self.chart_rational_tokens, row)
+
+
+class SurfaceChartWitnessArchiveRecipe(NamedTuple):
+    """Archive form of a surface chart witness with its per-row banks as columns.
+
+    Source pieces, geometry entities, occurrence paths, exact chart tokens and
+    root-mesh bindings are one static value per chart row; the archive stores
+    them as array columns instead of one manifest node per row. Root bindings
+    split into a ``(root_geometry_id, root_topology_id)`` value table (``None``
+    for unbound rows) and int64 root cell IDs (``-1`` where unbound).
+    :meth:`restore` rebuilds through the witness constructor and requires the
+    recomputed witness identity to equal the stored one.
+    """
+
+    geometry_id: str
+    topology_id: str
+    domain_id: str
+    cell_global_ids: Array
+    patches: Array
+    charts: Array
+    source_root_cell_ids: Array
+    source_piece_ids: IntegerRowsArchiveRecipe
+    geometry_entity_ids: TextColumnArchiveRecipe
+    occurrence_paths: StaticColumnArchiveRecipe
+    chart_rational_tokens: ExactTensorArchiveRecipe
+    root_mesh_owners: StaticColumnArchiveRecipe
+    root_mesh_cell_ids: np.ndarray
+    witness_id: str
+
+    @classmethod
+    def from_witness(
+        cls, value: SurfaceChartWitness, /
+    ) -> SurfaceChartWitnessArchiveRecipe:
+        if type(value) is not SurfaceChartWitness:
+            raise TypeError("value must be SurfaceChartWitness.")
+        bindings = value.root_mesh_cell_bindings
+        return cls(
+            value.geometry_id,
+            value.topology_id,
+            value.domain_id,
+            value.cell_global_ids,
+            value.patches,
+            value.charts,
+            value.source_root_cell_ids,
+            IntegerRowsArchiveRecipe.encode(value.source_piece_ids),
+            TextColumnArchiveRecipe.encode(value.geometry_entity_ids),
+            StaticColumnArchiveRecipe.encode(value.occurrence_paths),
+            ExactTensorArchiveRecipe.encode(value.chart_rational_tokens, rational=False),
+            StaticColumnArchiveRecipe.encode(
+                tuple(
+                    None
+                    if binding is None
+                    else (binding.root_geometry_id, binding.root_topology_id)
+                    for binding in bindings
+                )
+            ),
+            np.asarray(
+                [
+                    -1 if binding is None else binding.root_cell_global_id
+                    for binding in bindings
+                ],
+                dtype=np.int64,
+            ).reshape((len(bindings),)),
+            value.witness_id,
+        )
+
+    def restore(self) -> SurfaceChartWitness:
+        owners = self.root_mesh_owners.decode()
+        cells = np.asarray(self.root_mesh_cell_ids)
+        if cells.dtype != np.int64 or cells.shape != (len(owners),):
+            raise TypeError("Stored root-mesh cell IDs must be one int64 row per owner.")
+        bindings: list[SurfaceRootMeshCellBinding | None] = []
+        for owner, cell in zip(owners, cells.tolist(), strict=True):
+            if owner is None:
+                if cell != -1:
+                    raise ValueError("An unbound chart row cannot name a root cell.")
+                bindings.append(None)
+                continue
+            if not isinstance(owner, tuple) or len(owner) != 2:
+                raise TypeError("Stored root-mesh owners must be identity pairs.")
+            bindings.append(SurfaceRootMeshCellBinding(owner[0], owner[1], cell))
+        tokens = self.chart_rational_tokens.decode()
+        restored = SurfaceChartWitness(
+            geometry_id=self.geometry_id,
+            topology_id=self.topology_id,
+            domain_id=self.domain_id,
+            cell_global_ids=self.cell_global_ids,
+            patches=self.patches,
+            charts=self.charts,
+            source_root_cell_ids=self.source_root_cell_ids,
+            source_piece_ids=self.source_piece_ids.decode(),
+            geometry_entity_ids=self.geometry_entity_ids.decode(),
+            occurrence_paths=self.occurrence_paths.decode(),
+            chart_rational_tokens=tokens,
+            root_mesh_cell_bindings=bindings,
+        )
+        if restored.witness_id != self.witness_id:
+            raise ValueError(
+                "Stored surface chart witness differs from its recomputed identity."
+            )
+        return restored
 
 
 class PreparedSurfaceChartPiece(NamedTuple):
@@ -1100,6 +1207,7 @@ __all__ = [
     "PreparedSurfaceChartOccurrence",
     "PreparedSurfaceChartPiece",
     "SurfaceChartWitness",
+    "SurfaceChartWitnessArchiveRecipe",
     "SurfaceRootMeshCellBinding",
     "exact_chart_bank",
     "rational_chart_tokens",

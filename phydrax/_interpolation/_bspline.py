@@ -21,6 +21,7 @@ from ..typing import parse
 from ._bspline_extraction import (
     bezier_refinement,
     exact_bezier_refinement,
+    PreparedSourceSpans,
     rational_bspline_curve_continuity,
     rational_bspline_curve_spans,
     rational_bspline_surface_spans,
@@ -603,6 +604,7 @@ __all__ = [
     "RationalBSplineCurveContinuity",
     "RationalBSplineCurveContinuityReport",
     "RationalBSplineCurveFloatEnclosure",
+    "PreparedSourceSpans",
     "RationalBSplineCurveSpan",
     "RationalBSplineCurveSpanEnclosure",
     "tensor_bspline_span_extraction",

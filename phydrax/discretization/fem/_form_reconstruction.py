@@ -65,7 +65,7 @@ class FormAmbientDim(Dim):
 # Query rows (point x candidate) whose basis is evaluated at once: the vmapped
 # cell-map evaluation materializes per-row geometry, so rows are processed in
 # chunks and the working set stays bounded whatever the number of points.
-_BASIS_ROW_BUDGET = 1 << 15
+_BASIS_ROW_BUDGET = 1 << 12
 
 
 def _row_chunked(
@@ -246,12 +246,25 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
         location = self.locator.locate(
             points, cell_mask=None if side is None else side.cell_mask
         )
-        candidates = location.candidate_cells
-        accepted = candidates >= 0
-        safe = jnp.where(accepted, candidates, 0)
+        accepted = location.candidate_cells >= 0
         count = jnp.sum(accepted, axis=1, dtype=jnp.int32)
+        if side is not None and side.side == "average":
+            candidates = location.candidate_cells
+            candidate_reference = location.candidate_reference
+            share = accepted / jnp.maximum(count, 1)[:, None]
+        else:
+            # Without averaging only the first containing candidate carries
+            # weight, so the route keeps that one candidate and the basis is
+            # evaluated for it alone (the others would be multiplied by zero).
+            chosen = jnp.argmax(accepted, axis=1)[:, None]
+            candidates = jnp.take_along_axis(location.candidate_cells, chosen, axis=1)
+            candidate_reference = jnp.take_along_axis(
+                location.candidate_reference, chosen[:, :, None], axis=1
+            )
+            share = jnp.take_along_axis(accepted, chosen, axis=1)
+        safe = jnp.where(candidates >= 0, candidates, 0)
         cells = safe.reshape((-1,))
-        reference = location.candidate_reference.reshape(
+        reference = candidate_reference.reshape(
             (-1, self.locator.cell_map.reference_dimension)
         )
         if isinstance(self.locator, PreparedMappedCellLocator) and isinstance(
@@ -305,13 +318,6 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
             inverse = _row_chunked(inverse_jacobian, cells, reference)
             weights = contract("plvr,pr->plv", reference_gradient, inverse[:, :, axis])
         weights = weights.reshape((*candidates.shape, self.element.local_dof_count, -1))
-        if side is not None and side.side == "average":
-            share = accepted / jnp.maximum(count, 1)[:, None]
-        else:
-            share = (
-                jnp.arange(candidates.shape[1])[None]
-                == jnp.argmax(accepted, axis=1)[:, None]
-            ) & accepted
         route = _FormRoute(self.cell_dofs[safe], weights * share[:, :, None, None])
         status = cell_location_status(location.status)
         continuity = (

@@ -372,9 +372,35 @@ def form_to_vector(form: ArrayLike, value_spec: FormValueSpec, /) -> Array:
             )
 
 
+# Elements of one mapping-solve product temporary (rows x n x n x right-hand
+# sides): mapping solves of many cells and points with many right-hand sides are
+# split into row chunks of at most this size, so their working set is bounded
+# whatever the batch. Each row is solved independently, so chunking does not
+# change any value.
+_MAPPING_SOLVE_ELEMENT_BUDGET = 1 << 21
+
+
 def _solve_mapping(matrix: Array, rhs: Array, /) -> Array:
     """Apply the owning native solve without numeric-derived static identities."""
     matrix, rhs = _promote_factors(matrix, rhs)
+    n = matrix.shape[-1]
+    batch = rhs.shape[:-2]
+    columns = rhs.shape[-1]
+    rows = prod(batch)
+    flat_matrix = jnp.broadcast_to(matrix, (*batch, n, n)).reshape((rows, n, n))
+    flat_rhs = rhs.reshape((rows, n, columns))
+    chunk = max(1, _MAPPING_SOLVE_ELEMENT_BUDGET // (n * n * max(columns, 1)))
+    parts = [
+        _solve_mapping_rows(
+            flat_matrix[start : start + chunk], flat_rhs[start : start + chunk]
+        )
+        for start in range(0, rows, chunk)
+    ]
+    value = parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
+    return value.reshape(rhs.shape)
+
+
+def _solve_mapping_rows(matrix: Array, rhs: Array, /) -> Array:
     dtype = matrix.dtype
     n = matrix.shape[-1]
     if n <= 4:

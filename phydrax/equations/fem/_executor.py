@@ -22,6 +22,7 @@ from ...discretization._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
+from ...discretization._cell_geometry import PerCellRestrictedCellGeometryElement
 from ...discretization._cell_mesh import SimplicialConnectivity
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._local_variational import (
@@ -233,10 +234,14 @@ def _cell_metric(
     /,
 ) -> FiniteElementMetricData:
     coordinate_element = discretization.coordinate_elements[block_index]
-    # ty: ignore[unresolved-attribute]
-    coordinate_basis, coordinate_gradients = coordinate_element.tabulate(
-        reference.volume_rule.points
-    )
+    points = reference.volume_rule.points
+    if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
+        coordinate_basis, coordinate_gradients = coordinate_element.tabulate_cells(
+            np.asarray(local_cells), points
+        )
+    else:
+        # ty: ignore[unresolved-attribute]
+        coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
     coordinate_routes = discretization.coordinate_dofs[block_index][local_cells]
     cell_coordinates = coordinates[coordinate_routes]
     metric = FiniteElementMetricData(
