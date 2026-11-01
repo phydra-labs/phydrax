@@ -1058,7 +1058,15 @@ class _RealizedSpherePatch(AbstractSurfacePatch):
 def _realized_bspline_basis(
     knots: Array, degree: int, count: int, parameter: Array, /
 ) -> Array:
-    basis = ((parameter >= knots[:-1]) & (parameter < knots[1:])).astype(knots.dtype)
+    # The last span is closed on the right, so the domain end evaluates the
+    # end polynomial piece: its value is the end control point and its
+    # parameter derivatives are the one-sided ones (a constant end basis would
+    # report a zero chart Jacobian on the boundary rows).
+    closed = jnp.arange(knots.shape[0] - 1) == count - 1
+    basis = (
+        (parameter >= knots[:-1])
+        & ((parameter < knots[1:]) | (closed & (parameter == knots[count])))
+    ).astype(knots.dtype)
     for order in range(1, degree + 1):
         width = basis.shape[0] - 1
         left_denominator = knots[order : order + width] - knots[:width]
@@ -1070,9 +1078,7 @@ def _realized_bspline_basis(
             right_denominator != 0.0, right_denominator, 1.0
         )
         basis = left * basis[:-1] + right * basis[1:]
-    endpoint = parameter == knots[count]
-    endpoint_basis = jax.nn.one_hot(count - 1, count, dtype=knots.dtype)
-    return jnp.where(endpoint, endpoint_basis, basis)
+    return basis
 
 
 class _RealizedBSplineSurfacePatch(AbstractSurfacePatch):

@@ -63,11 +63,11 @@ def _exact_rational_surface_point_bounds(
 ) -> tuple[tuple[Fraction, Fraction], ...] | None:
     u, v = chart
     enclosures = []
-    for span, restrictions in zip(spans.spans, spans.restrictions, strict=True):
+    for span in spans.spans:
         (u_lower, u_upper), (v_lower, v_upper) = span.parameter_bounds
         if not (u_lower <= u <= u_upper and v_lower <= v <= v_upper):
             continue
-        enclosure = span.enclose(((u, u), (v, v)), restrictions=restrictions)
+        enclosure = span.enclose(((u, u), (v, v)))
         if not enclosure.positive_denominator:
             return None
         enclosures.append(enclosure.value_bounds)

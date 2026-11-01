@@ -1112,18 +1112,22 @@ def native_face_gap_squared(
     from ._tspline import TSplineSurfacePatch
 
     if isinstance(patch, (BSplineSurfacePatch, TSplineSurfacePatch)):
-        spline_gap = _rational_spline_line_gap_squared(
-            curve, pcurve, source_region, first, last
-        )
-        if spline_gap is not None:
-            return spline_gap
         from ._spline_face_gap import rational_spline_face_gap_squared
 
+        # The exact Bernstein enclosure of the composed difference refines to
+        # within a factor of an attained gap (exactly zero for exact identities);
+        # the endpoint-plus-interpolation line bound carries binary64 rounding
+        # and only serves correspondences the exact enclosure does not support.
         composed_gap = rational_spline_face_gap_squared(
             curve, pcurve, source_region, first, last
         )
         if composed_gap is not None:
             return composed_gap
+        spline_gap = _rational_spline_line_gap_squared(
+            curve, pcurve, source_region, first, last
+        )
+        if spline_gap is not None:
+            return spline_gap
     revolution_gap = (
         _revolution_circle_gap_squared(curve, pcurve, source_region, first, last)
         if isinstance(curve, CircleCurve)
