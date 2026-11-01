@@ -234,6 +234,14 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     )
     with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
         D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=transformed)
+    stale_identity = eqx.tree_at(
+        lambda value: value.determinant_lower,
+        certificate,
+        certificate.determinant_lower * 0.5,
+    )
+    assert stale_identity.certificate_id == certificate.certificate_id
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=stale_identity)
 
     _, other_geometry = _p3_triangle(0.25)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):

@@ -710,6 +710,25 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         if (
             fresh.certificate_id != self.certificate_id
             or fresh.cell_map_digests != self.cell_map_digests
+            or any(
+                not np.array_equal(
+                    np.asarray(getattr(fresh, name)), np.asarray(getattr(self, name))
+                )
+                for name in (
+                    "status",
+                    "execution_status",
+                    "determinant_lower",
+                    "determinant_upper",
+                    "depth",
+                    "source_status",
+                    "source_determinant_lower",
+                    "source_determinant_upper",
+                    "source_depth",
+                    "maximum_coefficient_rounding_error",
+                    "maximum_element_coefficient_rounding_error",
+                    "apex_derivative_unique",
+                )
+            )
         ):
             raise ValueError(
                 "Validity certificate does not reproduce the current mathematical proof."
