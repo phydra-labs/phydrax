@@ -2198,7 +2198,18 @@ These native source routes do not import PyVista, Open3D, or Qhull.
 The surface source of a reconstructed triangle complex is an exact
 `MeshingDomain`: each triangle chart evaluates in barycentric form, so every chart
 corner reproduces its authored vertex bit for bit, and shared corners are compared
-with zero tolerance.
+with zero tolerance. `MeshingDomain.evaluate` evaluates all reconstructed
+triangle charts of a query in one stacked call with the same arithmetic, so the
+coordinates are unchanged.
+
+A `ReconstructedTriangleBoundarySource` prepares the whole-domain boundary query
+of its source's `MeshingDomain` once, at construction (`domain_query`), with the
+domain's exact chart cover (`domain_cover`) and the proof that this cover is the
+query's own physical triangles, or records why it cannot (`domain_refusal`).
+Source-fidelity validation and certification reuse them after checking that the
+source still reproduces the query's triangles and still retains a domain of the
+same content (the domain is checked current), instead of recomputing the chart
+cover of every source triangle on each validation. Certificates are unchanged.
 
 ## Native unsigned-distance surface envelopes
 
