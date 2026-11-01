@@ -83,6 +83,7 @@ def _register_model_archive_types() -> None:
         IntegerRowsArchiveRecipe,
         StaticColumnArchiveRecipe,
         TextColumnArchiveRecipe,
+        TextRowsArchiveRecipe,
     )
     from .._geometry_predicates import PredicateMode
     from .._identity import SemanticProvenance
@@ -412,6 +413,11 @@ def _register_model_archive_types() -> None:
     from ..units._dimension import DimensionSignature
     from ..units._unit import UnitDefinition
     from ._adaptation import MeshAdaptationStatus
+    from ._archive_layer_columns import (
+        ExactExpressionRowsArchiveRecipe,
+        ImplicitChartRowsArchiveRecipe,
+        LayerRecordArchiveRecipe,
+    )
     from ._assembly import MeshCarrierKind, MeshPart
     from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy, CellMeshAuditReport
     from ._boundary_layer import BoundaryLayerEvidence
@@ -738,8 +744,12 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry", MeshEmbeddingWitnessArchiveRecipe),
         ("phydrax.model.archive", StaticColumnArchiveRecipe),
         ("phydrax.model.archive", TextColumnArchiveRecipe),
+        ("phydrax.model.archive", TextRowsArchiveRecipe),
         ("phydrax.model.archive", IntegerRowsArchiveRecipe),
         ("phydrax.model.archive", ExactTensorArchiveRecipe),
+        ("phydrax.model.archive", ExactExpressionRowsArchiveRecipe),
+        ("phydrax.model.archive", ImplicitChartRowsArchiveRecipe),
+        ("phydrax.model.archive", LayerRecordArchiveRecipe),
         ("phydrax.geometry", PreparedCommonRefinement),
         ("phydrax.geometry", EulerianVolumeOverlapChain),
         ("phydrax.geometry", EulerianVolumeOverlapMap),

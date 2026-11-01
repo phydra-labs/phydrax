@@ -1342,7 +1342,11 @@ def model_archive_root_projection(value: Any, /) -> Any:
     Row-record column recipes replace nested records only. An archive root must
     stay its registered dataclass, so a row-record root projects its fields.
     """
-    if (type(value).__module__, type(value).__name__) not in _ROW_RECORD_TYPES:
+    from ..meshing._archive_layer_columns import is_layer_archive_record
+
+    if (type(value).__module__, type(value).__name__) not in _ROW_RECORD_TYPES and not (
+        dataclasses.is_dataclass(value) and is_layer_archive_record(value)
+    ):
         return model_archive_projection(value)
     fields = {
         field.name: model_archive_projection(object.__getattribute__(value, field.name))
@@ -1359,6 +1363,11 @@ def model_archive_root_projection(value: Any, /) -> Any:
 def _row_record_archive_recipe(value: Any, /) -> object | None:
     """Project records with one static value per mesh entity to column recipes."""
     module, name = type(value).__module__, type(value).__name__
+    from ..meshing._archive_layer_columns import layer_record_archive_recipe
+
+    layer_recipe = layer_record_archive_recipe(value)
+    if layer_recipe is not None:
+        return layer_recipe
     if module == "phydrax.meshing._association" and name == "GeometryAssociation":
         from ..meshing._association import (
             GeometryAssociation,
@@ -1406,10 +1415,12 @@ def _row_record_recipe_types() -> frozenset[type]:
     from ..geometry._embedding_state import MeshEmbeddingWitnessArchiveRecipe
     from ..geometry.surface._contracts import SurfaceMetadataArchiveRecipe
     from ..meshing._association import GeometryAssociationArchiveRecipe
+    from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
 
     return frozenset(
         {
             GeometryAssociationArchiveRecipe,
+            LayerRecordArchiveRecipe,
             MeshEmbeddingWitnessArchiveRecipe,
             SurfaceChartWitnessArchiveRecipe,
             SurfaceMetadataArchiveRecipe,
@@ -1433,7 +1444,8 @@ def restore_row_record_recipes(value: Any, /) -> Any:
             return memo[identity]
         node_type = type(node)
         if node_type in recipe_types:
-            result = node.restore()
+            fields = tuple(visit(item) for item in node)
+            result = node_type(*fields).restore()
         elif (
             node is None
             or isinstance(
