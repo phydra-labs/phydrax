@@ -207,10 +207,7 @@ def _planar_interface_qualification() -> dict[str, object]:
         method = _allen_cahn(mesh, model)
         coordinates = method.discretization.dof_maps[
             method.field_index
-        ].evaluate_coordinates(
-            method.discretization.mesh,
-            method.discretization.default_runtime.coordinates,
-        )
+        ].evaluate_coordinates(method.discretization.default_runtime.coordinates)
         profile = jnp.tanh(coordinates[:, 0] / width)
         energy = float(np.asarray(method.energy(profile)))
         relative_error = abs(energy - analytic_tension) / analytic_tension
