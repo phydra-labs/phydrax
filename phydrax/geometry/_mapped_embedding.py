@@ -29,6 +29,7 @@ from ..discretization._coordinate_enclosure import (
     linear_combinations,
     multiply,
     normalize_pyramid_reference_derivative,
+    Polynomial,
     pyramid_reference_to_box_arguments,
     RationalPolynomial,
     scale,
@@ -132,7 +133,7 @@ def _positive_denominator(
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[dict, tuple[str, ...]] | None:
+) -> tuple[Polynomial, tuple[str, ...]] | None:
     """Prove one rational denominator has one strict sign on the whole cell."""
     polynomial = dict(denominator)
     controls = _strict_positive_controls(polynomial, domain, dimension)
@@ -152,11 +153,11 @@ def _polynomial_scaled_jacobian(
     /,
 ) -> tuple[tuple[tuple[Expression, ...], ...], tuple[tuple[str, ...], ...]] | None:
     """Clear denominators with one proved-positive common factor for all entries."""
-    denominators: list[dict] = []
+    denominators: list[Polynomial] = []
     evidence: list[tuple[str, ...]] = []
-    normalized: list[list[tuple[dict, dict | None]]] = []
+    normalized: list[list[tuple[Polynomial, Polynomial | None]]] = []
     for row in jacobian:
-        normalized_row = []
+        normalized_row: list[tuple[Polynomial, Polynomial | None]] = []
         for entry in row:
             if not isinstance(entry, RationalPolynomial):
                 normalized_row.append((entry, None))

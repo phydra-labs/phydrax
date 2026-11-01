@@ -1395,8 +1395,10 @@ def _retained_root_charts(
                         )
                     )
                 )
-                if same_element_chart:
-                    assert isinstance(element, PerCellRestrictedCellGeometryElement)
+                if (
+                    isinstance(element, PerCellRestrictedCellGeometryElement)
+                    and same_element_chart
+                ):
                     if coefficient_bank is None:
                         coefficient_bank = geometry.source_coordinates()
                     root_coordinates = _cell_expressions(
