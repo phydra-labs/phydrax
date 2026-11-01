@@ -49,7 +49,6 @@ from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
-    ExactLineCurve,
     LineCurve,
     PlanePatch,
 )
@@ -922,34 +921,21 @@ def line_chart_coefficients(
     curve: AbstractCurve,
 ) -> tuple[tuple[ChartScalar, ...], tuple[Fraction, ...]] | None:
     """Exact ``origin + t * direction`` UV coefficients in Q + Q*(2*pi), or None."""
-    if isinstance(curve, LineCurve):
+    from ._source_correspondence import _affine_curve_coefficients
+
+    coefficients = _affine_curve_coefficients(curve, (Fraction(0), Fraction(0)))
+    if coefficients is not None:
         try:
-            origin = tuple(
-                rational_coefficient(value, role="line chart origin")
-                for value in curve.origin_exact
-            )
-            direction = tuple(
-                rational_coefficient(value, role="line chart direction")
-                for value in curve.direction_exact
+            origin, direction = (
+                tuple(
+                    rational_coefficient(value, role="line chart coefficient")
+                    for value in row
+                )
+                for row in coefficients
             )
         except ValueError:
             return None
-        return (origin, direction) if len(origin) == len(direction) == 2 else None
-    if isinstance(curve, ExactLineCurve):
-        try:
-            origin = tuple(
-                rational_coefficient(value, role="exact line chart origin")
-                for value in curve.first_exact
-            )
-            last = tuple(
-                rational_coefficient(value, role="exact line chart endpoint")
-                for value in curve.last_exact
-            )
-        except ValueError:
-            return None
-        if len(origin) != 2 or len(last) != 2:
-            return None
-        return origin, (last[0] - origin[0], last[1] - origin[1])
+        return origin, direction
     if isinstance(curve, PeriodicPCurve):
         child = line_chart_coefficients(curve.source_curve)
         if child is None:

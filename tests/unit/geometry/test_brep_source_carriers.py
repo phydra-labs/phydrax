@@ -55,6 +55,40 @@ from phydrax.geometry.brep._root_bindings import BRepConicVertex, BRepRootSuppor
 from phydrax.units import MILLIMETER
 
 
+@pytest.mark.parametrize("weights", ((1.0, 1.0), (2.0, 2.0), (1.0, 2.0)))
+def test_boolean_chart_recognizes_exact_affine_spline_geometry(
+    weights: tuple[float, float],
+) -> None:
+    from phydrax.geometry.brep._boolean_core import line_chart_coefficients
+
+    curve = BSplineCurve(
+        np.asarray(((1.0, 2.0), (5.0, -2.0))),
+        np.asarray(weights),
+        np.asarray((2.0, 2.0, 4.0, 4.0)),
+        1,
+    )
+    coefficients = line_chart_coefficients(curve)
+    if weights[0] != weights[1]:
+        assert coefficients is None
+    else:
+        assert coefficients == (
+            (Fraction(-3), Fraction(6)),
+            (Fraction(2), Fraction(-2)),
+        )
+        patch = CylinderPatch(
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            1.0,
+        )
+        shifted = PeriodicPCurve(curve, patch, (1, 0))
+        shifted_coefficients = line_chart_coefficients(shifted)
+        assert shifted_coefficients is not None
+        assert shifted_coefficients[1] == coefficients[1]
+        assert shifted_coefficients[0][1] == coefficients[0][1]
+
+
 def test_affine_pcurve_identity_preserves_exact_rational_coefficients() -> None:
     curve = AffinePCurve(
         LineCurve((0.0, 0.0), (1.0, 0.0)),
@@ -208,6 +242,8 @@ def test_zero_angle_cylinder_generator_line_has_exact_source_lift() -> None:
         0.0,
         1.0,
     )
+
+
 def test_exact_source_lift_covers_direct_ruled_rails_and_spline_boundary() -> None:
     first_rail = ExactLineCurve((0, 0, 0), (1, 0, 0))
     second_rail = ExactLineCurve((0, 1, 0), (1, 1, 0))
@@ -234,10 +270,16 @@ def test_exact_source_lift_covers_direct_ruled_rails_and_spline_boundary() -> No
         for i in range(3)
     )
     exact_weights = tuple(
-        tuple(Fraction(2 if i == 1 and j == 1 else 1) for j in range(3))
-        for i in range(3)
+        tuple(Fraction(2 if i == 1 and j == 1 else 1) for j in range(3)) for i in range(3)
     )
-    exact_knots = (Fraction(0), Fraction(0), Fraction(0), Fraction(1), Fraction(1), Fraction(1))
+    exact_knots = (
+        Fraction(0),
+        Fraction(0),
+        Fraction(0),
+        Fraction(1),
+        Fraction(1),
+        Fraction(1),
+    )
     patch = BSplineSurfacePatch(
         np.asarray(exact_points, dtype=np.float64),
         np.asarray(exact_weights, dtype=np.float64),
@@ -254,9 +296,7 @@ def test_exact_source_lift_covers_direct_ruled_rails_and_spline_boundary() -> No
     reversed_top = ExactLineCurve((1, 1, 0), (0, 1, 0))
     reversed_chart = LineCurve((1.0, 1.0), (-1.0, 0.0))
 
-    assert exact_source_lift(
-        reversed_top, reversed_chart, region, 0.0, 1.0
-    )
+    assert exact_source_lift(reversed_top, reversed_chart, region, 0.0, 1.0)
     assert not exact_source_lift(
         reversed_top,
         LineCurve((1.0, 0.0), (-1.0, 0.0)),
@@ -297,7 +337,10 @@ def test_exact_source_lift_covers_direct_ruled_rails_and_spline_boundary() -> No
         np.ones(2, dtype=np.float64),
         np.asarray(scaled_knots, dtype=np.float64),
         1,
-        exact_control_points=((Fraction(0), Fraction(0), Fraction(0)), (Fraction(2), Fraction(0), Fraction(0))),
+        exact_control_points=(
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (Fraction(2), Fraction(0), Fraction(0)),
+        ),
         exact_weights=(Fraction(1), Fraction(1)),
         exact_knots=scaled_knots,
     )
@@ -314,8 +357,6 @@ def test_exact_source_lift_covers_direct_ruled_rails_and_spline_boundary() -> No
     assert exact_source_lift(scaled_edge, scaled_chart, region, 0.0, 0.5)
 
 
-
-
 def test_spline_boundary_gap_bounds_pointwise_parameterization() -> None:
     from phydrax.geometry.brep._conic_gaps import native_face_gap_squared
 
@@ -330,9 +371,7 @@ def test_spline_boundary_gap_bounds_pointwise_parameterization() -> None:
         )
         for i in range(3)
     )
-    exact_weights = tuple(
-        tuple(Fraction(i + 1) for _ in range(3)) for i in range(3)
-    )
+    exact_weights = tuple(tuple(Fraction(i + 1) for _ in range(3)) for i in range(3))
     exact_knots = (
         Fraction(0),
         Fraction(0),
@@ -341,6 +380,7 @@ def test_spline_boundary_gap_bounds_pointwise_parameterization() -> None:
         Fraction(1),
         Fraction(1),
     )
+
     def patch_from_controls(
         controls: tuple[tuple[tuple[Fraction, ...], ...], ...], /
     ) -> BSplineSurfacePatch:
@@ -380,9 +420,7 @@ def test_spline_boundary_gap_bounds_pointwise_parameterization() -> None:
     moved_region = SurfaceRegion(
         patch_from_controls(moved_points), np.asarray(((0.0, 0.0), (1.0, 1.0)))
     )
-    moved_gap_squared = native_face_gap_squared(
-        edge, pcurve, moved_region, 0.0, 1.0
-    )
+    moved_gap_squared = native_face_gap_squared(edge, pcurve, moved_region, 0.0, 1.0)
     assert moved_gap_squared is not None
     assert moved_gap_squared >= Fraction(29, 1600)
 
@@ -401,9 +439,7 @@ def test_torus_rotational_circle_requires_exact_profile_period_gauge() -> None:
         (0.0, 1.0, 0.0),
         2.5,
     )
-    region = SurfaceRegion(
-        patch, np.asarray(((0.0, 0.0), (2.0 * np.pi, 2.0 * np.pi)))
-    )
+    region = SurfaceRegion(patch, np.asarray(((0.0, 0.0), (2.0 * np.pi, 2.0 * np.pi))))
     source_chart = LineCurve((0.0, 0.0), (1.0, 0.0))
     periodic_chart = PeriodicPCurve(source_chart, patch, (0, 1))
 
@@ -433,9 +469,7 @@ def test_torus_rotational_circle_requires_exact_profile_period_gauge() -> None:
         (0.0, 1.0, 0.0),
         2.0,
     )
-    quarter_chart = LineCurve(
-        (0.0, quarter_parameter), (1.0, 0.0)
-    )
+    quarter_chart = LineCurve((0.0, quarter_parameter), (1.0, 0.0))
     quarter_gap = native_face_gap_squared(
         quarter_ring, quarter_chart, quarter_region, 0.0, 2.0 * np.pi
     )
@@ -463,16 +497,12 @@ def test_torus_rotational_circle_requires_exact_profile_period_gauge() -> None:
     )
     assert quarter_root is not None
     rooted_chart = AffinePCurve(
-        ConicRootLinePCurve(
-            quarter_root, 0, 1, parameter_range=(0.0, 2.0 * np.pi)
-        ),
+        ConicRootLinePCurve(quarter_root, 0, 1, parameter_range=(0.0, 2.0 * np.pi)),
         ((0, 1), (1, 0)),
         (0, 0),
     )
     rooted_periodic_chart = PeriodicPCurve(rooted_chart, patch, (0, 1))
-    assert exact_source_lift(
-        quarter_ring, rooted_chart, quarter_region, 0.0, 2.0 * np.pi
-    )
+    assert exact_source_lift(quarter_ring, rooted_chart, quarter_region, 0.0, 2.0 * np.pi)
     assert exact_source_lift(
         quarter_ring, rooted_periodic_chart, quarter_region, 0.0, 2.0 * np.pi
     )
@@ -539,10 +569,8 @@ def test_revolution_one_vertex_conic_uses_rooted_turn_for_nonzero_start() -> Non
     if geometry.edge_face_gap_bounds is not None:
         assert len(geometry.edge_face_gap_bounds) == len(geometry.coedge_edges)
         assert all(
-            geometry.edge_face_gap_bounds[index] == 0.0
-            for index in periodic_indices
+            geometry.edge_face_gap_bounds[index] == 0.0 for index in periodic_indices
         )
-
 
 
 def test_source_shadow_validation_replays_nested_roots_and_offset_witness() -> None:
@@ -563,9 +591,7 @@ def test_source_shadow_validation_replays_nested_roots_and_offset_witness() -> N
     finally:
         object.__setattr__(root, "parameter_lower", original_lower)
 
-    phase_conic = CircleCurve(
-        (0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0
-    )
+    phase_conic = CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0)
     phase_root = ConicParameterRoot(phase_conic, Fraction(1), Fraction(0))
     section = PlaneCylinderSectionPCurve(
         (Fraction(0), Fraction(0)),
@@ -605,7 +631,6 @@ def test_source_shadow_validation_replays_nested_roots_and_offset_witness() -> N
             _validate_surface_source_shadows(offset)
     finally:
         object.__setattr__(offset, "_sphere_revolution_witness", witness)
-
 
 
 def test_exact_line_root_support_admits_only_proved_closed_surface_boundary() -> None:
@@ -658,6 +683,7 @@ def test_exact_line_root_support_admits_only_proved_closed_surface_boundary() ->
     with pytest.raises(ValueError):
         BRepRootSupport(patch, outside_root)
 
+
 def test_conic_root_generator_lifts_to_exact_plane_line() -> None:
     conic = CircleCurve(
         (0.0, 0.0, 0.0),
@@ -675,9 +701,7 @@ def test_conic_root_generator_lifts_to_exact_plane_line() -> None:
     )
     source = SurfaceMappedCurve(
         cylinder,
-        ConicRootLinePCurve(
-            root, 0, 2, angle_realization=float(np.arctan2(4.0, 3.0))
-        ),
+        ConicRootLinePCurve(root, 0, 2, angle_realization=float(np.arctan2(4.0, 3.0))),
     )
     plane = PlanePatch((0.0, 0.0, 0.0), (3.0, 4.0, 0.0), (0.0, 0.0, 1.0))
     region = SurfaceRegion(plane, np.asarray(((0.0, -1.0), (2.0, 3.0))))
@@ -1176,10 +1200,7 @@ def test_authored_revolution_seam_coedges_have_exact_source_lifts(
     assert isinstance(source_curve, CircleCurve)
     assert vertex_root is not None and isinstance(vertex_root.primary, BRepConicVertex)
     assert vertex_root.primary.root.conic is source_curve
-    assert (
-        geometry.vertex_exact_points[seam_vertex]
-        == vertex_root.primary.point_exact
-    )
+    assert geometry.vertex_exact_points[seam_vertex] == vertex_root.primary.point_exact
     assert all(
         isinstance(root, NativePeriodEndpoint)
         for root in geometry.edge_endpoint_roots[seam_edge]
@@ -1199,9 +1220,7 @@ def test_authored_revolution_seam_coedges_have_exact_source_lifts(
         patch = model.patches[face]
         assert isinstance(patch, RevolutionSurface)
         bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
-        witness = patch.exact_quadric_witness(
-            (float(bounds[0, 1]), float(bounds[1, 1]))
-        )
+        witness = patch.exact_quadric_witness((float(bounds[0, 1]), float(bounds[1, 1])))
         assert witness is not None
         observed_families.add(witness.family)
         region = SurfaceRegion(patch, bounds)
@@ -1236,9 +1255,7 @@ def test_authored_revolution_seam_coedges_have_exact_source_lifts(
     placed_curve = PlacedCurve(curve, pose, np.zeros((3,), dtype=np.float64))
     placed_patch = PlacedSurface(patch, pose, np.zeros((3,), dtype=np.float64))
     placed_region = SurfaceRegion(placed_patch, np.asarray(region.parameter_box))
-    assert not exact_source_lift(
-        placed_curve, pcurve, placed_region, first, last
-    )
+    assert not exact_source_lift(placed_curve, pcurve, placed_region, first, last)
     wrong_radius = curve.radius_exact + Fraction(1, 4)
     wrong_curve = CircleCurve(
         tuple(float(value) for value in curve.center_exact),
@@ -1274,9 +1291,7 @@ def test_authored_revolution_seam_coedges_have_exact_source_lifts(
         ),
         direction_exact=(Fraction(1), Fraction(0)),
     )
-    assert not exact_source_lift(
-        curve, shifted_pcurve, shifted_region, first, last
-    )
+    assert not exact_source_lift(curve, shifted_pcurve, shifted_region, first, last)
 
     profile_lower, profile_upper = np.asarray(region.parameter_box)[:, 1]
     alternate_profile = float(
@@ -1324,10 +1339,8 @@ def test_parallel_cylinder_generator_coedges_retain_exact_conic_sources() -> Non
         curve_candidate = geometry.curves[curve_index]
         if (
             isinstance(curve_candidate, LineCurve)
-            and curve_candidate.origin_exact
-            == (Fraction(0), Fraction(4), Fraction(0))
-            and curve_candidate.direction_exact
-            == (Fraction(0), Fraction(0), Fraction(2))
+            and curve_candidate.origin_exact == (Fraction(0), Fraction(4), Fraction(0))
+            and curve_candidate.direction_exact == (Fraction(0), Fraction(0), Fraction(2))
         ):
             edge_candidates.append(index)
     assert len(edge_candidates) == 1
@@ -1338,11 +1351,14 @@ def test_parallel_cylinder_generator_coedges_retain_exact_conic_sources() -> Non
     )
     edge_roots = geometry.edge_endpoint_roots[edge]
     assert all(isinstance(root, ConicParameterEndpoint) for root in edge_roots)
-    assert tuple(
-        root.point_exact
-        for root in edge_roots
-        if isinstance(root, ConicParameterEndpoint)
-    ) == endpoints
+    assert (
+        tuple(
+            root.point_exact
+            for root in edge_roots
+            if isinstance(root, ConicParameterEndpoint)
+        )
+        == endpoints
+    )
     for vertex, point_exact in zip(geometry.edge_vertices[edge], endpoints, strict=True):
         vertex_root = geometry.vertex_roots[vertex]
         assert vertex_root is not None
@@ -1367,11 +1383,14 @@ def test_parallel_cylinder_generator_coedges_retain_exact_conic_sources() -> Non
         assert isinstance(pcurve, ConicRootLinePCurve)
         roots = geometry.coedge_endpoint_roots[coedge]
         assert all(isinstance(root, ConicParameterEndpoint) for root in roots)
-        assert tuple(
-            root.point_exact
-            for root in roots
-            if isinstance(root, ConicParameterEndpoint)
-        ) == endpoints
+        assert (
+            tuple(
+                root.point_exact
+                for root in roots
+                if isinstance(root, ConicParameterEndpoint)
+            )
+            == endpoints
+        )
         region = SurfaceRegion(
             patch, np.asarray(model.parameter_bounds[face], dtype=np.float64)
         )
@@ -1386,8 +1405,7 @@ def test_revolution_profile_line_lift_accepts_exact_affine_and_periodic_maps() -
     face = next(
         index
         for index, patch in enumerate(model.patches)
-        if isinstance(patch, RevolutionSurface)
-        and isinstance(patch.curve, LineCurve)
+        if isinstance(patch, RevolutionSurface) and isinstance(patch.curve, LineCurve)
     )
     patch = model.patches[face]
     assert isinstance(patch, RevolutionSurface)
@@ -1399,9 +1417,7 @@ def test_revolution_profile_line_lift_accepts_exact_affine_and_periodic_maps() -
         profile.origin_exact[axis] + lower * profile.direction_exact[axis]
         for axis in range(3)
     )
-    source_direction = tuple(
-        scale * profile.direction_exact[axis] for axis in range(3)
-    )
+    source_direction = tuple(scale * profile.direction_exact[axis] for axis in range(3))
     source = LineCurve(
         tuple(float(value) for value in source_origin),
         tuple(float(value) for value in source_direction),

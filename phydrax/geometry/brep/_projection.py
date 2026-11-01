@@ -441,6 +441,8 @@ def _periodic_parameter(
 
 def _trim_classification(model: BRepModel, face: int, uv: np.ndarray, /) -> int | None:
     """Classify a chart point only when every authored trim is a line p-curve."""
+    from ._boolean_core import line_chart_coefficients
+
     geometry = model.geometry
     domain = model.trim_domains[face]
     if domain is not None and domain.curve_loops:
@@ -459,10 +461,7 @@ def _trim_classification(model: BRepModel, face: int, uv: np.ndarray, /) -> int 
         for coedge in loop:
             edge = geometry.coedge_edges[coedge]
             curve = geometry.pcurves[coedge]
-            if (
-                not isinstance(curve, (LineCurve, ExactLineCurve))
-                or curve.ambient_dimension != 2
-            ):
+            if line_chart_coefficients(curve) is None:
                 return None
             first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
             start = np.asarray(curve.evaluate(jnp.asarray(first)), dtype=np.float64)
@@ -534,7 +533,7 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
     a doubly periodic face (a full torus) is the rectangle of one period in
     each direction traced by such sides.
     """
-    from ._boolean_core import AffinePCurve, PeriodicPCurve
+    from ._boolean_core import AffinePCurve, line_chart_coefficients, PeriodicPCurve
 
     geometry = model.geometry
     loops = geometry.face_loops[face]
@@ -554,9 +553,9 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
         while isinstance(line, (PeriodicPCurve, AffinePCurve)):
             line = line.source_curve if isinstance(line, PeriodicPCurve) else line.curve
         if (
-            not isinstance(line, (LineCurve, ExactLineCurve, ConicRootLinePCurve))
-            or curve.ambient_dimension != 2
-        ):
+            line_chart_coefficients(curve) is None
+            and not isinstance(line, ConicRootLinePCurve)
+        ) or curve.ambient_dimension != 2:
             return False
         first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
         start = np.asarray(curve.evaluate(jnp.asarray(first)), dtype=np.float64)
@@ -791,7 +790,7 @@ def _natural_rectangle_trim(model: BRepModel, face: int, /) -> bool:
     Every coedge must be an exact axis-aligned chart line (possibly on a
     native period sheet) along one rectangle side, joined corner to corner.
     """
-    from ._boolean_core import PeriodicPCurve
+    from ._boolean_core import line_chart_coefficients
 
     geometry = model.geometry
     if geometry is None or len(geometry.face_loops[face]) != 1:
@@ -802,9 +801,7 @@ def _natural_rectangle_trim(model: BRepModel, face: int, /) -> bool:
     path: list[tuple[float, float]] = []
     for coedge in loop:
         pcurve = geometry.pcurves[coedge]
-        while isinstance(pcurve, PeriodicPCurve):
-            pcurve = pcurve.source_curve
-        if not isinstance(pcurve, (LineCurve, ExactLineCurve)):
+        if line_chart_coefficients(pcurve) is None:
             return False
         edge = geometry.coedge_edges[coedge]
         first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)

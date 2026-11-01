@@ -327,6 +327,11 @@ seam roots changes the decoded representation and therefore may change its
 model/source revision; it does not merge distinct source occurrences or promise
 historical representation IDs.
 
+Boolean chart arrangements use the same exact affine-source recognizer as
+curve/surface correspondence. A clamped degree-one B-spline with equal
+weights is therefore an affine line, including its actual knot-parameter
+scale; unequal weights are not silently treated as affine parameterization.
+
 When a file omits p-curves, import recovers only exact source maps. A circle
 that is a height section of a cylinder, with the cylinder's own phase, maps to
 the isoline `(t, h)`. A circle in a plane exactly parallel to a planar face maps
