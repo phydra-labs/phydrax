@@ -296,6 +296,11 @@ refused. A fitted carrier only interpolates its endpoints, so the vertices it
 touches are no longer exact source roots in the exported geometry; their
 root-supported endpoint bindings are released with them.
 
+B-spline pole identities (`control_point_ids`) are format-dependent. BRep text
+names each pole by its u-major/v-fast record ordinal, and STEP and IGES carry no
+pole identity. When re-importing the written record would change a surface's
+pole identities, the export report declares a `face:<i>.pole-identity` loss.
+
 ## Periodic seams, poles, and recovered p-curves
 
 Closed periodic faces round-trip through STEP, IGES, and BRep text without

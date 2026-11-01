@@ -1276,6 +1276,26 @@ def test_exact_bspline_surface_round_trips_through_native_codecs(
         allow_physical_tag_loss=True,
     )
     assert any(loss.path == "face:0.physical-tag" for loss in brep_export.report.losses)
+    # The source declares no pole identities: STEP and IGES re-import none, while
+    # BRep text declares record ordinals and the export says so.
+    for report in (step_export.report, iges_export.report):
+        assert not any(loss.path.endswith(".pole-identity") for loss in report.losses)
+    assert any(
+        loss.path == "face:0.pole-identity" and loss.changes_interpretation
+        for loss in brep_export.report.losses
+    )
+
+    identified = _native_bspline_model(ordinal_pole_ids=True)
+    identified_brep = write_brep_text(identified, tmp_path / "identified.brep")
+    assert not any(
+        loss.path.endswith(".pole-identity") for loss in identified_brep.report.losses
+    )
+    for writer, name in ((write_step, "step"), (write_iges, "iges")):
+        export = writer(identified, tmp_path / f"identified.{name}")
+        assert any(
+            loss.path == "face:0.pole-identity" and "does not encode" in loss.rationale
+            for loss in export.report.losses
+        )
 
 
 def test_physical_tags_use_standard_fields_or_declare_loss(

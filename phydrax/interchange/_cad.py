@@ -4843,6 +4843,62 @@ def cad_export_physical_tag_losses(
     )
 
 
+def _pole_identity_carriers(
+    patch: AbstractSurfacePatch, label: str, /
+) -> tuple[tuple[str, BSplineSurfacePatch], ...]:
+    match patch:
+        case BSplineSurfacePatch():
+            return ((label, patch),)
+        case OffsetSurface():
+            return _pole_identity_carriers(patch.base, f"{label}.base")
+        case _:
+            return ()
+
+
+@checked
+def cad_export_pole_identity_losses(
+    target_patches: Sequence[AbstractSurfacePatch],
+    format_name: str,
+    reread_identity: Literal["record-ordinal", "undeclared"],
+    /,
+) -> tuple[AdapterLoss, ...]:
+    """Report B-spline pole identities that re-import of the written record changes.
+
+    ``record-ordinal`` formats name each pole by its u-major/v-fast ordinal in
+    the written record; ``undeclared`` formats carry no pole identity.
+    """
+    losses: list[AdapterLoss] = []
+    for face, patch in enumerate(target_patches):
+        for label, carrier in _pole_identity_carriers(patch, f"face:{face}"):
+            source = carrier.control_point_ids
+            rows, columns = np.asarray(carrier.weights).shape
+            if reread_identity == "record-ordinal":
+                reread = tuple(
+                    tuple(range(row * columns, (row + 1) * columns))
+                    for row in range(rows)
+                )
+            else:
+                reread = None
+            if source == reread:
+                continue
+            if reread is None:
+                rationale = f"{format_name} does not encode B-spline pole identities; the source's {rows * columns} declared pole identities are not embedded and re-import declares none."
+            elif source is None:
+                rationale = f"{format_name} identifies each B-spline pole by its u-major/v-fast record ordinal; the source declares no pole identities and re-import declares the ordinals 0..{rows * columns - 1}."
+            else:
+                rationale = f"{format_name} identifies each B-spline pole by its u-major/v-fast record ordinal; re-import replaces the source's declared pole identities with the ordinals 0..{rows * columns - 1}."
+            losses.append(
+                AdapterLoss(
+                    f"{label}.pole-identity",
+                    "export",
+                    "transformed",
+                    rationale,
+                    changes_interpretation=True,
+                )
+            )
+    return tuple(losses)
+
+
 @checked
 def cad_export_assembly_identifier_losses(
     graph: BRepAssemblyGraph | None, format_name: str, /
@@ -4872,6 +4928,7 @@ __all__ = [
     "build_cad_import_tolerance_evidence",
     "cad_export_assembly_identifier_losses",
     "cad_export_physical_tag_losses",
+    "cad_export_pole_identity_losses",
     "prepare_cad_export_surfaces",
     "build_cad_export_report",
     "certified_cad_export_tolerances",

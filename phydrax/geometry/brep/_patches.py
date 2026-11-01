@@ -651,6 +651,17 @@ class LineCurve(AbstractCurve):
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameter = jnp.asarray(parameters, dtype=self.origin.dtype)
+        if any(
+            isinstance(value, Tracer)
+            for value in (parameter, self.origin, self.direction)
+        ):
+            return self._evaluate_rows(parameter)
+        values = bucketed_query_rows(
+            self._evaluate_rows, np.asarray(parameter).reshape(-1)
+        )
+        return jax.device_put(values.reshape((*parameter.shape, self.origin.shape[0])))
+
+    def _evaluate_rows(self, parameter: Array, /) -> Array:
         return self.origin + parameter[..., None] * self.direction
 
     def derivative_bounds(
