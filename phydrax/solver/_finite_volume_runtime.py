@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._owned_programs import run_owned_program
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
@@ -95,6 +96,53 @@ from ._finite_volume_topology_events import (
 
 
 _TreeT = TypeVar("_TreeT")
+
+
+def _run_runtime_program(
+    runtime: Any, phase: str, method: Callable[..., _TreeT], /, *operands: Any
+) -> _TreeT:
+    """Run one advance phase as the runtime's owned compiled program.
+
+    Op by op, every stage conditional and motion-route root solve of a step
+    compiles and caches a new executable; the owned program is traced once
+    per runtime and released with it. A multi-device owner-local group runs
+    its stage collectives eagerly (``collective_branch``), so its steps stay
+    op by op.
+    """
+    group = getattr(runtime, "owner_local_execution_group", None)
+    if group is not None and len(group.devices) > 1:
+        return method(runtime, *operands)
+    return run_owned_program(runtime, phase, method, *operands)
+
+
+def _fold_retry_attempts(
+    attempt: Callable[[Any, _TreeT], _TreeT], carry: _TreeT, maximum_retries: int, /
+) -> _TreeT:
+    """Apply ``attempt(retry, carry)`` for ``retry = 1..maximum_retries``.
+
+    Every attempt evaluates and selects exactly as an unrolled retry sequence.
+    Inside a traced program the attempts are one loop body instead of one
+    copy per retry; the loop has static bounds, so it stays
+    reverse-differentiable. Op-by-op (eager collective) steps keep the plain
+    attempt sequence.
+    """
+    if not any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(carry)):
+        for retry in range(1, maximum_retries + 1):
+            carry = attempt(retry, carry)
+        return carry
+    if maximum_retries < 1:
+        return carry
+    dynamic, static = eqx.partition(carry, eqx.is_array)
+
+    def body(retry: Array, dynamic_carry: Any, /) -> Any:
+        output = attempt(retry, eqx.combine(dynamic_carry, static))
+        output_dynamic, output_static = eqx.partition(output, eqx.is_array)
+        if not eqx.tree_equal(output_static, static):
+            raise RuntimeError("A retry attempt changed the static step structure.")
+        return output_dynamic
+
+    dynamic = jax.lax.fori_loop(1, maximum_retries + 1, body, dynamic)
+    return eqx.combine(dynamic, static)
 
 
 @dataclass(frozen=True, slots=True)
@@ -7379,7 +7427,15 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 valid = self.owner_local_decision_provider(valid)
             return self._refresh_sliding_after_accept(
                 runtime_state,
-                self._advance_ale(runtime_state, average, valid, args),
+                _run_runtime_program(
+                    self,
+                    "ale-advance",
+                    PreparedFiniteVolumeRuntime._advance_ale,
+                    runtime_state,
+                    average,
+                    valid,
+                    args,
+                ),
                 args,
             )
         average = eqx.error_if(
@@ -7398,6 +7454,38 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         valid = jnp.all(self.dynamics.system.admissible(stage_average))
         if self.owner_local_decision_provider is not None:
             valid = self.owner_local_decision_provider(valid)
+
+        if self.stage_flux_provider is None:
+            selected = _run_runtime_program(
+                self,
+                "static-advance",
+                PreparedFiniteVolumeRuntime._advance_static,
+                runtime_state,
+                average,
+                stage_average,
+                valid,
+                args,
+            )
+        else:
+            selected = self._advance_static(
+                runtime_state, average, stage_average, valid, args
+            )
+        return self._refresh_sliding_after_accept(
+            runtime_state,
+            selected,
+            args,
+        )
+
+    def _advance_static(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        average: Array,
+        stage_average: Array,
+        valid: Array,
+        args: Any,
+        /,
+    ) -> FiniteVolumeAdvanceResult:
+        content_state = runtime_state.content_state
 
         def valid_branch(_: None) -> FiniteVolumeAdvanceResult:
             return self._advance_valid(runtime_state, average, args)
@@ -7475,11 +7563,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 lambda _: invalid_result,
                 operand=None,
             )
-        return self._refresh_sliding_after_accept(
-            runtime_state,
-            selected,
-            args,
-        )
+        return selected
 
     def advance_prescribed(
         self,
@@ -8185,9 +8269,6 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             secondary_reduction_factor=zero,
         )
         current_dt = self.precision.decision(attempted)
-        accepted_flux_ledger = None
-        accepted_stage_ledgers = None
-        recorded_geometry = None
         recorded_maximum_rate = zero
         recorded_cfl_step = jnp.asarray(jnp.inf, dtype=zero.dtype)
         recorded_geometry_reduction = jnp.asarray(1.0, dtype=zero.dtype)
@@ -8204,7 +8285,22 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 old,
             )
 
-        for retry in range(self.policy.maximum_retries + 1):
+        def attempt(retry: Any, carry: tuple[Any, ...], /) -> tuple[Any, ...]:
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+                recorded_geometry,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+                recorded_geometry_reduction,
+                minimum_geometry_reduction,
+            ) = carry
             geometry = motion.prepare_ssprk33_step(
                 runtime_state.time,
                 current_dt,
@@ -8254,7 +8350,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 lambda _: zero_candidate,
                 operand=None,
             )
-            if retry == 0:
+            if recorded_geometry is None:
                 accepted_flux_ledger = zero_candidate.accepted_flux_integrals
                 recorded_geometry = geometry
                 accepted_stage_ledgers = zero_candidate.stage_rate_ledgers
@@ -8339,6 +8435,58 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 geometry_reduction.astype(current_dt.dtype),
             )
             current_dt = self.precision.decision(current_dt * retry_factor)
+            return (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                accepted_flux_ledger,
+                accepted_stage_ledgers,
+                recorded_geometry,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+                recorded_geometry_reduction,
+                minimum_geometry_reduction,
+            )
+
+        # The first attempt forms the evidence envelope; later attempts run as
+        # one loop body, so the program holds two attempts for any retry budget.
+        carry = attempt(
+            0,
+            (
+                accepted,
+                accepted_content,
+                accepted_dt,
+                retries,
+                last_report,
+                current_dt,
+                None,
+                None,
+                None,
+                recorded_maximum_rate,
+                recorded_cfl_step,
+                recorded_geometry_reduction,
+                minimum_geometry_reduction,
+            ),
+        )
+        carry = _fold_retry_attempts(attempt, carry, self.policy.maximum_retries)
+        (
+            accepted,
+            accepted_content,
+            accepted_dt,
+            retries,
+            last_report,
+            current_dt,
+            accepted_flux_ledger,
+            accepted_stage_ledgers,
+            recorded_geometry,
+            recorded_maximum_rate,
+            recorded_cfl_step,
+            recorded_geometry_reduction,
+            minimum_geometry_reduction,
+        ) = carry
 
         minimum_reached = current_dt < self.precision.decision(
             self.policy.minimum_step_size

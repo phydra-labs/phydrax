@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
@@ -980,9 +981,32 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             )
         if prior_volumes.dtype.kind not in "fiu":
             raise ValueError("prior_effective_cell_volumes must have real numeric dtype.")
-        time_value = jnp.asarray(time_value, dtype=dtype)
-        step = jnp.asarray(step, dtype=dtype)
-        prior_volumes = jnp.asarray(prior_volumes, dtype=dtype)
+        return run_owned_program(
+            self,
+            "ssprk33-step",
+            FixedConnectivityMotionPlan._ssprk33_step,
+            jnp.asarray(time_value, dtype=dtype),
+            jnp.asarray(step, dtype=dtype),
+            topology_epoch_id,
+            jnp.asarray(start_geometry_version),
+            jnp.asarray(start_evidence_version),
+            args,
+            jnp.asarray(prior_volumes, dtype=dtype),
+        )
+
+    def _ssprk33_step(
+        self,
+        time_value: Array,
+        step: Array,
+        topology_epoch_id: str,
+        start_geometry_version: Array,
+        start_evidence_version: Array,
+        args: Any,
+        prior_volumes: Array,
+        /,
+    ) -> UnstructuredALEStepGeometry:
+        """Stage geometry of validated step inputs, one owned program per plan."""
+
         prior_volumes = eqx.error_if(
             prior_volumes,
             jnp.any(~jnp.isfinite(prior_volumes) | (prior_volumes <= 0.0)),
