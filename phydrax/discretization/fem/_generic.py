@@ -2845,6 +2845,24 @@ def _degree_aware_reference_rule(
     raise ValueError("Unsupported finite-element cell kind.")
 
 
+# Output elements of one row chunk of mapped basis gradients: forward-mode
+# gradients materialize per-row products of the full local basis, so rows are
+# processed in chunks whose output stays within this many elements.
+_MAPPED_GRADIENT_ELEMENT_BUDGET = 1 << 21
+
+
+def _row_chunked_map(function: Callable[..., Array], *rows: Array) -> Array:
+    """Apply a row-vectorized ``function`` in chunks bounded by output size."""
+    row_count = rows[0].shape[0]
+    per_row = prod(jax.eval_shape(function, *(row[:1] for row in rows)).shape[1:])
+    chunk = max(1, _MAPPED_GRADIENT_ELEMENT_BUDGET // max(per_row, 1))
+    parts = [
+        function(*(row[start : start + chunk] for row in rows))
+        for start in range(0, row_count, chunk)
+    ]
+    return parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
+
+
 def _evaluate_coordinate_map(
     coordinate_element: ScalarCoordinateElement,
     coordinate_routes: ArrayLike,
@@ -3062,7 +3080,9 @@ def _prepare_block_geometry(
                     return map_reference_values(values_, element.value_spec, jacobian_)
 
                 mapped_gradients.append(
-                    jax.vmap(jax.jacfwd(mapped_reference))(reference_points)
+                    _row_chunked_map(
+                        jax.vmap(jax.jacfwd(mapped_reference)), reference_points
+                    )
                 )
             mapped_gradient = jnp.stack(mapped_gradients, axis=0)
         else:
@@ -3073,10 +3093,25 @@ def _prepare_block_geometry(
                 values_ = element.tabulate(reference[None])[0][0]
                 return map_reference_values(values_, element.value_spec, jacobian_)
 
-            mapped_gradient = jax.vmap(
-                jax.vmap(jax.jacfwd(mapped_reference, argnums=0), in_axes=(0, None)),
-                in_axes=(None, 0),
-            )(reference_points, coordinates_[routes_])
+            # Forward-mode gradients of every basis function at every (cell,
+            # point) row are formed for a bounded number of rows at a time.
+            cell_coordinates = coordinates_[routes_]
+            point_count = reference_points.shape[0]
+            row_cells = jnp.repeat(
+                jnp.arange(cell_coordinates.shape[0], dtype=jnp.int32), point_count
+            )
+            row_points = jnp.tile(
+                jnp.arange(point_count, dtype=jnp.int32), cell_coordinates.shape[0]
+            )
+            mapped = jax.vmap(jax.jacfwd(mapped_reference, argnums=0))
+
+            def mapped_rows(cells_: Array, points_: Array, /) -> Array:
+                return mapped(reference_points[points_], cell_coordinates[cells_])
+
+            mapped_gradient = _row_chunked_map(mapped_rows, row_cells, row_points)
+            mapped_gradient = mapped_gradient.reshape(
+                (cell_coordinates.shape[0], point_count, *mapped_gradient.shape[1:])
+            )
         physical_gradients = mapped_gradient
     physical_weights = precision_policy.accumulation(
         measure_factor * reference_weights[None, :]

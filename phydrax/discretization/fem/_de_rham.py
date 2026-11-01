@@ -36,7 +36,7 @@ from ...linalg._complexes import (
     hodge_laplacian,
     HodgeLaplacianPart,
 )
-from ...linalg._exact import solve_exact
+from ...linalg._exact import matmul_exact, solve_exact
 from ...sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
 from ...typing import checked, ConvertibleToArray, parse
 from .._cell_de_rham import AbstractCellDeRhamComplex
@@ -680,16 +680,7 @@ def _exact_matrix_product(
         len(row) != len(right[0]) for row in right
     ):
         raise ValueError("Exact orientation matrices must be rectangular.")
-    return tuple(
-        tuple(
-            sum(
-                (left[row][inner] * right[inner][column] for inner in range(len(right))),
-                Fraction(0),
-            )
-            for column in range(len(right[0]))
-        )
-        for row in range(len(left))
-    )
+    return matmul_exact(left, right)
 
 
 def _exact_matrix_subspace(
