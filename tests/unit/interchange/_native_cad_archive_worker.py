@@ -111,6 +111,7 @@ from phydrax._model._structure import (
     ParametricCurveBoundarySourceArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
+    PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
     SphereMaterialCellAtlasArchiveRecipe,
     SurfaceChartBoundarySourceArchiveRecipe,
@@ -4683,9 +4684,9 @@ def _rebuild_prepared_surface_support(value: object, /) -> PreparedSurfaceSource
         SurfaceSourceRootAtlas,
     )
 
-    if type(value) is not PreparedSurfaceSourceSupport:
+    if type(value) is not PreparedSurfaceSourceSupportArchiveRecipe:
         raise TypeError(
-            "Stored prepared surface support has an unexpected concrete type."
+            "Stored prepared surface support has an unexpected archive recipe."
         )
     domain = _rebuild_as(value.domain, MeshingDomain)
     original = _rebuild_continuation_value(value.original)
@@ -4697,17 +4698,9 @@ def _rebuild_prepared_surface_support(value: object, /) -> PreparedSurfaceSource
     support = PreparedSurfaceSourceSupport(
         domain, original, value.root_parameters, root_boundary
     )
-    if (
-        support.support_id != value.support_id
-        or support.root_geometry_id != value.root_geometry_id
-        or support.root_topology_id != value.root_topology_id
-        or support.root_cell_ids != value.root_cell_ids
-        or support.root_atlas_cell_ids != value.root_atlas_cell_ids
-        or support.root_source_cell_ids != value.root_source_cell_ids
-        or support.root_parameter_bounds != value.root_parameter_bounds
-        or not np.array_equal(support.root_parameters, value.root_parameters)
-        or not np.array_equal(support.root_patches, value.root_patches)
-    ):
+    # The identity binds every recomputed root bank (cells, atlas cells, source
+    # pieces, exact chart bounds, parameters, patches, vertices, coordinates).
+    if support.support_id != value.expected_support_id:
         raise ValueError(
             "Prepared surface support differs from its reconstructed root charts."
         )
@@ -5065,10 +5058,7 @@ def _rebuild_continuation_value(
         and type(value).__name__ == "SurfaceSourceRootAtlas"
     ):
         return _rebuild_surface_source_root_atlas(value)
-    if (
-        type(value).__module__ == "phydrax.geometry._surface_source_support"
-        and type(value).__name__ == "PreparedSurfaceSourceSupport"
-    ):
+    if type(value) is PreparedSurfaceSourceSupportArchiveRecipe:
         return _rebuild_prepared_surface_support(value)
     if (
         type(value).__module__ == "phydrax.discretization._surface_chart_records"
@@ -5602,8 +5592,8 @@ def _rebuild_continuation_value(
             associations,
             boundary_source,
             source_root_cell_ids=value.source_root_cell_ids,
-            source_piece_ids=value.source_piece_ids,
-            root_parameter_exact=value.root_parameter_exact,
+            source_piece_ids=value.source_piece_ids.decode(),
+            root_parameter_exact=value.root_parameter_exact.decode(),
         )
         if source.source_chart_id != value.expected_source_chart_id:
             raise ValueError(
@@ -12888,7 +12878,9 @@ def _write_surface_chart_boundary_query(directory: Path, /) -> None:
         root_result, result, query, composition
     )
     write_model_artifact(
-        directory / "surface-chart-boundary-query.phx", composition, limits=None
+        directory / "surface-chart-boundary-query.phx",
+        composition,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     print(json.dumps(expected, sort_keys=True))
 
@@ -12993,7 +12985,7 @@ def _read_surface_chart_boundary_query(
         restore=lambda value: _rebuild_surface_chart_boundary_query_composition(
             value, expected
         ),
-        limits=None,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     query = composition.entry("surface-query/boundary").value
     if not isinstance(query, SurfaceChartBoundarySource):
