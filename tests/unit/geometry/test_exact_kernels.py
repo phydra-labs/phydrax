@@ -27,6 +27,7 @@ from phydrax._interpolation import _bspline_extraction as extraction
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import _coordinate_enclosure as enclosure
 from phydrax.discretization._exact_algebraic_geometry import coefficient_endpoint
+from phydrax.geometry import _interval_enclosure as interval_enclosure
 
 
 pytestmark = [
@@ -436,3 +437,57 @@ def test_bvh_pair_blocks_reference_constants(monkeypatch: Any) -> None:
         if np.all(np.minimum(upper[i], upper[j]) - np.maximum(lower[i], lower[j]) >= 0.0)
     )
     assert list(zip(pairs[0].tolist(), pairs[1].tolist(), strict=True)) == brute
+
+
+def test_float64_interval_kernels_are_bit_identical_to_the_host_operations() -> None:
+    noise = np.random.default_rng(13)
+    specials = np.asarray(
+        [
+            0.0,
+            -0.0,
+            np.inf,
+            -np.inf,
+            5.0e-324,
+            -5.0e-324,
+            1.0e300,
+            -1.0e300,
+            2.0**996,
+            3.0,
+        ]
+    )
+    count = 4000
+    values = noise.normal(size=(4, count)) * 10.0 ** noise.integers(
+        -320, 300, size=(4, count)
+    )
+    values = np.where(
+        noise.random((4, count)) < 0.3, noise.choice(specials, (4, count)), values
+    )
+    first = (np.minimum(values[0], values[1]), np.maximum(values[0], values[1]))
+    second = (np.minimum(values[2], values[3]), np.maximum(values[2], values[3]))
+    first[0][:7] = np.nan
+    for public, host in (
+        (
+            interval_enclosure.interval_multiply,
+            interval_enclosure._host_interval_multiply,
+        ),
+        (interval_enclosure.interval_add, interval_enclosure._host_interval_add),
+        (
+            interval_enclosure.interval_subtract,
+            interval_enclosure._host_interval_subtract,
+        ),
+    ):
+        expected = host(first, second)
+        computed = public(first, second)
+        for native, reference in zip(computed, expected, strict=True):
+            assert native.dtype == np.float64 and native.shape == reference.shape
+            assert native.tobytes() == np.asarray(reference).tobytes()
+    # Broadcast operands and 0-d endpoints keep the host shapes.
+    scalar = (np.float64(-2.0), np.float64(3.0))
+    broadcast = interval_enclosure.interval_multiply(
+        scalar, (second[0][:5], second[1][:5])
+    )
+    reference = interval_enclosure._host_interval_multiply(
+        scalar, (second[0][:5], second[1][:5])
+    )
+    for native, host in zip(broadcast, reference, strict=True):
+        assert native.tobytes() == np.asarray(host).tobytes()

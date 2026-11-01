@@ -96,6 +96,76 @@ def _pointer(array: np.ndarray, /) -> int:
 # ------------------------------------------------------ interval restriction
 
 
+def float64_interval_product(
+    first_lower: np.ndarray | np.generic,
+    first_upper: np.ndarray | np.generic,
+    second_lower: np.ndarray | np.generic,
+    second_upper: np.ndarray | np.generic,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Set-based interval product of broadcastable float64 endpoint arrays.
+
+    Bit-identical to the host interval interpreter's product: zero times an
+    unbounded endpoint contributes 0, a NaN endpoint product gives the whole
+    line, an endpoint rounds outward only when its product is not error free,
+    and a sign fixed by the operand signs is kept.
+    """
+    endpoints, shape = _aligned_endpoints(
+        first_lower, first_upper, second_lower, second_upper
+    )
+    lower = np.empty(shape, dtype=np.float64)
+    upper = np.empty(shape, dtype=np.float64)
+    status = load_meshcore()["phx_mc_interval_multiply"](
+        lower.size,
+        *(_pointer(value) for value in endpoints),
+        _pointer(lower),
+        _pointer(upper),
+    )
+    _raise_for_call(status, "interval_multiply")
+    return lower, upper
+
+
+def float64_interval_sum(
+    first_lower: np.ndarray | np.generic,
+    first_upper: np.ndarray | np.generic,
+    second_lower: np.ndarray | np.generic,
+    second_upper: np.ndarray | np.generic,
+    /,
+    *,
+    subtract: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Interval sum or difference of broadcastable float64 endpoint arrays.
+
+    Bit-identical to the host interval interpreter: an endpoint rounds outward
+    only when its sum is not error free, a NaN endpoint widens to the whole
+    line, and a sum of sign-fixed operands keeps that sign.
+    """
+    endpoints, shape = _aligned_endpoints(
+        first_lower, first_upper, second_lower, second_upper
+    )
+    lower = np.empty(shape, dtype=np.float64)
+    upper = np.empty(shape, dtype=np.float64)
+    status = load_meshcore()["phx_mc_interval_sum"](
+        lower.size,
+        *(_pointer(value) for value in endpoints),
+        int(subtract),
+        _pointer(lower),
+        _pointer(upper),
+    )
+    _raise_for_call(status, "interval_sum")
+    return lower, upper
+
+
+def _aligned_endpoints(
+    *endpoints: np.ndarray | np.generic,
+) -> tuple[list[np.ndarray], tuple[int, ...]]:
+    shape = endpoints[0].shape
+    if any(value.shape != shape for value in endpoints):
+        endpoints = tuple(np.broadcast_arrays(*endpoints))
+        shape = endpoints[0].shape
+    return [np.ascontiguousarray(value) for value in endpoints], shape
+
+
 def interval_bernstein_restrict(
     lower: np.ndarray,
     upper: np.ndarray,
@@ -735,6 +805,8 @@ __all__ = [
     "bisect_integer_nets",
     "bvh_pair_blocks",
     "exact_kernel_parallelism",
+    "float64_interval_product",
+    "float64_interval_sum",
     "interval_bernstein_restrict",
     "rational_bernstein_nets",
     "separation_screen",
