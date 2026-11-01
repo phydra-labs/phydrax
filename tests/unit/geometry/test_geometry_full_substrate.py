@@ -438,6 +438,51 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
     assert replacement.source_revision != published_revision
 
 
+@pytest.mark.parametrize("count", [0, 1, 8, 9, 64, 65, 512, 513, 4096, 4097, 8201])
+def test_query_padding_preserves_rows_and_fixed_shapes(count: int) -> None:
+    from phydrax.geometry.brep._patches import bucketed_query_rows
+
+    rows = np.arange(count * 2, dtype=np.float64).reshape((count, 2))
+    shapes = []
+
+    def evaluate(values: Any) -> Any:
+        shapes.append(values.shape[0])
+        return values
+
+    np.testing.assert_array_equal(bucketed_query_rows(evaluate, rows), rows)
+    if count:
+        assert set(shapes) <= {8, 64, 512, 4096}
+        assert len(shapes) == (count + 4095) // 4096
+    else:
+        assert shapes == [0]
+
+
+def test_line_query_padding_preserves_traced_parameter_and_operand_derivatives() -> None:
+    from phydrax.geometry.brep._patches import LineCurve
+
+    origin = jnp.asarray([0.25, -0.5, 1.0])
+    direction = jnp.asarray([2.0, -4.0, 0.5])
+    parameters = jnp.arange(65, dtype=jnp.float64) / 64.0
+    curve = LineCurve(origin, direction)
+    expected = origin + parameters[:, None] * direction
+    np.testing.assert_array_equal(curve.evaluate(parameters), expected)
+    np.testing.assert_array_equal(
+        jax.jit(lambda values: curve.evaluate(values))(parameters), expected
+    )
+    np.testing.assert_array_equal(
+        jax.jvp(curve.evaluate, (parameters,), (jnp.ones_like(parameters),))[1],
+        np.broadcast_to(direction, (65, 3)),
+    )
+
+    def displaced(value: Any) -> Any:
+        return eqx.tree_at(lambda line: line.origin, curve, value).evaluate(parameters)
+
+    np.testing.assert_array_equal(
+        jax.jvp(displaced, (origin,), (jnp.ones_like(origin),))[1],
+        np.ones((65, 3)),
+    )
+
+
 def test_rational_bspline_surface_is_jax_differentiable() -> None:
     control_points = jnp.asarray(
         [
