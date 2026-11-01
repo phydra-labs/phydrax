@@ -8,16 +8,26 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, TYPE_CHECKING
+from fractions import Fraction
+from typing import Any, cast, Literal, TYPE_CHECKING
 
 import jax
 import numpy as np
 from jax import Array
+from jax._src.numpy.hijax import SearchSorted
 from jax.core import eval_jaxpr, ShapedArray
 from jax.extend import core as jax_core
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
+from .._interpolation._bspline import bspline_jet_rule_alignment
+from .._interpolation._bspline_extraction import (
+    _bernstein_derivative,
+    _binary64_down,
+    _binary64_up,
+    _univariate_span_extraction,
+)
+from .._jax_program import custom_jvp_rule_owner
 from ..typing import parse
 
 
@@ -805,13 +815,21 @@ def _gather_interval(
     index_lower, index_upper = _integer_index_interval(start_indices, 1)
     dimensions = params["dimension_numbers"]
     start_index_map = tuple(dimensions.start_index_map)
+    mode = params["mode"]
+    # A batched scalar dynamic index (``x[i]`` under vmap) keeps its size-one
+    # slice axis instead of collapsing it and clamps its start index.
+    collapsed = tuple(dimensions.collapsed_slice_dims) == start_index_map
     if (
         operand_lower.shape != operand_upper.shape
         or len(start_index_map) != 1
-        or tuple(dimensions.collapsed_slice_dims) != start_index_map
+        or not (collapsed or not dimensions.collapsed_slice_dims)
         or dimensions.operand_batching_dims
         or dimensions.start_indices_batching_dims
-        or params["mode"] != jax.lax.GatherScatterMode.PROMISE_IN_BOUNDS
+        or mode
+        not in (
+            jax.lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+            jax.lax.GatherScatterMode.CLIP,
+        )
         or params["fill_value"] is not None
     ):
         raise IntervalExtensionError(
@@ -822,11 +840,16 @@ def _gather_interval(
         raise IntervalExtensionError("gather index axis is outside its operand.")
     index_shape = index_lower.shape[:-1]
     remaining_axes = tuple(
-        dimension for dimension in range(operand_lower.ndim) if dimension != axis
+        dimension
+        for dimension in range(operand_lower.ndim)
+        if dimension != axis or not collapsed
     )
     output_shape = (
         *index_shape,
-        *(operand_lower.shape[dimension] for dimension in remaining_axes),
+        *(
+            1 if dimension == axis else operand_lower.shape[dimension]
+            for dimension in remaining_axes
+        ),
     )
     expected_offsets = tuple(range(len(index_shape), len(output_shape)))
     expected_slice_sizes = tuple(
@@ -845,10 +868,17 @@ def _gather_interval(
         np.asarray(index_upper)[..., 0],
     )
     extent = operand_lower.shape[axis]
+    if mode == jax.lax.GatherScatterMode.CLIP:
+        # Clamping is monotone: clamped endpoints enclose every clamped index.
+        integer_lower = np.clip(integer_lower, 0, extent - 1)
+        integer_upper = np.clip(integer_upper, 0, extent - 1)
     if np.any(integer_lower < 0) or np.any(integer_upper >= extent):
         raise IntervalExtensionError("gather index interval is outside the operand.")
     integer_lower = integer_lower.astype(np.intp)
     integer_upper = integer_upper.astype(np.intp)
+    if not collapsed:
+        operand_lower = np.expand_dims(operand_lower, axis + 1)
+        operand_upper = np.expand_dims(operand_upper, axis + 1)
     if np.array_equal(integer_lower, integer_upper):
         return (
             np.take(operand_lower, integer_lower, axis=axis),
@@ -1044,6 +1074,263 @@ def _scatter_add_interval(
                 updated = interval_add(destination_interval, contribution)
                 lane_result_lower[key], lane_result_upper[key] = updated
     return result_lower, result_upper
+
+
+def _searchsorted_interval(
+    primitive: SearchSorted, sorted_values: Interval, query: Interval, /
+) -> Interval:
+    """Enclose the insertion index of every query in its sorted-array interval.
+
+    The index counts sorted entries below the query (``<`` for ``left``, ``<=``
+    for ``right``), so it is monotone nondecreasing in the query and
+    nonincreasing in every entry. Running maxima of the entry upper bounds and
+    reversed running minima of the lower bounds stay sorted and still bound
+    every admissible entry, so the concrete search on those sorted bounds
+    encloses the index of every real value in the boxes.
+    """
+    entry_lower = np.asarray(sorted_values[0], dtype=np.float64)
+    entry_upper = np.asarray(sorted_values[1], dtype=np.float64)
+    query_lower = np.asarray(query[0], dtype=np.float64)
+    query_upper = np.asarray(query[1], dtype=np.float64)
+    if (
+        np.any(np.isnan(entry_lower))
+        or np.any(np.isnan(entry_upper))
+        or np.any(np.isnan(query_lower))
+        or np.any(np.isnan(query_upper))
+    ):
+        raise IntervalExtensionError("searchsorted requires non-NaN interval bounds.")
+    axis = primitive.dimension
+    sorted_upper = np.maximum.accumulate(entry_upper, axis=axis)
+    sorted_lower = np.flip(
+        np.minimum.accumulate(np.flip(entry_lower, axis=axis), axis=axis), axis=axis
+    )
+    lower = np.asarray(primitive.expand(sorted_upper, query_lower))
+    upper = np.asarray(primitive.expand(sorted_lower, query_upper))
+    return lower, upper
+
+
+type _JetTable = tuple[Interval, ...]
+
+
+def _bspline_span_jet_table(
+    knots: NDArray[np.float64],
+    degree: int,
+    span: int,
+    order_count: int,
+    /,
+) -> _JetTable:
+    """Outward Bernstein coefficients of each local basis jet on one span.
+
+    Entry ``r`` holds, per local basis function, the exact Bernstein net of its
+    ``r``-th parameter derivative on ``[knots[span], knots[span + 1]]`` rounded
+    outward to binary64, with shape ``(degree + 1, max(degree - r, 0) + 1)``.
+    """
+    exact_knots = tuple(Fraction(float(value)) for value in knots)
+    bounds = (exact_knots[span], exact_knots[span + 1])
+    # Rational knots keep every extracted coefficient rational.
+    rows = [
+        [cast(Fraction, value) for value in row]
+        for row in _univariate_span_extraction(exact_knots, degree, span)
+    ]
+    table: list[Interval] = []
+    for order in range(order_count):
+        if order:
+            rows = [
+                [cast(Fraction, value) for value in _bernstein_derivative(row, bounds)]
+                for row in rows
+            ]
+        table.append(
+            (
+                np.asarray([[_binary64_down(value) for value in row] for row in rows]),
+                np.asarray([[_binary64_up(value) for value in row] for row in rows]),
+            )
+        )
+    return tuple(table)
+
+
+def _bernstein_range(net: Interval, first: Interval, last: Interval, /) -> Interval:
+    """Enclose a Bernstein polynomial on ``[first, last]`` of its unit domain.
+
+    ``net`` has shape ``(local, degree + 1)``; ``first``/``last`` enclose the
+    local sub-interval endpoints of every box, shape ``(boxes,)``. The
+    restricted net's coefficients are blossom values with ``j`` arguments at
+    ``last`` and the rest at ``first``; their hull encloses the polynomial on
+    the sub-interval (convex hull property), evaluated with outward interval
+    de Casteljau steps.
+    """
+    degree = np.shape(net[0])[-1] - 1
+    boxes = np.shape(first[0])[0]
+    lower = np.broadcast_to(np.asarray(net[0]), (boxes, *np.shape(net[0])))
+    upper = np.broadcast_to(np.asarray(net[1]), lower.shape)
+    one = (np.ones(()), np.ones(()))
+    result_lower: NDArray[np.float64] | None = None
+    result_upper: NDArray[np.float64] | None = None
+    for index in range(degree + 1):
+        row_lower, row_upper = lower, upper
+        for step in range(degree):
+            point = last if step < index else first
+            parameter = (
+                np.asarray(point[0])[:, None, None],
+                np.asarray(point[1])[:, None, None],
+            )
+            combined = interval_add(
+                interval_multiply(
+                    interval_subtract(one, parameter),
+                    (row_lower[..., :-1], row_upper[..., :-1]),
+                ),
+                interval_multiply(parameter, (row_lower[..., 1:], row_upper[..., 1:])),
+            )
+            row_lower, row_upper = np.asarray(combined[0]), np.asarray(combined[1])
+        value_lower = row_lower[..., 0]
+        value_upper = row_upper[..., 0]
+        result_lower = (
+            value_lower if result_lower is None else np.minimum(result_lower, value_lower)
+        )
+        result_upper = (
+            value_upper if result_upper is None else np.maximum(result_upper, value_upper)
+        )
+    if result_lower is None or result_upper is None:
+        raise ValueError("a Bernstein range needs at least one coefficient.")
+    return result_lower, result_upper
+
+
+def _bspline_jet_interval(
+    aligned: bool,
+    knots: Interval,
+    parameters: Interval,
+    spans: Interval,
+    output_shape: tuple[int, ...],
+    tables: dict[tuple[bytes, int, int, int], _JetTable],
+    /,
+) -> Interval | None:
+    """Enclose B-spline basis jets per knot span in Bernstein form.
+
+    Each span index the span interval admits contributes its polynomial
+    pieces' Bernstein enclosure on the box. Searched (``aligned``) spans
+    contain their parameters, so the box is first clipped to the span and
+    spans the box misses contribute nothing; a box crossing knots is thus
+    split at them. Piece spans are evaluated on the whole box. Returns
+    ``None`` when the equation is outside this rule's preconditions (moving or
+    unsorted knots, misaligned shapes, zero-length pieces); callers then
+    interpret the equation's own program.
+    """
+    knot_values = np.asarray(knots[0])
+    if (
+        knot_values.ndim != 1
+        or knot_values.dtype.kind != "f"
+        or not np.array_equal(knot_values, np.asarray(knots[1]))
+        or not np.all(np.isfinite(knot_values))
+        or np.any(np.diff(knot_values) < 0.0)
+        or len(output_shape) < 2
+    ):
+        return None
+    order_count, local = output_shape[-2:]
+    degree = local - 1
+    count = knot_values.size - degree - 1
+    parameter_lower = np.asarray(parameters[0], dtype=np.float64)
+    parameter_upper = np.asarray(parameters[1], dtype=np.float64)
+    span_lower, span_upper = np.asarray(spans[0]), np.asarray(spans[1])
+    shape = parameter_lower.shape
+    if (
+        count <= degree
+        or output_shape != (*shape, order_count, local)
+        or parameter_upper.shape != shape
+        or span_lower.shape != shape
+        or span_upper.shape != shape
+        # Integer operands travel as exact binary64 interval endpoints.
+        or span_lower.dtype.kind not in "iuf"
+        or span_upper.dtype.kind not in "iuf"
+        or not np.all(np.isfinite(span_lower))
+        or not np.all(np.isfinite(span_upper))
+        or np.any(span_lower != np.floor(span_lower))
+        or np.any(span_upper != np.floor(span_upper))
+        or not np.all(np.isfinite(parameter_lower))
+        or not np.all(np.isfinite(parameter_upper))
+        or np.any(span_lower < degree)
+        or np.any(span_upper >= count)
+        or np.any(span_lower > span_upper)
+    ):
+        return None
+    boxes = int(np.prod(shape, dtype=np.int64))
+    lower = parameter_lower.reshape((boxes,))
+    upper = parameter_upper.reshape((boxes,))
+    first_span = span_lower.reshape((boxes,)).astype(np.int64)
+    last_span = span_upper.reshape((boxes,)).astype(np.int64)
+    result_lower = np.full((boxes, order_count, local), np.inf)
+    result_upper = np.full((boxes, order_count, local), -np.inf)
+    key = knot_values.tobytes()
+    for span in range(
+        int(first_span.min(initial=degree)), int(last_span.max(initial=degree)) + 1
+    ):
+        active = (first_span <= span) & (span <= last_span)
+        left, right = float(knot_values[span]), float(knot_values[span + 1])
+        if aligned:
+            first = np.maximum(lower, left)
+            last = np.minimum(upper, right)
+            active &= first <= last
+        else:
+            first, last = lower, upper
+        if not np.any(active):
+            continue
+        if left == right:
+            # Knot search selects a zero-length span only by clipping into a
+            # degenerate last span, where de Boor's quotients are not the
+            # span's polynomial; a piece span of zero length has no piece.
+            if not aligned or span == count - 1:
+                return None
+            continue
+        table_key = (key, degree, span, order_count)
+        table = tables.get(table_key)
+        if table is None:
+            table = _bspline_span_jet_table(knot_values, degree, span, order_count)
+            tables[table_key] = table
+        origin = (np.asarray(left), np.asarray(left))
+        width = interval_subtract((np.asarray(right), np.asarray(right)), origin)
+        start = interval_divide(
+            interval_subtract((first[active], first[active]), origin), width
+        )
+        stop = interval_divide(
+            interval_subtract((last[active], last[active]), origin), width
+        )
+        if aligned:
+            # The clipped endpoints lie in the span: their local values lie in [0, 1].
+            start = (np.clip(start[0], 0.0, 1.0), np.clip(start[1], 0.0, 1.0))
+            stop = (np.clip(stop[0], 0.0, 1.0), np.clip(stop[1], 0.0, 1.0))
+        for order, net in enumerate(table):
+            jet_lower, jet_upper = _bernstein_range(net, start, stop)
+            result_lower[active, order] = np.minimum(
+                result_lower[active, order], jet_lower
+            )
+            result_upper[active, order] = np.maximum(
+                result_upper[active, order], jet_upper
+            )
+    if np.any(result_lower > result_upper):
+        return None
+    return (
+        result_lower.reshape(output_shape),
+        result_upper.reshape(output_shape),
+    )
+
+
+def _bspline_jet_equation(
+    equation: jax_core.JaxprEqn,
+    arguments: tuple[Interval, ...],
+    tables: dict[tuple[bytes, int, int, int], _JetTable],
+    /,
+) -> Interval | None:
+    """Span-wise jet enclosure of a staged B-spline basis-jet equation, if it is one."""
+    owner = custom_jvp_rule_owner(equation.params.get("jvp_jaxpr_fun"))
+    aligned = None if owner is None else bspline_jet_rule_alignment(owner.f)
+    operands = arguments[int(equation.params.get("num_consts", 0)) :]
+    if aligned is None or len(operands) != 3 or len(equation.outvars) != 1:
+        return None
+    aval = equation.outvars[0].aval
+    if not isinstance(aval, ShapedArray):
+        return None
+    knots, parameters, spans = operands
+    return _bspline_jet_interval(
+        aligned, knots, parameters, spans, tuple(aval.shape), tables
+    )
 
 
 def _primitive(
@@ -1297,6 +1584,20 @@ def _primitive(
             )
             result = np.broadcast_to(value.reshape(reshape), shape)
             return ((result, result),)
+        case "call_hi_primitive" if isinstance(params["_prim"], SearchSorted):
+            return (_searchsorted_interval(params["_prim"], values[0], values[1]),)
+        case "call_hi_primitive":
+            raise IntervalExtensionError(
+                f"no sound interval extension for JAX high-level primitive {type(params['_prim']).__name__!r}."
+            )
+        case "pure_callback":
+            # Opaque host callbacks (traced runtime checks such as Equinox
+            # error_if) are reached only when the check is not certainly
+            # passing on the box: the interval route refuses rather than
+            # certify a value whose own validity check may fail.
+            raise IntervalExtensionError(
+                "a traced runtime check is not certainly satisfied on this interval box."
+            )
         case _:
             raise IntervalExtensionError(
                 f"no sound interval extension for JAX primitive {name!r}."
@@ -1393,6 +1694,7 @@ def _evaluate_jaxpr(
     jaxpr: jax_core.Jaxpr,
     constants: tuple[Interval, ...],
     inputs: tuple[Interval, ...],
+    tables: dict[tuple[bytes, int, int, int], _JetTable],
     /,
 ) -> tuple[Interval, ...]:
     environment: dict[jax_core.Var, Interval] = {}
@@ -1405,7 +1707,14 @@ def _evaluate_jaxpr(
         identity.record(equation)
         arguments = tuple(_read_atom(atom, environment) for atom in equation.invars)
         name = equation.primitive.name
-        if name in ("pjit", "jit", "custom_jvp_call"):
+        jets = (
+            _bspline_jet_equation(equation, arguments, tables)
+            if name == "custom_jvp_call"
+            else None
+        )
+        if jets is not None:
+            outputs = (jets,)
+        elif name in ("pjit", "jit", "custom_jvp_call"):
             nested = equation.params.get(
                 "call_jaxpr" if name == "custom_jvp_call" else "jaxpr"
             )
@@ -1414,9 +1723,10 @@ def _evaluate_jaxpr(
                     nested.jaxpr,
                     tuple(_as_interval(value) for value in nested.consts),
                     arguments,
+                    tables,
                 )
             elif isinstance(nested, jax_core.Jaxpr):
-                outputs = _evaluate_jaxpr(nested, (), arguments)
+                outputs = _evaluate_jaxpr(nested, (), arguments, tables)
             else:
                 raise IntervalExtensionError(
                     f"unsupported nested jaxpr for primitive {name!r}."
@@ -1436,6 +1746,7 @@ def _evaluate_jaxpr(
                     branch.jaxpr,
                     tuple(_as_interval(value) for value in branch.consts),
                     arguments[1:],
+                    tables,
                 )
             else:
                 branch_outputs = tuple(
@@ -1443,6 +1754,7 @@ def _evaluate_jaxpr(
                         branch.jaxpr,
                         tuple(_as_interval(value) for value in branch.consts),
                         arguments[1:],
+                        tables,
                     )
                     for branch in branches
                 )
@@ -1451,7 +1763,7 @@ def _evaluate_jaxpr(
                     for index in range(len(branch_outputs[0]))
                 )
         elif name == "scan":
-            outputs = _evaluate_scan(equation, arguments)
+            outputs = _evaluate_scan(equation, arguments, tables)
         elif identity.is_square(equation):
             outputs = (interval_square(arguments[0]),)
         else:
@@ -1467,7 +1779,10 @@ def _evaluate_jaxpr(
 
 
 def _evaluate_scan(
-    equation: jax_core.JaxprEqn, arguments: tuple[Interval, ...], /
+    equation: jax_core.JaxprEqn,
+    arguments: tuple[Interval, ...],
+    tables: dict[tuple[bytes, int, int, int], _JetTable],
+    /,
 ) -> tuple[Interval, ...]:
     """Unroll a fixed-length scan: each step is a sound enclosure of the last."""
     body = equation.params["jaxpr"]
@@ -1492,7 +1807,7 @@ def _evaluate_scan(
             (np.asarray(lower)[step], np.asarray(upper)[step]) for lower, upper in scanned
         )
         result = _evaluate_jaxpr(
-            body.jaxpr, body_constants, (*constants, *carry, *sliced)
+            body.jaxpr, body_constants, (*constants, *carry, *sliced), tables
         )
         carry = result[:carry_count]
         stacked.append(result[carry_count:])
@@ -1528,6 +1843,11 @@ class PreparedIntervalFunction:
     execution: IntervalExecution = "host"
     native_program: NativeIntervalProgram | None = field(
         default=None, init=False, repr=False, compare=False
+    )
+    # Exact span Bernstein tables of this program's B-spline jets, derived on
+    # first use from its captured knots and kept for this program's lifetime.
+    jet_tables: dict[tuple[bytes, int, int, int], _JetTable] = field(
+        default_factory=dict, init=False, repr=False, compare=False
     )
     execution_reason: str = field(init=False)
 
@@ -1602,6 +1922,7 @@ class PreparedIntervalFunction:
                     self.closed_jaxpr.jaxpr,
                     self.constant_intervals,
                     ((chunk_lower, chunk_upper),),
+                    self.jet_tables,
                 )
                 chunk_low, chunk_high = output
             else:
