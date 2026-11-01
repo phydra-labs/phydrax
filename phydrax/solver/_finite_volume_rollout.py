@@ -447,47 +447,32 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         epsilon_ = float(epsilon)
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
-        initial_content = initial_state.content_state.conservative_content
-        # Owned programs: the forward and reverse derivatives each run as one
-        # program, and one objective program serves both finite-difference
-        # evaluations.
-        directional = run_owned_program(
-            self,
-            "rollout-forward-derivative",
-            ScheduledFiniteVolumeRolloutPlan._forward_derivative,
-            loss,
-            initial_state,
-            direction,
-            args,
-        )
-        reverse = run_owned_program(
-            self,
-            "rollout-reverse-derivative",
-            ScheduledFiniteVolumeRolloutPlan._reverse_derivative,
-            loss,
-            initial_state,
-            direction,
-            args,
-        )
+
+        def objective(content: Array) -> Array:
+            content_state = initial_state.content_state.with_content(content)
+            runtime = FiniteVolumeRuntimeState(
+                content_state,
+                initial_state.topology_journal,
+                initial_state.step_size,
+                accepted_step=initial_state.accepted_step,
+                last_status=initial_state.last_status,
+                controller_state=initial_state.controller_state,
+                integrator_state=initial_state.integrator_state,
+                output_cursor=initial_state.output_cursor,
+                sliding_coupling=initial_state.sliding_coupling,
+                sliding_shift=initial_state.sliding_shift,
+                sliding_event_id=initial_state.sliding_event_id,
+            )
+            return loss(self.rollout(runtime, args).final_state, args)
+
+        # Keep the independent AD checks diagnostic rather than compiling three
+        # additional whole-rollout programs: that increased cold time and memory.
+        _, directional = jax.jvp(objective, (initial_content,), (direction,))
+        gradient = jax.grad(objective)(initial_content)
+        reverse = jnp.vdot(gradient, direction)
         finite_difference = (
-            run_owned_program(
-                self,
-                "rollout-objective",
-                ScheduledFiniteVolumeRolloutPlan._objective,
-                loss,
-                initial_state,
-                initial_content + epsilon_ * direction,
-                args,
-            )
-            - run_owned_program(
-                self,
-                "rollout-objective",
-                ScheduledFiniteVolumeRolloutPlan._objective,
-                loss,
-                initial_state,
-                initial_content - epsilon_ * direction,
-                args,
-            )
+            objective(initial_content + epsilon_ * direction)
+            - objective(initial_content - epsilon_ * direction)
         ) / (2.0 * epsilon_)
         return FiniteVolumeGradientReport(
             directional_derivative=self.runtime.precision.decision(directional),
@@ -502,58 +487,6 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
                 jnp.abs(directional - finite_difference)
             ),
         )
-
-    def _objective(
-        self,
-        loss: RolloutLoss,
-        initial_state: FiniteVolumeRuntimeState,
-        content: Array,
-        args: Any,
-        /,
-    ) -> Array:
-        content_state = initial_state.content_state.with_content(content)
-        runtime = FiniteVolumeRuntimeState(
-            content_state,
-            initial_state.topology_journal,
-            initial_state.step_size,
-            accepted_step=initial_state.accepted_step,
-            last_status=initial_state.last_status,
-            controller_state=initial_state.controller_state,
-            integrator_state=initial_state.integrator_state,
-            output_cursor=initial_state.output_cursor,
-            sliding_coupling=initial_state.sliding_coupling,
-            sliding_shift=initial_state.sliding_shift,
-            sliding_event_id=initial_state.sliding_event_id,
-        )
-        return loss(self._rollout(runtime, args).final_state, args)
-
-    def _forward_derivative(
-        self,
-        loss: RolloutLoss,
-        initial_state: FiniteVolumeRuntimeState,
-        direction: Array,
-        args: Any,
-        /,
-    ) -> Array:
-        def objective(content: Array) -> Array:
-            return self._objective(loss, initial_state, content, args)
-
-        initial_content = initial_state.content_state.conservative_content
-        return jax.jvp(objective, (initial_content,), (direction,))[1]
-
-    def _reverse_derivative(
-        self,
-        loss: RolloutLoss,
-        initial_state: FiniteVolumeRuntimeState,
-        direction: Array,
-        args: Any,
-        /,
-    ) -> Array:
-        def objective(content: Array) -> Array:
-            return self._objective(loss, initial_state, content, args)
-
-        initial_content = initial_state.content_state.conservative_content
-        return jnp.vdot(jax.grad(objective)(initial_content), direction)
 
 
 __all__ = [
