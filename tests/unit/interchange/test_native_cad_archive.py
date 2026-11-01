@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -1037,6 +1038,8 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
 ) -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
+    # Writer and cold reader run under different string-hash seeds, so the
+    # reproduced certificate and identity checks cannot depend on hash order.
     written = subprocess.run(
         [
             sys.executable,
@@ -1045,6 +1048,7 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
             str(tmp_path),
         ],
         cwd=_REPOSITORY_ROOT,
+        env={**os.environ, "PYTHONHASHSEED": "1"},
         check=True,
         capture_output=True,
         text=True,
@@ -1060,13 +1064,15 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
             json.dumps(expected),
         ],
         cwd=_REPOSITORY_ROOT,
+        env={**os.environ, "PYTHONHASHSEED": "2"},
         check=True,
         capture_output=True,
         text=True,
     )
     assert restored.stdout.strip() == "layer-curving-evidence-cold-restored"
 
-    manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
+    # The worker writes and reads layer-curving compositions with limits=None.
+    manifest, arrays = read_model_archive(source, limits=None)
 
     def find_implicit_trace(node: object) -> dict[str, Any] | None:
         if isinstance(node, dict):
@@ -1096,9 +1102,7 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
     assert lower_bound["kind"] == "literal"
     lower_bound["value"] += 0.125
     corrupted = tmp_path / "changed-implicit-layer-chart-evidence.phx"
-    write_model_archive(
-        corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
-    )
+    write_model_archive(corrupted, manifest=manifest, arrays=arrays, limits=None)
     refused = subprocess.run(
         [
             sys.executable,
