@@ -1619,8 +1619,20 @@ def write_model_archive(
         raise ValueError(
             "Native model archive manifests hold only kind and model_recipe."
         )
+    return _write_model_archive_recipe(
+        path, _unaliased_recipe(manifest["model_recipe"]), arrays, limits
+    )
+
+
+def _write_model_archive_recipe(
+    path: str | Path,
+    recipe: dict[str, Any],
+    arrays: dict[str, Any],
+    limits: ArrayArchiveLimits | None,
+    /,
+) -> Path:
     shared_recipe, members = share_model_archive_recipe(
-        _unaliased_recipe(manifest["model_recipe"]), arrays, prefix=_MODEL_ARRAYS
+        recipe, arrays, prefix=_MODEL_ARRAYS
     )
     return write_array_archive(
         path,
@@ -1689,12 +1701,9 @@ def write_model_artifact(
     arrays = pack_model_array_tree(
         archive_model, recipe, prefix=_MODEL_ARRAYS, limits=limits
     )
-    return write_model_archive(
-        path,
-        manifest={"kind": _MODEL_KIND, "model_recipe": recipe},
-        arrays=arrays,
-        limits=limits,
-    )
+    # model_structure_recipe creates a distinct node for every occurrence;
+    # unlike an expanded shared archive, it needs no unaliasing copy.
+    return _write_model_archive_recipe(path, recipe, arrays, limits)
 
 
 def read_model_artifact(
