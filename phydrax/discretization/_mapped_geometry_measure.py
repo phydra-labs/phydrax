@@ -16,7 +16,10 @@ from ._cell_geometry import (
     coordinate_effective_basis,
     ScalarCoordinateElement,
 )
-from ._cell_geometry_validity import certify_cell_geometry_validity
+from ._cell_geometry_validity import (
+    CellValidityCertificate,
+    certify_cell_geometry_validity,
+)
 from ._cell_mesh import CellMesh
 from ._coordinate_enclosure import (
     add,
@@ -38,7 +41,11 @@ from ._coordinate_enclosure import (
     scale,
     sum_polynomials,
 )
-from ._exact_algebraic_geometry import coefficient_endpoint, coefficient_interval
+from ._exact_algebraic_geometry import (
+    coefficient_endpoint,
+    coefficient_interval,
+    coefficient_payload,
+)
 from ._reference_cell import reference_cell_topology
 
 
@@ -866,6 +873,7 @@ def certified_cell_measures(
     *,
     absolute_tolerance: float = 1e-12,
     relative_tolerance: float = 1e-12,
+    validity: CellValidityCertificate | None = None,
 ) -> MappedCellMeasures:
     """Integrate certified mapped volume and embedded measures per cell.
 
@@ -880,7 +888,12 @@ def certified_cell_measures(
     relative = finite_real_scalar(relative_tolerance, "relative_tolerance")
     if relative < 0.0:
         raise ValueError("relative_tolerance must be nonnegative.")
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    if validity is None:
+        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    elif not isinstance(validity, CellValidityCertificate):
+        raise TypeError("validity must be CellValidityCertificate or None.")
+    else:
+        validity.require_bound(geometry, mesh=mesh)
     if not validity.all_certified:
         raise ValueError("Mapped cell measures require every cell to be certified valid.")
     cells = mapped_geometry_cells(mesh, geometry)
@@ -889,6 +902,14 @@ def certified_cell_measures(
     exact = True
     absolute_per_cell = Fraction(absolute) / max(len(cells), 1)
     relative_fraction = Fraction(relative)
+    embedded_integrals: dict[tuple[object, ...], tuple[float, float, bool]] = {}
+
+    def polynomial_key(polynomial: Polynomial, /) -> tuple[object, ...]:
+        return tuple(
+            (exponent, coefficient_payload(coefficient))
+            for exponent, coefficient in sorted(polynomial.items())
+        )
+
     for flattened_row, (element, local, cell_row) in enumerate(cells):
         if not isinstance(element, ScalarCoordinateElement):
             raise TypeError("Mapped cell measures require scalar coordinate elements.")
@@ -925,11 +946,22 @@ def certified_cell_measures(
                 ) = _publish_integral(exact_value)
         elif ambient_dimension > dimension and dimension in (1, 2):
             gram = _gram_density(jacobian, dimension)
-            (
-                values[flattened_row],
-                errors[flattened_row],
-                cell_exact,
-            ) = _integrate_embedded_measure(gram, scalar.cell_kind, absolute_per_cell)
+            if isinstance(gram, RationalPolynomial):
+                key = (
+                    scalar.cell_kind,
+                    "rational",
+                    polynomial_key(dict(gram.numerator)),
+                    polynomial_key(dict(gram.denominator)),
+                )
+            else:
+                key = (scalar.cell_kind, "polynomial", polynomial_key(gram))
+            integral = embedded_integrals.get(key)
+            if integral is None:
+                integral = _integrate_embedded_measure(
+                    gram, scalar.cell_kind, absolute_per_cell
+                )
+                embedded_integrals[key] = integral
+            values[flattened_row], errors[flattened_row], cell_exact = integral
             exact = exact and cell_exact
         else:
             raise ValueError(

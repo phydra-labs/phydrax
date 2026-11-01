@@ -70,10 +70,8 @@ if TYPE_CHECKING:
 Corners = tuple[tuple[Fraction, Fraction], ...]
 type _SurfaceChartToken = tuple[int, int]
 type _SurfaceChartPoint = tuple[_SurfaceChartToken, _SurfaceChartToken]
-type _SurfaceChartTriangle = tuple[
-    _SurfaceChartPoint, _SurfaceChartPoint, _SurfaceChartPoint
-]
-type _SurfaceChartRationalBank = tuple[_SurfaceChartTriangle, ...]
+type _SurfaceChartCell = tuple[_SurfaceChartPoint, ...]
+type _SurfaceChartRationalBank = tuple[_SurfaceChartCell, ...]
 
 
 def _fraction_coordinate(value: object, name: str, /) -> Fraction:
@@ -116,22 +114,23 @@ def _exact_surface_chart_bank(
     count: int,
     supplied: Sequence[Corners] | None,
     /,
+    *,
+    cell_kind: str = "triangle",
 ) -> tuple[Corners, ...]:
     from ..discretization._surface_chart_records import _area, exact_chart_bank
 
     if supplied is None:
-        exact_rows = exact_chart_bank(realization, count)
+        exact_rows = exact_chart_bank(realization, count, cell_kind=cell_kind)
     else:
         if len(supplied) != count:
             raise ValueError("Exact source charts must align with their cell rows.")
         rows: list[Corners] = []
         for row in supplied:
-            if len(row) != 3:
-                raise ValueError(
-                    "Surface source charts must retain three exact UV corners."
-                )
+            corner_count = 3 if cell_kind == "triangle" else 4
+            if cell_kind not in ("triangle", "quadrilateral") or len(row) != corner_count:
+                raise ValueError("Surface source chart corners must match the cell kind.")
             points = tuple(_exact_uv(point, "Exact source UV point") for point in row)
-            rows.append((points[0], points[1], points[2]))
+            rows.append(points)
         exact_rows = tuple(rows)
     rounded = np.asarray(
         [[[float(value) for value in point] for point in row] for row in exact_rows],
@@ -142,7 +141,7 @@ def _exact_surface_chart_bank(
             "Exact source UV charts do not round to their retained float realization."
         )
     if any(not _area(row) for row in exact_rows):
-        raise ValueError("Exact source chart triangles must be nondegenerate.")
+        raise ValueError("Exact source chart cells must be nondegenerate.")
     return tuple(exact_rows)
 
 
@@ -265,6 +264,7 @@ def validate_surface_source_pieces(
     /,
     *,
     exact_charts: Sequence[Corners],
+    cell_kind: str = "triangle",
 ) -> None:
     """Bind every surface chart to one current exact source-piece identity."""
     if not isinstance(domain, MeshingDomain):
@@ -279,7 +279,8 @@ def validate_surface_source_pieces(
         or patch_rows.dtype.kind not in "iu"
         or np.any(patch_rows < 0)
         or np.any(patch_rows >= len(domain.patches))
-        or chart_rows.shape != (patch_rows.size, 3, 2)
+        or chart_rows.shape != (patch_rows.size, 3 if cell_kind == "triangle" else 4, 2)
+        or cell_kind not in ("triangle", "quadrilateral")
         or not np.all(np.isfinite(chart_rows))
         or root_rows.shape != patch_rows.shape
         or root_rows.dtype.kind not in "iu"
@@ -299,7 +300,9 @@ def validate_surface_source_pieces(
         )
     ):
         raise ValueError("Surface source-piece identities and chart rows must align.")
-    exact_rows = _exact_surface_chart_bank(chart_rows, patch_rows.size, exact_charts)
+    exact_rows = _exact_surface_chart_bank(
+        chart_rows, patch_rows.size, exact_charts, cell_kind=cell_kind
+    )
     from ..meshing._plc_source import _numeric_entity_ids
     from .brep._patches import BSplineSurfacePatch
     from .brep._tspline import TSplineSurfacePatch
@@ -512,8 +515,10 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             )
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
             raise ValueError("SurfaceSourceCharts.mesh must be a surface in three-space.")
-        if any(block.cell_kind != "triangle" for block in mesh.blocks):
-            raise ValueError("SurfaceSourceCharts roots must be triangular cells.")
+        cell_kinds = {block.cell_kind for block in mesh.blocks}
+        if len(cell_kinds) != 1 or not cell_kinds <= {"triangle", "quadrilateral"}:
+            raise ValueError("SurfaceSourceCharts require one surface cell kind.")
+        cell_kind = next(iter(cell_kinds))
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if coordinate_contract.coordinate_system != "cartesian":
@@ -538,23 +543,23 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         parameters = np.asarray(root_parameters, dtype=np.float64)
         patches_raw = np.asarray(root_patches)
         if (
-            parameters.shape != (len(cell_ids), 3, 2)
+            parameters.shape != (len(cell_ids), 3 if cell_kind == "triangle" else 4, 2)
             or not np.all(np.isfinite(parameters))
             or patches_raw.shape != (len(cell_ids),)
             or patches_raw.dtype.kind not in "iu"
         ):
             raise ValueError(
-                "Root surface charts must align as finite (cells, 3, 2) UV triangles."
+                "Root surface charts must align with finite cell-kind UV corners."
             )
         patches = np.asarray(patches_raw, dtype=np.int64)
         source_root_cell_ids_ = np.asarray(source_root_cell_ids)
         source_piece_ids_ = tuple(tuple(row) for row in source_piece_ids)
         exact_parameters = _exact_surface_chart_bank(
-            parameters, len(cell_ids), root_parameter_exact
+            parameters, len(cell_ids), root_parameter_exact, cell_kind=cell_kind
         )
         from ..discretization._surface_chart_records import rational_chart_tokens
 
-        parameter_tokens = rational_chart_tokens(exact_parameters)
+        parameter_tokens = rational_chart_tokens(exact_parameters, cell_kind=cell_kind)
         if np.any(patches < 0) or np.any(patches >= len(domain.patches)):
             raise ValueError("Root chart patch IDs must name declared source patches.")
         validate_surface_source_pieces(
@@ -564,6 +569,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             source_root_cell_ids_,
             source_piece_ids_,
             exact_charts=exact_parameters,
+            cell_kind=cell_kind,
         )
         if set(patches.tolist()) != set(boundary_source.patches):
             raise ValueError(
@@ -713,6 +719,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             geometry_id=geometry_id,
             topology_id=self.mesh.topology_id,
             domain_id=self.domain.domain_id,
+            cell_kind=self.mesh.blocks[0].cell_kind,
             cell_global_ids=np.asarray(self.cell_global_ids, dtype=np.int64),
             patches=self.root_patches,
             charts=self.root_parameters,
@@ -846,6 +853,7 @@ class _SplineSurfaceCoordinateMap(StrictModule, NonTrainableState):
     rounded_vertices: np.ndarray
     exact_coordinates: tuple[tuple[ExactScalar, ...], ...]
     coefficient_keys: tuple[tuple[int, int], ...]
+    coefficient_authorities: tuple[tuple[object, ...], ...] = eqx.field(static=True)
     source_map_id: str
 
     def __init__(
@@ -856,12 +864,14 @@ class _SplineSurfaceCoordinateMap(StrictModule, NonTrainableState):
         exact_coordinates: Sequence[Sequence[ExactScalar]],
         numeric_coordinates: ArrayLike,
         coefficient_keys: Sequence[tuple[int, int]],
+        coefficient_authorities: Sequence[tuple[object, ...]],
         /,
     ) -> None:
         source = str(source_id).strip()
         revision = str(source_revision).strip()
         exact = tuple(tuple(row) for row in exact_coordinates)
         raw_keys = tuple(tuple(row) for row in coefficient_keys)
+        authorities = tuple(tuple(row) for row in coefficient_authorities)
         rounded = np.asarray(rounded_vertices, dtype=np.float64)
         numeric = np.asarray(numeric_coordinates, dtype=np.float64)
         if not source or not revision or not exact or any(len(row) != 3 for row in exact):
@@ -888,6 +898,10 @@ class _SplineSurfaceCoordinateMap(StrictModule, NonTrainableState):
         keys = tuple((int(row[0]), int(row[1])) for row in raw_keys)
         if len(set(keys)) != len(keys):
             raise ValueError("Spline control identity keys must be unique.")
+        if len(authorities) != len(keys) or len(set(authorities)) != len(authorities):
+            raise ValueError(
+                "Spline coefficient authorities must uniquely align with the bank."
+            )
         try:
             exact_shadow = np.asarray(
                 [[float(value) for value in row] for row in exact],
@@ -920,6 +934,7 @@ class _SplineSurfaceCoordinateMap(StrictModule, NonTrainableState):
         self.rounded_vertices = rounded
         self.exact_coordinates = exact
         self.coefficient_keys = keys
+        self.coefficient_authorities = authorities
         self.source_map_id = canonical_fingerprint(
             {
                 "kind": "exact-spline-surface-coordinate-map",
@@ -928,6 +943,7 @@ class _SplineSurfaceCoordinateMap(StrictModule, NonTrainableState):
                 "rounded_vertices": array_tree_fingerprint(rounded),
                 "exact_coordinates": payload,
                 "coefficient_keys": keys,
+                "coefficient_authorities": authorities,
             }
         )
 
@@ -1165,7 +1181,35 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
             root_parameters = np.asarray(root_result.root_parameters, dtype=np.float64)
             root_patches = np.asarray(root_result.root_patches, dtype=np.int64)
             root_ids = root_result.root_cell_ids
-            root_atlas_ids = root_result.root_cell_ids
+            from ..meshing._plc_source import _numeric_entity_ids
+
+            patch_keys = domain.stratum_entity_ids(2)
+            root_atlas_ids = tuple(
+                _numeric_entity_ids(
+                    "native-surface-root-cell",
+                    (
+                        canonical_fingerprint(
+                            {
+                                "kind": "native-surface-root-cell",
+                                "source": (domain.source_id, domain.source_revision),
+                                "patch": (
+                                    patch_keys[int(patch)],
+                                    domain.source_occurrences[2][int(patch)],
+                                ),
+                                "piece": piece,
+                                "bounds": tuple((str(u), str(v)) for u, v in corners),
+                            }
+                        ),
+                    ),
+                    (domain.source_occurrences[2][int(patch)],),
+                )[0]
+                for patch, piece, corners in zip(
+                    root_patches,
+                    root_result.root_source_cell_ids,
+                    root_result.root_parameter_bounds,
+                    strict=True,
+                )
+            )
             root_source_ids = root_result.root_source_cell_ids
             bounds = tuple(map(root_result.root_parameter_chart, range(len(root_ids))))
             coordinate_contract = root_result.coordinate_contract
@@ -1322,6 +1366,9 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                 or chart_witness.geometry_id != cell_geometry_id(geometry)
                 or chart_witness.topology_id != mesh.topology_id
                 or chart_witness.domain_id != self.domain.domain_id
+                or any(
+                    block.cell_kind != chart_witness.cell_kind for block in mesh.blocks
+                )
             ):
                 raise ValueError(
                     "Surface chart witness must bind the exact target geometry, topology, and domain."
@@ -1356,6 +1403,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                 chart_roots,
                 chart_witness.source_piece_ids,
                 exact_charts=exact_charts,
+                cell_kind=chart_witness.cell_kind,
             )
             patch_keys = self.domain.stratum_entity_ids(2)
             for row, cell_id in enumerate(chart_cell_ids.tolist()):
@@ -1619,6 +1667,10 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                         )
                     )
                     arguments = _reference_chart_arguments(root_corners, block.cell_kind)
+                    if affine_map(arguments, 2) is None:
+                        raise ValueError(
+                            "Surface source charts require an exact affine retained reference map."
+                        )
                 elif (
                     reference_map is not None
                     and reference_map.source_reference_chart_arguments is not None
@@ -1954,10 +2006,9 @@ def _control_point_id_bank(surface: BSplineSurfacePatch, /) -> tuple[int, ...]:
     controls = np.asarray(surface.control_points)
     supplied_ids = surface.control_point_ids
     if supplied_ids is None:
-        raise ValueError(
-            "B-spline root atlases require persistent source control_point_ids; "
-            "coefficient row positions are not source identities."
-        )
+        # Integers address extraction rows only; scientific identity is bound
+        # separately to the authored patch and tensor lattice coordinates.
+        return tuple(range(int(controls.shape[0] * controls.shape[1])))
     identifiers = np.asarray(supplied_ids)
     if identifiers.shape != controls.shape[:2] or identifiers.dtype.kind not in "iu":
         raise ValueError(
@@ -1967,6 +2018,39 @@ def _control_point_id_bank(surface: BSplineSurfacePatch, /) -> tuple[int, ...]:
     if np.any(flat < 0) or np.unique(flat).size != flat.size:
         raise ValueError("control_point_ids must be unique nonnegative source IDs.")
     return tuple(int(value) for value in flat)
+
+
+def _control_point_authorities(
+    domain: MeshingDomain, patch: int, /
+) -> tuple[tuple[object, ...], ...]:
+    """Identify controls by authored IDs or source-bound tensor indices."""
+    from .brep._patches import BSplineSurfacePatch
+    from .brep._tspline import TSplineSurfacePatch
+
+    surface = domain.patches[patch].surface
+    owner = (
+        domain.source_id,
+        domain.source_revision,
+        domain.stratum_entity_ids(2)[patch],
+        domain.source_occurrences[2][patch],
+    )
+    if isinstance(surface, BSplineSurfacePatch):
+        if surface.control_point_ids is None:
+            return tuple(
+                (*owner, "tensor-lattice", u, v)
+                for u in range(surface.control_points.shape[0])
+                for v in range(surface.control_points.shape[1])
+            )
+        return tuple(
+            (*owner, "authored-control", value)
+            for value in _control_point_id_bank(surface)
+        )
+    if isinstance(surface, TSplineSurfacePatch):
+        return tuple(
+            (*owner, "authored-anchor", int(anchor.anchor_id))
+            for anchor in surface.mesh.anchors
+        )
+    raise TypeError("Spline control authorities require a supported spline source.")
 
 
 def _exact_tspline_source_banks(
@@ -2073,9 +2157,11 @@ def _validate_root_atlas(
             "Spline root source map must bind the current exact coefficient bank."
         )
     expected_keys: list[tuple[int, int]] = []
+    expected_authorities: list[tuple[object, ...]] = []
     patch_values = tuple(int(patches[index]) for index in range(patches.shape[0]))
     for patch in sorted(set(patch_values)):
         surface = domain.patches[patch].surface
+        expected_authorities.extend(_control_point_authorities(domain, patch))
         if isinstance(surface, BSplineSurfacePatch):
             expected_keys.extend(
                 (patch, int(identifier)) for identifier in _control_point_id_bank(surface)
@@ -2086,9 +2172,11 @@ def _validate_root_atlas(
             )
         else:
             raise ValueError("Spline root source map contains an unsupported carrier.")
-    if source_map.coefficient_keys != tuple(expected_keys):
+    if source_map.coefficient_keys != tuple(
+        expected_keys
+    ) or source_map.coefficient_authorities != tuple(expected_authorities):
         raise ValueError(
-            "Spline root source coefficient keys must match authored control IDs."
+            "Spline root coefficient identities must match their authored source authorities."
         )
     source_row_by_key = {key: row for row, key in enumerate(expected_keys)}
     exact_shadow = np.asarray(
@@ -2388,6 +2476,7 @@ def prepare_surface_source_root_atlas(
     coefficient_parts: list[np.ndarray] = []
     exact_coordinate_rows: list[tuple[ExactScalar, ...]] = []
     coefficient_keys: list[tuple[int, int]] = []
+    coefficient_authorities: list[tuple[object, ...]] = []
     parameters: list[np.ndarray] = []
     patch_rows: list[int] = []
     source_cells: list[tuple[int, ...]] = []
@@ -2491,6 +2580,7 @@ def prepare_surface_source_root_atlas(
                 for v in range(surface.control_points.shape[1])
             )
             coefficient_parts.append(controls)
+            coefficient_authorities.extend(_control_point_authorities(domain, patch))
             exact_coordinate_rows.extend(exact_control_bank)
             coefficient_keys.extend(
                 (patch, int(identifier)) for identifier in control_ids
@@ -2546,6 +2636,7 @@ def prepare_surface_source_root_atlas(
                 weights_exact_shadow,
             ) = _exact_tspline_source_banks(surface)
             coefficient_parts.append(controls_exact_shadow)
+            coefficient_authorities.extend(_control_point_authorities(domain, patch))
             exact_coordinate_rows.extend(exact_control_bank)
             coefficient_keys.extend(
                 (patch, int(anchor.anchor_id)) for anchor in surface.mesh.anchors
@@ -2609,6 +2700,7 @@ def prepare_surface_source_root_atlas(
         exact_coordinate_rows,
         numeric_controls,
         coefficient_keys,
+        coefficient_authorities,
     )
     root_geometry = CellGeometrySpec(
         elements,

@@ -116,6 +116,7 @@ from phydrax._model._structure import (
     SphereMaterialCellAtlasArchiveRecipe,
     SurfaceChartBoundarySourceArchiveRecipe,
     SurfaceEnvelopeSourceArchiveRecipe,
+    SurfaceNativeRestrictionBoundarySourceArchiveRecipe,
     SurfaceSourceChartsArchiveRecipe,
     SurfaceSubdivisionBoundarySourceArchiveRecipe,
 )
@@ -4645,7 +4646,11 @@ def _rebuild_source_fidelity_certificate(
             retained.parent_geometry, parent_mesh
         )
         parent_certificate = _rebuild_source_fidelity_certificate(
-            retained.parent_certificate, parent_mesh, parent_geometry, source, source_record
+            retained.parent_certificate,
+            parent_mesh,
+            parent_geometry,
+            source,
+            source_record,
         )
         transition = (
             None
@@ -4678,10 +4683,6 @@ def _rebuild_source_fidelity_certificate(
 
 
 def _write_implicit_chart_restriction(directory: Path, /) -> None:
-    from tests.unit.meshing.test_source_association_transfer import (
-        _implicit_surface_result,
-        _profile,
-    )
     from phydrax.meshing._adaptation import (
         execute_mesh_adaptation,
         MarkedMeshAdaptation,
@@ -4692,6 +4693,10 @@ def _write_implicit_chart_restriction(directory: Path, /) -> None:
     from phydrax.meshing._bisection import BisectionCompatibility
     from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
     from phydrax.meshing.providers._native_sources import NativeImplicitSource
+    from tests.unit.meshing.test_source_association_transfer import (
+        _implicit_surface_result,
+        _profile,
+    )
 
     source = _implicit_surface_result(
         _profile("restriction-sphere"), relative_cell_diameter=0.4
@@ -4714,7 +4719,9 @@ def _write_implicit_chart_restriction(directory: Path, /) -> None:
     certificate = refined.target.certification.fidelity
     assert certificate is not None and certificate.chart_restriction is not None
     write_model_artifact(
-        directory / "implicit-chart-restriction.phx", certificate, limits=MODEL_ARCHIVE_LIMITS
+        directory / "implicit-chart-restriction.phx",
+        certificate,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     print(json.dumps({"certificate_id": certificate.certificate_id}))
 
@@ -4728,13 +4735,63 @@ def _read_implicit_chart_restriction(path: Path, expected: dict[str, str], /) ->
         source = _rebuild_continuation_value(value.source)
         if not isinstance(source, SourceBoundaryQuery):
             raise TypeError("Cold restriction source lost its query contract.")
-        return _rebuild_source_fidelity_certificate(value, mesh, geometry, source, value.source)
+        return _rebuild_source_fidelity_certificate(
+            value, mesh, geometry, source, value.source
+        )
 
     certificate = read_model_artifact(
-        path, expected_type=SourceFidelityCertificate, restore=rebuild, limits=MODEL_ARCHIVE_LIMITS
+        path,
+        expected_type=SourceFidelityCertificate,
+        restore=rebuild,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     assert certificate.certificate_id == expected["certificate_id"]
     assert certificate.chart_restriction is not None
+    print(json.dumps({"certificate_id": certificate.certificate_id}))
+
+
+def _write_exact_tensor_quad_fidelity(directory: Path, /) -> None:
+    from phydrax.meshing.providers import NativeMeshingProvider
+    from tools.meshing_qualification.scenarios.native_family_matrix import (
+        _CONTRACT,
+        _quarter_surface_case,
+    )
+
+    case = _quarter_surface_case(4)
+    result = (
+        NativeMeshingProvider(case.options)
+        .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    if result.certification is None or result.certification.fidelity is None:
+        raise ValueError("Exact tensor quad result has no fidelity certificate.")
+    certificate = result.certification.fidelity
+    write_model_artifact(
+        directory / "exact-tensor-quad-fidelity.phx", certificate, limits=None
+    )
+    print(json.dumps({"certificate_id": certificate.certificate_id}))
+
+
+def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, str], /) -> None:
+    def rebuild(value: object) -> SourceFidelityCertificate:
+        if type(value) is not SourceFidelityCertificate:
+            raise TypeError("Cold exact tensor root must be SourceFidelityCertificate.")
+        mesh = _rebuild_as(value.binding.mesh, CellMesh)
+        geometry = _rebuild_geometry_for_mesh(value.binding.geometry, mesh)
+        source = _rebuild_continuation_value(value.source)
+        if not isinstance(source, SourceBoundaryQuery):
+            raise TypeError("Cold exact tensor source lost its query contract.")
+        return _rebuild_source_fidelity_certificate(
+            value, mesh, geometry, source, value.source
+        )
+
+    certificate = read_model_artifact(
+        path, expected_type=SourceFidelityCertificate, restore=rebuild, limits=None
+    )
+    if certificate.certificate_id != expected["certificate_id"]:
+        raise ValueError("Cold exact tensor certificate identity changed.")
+    if certificate.mesh_to_source_upper != 0.0 or certificate.source_to_mesh_upper != 0.0:
+        raise ValueError("Cold exact tensor fidelity did not reproduce zero deviation.")
     print(json.dumps({"certificate_id": certificate.certificate_id}))
 
 
@@ -4778,8 +4835,6 @@ def _rebuild_prepared_surface_support(value: object, /) -> PreparedSurfaceSource
     original = _rebuild_continuation_value(value.original)
     if not isinstance(original, (CellMeshingResult, SurfaceSourceRootAtlas)):
         raise TypeError("Prepared surface support lost its accepted root owner.")
-    if isinstance(original, SurfaceSourceRootAtlas):
-        original = _rebuild_surface_source_root_atlas(original)
     root_boundary = _rebuild_as(value.root_boundary_source, MeshingDomainBoundarySource)
     support = PreparedSurfaceSourceSupport(
         domain, original, value.root_parameters, root_boundary
@@ -5149,6 +5204,23 @@ def _rebuild_continuation_value(
         return _rebuild_surface_source_root_atlas(value)
     if type(value) is PreparedSurfaceSourceSupportArchiveRecipe:
         return _rebuild_prepared_surface_support(value)
+    if type(value) is SurfaceNativeRestrictionBoundarySourceArchiveRecipe:
+        from phydrax.geometry._surface_source_support import (
+            SurfaceNativeRestrictionBoundarySource,
+        )
+
+        root = _rebuild_as(value.root, MeshingDomainBoundarySource)
+        support = _rebuild_prepared_surface_support(value.support)
+        mesh = _rebuild_as(value.mesh, CellMesh)
+        geometry = _rebuild_geometry_for_mesh(value.geometry, mesh)
+        source = SurfaceNativeRestrictionBoundarySource(root, support, mesh, geometry)
+        if (
+            source.source_id != value.source_id
+            or source.source_revision != value.source_revision
+            or source.source_scope_id != value.source_scope_id
+        ):
+            raise ValueError("Cold native restriction source changed its identity.")
+        return source
     if (
         type(value).__module__ == "phydrax.discretization._surface_chart_records"
         and type(value).__name__ == "PreparedSurfaceChartDeformation"
@@ -5367,6 +5439,7 @@ def _rebuild_continuation_value(
             geometry_id=value.geometry_id,
             topology_id=value.topology_id,
             domain_id=value.domain_id,
+            cell_kind=value.cell_kind,
             cell_global_ids=value.cell_global_ids,
             patches=value.patches,
             charts=value.charts,
@@ -5600,6 +5673,8 @@ def _rebuild_continuation_value(
             raise ValueError("Reconstructed triangle query identity changed.")
         return query
     if isinstance(value, MeshingDomainArchiveRecipe):
+        if type(value.corner_points_authored) is not bool:
+            raise TypeError("MeshingDomain corner-point provenance must be boolean.")
         patches = _rebuild_tuple_as(value.patches, MeshingSurfacePatch)
         curves = _rebuild_tuple_as(value.curves, MeshingDomainCurve)
         regions = _rebuild_tuple_as(value.regions, MeshingDomainRegion)
@@ -5629,10 +5704,16 @@ def _rebuild_continuation_value(
             brep_authority=brep_authority,
             corner_points=(
                 None
-                if value.corner_points is None
+                if not value.corner_points_authored
                 else _array_archive_input(value.corner_points)
             ),
         )
+        if not np.array_equal(
+            np.asarray(domain.corner_points), np.asarray(value.corner_points)
+        ):
+            raise ValueError(
+                "MeshingDomain corner points changed during source reconstruction."
+            )
         if domain.domain_id != value.expected_domain_id:
             raise ValueError("MeshingDomain identity differs from its source recipe.")
         return domain
@@ -5884,6 +5965,22 @@ def _rebuild_continuation_value(
         )
     if type(value) is CellVertexGeometryElement:
         return CellVertexGeometryElement(value.cell_kind, value.local_dof_count)
+    from phydrax.discretization._cell_geometry import SplineCellGeometryElement
+
+    if isinstance(value, SplineCellGeometryElement):
+        rebuilt = SplineCellGeometryElement(
+            value.anchor_ids,
+            value.parameter_bounds,
+            value.exact_extraction_operator,
+            value.weights,
+            value.source_id,
+            value.source_revision,
+            degrees=value.degrees,
+            exact_weights=value.exact_weights,
+        )
+        if rebuilt.element_id != value.element_id:
+            raise ValueError("Stored spline element differs from its exact extraction.")
+        return rebuilt
     if isinstance(value, PerCellRestrictedCellGeometryElement):
         source_element = _rebuild_scalar_coordinate_element(value.source_element)
         charts = tuple(
@@ -6420,6 +6517,7 @@ def _rebuild_continuation_value(
             CellGeometryCoordinateMap,
             CellGeometryElement,
         )
+        from phydrax.geometry._surface_source_support import _SplineSurfaceCoordinateMap
 
         source_map = value.source_map
         if source_map is not None:
@@ -6463,6 +6561,21 @@ def _rebuild_continuation_value(
                 source_map = _ExactCoordinateBankMap.from_stored_fields(
                     source_map, mesh=source_mesh
                 )
+            elif type(source_map) is _SplineSurfaceCoordinateMap:
+                original_map = source_map
+                source_map = _SplineSurfaceCoordinateMap(
+                    original_map.source_id,
+                    original_map.source_revision,
+                    original_map.rounded_vertices,
+                    original_map.exact_coordinates,
+                    value.coordinates,
+                    original_map.coefficient_keys,
+                    original_map.coefficient_authorities,
+                )
+                if source_map.source_map_id != original_map.source_map_id:
+                    raise ValueError(
+                        "Stored spline source map differs from its exact bank."
+                    )
             else:
                 raise TypeError(
                     f"No explicit coordinate-map archive constructor is registered for {type(source_map).__name__}."
@@ -14694,6 +14807,10 @@ if __name__ == "__main__":
         _write_implicit_chart_restriction(archive_directory)
     elif operation == "read-implicit-chart-restriction":
         _read_implicit_chart_restriction(archive_directory, json.loads(sys.argv[3]))
+    elif operation == "write-exact-tensor-quad-fidelity":
+        _write_exact_tensor_quad_fidelity(archive_directory)
+    elif operation == "read-exact-tensor-quad-fidelity":
+        _read_exact_tensor_quad_fidelity(archive_directory, json.loads(sys.argv[3]))
     elif operation == "write-material-reference-seed-transition":
         _write_material_reference_seed_transition(archive_directory)
     elif operation == "read-material-reference-seed-transition":

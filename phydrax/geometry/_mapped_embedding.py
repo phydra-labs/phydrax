@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, product
@@ -29,6 +30,7 @@ from ..discretization._coordinate_enclosure import (
     multiply,
     normalize_pyramid_reference_derivative,
     pyramid_reference_to_box_arguments,
+    RationalPolynomial,
     scale,
     subtract,
 )
@@ -53,6 +55,7 @@ class MappedInjectivityWitness:
     projection_rows: tuple[int, ...]
     projection_matrix: tuple[tuple[ExactScalar, ...], ...]
     principal_minor_controls: tuple[tuple[str, ...], ...]
+    denominator_controls: tuple[tuple[str, ...], ...] = ()
 
 
 def _sign(value: ExactScalar, /) -> int:
@@ -124,6 +127,65 @@ def _positive_definite_controls(
     return tuple(controls)
 
 
+def _positive_denominator(
+    denominator: Mapping[tuple[int, ...], ExactScalar],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[dict, tuple[str, ...]] | None:
+    """Prove one rational denominator has one strict sign on the whole cell."""
+    polynomial = dict(denominator)
+    controls = _strict_positive_controls(polynomial, domain, dimension)
+    if controls is not None:
+        return polynomial, controls
+    negative = scale(polynomial, -1)
+    controls = _strict_positive_controls(negative, domain, dimension)
+    if controls is None:
+        return None
+    return negative, controls
+
+
+def _polynomial_scaled_jacobian(
+    jacobian: tuple[tuple[Expression, ...], ...],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+) -> tuple[tuple[tuple[Expression, ...], ...], tuple[tuple[str, ...], ...]] | None:
+    """Clear denominators with one proved-positive common factor for all entries."""
+    denominators: list[dict] = []
+    evidence: list[tuple[str, ...]] = []
+    normalized: list[list[tuple[dict, dict | None]]] = []
+    for row in jacobian:
+        normalized_row = []
+        for entry in row:
+            if not isinstance(entry, RationalPolynomial):
+                normalized_row.append((entry, None))
+                continue
+            result = _positive_denominator(entry.denominator, domain, dimension)
+            if result is None:
+                return None
+            denominator, controls = result
+            numerator = dict(entry.numerator)
+            if denominator != dict(entry.denominator):
+                numerator = scale(numerator, -1)
+            normalized_row.append((numerator, denominator))
+            if denominator not in denominators:
+                denominators.append(denominator)
+                evidence.append(controls)
+        normalized.append(normalized_row)
+    output = []
+    for row in normalized:
+        values = []
+        for numerator, denominator in row:
+            value = numerator
+            for factor in denominators:
+                if denominator is None or factor != denominator:
+                    value = multiply(value, factor)
+            values.append(value)
+        output.append(tuple(values))
+    return tuple(output), tuple(evidence)
+
+
 def prove_mapped_cell_injective(
     cell: EmbeddingCell, /
 ) -> MappedInjectivityWitness | None:
@@ -136,18 +198,19 @@ def prove_mapped_cell_injective(
     """
     if cell.affine:
         return MappedInjectivityWitness((), (), ())
-    coordinates = tuple(
-        expression
-        for expression in cell.proof_coordinates
-        if isinstance(expression, dict)
-    )
-    if len(coordinates) != len(cell.proof_coordinates):
-        return None
+    coordinates = cell.proof_coordinates
     dimension = cell.dimension
     ambient = len(coordinates)
     if dimension < 1 or dimension > 3 or ambient < dimension:
         return None
     domain = cell.proof_domain
+    denominator_evidence: list[tuple[str, ...]] = []
+    for expression in coordinates:
+        if isinstance(expression, RationalPolynomial):
+            proof = _positive_denominator(expression.denominator, domain, dimension)
+            if proof is None:
+                return None
+            denominator_evidence.append(proof[1])
     if cell.pyramid_normalizations is None:
         if cell.kind == "pyramid":
             return None
@@ -185,6 +248,12 @@ def prove_mapped_cell_injective(
                 row.append(normalization.expression)
             normalized_jacobian_rows.append(tuple(row))
         jacobian = tuple(normalized_jacobian_rows)
+    cleared = _polynomial_scaled_jacobian(jacobian, domain, dimension)
+    if cleared is None:
+        return None
+    jacobian, denominator_controls = cleared
+    denominator_evidence.extend(denominator_controls)
+    denominator_proof = tuple(denominator_evidence)
     identity: tuple[tuple[ExactScalar, ...], ...] = tuple(
         tuple(Fraction(int(row == column)) for column in range(dimension))
         for row in range(dimension)
@@ -196,7 +265,7 @@ def prove_mapped_cell_injective(
         )
         controls = _positive_definite_controls(direct, domain, dimension)
         if controls is not None:
-            return MappedInjectivityWitness(rows, identity, controls)
+            return MappedInjectivityWitness(rows, identity, controls, denominator_proof)
 
     center = tuple(
         sum(
@@ -238,7 +307,56 @@ def prove_mapped_cell_injective(
         )
         controls = _positive_definite_controls(projected_jacobian, domain, dimension)
         if controls is not None:
-            return MappedInjectivityWitness(rows, projection_matrix, controls)
+            return MappedInjectivityWitness(
+                rows, projection_matrix, controls, denominator_proof
+            )
+    if ambient > dimension:
+        # A curved embedded map can need a projection combining more than
+        # ``dimension`` ambient axes. Its exact centroid left inverse supplies
+        # the candidate; the same whole-cell Bernstein test proves it.
+        center_rows = tuple(
+            tuple(
+                evaluate_expression(center_jacobian_expressions[row][axis], center)
+                for axis in range(dimension)
+            )
+            for row in range(ambient)
+        )
+        gram = tuple(
+            tuple(
+                sum(
+                    (center_rows[row][i] * center_rows[row][j] for row in range(ambient)),
+                    Fraction(0),
+                )
+                for j in range(dimension)
+            )
+            for i in range(dimension)
+        )
+        transpose = tuple(
+            tuple(center_rows[row][axis] for row in range(ambient))
+            for axis in range(dimension)
+        )
+        try:
+            projection = solve_exact(gram, transpose, singular_error=_SingularProjection)
+        except _SingularProjection:
+            projection = None
+        if projection is not None:
+            projection_matrix = tuple(tuple(row) for row in projection)
+            projected_columns = tuple(
+                linear_combinations(
+                    tuple(jacobian[row][axis] for row in range(ambient)),
+                    projection_matrix,
+                )
+                for axis in range(dimension)
+            )
+            projected_jacobian = tuple(
+                tuple(projected_columns[axis][row] for axis in range(dimension))
+                for row in range(dimension)
+            )
+            controls = _positive_definite_controls(projected_jacobian, domain, dimension)
+            if controls is not None:
+                return MappedInjectivityWitness(
+                    tuple(range(ambient)), projection_matrix, controls, denominator_proof
+                )
     # The centroid preconditioner fails on strongly curved cells; search a constant
     # preconditioner against the Jacobian's Bernstein control matrices, on uniform
     # subdivisions of the reference domain when the whole-cell controls are too
@@ -260,7 +378,9 @@ def prove_mapped_cell_injective(
                 return None
             found = monotone_preconditioner(matrices)
             if found is not None:
-                return MappedInjectivityWitness(rows, found[0], found[1])
+                return MappedInjectivityWitness(
+                    rows, found[0], found[1], denominator_proof
+                )
     return None
 
 
@@ -702,9 +822,7 @@ def _leading_minors(
         for row in range(size)
     )
     symmetric = tuple(
-        tuple(
-            (product[row][column] + product[column][row]) / 2 for column in range(size)
-        )
+        tuple((product[row][column] + product[column][row]) / 2 for column in range(size))
         for row in range(size)
     )
     return tuple(

@@ -886,6 +886,7 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
             geometry_id=fields["geometry_id"],
             topology_id=fields["topology_id"],
             domain_id=fields["domain_id"],
+            cell_kind=fields["cell_kind"],
             cell_global_ids=fields["cell_global_ids"],
             patches=fields["patches"],
             charts=fields["charts"],

@@ -1361,6 +1361,7 @@ def _retained_root_charts(
         (cell.block_name, cell.local_index): index for index, cell in enumerate(cells)
     }
     result: list[_RootChart | None] = [None] * len(cells)
+    root_proofs: dict[tuple[int, str], tuple[tuple[Expression, ...], bool]] = {}
     for block, element, block_route in zip(mesh.blocks, elements, routes, strict=True):
         row_charts = _block_root_chart_rows(
             block.cell_kind,
@@ -1379,15 +1380,23 @@ def _retained_root_charts(
             cell = cells[cell_index]
             inverse = _inverse_affine_arguments(arguments, cell.dimension)
             try:
-                if inverse is not None:
-                    root_coordinates = tuple(
-                        compose_expression(expression, inverse)
-                        for expression in cell.coordinates
+                element_arguments = (
+                    tuple(element.chart_arguments(row))
+                    if isinstance(element, PerCellRestrictedCellGeometryElement)
+                    else None
+                )
+                same_element_chart = (
+                    element_arguments is not None
+                    and len(element_arguments) == len(arguments)
+                    and all(
+                        expression_equal(first, second)
+                        for first, second in zip(
+                            element_arguments, arguments, strict=True
+                        )
                     )
-                elif isinstance(element, PerCellRestrictedCellGeometryElement):
-                    # A non-affine restriction chart (a dual hexahedron of a
-                    # root simplex) has no affine inverse; the common root map is
-                    # the source element on the cell's retained root route.
+                )
+                if same_element_chart:
+                    assert isinstance(element, PerCellRestrictedCellGeometryElement)
                     if coefficient_bank is None:
                         coefficient_bank = geometry.source_coordinates()
                     root_coordinates = _cell_expressions(
@@ -1397,6 +1406,11 @@ def _retained_root_charts(
                             for index in np.asarray(block_route, dtype=np.int64)[row]
                         ),
                         row,
+                    )
+                elif inverse is not None:
+                    root_coordinates = tuple(
+                        compose_expression(expression, inverse)
+                        for expression in cell.coordinates
                     )
                 else:
                     continue
@@ -1416,6 +1430,20 @@ def _retained_root_charts(
             )
             if root_cell is None:
                 continue
+            root_key = (source_cell_id, source_cell_kind)
+            cached = root_proofs.get(root_key)
+            if (
+                cached is not None
+                and len(cached[0]) == len(root_coordinates)
+                and all(
+                    expression_equal(first, second)
+                    for first, second in zip(cached[0], root_coordinates, strict=True)
+                )
+            ):
+                root_injective = cached[1]
+            else:
+                root_injective = _root_map_injective(root_cell)
+                root_proofs[root_key] = (root_coordinates, root_injective)
             root_vertex_ids = tuple(
                 int(value)
                 for value in np.asarray(parent_vertices[block.name], dtype=np.int64)[
@@ -1433,7 +1461,7 @@ def _retained_root_charts(
                 _affine_chart_cell(cell, arguments)
                 if inverse is not None
                 else _planar_faced_chart_cell(cell, arguments),
-                _root_map_injective(root_cell),
+                root_injective,
                 root_vertex_ids
                 if len(root_vertex_ids) == len(root_cell.reference_vertices)
                 and min(root_vertex_ids) >= 0
@@ -1935,6 +1963,11 @@ def _cell_map_findings(
                 f"cell:{cell.global_id}:projection_rows:{witness.projection_rows}:"
                 f"projection_matrix:{projection_matrix}:"
                 f"controls:{witness.principal_minor_controls}"
+                + (
+                    f":denominator_controls:{witness.denominator_controls}"
+                    if witness.denominator_controls
+                    else ""
+                )
             )
     if expressions:
         witnesses.append(
@@ -2038,7 +2071,7 @@ def _root_chart_contact(
                         left,
                         right,
                         first_cell.dimension,
-                        len(first.coordinates),
+                        len(first_cell.corner_images[0]),
                     )
                 )
                 declared = _root_contact_is_declared(first_cell, second_cell, contacts)

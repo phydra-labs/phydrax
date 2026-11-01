@@ -80,6 +80,7 @@ class MeshingDomainArchiveRecipe(NamedTuple):
     authority_id: str
     brep_authority: object | None
     corner_points: object
+    corner_points_authored: bool
     expected_domain_id: str
 
 
@@ -117,6 +118,18 @@ class PreparedSurfaceSourceSupportArchiveRecipe(NamedTuple):
     root_parameters: np.ndarray
     root_boundary_source: MeshingDomainBoundarySourceArchiveRecipe
     expected_support_id: str
+
+
+class SurfaceNativeRestrictionBoundarySourceArchiveRecipe(NamedTuple):
+    """Exact restriction query inputs, reconstructed through its proof owner."""
+
+    root: MeshingDomainBoundarySourceArchiveRecipe
+    support: PreparedSurfaceSourceSupportArchiveRecipe
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    source_id: str
+    source_revision: str
+    source_scope_id: str
 
 
 class SurfaceChartBoundarySourceArchiveRecipe(NamedTuple):
@@ -694,6 +707,7 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
     from ..geometry._sphere_material_atlas import SphereMaterialCellAtlas
     from ..geometry._surface_source_support import (
         PreparedSurfaceSourceSupport,
+        SurfaceNativeRestrictionBoundarySource,
         SurfaceSourceCharts,
     )
     from ..geometry.implicit._adaptive_discovery import (
@@ -774,6 +788,7 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.authority_id,
             value.brep_authority,
             value.corner_points,
+            value.corner_points_authored,
             value.domain_id,
         )
     if type(value) is MeshingDomainBoundarySource:
@@ -830,6 +845,24 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.root_parameters,
             boundary_recipe,
             value.support_id,
+        )
+    if type(value) is SurfaceNativeRestrictionBoundarySource:
+        value.require_current()
+        root_recipe = _source_query_archive_recipe(value.root)
+        support_recipe = _source_query_archive_recipe(value.support)
+        if (
+            type(root_recipe) is not MeshingDomainBoundarySourceArchiveRecipe
+            or type(support_recipe) is not PreparedSurfaceSourceSupportArchiveRecipe
+        ):
+            raise TypeError("Native restriction query lost its exact source recipes.")
+        return SurfaceNativeRestrictionBoundarySourceArchiveRecipe(
+            root_recipe,
+            support_recipe,
+            value.mesh,
+            value.geometry,
+            value.source_id,
+            value.source_revision,
+            value.source_scope_id,
         )
     if type(value) is SurfaceEnvelopeSource:
         value.require_current()
@@ -1429,8 +1462,8 @@ def _row_record_recipe_types() -> frozenset[type]:
     from ..discretization._surface_chart_records import SurfaceChartWitnessArchiveRecipe
     from ..geometry._embedding_state import MeshEmbeddingWitnessArchiveRecipe
     from ..geometry.surface._contracts import SurfaceMetadataArchiveRecipe
-    from ..meshing._association import GeometryAssociationArchiveRecipe
     from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
+    from ..meshing._association import GeometryAssociationArchiveRecipe
 
     return frozenset(
         {

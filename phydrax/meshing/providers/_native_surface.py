@@ -443,15 +443,22 @@ def _support_issues(
         for corner in (domain.curves[curve].start, domain.curves[curve].end)
     }
     family = target.cell_families
+    triangle_target = target.geometry_order == 1 and set(
+        (*family.required, *family.preferred)
+    ) == {"triangle"}
+    tensor_quad_target = target.geometry_order >= 1 and set(
+        (*family.required, *family.preferred)
+    ) == {"quadrilateral"}
     if (
         target.topological_dimension != 2
         or target.ambient_dimension != 3
-        or target.geometry_order != 1
-        or set((*family.required, *family.preferred)) != {"triangle"}
+        or not (triangle_target or tensor_quad_target)
         or family.allow_mixed
         or family.allowed_transitions
     ):
-        issues.append("a conforming affine triangular target in ambient dimension three")
+        issues.append(
+            "a conforming affine triangle or tensor-spline quadrilateral target in ambient dimension three"
+        )
     if specification.background_metric is not None:
         issues.append("background metrics outside the isotropic physical size schedule")
     if specification.planar_embedding is not None:
@@ -4795,12 +4802,14 @@ def _organization(
     specification: SurfaceMeshingSpec,
     scope_ids: tuple[np.ndarray, ...],
     mesh: cell_mesh_owner.CellMesh,
-    construction: SurfaceConstruction,
+    patch_rows: np.ndarray,
     associations: tuple[association_owner.GeometryAssociation, ...],
     /,
 ) -> NativeMeshOrganization:
-    cell_ids = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)
-    patch_rows = np.asarray(construction.triangle_patches, dtype=np.int64)
+    cell_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    )
+    patch_rows = np.asarray(patch_rows, dtype=np.int64)
     patch_objects = []
     for patch in sorted(set(patch_rows.tolist())):
         rows = np.flatnonzero(patch_rows == patch)
@@ -5401,6 +5410,11 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         domain.require_current(domain.source_id, domain.source_revision)
         self.boundary_source.require_current()
         preparation = domain_owner.SourcePreparation.of(domain, preparation)
+        family = self.specification.target.cell_families
+        if set((*family.required, *family.preferred)) == {"quadrilateral"}:
+            from ._native_surface_quad import execute_tensor_quads
+
+            return execute_tensor_quads(self, preparation)
         curve_ids = _trim_curves(domain, self.selected_patches)
         parameters_by_curve = _curve_parameters(
             domain,
@@ -5533,7 +5547,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.specification,
             self.scope_ids,
             mesh,
-            construction,
+            construction.triangle_patches,
             association_values,
         )
         cell_ids = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)

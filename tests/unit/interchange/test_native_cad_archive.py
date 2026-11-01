@@ -5427,3 +5427,32 @@ def test_brep_assembly_placement_evidence_archive_round_trips_cold_and_refuses_t
     )
     assert refused.returncode != 0
     assert "incompatible with its registered recipe" in refused.stderr
+
+
+def test_exact_tensor_quad_fidelity_restores_in_independent_process(
+    tmp_path: Path,
+) -> None:
+    written = subprocess.run(
+        [sys.executable, str(_WORKER), "write-exact-tensor-quad-fidelity", str(tmp_path)],
+        cwd=_REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert written.returncode == 0, written.stderr
+    expected = json.loads(written.stdout)
+    restored = subprocess.run(
+        [
+            sys.executable,
+            str(_WORKER),
+            "read-exact-tensor-quad-fidelity",
+            str(tmp_path / "exact-tensor-quad-fidelity.phx"),
+            json.dumps(expected),
+        ],
+        cwd=_REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert restored.returncode == 0, restored.stderr
+    assert json.loads(restored.stdout) == expected

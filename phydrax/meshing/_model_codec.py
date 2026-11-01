@@ -55,6 +55,7 @@ from .._model._structure import (
     SphereMaterialCellAtlasArchiveRecipe,
     SurfaceChartBoundarySourceArchiveRecipe,
     SurfaceEnvelopeSourceArchiveRecipe,
+    SurfaceNativeRestrictionBoundarySourceArchiveRecipe,
     SurfaceSourceChartsArchiveRecipe,
     SurfaceSubdivisionBoundarySourceArchiveRecipe,
     validate_model_structure_recipe,
@@ -257,7 +258,9 @@ def _register_model_archive_types() -> None:
         PreparedCommonRefinement,
     )
     from ..geometry._surface_source_support import (
+        _SplineSurfaceCoordinateMap,
         PreparedSurfaceSourceSupport,
+        SurfaceNativeRestrictionBoundarySource,
         SurfaceSourceCharts,
         SurfaceSourceRootAtlas,
     )
@@ -532,6 +535,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", ReconstructedTriangleBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SurfaceSourceChartsArchiveRecipe),
         ("phydrax.model.archive", PreparedSurfaceSourceSupportArchiveRecipe),
+        ("phydrax.model.archive", SurfaceNativeRestrictionBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SurfaceChartBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SurfaceSubdivisionBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SphereMaterialCellAtlasArchiveRecipe),
@@ -636,6 +640,8 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.internal", _SphereMaterialFidelityBinding),
         ("phydrax.geometry", PreparedSurfaceSourceSupport),
         ("phydrax.geometry", SurfaceSourceRootAtlas),
+        ("phydrax.geometry.internal", SurfaceNativeRestrictionBoundarySource),
+        ("phydrax.geometry.internal", _SplineSurfaceCoordinateMap),
         ("phydrax.discretization", SurfaceRootMeshCellBinding),
         ("phydrax.discretization", DiscreteSupport),
         ("phydrax.discretization", EntitySet),

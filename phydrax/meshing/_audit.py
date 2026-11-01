@@ -50,6 +50,7 @@ from ._organization import (
     validate_mesh_zones,
 )
 from ._quality import (
+    _with_certified_mapped_measures,
     CellQualityEvaluation,
     CellQualityReport,
     evaluate_cell_quality,
@@ -994,6 +995,10 @@ def audit_cell_mesh(
     if not isinstance(validity_, CellValidityCertificate):
         raise TypeError("validity must be CellValidityCertificate or None.")
     validity_.require_bound(geometry, mesh=mesh)
+    if quality_scope == "corner_cells" and validity_.all_certified:
+        quality_evaluation = _with_certified_mapped_measures(
+            quality_evaluation, mesh, geometry, validity_
+        )
     if global_embedding is not None:
         from ..geometry._global_embedding import GlobalEmbeddingCertificate
 

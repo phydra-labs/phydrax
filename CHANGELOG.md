@@ -6,6 +6,11 @@
 - Nonaffine retained-root embedding proofs now pass the routed local coefficient
   bank to the canonical cell-expression owner, preserving valid root ancestry
   instead of dropping it after an argument mismatch.
+- Native rational tensor-surface quadrilaterals retain exact source controls,
+  elevated extraction, affine knot-span restrictions, and source chart identities.
+  Whole-cell rational injectivity and common-root contact are proved with exact
+  denominator and projection controls. Mapped audit measures retain certified
+  integration errors instead of substituting corner-carrier area.
 - Scoped native surface fidelity validates the full target witness before
   filtering selected source occurrences, and uses exact rational spline corner
   bounds rather than widened numerical point boxes. Surface feature tolerances

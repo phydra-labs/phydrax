@@ -12,7 +12,7 @@ the validity owner.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from typing import Any, NamedTuple
 
@@ -31,7 +31,9 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, PolyhedralConnectivity
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import (
+    CellValidityCertificate,
     polyhedral_star_tables,
     PolyhedralStarTables,
 )
@@ -44,7 +46,7 @@ from ._metric import interpolate_mesh_metric, MeshMetricField
 
 
 class CellQualityEvaluation(StrictModule):
-    """Per-cell sampled quality in mesh block order.
+    """Per-cell quality in mesh block order.
 
     Angles are radians: interior corner angles for 2-cells and interior
     dihedral angles for 3-cells (above pi at reflex corners/edges). Mean ratio,
@@ -54,6 +56,9 @@ class CellQualityEvaluation(StrictModule):
     ``sliver_measures`` (tetrahedra) are NaN for other kinds; ``metric_quality``
     is NaN without a metric. ``warpage`` is the largest angle between a face's
     centroid-fan triangle normals and its vector-area normal.
+    Audits of higher-order or nonvertex coordinate elements replace
+    corner-carrier measures with certified physical measures and retain their
+    absolute error bounds and geometry ID.
     """
 
     cell_global_ids: Array
@@ -73,6 +78,8 @@ class CellQualityEvaluation(StrictModule):
     block_offsets: tuple[int, ...] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     evaluation_id: str = eqx.field(static=True)
+    measure_absolute_errors: Array | None = None
+    measure_geometry_id: str | None = eqx.field(static=True, default=None)
 
 
 def _nan_extreme(values: np.ndarray, reducer: Any, /) -> float:
@@ -111,8 +118,25 @@ class CellQualityReport(StrictModule, NonTrainableState):
         identifiers = np.asarray(evaluation.cell_global_ids, dtype=np.int64)
         order = np.argsort(np.where(valid, ratios, -np.inf), kind="stable")
         self.evaluation = evaluation
-        self.minimum_measure = float(np.min(measures))
-        self.maximum_measure = float(np.max(measures))
+        errors = (
+            np.zeros_like(measures)
+            if evaluation.measure_absolute_errors is None
+            else np.asarray(evaluation.measure_absolute_errors, dtype=np.float64)
+        )
+        if (evaluation.measure_absolute_errors is None) != (
+            evaluation.measure_geometry_id is None
+        ):
+            raise ValueError("Mapped quality measures require their geometry identity.")
+        if (
+            errors.shape != measures.shape
+            or np.any(errors < 0.0)
+            or not np.all(np.isfinite(errors))
+        ):
+            raise ValueError(
+                "Mapped quality measures require finite aligned error bounds."
+            )
+        self.minimum_measure = float(np.min(measures - errors))
+        self.maximum_measure = float(np.max(measures + errors))
         self.minimum_mean_ratio = float(np.min(ratios))
         self.maximum_aspect_ratio = float(np.max(aspects))
         self.minimum_scaled_jacobian = float(np.min(scaled))
@@ -142,6 +166,11 @@ class CellQualityReport(StrictModule, NonTrainableState):
                         warpage,
                         metric,
                         valid,
+                        *(
+                            (errors,)
+                            if evaluation.measure_absolute_errors is not None
+                            else ()
+                        ),
                     )
                 ],
             }
@@ -1061,6 +1090,37 @@ def evaluate_cell_quality(
         block_offsets=tuple(offsets),
         topology_id=mesh.topology_id,
         evaluation_id=evaluation_id,
+    )
+
+
+def _with_certified_mapped_measures(
+    evaluation: CellQualityEvaluation,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    validity: CellValidityCertificate,
+    /,
+) -> CellQualityEvaluation:
+    """Bind exact-map measure enclosures to the existing sampled quality rows."""
+    from ..discretization._cell_geometry_validity import cell_geometry_id
+    from ..discretization._mapped_geometry_measure import certified_cell_measures
+
+    measures = certified_cell_measures(mesh, geometry, validity=validity)
+    geometry_id = cell_geometry_id(geometry)
+    identifier = canonical_fingerprint(
+        {
+            "kind": "mapped-cell-quality-evaluation",
+            "sampled_evaluation": evaluation.evaluation_id,
+            "geometry": geometry_id,
+            "values": array_tree_fingerprint(measures.values),
+            "absolute_errors": array_tree_fingerprint(measures.absolute_errors),
+        }
+    )
+    return replace(
+        evaluation,
+        measures=jnp.asarray(measures.values),
+        measure_absolute_errors=jnp.asarray(measures.absolute_errors),
+        measure_geometry_id=geometry_id,
+        evaluation_id=identifier,
     )
 
 

@@ -481,7 +481,16 @@ def _partition_findings(
         patches, charts, plane_patches = _surface_source_chart_rows(source, witness)
     target_triangles: dict[int, list[Triangle2]] = {}
     for patch, chart in zip(patches, charts, strict=True):
-        target_triangles.setdefault(int(patch), []).append(chart)
+        if (
+            isinstance(witness, SurfaceChartWitness)
+            and witness.cell_kind == "quadrilateral"
+        ):
+            # Partition the exact parameter polygon for the existing triangle
+            # intersection proof; the physical target remains a quadrilateral.
+            triangles = ((chart[0], chart[1], chart[2]), (chart[0], chart[2], chart[3]))
+        else:
+            triangles = (chart,)
+        target_triangles.setdefault(int(patch), []).extend(triangles)
     findings: list[MeshCertificateFinding] = []
     if isinstance(witness, SurfaceChartWitness) and set(target_triangles) <= set(
         range(len(domain.patches))
@@ -1076,6 +1085,7 @@ def _validate_source_fidelity_witness(
             geometry_id=witness.geometry_id,
             topology_id=witness.topology_id,
             domain_id=witness.domain_id,
+            cell_kind=witness.cell_kind,
             cell_global_ids=np.asarray(witness.cell_global_ids),
             patches=np.asarray(witness.patches),
             charts=np.asarray(witness.charts),
@@ -1098,6 +1108,7 @@ def _validate_source_fidelity_witness(
                 _exact_chart_from_tokens(witness.chart_rational_tokens, row)
                 for row in range(len(witness.source_piece_ids))
             ),
+            cell_kind=witness.cell_kind,
         )
         if renewed.witness_id != witness.witness_id:
             raise ValueError(
@@ -1393,9 +1404,9 @@ def _chart_point_tables(
         )
     mesh_cells: dict[int, tuple[int, int, CellBlock]] = {}
     for block_index, block in enumerate(mesh.blocks):
-        if not isinstance(block, CellBlock) or block.cell_kind != "triangle":
+        if not isinstance(block, CellBlock) or block.cell_kind != witness.cell_kind:
             raise ValueError(
-                "Continuous surface chart fidelity currently requires triangle target cells."
+                "Surface chart cell kind must match every target mesh block."
             )
         block_ids = _integer_vector(block.global_ids)
         for row in range(len(block_ids)):
@@ -5823,6 +5834,84 @@ def certify_source_fidelity(
                 "mesh",
                 detail="Surface chart fidelity requires a two-dimensional mesh in three-space.",
             )
+        )
+    if witness.cell_kind == "quadrilateral":
+        from ._surface_source_support import (
+            SurfaceNativeRestrictionBoundarySource,
+            SurfaceSourceRootAtlas,
+        )
+
+        if not isinstance(
+            source, SurfaceNativeRestrictionBoundarySource
+        ) or not isinstance(source.support.original, SurfaceSourceRootAtlas):
+            findings.append(
+                MeshCertificateFinding(
+                    "source_chart_target_map",
+                    "unresolved",
+                    "mesh",
+                    detail="Exact quadrilateral fidelity requires a retained spline-root restriction proof.",
+                )
+            )
+        else:
+            try:
+                source.support.prove_native_restrictions(
+                    mesh, geometry, chart_witness=witness
+                )
+            except (ArithmeticError, TypeError, ValueError, IndexError) as error:
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_chart_target_map",
+                        "unresolved",
+                        "mesh",
+                        detail=f"Exact quadrilateral source-map identity failed: {error}",
+                    )
+                )
+        if normal_limit is not None:
+            findings.append(
+                MeshCertificateFinding(
+                    "source_chart_normal",
+                    "unresolved",
+                    "mesh",
+                    detail="Exact quadrilateral normal-deviation certification is unavailable.",
+                )
+            )
+        if findings:
+            return _unresolved_fidelity(
+                mesh,
+                geometry,
+                source,
+                tolerance=tolerance_,
+                maximum_normal_deviation=normal_limit,
+                witness=witness,
+                coverage=coverage,
+                findings=tuple(findings),
+            )
+        binding = MeshCertificateBinding(
+            mesh,
+            geometry,
+            "mapped",
+            source=source,
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+        )
+        return SourceFidelityCertificate._from_computed(
+            binding,
+            source,
+            tolerance_,
+            None,
+            np.zeros((len(cell_ids), 2), dtype=np.float64),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            None,
+            None,
+            cell_ids,
+            patch_ids,
+            occurrence_paths,
+            witness,
+            coverage,
+            (),
         )
     elements, routes, _ = geometry.resolve(mesh)
     coefficients = geometry.source_coordinates()

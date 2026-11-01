@@ -1539,6 +1539,61 @@ class SplineCellGeometryElement(StrictModule, NonTrainableState):
         return jnp.asarray(values), jnp.asarray(rational_gradients)
 
 
+def elevate_spline_extraction(
+    element: SplineCellGeometryElement, degrees: tuple[int, int], /
+) -> SplineCellGeometryElement:
+    """Exactly elevate spline extraction while retaining source controls and weights."""
+    from ._coordinate_enclosure import (
+        add,
+        axes,
+        bernstein_coefficients,
+        constant,
+        linear_combinations,
+        multiply,
+        power,
+        scale,
+    )
+
+    if len(degrees) != 2 or any(
+        isinstance(value, bool) or not isinstance(value, (int, np.integer))
+        for value in degrees
+    ):
+        raise TypeError("Spline elevation degrees must be two integers.")
+    target = (int(degrees[0]), int(degrees[1]))
+    if any(new < old for new, old in zip(target, element.degrees, strict=True)):
+        raise ValueError("Spline extraction cannot be elevated to a lower degree.")
+    variables = axes(2)
+    one = constant(Fraction(1), 2)
+    basis = []
+    for axis, degree in zip(variables, element.degrees, strict=True):
+        complement = add(one, scale(axis, -1))
+        basis.append(
+            tuple(
+                scale(
+                    multiply(power(axis, index), power(complement, degree - index)),
+                    Fraction(comb(degree, index)),
+                )
+                for index in range(degree + 1)
+            )
+        )
+    tensor = tuple(multiply(u, v) for u in basis[0] for v in basis[1])
+    extracted = linear_combinations(tensor, element.exact_extraction_operator)
+    extraction = tuple(
+        tuple(bernstein_coefficients(polynomial, "box", 2, degree=target))
+        for polynomial in extracted
+    )
+    return SplineCellGeometryElement(
+        element.anchor_ids,
+        element.parameter_bounds,
+        extraction,
+        element.weights,
+        element.source_id,
+        element.source_revision,
+        degrees=target,
+        exact_weights=element.exact_weights,
+    )
+
+
 class LayerColumnCellGeometryElement(StrictModule, NonTrainableState):
     """Exact profile-times-P1-station basis with authored corner corrections."""
 

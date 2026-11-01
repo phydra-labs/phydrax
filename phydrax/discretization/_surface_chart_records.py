@@ -113,11 +113,18 @@ class SurfaceRootMeshCellBinding(NamedTuple):
 
 _ChartRationalToken = tuple[int, int]
 _ChartRationalPoint = tuple[_ChartRationalToken, _ChartRationalToken]
-_ChartRationalTriangle = tuple[
-    _ChartRationalPoint, _ChartRationalPoint, _ChartRationalPoint
-]
-_ChartRationalBank = tuple[_ChartRationalTriangle, ...]
+_ChartRationalCell = tuple[_ChartRationalPoint, ...]
+_ChartRationalBank = tuple[_ChartRationalCell, ...]
 _ExactTriangle = tuple[_ExactPoint, _ExactPoint, _ExactPoint]
+_ExactChart = tuple[_ExactPoint, ...]
+
+
+def _chart_corner_count(cell_kind: str, /) -> int:
+    if cell_kind == "triangle":
+        return 3
+    if cell_kind == "quadrilateral":
+        return 4
+    raise ValueError("Surface charts require a triangle or quadrilateral cell kind.")
 
 
 def _area(points: tuple[_ExactPoint, ...], /) -> Fraction:
@@ -147,22 +154,20 @@ def _exact_fraction(value: object, /) -> Fraction:
     raise TypeError("Exact chart coordinates must be Fractions or binary numeric values.")
 
 
-def exact_chart_bank(values: ArrayLike, count: int, /) -> tuple[_ExactTriangle, ...]:
+def exact_chart_bank(
+    values: ArrayLike, count: int, /, *, cell_kind: str = "triangle"
+) -> tuple[_ExactChart, ...]:
+    corners = _chart_corner_count(cell_kind)
     bank = np.asarray(values, dtype=object)
-    if bank.shape != (count, 3, 2):
+    if bank.shape != (count, corners, 2):
         raise ValueError("Material charts must align with their scientific cell rows.")
-    charts: list[_ExactTriangle] = []
-    for triangle in bank:
-        points: list[_ExactPoint] = []
-        for point in triangle:
-            if len(point) != 2:
-                raise ValueError("Material chart corners must be two-dimensional.")
-            points.append((_exact_fraction(point[0]), _exact_fraction(point[1])))
-        if len(points) != 3:
-            raise ValueError("Every material chart must contain three exact corners.")
-        chart: _ExactTriangle = (points[0], points[1], points[2])
+    charts: list[_ExactChart] = []
+    for cell in bank:
+        chart = tuple(
+            (_exact_fraction(point[0]), _exact_fraction(point[1])) for point in cell
+        )
         if not _area(chart):
-            raise ValueError("Material charts must be nondegenerate exact triangles.")
+            raise ValueError("Material charts must be nondegenerate exact cells.")
         charts.append(chart)
     return tuple(charts)
 
@@ -170,12 +175,15 @@ def exact_chart_bank(values: ArrayLike, count: int, /) -> tuple[_ExactTriangle, 
 def rational_chart_tokens(
     values: Sequence[Sequence[Sequence[Fraction | int | np.integer]]],
     /,
+    *,
+    cell_kind: str = "triangle",
 ) -> _ChartRationalBank:
-    """Encode exact triangular chart coordinates as reduced rational tokens."""
-    rows: list[_ChartRationalTriangle] = []
+    """Encode exact chart coordinates as reduced rational tokens."""
+    corners = _chart_corner_count(cell_kind)
+    rows: list[_ChartRationalCell] = []
     for row in values:
-        if len(row) != 3:
-            raise ValueError("Every material chart must contain three exact corners.")
+        if len(row) != corners:
+            raise ValueError("Material chart corner count must match its cell kind.")
         points: list[_ChartRationalPoint] = []
         for point in row:
             if len(point) != 2:
@@ -191,11 +199,11 @@ def rational_chart_tokens(
                 exact = value if isinstance(value, Fraction) else Fraction(int(value))
                 coordinates.append((exact.numerator, exact.denominator))
             points.append((coordinates[0], coordinates[1]))
-        rows.append((points[0], points[1], points[2]))
+        rows.append(tuple(points))
     return tuple(rows)
 
 
-def _exact_chart_from_tokens(bank: _ChartRationalBank, row: int, /) -> _ExactTriangle:
+def _exact_chart_from_tokens(bank: _ChartRationalBank, row: int, /) -> _ExactChart:
     tokens = bank[row]
 
     def point(value: _ChartRationalPoint, /) -> _ExactPoint:
@@ -205,7 +213,7 @@ def _exact_chart_from_tokens(bank: _ChartRationalBank, row: int, /) -> _ExactTri
             Fraction(second[0], second[1]),
         )
 
-    return (point(tokens[0]), point(tokens[1]), point(tokens[2]))
+    return tuple(point(value) for value in tokens)
 
 
 def _validated_chart_rational_tokens(
@@ -213,16 +221,21 @@ def _validated_chart_rational_tokens(
     realization: np.ndarray,
     count: int,
     /,
+    *,
+    cell_kind: str = "triangle",
 ) -> _ChartRationalBank:
+    corners = _chart_corner_count(cell_kind)
     if supplied is None:
-        exact = exact_chart_bank(realization, count)
-        return rational_chart_tokens(exact)
+        exact = exact_chart_bank(realization, count, cell_kind=cell_kind)
+        return rational_chart_tokens(exact, cell_kind=cell_kind)
     if not isinstance(supplied, tuple) or len(supplied) != count:
         raise ValueError("Rational chart tokens must align with their cell rows.")
-    exact_rows: list[_ExactTriangle] = []
+    exact_rows: list[_ExactChart] = []
     for row in supplied:
-        if not isinstance(row, tuple) or len(row) != 3:
-            raise ValueError("Rational chart token rows must contain three corners.")
+        if not isinstance(row, tuple) or len(row) != corners:
+            raise ValueError(
+                "Rational chart token corner count must match its cell kind."
+            )
         points: list[_ExactPoint] = []
         for point in row:
             if not isinstance(point, tuple) or len(point) != 2:
@@ -251,8 +264,8 @@ def _validated_chart_rational_tokens(
                     raise ValueError("Chart tokens must be reduced rational pairs.")
                 coordinates.append(exact)
             points.append((coordinates[0], coordinates[1]))
-        exact_rows.append((points[0], points[1], points[2]))
-    canonical = rational_chart_tokens(exact_rows)
+        exact_rows.append(tuple(points))
+    canonical = rational_chart_tokens(exact_rows, cell_kind=cell_kind)
     rounded = np.asarray(
         [
             [
@@ -330,6 +343,7 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     domain_id: str = eqx.field(static=True)
+    cell_kind: str = eqx.field(static=True)
     cell_global_ids: Array
     patches: Array
     charts: Array
@@ -349,6 +363,7 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
         geometry_id: str,
         topology_id: str,
         domain_id: str,
+        cell_kind: str = "triangle",
         cell_global_ids: ArrayLike,
         patches: ArrayLike,
         charts: ArrayLike,
@@ -408,7 +423,7 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
             or source_roots.dtype.kind not in "iu"
             or np.any(source_roots < 0)
             or np.any(source_roots > np.iinfo(np.int64).max)
-            or chart.shape != (ids.size, 3, 2)
+            or chart.shape != (ids.size, _chart_corner_count(cell_kind), 2)
             or not np.all(np.isfinite(chart))
             or len(bindings) != ids.size
             or len(pieces) != ids.size
@@ -446,15 +461,13 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
                 "Surface chart witness rows and source identities must align."
             )
         rational_bank = _validated_chart_rational_tokens(
-            chart_rational_tokens, chart, ids.size
+            chart_rational_tokens, chart, ids.size, cell_kind=cell_kind
         )
         charts_exact = tuple(
             _exact_chart_from_tokens(rational_bank, row) for row in range(ids.size)
         )
         if any(not _area(value) for value in charts_exact):
-            raise ValueError(
-                "Surface chart witness contains a degenerate material triangle."
-            )
+            raise ValueError("Surface chart witness contains a degenerate material cell.")
         order = np.argsort(ids, kind="stable")
         sorted_source_roots = np.asarray(source_roots[order], dtype=np.int64)
         sorted_source_pieces = tuple(pieces[int(row)] for row in order)
@@ -466,6 +479,7 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
         self.geometry_id = geometry_id
         self.topology_id = topology_id
         self.domain_id = domain_id
+        self.cell_kind = cell_kind
         self.cell_global_ids = jnp.asarray(sorted_ids)
         self.source_root_cell_ids = jnp.asarray(sorted_source_roots)
         self.source_piece_ids = sorted_source_pieces
@@ -481,6 +495,7 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
                 "geometry": geometry_id,
                 "topology": topology_id,
                 "domain": domain_id,
+                "cell_kind": cell_kind,
                 "cells": array_tree_fingerprint(sorted_ids),
                 "source_root_cells": array_tree_fingerprint(sorted_source_roots),
                 "source_pieces": sorted_source_pieces,
@@ -502,7 +517,7 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
             }
         )
 
-    def exact_chart(self, row: int, /) -> _ExactTriangle:
+    def exact_chart(self, row: int, /) -> _ExactChart:
         if (
             isinstance(row, bool)
             or not isinstance(row, int)
@@ -527,6 +542,7 @@ class SurfaceChartWitnessArchiveRecipe(NamedTuple):
     geometry_id: str
     topology_id: str
     domain_id: str
+    cell_kind: str
     cell_global_ids: Array
     patches: Array
     charts: Array
@@ -550,6 +566,7 @@ class SurfaceChartWitnessArchiveRecipe(NamedTuple):
             value.geometry_id,
             value.topology_id,
             value.domain_id,
+            value.cell_kind,
             value.cell_global_ids,
             value.patches,
             value.charts,
@@ -596,6 +613,7 @@ class SurfaceChartWitnessArchiveRecipe(NamedTuple):
             geometry_id=self.geometry_id,
             topology_id=self.topology_id,
             domain_id=self.domain_id,
+            cell_kind=self.cell_kind,
             cell_global_ids=self.cell_global_ids,
             patches=self.patches,
             charts=self.charts,

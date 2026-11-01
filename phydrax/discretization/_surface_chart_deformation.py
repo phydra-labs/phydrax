@@ -426,7 +426,9 @@ def _witness_bank(
         domain.domain_id,
     ):
         raise ValueError("Surface chart witness is stale for its endpoint or domain.")
-    if any(block.cell_kind != "triangle" for block in mesh.blocks):
+    if witness.cell_kind != "triangle" or any(
+        block.cell_kind != "triangle" for block in mesh.blocks
+    ):
         raise ValueError("Surface chart deformation requires triangular cell blocks.")
     physical_ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]

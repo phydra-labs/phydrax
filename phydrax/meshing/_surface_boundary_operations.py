@@ -183,6 +183,12 @@ def lineage_chart_witness(
         raise ValueError(
             "Surface subdivision lineage and chart witness must bind their exact source and target meshes."
         )
+    if any(block.cell_kind != source_witness.cell_kind for block in source_mesh.blocks):
+        raise ValueError("Surface chart witness cell kind must match the source mesh.")
+    target_kinds = {block.cell_kind for block in target.blocks}
+    if len(target_kinds) != 1 or not target_kinds <= {"triangle", "quadrilateral"}:
+        raise ValueError("Surface chart lineage requires one supported target cell kind.")
+    target_kind = next(iter(target_kinds))
     source_cell_ids = np.asarray(source_witness.cell_global_ids, dtype=np.int64)
     if set(source_cell_ids.tolist()) != {
         int(value) for block in source_mesh.blocks for value in block.global_ids
@@ -303,6 +309,7 @@ def lineage_chart_witness(
         geometry_id=geometry_id,
         topology_id=target.topology_id,
         domain_id=source_witness.domain_id,
+        cell_kind=target_kind,
         cell_global_ids=np.asarray(target_cell_ids, dtype=np.int64),
         patches=np.asarray(patches, dtype=np.int64),
         charts=np.asarray(
@@ -314,7 +321,7 @@ def lineage_chart_witness(
         source_piece_ids=tuple(source_piece_ids),
         geometry_entity_ids=tuple(entities),
         occurrence_paths=tuple(occurrences),
-        chart_rational_tokens=rational_chart_tokens(charts),
+        chart_rational_tokens=rational_chart_tokens(charts, cell_kind=target_kind),
     )
 
 

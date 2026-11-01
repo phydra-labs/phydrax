@@ -351,6 +351,25 @@ patch. Exact rational spline corner evaluations avoid interval-rounding inflatio
 zero deviation is certified only when the target correspondence and all other
 continuous bounds actually establish it.
 
+For quadrilateral targets the tensor-spline route retains the authored control
+and weight bank and exactly elevates its Bernstein extraction to the requested
+geometry order. Each cell is an exact affine restriction of a source knot-span
+map; execution vertices are rounded from exact rational source images. Zero
+deviation requires a verified whole-map restriction and complete source-chart
+partition, not a bound on chords or sampled points. The admitted route is one
+positively oriented tensor patch with a rectangular linear trim; unsupported
+trim, region, normal-aim, and non-surface feature requests are refused.
+When a tensor patch has no authored control-point IDs, its control authority is
+explicitly identified by source revision, canonical patch occurrence, and the
+two control-net indices; internal extraction row numbers do not assert authored
+identities. Authored control IDs remain unchanged when supplied.
+For rational mapped-cell injectivity, the embedding proof first establishes the
+sign of every rational denominator on the complete reference cell with exact
+Bernstein controls. It then clears the Jacobian by a proved-positive common
+factor and verifies projected symmetric-Jacobian principal minors on the whole
+cell. Embedded projections may combine ambient axes; their exact coefficients
+and denominator controls are retained in the proof witness.
+
 Sphere and cone pole trims use their authored collapsed-edge corner as one mesh
 vertex. The provider places a regular chart ring from continuous surface-box
 bounds, removes chart triangles that collapse onto the pole edge, and retains
@@ -401,6 +420,11 @@ curved cell. Compliance records both the requested and achieved angle in radians
 an unmet hard target prevents acceptance, while a soft target remains diagnostic.
 These corner-quality measurements do not replace whole-cell validity, embedding,
 or source-fidelity certification.
+For higher-order or nonvertex coordinate elements, accepted audit quality retains
+per-cell physical measures from certified exact-map integration, including
+absolute integration error bounds and the bound geometry identity. Corner
+shape and angle quality remain sampled diagnostics; a chordal carrier area is
+not substituted for the curved physical measure.
 
 For ambient-two-dimensional blocks, `NativeStructuredSource.domain` must retain
 the independently authored `PiecewiseLinearDomain`. Canonical acceptance uses
