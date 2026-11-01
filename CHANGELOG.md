@@ -3,9 +3,11 @@
 ## Unreleased
 
 ### Fixed
-- Host optimal-point metric collapse now searches between its seed parameters
-  using exact source geometry and interval metric bounds; uncertified field
-  ranges remain unresolved. Compiled device search is unchanged.
+- Host optimal-point metric collapse searches between seed parameters for
+  constant current vertex-ball tensors, with exact source geometry and metric
+  bounds. Other seed misses remain unresolved; compiled device search is unchanged.
+- Surface metric adaptation now binds local UV edits to the authored exact
+  chart bank and refuses target carriers that do not round their source stencil.
 - Finite-element and finite-volume field queries now bind compiled geometry
   through the same content identity; default finite-volume simplex location uses
   the supported block's cell count.

@@ -1526,7 +1526,6 @@ def _exact_target_chart(
     local_edit: CellTopologyEdit,
     source: SurfaceMetricSource,
     stencils: list[_WorkStencil],
-    snapped: np.ndarray,
     /,
 ) -> tuple[_ExactPoint, ...]:
     coordinates = np.asarray(local_edit.coordinates, dtype=np.float64)
@@ -1544,23 +1543,11 @@ def _exact_target_chart(
             second += coefficient * point[1]
         exact_point = (first, second)
         exact_shadow = np.asarray(tuple(float(value) for value in exact_point))
-        coordinate_scale = max(1.0, float(np.linalg.norm(coordinates[row], ord=np.inf)))
-        if (
-            np.linalg.norm(exact_shadow - coordinates[row], ord=np.inf)
-            <= 4.0 * np.finfo(np.float64).eps * coordinate_scale
-        ):
-            charts.append(exact_point)
-        elif snapped[row]:
+        if not np.array_equal(exact_shadow, coordinates[row]):
             raise ValueError(
-                "A surface metric target vertex leaves its exact source face beyond binary64 shadow resolution."
+                "A surface metric target carrier does not canonically round its exact source stencil."
             )
-        else:
-            charts.append(
-                (
-                    Fraction.from_float(float(coordinates[row, 0])),
-                    Fraction.from_float(float(coordinates[row, 1])),
-                )
-            )
+        charts.append(exact_point)
     return tuple(charts)
 
 
@@ -2034,7 +2021,7 @@ def _physical_edit(
     )
     if work_target.periodic_topology is not None:
         work_stencils = _synchronized_copy_stencils(prepared, work_stencils, group_rows)
-    target_uv = _exact_target_chart(local_edit, prepared, work_stencils, snapped)
+    target_uv = _exact_target_chart(local_edit, prepared, work_stencils)
     global_chart = isinstance(prepared.source_charts, _ImplicitSurfaceChartBank)
     cell_meta: dict[
         int, tuple[int, int, tuple[int, ...], str, int, _ExactTriangle, tuple[int, ...]]
@@ -2552,6 +2539,7 @@ def execute_surface_metric_adaptation(
         # A collapsed chart point makes the pullback singular there, so generated
         # points take the exact pullback rather than chart-linear interpolation.
         metric_field=_pullback_field(source) if np.any(collapsed) else None,
+        exact_source_points=source.work_vertex_charts,
     )
     edit, target_metric, geometry = _physical_edit(source, local)
     evidence = local.evidence

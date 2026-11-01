@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +34,7 @@ from phydrax.geometry.implicit import (
     AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
 )
+from phydrax.meshing import _surface_metric as surface_metric
 from phydrax.meshing._adaptation import (
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
@@ -533,7 +535,9 @@ def test_sphere_metric_segment_enclosure_contains_chart_samples() -> None:
     assert np.all(value >= bounds[0]) and np.all(value <= bounds[1])
 
 
-def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> None:
+def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     profile, source, contract = _implicit_sphere_source()
     mesh = source.mesh
     certification = source.certification
@@ -570,12 +574,30 @@ def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> No
     np.testing.assert_array_equal(
         np.flatnonzero(prepared.collapsed_source_vertices), poles
     )
+    assert np.any(prepared.work_vertex_period_shifts)
+    assert any(
+        value != Fraction(float(value))
+        for point in prepared.work_vertex_charts
+        for value in point
+    )
+    original = surface_metric.execute_local_metric_adaptation
+    observed: list[tuple[tuple[Fraction, ...], ...]] = []
+
+    def local_with_exact_charts(*args: Any, **kwargs: Any) -> Any:
+        exact = kwargs["exact_source_points"]
+        observed.append(exact)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        surface_metric, "execute_local_metric_adaptation", local_with_exact_charts
+    )
     outcome = execute_surface_metric_adaptation(
         prepared,
         predicate_mode=PredicateMode.EXACT,
         topology_operations=True,
         relocation=True,
     )
+    assert observed == [prepared.work_vertex_charts]
     # Extraction vertices are not features: the cap refines across the seam and the
     # pole fan while the coarser remainder collapses and relocates free vertices.
     # Regular passes stall on one short birth edge whose endpoint collapses both

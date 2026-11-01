@@ -605,6 +605,7 @@ def test_host_optimal_collapse_batches_preserve_candidate_order(
 def test_host_optimal_collapse_searches_between_seed_parameters(
     scale: float,
     feasible: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     center = -0.2 + 0.4 * (17.0 / 64.0)
     points = np.asarray(
@@ -670,6 +671,15 @@ def test_host_optimal_collapse_searches_between_seed_parameters(
             stale, stale_topology, PredicateMode.EXACT, None, source, short
         )
         assert refused.reason == ("unresolved",)
+
+        def exhausted(*_args: object) -> None:
+            raise MemoryError
+
+        monkeypatch.setattr(local_metric, "_optimal_remainder", exhausted)
+        resource = local_metric._optimal_collapse_search(
+            state, topology, PredicateMode.EXACT, None, source, short
+        )
+        assert resource.reason == ("resource",)
     else:
         assert result.reason == ("long",)
 
@@ -705,6 +715,31 @@ def test_host_optimal_collapse_opaque_field_seed_miss_is_unresolved() -> None:
     assert short.size == 1
     result = local_metric._optimal_collapse_search(
         state, topology, PredicateMode.EXACT, None, source, short
+    )
+    assert result.reason == ("missing-certification",)
+
+    class NoncontractingField:
+        def __call__(
+            self, query: np.ndarray, rows: np.ndarray, weights: np.ndarray, /
+        ) -> np.ndarray:
+            del rows, weights
+            return np.broadcast_to(100.0 * np.eye(2), (query.shape[0], 2, 2))
+
+        def segment_range(
+            self,
+            rows: tuple[int, ...],
+            lower: tuple[Fraction, ...],
+            upper: tuple[Fraction, ...],
+            chart_lower: np.ndarray,
+            chart_upper: np.ndarray,
+            /,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del rows, lower, upper, chart_lower, chart_upper
+            return np.zeros((2, 2)), 100.0 * np.eye(2)
+
+    wide = source._replace(metric_field=NoncontractingField())
+    result = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, wide, short
     )
     assert result.reason == ("missing-certification",)
 
@@ -772,6 +807,55 @@ def test_source_box_detects_single_and_crossing_cells() -> None:
     assert covered
     piece = next(piece for piece in shifted if piece.rows == (0, 1, 2))
     assert piece.weight_upper[1] == 1 / (Fraction(1) + Fraction(1, 2**54))
+
+
+def test_field_box_includes_carrier_locator_tie_across_exact_cells() -> None:
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (0, 2, 3))))
+    _, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (4, 2, 2)),
+        np.zeros(4, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(4, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+
+    class CellField:
+        def __call__(
+            self, query: np.ndarray, rows: np.ndarray, weights: np.ndarray, /
+        ) -> np.ndarray:
+            del query, weights
+            scales = np.where(np.any(rows == 1, axis=1), 0.01, 100.0)
+            return scales[:, None, None] * np.eye(2)
+
+        def segment_range(
+            self,
+            rows: tuple[int, ...],
+            lower: tuple[Fraction, ...],
+            upper: tuple[Fraction, ...],
+            chart_lower: np.ndarray,
+            chart_upper: np.ndarray,
+            /,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del lower, upper, chart_lower, chart_upper
+            matrix = (0.01 if 1 in rows else 100.0) * np.eye(2)
+            return matrix, matrix
+
+    exact = list(source.exact_points)
+    exact[2] = (Fraction(1) + Fraction(1, 2**54), Fraction(1))
+    source = source._replace(exact_points=tuple(exact), metric_field=CellField())
+    query = np.asarray(((0.5, 0.5),))
+    actual = local_metric._field_metric(
+        source, query, np.eye(2)[None], PredicateMode.EXACT
+    )
+    bounds = local_metric._field_box(source, query[0], query[0])
+    assert bounds is not None
+    assert np.all(bounds[0] <= actual[0])
+    assert np.all(actual[0] <= bounds[1])
+    assert bounds[0][0, 0] == 0.01
+    assert bounds[1][0, 0] == 100.0
 
 
 def test_candidate_box_encloses_rounded_and_exact_affine_values() -> None:

@@ -1447,11 +1447,13 @@ bound to the source vertices). Routes:
   criterion is a stall. It first tries optimal-point collapse: both endpoints
   merge along an edge (or slide on the survivor's straight source curve)
   without creating an edge above `sqrt(2)`. The host tries a fixed seed lattice
-  first, then subdivides the remaining representable parameters; the lattice
-  alone cannot establish infeasibility. Interval geometry and metric bounds
-  exclude segments, and an accepted point retains its exact source stencil.
-  Point-only metric callbacks cannot certify the unsampled remainder. The
-  compiled device search is separate and currently uses its fixed seed lattice.
+  first. For identical current vertex-ball tensors with no callback, it also
+  subdivides the remaining representable parameters using interval geometry
+  and metric bounds. Other seed misses remain unresolved: ideal P1 bounds do
+  not certify JAX execution, and callback ranges alone do not certify the
+  executed locator and metric or guarantee progress. An accepted point retains
+  its exact source stencil. The compiled device search remains separate and
+  currently uses its fixed seed lattice.
   All merged-star cells and source stencils are rechecked, including periodic
   orphan retirement. If this does not improve
   the stall, an endpoint escape admits every collapse up to metric length 2,

@@ -414,15 +414,70 @@ class _SegmentMetricField(Protocol):
     ) -> tuple[np.ndarray, np.ndarray] | None: ...
 
 
+def _carrier_locator_pieces(
+    source: _Source, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[_SourceBoxPiece, ...] | None:
+    """Bound every floating locator cell and normalized weight on a carrier box."""
+    overlaps = _host_boxes_overlap(
+        source.cell_lower, source.cell_upper, lower, upper, True, 0.0, _LOCATION_TOLERANCE
+    )
+    cells = _locator(source)[0]
+    box = (lower, upper)
+
+    def component(value: Any, axis: int) -> tuple[np.ndarray, np.ndarray]:
+        return np.asarray(value[0][axis]), np.asarray(value[1][axis])
+
+    def cross(origin: Any, first: Any, second: Any) -> Any:
+        u = interval_subtract(first, origin)
+        v = interval_subtract(second, origin)
+        return interval_subtract(
+            interval_multiply(component(u, 0), component(v, 1)),
+            interval_multiply(component(u, 1), component(v, 0)),
+        )
+
+    pieces = []
+    for cell in np.flatnonzero(overlaps):
+        raw = cells[cell]
+        rows = (int(raw[0]), int(raw[1]), int(raw[2]))
+        a, b, c = ((source.points[row], source.points[row]) for row in rows)
+        denominator = cross(a, b, c)
+        if float(denominator[0]) <= 0.0 <= float(denominator[1]):
+            return None
+        weights = tuple(
+            interval_divide(cross(box, first, second), denominator)
+            for first, second in ((b, c), (c, a), (a, b))
+        )
+        if not all(np.isfinite(value) for weight in weights for value in weight):
+            return None
+        clipped = tuple(
+            (np.maximum(weight[0], 0.0), np.maximum(weight[1], 0.0)) for weight in weights
+        )
+        total = interval_add(interval_add(clipped[0], clipped[1]), clipped[2])
+        if float(total[0]) <= 0.0:
+            return None
+        normalized = tuple(interval_divide(weight, total) for weight in clipped)
+        if not all(np.isfinite(value) for weight in normalized for value in weight):
+            return None
+        lo = tuple(Fraction(float(weight[0])) for weight in normalized)
+        hi = tuple(Fraction(float(weight[1])) for weight in normalized)
+        pieces.append(_SourceBoxPiece(rows, (lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2])))
+    return tuple(pieces)
+
+
 def _field_box(
     source: _Source, lower: np.ndarray, upper: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Enclose a source field throughout a covered box, including cell ties."""
+    """Combine callback-declared ranges over all possible carrier locator cells.
+
+    This does not by itself certify the callback's floating execution and is
+    not used to exclude optimal-collapse intervals.
+    """
     field = source.metric_field
     if not isinstance(field, _SegmentMetricField):
         return None
-    covered, pieces = _source_box_pieces(source, lower, upper)
-    if not covered:
+    covered, _ = _source_box_pieces(source, lower, upper)
+    pieces = _carrier_locator_pieces(source, lower, upper)
+    if not covered or pieces is None:
         return None
     ranges: list[tuple[np.ndarray, np.ndarray]] = []
     for piece in pieces:
@@ -3277,20 +3332,26 @@ def _optimal_box_band(
         np.zeros(2, dtype=np.float64),
     )
     point_box = _exact_candidate_box(endpoints[0], endpoints[1], lower, upper)
-    point_metric = (
-        _current_segment_metric(
+    if actual_metric is not None:
+        point_metric = (actual_metric, actual_metric)
+    elif source.metric_field is not None:
+        return "unresolved"
+    else:
+        ball = topology.ball_cells[
+            topology.ball_offsets[kept] : topology.ball_offsets[kept + 1]
+        ]
+        vertices = np.unique(state.cells[ball])
+        if not vertices.size or not np.all(
+            state.metric[vertices] == state.metric[vertices[0]]
+        ):
+            # The spectral enclosure bounds the ideal interpolation, not every
+            # JAX execution. Only the shared constant rule is exact here.
+            return "unresolved"
+        point_metric = _current_segment_metric(
             state, topology, source, kept, target, lower, upper, prepared
         )
-        if source.metric_field is None
-        else _field_box(source, *point_box)
-    )
-    if point_metric is None:
-        return "unresolved"
-    if actual_metric is not None:
-        point_metric = (
-            np.minimum(point_metric[0], actual_metric),
-            np.maximum(point_metric[1], actual_metric),
-        )
+        if point_metric is None:
+            return "unresolved"
     neighbors: set[int] = set()
     for vertex in (kept, removed):
         begin, end = topology.neighbor_offsets[vertex : vertex + 2]
@@ -3339,8 +3400,14 @@ def _optimal_remainder(
     )
     if reason[0]:
         return None
-    if source.metric_field is not None and not isinstance(
-        source.metric_field, _SegmentMetricField
+    if source.metric_field is not None:
+        return None
+    ball = topology.ball_cells[
+        topology.ball_offsets[kept[0]] : topology.ball_offsets[kept[0] + 1]
+    ]
+    vertices = np.unique(state.cells[ball])
+    if not vertices.size or not np.all(
+        state.metric[vertices] == state.metric[vertices[0]]
     ):
         return None
     for step in range(_OPTIMAL_LATTICE + 1):
@@ -3410,6 +3477,18 @@ def _optimal_remainder(
             )
             if not candidate.reason[0]:
                 return candidate
+            vertices = np.asarray((kept[0], target), dtype=np.int64)
+            endpoints = _exact_source_segment_points(
+                state, source, vertices, vertices, np.zeros(2, dtype=np.float64)
+            )
+            box_lower, box_upper = _exact_candidate_box(
+                endpoints[0], endpoints[1], lower, upper
+            )
+            if np.all(np.nextafter(box_lower, np.inf) >= box_upper):
+                # No interior subbox can improve these outward binary64
+                # coordinate bounds. Preserve an indeterminate result.
+                unresolved = True
+                continue
             stack.append((middle, hi))
             stack.append((lo, middle))
     return None if unresolved else "long"
@@ -3460,7 +3539,8 @@ def _optimal_collapse_search(
                 state, topology, mode, context, source, result, index, prepared
             )
         except MemoryError:
-            replacement = None
+            reason[index] = "resource"
+            continue
         if replacement is None:
             continue
         if isinstance(replacement, str):
