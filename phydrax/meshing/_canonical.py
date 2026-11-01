@@ -24,6 +24,7 @@ from ..discretization._cell_geometry_validity import CellValidityStatus
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
+from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry._surface_source_support import SurfaceSourceCharts
@@ -227,6 +228,7 @@ def certify_cell_mesh(
     planar_embedding: PlanarEmbedding | None = None,
     layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
     embedding: GlobalEmbeddingCertificate | None = None,
+    embedding_premise: NestedRestrictionPremise | None = None,
     manifold_scope: CellMeshManifoldScope | None = None,
     validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
 ) -> CellMeshingResult:
@@ -234,6 +236,9 @@ def certify_cell_mesh(
 
     ``embedding`` is a prepared global-embedding certificate of the canonical
     mesh; acceptance with ``certification_inputs`` checks and reuses it.
+    ``embedding_premise`` offers acceptance a certified source embedding and
+    the exact nested transition to this mesh, from which the global embedding
+    follows when the nested-restriction theorem's premises hold.
     ``validated_witnesses`` are fidelity-witness validations the caller made
     for exactly these mesh, coordinate map and source objects; acceptance with
     ``certification_inputs`` does not repeat them.
@@ -252,7 +257,9 @@ def certify_cell_mesh(
     geometry_ = CellGeometrySpec.affine(canonical) if geometry is None else geometry
     if not isinstance(geometry_, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec or None.")
-    if embedding is not None and certification_inputs is None:
+    if (
+        embedding is not None or embedding_premise is not None
+    ) and certification_inputs is None:
         raise ValueError("A prepared embedding is reused only by certified acceptance.")
     if validated_witnesses and certification_inputs is None:
         raise ValueError(
@@ -297,6 +304,7 @@ def certify_cell_mesh(
                 region_boundary_evidence=region_boundary_evidence,
             ),
             embedding=embedding,
+            embedding_premise=embedding_premise,
             validated=validated,
         )
         certification.require_passed()

@@ -36,6 +36,7 @@ from ..geometry._mesh_certificates import (
     certificate_status,
     MeshCertificateStatus,
 )
+from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistanceWitness,
@@ -317,13 +318,16 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         audit_policy: CellMeshAuditPolicy | None = None,
         organization: NativeMeshOrganization | None = None,
         embedding: GlobalEmbeddingCertificate | None = None,
+        embedding_premise: NestedRestrictionPremise | None = None,
         validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
     ) -> None:
         """Compute acceptance from ``inputs``.
 
         ``embedding`` is an optional prepared global-embedding certificate. It
         is reused only after it is shown to bind these exact mesh, coordinate
-        map, local-validity and junction inputs; otherwise it is computed here.
+        map, local-validity and junction inputs; otherwise it is computed here,
+        from ``embedding_premise`` (a certified source embedding and the exact
+        nested transition to this mesh) when that theorem's premises hold.
         ``validated`` holds fidelity-witness validations already made for the
         retained mesh, coordinate map and source objects of ``inputs``, as
         returned by ``inputs.require_current``; those are not repeated.
@@ -361,6 +365,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 inputs.geometry,
                 validity,
                 junction_vertices=inputs.junction_vertices,
+                nested_restriction=embedding_premise,
             )
         else:
             embedding.require_inputs(
@@ -711,6 +716,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 associations=self.associations,
             ),
             embedding=embedding,
+            embedding_premise=self.embedding.nested_restriction_premise,
             validated=validated,
         )
         if not _same_tree_content(self, renewed):
