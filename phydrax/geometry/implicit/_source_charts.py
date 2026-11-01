@@ -75,6 +75,7 @@ from ._analytic_profile import AnalyticImplicitProfile
 
 
 if TYPE_CHECKING:
+    from ...geometry._source_fidelity import ValidatedSourceFidelityWitness
     from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
 type Interval = tuple[float, float]
 type GridCorner = tuple[int, int, int]
@@ -4312,7 +4313,7 @@ def certify_adaptive_implicit_charts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: AdaptiveImplicitSourceQuery,
-    witness: SourceBoundaryChartWitness,
+    witness: SourceBoundaryChartWitness | ValidatedSourceFidelityWitness,
     /,
     *,
     tolerance: float,
@@ -4332,7 +4333,12 @@ def certify_adaptive_implicit_charts(
     )
     from ...geometry._source_fidelity_certificate import SourceFidelityCertificate
 
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    chart_witness = validate_source_fidelity_witness(
+        mesh, geometry, source, witness
+    ).witness
+    if not isinstance(chart_witness, SourceBoundaryChartWitness):
+        raise TypeError("witness must be SourceBoundaryChartWitness.")
+    witness = chart_witness
     if root_charts is not None:
         root_charts.require_request(
             mesh,
