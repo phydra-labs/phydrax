@@ -676,6 +676,7 @@ from ._sparse_factorizations import (
     PreparedSparseFactorization,
     refresh_sparse_factorization,
     refresh_sparse_factorization_values,
+    SparseEliminationSchedule,
     SparseFactorizationDiagnostics,
     SparseFactorizationKind,
     SparseFactorizationPlan,
@@ -707,6 +708,7 @@ from ._sparse_rank import (
     SparseRowRankPolicy,
     SparseRowRankRefusal,
 )
+from ._sparse_supernodal import SupernodalAnalysis
 from ._sparse_triangular import (
     analyze_sparse_triangular,
     solve_sparse_triangular,
@@ -1240,6 +1242,7 @@ __all__ = [
     "SparseAssemblyCostEstimate",
     "SparseAssemblyPlan",
     "SparseAssemblyPolicy",
+    "SparseEliminationSchedule",
     "SparseCholesky",
     "SparseFactorizationDiagnostics",
     "SparseFactorizationKind",
@@ -1294,6 +1297,7 @@ __all__ = [
     "SubspaceCorrectionSweep",
     "SubspaceCorrectionTerm",
     "SumLinearOperator",
+    "SupernodalAnalysis",
     "SylvesterSolveResult",
     "SymmetricLowRankLinearOperator",
     "TaylorExponentialPlan",
