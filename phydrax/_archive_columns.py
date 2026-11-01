@@ -7,13 +7,17 @@ Model recipes encode every static value as one manifest node. Records that keep
 one static value per mesh entity (source IDs, roles, tags, exact witness text)
 would otherwise put one JSON node per row into the manifest. These columns move
 the row data into array members: repeated values become a first-occurrence table
-plus one row-index array, and unique text becomes UTF-8 bytes plus offsets.
-Both decode to exactly the original tuple.
+plus one row-index array, unique text becomes UTF-8 bytes plus offsets,
+variable-length integer rows become int64 values plus row ends, and regular
+exact integer or rational tensors become canonical decimal text. All decode to
+exactly the original tuple.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Hashable
+from fractions import Fraction
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -128,9 +132,108 @@ def integer_column_values(rows: Any, /) -> tuple[int, ...]:
     return tuple(array.tolist())
 
 
+class IntegerRowsArchiveRecipe(NamedTuple):
+    """Variable-length integer rows as concatenated int64 values and row ends."""
+
+    values: np.ndarray
+    ends: np.ndarray
+
+    @classmethod
+    def encode(cls, rows: tuple[tuple[int, ...], ...], /) -> IntegerRowsArchiveRecipe:
+        if any(not isinstance(row, tuple) for row in rows):
+            raise TypeError("Integer rows must be tuples.")
+        ends = np.cumsum(
+            np.asarray([len(row) for row in rows], dtype=np.int64), dtype=np.int64
+        ).reshape((len(rows),))
+        return cls(integer_column(tuple(value for row in rows for value in row)), ends)
+
+    def decode(self) -> tuple[tuple[int, ...], ...]:
+        values = integer_column_values(self.values)
+        ends = integer_column_values(self.ends)
+        if (not ends and values) or (
+            ends
+            and (
+                ends[0] < 0
+                or any(last < first for first, last in zip(ends, ends[1:]))
+                or ends[-1] != len(values)
+            )
+        ):
+            raise ValueError("Integer row ends must partition their values.")
+        return tuple(
+            values[start:end] for start, end in zip((0, *ends[:-1]), ends, strict=True)
+        )
+
+
+class ExactTensorArchiveRecipe(NamedTuple):
+    """Regular nested tuples of exact integers or rationals as canonical decimal text.
+
+    Each leaf is stored as ``str(value)`` (``n`` or ``n/d`` in lowest terms), so
+    integers of any size and exact rationals round-trip without binary64 rounding.
+    """
+
+    text: TextColumnArchiveRecipe
+    shape: tuple[int, ...]
+    rational: bool
+
+    @classmethod
+    def encode(
+        cls, value: tuple[Any, ...], /, *, rational: bool
+    ) -> ExactTensorArchiveRecipe:
+        leaf_type = Fraction if rational else int
+        shape: list[int] = []
+        node: Any = value
+        while isinstance(node, tuple):
+            shape.append(len(node))
+            if not node:
+                break
+            node = node[0]
+        leaves: list[str] = []
+
+        def visit(item: Any, depth: int, /) -> None:
+            if depth == len(shape):
+                if type(item) is not leaf_type:
+                    raise TypeError("Exact tensor leaves must share one exact type.")
+                leaves.append(str(item))
+                return
+            if not isinstance(item, tuple) or len(item) != shape[depth]:
+                raise ValueError("Exact tensor rows must have one regular shape.")
+            for child in item:
+                visit(child, depth + 1)
+
+        visit(value, 0)
+        return cls(TextColumnArchiveRecipe.encode(tuple(leaves)), tuple(shape), rational)
+
+    def decode(self) -> tuple[Any, ...]:
+        if not isinstance(self.shape, tuple) or any(
+            isinstance(size, bool) or not isinstance(size, int) or size < 0
+            for size in self.shape
+        ):
+            raise TypeError("Exact tensor shape must be a tuple of sizes.")
+        if not self.shape or type(self.rational) is not bool:
+            raise TypeError("Exact tensor must be a tuple with one exact leaf type.")
+        texts = self.text.decode()
+        if len(texts) != math.prod(self.shape):
+            raise ValueError("Exact tensor text does not match its shape.")
+        leaves = [Fraction(text) if self.rational else int(text) for text in texts]
+        if any(str(leaf) != text for leaf, text in zip(leaves, texts, strict=True)):
+            raise ValueError("Exact tensor text must be canonical.")
+        position = 0
+
+        def build(depth: int, /) -> Any:
+            nonlocal position
+            if depth == len(self.shape):
+                position += 1
+                return leaves[position - 1]
+            return tuple(build(depth + 1) for _ in range(self.shape[depth]))
+
+        return build(0)
+
+
 __all__ = [
+    "ExactTensorArchiveRecipe",
     "integer_column",
     "integer_column_values",
+    "IntegerRowsArchiveRecipe",
     "StaticColumnArchiveRecipe",
     "TextColumnArchiveRecipe",
 ]

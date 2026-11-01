@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
@@ -308,6 +310,45 @@ def test_reconstruction_chart_witness_revalidates_persistent_triangle_keys() -> 
     witness.require_current(construction.mesh, construction.geometry, fidelity_source)
 
 
+def test_reconstructed_query_prepares_its_domain_cover_once(monkeypatch) -> None:
+    from phydrax.geometry import _domain_boundary
+    from phydrax.geometry._source_fidelity import _reconstructed_domain_query
+
+    source = _reconstructed_source(feature_id="native-reconstructed-prepared-domain")
+    domain = source.meshing_domain
+    assert domain is not None
+    query = ReconstructedTriangleBoundarySource(source)
+    reference = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
+    assert query.domain_refusal is None
+    assert query.domain_query is not None and query.domain_cover is not None
+    assert query.domain_query.source_scope_id == reference.source_scope_id
+    expected = reference.boundary_chart_cover()
+    np.testing.assert_array_equal(query.domain_cover.simplices, expected.simplices)
+    np.testing.assert_array_equal(
+        query.domain_cover.deviation_bounds, expected.deviation_bounds
+    )
+    assert query.domain_cover.restriction_ids == expected.restriction_ids
+
+    # Validation reuses the prepared query: no domain chart cover is recomputed.
+    def refuse(self, /):
+        raise AssertionError("the prepared domain cover was recomputed")
+
+    monkeypatch.setattr(
+        _domain_boundary.MeshingDomainBoundarySource, "boundary_chart_cover", refuse
+    )
+    assert _reconstructed_domain_query(query) is query.domain_query
+    monkeypatch.undo()
+
+    # A source retaining a domain of other content no longer carries the proof.
+    other = _reconstructed_source(feature_id="native-reconstructed-other-domain")
+    assert other.meshing_domain is not None
+    swapped = eqx.tree_at(
+        lambda value: value.source.meshing_domain, query, other.meshing_domain
+    )
+    with pytest.raises(ValueError, match="persistent source vertex/facet IDs"):
+        _reconstructed_domain_query(swapped)
+
+
 def test_reconstructed_persistent_entities_survive_row_permutation() -> None:
     source = _reconstructed_source(feature_id="native-reconstructed-permutation")
     original_region = source.source
@@ -491,3 +532,24 @@ def test_reconstructed_public_plan_certifies_continuous_source_boundary() -> Non
     assert result.audit.passed
     assert result.compliance.passed
     assert result.trace.successful
+
+
+def test_reconstructed_domain_evaluates_patches_in_one_stacked_call() -> None:
+    from phydrax.geometry._meshing_domain import StackedSurfaceEvaluation
+
+    source = _reconstructed_source(feature_id="native-reconstructed-stacked")
+    domain = source.meshing_domain
+    assert domain is not None
+    assert all(
+        isinstance(patch.surface, StackedSurfaceEvaluation) for patch in domain.patches
+    )
+    rng = np.random.default_rng(3)
+    rows = rng.integers(0, len(domain.patches), size=97)
+    charts = rng.random((97, 2))
+    charts[::5] = (1.0, 0.0)
+    values = domain.evaluate(rows, charts)
+    for row, (patch, chart) in enumerate(zip(rows, charts, strict=True)):
+        single = np.asarray(
+            domain.patches[int(patch)].surface.evaluate(jnp.asarray(chart[None, :]))
+        )[0]
+        assert values[row].tobytes() == single.tobytes()

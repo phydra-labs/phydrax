@@ -9,7 +9,7 @@ import math
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from fractions import Fraction
-from typing import cast, final, Literal, TYPE_CHECKING
+from typing import cast, final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -21,6 +21,8 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation._bspline_extraction import (
     _rational_bernstein_surface_span,
+    PreparedSourceSpans,
+    RationalBSplineCurveSpan,
     RationalBSplineSurfaceHessianEnclosure,
     RationalBSplineSurfaceSpan,
 )
@@ -33,13 +35,20 @@ from ..linalg._exact import determinant_exact
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked, ConvertibleToArray, parse
 from ._atlas import AbstractBoundaryMap, BoundaryAtlas
-from ._interval_enclosure import prepare_interval_function
+from ._interval_enclosure import (
+    IntervalExtensionError,
+    prepare_interval_function,
+    PreparedIntervalFunction,
+)
 from ._source_identity import source_entity_id as canonical_source_entity_id
 from .brep._assembly import BRepAffinePlacement, BRepAssemblyOccurrence
 from .brep._model import BRepGeometry, BRepModel
 from .brep._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
+    bspline_curve_bounds,
+    bspline_curve_derivative_bounds,
+    BSplineCurve,
     BSplineSurfacePatch,
     surface_differential,
     SurfaceMappedCurve,
@@ -64,6 +73,25 @@ type _ExactChartInput = Sequence[
     ]
 ]
 type _MeshingChartInput = ConvertibleToArray | _ExactChartInput
+
+
+@runtime_checkable
+class StackedSurfaceEvaluation(Protocol):
+    """A surface class that evaluates a stack of its instances in one call.
+
+    ``evaluate_stacked(surfaces, owners, parameters)`` returns, for every row,
+    ``surfaces[owners[row]].evaluate(parameters[row])`` with exactly the same
+    arithmetic, so batching never changes a coordinate.
+    """
+
+    @classmethod
+    def evaluate_stacked(
+        cls,
+        surfaces: Sequence[AbstractSurfacePatch],
+        owners: np.ndarray,
+        parameters: Array,
+        /,
+    ) -> Array: ...
 
 
 def _outward_surface_parameter_box(
@@ -525,33 +553,42 @@ class _PlacedSurfacePatch(AbstractSurfacePatch):
 
     def bounding_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
         """Place the source's own enclosure through the exact affine placement."""
-        from ..discretization._exact_algebraic_geometry import coefficient_interval
-
-        source_box = np.asarray(self.source.bounding_box(parameter_box), np.float64)
-        if source_box.shape != (2, 3) or not np.all(np.isfinite(source_box)):
-            raise ValueError("Placed source patch needs a finite source enclosure.")
-        source_bounds = tuple(
-            (
-                Fraction.from_float(float(source_box[0, axis])),
-                Fraction.from_float(float(source_box[1, axis])),
-            )
-            for axis in range(3)
+        return _placed_point_box(
+            self.placement,
+            np.asarray(self.source.bounding_box(parameter_box), np.float64),
         )
-        matrix = self.placement.matrix
-        lower: list[float] = []
-        upper: list[float] = []
-        for row in range(3):
-            row_lower, row_upper = coefficient_interval(matrix[row][3])
-            for column in range(3):
-                entry = coefficient_interval(matrix[row][column])
-                products = tuple(
-                    factor * bound for factor in entry for bound in source_bounds[column]
-                )
-                row_lower += min(products)
-                row_upper += max(products)
-            lower.append(fraction_endpoint(row_lower, upper=False))
-            upper.append(fraction_endpoint(row_upper, upper=True))
-        return np.asarray((lower, upper), dtype=np.float64)
+
+
+def _placed_point_box(
+    placement: BRepAffinePlacement, source_box: np.ndarray, /
+) -> np.ndarray:
+    """Outward box of the exact affine image of a finite source point box."""
+    from ..discretization._exact_algebraic_geometry import coefficient_interval
+
+    if source_box.shape != (2, 3) or not np.all(np.isfinite(source_box)):
+        raise ValueError("Placed source patch needs a finite source enclosure.")
+    source_bounds = tuple(
+        (
+            Fraction.from_float(float(source_box[0, axis])),
+            Fraction.from_float(float(source_box[1, axis])),
+        )
+        for axis in range(3)
+    )
+    matrix = placement.matrix
+    lower: list[float] = []
+    upper: list[float] = []
+    for row in range(3):
+        row_lower, row_upper = coefficient_interval(matrix[row][3])
+        for column in range(3):
+            entry = coefficient_interval(matrix[row][column])
+            products = tuple(
+                factor * bound for factor in entry for bound in source_bounds[column]
+            )
+            row_lower += min(products)
+            row_upper += max(products)
+        lower.append(fraction_endpoint(row_lower, upper=False))
+        upper.append(fraction_endpoint(row_upper, upper=True))
+    return np.asarray((lower, upper), dtype=np.float64)
 
 
 def _placed_homogeneous_surface_coefficients(
@@ -608,83 +645,205 @@ def _placed_rational_surface_span(
     )
 
 
-_PLACED_SPAN_CAPACITY = 64
-_PLACED_SPANS: dict[
-    int,
-    tuple[
-        tuple[RationalBSplineSurfaceSpan, ...],
-        BRepAffinePlacement,
-        tuple[RationalBSplineSurfaceSpan, ...],
-    ],
-] = {}
-
-
 def _placed_rational_surface_spans(
-    source_spans: tuple[RationalBSplineSurfaceSpan, ...],
+    source_spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     placement: BRepAffinePlacement,
     /,
-) -> tuple[RationalBSplineSurfaceSpan, ...]:
-    """Place one source span bank once and keep the placed bank with it.
-
-    The entry holds the source bank itself, so its identity key cannot be
-    reused by another bank while cached; placed spans keep their prepared
-    interval nets across consumers.
-    """
-    cached = _PLACED_SPANS.get(id(source_spans))
-    if cached is not None and cached[0] is source_spans and cached[1] == placement:
-        return cached[2]
-    placed = tuple(
-        _placed_rational_surface_span(span, placement) for span in source_spans
+) -> PreparedSourceSpans[RationalBSplineSurfaceSpan]:
+    """Exact spans of a source span bank under one exact affine placement."""
+    return PreparedSourceSpans(
+        canonical_fingerprint(
+            {
+                "kind": "placed-rational-bernstein-surface-spans",
+                "source": source_spans.source_id,
+                "placement": placement.identity_payload(),
+            }
+        ),
+        tuple(
+            _placed_rational_surface_span(span, placement) for span in source_spans.spans
+        ),
     )
-    if len(_PLACED_SPANS) >= _PLACED_SPAN_CAPACITY:
-        del _PLACED_SPANS[next(iter(_PLACED_SPANS))]
-    _PLACED_SPANS[id(source_spans)] = (source_spans, placement, placed)
-    return placed
 
 
-def _exact_rational_surface_spans(
+def _prepare_surface_spans(
     surface: AbstractSurfacePatch, /
-) -> tuple[RationalBSplineSurfaceSpan, ...] | None:
+) -> PreparedSourceSpans[RationalBSplineSurfaceSpan] | None:
+    """Extract the exact rational spans of a spline or placed spline carrier.
+
+    Pure: every call extracts again. ``None`` marks a carrier without exact
+    rational spans. Consumers of many queries hold a `SourcePreparation`.
+    """
     if isinstance(surface, _PlacedSurfacePatch):
-        source_spans = _exact_rational_surface_spans(surface.source)
+        source_spans = _prepare_surface_spans(surface.source)
         if source_spans is None:
             return None
         return _placed_rational_surface_spans(source_spans, surface.placement)
-    if isinstance(surface, BSplineSurfacePatch):
-        return surface.rational_spans()
     from .brep._tspline import TSplineSurfacePatch
 
-    if not isinstance(surface, TSplineSurfacePatch):
-        return None
-    surface.validate_source_bank()
-    surface.validate_exact_transfer_chain()
-    realization = surface.realization
-    spans: list[RationalBSplineSurfaceSpan] = []
-    for extraction in realization.extractions:
-        homogeneous_controls = realization.exact_homogeneous_piece(
-            extraction.piece_id, surface.exact_target_homogeneous
-        )
-        if len(homogeneous_controls) != 16:
+    if isinstance(surface, (BSplineSurfacePatch, TSplineSurfacePatch)):
+        return surface.prepare_spans()
+    return None
+
+
+@final
+class SourcePreparation:
+    """Exact source artifacts that one consumer prepares for one meshing domain.
+
+    Carriers stay pure: they extract spans or trace interval programs on every
+    request. A computation over one domain (native surface meshing, source
+    fidelity certification, boundary chart covers) creates one preparation,
+    passes it explicitly to every routine and drops it when done, so span
+    extraction, placement, interval nets and restrictions, interval programs
+    and mapped p-curve Hessians are derived once per carrier for exactly that
+    lifetime. Entries are keyed by carrier identity and retain their carrier,
+    so an entry answers only the carrier object it was prepared from.
+    """
+
+    __slots__ = (
+        "_curve_spans",
+        "_mapped_hessians",
+        "_programs",
+        "_surface_spans",
+        "domain",
+    )
+
+    def __init__(self, domain: MeshingDomain, /) -> None:
+        self.domain = domain
+        self._surface_spans: dict[
+            int,
+            tuple[
+                AbstractSurfacePatch,
+                PreparedSourceSpans[RationalBSplineSurfaceSpan] | None,
+            ],
+        ] = {}
+        self._curve_spans: dict[
+            int, tuple[BSplineCurve, PreparedSourceSpans[RationalBSplineCurveSpan]]
+        ] = {}
+        self._programs: dict[
+            tuple[int, int], tuple[AbstractSurfacePatch, PreparedIntervalFunction]
+        ] = {}
+        self._mapped_hessians: dict[
+            tuple[int, int],
+            tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
+        ] = {}
+
+    @classmethod
+    def of(
+        cls, domain: MeshingDomain, preparation: SourcePreparation | None, /
+    ) -> SourcePreparation:
+        """Return ``preparation`` checked against ``domain``, or a fresh one."""
+        if preparation is None:
+            return cls(domain)
+        preparation.require(domain)
+        return preparation
+
+    def require(self, domain: MeshingDomain, /) -> None:
+        """Refuse to answer queries of a different meshing domain."""
+        if domain is not self.domain and domain.domain_id != self.domain.domain_id:
             raise ValueError(
-                "A bicubic T-spline extraction must retain sixteen homogeneous controls."
+                "A source preparation answers only the meshing domain it was prepared for."
             )
-        homogeneous_net = tuple(
-            tuple(homogeneous_controls[u_index * 4 + v_index] for v_index in range(4))
-            for u_index in range(4)
-        )
-        u0, u1, v0, v1 = extraction.parameter_bounds
-        spans.append(
-            _rational_bernstein_surface_span(
-                surface.source_definition_id,
-                (extraction.cell_id, extraction.piece_id),
-                (3, 3),
-                extraction.coefficient_row_ids,
-                ((u0, u1), (v0, v1)),
-                homogeneous_net,
-                include_hessian=True,
+
+    def surface_spans(
+        self, surface: AbstractSurfacePatch, /
+    ) -> PreparedSourceSpans[RationalBSplineSurfaceSpan] | None:
+        """Exact rational spans of a spline or placed spline carrier, or ``None``."""
+        entry = self._surface_spans.get(id(surface))
+        if entry is not None:
+            return entry[1]
+        if isinstance(surface, _PlacedSurfacePatch):
+            source_spans = self.surface_spans(surface.source)
+            spans = (
+                None
+                if source_spans is None
+                else _placed_rational_surface_spans(source_spans, surface.placement)
             )
-        )
-    return tuple(spans)
+        else:
+            spans = _prepare_surface_spans(surface)
+        self._surface_spans[id(surface)] = (surface, spans)
+        return spans
+
+    def curve_spans(
+        self, curve: BSplineCurve, /
+    ) -> PreparedSourceSpans[RationalBSplineCurveSpan]:
+        """Exact rational spans of one B-spline curve carrier."""
+        entry = self._curve_spans.get(id(curve))
+        if entry is not None:
+            return entry[1]
+        spans = curve.prepare_spans()
+        self._curve_spans[id(curve)] = (curve, spans)
+        return spans
+
+    def surface_box(
+        self, surface: AbstractSurfacePatch, parameter_box: ConvertibleToArray, /
+    ) -> np.ndarray:
+        """``surface.bounding_box(parameter_box)`` from prepared spline spans."""
+        if isinstance(surface, _PlacedSurfacePatch):
+            return _placed_point_box(
+                surface.placement, self.surface_box(surface.source, parameter_box)
+            )
+        from .brep._root_bindings import _exact_span_surface_box
+        from .brep._tspline import TSplineSurfacePatch
+
+        if isinstance(surface, (BSplineSurfacePatch, TSplineSurfacePatch)):
+            box = np.asarray(surface.validate_parameter_box(parameter_box), np.float64)
+            spans = self.surface_spans(surface)
+            if spans is None:
+                raise RuntimeError("A spline carrier prepared no exact spans.")
+            return _exact_span_surface_box(spans, box[0], box[1])
+        return np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
+
+    def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
+        """``curve.bounding_box(first, last)`` from prepared spline spans."""
+        if isinstance(curve, BSplineCurve):
+            return bspline_curve_bounds(curve, self.curve_spans(curve), first, last)
+        return np.asarray(curve.bounding_box(first, last), dtype=np.float64)
+
+    def curve_derivative_bounds(
+        self, curve: AbstractCurve, first: float, last: float, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """``curve.derivative_bounds(first, last)`` from prepared spline spans."""
+        if isinstance(curve, BSplineCurve):
+            return bspline_curve_derivative_bounds(
+                curve, self.curve_spans(curve), first, last
+            )
+        return curve.derivative_bounds(first, last)
+
+    def derivative_program(
+        self, surface: AbstractSurfacePatch, order: Literal[0, 1, 2], /
+    ) -> PreparedIntervalFunction:
+        """Interval program of the ``order``-th parameter derivative of ``surface``."""
+        key = (id(surface), order)
+        entry = self._programs.get(key)
+        if entry is not None:
+            return entry[1]
+        derivative: Callable[[Array], Array] = surface.evaluate
+        for _ in range(order):
+            derivative = jax.jacfwd(derivative)
+        program = prepare_interval_function(derivative, 2)
+        self._programs[key] = (surface, program)
+        return program
+
+    def mapped_curve_hessian(
+        self, surface: AbstractSurfacePatch, pcurve: AbstractCurve, /
+    ) -> PreparedIntervalFunction | None:
+        """Interval program of ``d^2/ds^2 surface(pcurve(s))``, if the maps trace."""
+        key = (id(surface), id(pcurve))
+        entry = self._mapped_hessians.get(key)
+        if entry is not None:
+            return entry[2]
+
+        def mapped(parameter: Array) -> Array:
+            return surface.evaluate(pcurve.evaluate(parameter[0]))
+
+        try:
+            program = prepare_interval_function(
+                jax.jacfwd(jax.jacfwd(mapped)), 1, batch_capacity=1
+            )
+        except (IntervalExtensionError, NotImplementedError):
+            program = None
+        self._mapped_hessians[key] = (surface, pcurve, program)
+        return program
 
 
 def _clip_parameter_polygon(
@@ -772,7 +931,7 @@ def _exact_uv_chart_bank(
 
 
 def _span_enclosures_for_chart(
-    spans: tuple[RationalBSplineSurfaceSpan, ...],
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     chart: _ExactUVChart,
     /,
 ) -> tuple[RationalBSplineSurfaceHessianEnclosure, ...]:
@@ -780,7 +939,7 @@ def _span_enclosures_for_chart(
     rational_span_bounds: list[
         tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
     ] = []
-    for span in spans:
+    for span in spans.spans:
         raw_u_bounds, raw_v_bounds = span.parameter_bounds
         lower_u, upper_u = raw_u_bounds
         lower_v, upper_v = raw_v_bounds
@@ -811,8 +970,8 @@ def _span_enclosures_for_chart(
     ):
         return ()
     enclosures: list[RationalBSplineSurfaceHessianEnclosure] = []
-    for span, ((lower_u, upper_u), (lower_v, upper_v)) in zip(
-        spans, rational_span_bounds, strict=True
+    for span, restrictions, ((lower_u, upper_u), (lower_v, upper_v)) in zip(
+        spans.spans, spans.restrictions, rational_span_bounds, strict=True
     ):
         clipped = polygon
         for axis, bound, keep_greater in (
@@ -836,7 +995,7 @@ def _span_enclosures_for_chart(
                 max(point[1] for point in clipped),
             ),
         )
-        enclosure = span.enclose_hessian(sub_bounds)
+        enclosure = span.enclose_hessian(sub_bounds, restrictions=restrictions)
         if not enclosure.positive_denominator:
             raise ValueError(
                 "Every spline extraction intersecting a chart must have a positive denominator enclosure."
@@ -883,7 +1042,7 @@ def _spline_interpolation_bound_from_enclosures(
 
 def _exact_spline_interpolation_bounds(
     cells: np.ndarray,
-    spans: tuple[RationalBSplineSurfaceSpan, ...],
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     exact_charts: tuple[_ExactUVChart, ...],
     /,
 ) -> np.ndarray:
@@ -897,7 +1056,7 @@ def _exact_spline_interpolation_bounds(
 
 def _exact_spline_normal_turn_bounds(
     cells: np.ndarray,
-    spans: tuple[RationalBSplineSurfaceSpan, ...],
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     exact_charts: tuple[_ExactUVChart, ...],
     /,
 ) -> np.ndarray:
@@ -1036,6 +1195,7 @@ def _adaptive_triangle_interpolation_bounds(
     surface: AbstractSurfacePatch,
     charts: Sequence[_ExactUVChart],
     budgets: Sequence[Fraction],
+    preparation: SourcePreparation,
     /,
 ) -> tuple[Fraction | None, ...]:
     """Bound ``|S - I_T S|`` on exact UV triangles ``T``, refining each until decided.
@@ -1055,10 +1215,8 @@ def _adaptive_triangle_interpolation_bounds(
         raise ValueError("Adaptive interpolation bounds require triangular UV charts.")
     if not charts:
         return ()
-    point_program = prepare_interval_function(surface.evaluate, 2)
-    hessian_program = prepare_interval_function(
-        jax.jacfwd(jax.jacfwd(surface.evaluate)), 2
-    )
+    point_program = preparation.derivative_program(surface, 0)
+    hessian_program = preparation.derivative_program(surface, 2)
 
     def chart_point(row: int, weights: _Barycentric, /) -> tuple[Fraction, Fraction]:
         chart = charts[row]
@@ -2959,12 +3117,41 @@ class MeshingDomain(StrictModule, NonTrainableState):
         return rows, points
 
     def evaluate(self, patches: ArrayLike, charts: ArrayLike, /) -> np.ndarray:
+        """Physical points of (patch, chart) pairs.
+
+        Patches whose surface class defines ``evaluate_stacked(surfaces, owners,
+        parameters)`` (the same arithmetic as ``evaluate``, row by row, over a
+        stack of surfaces of that class) are evaluated in one call per class;
+        every other patch is evaluated on its own.
+        """
         rows, charts_ = self._batch(patches, charts)
         result = np.empty((rows.size, 3), dtype=np.float64)
-        for patch in np.unique(rows):
-            selected = rows == patch
+        order = np.argsort(rows, kind="stable")
+        unique, starts = np.unique(rows[order], return_index=True)
+        stops = np.append(starts[1:], rows.size)
+        stacked: dict[type[StackedSurfaceEvaluation], list[int]] = {}
+        for index, patch in enumerate(unique.tolist()):
+            surface = self.patches[patch].surface
+            if isinstance(surface, StackedSurfaceEvaluation):
+                stacked.setdefault(type(surface), []).append(index)
+                continue
+            selected = order[starts[index] : stops[index]]
             result[selected] = np.asarray(
-                self.patches[int(patch)].surface.evaluate(jnp.asarray(charts_[selected])),
+                surface.evaluate(jnp.asarray(charts_[selected])), dtype=np.float64
+            )
+        for kind, members in stacked.items():
+            selected = np.concatenate(
+                [order[starts[index] : stops[index]] for index in members]
+            )
+            owners = np.repeat(
+                np.arange(len(members), dtype=np.int64),
+                [int(stops[index] - starts[index]) for index in members],
+            )
+            surfaces = tuple(
+                self.patches[int(unique[index])].surface for index in members
+            )
+            result[selected] = np.asarray(
+                kind.evaluate_stacked(surfaces, owners, jnp.asarray(charts_[selected])),
                 dtype=np.float64,
             )
         return result
@@ -2996,9 +3183,19 @@ class MeshingDomain(StrictModule, NonTrainableState):
         return normals, regular
 
     def interpolation_bounds(
-        self, patch: int, charts: _MeshingChartInput, /
+        self,
+        patch: int,
+        charts: _MeshingChartInput,
+        /,
+        *,
+        preparation: SourcePreparation | None = None,
     ) -> np.ndarray:
-        """Bound surface-to-affine interpolation over complete UV chart cells."""
+        """Bound surface-to-affine interpolation over complete UV chart cells.
+
+        ``preparation`` is the caller's `SourcePreparation` of this domain;
+        without one the source is prepared for this query alone.
+        """
+        preparation = SourcePreparation.of(self, preparation)
         if (
             isinstance(patch, bool)
             or not isinstance(patch, int)
@@ -3019,14 +3216,13 @@ class MeshingDomain(StrictModule, NonTrainableState):
         if cells.shape[0] == 0:
             return np.empty((0,), dtype=np.float64)
         surface = self.patches[patch].surface
-        spans = _exact_rational_surface_spans(surface)
+        spans = preparation.surface_spans(surface)
         if spans is not None:
             exact_charts = _exact_uv_chart_bank(charts, cells)
             return _exact_spline_interpolation_bounds(cells, spans, exact_charts)
         lower = np.min(cells, axis=1)
         upper = np.max(cells, axis=1)
-        second = jax.jacfwd(jax.jacfwd(surface.evaluate))
-        prepared = prepare_interval_function(second, 2)
+        prepared = preparation.derivative_program(surface, 2)
         hessian_lower, hessian_upper = prepared.evaluate(lower, upper)
         result = np.full((cells.shape[0],), np.inf, dtype=np.float64)
         for row in range(cells.shape[0]):
@@ -3069,14 +3265,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
         charts: Sequence[_ExactUVChart],
         budgets: Sequence[Fraction],
         /,
+        *,
+        preparation: SourcePreparation | None = None,
     ) -> tuple[Fraction | None, ...]:
         """Bound surface-to-affine interpolation over exact UV triangles to a budget.
 
         Exact spline carriers keep their span Hessian bound. Other carriers refine
         each triangle adaptively until its bound meets ``budgets[row]``, a vertex
         lower bound exceeds it, or binary64 enclosure resolution is reached.
-        ``None`` marks a row without a finite bound.
+        ``None`` marks a row without a finite bound. ``preparation`` is the
+        caller's `SourcePreparation` of this domain.
         """
+        preparation = SourcePreparation.of(self, preparation)
         if (
             isinstance(patch, bool)
             or not isinstance(patch, int)
@@ -3091,10 +3291,13 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for chart in charts
         )
         surface = self.patches[patch].surface
-        spans = _exact_rational_surface_spans(surface)
+        spans = preparation.surface_spans(surface)
         if spans is None:
             return _adaptive_triangle_interpolation_bounds(
-                surface, exact_charts, tuple(Fraction(value) for value in budgets)
+                surface,
+                exact_charts,
+                tuple(Fraction(value) for value in budgets),
+                preparation,
             )
         cells = np.asarray(
             [
@@ -3109,8 +3312,19 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for value in bounds
         )
 
-    def normal_turn_bounds(self, patch: int, charts: _MeshingChartInput, /) -> np.ndarray:
-        """Bound normal rotation in radians over complete UV chart cells."""
+    def normal_turn_bounds(
+        self,
+        patch: int,
+        charts: _MeshingChartInput,
+        /,
+        *,
+        preparation: SourcePreparation | None = None,
+    ) -> np.ndarray:
+        """Bound normal rotation in radians over complete UV chart cells.
+
+        ``preparation`` is the caller's `SourcePreparation` of this domain.
+        """
+        preparation = SourcePreparation.of(self, preparation)
         if (
             isinstance(patch, bool)
             or not isinstance(patch, int)
@@ -3131,14 +3345,14 @@ class MeshingDomain(StrictModule, NonTrainableState):
         if cells.shape[0] == 0:
             return np.empty((0,), dtype=np.float64)
         surface = self.patches[patch].surface
-        spans = _exact_rational_surface_spans(surface)
+        spans = preparation.surface_spans(surface)
         if spans is not None:
             exact_charts = _exact_uv_chart_bank(charts, cells)
             return _exact_spline_normal_turn_bounds(cells, spans, exact_charts)
         lower = np.min(cells, axis=1)
         upper = np.max(cells, axis=1)
-        first = prepare_interval_function(jax.jacfwd(surface.evaluate), 2)
-        second = prepare_interval_function(jax.jacfwd(jax.jacfwd(surface.evaluate)), 2)
+        first = preparation.derivative_program(surface, 1)
+        second = preparation.derivative_program(surface, 2)
         jacobian_lower, jacobian_upper = first.evaluate(lower, upper)
         hessian_lower, hessian_upper = second.evaluate(lower, upper)
         centers = np.mean(cells, axis=1)
@@ -3490,5 +3704,6 @@ __all__ = [
     "PatchCurveUse",
     "PatchPoleUse",
     "PatchBoundaryUse",
+    "SourcePreparation",
     "use_endpoints",
 ]

@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "d315469b26890d8176a54c6208a2bb45012fc229f24227ba346b1bfc6ef046e0",
+  "manifest_id": "3bf5944749117b923fde6cdc907b031548524ca8608c40a8c39fce69f6f4efa0",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -13365,6 +13365,7 @@
       "phydrax.discretization.AbstractMPMFrictionPlan",
       "phydrax.discretization.AbstractMPMNodalStoragePlan",
       "phydrax.discretization.AbstractMPMVelocityTransferPlan",
+      "phydrax.discretization.AbstractMeshMonitor",
       "phydrax.discretization.AbstractNumericalFluxPlan",
       "phydrax.discretization.AbstractParticleImageNeighborhoodPlan",
       "phydrax.discretization.AbstractParticleInternalMeshPlan",
@@ -13569,10 +13570,12 @@
       "phydrax.discretization.CellGeometryElement",
       "phydrax.discretization.CellGeometrySpec",
       "phydrax.discretization.CellGhostBoundary",
+      "phydrax.discretization.CellInverseRefusal",
       "phydrax.discretization.CellListBipartiteParticleNeighborhoodPlan",
       "phydrax.discretization.CellListImageRouteSearch",
       "phydrax.discretization.CellListParticleImageNeighborhoodPlan",
       "phydrax.discretization.CellListParticleNeighborhoodPlan",
+      "phydrax.discretization.CellLocationRefusalError",
       "phydrax.discretization.CellLocationResult",
       "phydrax.discretization.CellLocationStatus",
       "phydrax.discretization.CellMesh",
@@ -14359,6 +14362,7 @@
       "phydrax.discretization.InteriorStencilKernel",
       "phydrax.discretization.InterpolationTransposeEvidence",
       "phydrax.discretization.InvariantConvexEdgeCertificate",
+      "phydrax.discretization.InverseRefusalReason",
       "phydrax.discretization.InversionStatus",
       "phydrax.discretization.InversionStepEvidence",
       "phydrax.discretization.InviscidVortexDiffusionPlan",
@@ -17223,6 +17227,7 @@
       "phydrax.discretization.explicit_polygon_h1.prepare_explicit_polygon_h1_reconstruction"
     ],
     "phydrax.discretization.fem": [
+      "phydrax.discretization.fem.AbstractMeshMonitor",
       "phydrax.discretization.fem.AnisotropicHPattern",
       "phydrax.discretization.fem.AttachmentActionReactionCertificate",
       "phydrax.discretization.fem.AttachmentRankEvidence",
@@ -25141,6 +25146,7 @@
       "phydrax.interchange.helics",
       "phydrax.interchange.hep",
       "phydrax.interchange.hfss_design",
+      "phydrax.interchange.import_occt_shape",
       "phydrax.interchange.import_packed_kinetic_boundary",
       "phydrax.interchange.inspect_hdf5_resource",
       "phydrax.interchange.map_black_hole_artifact",
@@ -25149,7 +25155,6 @@
       "phydrax.interchange.map_numeric_model_artifact",
       "phydrax.interchange.map_visibility_artifact",
       "phydrax.interchange.map_waveform_artifact",
-      "phydrax.interchange.model_from_occt_shape",
       "phydrax.interchange.negotiate_adapter",
       "phydrax.interchange.open_bounded_resource",
       "phydrax.interchange.opticstudio",
@@ -26957,6 +26962,7 @@
       "phydrax.meshing.OversetConnectivityError",
       "phydrax.meshing.OversetCoupling",
       "phydrax.meshing.OversetDonorPacket",
+      "phydrax.meshing.OversetDonorRefusal",
       "phydrax.meshing.OversetPartBlanking",
       "phydrax.meshing.OversetPartSpec",
       "phydrax.meshing.OversetPolicy",

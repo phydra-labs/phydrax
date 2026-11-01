@@ -13,7 +13,7 @@ from typing import NamedTuple, TYPE_CHECKING
 import jax.numpy as jnp
 import numpy as np
 
-from ...geometry._meshing_domain import MeshingDomain
+from ...geometry._meshing_domain import MeshingDomain, SourcePreparation
 from ...meshing._contracts import CellFamilyPolicy, CellMeshingTarget, SurfaceMeshingSpec
 from ...meshing._scope import MeshingScope
 from ...meshing._sizing import UniformSizeControl
@@ -384,13 +384,15 @@ def _certify_construction(
     construction: NativeMeshConstruction,
     policy: BRepTessellationPolicy,
     witness: SurfaceChartWitness,
+    preparation: SourcePreparation,
     /,
 ) -> tuple[np.ndarray, np.ndarray, SourceFidelityCertificate]:
     """Certify one construction against the policy the tessellation must meet.
 
     The proof answers exactly the model's acceptance question (policy linear
     and angular deflection, this witness), so the accepted certificate is the
-    one a ``BRepModel`` binds instead of recomputing it.
+    one a ``BRepModel`` binds instead of recomputing it. ``preparation`` is
+    the tessellation's source preparation of the construction's domain.
     """
     from ...geometry._source_fidelity import certify_source_fidelity
 
@@ -408,6 +410,7 @@ def _certify_construction(
             tolerance=policy.linear_deflection,
             maximum_normal_deviation=policy.angular_deflection,
             witness=witness,
+            preparation=preparation,
         )
     except (ArithmeticError, FloatingPointError, TypeError, ValueError) as error:
         raise _TessellationUnresolved(
@@ -539,13 +542,20 @@ def tessellate_brep_model(
         raise ValueError("A faceless B-Rep has no surface tessellation.")
 
     domain = MeshingDomain.from_brep(model)
+    # Every attempt and its certification query the same sources; their exact
+    # spans, interval programs and mapped p-curve Hessians are prepared once.
+    preparation = SourcePreparation(domain)
     linear_target = policy.linear_deflection
     history: list[tuple[float, float, float]] = []
     while True:
         specification, options = _build_request(domain, policy, linear_target)
         construction = prepare_native_surface(
-            domain, specification, options, model.coordinate_contract
-        ).execute()
+            domain,
+            specification,
+            options,
+            model.coordinate_contract,
+            preparation=preparation,
+        ).execute(preparation=preparation)
         arrays = _construction_arrays(model, domain, construction)
         (
             vertices,
@@ -562,7 +572,7 @@ def tessellate_brep_model(
             source_chart_witness,
         ) = arrays
         deviation_bounds, normal_bounds, certificate = _certify_construction(
-            construction, policy, source_chart_witness
+            construction, policy, source_chart_witness, preparation
         )
         if np.all(deviation_bounds <= policy.linear_deflection) and np.all(
             normal_bounds <= policy.angular_deflection

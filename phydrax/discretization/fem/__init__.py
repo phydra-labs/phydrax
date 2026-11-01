@@ -88,6 +88,7 @@ from ._generic import (
     MaskedFiniteElementSystem,
 )
 from ._geometry_motion import (
+    AbstractMeshMonitor,
     FiniteElementBoundaryProvider,
     FiniteElementBoundaryRealization,
     FiniteElementMeshMotionEvidence,
@@ -433,6 +434,7 @@ __all__ = [
     "FiniteElementMortarPlan",
     "FiniteElementMotionExtension",
     "FiniteElementMotionExtensionResult",
+    "AbstractMeshMonitor",
     "FiniteElementPMultigridPlan",
     "FiniteElementPMultigridPolicy",
     "FiniteElementPTransfer",

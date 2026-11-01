@@ -23,7 +23,7 @@ from jax import core as jax_public_core
 from jax.extend import core as jax_core
 
 from ._fingerprint import canonical_fingerprint, canonical_json
-from ._jax_program import stock_high_operation
+from ._jax_program import custom_jvp_rule_owner, stock_high_operation
 from ._strict import StrictModule
 from ._trainable import _global_reads, _hidden_arrays, NonTrainableState
 
@@ -700,13 +700,10 @@ class _CompilerPayload:
     def rule_owner(self, thunk: Any, path: str, /) -> Any:
         # Unwrap only JAX's owned memoization/thunk protocol. The cache and
         # live tracing context are interpreter state, not executable constants.
-        if (
-            thunk.f.__module__ != "jax._src.interpreters.partial_eval"
-            or thunk.f.__qualname__ != "_memoize.<locals>.memoized"
-        ):
+        owner = custom_jvp_rule_owner(thunk)
+        if owner is None:
             raise TypeError(f"Unsupported custom-JVP thunk at {path}.")
-        function = getclosurevars(thunk.f).nonlocals["fn"]
-        return getclosurevars(function).nonlocals["jvp"]
+        return owner
 
     def rule_selector(self, owner: Any, path: str, /) -> tuple[Any, str]:
         from jax._src.api_util import _prepend_static_args

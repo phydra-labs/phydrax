@@ -17,6 +17,7 @@ moved coordinates is owned by :class:`MotionValidityPlan`.
 
 from __future__ import annotations
 
+import abc
 import math
 from collections.abc import Callable, Sequence
 from enum import IntFlag, StrEnum
@@ -34,6 +35,7 @@ from scipy.sparse.csgraph import connected_components
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
@@ -88,9 +90,35 @@ from ._generic import (
 from ._reference import lagrange_element
 
 
-MeshMonitor = Callable[[Array], Array]
 # Time-dependent monitors of ALE consumers: ``monitor(time, points, args)``.
 TimeMeshMonitor = Callable[[Array, Array, Any], ArrayLike]
+
+
+class AbstractMeshMonitor(StrictModule):
+    """Callable PyTree monitor ``M(points)`` of the ``MMPDE`` route.
+
+    ``__call__`` returns ``(vertices,)`` scalars or ``(vertices, dim, dim)``
+    symmetric positive definite tensors at every mesh vertex. Array fields are
+    the dynamic parameters (the route differentiates through them); the class
+    and its non-array fields are the static structure. A monitor of one class
+    with new array values therefore reuses the extension's compiled solve.
+    """
+
+    @abc.abstractmethod
+    def __call__(self, points: Array, /) -> Array:
+        raise NotImplementedError
+
+
+class _TimeBoundMeshMonitor(AbstractMeshMonitor):
+    """A time-dependent monitor bound to one time and argument tree."""
+
+    monitor: TimeMeshMonitor = eqx.field(static=True)
+    time: Array
+    args: Any
+
+    def __call__(self, points: Array, /) -> Array:
+        return jnp.asarray(self.monitor(self.time, points, self.args))
+
 
 # Huang (2001) meshing functional: theta balances alignment against
 # equidistribution and p > 1 strengthens equidistribution.
@@ -1083,7 +1111,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         self,
         boundary_points: Array,
         initial: Array,
-        monitor: MeshMonitor | None,
+        monitor: AbstractMeshMonitor | None,
         scale: Array,
         /,
     ) -> Any:
@@ -1170,19 +1198,34 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         boundary_displacement: ArrayLike,
         /,
         *,
-        monitor: MeshMonitor | None = None,
+        monitor: AbstractMeshMonitor | None = None,
     ) -> FiniteElementMotionExtensionResult:
-        """Every vertex displacement for one boundary displacement ``(boundary, dim)``."""
+        """Every vertex displacement for one boundary displacement ``(boundary, dim)``.
+
+        Outside an enclosing trace the solve runs as one compiled program owned
+        by this extension: repeated calls with new boundary values or new
+        monitor array values reuse it, and its executables are released with
+        the extension.
+        """
 
         route = self.policy.route
         if (monitor is None) == (route is FiniteElementMeshMotionRoute.MMPDE):
             raise ValueError("A monitor is required exactly for the MMPDE route.")
-        if monitor is not None and not callable(monitor):
-            raise TypeError("monitor must be callable.")
+        if monitor is not None and not isinstance(monitor, AbstractMeshMonitor):
+            raise TypeError("monitor must be an AbstractMeshMonitor.")
         reference = self.reference_coordinates
         boundary = jnp.asarray(boundary_displacement, dtype=reference.dtype)
         if boundary.shape != (self.boundary_indices.shape[0], reference.shape[1]):
             raise ValueError("boundary_displacement must have shape (boundary, dim).")
+        return run_owned_program(
+            self, "extend", FiniteElementMotionExtension._extend, boundary, monitor
+        )
+
+    def _extend(
+        self, boundary: Array, monitor: AbstractMeshMonitor | None, /
+    ) -> FiniteElementMotionExtensionResult:
+        route = self.policy.route
+        reference = self.reference_coordinates
         boundary_points = reference[self.boundary_indices] + boundary
         # Prescribed vertices of one periodic class must move as lattice copies.
         scale = jnp.maximum(
@@ -1276,7 +1319,7 @@ def _propose_coordinates(
     extension: FiniteElementMotionExtension,
     validity: MotionValidityPlan,
     boundary_displacement: Array,
-    monitor: MeshMonitor | None,
+    monitor: AbstractMeshMonitor | None,
     /,
 ) -> tuple[Array, FiniteElementMotionExtensionResult, MotionValidityEvidence]:
     extended = extension.extend(boundary_displacement, monitor=monitor)
@@ -1404,7 +1447,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
         /,
         *,
         numeric_version: str,
-        monitor: MeshMonitor | None = None,
+        monitor: AbstractMeshMonitor | None = None,
     ) -> FiniteElementMeshRealization:
         """Realize one design; ``monitor`` drives the MMPDE route."""
 
@@ -1475,6 +1518,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
 
 
 __all__ = [
+    "AbstractMeshMonitor",
     "FiniteElementBoundaryProvider",
     "FiniteElementBoundaryRealization",
     "FiniteElementMeshMotionEvidence",

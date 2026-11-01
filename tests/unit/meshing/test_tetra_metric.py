@@ -12,6 +12,9 @@ from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._tetra_metric import (
+    _prepare_native_state,
+    _split_phase,
+    _unit_metric_status,
     execute_tetra_metric_adaptation,
     TetraMetricOutcome,
     TetraMetricStatus,
@@ -122,6 +125,65 @@ def test_nonperiodic_refinement_reaches_the_unit_metric() -> None:
     assert outcome.evidence.out_of_range_edges == 0
     assert outcome.evidence.minimum_metric_quality > 0.0
     assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+
+
+def test_graded_split_points_are_exact_dyadic_edge_points() -> None:
+    # A graded size places metric midpoints at full-precision parameters; such a
+    # split point leaves a source facet diagonal by rounding and its nested
+    # ancestry outgrows binary64. Short dyadic parameters keep every split exact.
+    source = _source()
+    mesh = source.mesh
+    sizes = 0.12 + 0.3 * np.asarray(mesh.coordinates[:, 0], dtype=np.float64)
+    metric = np.eye(3)[None] / (sizes * sizes)[:, None, None]
+    state = _prepare_native_state(
+        source,
+        metric,
+        cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
+        facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+        edge_classes=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.int64),
+        protected_edges=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.bool_),
+        fixed_vertices=np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_),
+    )
+    counters = dict.fromkeys(
+        (
+            "splits",
+            "rejected_topology",
+            "rejected_protected",
+            "rejected_uncertain",
+            "rejected_invalid",
+        ),
+        0,
+    )
+
+    applied = _split_phase(state, counters)
+
+    assert applied == counters["splits"] > 6
+    assert counters["rejected_uncertain"] == counters["rejected_invalid"] == 0
+    _, outside, _, longest, _ = _unit_metric_status(state)
+    assert outside > 0 and longest <= np.sqrt(2.0)
+    source_rows = {
+        int(identifier): row for row, identifier in enumerate(mesh.vertex_global_ids)
+    }
+    snapshot = state.snapshot
+    for identifier, point in zip(
+        np.asarray(snapshot.vertex_ids).tolist(), np.asarray(snapshot.points), strict=True
+    ):
+        stencil = state.vertex_stencils[int(identifier)]
+        exact = [
+            sum(
+                (
+                    weight * Fraction(float(mesh.coordinates[source_rows[key], axis]))
+                    for key, weight in stencil.items()
+                ),
+                Fraction(0),
+            )
+            for axis in range(3)
+        ]
+        assert [Fraction(float(value)) for value in point] == exact
+        assert all(
+            Fraction(float(weight)) == weight and weight.denominator.bit_count() == 1
+            for weight in stencil.values()
+        )
 
 
 def test_relocation_uses_live_native_vertices_and_exact_source_stencils() -> None:
@@ -236,11 +298,25 @@ def test_relocation_is_invariant_under_sparse_vertex_ids() -> None:
 def test_coarsening_updates_live_topology_and_conserves_region_volume() -> None:
     outcome = _adapt(_source(4, close_edge=True), np.eye(3) * 5.76, relocation=False)
 
-    assert outcome.evidence.status is TetraMetricStatus.STALLED
+    assert outcome.evidence.status is TetraMetricStatus.COMPLETE
     assert outcome.evidence.collapses > 0
-    assert outcome.evidence.out_of_range_edges > 0
+    assert outcome.evidence.out_of_range_edges == 0
     assert outcome.evidence.minimum_metric_quality > 0.0
     assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+    # COMPLETE is the measured state of the published target: every target edge
+    # has unit-metric length 2.4 |e| inside [1/sqrt(2), sqrt(2)].
+    target_ids = np.asarray(outcome.edit.vertex_global_ids, dtype=np.int64)
+    rows = {int(identifier): row for row, identifier in enumerate(target_ids.tolist())}
+    coordinates = np.asarray(outcome.edit.coordinates, dtype=np.float64)
+    lengths = np.asarray(
+        [
+            2.4 * np.linalg.norm(coordinates[rows[first]] - coordinates[rows[second]])
+            for first, second in sorted(_target_edges(outcome))
+        ]
+    )
+    assert lengths.size and np.all(
+        (lengths >= 1.0 / np.sqrt(2.0)) & (lengths <= np.sqrt(2.0))
+    )
 
 
 def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:

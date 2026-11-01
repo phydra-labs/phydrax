@@ -4,19 +4,26 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
-from jax import Array
+import numpy as np
+from jax import Array, core as jax_core
 from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked
+from ._assembly import plan_sparse_assembly, prepare_sparse_assembly, SparseAssemblyPolicy
 from ._operators import AbstractLinearOperator, FunctionLinearOperator
+from ._properties import LinearCapabilityError, OperatorProperties
 from ._spaces import AbstractVectorSpace, DualSpace
+
+
+if TYPE_CHECKING:
+    from ..sparse import SparseCoordinateOperator
 
 
 class ConstraintMap(StrictModule, NonTrainableState):
@@ -105,6 +112,145 @@ class ConstraintMap(StrictModule, NonTrainableState):
 
     def reduce_vector(self, residual: PyTree[Any], /) -> PyTree[Array]:
         return self.prolongation.adjoint_mv(self.full_space.validate(residual))
+
+    def coordinate_selection(self) -> np.ndarray | None:
+        """Full coordinates kept by a pure coordinate-selection prolongation.
+
+        Returns ``selected`` with ``selected[r]`` the flattened full coordinate of
+        reduced coordinate ``r`` when ``P`` stores exactly one unit coefficient
+        per reduced coordinate on distinct full coordinates (strong Dirichlet
+        elimination), and ``None`` for every other prolongation, including
+        traced structure.
+        """
+        from ..sparse import RowRelation, SparseCoordinateOperator
+
+        prolongation = self.prolongation
+        if (
+            not isinstance(prolongation, SparseCoordinateOperator)
+            or prolongation.block_shape is not None
+        ):
+            return None
+        relation = prolongation.relation
+        if isinstance(relation, RowRelation):
+            relation = relation.as_edge_relation()
+        leaves = (
+            relation.source_indices,
+            relation.target_indices,
+            relation.valid,
+            prolongation.coefficients,
+        )
+        if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
+            return None
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        sources = np.asarray(relation.source_indices)[valid]
+        targets = np.asarray(relation.target_indices)[valid]
+        coefficients = np.asarray(prolongation.coefficients)[valid]
+        size = self.reduced_space.size
+        if sources.size != size or np.any(coefficients != 1):
+            return None
+        order = np.argsort(sources, kind="stable")
+        if not np.array_equal(sources[order], np.arange(size)):
+            return None
+        selected = targets[order].astype(np.int64)
+        if np.unique(selected).size != size:
+            return None
+        return selected
+
+    def reduce_sparse_operator(
+        self,
+        operator: AbstractLinearOperator,
+        /,
+        *,
+        policy: SparseAssemblyPolicy | None = None,
+    ) -> SparseCoordinateOperator:
+        """Exactly eliminate constrained coordinates from structurally sparse storage.
+
+        For a coordinate-selection constraint (see `coordinate_selection`) this
+        returns the free-by-free block ``P^T A P`` of ``operator`` as sparse
+        coordinates on the reduced space: the kept entries of ``A``'s exact
+        sparse assembly, renumbered, without densifying anything. Columns of
+        constrained coordinates belong to the right-hand side through the lift
+        ``g`` (``-P^T (A g - f)``) and are not stored here. Claimed
+        self-adjointness, (semi)definiteness and diagonality survive the
+        congruence with ``"transformed"`` evidence when ``A`` certifies them.
+
+        Refuses constraints that are not coordinate selections, operators whose
+        sparse lowering would materialize, and operators that do not act on the
+        full space.
+        """
+        from ..sparse import EdgeRelation, SparseCoordinateOperator
+
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("operator must be an AbstractLinearOperator.")
+        if not operator.source.compatible(self.full_space):
+            raise ValueError("The operator must act on the constraint's full space.")
+        if operator.target.compatible(self.full_space):
+            target: AbstractVectorSpace = self.reduced_space
+        elif operator.target.compatible(DualSpace(self.full_space)):
+            target = DualSpace(self.reduced_space)
+        else:
+            raise ValueError(
+                "The operator must map the full space to itself or to its dual."
+            )
+        selected = self.coordinate_selection()
+        if selected is None:
+            raise LinearCapabilityError(
+                "Sparse elimination requires a concrete coordinate-selection "
+                "constraint; general affine constraints need a Galerkin product."
+            )
+        plan = plan_sparse_assembly(operator, policy)
+        if plan.uses_materialization:
+            raise LinearCapabilityError(
+                "Sparse elimination requires a structurally sparse lowering; "
+                "the operator would be densely materialized."
+            )
+        assembled = prepare_sparse_assembly(plan, operator).operator
+        if not isinstance(assembled, SparseCoordinateOperator):
+            raise TypeError("Sparse assembly did not produce coordinate storage.")
+        values = assembled.coefficients
+        reduced_index = np.full((self.full_space.size,), -1, dtype=np.int64)
+        reduced_index[selected] = np.arange(selected.size, dtype=np.int64)
+        rows = reduced_index[np.asarray(plan.row_indices, dtype=np.int64)]
+        columns = reduced_index[np.asarray(plan.column_indices, dtype=np.int64)]
+        kept = np.flatnonzero((rows >= 0) & (columns >= 0))
+        size = self.reduced_space.size
+        relation = EdgeRelation(
+            columns[kept].astype(np.int32),
+            rows[kept].astype(np.int32),
+            source_size=size,
+            target_size=size,
+        )
+        properties = operator.properties
+        claims = {
+            name: True
+            for name in (
+                "diagonal",
+                "self_adjoint",
+                "positive_semidefinite",
+                "positive_definite",
+            )
+            if getattr(properties, name)
+        }
+        return SparseCoordinateOperator(
+            relation,
+            values[kept],
+            source=self.reduced_space,
+            target=target,
+            properties=OperatorProperties(
+                **claims,
+                evidence={
+                    name: "transformed" for name in claims if properties.certifies(name)
+                },
+            ),
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "constraint-eliminated-sparse-operator",
+                    "constraint": self.constraint_id,
+                    "operator": operator.operator_id,
+                    "plan": plan.plan_id,
+                }
+            ),
+        )
 
 
 def compose_constraint_maps(

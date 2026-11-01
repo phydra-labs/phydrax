@@ -787,6 +787,37 @@ def test_implicit_root_bracket_widens_until_a_far_normal_root_is_signed() -> Non
     assert 2.0**4 * bracket_ends[0] < root
 
 
+def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces() -> None:
+    surface, source, _contract, mesh, geometry, witness = _adaptive_source()
+    charts = prepare_adaptive_implicit_root_charts(
+        mesh, geometry, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
+    )
+    faces = charts._faces
+    tolerance = 0.05
+
+    lower, upper = source_charts._source_to_mesh_bounds(
+        surface, source_charts._face_maps(faces), tolerance
+    )
+    assert 0.0 <= lower <= upper <= tolerance
+
+    # Without the faces on the x > 0 side, the zero set there lies about one
+    # superquadric radius from every face, so a zero-containing box refutes it.
+    kept = [
+        face
+        for face in faces
+        if source_charts._enclosed_box(
+            face.face_enclosure, source_charts._STANDARD_TRIANGLE
+        )[1][0]
+        < 0.0
+    ]
+    assert 0 < len(kept) < len(faces)
+    lower, upper = source_charts._source_to_mesh_bounds(
+        surface, source_charts._face_maps(kept), tolerance
+    )
+    assert lower > tolerance
+    assert upper == np.inf
+
+
 def test_adaptive_implicit_fidelity_retains_scoped_target_extent() -> None:
     _surface, source, _contract, mesh, _affine, witness = _adaptive_source()
     target_mesh, target_geometry, scoped_witness = _extend_implicit_target_mesh(

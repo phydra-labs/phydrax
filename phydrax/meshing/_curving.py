@@ -464,8 +464,9 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
     """Accepted curved geometry, or the straight geometry after a rollback.
 
     ``evidence`` certifies the returned ``geometry``; ``candidate`` is the
-    evidence of the last evaluated curved candidate (the rejection reason after
-    a rollback). ``minimizations`` carry the native optimizer evidence of every
+    evidence of the last fully certified curved candidate: the accepted one, or
+    after a rollback the last round's (the rejection reason). ``minimizations``
+    carry the native optimizer evidence of every
     relaxation round and ``relaxation_statuses`` their termination statuses.
     ``accepted_round`` is ``0`` when the geometry is the CAD projection, ``k``
     when it is the candidate of relaxation round ``k``, and ``None`` unless the
@@ -1312,6 +1313,7 @@ def _curving_target_result(
     if source_result is None:
         return None, None, None, None, None
     inputs = None
+    validated_witnesses = ()
     audit_policy = None
     layer_curving_evidence = None
     coordinate_transition = None
@@ -1368,7 +1370,7 @@ def _curving_target_result(
                 raise ValueError(
                     "Curving projection and retained source revision disagree."
                 )
-            inputs = _renew_transition_certification_inputs(
+            renewed_inputs = _renew_transition_certification_inputs(
                 source_result,
                 mesh,
                 geometry,
@@ -1376,6 +1378,8 @@ def _curving_target_result(
                 reference_maps=identity_maps,
                 transition=coordinate_transition,
             )
+            if renewed_inputs is not None:
+                inputs, validated_witnesses = renewed_inputs
             audit_policy = source_result.certification.audit_policy
         result = certify_cell_mesh(
             mesh,
@@ -1383,6 +1387,7 @@ def _curving_target_result(
             geometry=geometry,
             audit_policy=audit_policy,
             certification_inputs=inputs,
+            validated_witnesses=validated_witnesses,
             boundary=source_result.boundary,
             patches=source_result.patches,
             zones=source_result.zones,
@@ -1434,6 +1439,38 @@ def _curving_target_result(
     return result, result.certification, None, coordinate_transition, material_transition
 
 
+class _LocalEvidence(NamedTuple):
+    """Per-map evidence: CAD residuals, sampled quality and cell validity."""
+
+    residuals: np.ndarray
+    scaled: float
+    distortion: float
+    validity: CellValidityCertificate
+
+    def passes(self, policy: HighOrderCurvingPolicy, /) -> bool:
+        """Every cell certified valid and every constrained node on the source."""
+        return bool(
+            self.validity.all_certified
+            and float(np.max(self.residuals, initial=0.0)) <= policy.residual_tolerance
+        )
+
+
+def _local_evidence(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    classes: _NodeClasses,
+    projection: AbstractBRepProjection,
+    blocks: tuple[_BlockDistortion, ...],
+    policy: HighOrderCurvingPolicy,
+    /,
+) -> _LocalEvidence:
+    coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
+    _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
+    scaled, distortion = _sampled_quality(blocks, coordinates)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity)
+    return _LocalEvidence(residuals, scaled, distortion, validity)
+
+
 def _evidence(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1445,11 +1482,11 @@ def _evidence(
     *,
     source_result: CellMeshingResult | None = None,
     prior_transition: CellMeshTransition | None = None,
+    local: _LocalEvidence | None = None,
 ) -> CurvedGeometryEvidence:
-    coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
-    _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
-    scaled, distortion = _sampled_quality(blocks, coordinates)
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity)
+    if local is None:
+        local = _local_evidence(mesh, geometry, classes, projection, blocks, policy)
+    residuals, scaled, distortion, validity = local
     certification = None if source_result is None else source_result.certification
     embedding = certify_global_embedding(
         mesh,
@@ -1461,11 +1498,7 @@ def _evidence(
     )
     # Source claims are renewed only for a locally accepted map: a rejected
     # candidate's refusal is decided before any source acceptance is consulted.
-    locally_accepted = bool(
-        validity.all_certified
-        and embedding.status == "certified"
-        and float(np.max(residuals, initial=0.0)) <= policy.residual_tolerance
-    )
+    locally_accepted = local.passes(policy) and embedding.status == "certified"
     (
         target_result,
         source_certification,
@@ -1760,25 +1793,27 @@ def curve_cell_mesh(
     coordinates, constrained_rows, projectors = _project_constrained(
         projection, np.asarray(straight.coordinates, dtype=np.float64), classes, pairs
     )
-    candidate = _evidence(
-        mesh,
-        _geometry_with_exact_coordinate_bank(
+
+    def candidate_geometry(values: np.ndarray, /) -> CellGeometrySpec:
+        return _geometry_with_exact_coordinate_bank(
             mesh,
             layout[0],
             layout[1],
             straight,
-            coordinates,
+            values,
             identity_context=("curving-candidate",),
-        ),
-        classes,
-        projection,
-        blocks,
-        policy,
-        source_result=source_result,
-        prior_transition=prior_transition,
-    )
-    # The CAD projection needs no relaxation; it is accepted on its own when valid.
-    accepted = (coordinates, candidate, 0) if candidate.accepted else None
+        )
+
+    # Candidate maps with their local evidence: the CAD projection (round 0, which
+    # needs no relaxation), every admissible relaxation round and the last round.
+    candidates: list[tuple[int, np.ndarray, CellGeometrySpec, _LocalEvidence, bool]] = []
+
+    def record(round_: int, values: np.ndarray, admissible: bool, /) -> None:
+        geometry = candidate_geometry(values)
+        local = _local_evidence(mesh, geometry, classes, projection, blocks, policy)
+        candidates.append((round_, values, geometry, local, admissible))
+
+    record(0, coordinates, True)
     minimizations = []
     for round_ in range(1, policy.relaxation_rounds + 1):
         energy = _CurvingEnergy(
@@ -1798,14 +1833,7 @@ def curve_cell_mesh(
             regularization=jnp.asarray(policy.regularization, dtype=jnp.float64),
         )
         relaxed = optimize_cell_geometry_coordinates(
-            _geometry_with_exact_coordinate_bank(
-                mesh,
-                layout[0],
-                layout[1],
-                straight,
-                coordinates,
-                identity_context=("curving-candidate",),
-            ),
+            candidate_geometry(coordinates),
             energy,
             fixed_coordinates=fixed,
             termination=policy.termination,
@@ -1817,45 +1845,61 @@ def curve_cell_mesh(
         coordinates, constrained_rows, projectors = _project_constrained(
             projection, moved, classes, pairs
         )
-        candidate = _evidence(
+        admissible = relaxed.converged or policy.accept_valid_nonconverged_relaxation
+        if not admissible and round_ < policy.relaxation_rounds:
+            # An intermediate candidate that may not replace the geometry needs
+            # no evidence; the last round's candidate is always certified.
+            continue
+        record(round_, coordinates, admissible)
+
+    def full_evidence(
+        geometry: CellGeometrySpec, local: _LocalEvidence, /
+    ) -> CurvedGeometryEvidence:
+        return _evidence(
             mesh,
-            _geometry_with_exact_coordinate_bank(
-                mesh,
-                layout[0],
-                layout[1],
-                straight,
-                coordinates,
-                identity_context=("curving-candidate",),
-            ),
+            geometry,
             classes,
             projection,
             blocks,
             policy,
             source_result=source_result,
             prior_transition=prior_transition,
+            local=local,
         )
-        if candidate.accepted and (
-            relaxed.converged or policy.accept_valid_nonconverged_relaxation
-        ):
-            accepted = (coordinates, candidate, round_)
+
+    # The global embedding and source acceptance dominate the cost, so they run
+    # on locally passing admissible candidates latest round first and stop at the
+    # first accepted map: the map that certifying every round and keeping the
+    # latest accepted one would select.
+    accepted: tuple[CellGeometrySpec, CurvedGeometryEvidence, int] | None = None
+    final: CurvedGeometryEvidence | None = None
+    for index in range(len(candidates) - 1, -1, -1):
+        round_, _, geometry, local, admissible = candidates[index]
+        if not (admissible and local.passes(policy)):
+            continue
+        evidence = full_evidence(geometry, local)
+        if index == len(candidates) - 1:
+            final = evidence
+        if evidence.accepted:
+            accepted = (geometry, evidence, round_)
+            break
     if accepted is not None:
+        # The accepted map is the last fully certified candidate.
         return HighOrderCurvingResult(
             HighOrderCurvingStatus.CURVED,
-            _geometry_with_exact_coordinate_bank(
-                mesh,
-                layout[0],
-                layout[1],
-                straight,
-                accepted[0],
-                identity_context=("curving-candidate",),
-            ),
+            accepted[0],
             straight,
             accepted[1],
-            candidate,
+            accepted[1],
             tuple(minimizations),
             accepted[2],
             cell_result=accepted[1].target_result,
         )
+    # After a rollback the last round's candidate is fully certified: it names
+    # the refusal below.
+    candidate = (
+        full_evidence(candidates[-1][2], candidates[-1][3]) if final is None else final
+    )
     # Without an accepted geometry, the last candidate names the first refusal in
     # the order: local cell validity, global embedding, CAD residual, retained
     # source acceptance; a candidate passing all of them was refused only

@@ -20,6 +20,7 @@ import jax
 import numpy as np
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax._bvh import (
     bvh_nearest_items,
     bvh_overlap_pairs,
@@ -29,6 +30,7 @@ from phydrax._bvh import (
     prepare_bvh,
     refit_packed_bvh_bounds,
 )
+from phydrax._jax_config import configuration_values, set_compilation_cache
 from phydrax._meshcore import PlcRecovery3D, TetMeshArrays
 from phydrax.meshing._quality import _standard_block_quality
 
@@ -3895,9 +3897,9 @@ def _environment_identity() -> dict[str, object]:
         "jax": {
             "backend": jax.default_backend(),
             "devices": devices,
-            "x64_enabled": bool(jax.config.read("jax_enable_x64")),
-            "compilation_cache_enabled": bool(jax.config.jax_enable_compilation_cache),
-            "compilation_cache_directory": jax.config.values.get(
+            "x64_enabled": bool(pxconfig.x64_enabled()),
+            "compilation_cache_enabled": bool(pxconfig.compilation_cache_enabled()),
+            "compilation_cache_directory": configuration_values().get(
                 "jax_compilation_cache_dir"
             ),
         },
@@ -4098,7 +4100,7 @@ def main() -> None:
             )
         if not np.isfinite(args.plc_target_size) or args.plc_target_size <= 0.0:
             parser.error("--plc-target-size must be finite and positive")
-    jax.config.update("jax_enable_compilation_cache", False)
+    set_compilation_cache(False)
     output: dict[str, object] = {
         "status": "completed",
         "environment": _environment_identity(),

@@ -46,6 +46,7 @@ from ..geometry._source_boundary_records import (
 from ..geometry._source_fidelity import (
     certify_source_fidelity,
     validate_source_entity_scope,
+    ValidatedSourceFidelityWitness,
 )
 from ..geometry._source_fidelity_certificate import (
     SourceFidelityCertificate,
@@ -59,7 +60,7 @@ from ._audit import (
     CellMeshAuditPolicy,
     CellMeshAuditReport,
 )
-from ._certification_inputs import MeshCertificationInputs
+from ._certification_inputs import MeshCertificationInputs, validated_fidelity_witness
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._native_construction import NativeMeshOrganization
 from ._organization import MeshAttribute, MeshLabel, MeshPatch, MeshZone
@@ -316,12 +317,16 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         audit_policy: CellMeshAuditPolicy | None = None,
         organization: NativeMeshOrganization | None = None,
         embedding: GlobalEmbeddingCertificate | None = None,
+        validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
     ) -> None:
         """Compute acceptance from ``inputs``.
 
         ``embedding`` is an optional prepared global-embedding certificate. It
         is reused only after it is shown to bind these exact mesh, coordinate
         map, local-validity and junction inputs; otherwise it is computed here.
+        ``validated`` holds fidelity-witness validations already made for the
+        retained mesh, coordinate map and source objects of ``inputs``, as
+        returned by ``inputs.require_current``; those are not repeated.
         """
         if not isinstance(inputs, MeshCertificationInputs):
             raise TypeError("inputs must be MeshCertificationInputs.")
@@ -338,8 +343,12 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         policy = (
             _acceptance_audit_policy(inputs) if audit_policy is None else audit_policy
         )
-        inputs.require_current(
-            inputs.mesh, inputs.geometry, domain=inputs.domain, source=inputs.source
+        validated_ = inputs.require_current(
+            inputs.mesh,
+            inputs.geometry,
+            domain=inputs.domain,
+            source=inputs.source,
+            validated=validated,
         )
         validity = certify_cell_geometry_validity(
             inputs.geometry,
@@ -385,7 +394,15 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 inputs.source,
                 tolerance=inputs.fidelity_tolerance,
                 maximum_normal_deviation=inputs.maximum_normal_deviation,
-                witness=inputs.fidelity_witness,
+                witness=None
+                if inputs.fidelity_witness is None
+                else validated_fidelity_witness(
+                    validated_,
+                    inputs.mesh,
+                    inputs.geometry,
+                    inputs.source,
+                    inputs.fidelity_witness,
+                ),
             )
             findings.extend(fidelity.findings)
         scoped = tuple(
@@ -394,7 +411,9 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 inputs.geometry,
                 query,
                 tolerance=tolerance,
-                witness=witness,
+                witness=validated_fidelity_witness(
+                    validated_, inputs.mesh, inputs.geometry, query, witness
+                ),
             )
             for query, witness, tolerance in inputs.scoped_fidelity
         )
@@ -630,6 +649,39 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 "Stored material coverage binds another dense region assignment."
             )
 
+    def require_current(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        /,
+    ) -> tuple[ValidatedSourceFidelityWitness, ...]:
+        """Require this computed acceptance to answer ``mesh`` and ``geometry``.
+
+        Nothing is recomputed: the retained inputs must be current for these
+        operands (their fidelity witnesses are validated, and the validations
+        returned for reuse on the same operands), the report must have passed,
+        and its status, identity and every identity-bound claim must match its
+        retained premises (:meth:`require_premises`). :meth:`revalidate`
+        recomputes the proofs instead.
+        """
+        validated = self.inputs.require_current(
+            mesh, geometry, domain=self.inputs.domain, source=self.inputs.source
+        )
+        self.require_premises(
+            self.inputs,
+            audit_policy=self.audit_policy,
+            organization=NativeMeshOrganization(
+                boundary=self.boundary,
+                patches=self.patches,
+                zones=self.zones,
+                labels=self.labels,
+                attributes=self.attributes,
+                associations=self.associations,
+            ),
+        )
+        self.require_passed()
+        return validated
+
     def revalidate(
         self,
         mesh: CellMesh,
@@ -644,7 +696,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         reused only when it binds exactly the current inputs, and every other
         proof obligation is recomputed.
         """
-        self.inputs.require_current(
+        validated = self.inputs.require_current(
             mesh, geometry, domain=self.inputs.domain, source=self.inputs.source
         )
         renewed = MeshCertificationReport(
@@ -659,6 +711,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 associations=self.associations,
             ),
             embedding=embedding,
+            validated=validated,
         )
         if not _same_tree_content(self, renewed):
             raise ValueError(

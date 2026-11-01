@@ -1769,6 +1769,35 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
             target_cell_kind=self.cell_kind,
         )
 
+    def tabulate_cells(
+        self, cell_rows: Sequence[int] | np.ndarray, points: ArrayLike, /
+    ) -> tuple[Array, Array]:
+        """Tabulate ``(cell, q, i)`` values and ``(cell, q, i, r)`` gradients.
+
+        Rows sharing one exact chart share one tabulation, so the work scales
+        with the distinct charts of the selection rather than its cell count.
+        """
+        rows = np.asarray(cell_rows, dtype=np.int64).reshape((-1,))
+        if rows.size and (rows.min() < 0 or rows.max() >= len(self.chart_coefficients)):
+            raise IndexError("Per-cell restriction row is outside the target block.")
+        groups: dict[tuple[_ExactRationalChartTerms, ...], int] = {}
+        representatives: list[int] = []
+        slots = np.empty((rows.size,), dtype=np.int64)
+        for position, row in enumerate(rows.tolist()):
+            chart = self.chart_coefficients[row]
+            slot = groups.get(chart)
+            if slot is None:
+                slot = groups[chart] = len(representatives)
+                representatives.append(row)
+            slots[position] = slot
+        tabulations = tuple(
+            self.tabulate_cell(row, points) for row in representatives or [0]
+        )
+        gather = jnp.asarray(slots)
+        values = jnp.stack(tuple(value for value, _ in tabulations))[gather]
+        gradients = jnp.stack(tuple(gradient for _, gradient in tabulations))[gather]
+        return values, gradients
+
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
         raise ValueError(
             "Per-cell coordinate elements require tabulate_cell(cell_row, points)."
@@ -3586,6 +3615,10 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             dtype=np.float64,
         )
         point_values = np.asarray(coordinates, dtype=np.float64)
+        route_rows = [np.asarray(route, dtype=np.int64) for route in routes]
+        # A shared reference element tabulates each distinct reference point set
+        # once per block; cells requesting the same points reuse those values.
+        shared_tabulations: dict[tuple[int, bytes], np.ndarray] = {}
         for output_row, identifier in enumerate(identifiers.tolist()):
             owner = cell_rows.get(int(identifier))
             if owner is None:
@@ -3618,9 +3651,15 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         raise ValueError(
                             f"Coordinate element {type(element).__name__} has no reference evaluator."
                         )
-                    values, _ = tabulate(references[output_row])
+                    key = (block_index, references[output_row].tobytes())
+                    values = shared_tabulations.get(key)
+                    if values is None:
+                        values = np.asarray(
+                            tabulate(references[output_row])[0], dtype=np.float64
+                        )
+                        shared_tabulations[key] = values
             basis = np.asarray(values, dtype=np.float64)
-            dofs = np.asarray(routes[block_index], dtype=np.int64)[cell_row]
+            dofs = route_rows[block_index][cell_row]
             if basis.shape != (references.shape[1], dofs.size):
                 raise ValueError(
                     "Coordinate basis evaluation returned incompatible shape."
