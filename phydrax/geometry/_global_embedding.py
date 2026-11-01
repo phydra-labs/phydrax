@@ -108,6 +108,11 @@ from ._mesh_certificates import (
     MeshCertificateBinding,
     MeshCertificateStatus,
 )
+from ._nested_restriction_embedding import (
+    certify_nested_restriction_embedding,
+    NestedRestrictionEmbeddingEvidence,
+    NestedRestrictionPremise,
+)
 from ._periodic_restriction import (
     certify_periodic_restriction_partition,
     PeriodicRestrictionPremise,
@@ -1450,6 +1455,8 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
     periodic_restriction: PeriodicRestrictionPartitionEvidence | None
     periodic_restriction_premise: PeriodicRestrictionPremise | None
     periodic_mapped_degree: PeriodicMappedTorusDegreeEvidence | None
+    nested_restriction: NestedRestrictionEmbeddingEvidence | None
+    nested_restriction_premise: NestedRestrictionPremise | None
     certificate_id: str
 
     def __init__(
@@ -1462,8 +1469,15 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         junction_vertices: ArrayLike | None = None,
         periodic: PeriodicMeshTopology | None = None,
         periodic_restriction: PeriodicRestrictionPremise | None = None,
+        nested_restriction: NestedRestrictionPremise | None = None,
     ) -> None:
-        """Compute every proof obligation from inputs; no caller-supplied verdict exists."""
+        """Compute every proof obligation from inputs; no caller-supplied verdict exists.
+
+        ``nested_restriction`` offers the nested-restriction theorem of
+        :mod:`._nested_restriction_embedding`: when its exact premises hold,
+        the target follows from the source certificate it carries; otherwise
+        every obligation is proved here from scratch.
+        """
         if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
             raise TypeError(
                 "Global embedding requires CellMesh and CellGeometrySpec inputs."
@@ -1493,32 +1507,69 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 mesh,
                 geometry,
             )
-        prepared_cells: tuple[EmbeddingCell, ...] | None = None
-        map_error: Exception | None = None
-        if validity.all_certified:
-            try:
-                prepared_cells = prepare_embedding_cells(mesh, geometry)
-            except (ValueError, ZeroDivisionError) as error:
-                map_error = error
-        scope: CoordinateMapScope = (
-            "affine"
-            if prepared_cells is not None
-            and all(cell.affine or not cell.coordinates for cell in prepared_cells)
-            else "mapped"
-        )
-        binding = MeshCertificateBinding(
-            mesh, geometry, scope, junction_vertices=junctions
-        )
-        outcome = _proof(
-            mesh,
-            geometry,
-            validity,
-            binding,
-            prepared_cells,
-            map_error,
-            periodic=periodic_topology,
-            periodic_restriction=periodic_restriction,
-        )
+        nested_evidence: NestedRestrictionEmbeddingEvidence | None = None
+        if nested_restriction is not None:
+            if not isinstance(nested_restriction, NestedRestrictionPremise):
+                raise TypeError(
+                    "nested_restriction must be NestedRestrictionPremise or None."
+                )
+            if periodic_topology is not None or periodic_restriction is not None:
+                raise ValueError(
+                    "A nested restriction premise answers nonperiodic targets only."
+                )
+            nested_evidence = certify_nested_restriction_embedding(
+                mesh, geometry, validity, nested_restriction
+            )
+            source_binding = nested_restriction.source_embedding.binding
+            if (
+                nested_evidence is not None
+                and source_binding.coordinate_scope != "affine"
+                and nested_evidence.parent_count
+                != len(cell_global_ids(nested_restriction.source_mesh))
+            ):
+                # A mapped source binds a mapped target only when every
+                # (some non-affine) source cell bears target cells.
+                nested_evidence = None
+        if nested_evidence is not None:
+            assert nested_restriction is not None
+            # Affine reparametrization keeps each cell map's degree, so the
+            # target's coordinate scope is the source's.
+            binding = MeshCertificateBinding(
+                mesh,
+                geometry,
+                nested_restriction.source_embedding.binding.coordinate_scope,
+                junction_vertices=junctions,
+            )
+            outcome = _nested_restriction_outcome(
+                mesh, validity, binding, nested_restriction, nested_evidence
+            )
+        else:
+            prepared_cells: tuple[EmbeddingCell, ...] | None = None
+            map_error: Exception | None = None
+            if validity.all_certified:
+                try:
+                    prepared_cells = prepare_embedding_cells(mesh, geometry)
+                except (ValueError, ZeroDivisionError) as error:
+                    map_error = error
+            scope: CoordinateMapScope = (
+                "affine"
+                if prepared_cells is not None
+                and all(cell.affine or not cell.coordinates for cell in prepared_cells)
+                else "mapped"
+            )
+            binding = MeshCertificateBinding(
+                mesh, geometry, scope, junction_vertices=junctions
+            )
+            outcome = _proof(
+                mesh,
+                geometry,
+                validity,
+                binding,
+                prepared_cells,
+                map_error,
+                periodic=periodic_topology,
+                periodic_restriction=periodic_restriction,
+            )
         degree_checks = {
             "periodic_affine_torus_manifold",
             "periodic_affine_torus_trace",
@@ -1643,6 +1694,10 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         )
         self.periodic = periodic_topology
         self.periodic_mapped_degree = mapped_degree_evidence
+        self.nested_restriction = nested_evidence
+        self.nested_restriction_premise = (
+            nested_restriction if nested_evidence is not None else None
+        )
         identity = {
             "kind": "global-embedding-certificate",
             "binding": binding.binding_id,
@@ -1669,6 +1724,8 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             identity["periodic_restriction"] = self.periodic_restriction.evidence_id
         if self.periodic_mapped_degree is not None:
             identity["periodic_mapped_degree"] = self.periodic_mapped_degree.evidence_id
+        if self.nested_restriction is not None:
+            identity["nested_restriction"] = self.nested_restriction.evidence_id
         self.certificate_id = canonical_fingerprint(identity)
 
     @property
@@ -1748,6 +1805,10 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             raise ValueError(
                 "A periodic-restriction embedding proof answers a different premise set."
             )
+        if self.nested_restriction_premise is not None:
+            raise ValueError(
+                "A nested-restriction embedding proof answers a different premise set."
+            )
 
     @classmethod
     def from_stored_fields(
@@ -1780,6 +1841,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             junction_vertices=value.binding.junction_vertices,
             periodic=value.periodic,
             periodic_restriction=value.periodic_restriction_premise,
+            nested_restriction=value.nested_restriction_premise,
         )
         if (
             rebuilt.certificate_id != value.certificate_id
@@ -6057,6 +6119,94 @@ def _proof(
     )
 
 
+def _topological_boundary_inventory(mesh: CellMesh, /) -> tuple[int, int]:
+    """Boundary faces and their edge-connected shells of a tetrahedral mesh."""
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    face_counts: dict[tuple[int, ...], int] = defaultdict(int)
+    for block in mesh.blocks:
+        routes = reference_cell_topology(block.cell_kind).entities[2]
+        for row in vertex_ids[np.asarray(block.vertices, dtype=np.int64)].tolist():
+            for route in routes:
+                face_counts[tuple(sorted(row[int(index)] for index in route))] += 1
+    boundary = [face for face, count in face_counts.items() if count == 1]
+    edge_faces: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for index, face in enumerate(boundary):
+        for left, right in combinations(face, 2):
+            edge_faces[(left, right)].append(index)
+    parent = list(range(len(boundary)))
+
+    def root(index: int, /) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for incident in edge_faces.values():
+        for other in incident[1:]:
+            parent[root(other)] = root(incident[0])
+    return len(boundary), len({root(index) for index in range(len(boundary))})
+
+
+def _nested_restriction_outcome(
+    mesh: CellMesh,
+    validity: CellValidityCertificate,
+    binding: MeshCertificateBinding,
+    premise: NestedRestrictionPremise,
+    evidence: NestedRestrictionEmbeddingEvidence,
+    /,
+) -> _ProofOutcome:
+    """Global embedding of a nested restriction from its certified source."""
+    cell_ids = tuple(int(value) for value in cell_global_ids(mesh).tolist())
+    boundary_facet_count, shell_count = (
+        _topological_boundary_inventory(mesh)
+        if mesh.topological_dimension == 3 and mesh.ambient_dimension == 3
+        else (0, 0)
+    )
+    values = (
+        f"route:{evidence.route}",
+        f"parent_embedding:{evidence.source_embedding_certificate_id}",
+        f"parent:{evidence.source_mesh_id}:{evidence.source_geometry_id}",
+        f"transition:{evidence.transition_id}",
+        f"nested_restriction_evidence:{evidence.evidence_id}",
+        f"parents:{evidence.parent_count}:children:{evidence.child_count}",
+    )
+    premises = (binding.binding_id, validity.certificate_id)
+    witnesses = (
+        MeshEmbeddingWitness("positive_local_validity", premises, cell_ids),
+        MeshEmbeddingWitness(
+            "nested_restriction_embedding",
+            (
+                *premises,
+                premise.source_embedding.certificate_id,
+                premise.transition.transition_id,
+                evidence.evidence_id,
+            ),
+            cell_ids,
+            values,
+        ),
+        MeshEmbeddingWitness(
+            "complete_global_cell_contact_theorem", premises, cell_ids, values
+        ),
+    )
+    return _ProofOutcome(
+        (),
+        (
+            "cell_validity",
+            "nested_restriction_source_embedding",
+            "nested_restriction_exact_transition",
+            "nested_restriction_parent_tiling",
+            "nested_restriction_conforming_subdivision",
+        ),
+        EmbeddingCounts(
+            cell_count=len(cell_ids),
+            source_bound_count=len(cell_ids),
+            boundary_facet_count=boundary_facet_count,
+            shell_count=shell_count,
+        ),
+        witnesses,
+    )
+
+
 def certify_global_embedding(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -6066,8 +6216,13 @@ def certify_global_embedding(
     junction_vertices: ArrayLike | None = None,
     periodic: PeriodicMeshTopology | None = None,
     periodic_restriction: PeriodicRestrictionPremise | None = None,
+    nested_restriction: NestedRestrictionPremise | None = None,
 ) -> GlobalEmbeddingCertificate:
-    """Certify exact global cell contacts after local coordinate-map validation."""
+    """Certify exact global cell contacts after local coordinate-map validation.
+
+    ``nested_restriction`` carries a certified source embedding and the exact
+    transition to this target; see :class:`GlobalEmbeddingCertificate`.
+    """
     return GlobalEmbeddingCertificate(
         mesh,
         geometry,
@@ -6075,6 +6230,7 @@ def certify_global_embedding(
         junction_vertices=junction_vertices,
         periodic=periodic,
         periodic_restriction=periodic_restriction,
+        nested_restriction=nested_restriction,
     )
 
 
