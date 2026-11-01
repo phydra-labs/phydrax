@@ -42,9 +42,11 @@ from ..discretization._cell_geometry import (
 from ..discretization._cell_geometry_transition_types import (
     CellGeometryTransition,
     CellGeometryTransitionEvidence,
+    exact_linear_combinations,
 )
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._coordinate_enclosure import (
+    axes,
     compose_expression,
     coordinate_map_expressions,
     coordinate_reference_chain,
@@ -91,6 +93,7 @@ from ..discretization.fem import (
 from ..discretization.finite_volume._unstructured_remap import (
     UnstructuredConservativeRemapPlan,
 )
+from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -1999,18 +2002,50 @@ def _same_volume_boundary_geometry(source: CellMesh, target: CellMesh, /) -> boo
 
 
 def _reference_map_rows(
-    reference_maps: tuple[ReferenceCellMapWitnesses, ...], /
+    reference_maps: tuple[ReferenceCellMapWitnesses, ...],
+    /,
+    *,
+    validated: bool = False,
 ) -> dict[int, tuple[ReferenceCellMapWitnesses, int, tuple[tuple[Fraction, ...], ...]]]:
+    """Exact corner rows by target cell ID.
+
+    ``validated`` states that the caller has just validated these witnesses and
+    each carries its exact bank, which is then read instead of re-validated.
+    """
     result = {}
     for witness in reference_maps:
-        exact = exact_reference_cell_vertices(witness)
+        exact = (
+            witness.source_reference_exact_vertices
+            if validated and witness.source_reference_exact_vertices is not None
+            else exact_reference_cell_vertices(witness)
+        )
         for row, identifier in enumerate(
-            np.asarray(witness.target_cell_ids, dtype=np.int64)
+            np.asarray(witness.target_cell_ids, dtype=np.int64).tolist()
         ):
-            if int(identifier) in result:
+            if identifier in result:
                 raise ValueError("Reference maps assign one target cell more than once.")
-            result[int(identifier)] = (witness, row, exact[row])
+            result[identifier] = (witness, row, exact[row])
     return result
+
+
+def _reference_chart_basis(cell_kind: str, /) -> tuple[Any, ...]:
+    return coordinate_source_basis(lagrange_element(cell_kind, 1))
+
+
+def _reference_chart_from_basis(
+    basis: tuple[Any, ...],
+    points: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> tuple[Any, ...]:
+    if len(basis) != len(points):
+        raise ValueError(
+            "Exact reference map corners do not match the target cell basis."
+        )
+    dimension = len(points[0])
+    return exact_linear_combinations(
+        basis,
+        tuple(tuple(point[axis] for point in points) for axis in range(dimension)),
+    )
 
 
 def _reference_chart_expressions(
@@ -2018,16 +2053,7 @@ def _reference_chart_expressions(
     points: tuple[tuple[Fraction, ...], ...],
     /,
 ) -> tuple[Any, ...]:
-    basis = coordinate_source_basis(lagrange_element(cell_kind, 1))
-    if len(basis) != len(points):
-        raise ValueError(
-            "Exact reference map corners do not match the target cell basis."
-        )
-    dimension = len(points[0])
-    return linear_combinations(
-        basis,
-        tuple(tuple(point[axis] for point in points) for axis in range(dimension)),
-    )
+    return _reference_chart_from_basis(_reference_chart_basis(cell_kind), points)
 
 
 def _available_reference_maps(
@@ -2840,7 +2866,8 @@ def _restricted_target_geometry(
         if coarsening is None or not coarse
         else _coarsened_corner_coordinates(source, target, coarse, coarsening)
     )
-    records = _reference_map_rows(reference_maps)
+    # Both map producers above validate every witness against its exact bank.
+    records = _reference_map_rows(reference_maps, validated=True)
     if set(records) & set(coarse):
         raise ValueError("Reference maps assign one target cell more than once.")
     target_ids = {
@@ -2864,6 +2891,14 @@ def _restricted_target_geometry(
         np.asarray(block.vertices, dtype=np.int64) for block in source.mesh.blocks
     )
     source_route_tables = tuple(np.asarray(route) for route in source_routes)
+    witness_source_ids = {
+        id(witness): np.asarray(witness.source_cell_ids, dtype=np.int64).tolist()
+        for witness in reference_maps
+    }
+    # Root element and local-to-root chart of each source cell, formed once per
+    # source cell; ``True`` marks an identity chart, whose composition with a
+    # polynomial target chart is that chart itself.
+    source_chains: dict[int, tuple[ScalarCoordinateElement, tuple[Any, ...], bool]] = {}
     target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
     target_elements: dict[str, Any] = {}
     target_routes: dict[str, np.ndarray] = {}
@@ -2875,7 +2910,9 @@ def _restricted_target_geometry(
     for target_block in target.blocks:
         identifiers = np.asarray(target_block.global_ids, dtype=np.int64)
         target_cells = np.asarray(target_block.vertices, dtype=np.int64)
+        target_cell_vertices = target_vertex_ids[target_cells].tolist()
         target_corners = _fraction_reference_corners(target_block.cell_kind)
+        chart_basis = _reference_chart_basis(target_block.cell_kind)
         block_roots: list[ScalarCoordinateElement] = []
         charts: list[tuple[ExpressionInput, ...]] = []
         parent_ids: list[int] = []
@@ -2885,11 +2922,14 @@ def _restricted_target_geometry(
         exact_cells = []
         parent_kinds = set()
         # Exact source images of target corners, evaluated for the whole block
-        # at once: each evaluation resolves the source map over every cell.
+        # at once: each evaluation resolves the source map over every cell. A
+        # corner shared by children of one parent at one exact point is
+        # evaluated once.
         corner_images: dict[int, tuple[tuple[Any, ...], ...]] = {}
-        pending_rows: list[int] = []
+        pending_rows: list[tuple[int, list[int]]] = []
         pending_sources: list[int] = []
         pending_points: list[tuple[tuple[Fraction, ...], ...]] = []
+        pending_keys: dict[tuple[int, int], tuple[int, tuple[Fraction, ...]]] = {}
         for row, target_id in enumerate(identifiers.tolist()):
             restored = coarse.get(int(target_id))
             if restored is not None:
@@ -2904,25 +2944,34 @@ def _restricted_target_geometry(
                 corner_images[row] = coarse_corners[int(target_id)]
             else:
                 witness, map_row, exact_points = records[int(target_id)]
-                source_id = int(
-                    np.asarray(witness.source_cell_ids, dtype=np.int64)[map_row]
-                )
+                source_id = witness_source_ids[id(witness)][map_row]
                 owner = source_cell_rows.get(source_id)
                 if owner is None:
                     raise ValueError("A reference map names an absent source cell.")
                 source_block_index, source_row = owner
                 source_block = source.mesh.blocks[source_block_index]
-                source_element = source_elements[source_block_index]
-                if not isinstance(source_element, ScalarCoordinateElement):
-                    raise ValueError(
-                        "Source coordinate map has no exact scalar ancestry."
+                chain = source_chains.get(source_id)
+                if chain is None:
+                    source_element = source_elements[source_block_index]
+                    if not isinstance(source_element, ScalarCoordinateElement):
+                        raise ValueError(
+                            "Source coordinate map has no exact scalar ancestry."
+                        )
+                    chain_root, chain_arguments = coordinate_reference_chain(
+                        source_element, cell_row=source_row
                     )
-                root, source_chart = coordinate_reference_chain(
-                    source_element, cell_row=source_row
-                )
-                chart = _reference_chart_expressions(target_block.cell_kind, exact_points)
-                composed = tuple(
-                    compose_expression(value, chart) for value in source_chart
+                    chain = (
+                        chain_root,
+                        chain_arguments,
+                        chain_arguments == axes(len(chain_arguments)),
+                    )
+                    source_chains[source_id] = chain
+                root, source_chart, identity_chart = chain
+                chart = _reference_chart_from_basis(chart_basis, exact_points)
+                composed = (
+                    chart
+                    if identity_chart and all(type(value) is dict for value in chart)
+                    else tuple(compose_expression(value, chart) for value in source_chart)
                 )
                 block_roots.append(root)
                 charts.append(composed)
@@ -2964,24 +3013,32 @@ def _restricted_target_geometry(
                             for point in root_points
                         )
                     )
-                pending_rows.append(row)
-                pending_sources.append(source_id)
-                pending_points.append(exact_points)
+                slots = []
+                for vertex_id, point in zip(
+                    target_cell_vertices[row], exact_points, strict=True
+                ):
+                    known = pending_keys.get((source_id, vertex_id))
+                    if known is not None and known[1] == point:
+                        slots.append(known[0])
+                        continue
+                    slots.append(len(pending_points))
+                    pending_keys[source_id, vertex_id] = (len(pending_points), point)
+                    pending_sources.append(source_id)
+                    pending_points.append((point,))
+                pending_rows.append((row, slots))
         if pending_rows:
+            images = source.geometry.evaluate_exact(
+                source.mesh,
+                np.asarray(pending_sources, dtype=np.int64),
+                tuple(pending_points),
+            )
             corner_images.update(
-                zip(
-                    pending_rows,
-                    source.geometry.evaluate_exact(
-                        source.mesh,
-                        np.asarray(pending_sources, dtype=np.int64),
-                        tuple(pending_points),
-                    ),
-                    strict=True,
-                )
+                (row, tuple(images[slot][0] for slot in slots))
+                for row, slots in pending_rows
             )
         for row in range(identifiers.size):
             for vertex_id, coordinate in zip(
-                target_vertex_ids[target_cells[row]].tolist(),
+                target_cell_vertices[row],
                 corner_images[row],
                 strict=True,
             ):
@@ -5569,6 +5626,23 @@ def _finalize_native(
                 () if mixed_outcome is None else mixed_outcome.coarsening_maps
             ),
         )
+    # The certified source embedding and the exact transition offer the target
+    # its nested-restriction embedding theorem; acceptance proves it from
+    # scratch when the theorem's premises do not hold.
+    embedding_premise = (
+        NestedRestrictionPremise(
+            source.mesh,
+            source.geometry,
+            source.certification.embedding,
+            transition_geometry,
+        )
+        if certification_inputs is not None
+        and source.certification is not None
+        and transition_geometry is not None
+        and coarsening is None
+        and source.certification.embedding.status == "certified"
+        else None
+    )
     target = certify_cell_mesh(
         mesh,
         source.coordinate_contract,
@@ -5579,6 +5653,7 @@ def _finalize_native(
         ),
         certification_inputs=certification_inputs,
         validated_witnesses=validated_witnesses,
+        embedding_premise=embedding_premise,
         patches=patches,
         zones=zones,
         labels=labels,

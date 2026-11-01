@@ -20,6 +20,7 @@ from jax.extend import core as jax_core
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
+from .._exact_kernels import float64_interval_product, float64_interval_sum
 from .._interpolation._bspline import bspline_jet_rule_alignment
 from .._interpolation._bspline_extraction import (
     _bernstein_derivative,
@@ -28,6 +29,7 @@ from .._interpolation._bspline_extraction import (
     _univariate_span_extraction,
 )
 from .._jax_program import custom_jvp_rule_owner
+from .._meshcore import meshcore_available
 from ..typing import parse
 
 
@@ -148,12 +150,34 @@ def _sign_clamped(
     )
 
 
+def _native_float64(first: Interval, second: Interval, /) -> bool:
+    """Whether the native endpoint kernels apply: float64 endpoints and meshcore.
+
+    The kernels repeat the host operations below per element, so their
+    enclosures are bit-identical; they remove the per-call NumPy overhead that
+    dominates the interpreter's small batches.
+    """
+    return (
+        all(
+            getattr(value, "dtype", None) == np.float64
+            for value in (first[0], first[1], second[0], second[1])
+        )
+        and meshcore_available()
+    )
+
+
 def interval_add(first: Interval, second: Interval, /) -> Interval:
     shape = np.broadcast_shapes(np.shape(first[0]), np.shape(second[0]))
     if np.all(np.asarray(second[0]) == 0) and np.all(np.asarray(second[1]) == 0):
         return np.broadcast_to(first[0], shape), np.broadcast_to(first[1], shape)
     if np.all(np.asarray(first[0]) == 0) and np.all(np.asarray(first[1]) == 0):
         return np.broadcast_to(second[0], shape), np.broadcast_to(second[1], shape)
+    if _native_float64(first, second):
+        return float64_interval_sum(*first, *second, subtract=False)
+    return _host_interval_add(first, second)
+
+
+def _host_interval_add(first: Interval, second: Interval, /) -> Interval:
     with np.errstate(invalid="ignore", over="ignore"):
         lower = np.add(first[0], second[0])
         upper = np.add(first[1], second[1])
@@ -171,6 +195,12 @@ def interval_add(first: Interval, second: Interval, /) -> Interval:
 
 
 def interval_subtract(first: Interval, second: Interval, /) -> Interval:
+    if _native_float64(first, second):
+        return float64_interval_sum(*first, *second, subtract=True)
+    return _host_interval_subtract(first, second)
+
+
+def _host_interval_subtract(first: Interval, second: Interval, /) -> Interval:
     with np.errstate(invalid="ignore", over="ignore"):
         lower = np.subtract(first[0], second[1])
         upper = np.subtract(first[1], second[0])
@@ -191,6 +221,12 @@ def interval_multiply(first: Interval, second: Interval, /) -> Interval:
     # Interval endpoints bound real numbers; an infinite endpoint marks an
     # unbounded side, never a member. An exact zero endpoint times it therefore
     # contributes 0, as in IEEE 1788 set-based multiplication.
+    if _native_float64(first, second):
+        return float64_interval_product(*first, *second)
+    return _host_interval_multiply(first, second)
+
+
+def _host_interval_multiply(first: Interval, second: Interval, /) -> Interval:
     pairs = (
         (first[0], second[0]),
         (first[0], second[1]),

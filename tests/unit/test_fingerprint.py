@@ -23,6 +23,7 @@ from phydrax._fingerprint import (
     canonical_array_hex_fingerprint,
     canonical_fingerprint,
     iter_array_bytes,
+    LazyCanonicalSequence,
 )
 from phydrax.discretization import CellMesh
 from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
@@ -160,7 +161,8 @@ def _legacy_payload(value: Any) -> Any:
         return {"__array__": array_tree_fingerprint(np.asarray(value))}
     if isinstance(value, Mapping):
         return {key: _legacy_payload(item) for key, item in value.items()}
-    if isinstance(value, (tuple, list)):
+    if isinstance(value, (tuple, list, LazyCanonicalSequence)):
+        # A lazy sequence encodes exactly as the tuple of its items.
         return [_legacy_payload(item) for item in value]
     return value
 
