@@ -298,11 +298,25 @@ def test_relocation_is_invariant_under_sparse_vertex_ids() -> None:
 def test_coarsening_updates_live_topology_and_conserves_region_volume() -> None:
     outcome = _adapt(_source(4, close_edge=True), np.eye(3) * 5.76, relocation=False)
 
-    assert outcome.evidence.status is TetraMetricStatus.STALLED
+    assert outcome.evidence.status is TetraMetricStatus.COMPLETE
     assert outcome.evidence.collapses > 0
-    assert outcome.evidence.out_of_range_edges > 0
+    assert outcome.evidence.out_of_range_edges == 0
     assert outcome.evidence.minimum_metric_quality > 0.0
     assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+    # COMPLETE is the measured state of the published target: every target edge
+    # has unit-metric length 2.4 |e| inside [1/sqrt(2), sqrt(2)].
+    target_ids = np.asarray(outcome.edit.vertex_global_ids, dtype=np.int64)
+    rows = {int(identifier): row for row, identifier in enumerate(target_ids.tolist())}
+    coordinates = np.asarray(outcome.edit.coordinates, dtype=np.float64)
+    lengths = np.asarray(
+        [
+            2.4 * np.linalg.norm(coordinates[rows[first]] - coordinates[rows[second]])
+            for first, second in sorted(_target_edges(outcome))
+        ]
+    )
+    assert lengths.size and np.all(
+        (lengths >= 1.0 / np.sqrt(2.0)) & (lengths <= np.sqrt(2.0))
+    )
 
 
 def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
