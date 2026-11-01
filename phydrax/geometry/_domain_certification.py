@@ -1106,7 +1106,6 @@ def _coverage_boundary_partition(
                 source=source,
                 fidelity=fidelity,
                 embedding=embedding,
-                revalidate_fidelity=False,
             )
             if attempt.bounded is not None:
                 bounded = attempt.bounded
@@ -1195,7 +1194,6 @@ def _coverage_boundary_partition(
                     source=source,
                     fidelity=fidelity,
                     embedding=embedding,
-                    revalidate_fidelity=False,
                 )
                 if attempt.bounded is not None:
                     bounded = attempt.bounded
@@ -1332,7 +1330,6 @@ def _coverage_boundary_partition(
             source=source,
             fidelity=fidelity,
             embedding=embedding,
-            revalidate_fidelity=False,
         )
         if attempt.bounded is None:
             for failure in attempt.failures:

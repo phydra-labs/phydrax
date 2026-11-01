@@ -31,7 +31,10 @@ from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshManifoldScope
 from ._certification import MeshCertificationReport
-from ._certification_inputs import MeshCertificationInputs
+from ._certification_inputs import (
+    MeshCertificationInputs,
+    validate_fidelity_witnesses,
+)
 from ._contracts import (
     CurveMeshingSpec,
     MeshingCapability,
@@ -516,6 +519,15 @@ def _accept_native_construction(
             stage=MeshingStageKind.CANONICALIZATION.value,
         )
     request = construction.certification
+    # Validate each fidelity witness once and hand the validations on to the
+    # inputs, their currency check and the acceptance proofs.
+    validated = validate_fidelity_witnesses(
+        mesh,
+        geometry,
+        request.fidelity_source,
+        request.fidelity_witness,
+        request.scoped_fidelity,
+    )
     inputs = MeshCertificationInputs(
         mesh,
         geometry,
@@ -533,10 +545,11 @@ def _accept_native_construction(
         scoped_fidelity=request.scoped_fidelity,
         fidelity_witness=request.fidelity_witness,
         source_coverage_witness=request.source_coverage_witness,
+        validated=validated,
     )
     organization = construction.organization
     validated = inputs.require_current(
-        mesh, geometry, domain=inputs.domain, source=inputs.source
+        mesh, geometry, domain=inputs.domain, source=inputs.source, validated=validated
     )
     certification = MeshCertificationReport(
         inputs,

@@ -787,14 +787,19 @@ def _source_entities(
     ):
         raise ValueError("Source entities must pair a dimension with an int64 index.")
     if kind is GeometryAssociationKind.BREP:
-        expected = tuple(
-            brep_entity_id(source, revision, dimension, index, occurrence_path=path)
-            if dimension >= 0
-            else _unclassified_id(source, revision, path)
-            for dimension, index, path in zip(
-                dimensions_.tolist(), indices_.tolist(), occurrence_paths, strict=True
-            )
+        rows = tuple(
+            zip(dimensions_.tolist(), indices_.tolist(), occurrence_paths, strict=True)
         )
+        # Rows repeat a few source entities: key each distinct entity once.
+        keys = {
+            (dimension, index, path): (
+                brep_entity_id(source, revision, dimension, index, occurrence_path=path)
+                if dimension >= 0
+                else _unclassified_id(source, revision, path)
+            )
+            for dimension, index, path in dict.fromkeys(rows)
+        }
+        expected = tuple(keys[row] for row in rows)
         if expected != sources:
             raise ValueError(
                 "B-Rep source entity keys must match their revision, definition and occurrence."
