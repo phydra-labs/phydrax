@@ -1955,8 +1955,13 @@ hull separation or stratum-residual cones. For cells sharing a facet, an exact
 affine glue places the second reference cell across the facet so that the union
 is convex; a constant preconditioner then makes the glued map strictly monotone
 at every (uniformly refined) Jacobian Bernstein control. Single-cell injectivity
-uses the same preconditioner. It is found by Kelley cutting planes, whose
-linear-program bound also proves when no preconditioner exists. Solid containment
+uses the same preconditioner. A cheap exact refutation runs first: no
+preconditioner exists when two controls have a singular convex combination
+(floats propose the pair from negative real eigenvalues of `B^-1 A`, and an
+exact determinant sign change decides it). Otherwise it is found by Kelley
+cutting planes, which stop when the bound proves that none exists, when the
+bound meets the attained margin, or when new cuts fall within the programs'
+feasibility tolerance. Solid containment
 casts exact rays along an unbounded dense sequence of dyadic directions until one
 meets every face transversally away from trim edges; points on the solid boundary
 stay unresolved, and every other point is decided after finitely many rays.
