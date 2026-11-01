@@ -16,7 +16,9 @@ from typing import cast, Literal, NamedTuple, overload, Protocol, TYPE_CHECKING
 
 import numpy as np
 
+from .._exact_kernels import IntegerBernsteinNet, rational_bernstein_nets
 from .._fingerprint import array_tree_fingerprint
+from .._meshcore import meshcore_available
 from ._exact_algebraic_geometry import (
     coefficient_endpoint,
     coefficient_rounding_error,
@@ -814,6 +816,53 @@ def bernstein_degree(
             raise ValueError(f"Unsupported Bernstein domain {domain!r}.")
 
 
+def _controls_input(
+    polynomial: Mapping[tuple[int, ...], ExactScalar],
+    domain: BernsteinDomain,
+    dimension: int,
+    degree: tuple[int, ...] | None,
+    /,
+) -> tuple[Polynomial, tuple[int, ...]]:
+    value = _canonical_polynomial(polynomial)
+    if dimension < 1 or any(len(index) != dimension for index in value):
+        raise ValueError("Bernstein dimension must match polynomial monomial dimensions.")
+    least = bernstein_degree(value, domain, dimension)
+    if degree is None:
+        return value, least
+    if len(degree) != len(least) or any(
+        int(chosen) < int(minimum) for chosen, minimum in zip(degree, least, strict=True)
+    ):
+        raise ValueError("Bernstein elevation degree is below the polynomial degree.")
+    return value, degree
+
+
+# Least (terms x controls) product a native conversion pays off at; smaller
+# polynomials stay on the Fraction path (both give identical controls).
+_NATIVE_CONTROL_WORK = 32
+
+
+def _native_net(
+    value: Polynomial, domain: BernsteinDomain, dimension: int, degree: tuple[int, ...], /
+) -> IntegerBernsteinNet | None:
+    """Integer controls from the native kernel, or ``None`` for the Fraction path.
+
+    ``None`` covers a missing native library, radical coefficients, small work,
+    and the kernel's typed range refusal.
+    """
+    if not value or not meshcore_available():
+        return None
+    match domain:
+        case "simplex":
+            controls = comb(int(degree[0]) + dimension, dimension)
+        case "box":
+            controls = prod(int(axis) + 1 for axis in degree)
+        case _:
+            controls = comb(int(degree[0]) + 2, 2) * (int(degree[1]) + 1)
+    if len(value) * controls < _NATIVE_CONTROL_WORK:
+        return None
+    return rational_bernstein_nets([value], domain, dimension, [degree])[0]
+
+
 def bernstein_coefficients(
     polynomial: Mapping[tuple[int, ...], ExactScalar],
     domain: BernsteinDomain,
@@ -826,17 +875,18 @@ def bernstein_coefficients(
 
     ``degree`` (shaped as `bernstein_degree`) elevates the controls; each
     elevated control is a convex combination of the least-degree controls.
+    Rational polynomials use the native integer kernel when it is available.
     """
-    value = _canonical_polynomial(polynomial)
-    if dimension < 1 or any(len(index) != dimension for index in value):
-        raise ValueError("Bernstein dimension must match polynomial monomial dimensions.")
-    least = bernstein_degree(value, domain, dimension)
-    if degree is None:
-        degree = least
-    elif len(degree) != len(least) or any(
-        int(chosen) < int(minimum) for chosen, minimum in zip(degree, least, strict=True)
-    ):
-        raise ValueError("Bernstein elevation degree is below the polynomial degree.")
+    value, degree = _controls_input(polynomial, domain, dimension, degree)
+    native = _native_net(value, domain, dimension, degree)
+    if native is not None:
+        return native.controls()
+    return _fraction_controls(value, domain, dimension, degree)
+
+
+def _fraction_controls(
+    value: Polynomial, domain: BernsteinDomain, dimension: int, degree: tuple[int, ...], /
+) -> tuple[ExactScalar, ...]:
     controls: list[ExactScalar]
     match domain:
         case "simplex":
@@ -897,7 +947,18 @@ def polynomial_bounds(
             float(np.nextafter(min(values), -np.inf)),
             float(np.nextafter(max(values), np.inf)),
         )
-    controls = bernstein_coefficients(polynomial, domain, dimension)
+    value, degree = _controls_input(polynomial, domain, dimension, None)
+    native = _native_net(value, domain, dimension, degree)
+    if native is not None:
+        return (
+            coefficient_endpoint(
+                native.control(native.least), upper=False, saturate=True
+            ),
+            coefficient_endpoint(
+                native.control(native.greatest), upper=True, saturate=True
+            ),
+        )
+    controls = _fraction_controls(value, domain, dimension, degree)
     if not controls:
         return 0.0, 0.0
     return (

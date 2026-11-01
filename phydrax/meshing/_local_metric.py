@@ -24,7 +24,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
-from .._bvh import bvh_overlap_pairs_host, prepare_bvh
+from .._bvh import _host_boxes_overlap, bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient2d, PredicateMode, PredicateSign
 from .._strict import StrictModule
@@ -61,6 +61,8 @@ _DEVIATION_QUANTUM = 2.0**-20
 _IMPROVEMENT = 1.0e-6
 # Candidate-pair padding of the source point location; exact signs decide.
 _LOCATION_TOLERANCE = 1.0e-9
+# Box tests below which point location skips the query tree (identical pairs).
+_DIRECT_LOCATION_TESTS = 1 << 16
 # Scale lanes batch represented backtracking steps; continuation has no fixed limit.
 _RELOCATION_SCALE_LANES = 8
 _MINIMUM_CAPACITY = 16
@@ -274,6 +276,9 @@ class _Source(NamedTuple):
     vertex_ids: np.ndarray
     cells: np.ndarray
     cell_tree: Any
+    # Binary64 bounding boxes of the location cells (the ``cell_tree`` items).
+    cell_lower: np.ndarray
+    cell_upper: np.ndarray
     cell_ids: np.ndarray
     edge_keys: np.ndarray
     block_count: int
@@ -419,6 +424,17 @@ def _orbit_groups(keys: np.ndarray, rows: np.ndarray, /) -> list[np.ndarray]:
     ordered = rows[np.argsort(keys[rows], kind="stable")]
     starts = np.flatnonzero(np.diff(keys[ordered]) != 0) + 1
     return np.split(ordered, starts)
+
+
+def _orbit_disagreement(
+    orbits: np.ndarray, values: np.ndarray, size: int, /
+) -> np.ndarray:
+    """Per orbit ``0..size-1``, whether its members' ``values`` are not all equal."""
+    reference = np.zeros((size,), dtype=values.dtype)
+    reference[orbits] = values
+    result = np.zeros((size,), dtype=np.bool_)
+    np.logical_or.at(result, orbits, values != reference[orbits])
+    return result
 
 
 def _exact_periodic_point(
@@ -1033,16 +1049,16 @@ def _initial_state(
             (cell_ids, int(np.max(cell_ids)) + 1 + np.arange(notches.shape[0]))
         )
     triangles = points[locator_cells]
+    cell_lower = np.min(triangles, axis=1)
+    cell_upper = np.max(triangles, axis=1)
     source = _Source(
         points=points,
         vertex_ids=vertex_ids,
         cells=cells,
         cell_ids=cell_ids,
-        cell_tree=prepare_bvh(
-            np.min(triangles, axis=1),
-            np.max(triangles, axis=1),
-            dtype=jnp.float64,
-        ),
+        cell_tree=prepare_bvh(cell_lower, cell_upper, dtype=jnp.float64),
+        cell_lower=cell_lower,
+        cell_upper=cell_upper,
         edge_keys=entity_keys(mesh, 1),
         block_count=len(mesh.blocks),
         families=tuple((block.name, block.cell_kind) for block in mesh.blocks),
@@ -4276,14 +4292,28 @@ def _locate(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Containing source cell and floating P1 weights for each supported query."""
     location_cells, location_ids = _locator(source)
-    triangles = source.points[location_cells]
-    points_tree = prepare_bvh(queries, queries, dtype=jnp.float64)
-    cell, query = bvh_overlap_pairs_host(
-        source.cell_tree,
-        points_tree,
-        include_touching=True,
-        relative_tolerance=_LOCATION_TOLERANCE,
-    )
+    if queries.shape[0] * source.cell_lower.shape[0] <= _DIRECT_LOCATION_TESTS:
+        # Few queries: the tree's item predicate on every (cell, query) box pair
+        # gives the same pairs in the same (cell, query) order without building a
+        # query tree.
+        cell, query = np.nonzero(
+            _host_boxes_overlap(
+                source.cell_lower[:, None, :],
+                source.cell_upper[:, None, :],
+                queries[None, :, :],
+                queries[None, :, :],
+                True,
+                0.0,
+                _LOCATION_TOLERANCE,
+            )
+        )
+    else:
+        cell, query = bvh_overlap_pairs_host(
+            source.cell_tree,
+            prepare_bvh(queries, queries, dtype=jnp.float64),
+            include_touching=True,
+            relative_tolerance=_LOCATION_TOLERANCE,
+        )
     located = np.zeros((queries.shape[0],), dtype=np.bool_)
     located[query] = True
     cells = np.full((queries.shape[0],), -1, dtype=np.int64)
@@ -4291,7 +4321,7 @@ def _locate(
     if not np.any(located):
         return cells, chosen, located
     query_rows = np.flatnonzero(located)
-    corners = triangles[cell]
+    corners = source.points[location_cells[cell]]
     point = queries[query]
     result = orient2d(
         np.stack((corners[:, 1], corners[:, 2], corners[:, 0]), axis=1),
@@ -4726,100 +4756,110 @@ def _periodic_state_context(
         edge_target_rows
     ]
     target_edge_vertices = np.asarray(_entity_vertex_rows(bound)[1], dtype=np.int64)
-    permutation_rows = tuple(
-        np.asarray(edge_map.corner_permutation_row(int(row)), dtype=np.int64)
-        for row in edge_target_rows
-    )
-    if any(row.shape != (2,) for row in permutation_rows):
+    permutation_offsets = np.asarray(edge_map.corner_permutation_offsets, dtype=np.int64)
+    permutation_values = np.asarray(edge_map.corner_permutations, dtype=np.int64)
+    if np.any(
+        permutation_offsets[edge_target_rows + 1] - permutation_offsets[edge_target_rows]
+        != 2
+    ):
         raise ValueError("Periodic metric edge permutations require two corners.")
-    edge_permutations = np.stack(permutation_rows, axis=0)
+    edge_permutations = permutation_values[
+        permutation_offsets[edge_target_rows][:, None] + np.arange(2)
+    ]
     canonical_target_vertices = target_edge_vertices[
         edge_target_rows[:, None], edge_permutations
     ]
     edge_canonical_vertices = order[canonical_target_vertices]
 
-    vertex_orbits = np.full((state.points.shape[0],), -1, dtype=np.int64)
+    count = state.points.shape[0]
+    vertex_orbits = np.full((count,), -1, dtype=np.int64)
     vertex_orbits[order] = np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
-    row_of = np.full((state.points.shape[0],), -1, dtype=np.int64)
+    row_of = np.full((count,), -1, dtype=np.int64)
     row_of[order] = np.arange(order.size, dtype=np.int64)
     fixed_generators = np.asarray(bound_periodic.vertex_fixed_generators, dtype=np.bool_)
     vertex_windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
     vertex_representatives = np.asarray(
         vertex_map.representative_lifted_rows, dtype=np.int64
     )
-    representative_state_rows = np.full((state.points.shape[0],), -1, dtype=np.int64)
+    representative_state_rows = np.full((count,), -1, dtype=np.int64)
     identity = tuple(
         tuple(
             Fraction(int(row == column)) for column in range(mesh.ambient_dimension + 1)
         )
         for row in range(mesh.ambient_dimension + 1)
     )
-    vertex_exact_isometries = [identity] * state.points.shape[0]
+    vertex_exact_isometries = [identity] * count
     # Rows acted on by the zero winding: their exact action is the identity, so
     # their orbit checks reduce to binary64 equality with the root.
-    vertex_identity = np.ones((state.points.shape[0],), dtype=np.bool_)
-    state_vertex_windings = np.zeros(
-        (state.points.shape[0], vertex_windings.shape[1]), dtype=np.int64
+    vertex_identity = np.ones((count,), dtype=np.bool_)
+    state_vertex_windings = np.zeros((count, vertex_windings.shape[1]), dtype=np.int64)
+    vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [()] * count
+    live = np.flatnonzero(vertex_orbits >= 0)
+    live_orbits = vertex_orbits[live]
+    target_rows = row_of[live]
+    representative_targets = vertex_representatives[live_orbits]
+    root_rows = order[representative_targets]
+    representative_state_rows[live] = root_rows
+    state_vertex_windings[live] = vertex_windings[target_rows]
+    windings = vertex_windings[target_rows] - vertex_windings[representative_targets]
+    # Per live row: 1 coordinates, 2 metric, 3 stabilizer; the first failing row
+    # in (orbit, row) order names the refusal.
+    failure = np.where(
+        np.any(state.points[live] != state.points[root_rows], axis=1),
+        1,
+        np.where(
+            np.any(state.metric[live] != state.metric[root_rows], axis=(1, 2)), 2, 0
+        ),
     )
-    vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [
-        ()
-    ] * state.points.shape[0]
-    for state_rows in _orbit_groups(vertex_orbits, np.flatnonzero(vertex_orbits >= 0)):
-        orbit = int(vertex_orbits[state_rows[0]])
-        target_rows = row_of[state_rows]
-        representative_target_row = int(vertex_representatives[orbit])
-        representative_winding = vertex_windings[representative_target_row]
-        representative_state_row = int(order[representative_target_row])
-        representative_state_rows[state_rows] = representative_state_row
-        representative_metric = state.metric[representative_state_row]
-        representative_point = state.points[representative_state_row]
-        for state_row, target_row in zip(state_rows, target_rows, strict=True):
-            state_vertex_windings[state_row] = vertex_windings[target_row]
-            winding = vertex_windings[target_row] - representative_winding
-            if np.any(winding):
-                exact_isometry = exact_periodic_element(bound_periodic.cell, winding)
-                vertex_exact_isometries[state_row] = exact_isometry
-                vertex_identity[state_row] = False
-                point_matches = np.array_equal(
-                    state.points[state_row],
-                    _exact_periodic_point(exact_isometry, representative_point),
-                )
-                metric_matches = np.array_equal(
-                    state.metric[state_row],
-                    _exact_periodic_metric(exact_isometry, representative_metric),
-                )
-            else:
-                point_matches = np.array_equal(
-                    state.points[state_row], representative_point
-                )
-                metric_matches = np.array_equal(
-                    state.metric[state_row], representative_metric
-                )
-            if not point_matches:
-                raise ValueError(
-                    "Periodic vertex coordinates must match their exact orbit action."
-                )
-            if not metric_matches:
-                raise ValueError(
-                    "Metric tensors must transform exactly over vertex orbits."
-                )
-            stabilizers = []
-            for generator in np.flatnonzero(fixed_generators[target_row]):
-                exponents = np.zeros((vertex_windings.shape[1],), dtype=np.int64)
-                exponents[generator] = 1
-                stabilizer = exact_periodic_element(bound_periodic.cell, exponents)
-                stabilizers.append(stabilizer)
-                if not np.array_equal(
-                    state.points[state_row],
-                    _exact_periodic_point(stabilizer, state.points[state_row]),
-                ) or not np.array_equal(
-                    state.metric[state_row],
-                    _exact_periodic_metric(stabilizer, state.metric[state_row]),
-                ):
-                    raise ValueError(
-                        "Periodic vertex coordinates and metrics must respect exact stabilizers."
-                    )
-            vertex_stabilizers[state_row] = tuple(stabilizers)
+    for position in np.flatnonzero(np.any(windings != 0, axis=1)).tolist():
+        state_row = int(live[position])
+        root_row = int(root_rows[position])
+        exact_isometry = exact_periodic_element(bound_periodic.cell, windings[position])
+        vertex_exact_isometries[state_row] = exact_isometry
+        vertex_identity[state_row] = False
+        if not np.array_equal(
+            state.points[state_row],
+            _exact_periodic_point(exact_isometry, state.points[root_row]),
+        ):
+            failure[position] = 1
+        elif not np.array_equal(
+            state.metric[state_row],
+            _exact_periodic_metric(exact_isometry, state.metric[root_row]),
+        ):
+            failure[position] = 2
+        else:
+            failure[position] = 0
+    for position in np.flatnonzero(
+        np.any(fixed_generators[target_rows], axis=1)
+    ).tolist():
+        if failure[position]:
+            continue
+        state_row = int(live[position])
+        stabilizers = []
+        for generator in np.flatnonzero(fixed_generators[target_rows[position]]):
+            exponents = np.zeros((vertex_windings.shape[1],), dtype=np.int64)
+            exponents[generator] = 1
+            stabilizer = exact_periodic_element(bound_periodic.cell, exponents)
+            stabilizers.append(stabilizer)
+            if not np.array_equal(
+                state.points[state_row],
+                _exact_periodic_point(stabilizer, state.points[state_row]),
+            ) or not np.array_equal(
+                state.metric[state_row],
+                _exact_periodic_metric(stabilizer, state.metric[state_row]),
+            ):
+                failure[position] = 3
+                break
+        vertex_stabilizers[state_row] = tuple(stabilizers)
+    if np.any(failure):
+        sequence = np.lexsort((live, live_orbits))
+        raise ValueError(
+            (
+                "Periodic vertex coordinates must match their exact orbit action.",
+                "Metric tensors must transform exactly over vertex orbits.",
+                "Periodic vertex coordinates and metrics must respect exact stabilizers.",
+            )[int(failure[sequence[failure[sequence] > 0][0]]) - 1]
+        )
     target_cell_ids = np.asarray(cell_map.lifted_entity_ids, dtype=np.int64)
     state_cell_ids = _cell_identifiers(state, source, final)
     cell_order = np.argsort(target_cell_ids, kind="stable")
@@ -4840,92 +4880,114 @@ def _periodic_state_context(
     )
     edge_representatives = np.asarray(edge_map.representative_lifted_rows, dtype=np.int64)
     edge_windings = np.asarray(edge_map.winding_shifts, dtype=np.int64)
-    edge_lengths = topology.lengths.copy()
     edge_member_windings = edge_windings[edge_target_rows]
-    edge_representative_rows = np.full((edge_representatives.size,), -1, dtype=np.int64)
-    # Evaluate each periodic scalar on its exact canonical lift; coordinate and
-    # tensor orbit consistency is independently checked above.
-    for rows in _orbit_groups(edge_orbits, np.arange(edge_orbits.size)):
-        orbit = int(edge_orbits[rows[0]])
-        if (
-            np.unique(topology.edge_class[rows]).size != 1
-            or np.unique(topology.edge_protected[rows]).size != 1
-        ):
-            raise ValueError("Periodic edge controls must agree over each orbit.")
-        representative_target_row = int(edge_representatives[orbit])
-        representative_row = int(edge_state_by_target[representative_target_row])
-        if representative_row < 0:
-            raise ValueError("Periodic edge orbit has no state representative.")
-        representative_vertices = edge_canonical_vertices[representative_row]
-        edge_representative_rows[orbit] = representative_row
-        representative_winding = edge_windings[representative_target_row]
-        for edge_row in rows:
-            target_row = int(edge_target_rows[edge_row])
-            winding = edge_windings[target_row] - representative_winding
-            isometry = (
-                exact_periodic_element(bound_periodic.cell, winding)
-                if np.any(winding)
-                else None
+    orbit_count = edge_representatives.size
+    orbit_rows = edge_state_by_target[edge_representatives]
+    edge_representative_rows = np.full((orbit_count,), -1, dtype=np.int64)
+    present = np.unique(edge_orbits)
+    edge_representative_rows[present] = orbit_rows[present]
+    # Per edge orbit: 1 controls disagree, 2 no state representative, 3 a
+    # member's corners miss the exact orbit action (first failing orbit raises).
+    edge_failure = np.zeros((orbit_count,), dtype=np.int64)
+    edge_failure[
+        _orbit_disagreement(edge_orbits, topology.edge_class, orbit_count)
+        | _orbit_disagreement(edge_orbits, topology.edge_protected, orbit_count)
+    ] = 1
+    edge_failure[(edge_failure == 0) & (orbit_rows < 0)] = 2
+    members = np.flatnonzero(edge_failure[edge_orbits] == 0)
+    member_orbits = edge_orbits[members]
+    # Only root-relative lifts are bit-consistent on non-dyadic lattices, so
+    # the edge action is checked through the vertex root: the composed exact
+    # element must reproduce each member corner.
+    member_windings = (
+        edge_windings[edge_target_rows[members]]
+        - edge_windings[edge_representatives[member_orbits]]
+    )
+    nontrivial = np.any(member_windings != 0, axis=1)
+    geometry = np.zeros((members.size,), dtype=np.bool_)
+    exact_corners: list[tuple[int, int, int]] = []
+    for corner in range(2):
+        representative_vertex = edge_canonical_vertices[orbit_rows[member_orbits], corner]
+        member_vertex = edge_canonical_vertices[members, corner]
+        root = representative_state_rows[member_vertex]
+        geometry |= root != representative_state_rows[representative_vertex]
+        simple = ~nontrivial & vertex_identity[representative_vertex]
+        geometry |= simple & (
+            np.any(state.points[member_vertex] != state.points[root], axis=1)
+            | np.any(state.metric[member_vertex] != state.metric[root], axis=(1, 2))
+        )
+        exact_corners.extend(
+            (
+                int(position),
+                int(representative_vertex[position]),
+                int(member_vertex[position]),
             )
-            member_vertices = edge_canonical_vertices[edge_row]
-            # Only root-relative lifts are bit-consistent on non-dyadic
-            # lattices, so the edge action is checked through the vertex root:
-            # the composed exact element must reproduce each member corner.
-            for representative_vertex, member_vertex in zip(
-                representative_vertices, member_vertices, strict=True
-            ):
-                root_row = int(representative_state_rows[member_vertex])
-                if root_row != int(representative_state_rows[representative_vertex]):
-                    raise ValueError(
-                        "Periodic edge geometry must respect its exact orbit action."
-                    )
-                if isometry is None and vertex_identity[representative_vertex]:
-                    consistent = np.array_equal(
-                        state.points[member_vertex], state.points[root_row]
-                    ) and np.array_equal(
-                        state.metric[member_vertex], state.metric[root_row]
-                    )
-                else:
-                    composite = (
-                        vertex_exact_isometries[representative_vertex]
-                        if isometry is None
-                        else _multiply(
-                            isometry, vertex_exact_isometries[representative_vertex]
-                        )
-                    )
-                    consistent = np.array_equal(
-                        state.points[member_vertex],
-                        _exact_periodic_point(composite, state.points[root_row]),
-                    ) and np.array_equal(
-                        state.metric[member_vertex],
-                        _exact_periodic_metric(composite, state.metric[root_row]),
-                    )
-                if not consistent:
-                    raise ValueError(
-                        "Periodic edge geometry must respect its exact orbit action."
-                    )
-        edge_lengths[rows] = topology.lengths[representative_row]
+            for position in np.flatnonzero(~simple & ~geometry)
+        )
+    for position, representative_vertex, member_vertex in exact_corners:
+        if geometry[position]:
+            continue
+        root_row = int(representative_state_rows[member_vertex])
+        composite = (
+            _multiply(
+                exact_periodic_element(bound_periodic.cell, member_windings[position]),
+                vertex_exact_isometries[representative_vertex],
+            )
+            if nontrivial[position]
+            else vertex_exact_isometries[representative_vertex]
+        )
+        geometry[position] = not (
+            np.array_equal(
+                state.points[member_vertex],
+                _exact_periodic_point(composite, state.points[root_row]),
+            )
+            and np.array_equal(
+                state.metric[member_vertex],
+                _exact_periodic_metric(composite, state.metric[root_row]),
+            )
+        )
+    edge_failure[np.unique(member_orbits[geometry])] = 3
+    if np.any(edge_failure[present]):
+        raise ValueError(
+            (
+                "Periodic edge controls must agree over each orbit.",
+                "Periodic edge orbit has no state representative.",
+                "Periodic edge geometry must respect its exact orbit action.",
+            )[int(edge_failure[present][edge_failure[present] > 0][0]) - 1]
+        )
+    # Evaluate each periodic scalar on its exact canonical lift; coordinate and
+    # tensor orbit consistency is checked above.
+    edge_lengths = topology.lengths[orbit_rows[edge_orbits]]
 
     cell_state_by_target = np.full((target_cell_ids.size,), -1, dtype=np.int64)
     cell_state_by_target[cell_target_rows] = np.arange(
         state_cell_ids.size, dtype=np.int64
     )
     cell_representatives = np.asarray(cell_map.representative_lifted_rows, dtype=np.int64)
-    cell_quality = _quality(edge_lengths[topology.cell_edges])
-    for rows in _orbit_groups(cell_orbits, np.arange(cell_orbits.size)):
-        orbit = int(cell_orbits[rows[0]])
-        if (
-            np.unique(state.cell_block[rows]).size != 1
-            or np.unique(state.cell_region[rows]).size != 1
-        ):
-            raise ValueError("Periodic cell controls must agree over each orbit.")
-        representative_row = int(cell_state_by_target[cell_representatives[orbit]])
-        if representative_row < 0:
-            raise ValueError("Periodic cell orbit has no state representative.")
-        cell_quality[rows] = cell_quality[representative_row]
-    for rows in _orbit_groups(vertex_orbits, np.flatnonzero(vertex_orbits >= 0)):
-        if np.unique(state.fixed[rows]).size != 1:
-            raise ValueError("Periodic fixed-vertex controls must agree over each orbit.")
+    cell_orbit_rows = cell_state_by_target[cell_representatives]
+    cell_failure = np.zeros((cell_representatives.size,), dtype=np.int64)
+    cell_failure[
+        _orbit_disagreement(cell_orbits, state.cell_block, cell_failure.size)
+        | _orbit_disagreement(cell_orbits, state.cell_region, cell_failure.size)
+    ] = 1
+    cell_failure[(cell_failure == 0) & (cell_orbit_rows < 0)] = 2
+    cell_present = np.unique(cell_orbits)
+    if np.any(cell_failure[cell_present]):
+        raise ValueError(
+            (
+                "Periodic cell controls must agree over each orbit.",
+                "Periodic cell orbit has no state representative.",
+            )[int(cell_failure[cell_present][cell_failure[cell_present] > 0][0]) - 1]
+        )
+    cell_quality = _quality(edge_lengths[topology.cell_edges])[
+        cell_orbit_rows[cell_orbits]
+    ]
+    if np.any(
+        _orbit_disagreement(
+            live_orbits, state.fixed[live], int(np.max(live_orbits, initial=-1)) + 1
+        )
+    ):
+        raise ValueError("Periodic fixed-vertex controls must agree over each orbit.")
     return _PeriodicContext(
         edge_orbits,
         np.asarray(edge_map.quotient_entity_ids, dtype=np.int64),

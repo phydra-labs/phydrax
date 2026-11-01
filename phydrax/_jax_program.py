@@ -122,7 +122,10 @@ def custom_jvp_rule_owner(thunk: Any, /) -> Any | None:
 
     Unwraps only JAX's own memoized ``jvp_jaxpr_fun`` protocol; the owner's
     ``f`` is the declared JVP rule and ``transforms`` its applied wrappers.
-    Returns ``None`` for any other thunk.
+    A call re-bound from a staged equation (for example inside a traced
+    ``jit`` body under ``vmap``) wraps the staged thunk in JAX's ``lift_jvp``
+    rule, which is followed to the declared rule. Returns ``None`` for any
+    other thunk.
     """
     function = getattr(thunk, "f", None)
     if (
@@ -132,7 +135,15 @@ def custom_jvp_rule_owner(thunk: Any, /) -> Any | None:
     ):
         return None
     memoized = getclosurevars(function).nonlocals["fn"]
-    return getclosurevars(memoized).nonlocals["jvp"]
+    owner = getclosurevars(memoized).nonlocals["jvp"]
+    rule = getattr(owner, "f", None)
+    if (
+        rule is not None
+        and rule.__module__ == "jax._src.custom_derivatives"
+        and rule.__qualname__ == "lift_jvp.<locals>.jvp"
+    ):
+        return custom_jvp_rule_owner(getclosurevars(rule).nonlocals["jvp_jaxpr_fun"])
+    return owner
 
 
 __all__ = [

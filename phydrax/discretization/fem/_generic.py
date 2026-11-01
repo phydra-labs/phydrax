@@ -2747,102 +2747,141 @@ def _local_stiffness_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
     )
 
 
-def _degree_aware_reference_rule(
-    cell_kind: str, polynomial_degree: int, /
-) -> tuple[Array, Array]:
+_NAMED_REFERENCE_LAYOUTS: dict[str, tuple[str, int]] = {
+    "interval": ("tensor", 1),
+    "quadrilateral": ("tensor", 2),
+    "hexahedron": ("tensor", 3),
+    "triangle": ("simplex", 2),
+    "tetrahedron": ("simplex", 3),
+    "prism": ("prism", 3),
+    "pyramid": ("pyramid", 3),
+}
+
+
+def _reference_rule_layout(cell_kind: str, /) -> tuple[str, int]:
     if cell_kind.startswith(("simplex:", "tensor:")):
         kind, dimension_text = cell_kind.split(":")
-        dimension = int(dimension_text)
-        count = max(2, polynomial_degree + dimension)
-        axis, weights = np.polynomial.legendre.leggauss(count)
-        axis, weights = 0.5 * (axis + 1), 0.5 * weights
-        grids = np.meshgrid(*((axis,) * dimension), indexing="ij")
-        weight_grids = np.meshgrid(*((weights,) * dimension), indexing="ij")
-        points = np.stack(grids, axis=-1)
-        combined = np.prod(np.stack(weight_grids, axis=-1), axis=-1)
-        if kind == "simplex":
-            scale = np.ones_like(grids[0])
-            for coordinate in range(dimension):
-                points[..., coordinate] = scale * grids[coordinate]
-                combined *= (1 - grids[coordinate]) ** (dimension - coordinate - 1)
-                scale *= 1 - grids[coordinate]
-        return jnp.asarray(points.reshape((-1, dimension))), jnp.asarray(
-            combined.reshape((-1,))
+        return kind, int(dimension_text)
+    layout = _NAMED_REFERENCE_LAYOUTS.get(cell_kind)
+    if layout is None:
+        raise ValueError("Unsupported finite-element cell kind.")
+    return layout
+
+
+def _collapse_weight_degrees(kind: str, dimension: int, /) -> tuple[int, ...]:
+    """Degree of the collapsed-coordinate Jacobian on each Gauss axis."""
+    if kind == "simplex":
+        return tuple(dimension - axis - 1 for axis in range(dimension))
+    if kind == "prism":
+        return (1, 0, 0)
+    if kind == "pyramid":
+        return (0, 0, 2)
+    return (0,) * dimension
+
+
+def _reference_rule_axis_counts(
+    cell_kind: str, polynomial_degree: int, geometry_degree: int | None, /
+) -> tuple[int, ...]:
+    """Smallest Gauss-Legendre count per collapsed axis for the required integrand.
+
+    The integrand pairs two basis functions of ``polynomial_degree`` (total
+    degree ``2 * polynomial_degree``) with the metric determinant of the
+    geometry map: none for an affine map (``geometry_degree`` None), total
+    degree ``d (g - 1)`` for a degree-``g`` simplex map, and degree ``d g - 1``
+    per axis for any other degree-``g`` map. Each collapsed axis adds its
+    collapse-Jacobian degree; ``n`` points integrate degree ``2 n - 1``.
+    """
+    kind, dimension = _reference_rule_layout(cell_kind)
+    if polynomial_degree < 0:
+        raise ValueError("Reference rule polynomial degree must be nonnegative.")
+    if geometry_degree is None:
+        measure_degree = 0
+    elif kind == "simplex":
+        measure_degree = dimension * (geometry_degree - 1)
+    else:
+        measure_degree = dimension * geometry_degree - 1
+    integrand = 2 * int(polynomial_degree) + measure_degree
+    return tuple(
+        (integrand + weight) // 2 + 1
+        for weight in _collapse_weight_degrees(kind, dimension)
+    )
+
+
+def _reference_rule_exactness(
+    cell_kind: str, polynomial_degree: int, geometry_degree: int | None = None, /
+) -> int:
+    """Total polynomial degree the reference rule integrates exactly on its cell."""
+    kind, dimension = _reference_rule_layout(cell_kind)
+    counts = _reference_rule_axis_counts(cell_kind, polynomial_degree, geometry_degree)
+    return min(
+        2 * count - 1 - weight
+        for count, weight in zip(
+            counts, _collapse_weight_degrees(kind, dimension), strict=True
         )
-    count = max(2, int(polynomial_degree) + 1)
-    if cell_kind == "tetrahedron":
-        count = max(count, int(polynomial_degree) + 2)
-    axis, weights = np.polynomial.legendre.leggauss(count)
-    axis = 0.5 * (axis + 1.0)
-    weights = 0.5 * weights
-    if cell_kind == "interval":
-        return jnp.asarray(axis[:, None]), jnp.asarray(weights)
-    if cell_kind == "triangle":
-        first, second = np.meshgrid(axis, axis, indexing="ij")
-        points = np.stack((first, (1.0 - first) * second), axis=-1)
-        combined = weights[:, None] * weights[None, :] * (1.0 - first)
-        return jnp.asarray(points.reshape((-1, 2))), jnp.asarray(combined.reshape((-1,)))
-    if cell_kind == "quadrilateral":
-        first, second = np.meshgrid(axis, axis, indexing="ij")
-        points = np.stack((first, second), axis=-1)
-        combined = weights[:, None] * weights[None, :]
-        return jnp.asarray(points.reshape((-1, 2))), jnp.asarray(combined.reshape((-1,)))
-    if cell_kind == "tetrahedron":
-        first, second, third = np.meshgrid(axis, axis, axis, indexing="ij")
-        one_minus_first = 1.0 - first
-        one_minus_second = 1.0 - second
-        points = np.stack(
-            (
-                first,
-                one_minus_first * second,
-                one_minus_first * one_minus_second * third,
-            ),
-            axis=-1,
-        )
-        combined = (
-            weights[:, None, None]
-            * weights[None, :, None]
-            * weights[None, None, :]
-            * one_minus_first**2
-            * one_minus_second
-        )
-        return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
-    if cell_kind == "prism":
-        first, second, third = np.meshgrid(axis, axis, axis, indexing="ij")
-        points = np.stack((first, (1.0 - first) * second, third), axis=-1)
-        combined = (
-            weights[:, None, None]
-            * weights[None, :, None]
-            * weights[None, None, :]
-            * (1.0 - first)
-        )
-        return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
-    if cell_kind == "pyramid":
-        first, second, height = np.meshgrid(axis, axis, axis, indexing="ij")
-        scale = 1.0 - height
-        points = np.stack(
-            (
-                scale * first + 0.5 * height,
-                scale * second + 0.5 * height,
-                height,
-            ),
-            axis=-1,
-        )
-        combined = (
-            weights[:, None, None]
-            * weights[None, :, None]
-            * weights[None, None, :]
-            * scale**2
-        )
-        return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
-    if cell_kind == "hexahedron":
-        first, second, third = np.meshgrid(axis, axis, axis, indexing="ij")
-        points = np.stack((first, second, third), axis=-1)
-        combined = (
-            weights[:, None, None] * weights[None, :, None] * weights[None, None, :]
-        )
-        return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
-    raise ValueError("Unsupported finite-element cell kind.")
+    )
+
+
+def _degree_aware_reference_rule(
+    cell_kind: str,
+    polynomial_degree: int,
+    /,
+    *,
+    geometry_degree: int | None = None,
+) -> tuple[Array, Array]:
+    """Collapsed Gauss-Legendre rule on the reference cell, exactness-derived.
+
+    Each axis uses the smallest count integrating the pairing of two basis
+    functions of ``polynomial_degree`` times the geometry measure (see
+    ``_reference_rule_axis_counts``); ``_reference_rule_exactness`` states the
+    total degree integrated exactly.
+    """
+    kind, dimension = _reference_rule_layout(cell_kind)
+    counts = _reference_rule_axis_counts(cell_kind, polynomial_degree, geometry_degree)
+    axes = []
+    axis_weights = []
+    for count in counts:
+        nodes, weights = np.polynomial.legendre.leggauss(count)
+        axes.append(0.5 * (nodes + 1.0))
+        axis_weights.append(0.5 * weights)
+    grids = np.meshgrid(*axes, indexing="ij")
+    weight_grids = np.meshgrid(*axis_weights, indexing="ij")
+    points = np.stack(grids, axis=-1)
+    combined = np.prod(np.stack(weight_grids, axis=-1), axis=-1)
+    if kind == "simplex":
+        scale = np.ones_like(grids[0])
+        for coordinate in range(dimension):
+            points[..., coordinate] = scale * grids[coordinate]
+            combined *= (1.0 - grids[coordinate]) ** (dimension - coordinate - 1)
+            scale *= 1.0 - grids[coordinate]
+    elif kind == "prism":
+        points[..., 1] = (1.0 - grids[0]) * grids[1]
+        combined *= 1.0 - grids[0]
+    elif kind == "pyramid":
+        scale = 1.0 - grids[2]
+        points[..., 0] = scale * grids[0] + 0.5 * grids[2]
+        points[..., 1] = scale * grids[1] + 0.5 * grids[2]
+        combined *= scale**2
+    return jnp.asarray(points.reshape((-1, dimension))), jnp.asarray(
+        combined.reshape((-1,))
+    )
+
+
+# Output elements of one row chunk of mapped basis gradients: forward-mode
+# gradients materialize per-row products of the full local basis, so rows are
+# processed in chunks whose output stays within this many elements.
+_MAPPED_GRADIENT_ELEMENT_BUDGET = 1 << 19
+
+
+def _row_chunked_map(function: Callable[..., Array], *rows: Array) -> Array:
+    """Apply a row-vectorized ``function`` in chunks bounded by output size."""
+    row_count = rows[0].shape[0]
+    per_row = prod(jax.eval_shape(function, *(row[:1] for row in rows)).shape[1:])
+    chunk = max(1, _MAPPED_GRADIENT_ELEMENT_BUDGET // max(per_row, 1))
+    parts = [
+        function(*(row[start : start + chunk] for row in rows))
+        for start in range(0, row_count, chunk)
+    ]
+    return parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
 
 
 def _evaluate_coordinate_map(
@@ -2985,13 +3024,14 @@ def _prepare_block_geometry(
     if reference_points is None:
         points_, weights_ = _degree_aware_reference_rule(
             block.cell_kind,
-            max(element.degree, geometry_element.degree)
+            element.degree
             + (
                 1
                 if coordinate_measure is not None
                 and coordinate_measure.kind == "spherical-radial"
                 else 0
             ),
+            geometry_degree=geometry_element.degree,
         )
     else:
         points_ = jnp.asarray(reference_points)
@@ -3062,7 +3102,9 @@ def _prepare_block_geometry(
                     return map_reference_values(values_, element.value_spec, jacobian_)
 
                 mapped_gradients.append(
-                    jax.vmap(jax.jacfwd(mapped_reference))(reference_points)
+                    _row_chunked_map(
+                        jax.vmap(jax.jacfwd(mapped_reference)), reference_points
+                    )
                 )
             mapped_gradient = jnp.stack(mapped_gradients, axis=0)
         else:
@@ -3073,10 +3115,25 @@ def _prepare_block_geometry(
                 values_ = element.tabulate(reference[None])[0][0]
                 return map_reference_values(values_, element.value_spec, jacobian_)
 
-            mapped_gradient = jax.vmap(
-                jax.vmap(jax.jacfwd(mapped_reference, argnums=0), in_axes=(0, None)),
-                in_axes=(None, 0),
-            )(reference_points, coordinates_[routes_])
+            # Forward-mode gradients of every basis function at every (cell,
+            # point) row are formed for a bounded number of rows at a time.
+            cell_coordinates = coordinates_[routes_]
+            point_count = reference_points.shape[0]
+            row_cells = jnp.repeat(
+                jnp.arange(cell_coordinates.shape[0], dtype=jnp.int32), point_count
+            )
+            row_points = jnp.tile(
+                jnp.arange(point_count, dtype=jnp.int32), cell_coordinates.shape[0]
+            )
+            mapped = jax.vmap(jax.jacfwd(mapped_reference, argnums=0))
+
+            def mapped_rows(cells_: Array, points_: Array, /) -> Array:
+                return mapped(reference_points[points_], cell_coordinates[cells_])
+
+            mapped_gradient = _row_chunked_map(mapped_rows, row_cells, row_points)
+            mapped_gradient = mapped_gradient.reshape(
+                (cell_coordinates.shape[0], point_count, *mapped_gradient.shape[1:])
+            )
         physical_gradients = mapped_gradient
     physical_weights = precision_policy.accumulation(
         measure_factor * reference_weights[None, :]
