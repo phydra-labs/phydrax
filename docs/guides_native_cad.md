@@ -313,6 +313,20 @@ binds its endpoints to its own face, using the declared period of that face's
 surface or else the p-curve's own native turn. Pole vertices keep their file
 coordinates as exact source values.
 
+STEP retains shared conic basis references as one curve-bank definition and
+exports a shared bank row as one referenced conic. Independently authored
+coincident circles remain distinct. A closed chain on that same definition,
+with consistent oriented vertex incidence and contiguous parameter intervals
+covering exactly one native turn, retains symbolic endpoints at the aggregate
+seam. Intermediate decimal trims are unchanged. An open chain, a partial or
+multiple turn, mismatched incidence, or a gap between intervals does not acquire
+native-turn authority; numerical proximity to a multiple of pi is not evidence.
+This is the existing closed-edge representation convention applied to its
+authored subdivisions, not a tolerance repair. Preserving shared references and
+seam roots changes the decoded representation and therefore may change its
+model/source revision; it does not merge distinct source occurrences or promise
+historical representation IDs.
+
 When a file omits p-curves, import recovers only exact source maps. A circle
 that is a height section of a cylinder, with the cylinder's own phase, maps to
 the isoline `(t, h)`. A circle in a plane exactly parallel to a planar face maps

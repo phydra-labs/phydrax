@@ -24,6 +24,7 @@ from phydrax.geometry.brep._carrier_pieces import (
     carrier_payload as _carrier_payload,
 )
 from phydrax.geometry.brep._correspondence import exact_source_lift
+from phydrax.geometry.brep._intersection import NativePeriodEndpoint
 from phydrax.geometry.brep._intersection_curve import CurveTrimSegment, SurfaceRegion
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import (
@@ -924,6 +925,133 @@ DATA;
 ENDSEC;
 END-ISO-10303-21;
 """
+
+
+@pytest.mark.parametrize(
+    "shared", (True, False), ids=("shared", "independent-coincident")
+)
+def test_independent_split_conic_loop_retains_native_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shared: bool
+) -> None:
+    _forbid_optional_occt(monkeypatch)
+    # The two EDGE_CURVEs share a source circle and close through the SAME
+    # topological vertices. The decimal pi split remains an ordinary trim.
+    fixture = _STEP_ANNULUS.replace(
+        b"#46=EDGE_CURVE('',#42,#42,#30,.T.);",
+        b"#23=CARTESIAN_POINT('',(-2.,0.,0.));\n"
+        b"#44=VERTEX_POINT('',#23);\n"
+        b"#32=TRIMMED_CURVE('',#30,(PARAMETER_VALUE(0.)),"
+        b"(PARAMETER_VALUE(3.141592653589793)),.T.,.PARAMETER.);\n"
+        b"#33=TRIMMED_CURVE('',#30,(PARAMETER_VALUE(3.141592653589793)),"
+        b"(PARAMETER_VALUE(6.283185307179586)),.T.,.PARAMETER.);\n"
+        b"#46=EDGE_CURVE('',#42,#44,#32,.T.);\n"
+        b"#48=EDGE_CURVE('',#44,#42,#33,.T.);\n"
+        b"#62=ORIENTED_EDGE('',*,*,#48,.T.);",
+    ).replace(b"#70=EDGE_LOOP('',(#60));", b"#70=EDGE_LOOP('',(#60,#62));")
+    if not shared:
+        fixture = fixture.replace(
+            b"#33=TRIMMED_CURVE('',#30,",
+            b"#34=CIRCLE('',#8,2.);\n#33=TRIMMED_CURVE('',#34,",
+        )
+    source = decode_step_bytes(fixture, _POLICY)
+    path = tmp_path / "split-annulus.step"
+    write_step(source.model, path)
+    restored = read_step(path, _POLICY, trusted_root=tmp_path)
+    for imported in (source, restored):
+        geometry = imported.model.geometry
+        assert geometry is not None
+        loops = geometry.face_loops[0]
+        outer = loops[0]
+        assert len(outer) == 2
+        first_edge, last_edge = (geometry.coedge_edges[coedge] for coedge in outer)
+        np.testing.assert_array_equal(geometry.edge_ranges[first_edge], (0.0, np.pi))
+        np.testing.assert_array_equal(
+            geometry.edge_ranges[last_edge], (np.pi, 2.0 * np.pi)
+        )
+        first_root, split_left = geometry.coedge_endpoint_roots[outer[0]]
+        split_right, last_root = geometry.coedge_endpoint_roots[outer[1]]
+        assert (
+            geometry.edge_curves[first_edge] == geometry.edge_curves[last_edge]
+        ) is shared
+        if not shared:
+            assert not isinstance(first_root, NativePeriodEndpoint)
+            assert not isinstance(last_root, NativePeriodEndpoint)
+            continue
+        assert isinstance(first_root, NativePeriodEndpoint) and first_root.turns == 0
+        assert isinstance(last_root, NativePeriodEndpoint) and last_root.turns == 1
+        assert split_left is None and split_right is None
+        curve_loops = tuple(
+            tuple(
+                CurveTrimSegment(
+                    geometry.pcurves[coedge],
+                    *map(float, geometry.edge_ranges[geometry.coedge_edges[coedge]]),
+                    reversed=geometry.coedge_senses[coedge] < 0,
+                    first_root=geometry.coedge_endpoint_roots[coedge][0],
+                    last_root=geometry.coedge_endpoint_roots[coedge][1],
+                )
+                for coedge in loop
+            )
+            for loop in loops
+        )
+        decision = TrimDomain.from_curve_loops(curve_loops).classify(
+            np.asarray(((1.5, 0.0), (0.0, 0.0), (3.0, 0.0)))
+        )
+        np.testing.assert_array_equal(decision.resolved, (True, True, True))
+        np.testing.assert_array_equal(decision.inside, (True, False, False))
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "closed",
+        "reversed",
+        "open-incidence",
+        "decimal-end",
+        "gap",
+        "different-carrier",
+        "different-source",
+        "missing-source",
+        "mixed-senses",
+        "partial",
+        "multiple-turns",
+    ),
+)
+def test_split_conic_turn_requires_whole_authored_loop(case: str) -> None:
+    circle = CircleCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), 2.0)
+    stage = CadStage(1.0, None)
+    stage.curves = [circle, circle]
+    stage.edge_curves = [0, 0]
+    # An arbitrary decimal split is not promoted to a symbolic phase.
+    stage.edge_ranges = [(0.0, 0.7), (0.7, 2.0 * np.pi)]
+    stage.edge_vertices = [(0, 1), (1, 0)]
+    senses = (-1, -1) if case == "reversed" else (1, 1)
+    if case == "open-incidence":
+        stage.edge_vertices[1] = (1, 2)
+    elif case == "decimal-end":
+        stage.edge_ranges[1] = (0.7, np.nextafter(2.0 * np.pi, np.inf))
+    elif case == "gap":
+        stage.edge_ranges[1] = (np.nextafter(0.7, np.inf), 2.0 * np.pi)
+    elif case == "different-carrier":
+        stage.curves[1] = CircleCurve(
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), 1.0
+        )
+        stage.edge_curves[1] = 1
+    elif case == "partial":
+        stage.edge_ranges[1] = (0.7, np.pi)
+    elif case == "multiple-turns":
+        stage.edge_ranges[1] = (0.7, 4.0 * np.pi)
+    elif case == "different-source":
+        stage.edge_curves[1] = 1
+    elif case == "missing-source":
+        stage.edge_curves[1] = -1
+    elif case == "mixed-senses":
+        senses = (1, -1)
+    endpoints = stage._closed_conic_loop_endpoints((0, 1), senses, (((0, 1),),))
+    assert endpoints == (
+        {(0, 0): (Fraction(0), 0), (1, 1): (Fraction(0), 1)}
+        if case in ("closed", "reversed")
+        else {}
+    )
 
 
 def _plane_conic_turns(model: BRepModel) -> list[int]:
