@@ -40,7 +40,6 @@ class MaterialChainSchedule(StrictModule, NonTrainableState):
     maximum_edges: int = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         source_row_slots: ArrayLike,
@@ -142,8 +141,6 @@ def prepare_material_chain_schedule(
     /,
 ) -> MaterialChainSchedule:
     """Prepare one compact sparse edit schedule, preserving each edit in order."""
-    if not isinstance(chain, VolumeMaterialChain):
-        raise TypeError("chain must be a VolumeMaterialChain.")
     source = _ids(source_ids, "source_ids")
     target = _ids(target_ids, "target_ids")
     if not chain.maps:

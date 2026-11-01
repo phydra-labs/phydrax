@@ -88,32 +88,103 @@ class AdaptiveSimplexCounter(IntEnum):
 _COUNTERS = len(AdaptiveSimplexCounter)
 
 
-@cache
-def maubach_bisection_tables(dimension: int, /) -> tuple[np.ndarray, ...]:
-    """Static Maubach templates ``(first, second, reversal, pairs, orders, odd)``.
+class BisectionLabelTables(NamedTuple):
+    """Static templates of tagged-simplex bisection, one row per tag.
 
-    Row ``k`` of ``first``/``second`` gathers the children of a simplex tagged
-    ``k`` from its tuple extended by the midpoint (column ``d + 1``); row ``k``
-    of ``reversal`` reverses the first ``k + 1`` entries (the same tagged
-    simplex); ``pairs`` are the local edges; ``orders`` enumerate the vertex
-    permutations with their parity ``odd``.
+    Tags ``1..d`` are Maubach tags. In three dimensions tags ``4`` and ``5`` are
+    the adjacent and opposite marked tetrahedra of Arnold, Mukherjee and Pouly
+    (2000): the tuple ``(x0, x1, x2, x3)`` bisects ``(x0, x3)`` and both children
+    carry tag ``2``. Row ``t`` of ``first``/``second`` gathers the children from
+    the tuple extended by the midpoint (column ``d + 1``); the first child keeps
+    ``x0``. ``equivalent`` is another tuple of the same tagged simplex (the
+    reversal of the first ``k + 1`` entries for Maubach tag ``k``; the full
+    reversal for tag ``5``, whose middle pair is stored ascending; the identity
+    for tag ``4``) with permutation parity ``equivalent_odd``. ``position`` is the
+    refinement edge ``(x0, x_position)``, ``child`` the tag of both children, and
+    ``first_odd``/``second_odd`` the parity of each child template relative to
+    the parent tuple with its dropped endpoint replaced by the midpoint. Row
+    ``0`` (a restored, unlabelled cell) is the identity. ``pairs`` are the local
+    edges; ``orders`` enumerate the vertex permutations with their parity
+    ``odd_orders``.
     """
 
+    first: np.ndarray
+    second: np.ndarray
+    equivalent: np.ndarray
+    equivalent_odd: np.ndarray
+    position: np.ndarray
+    child: np.ndarray
+    first_odd: np.ndarray
+    second_odd: np.ndarray
+    pairs: np.ndarray
+    orders: np.ndarray
+    odd_orders: np.ndarray
+
+
+def _odd_permutations(rows: np.ndarray, /) -> np.ndarray:
+    width = rows.shape[1]
+    pairs = np.asarray(tuple(combinations(range(width), 2)), dtype=np.int64)
+    return np.sum(rows[:, pairs[:, 0]] > rows[:, pairs[:, 1]], axis=1) % 2 == 1
+
+
+def _template_odd(templates: np.ndarray, bases: np.ndarray, /) -> np.ndarray:
+    """Parity of each template as a permutation of the entries of its base."""
+
+    return _odd_permutations(
+        np.argmax(templates[:, :, None] == bases[:, None, :], axis=2)
+    )
+
+
+@cache
+def bisection_label_tables(dimension: int, /) -> BisectionLabelTables:
+    """Static templates of Maubach and (in 3-D) marked-tetrahedron bisection."""
+
     if dimension not in (2, 3):
-        raise ValueError("Maubach bisection tables exist for dimensions 2 and 3.")
+        raise ValueError("Bisection label tables exist for dimensions 2 and 3.")
     width = dimension + 1
-    first = np.tile(np.arange(width, dtype=np.int64), (width, 1))
+    tags = 6 if dimension == 3 else width
+    identity = np.arange(width, dtype=np.int64)
+    first = np.tile(identity, (tags, 1))
     second = first.copy()
-    reversal = first.copy()
+    equivalent = first.copy()
+    position = np.zeros((tags,), dtype=np.int64)
+    child = np.full((tags,), dimension, dtype=np.int64)
     for tag in range(1, width):
         first[tag, tag] = width
         second[tag, :tag] = np.arange(1, tag + 1)
         second[tag, tag] = width
-        reversal[tag, : tag + 1] = np.arange(tag, -1, -1)
+        equivalent[tag, : tag + 1] = np.arange(tag, -1, -1)
+        position[tag] = tag
+        child[tag] = tag - 1 if tag > 1 else dimension
+    if dimension == 3:
+        first[4:] = (1, 0, 2, 4)
+        second[4] = (3, 1, 2, 4)
+        second[5] = (1, 3, 2, 4)
+        equivalent[5] = (3, 2, 1, 0)
+        position[4:] = 3
+        child[4:] = 2
+    bases = np.tile(np.arange(width, dtype=np.int64), (tags, 1))
+    first_base, second_base = bases.copy(), bases
+    first_base[np.arange(tags), position] = width
+    second_base[:, 0] = width
+    first_odd = _template_odd(first, first_base)
+    second_odd = _template_odd(second, second_base)
+    first_odd[0] = second_odd[0] = False
     pairs = np.asarray(tuple(combinations(range(width), 2)), dtype=np.int64)
     orders = np.asarray(tuple(permutations(range(width))), dtype=np.int64)
-    odd_orders = np.sum(orders[:, pairs[:, 0]] > orders[:, pairs[:, 1]], axis=1) % 2
-    return first, second, reversal, pairs, orders, odd_orders == 1
+    return BisectionLabelTables(
+        first,
+        second,
+        equivalent,
+        _odd_permutations(equivalent),
+        position,
+        child,
+        first_odd,
+        second_odd,
+        pairs,
+        orders,
+        _odd_permutations(orders),
+    )
 
 
 def _count(value: int, name: str, /) -> int:
@@ -447,7 +518,6 @@ def adaptive_simplex_bucket(count: int, growth_factor: float, /) -> int:
     return 1 << (required - 1).bit_length()
 
 
-
 @final
 class AdaptiveSimplexState(StrictModule, NonTrainableState):
     """Dynamic arrays of one fixed-capacity adaptive simplex epoch.
@@ -749,21 +819,26 @@ def _members(table: Array, queries: Array, /) -> tuple[Array, Array]:
     return (table[position] == queries) & (queries != _CODE_SENTINEL), position
 
 
+def _refinement_ends(tuples: Array, tags: Array, /) -> Array:
+    """Second refinement-edge endpoint ``x_position(tag)`` of each tagged tuple."""
+
+    position = bisection_label_tables(tuples.shape[1] - 1).position
+    return _take_rows(tuples, jnp.asarray(position, dtype=jnp.int32)[tags][:, None])[:, 0]
+
+
 def _refinement_edges(work: _Work, /) -> tuple[Array, Array]:
-    first = work.tuples[:, 0]
-    second = _take_rows(work.tuples, work.tags[:, None])[:, 0]
-    return first, second
+    return work.tuples[:, 0], _refinement_ends(work.tuples, work.tags)
 
 
 def _all_edge_codes(tuples: Array, dimension: int, vertex_capacity: int, /) -> Array:
-    pairs = maubach_bisection_tables(dimension)[3]
+    pairs = bisection_label_tables(dimension).pairs
     return _edge_codes(tuples[:, pairs[:, 0]], tuples[:, pairs[:, 1]], vertex_capacity)
 
 
 def _odd_relative(rows: Array, tuples: Array, dimension: int, /) -> Array:
     """Whether each tuple is an odd permutation of its oriented row."""
 
-    pairs = maubach_bisection_tables(dimension)[3]
+    pairs = bisection_label_tables(dimension).pairs
     position = jnp.argmax(tuples[:, :, None] == rows[:, None, :], axis=2)
     inversions = jnp.sum(position[:, pairs[:, 0]] > position[:, pairs[:, 1]], axis=1)
     return inversions % 2 == 1
@@ -772,14 +847,15 @@ def _odd_relative(rows: Array, tuples: Array, dimension: int, /) -> Array:
 def _canonical(tuples: Array, tags: Array, odd: Array, dimension: int, /) -> Any:
     """Canonical tagged tuple (smaller by slot = by global ID) and its parity."""
 
-    reversal = jnp.asarray(maubach_bisection_tables(dimension)[2], dtype=jnp.int32)
-    reversed_ = _take_rows(tuples, reversal[tags])
+    tables = bisection_label_tables(dimension)
+    equivalent = jnp.asarray(tables.equivalent, dtype=jnp.int32)
+    reversed_ = _take_rows(tuples, equivalent[tags])
     differs = reversed_ != tuples
     first = jnp.argmax(differs, axis=1)[:, None]
     smaller = jnp.any(differs, axis=1) & (
         _take_rows(reversed_, first)[:, 0] < _take_rows(tuples, first)[:, 0]
     )
-    flips = ((tags * (tags + 1)) // 2) % 2 == 1
+    flips = jnp.asarray(tables.equivalent_odd)[tags]
     return jnp.where(smaller[:, None], reversed_, tuples), odd ^ (smaller & flips)
 
 
@@ -989,16 +1065,18 @@ def _children(work: _Work, midpoint: Array, dimension: int, /) -> Any:
     facet has class 0.
     """
 
-    first_table, second_table = maubach_bisection_tables(dimension)[:2]
+    tables = bisection_label_tables(dimension)
     first_end, second_end = _refinement_edges(work)
     extended = jnp.concatenate((work.tuples, midpoint[:, None]), axis=1)
-    first_tuple = _take_rows(extended, jnp.asarray(first_table, jnp.int32)[work.tags])
-    second_tuple = _take_rows(extended, jnp.asarray(second_table, jnp.int32)[work.tags])
+    first_tuple = _take_rows(extended, jnp.asarray(tables.first, jnp.int32)[work.tags])
+    second_tuple = _take_rows(extended, jnp.asarray(tables.second, jnp.int32)[work.tags])
     odd = _odd_relative(work.cells, work.tuples, dimension)
-    tags = jnp.where(work.tags > 1, work.tags - 1, dimension)
-    first_tuple, first_odd = _canonical(first_tuple, tags, odd, dimension)
+    tags = jnp.asarray(tables.child, jnp.int32)[work.tags]
+    first_tuple, first_odd = _canonical(
+        first_tuple, tags, odd ^ jnp.asarray(tables.first_odd)[work.tags], dimension
+    )
     second_tuple, second_odd = _canonical(
-        second_tuple, tags, odd ^ (work.tags % 2 == 1), dimension
+        second_tuple, tags, odd ^ jnp.asarray(tables.second_odd)[work.tags], dimension
     )
     first_rows = _oriented_rows(first_tuple, first_odd)
     second_rows = _oriented_rows(second_tuple, second_odd)
@@ -1243,7 +1321,7 @@ def _protected_marks(
 def _shape_quality(points: Array, dimension: int, /) -> Array:
     """Mean-ratio shape quality in (0, 1] (1 for equilateral simplices)."""
 
-    pairs = maubach_bisection_tables(dimension)[3]
+    pairs = bisection_label_tables(dimension).pairs
     edges = points[:, pairs[:, 1]] - points[:, pairs[:, 0]]
     squared = jnp.sum(jnp.sum(edges * edges, axis=2), axis=1)
     spans = points[:, 1:] - points[:, :1]
@@ -1268,9 +1346,7 @@ def _invalid_geometry(work: _Work, dimension: int, axis: str | None, /) -> Array
         corners = tuple(points[:, index] for index in range(dimension + 1))
         predicate = orient2d if dimension == 2 else orient3d
         result = predicate(*corners, mode=PredicateMode.FILTERED_DEVICE)
-        invalid = active & result.certain & (
-            result.signs != int(PredicateSign.POSITIVE)
-        )
+        invalid = active & result.certain & (result.signs != int(PredicateSign.POSITIVE))
     else:
         spans = points[:, 1:] - points[:, :1]
         normal = jnp.cross(spans[:, 0], spans[:, 1])
@@ -1345,9 +1421,7 @@ def _finished(
     # Scientific failures and capacity retries both preserve the accepted input.
     result = _select(rollback, source, work)
     recorded = status & ~int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
-    result = result._replace(
-        clocks=result.clocks.at[2].set(source.clocks[2] | recorded)
-    )
+    result = result._replace(clocks=result.clocks.at[2].set(source.clocks[2] | recorded))
     zero = jnp.zeros((), dtype=jnp.int32)
     zero_capacity = jnp.zeros((), dtype=jnp.int64)
     required_vertices = (
@@ -1516,9 +1590,7 @@ def _coarsen(
     # Every mark of a refused call stays active, hence rejected.
     return jax.lax.cond(
         _terminal(work, None) != 0,
-        lambda: _refused(
-            layout, state, work, jnp.sum(marks, dtype=jnp.int32), raw
-        ),
+        lambda: _refused(layout, state, work, jnp.sum(marks, dtype=jnp.int32), raw),
         lambda: _coarsened(layout, work, raw, marks),
     )
 
@@ -1584,7 +1656,7 @@ def _restored_facet_classes(work: _Work, /) -> Array:
     midpoint = work.bisection_vertices
     rows = work.cells
     x0 = work.tuples[:, 0]
-    xk = _take_rows(work.tuples, work.tags[:, None])[:, 0]
+    xk = _refinement_ends(work.tuples, work.tags)
     first_rows, first_classes = rows[safe_first], work.facet_classes[safe_first]
     second_rows, second_classes = rows[safe_second], work.facet_classes[safe_second]
     halves = _class_opposite(first_rows, first_classes, rows)
@@ -1606,7 +1678,7 @@ def _record_agreement(work: _Work, /) -> Array:
     )
     rows = work.cells
     x0 = work.tuples[:, 0]
-    xk = _take_rows(work.tuples, work.tags[:, None])[:, 0]
+    xk = _refinement_ends(work.tuples, work.tags)
     first_half = _class_opposite(rows[first], work.facet_classes[first], rows)
     second_half = _class_opposite(rows[second], work.facet_classes[second], rows)
     split = (rows != x0[:, None]) & (rows != xk[:, None])
@@ -1826,8 +1898,6 @@ def refine_adaptive_simplex(
         layout, state, mask = _retry_capacity(layout, state, mask, update)
 
 
-
-
 def coarsen_adaptive_simplex(
     layout: AdaptiveSimplexLayout, state: AdaptiveSimplexState, marks: ArrayLike, /
 ) -> AdaptiveSimplexUpdate:
@@ -1944,9 +2014,7 @@ def _refine_parts(
         # Every part sees the collective union of recorded scientific failures.
         update = jax.lax.cond(
             _terminal(work, axis) != 0,
-            lambda: _refused(
-                layout, state, work, requested, jnp.zeros_like(mask), axis
-            ),
+            lambda: _refused(layout, state, work, requested, jnp.zeros_like(mask), axis),
             lambda: _refined_part(layout, work, mask, requested, axis),
         )
         return jax.tree_util.tree_map(lambda value: value[None], update)
@@ -2133,7 +2201,8 @@ __all__ = [
     "coarsen_adaptive_simplex",
     "masked_simplex_facet_neighbors",
     "masked_simplex_signature",
-    "maubach_bisection_tables",
+    "bisection_label_tables",
+    "BisectionLabelTables",
     "refine_adaptive_simplex",
     "refine_adaptive_simplex_parts",
 ]

@@ -2884,8 +2884,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             # Rigid-body modes read FE DOF coordinates; this default is FE-only.
             discretization = cast(FiniteElementDiscretization, self.discretization)
             coordinates = discretization.dof_maps[self.field_index].evaluate_coordinates(
-                discretization.mesh,
-                discretization.default_runtime.coordinates,
+                discretization.default_runtime.coordinates
             )
             modes = []
             for component in range(dimension):

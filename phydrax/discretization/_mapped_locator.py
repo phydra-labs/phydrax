@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from enum import Enum
 from fractions import Fraction
 from itertools import combinations
 from typing import assert_never, cast, final, Literal, NamedTuple, TYPE_CHECKING
@@ -30,7 +29,13 @@ from ._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
-from ._cell_locator import AbstractCellLocator, CellLocationResult, CellLocationStatus
+from ._cell_locator import (
+    AbstractCellLocator,
+    CellInverseRefusal,
+    CellLocationResult,
+    CellLocationStatus,
+    InverseRefusalReason,
+)
 from ._cell_mesh import CellMesh
 from ._coordinate_enclosure import (
     add,
@@ -120,7 +125,6 @@ class MappedLocationPolicy(StrictModule, NonTrainableState):
     parameter_resolution: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         *,
@@ -571,25 +575,13 @@ def _split_reference_box(
     return (lower, tuple(left_upper)), (tuple(right_lower), upper)
 
 
-class _InverseRefusal(Enum):
-    """Why a mapped inverse search left part of the reference cell undecided."""
-
-    SINGULAR_TOLERANCE_ROOT = "singular-tolerance-root"
-    ROOTLESS_TOLERANCE_ROOT = "rootless-tolerance-root"
-    PARAMETER_RESOLUTION = "parameter-resolution"
-    UNBOUNDED_ENCLOSURE = "unbounded-enclosure"
-    ROOT_REFINEMENT_STALLED = "root-refinement-stalled"
-    DUPLICATE_ROOT_UNMERGED = "duplicate-root-unmerged"
-
-
 class _UnresolvedInverseBox(NamedTuple):
-    """Reference-box evidence for one undecided inverse-map region.
+    """Reference-box evidence for one undecided inverse-map region of one cell.
 
-    ``witness`` is empty, one exact tolerance root, or the two ends of a segment
-    of tolerance roots across which the Jacobian determinant changes sign.
+    ``witness`` follows the :class:`CellInverseRefusal` contract.
     """
 
-    refusal: _InverseRefusal
+    reason: InverseRefusalReason
     lower: tuple[Fraction, ...]
     upper: tuple[Fraction, ...]
     witness: tuple[tuple[Fraction, ...], ...]
@@ -831,9 +823,7 @@ def _tolerance_refusal(
         )
         if witness is None:
             return None
-        return _UnresolvedInverseBox(
-            _InverseRefusal.ROOTLESS_TOLERANCE_ROOT, lower, upper, (witness,)
-        )
+        return _UnresolvedInverseBox("rootless-tolerance-root", lower, upper, (witness,))
     jacobian = outcome.jacobian
     if jacobian is None or len(jacobian) != len(lower):
         return None
@@ -850,9 +840,7 @@ def _tolerance_refusal(
     )
     if segment is None:
         return None
-    return _UnresolvedInverseBox(
-        _InverseRefusal.SINGULAR_TOLERANCE_ROOT, lower, upper, segment
-    )
+    return _UnresolvedInverseBox("singular-tolerance-root", lower, upper, segment)
 
 
 def _refine_isolated_root(
@@ -877,9 +865,7 @@ def _refine_isolated_root(
     while True:
         root_bounds = _box_expression_bounds(expressions, target, lower, upper)
         if root_bounds is None:
-            return _UnresolvedInverseBox(
-                _InverseRefusal.UNBOUNDED_ENCLOSURE, lower, upper, ()
-            )
+            return _UnresolvedInverseBox("unbounded-enclosure", lower, upper, ())
         residual_bounds, _ = root_bounds
         margin_lower, margin_upper = _reference_margin_bounds(cell_kind, lower, upper)
         margin_inside = margin_lower >= -reference_tolerance
@@ -930,9 +916,7 @@ def _refine_isolated_root(
         if margin_outside or residual_outside:
             return None
         if width <= policy.parameter_resolution:
-            return _UnresolvedInverseBox(
-                _InverseRefusal.PARAMETER_RESOLUTION, lower, upper, ()
-            )
+            return _UnresolvedInverseBox("parameter-resolution", lower, upper, ())
         refined = _krawczyk_box(
             target, expressions, lower, upper, policy, selected_rows=rows
         )
@@ -943,9 +927,7 @@ def _refine_isolated_root(
             or refined.rows != rows
             or (refined.lower == lower and refined.upper == upper)
         ):
-            return _UnresolvedInverseBox(
-                _InverseRefusal.ROOT_REFINEMENT_STALLED, lower, upper, ()
-            )
+            return _UnresolvedInverseBox("root-refinement-stalled", lower, upper, ())
         lower, upper = refined.lower, refined.upper
         refinement_steps += 1
 
@@ -994,7 +976,7 @@ def _merge_duplicate_roots(
         if root.selected_rows != previous.selected_rows:
             unresolved.append(
                 _UnresolvedInverseBox(
-                    _InverseRefusal.DUPLICATE_ROOT_UNMERGED, hull_lower, hull_upper, ()
+                    "duplicate-root-unmerged", hull_lower, hull_upper, ()
                 )
             )
             continue
@@ -1015,7 +997,7 @@ def _merge_duplicate_roots(
         ):
             unresolved.append(
                 _UnresolvedInverseBox(
-                    _InverseRefusal.DUPLICATE_ROOT_UNMERGED, hull_lower, hull_upper, ()
+                    "duplicate-root-unmerged", hull_lower, hull_upper, ()
                 )
             )
             continue
@@ -1096,9 +1078,7 @@ def _isolate_inverse_roots(
         split = _split_reference_box(lower, upper, policy)
         if split is None:
             unresolved.append(
-                _UnresolvedInverseBox(
-                    _InverseRefusal.PARAMETER_RESOLUTION, lower, upper, ()
-                )
+                _UnresolvedInverseBox("parameter-resolution", lower, upper, ())
             )
             continue
         left, right = split
@@ -1676,6 +1656,7 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
         complete = np.ones((count,), dtype=np.bool_)
         search_complete_all = np.ones((count,), dtype=np.bool_)
         ambiguous = np.zeros((count,), dtype=np.bool_)
+        refusals: list[CellInverseRefusal] = []
         for point_index, point in enumerate(values):
             target = np.asarray(point, dtype=np.float64)
             hits: list[tuple[int, _InverseRoot]] = []
@@ -1702,10 +1683,19 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
                     self.cell_map.coordinate_element.cell_kind,
                     self.policy,
                 )
-                # Undecided regions keep their box evidence in the isolation outcome; the
-                # location contract reports them as an exhausted inverse map.
                 if isolation.unresolved:
                     complete[point_index] = False
+                refusals.extend(
+                    CellInverseRefusal(
+                        point_index,
+                        int(cell),
+                        box.reason,
+                        box.lower,
+                        box.upper,
+                        box.witness,
+                    )
+                    for box in isolation.unresolved
+                )
                 ambiguous[point_index] |= isolation.ambiguous
                 hits.extend((int(cell), root) for root in isolation.roots)
             hits.sort(
@@ -1795,6 +1785,7 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
             jnp.asarray(candidate_cells),
             jnp.asarray(candidate_reference),
             jnp.asarray(complete & search_complete_all),
+            tuple(sorted(refusals, key=lambda refusal: (refusal.point, refusal.cell))),
             self.locator_id,
         )
 

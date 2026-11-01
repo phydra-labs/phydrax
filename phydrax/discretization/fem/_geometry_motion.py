@@ -325,7 +325,11 @@ class FiniteElementMotionExtensionResult(StrictModule):
 
     ``status`` is the linear-solve status (one entry per coordinate column for
     ``HARMONIC``) or the nonlinear status of ``WINSLOW``/``MMPDE``; ``PRESCRIBED``
-    reports success.
+    reports success. Every route solves for the displacement divided by
+    ``displacement_scale`` (the largest prescribed boundary displacement), so
+    the solve tolerances are relative to the motion; ``residual_norm`` is the
+    route residual in unnormalized units (the normalized residual times the
+    scale).
     """
 
     displacement: Array
@@ -333,6 +337,7 @@ class FiniteElementMotionExtensionResult(StrictModule):
     status: Array
     iterations: Array
     residual_norm: Array
+    displacement_scale: Array
     route: FiniteElementMeshMotionRoute = eqx.field(static=True)
 
 
@@ -455,6 +460,99 @@ def _require_boundary_reachable(
     anchored[labels[boundary]] = True
     if not np.all(anchored[labels]):
         raise ValueError("Every interior mesh component must connect to the boundary.")
+
+
+def _periodic_vertex_classes(
+    reference: np.ndarray,
+    periodic_vertex_pairs: tuple[ArrayLike, ArrayLike, ArrayLike] | None,
+    /,
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray] | None]:
+    """Quotient class of every vertex and the validated pairs.
+
+    ``periodic_vertex_pairs = (kept, twin, translation)`` declares that vertex
+    ``twin[i]`` is vertex ``kept[i]`` at a lattice image:
+    ``reference[twin[i]] == reference[kept[i]] + translation[i]`` (to ``1e-9``
+    of the coordinate scale). Twins share one displacement unknown, so moved
+    twins stay exact lattice copies. Classes are numbered by their lowest vertex.
+    """
+
+    count, dimension = reference.shape
+    if periodic_vertex_pairs is None:
+        return np.arange(count, dtype=np.int64), None
+    if len(periodic_vertex_pairs) != 3:
+        raise ValueError("periodic_vertex_pairs must be (kept, twin, translation).")
+    kept = np.asarray(periodic_vertex_pairs[0], dtype=np.int64)
+    twin = np.asarray(periodic_vertex_pairs[1], dtype=np.int64)
+    translations = np.asarray(periodic_vertex_pairs[2], dtype=np.float64)
+    if (
+        kept.ndim != 1
+        or twin.shape != kept.shape
+        or translations.shape != (kept.size, dimension)
+    ):
+        raise ValueError(
+            "Periodic vertex pairs must be (pairs,), (pairs,) and (pairs, dim) arrays."
+        )
+    if np.any(kept < 0) or np.any(kept >= count) or np.any(twin < 0):
+        raise ValueError("Periodic vertex pairs must index the reference coordinates.")
+    if np.any(twin >= count) or np.any(kept == twin):
+        raise ValueError("Periodic twins must be distinct reference vertices.")
+    if not np.all(np.isfinite(translations)):
+        raise ValueError("Periodic twin translations must be finite.")
+    scale = max(1.0, float(np.max(np.abs(reference))))
+    mismatch = np.linalg.norm(reference[twin] - reference[kept] - translations, axis=-1)
+    if np.any(mismatch > 1.0e-9 * scale):
+        raise ValueError(
+            "Periodic twin vertices must be lattice translates of their partners."
+        )
+    graph = coo_matrix(
+        (np.ones((kept.size,)), (kept, twin)),
+        shape=(count, count),
+    )
+    _, labels = connected_components(graph, directed=False)
+    # Renumber classes by their lowest vertex.
+    _, first = np.unique(labels, return_index=True)
+    order = np.empty_like(first)
+    order[np.argsort(first)] = np.arange(first.size)
+    return order[labels].astype(np.int64), (kept, twin, translations)
+
+
+def _quotient_edges(
+    reference: np.ndarray, edges: np.ndarray, classes: np.ndarray, /
+) -> np.ndarray:
+    """One lifted edge per quotient edge.
+
+    Lattice copies of a seam edge join the same classes with the same edge
+    vector; the quotient mesh holds that edge once. Edges inside one class
+    carry no displacement difference and are dropped.
+    """
+
+    first = classes[edges[:, 0]]
+    second = classes[edges[:, 1]]
+    keep = first != second
+    edges = edges[keep]
+    first = first[keep]
+    second = second[keep]
+    vectors = reference[edges[:, 1]] - reference[edges[:, 0]]
+    swap = first > second
+    vectors[swap] = -vectors[swap]
+    low = np.where(swap, second, first)
+    high = np.where(swap, first, second)
+    order = np.lexsort((high, low))
+    edges, low, high, vectors = edges[order], low[order], high[order], vectors[order]
+    tolerance = 1.0e-9 * max(1.0, float(np.max(np.abs(reference))))
+    starts = np.flatnonzero(
+        np.concatenate(([True], (low[1:] != low[:-1]) | (high[1:] != high[:-1])))
+    )
+    stops = np.append(starts[1:], low.size)
+    selected = np.ones((low.size,), dtype=np.bool_)
+    for start, stop in zip(starts, stops, strict=True):
+        for row in range(start + 1, stop):
+            earlier = np.flatnonzero(selected[start:row]) + start
+            if np.any(
+                np.linalg.norm(vectors[earlier] - vectors[row], axis=-1) <= tolerance
+            ):
+                selected[row] = False
+    return edges[selected]
 
 
 def _padded_element_tensors(
@@ -789,6 +887,7 @@ def _monitor_tensors(values: Array, count: int, dimension: int, /) -> Array:
 class _RouteArguments(StrictModule):
     boundary_points: Array
     monitor: Any
+    scale: Array
 
 
 class FiniteElementMotionExtension(StrictModule, NonTrainableState):
@@ -799,11 +898,27 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
     every vertex. Preparation (graph/element tensors, Krylov solve, corner
     frames) happens once; :meth:`extend` is traceable and differentiable in the
     boundary displacement and the MMPDE monitor parameters.
+
+    ``periodic_vertex_pairs = (kept, twin, translation)`` couples a lifted
+    periodic patch across its seams: ``twin[i]`` is ``kept[i]`` at a lattice
+    image (``reference[twin] == reference[kept] + translation``). Every route
+    is then solved on the quotient mesh. Each twin class has one displacement
+    unknown, so moved twins stay exact lattice copies. Element tensors keep
+    their lifted cell geometry, and seam edge copies count once in the harmonic
+    graph. A class is prescribed when any of its vertices is a boundary vertex;
+    the prescribed displacements of one class must agree (to ``1e-9`` of the
+    coordinate scale), or the extension reports failure.
     """
 
     reference_coordinates: Array
     boundary_indices: Array
     interior_indices: Array
+    interior_representatives: Array
+    interior_rows: Array
+    boundary_sources: Array
+    boundary_class_rows: Array
+    boundary_twin_indices: Array
+    boundary_twin_rows: Array
     linear: _DirichletExtension | None
     energy: _CornerEnergy | None
     policy: FiniteElementMeshMotionPolicy
@@ -817,6 +932,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         /,
         *,
         policy: FiniteElementMeshMotionPolicy | None = None,
+        periodic_vertex_pairs: tuple[ArrayLike, ArrayLike, ArrayLike] | None = None,
     ) -> None:
         policy_ = FiniteElementMeshMotionPolicy() if policy is None else policy
         if not isinstance(policy_, FiniteElementMeshMotionPolicy):
@@ -839,77 +955,128 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             raise ValueError(
                 "boundary_vertices must be sorted unique non-empty vertex indices."
             )
-        interior_mask = np.ones((count,), dtype=np.bool_)
-        interior_mask[boundary] = False
+        classes, pairs = _periodic_vertex_classes(reference, periodic_vertex_pairs)
+        class_count = int(classes.max()) + 1
+        prescribed = np.zeros((class_count,), dtype=np.bool_)
+        prescribed[classes[boundary]] = True
+        boundary_classes = np.flatnonzero(prescribed)
+        interior_classes = np.flatnonzero(~prescribed)
+        # Quotient unknowns: prescribed classes first, then free classes.
+        position = np.empty((class_count,), dtype=np.int64)
+        position[boundary_classes] = np.arange(boundary_classes.size)
+        position[interior_classes] = boundary_classes.size + np.arange(
+            interior_classes.size
+        )
+        vertex_position = position[classes]
+        # The first boundary vertex of each prescribed class supplies its value.
+        _, boundary_sources = np.unique(classes[boundary], return_index=True)
+        interior_mask = ~prescribed[classes]
         interior = np.flatnonzero(interior_mask)
+        boundary_mask = np.zeros((count,), dtype=np.bool_)
+        boundary_mask[boundary] = True
+        boundary_twins = np.flatnonzero(~interior_mask & ~boundary_mask)
+        _, interior_representatives = np.unique(classes[interior], return_index=True)
+        interior_representatives = interior[interior_representatives]
         route = policy_.route
         if route is FiniteElementMeshMotionRoute.PRESCRIBED and interior.size:
             raise ValueError("The PRESCRIBED route must prescribe every vertex.")
         linear = None
         energy = None
         if interior.size:
-            edges = _mesh_edges(blocks)
-            _require_boundary_reachable(edges, boundary, count)
+            edges = _quotient_edges(reference, _mesh_edges(blocks), classes)
+            quotient_boundary = np.arange(boundary_classes.size)
+            quotient_interior = boundary_classes.size + np.arange(interior_classes.size)
+            _require_boundary_reachable(
+                vertex_position[edges], quotient_boundary, class_count
+            )
             problem_id = f"{array_tree_fingerprint(reference)}:{route.value}"
+
+            def quotient(
+                tensors: tuple[np.ndarray, np.ndarray, np.ndarray],
+            ) -> _DirichletExtension:
+                local_matrices, vertex_routes, padding = tensors
+                return _DirichletExtension(
+                    (local_matrices, vertex_position[vertex_routes], padding),
+                    quotient_boundary,
+                    quotient_interior,
+                    dimension,
+                    policy_,
+                    problem_id,
+                )
+
             match route:
                 case FiniteElementMeshMotionRoute.HARMONIC:
-                    linear = _DirichletExtension(
-                        _harmonic_tensors(reference, edges),
-                        boundary,
-                        interior,
-                        dimension,
-                        policy_,
-                        problem_id,
-                    )
+                    linear = quotient(_harmonic_tensors(reference, edges))
                 case FiniteElementMeshMotionRoute.LINEAR_ELASTICITY:
-                    linear = _DirichletExtension(
-                        _elasticity_tensors(reference, blocks, policy_),
-                        boundary,
-                        interior,
-                        dimension,
-                        policy_,
-                        problem_id,
-                    )
+                    linear = quotient(_elasticity_tensors(reference, blocks, policy_))
                 case (
                     FiniteElementMeshMotionRoute.WINSLOW
                     | FiniteElementMeshMotionRoute.MMPDE
                 ):
                     # The harmonic extension is the admissible initial state.
-                    linear = _DirichletExtension(
-                        _harmonic_tensors(reference, edges),
-                        boundary,
-                        interior,
-                        dimension,
-                        policy_,
-                        problem_id,
-                    )
+                    linear = quotient(_harmonic_tensors(reference, edges))
                     energy = _CornerEnergy(reference, blocks)
                 case _:
                     raise ValueError(f"Unsupported mesh motion route {route!r}.")
         self.reference_coordinates = jnp.asarray(reference)
         self.boundary_indices = jnp.asarray(boundary, dtype=jnp.int32)
         self.interior_indices = jnp.asarray(interior, dtype=jnp.int32)
+        self.interior_representatives = jnp.asarray(
+            interior_representatives, dtype=jnp.int32
+        )
+        self.interior_rows = jnp.asarray(
+            vertex_position[interior] - boundary_classes.size, dtype=jnp.int32
+        )
+        self.boundary_sources = jnp.asarray(boundary_sources, dtype=jnp.int32)
+        self.boundary_class_rows = jnp.asarray(
+            boundary_sources[vertex_position[boundary]], dtype=jnp.int32
+        )
+        self.boundary_twin_indices = jnp.asarray(boundary_twins, dtype=jnp.int32)
+        self.boundary_twin_rows = jnp.asarray(
+            boundary_sources[vertex_position[boundary_twins]], dtype=jnp.int32
+        )
         self.linear = linear
         self.energy = energy
         self.policy = policy_
-        self.extension_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-motion-extension",
-                "reference": array_tree_fingerprint(reference),
-                "blocks": [
-                    [kind, array_tree_fingerprint(cells)] for kind, cells in blocks
-                ],
-                "boundary": array_tree_fingerprint(boundary),
-                "policy": policy_.policy_id,
-            }
-        )
+        identity: dict[str, Any] = {
+            "kind": "finite-element-motion-extension",
+            "reference": array_tree_fingerprint(reference),
+            "blocks": [[kind, array_tree_fingerprint(cells)] for kind, cells in blocks],
+            "boundary": array_tree_fingerprint(boundary),
+            "policy": policy_.policy_id,
+        }
+        if pairs is not None:
+            identity["periodic_vertex_pairs"] = array_tree_fingerprint(pairs)
+        self.extension_id = canonical_fingerprint(identity)
 
     def _points(self, interior: Array, boundary_points: Array, /) -> Array:
+        """Every vertex from free class coordinates and prescribed boundary points.
+
+        ``interior`` holds one coordinate per free class (at its representative)
+        and each prescribed class takes its source boundary point; the other
+        class members are lattice copies of those.
+        """
+
+        reference = self.reference_coordinates
+        offsets = (
+            reference[self.interior_indices]
+            - reference[self.interior_representatives][self.interior_rows]
+        )
+        boundary_reference = reference[self.boundary_indices]
+        boundary_offsets = (
+            boundary_reference - boundary_reference[self.boundary_class_rows]
+        )
+        twin_offsets = (
+            reference[self.boundary_twin_indices]
+            - boundary_reference[self.boundary_twin_rows]
+        )
         return (
-            self.reference_coordinates.at[self.boundary_indices]
-            .set(boundary_points)
+            reference.at[self.boundary_indices]
+            .set(boundary_points[self.boundary_class_rows] + boundary_offsets)
+            .at[self.boundary_twin_indices]
+            .set(boundary_points[self.boundary_twin_rows] + twin_offsets)
             .at[self.interior_indices]
-            .set(interior)
+            .set(interior[self.interior_rows] + offsets)
         )
 
     def _stationary_route(
@@ -917,27 +1084,38 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         boundary_points: Array,
         initial: Array,
         monitor: MeshMonitor | None,
+        scale: Array,
         /,
     ) -> Any:
+        """Root of the route's stationarity equation in normalized displacement.
+
+        The state is ``z = (x - x_ref) / scale`` and the residual is the
+        coordinate residual divided by ``scale``, so residual and step
+        criteria compare O(1) quantities for any boundary displacement size.
+        """
         energy = self.energy
         policy = self.policy
         count, dimension = self.reference_coordinates.shape
-        interior_indices = self.interior_indices
+        representatives = self.interior_representatives
+        origin = self.reference_coordinates[representatives]
 
         def admissible(state: Any, arguments: Any) -> Any:
             # ty: ignore[unresolved-attribute]
-            return energy.admissible(self._points(state, arguments.boundary_points))
+            return energy.admissible(
+                self._points(origin + arguments.scale * state, arguments.boundary_points)
+            )
 
         match policy.route:
             case FiniteElementMeshMotionRoute.WINSLOW:
 
                 def residual(state: Any, arguments: Any) -> Any:
-                    return jax.grad(
+                    gradient = jax.grad(
                         # ty: ignore[unresolved-attribute]
                         lambda interior: energy.winslow(
                             self._points(interior, arguments.boundary_points)
                         )
-                    )(state)
+                    )(origin + arguments.scale * state)
+                    return gradient / arguments.scale
 
                 method = NewtonKrylov(linear_policy=policy.linear_policy())
             case FiniteElementMeshMotionRoute.MMPDE:
@@ -951,17 +1129,18 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                         # ty: ignore[unresolved-attribute]
                         return energy.huang(points, values)
 
-                    points = self._points(state, arguments.boundary_points)
+                    coordinates = origin + arguments.scale * state
+                    points = self._points(coordinates, arguments.boundary_points)
                     values = _monitor_tensors(arguments.monitor(points), count, dimension)
                     # Huang–Kamenski balancing P = det(M)**((p - 1) / 2).
                     balance = determinant_small_linear(
                         # ty: ignore[unresolved-attribute]
                         energy.determinant_plan,
-                        values[interior_indices],
+                        values[representatives],
                     ) ** (0.5 * (_MMPDE_EXPONENT - 1.0))
-                    return (balance[:, None] / policy.relaxation_time) * jax.grad(
-                        functional
-                    )(state)
+                    return (
+                        balance[:, None] / (policy.relaxation_time * arguments.scale)
+                    ) * jax.grad(functional)(coordinates)
 
                 method = PseudoTransient(
                     linear=policy.linear_policy(),
@@ -973,7 +1152,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             residual,
             trial_validity=admissible,
             trial_validity_id="positive-corner-jacobians",
-            problem_id=f"{self.extension_id}:{policy.route.value}",
+            problem_id=f"{self.extension_id}:{policy.route.value}:normalized",
         )
         return implicit_root_result(
             problem,
@@ -983,7 +1162,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             derivative_policy=ImplicitRootDerivativePolicy(
                 tangent_linear_policy=policy.linear_policy()
             ),
-            args=_RouteArguments(boundary_points, monitor),
+            args=_RouteArguments(boundary_points, monitor, scale),
         )
 
     def extend(
@@ -993,7 +1172,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         *,
         monitor: MeshMonitor | None = None,
     ) -> FiniteElementMotionExtensionResult:
-        """Interior displacement for one boundary displacement ``(boundary, dim)``."""
+        """Every vertex displacement for one boundary displacement ``(boundary, dim)``."""
 
         route = self.policy.route
         if (monitor is None) == (route is FiniteElementMeshMotionRoute.MMPDE):
@@ -1005,6 +1184,25 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         if boundary.shape != (self.boundary_indices.shape[0], reference.shape[1]):
             raise ValueError("boundary_displacement must have shape (boundary, dim).")
         boundary_points = reference[self.boundary_indices] + boundary
+        # Prescribed vertices of one periodic class must move as lattice copies.
+        scale = jnp.maximum(
+            jnp.max(jnp.abs(reference)), jnp.asarray(1.0, dtype=reference.dtype)
+        )
+        consistent = jnp.all(
+            jnp.abs(boundary - boundary[self.boundary_class_rows]) <= 1.0e-9 * scale
+        )
+        class_boundary = boundary[self.boundary_sources]
+        # Every route solves for the displacement normalized by the largest
+        # prescribed displacement, so the solver's absolute floors and step
+        # criteria are relative to the motion: a 1e-9 move converges like a
+        # unit move. The scale carries no derivative (the linear routes are
+        # homogeneous, and the nonlinear routes are rescaled consistently).
+        displacement_scale = jax.lax.stop_gradient(jnp.max(jnp.abs(class_boundary)))
+        solve_scale = jnp.where(
+            displacement_scale > 0.0,
+            displacement_scale,
+            jnp.ones_like(displacement_scale),
+        )
 
         def result(
             interior: Any,
@@ -1016,16 +1214,19 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             displacement = (
                 jnp.zeros_like(reference)
                 .at[self.boundary_indices]
-                .set(boundary)
+                .set(boundary[self.boundary_class_rows])
+                .at[self.boundary_twin_indices]
+                .set(boundary[self.boundary_twin_rows])
                 .at[self.interior_indices]
-                .set(interior)
+                .set(interior[self.interior_rows])
             )
             return FiniteElementMotionExtensionResult(
                 displacement=displacement,
-                successful=jnp.asarray(successful, dtype=jnp.bool_),
+                successful=jnp.asarray(successful, dtype=jnp.bool_) & consistent,
                 status=jnp.asarray(status, dtype=jnp.int32),
                 iterations=jnp.asarray(iterations, dtype=jnp.int32),
                 residual_norm=jnp.asarray(residual_norm, dtype=reference.dtype),
+                displacement_scale=displacement_scale,
                 route=route,
             )
 
@@ -1043,27 +1244,28 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                 | FiniteElementMeshMotionRoute.LINEAR_ELASTICITY
             ):
                 # ty: ignore[unresolved-attribute]
-                interior, solved = self.linear.solve(boundary)
+                normalized, solved = self.linear.solve(class_boundary / solve_scale)
                 return result(
-                    interior,
+                    solve_scale * normalized,
                     jnp.all(solved.successful),
                     solved.status,
                     jnp.max(solved.diagnostics.iterations),
-                    jnp.max(solved.diagnostics.residual_norm),
+                    solve_scale * jnp.max(solved.diagnostics.residual_norm),
                 )
             case (
                 FiniteElementMeshMotionRoute.WINSLOW | FiniteElementMeshMotionRoute.MMPDE
             ):
                 # ty: ignore[unresolved-attribute]
-                harmonic, _ = self.linear.solve(boundary)
-                initial = reference[self.interior_indices] + harmonic
-                root = self._stationary_route(boundary_points, initial, monitor)
+                harmonic, _ = self.linear.solve(class_boundary / solve_scale)
+                root = self._stationary_route(
+                    boundary_points, harmonic, monitor, solve_scale
+                )
                 return result(
-                    root.state - reference[self.interior_indices],
+                    solve_scale * root.state,
                     root.successful,
                     root.status,
                     root.diagnostics.iterations,
-                    root.diagnostics.final_residual_norm,
+                    solve_scale * root.diagnostics.final_residual_norm,
                 )
             case _:
                 raise ValueError(f"Unsupported mesh motion route {route!r}.")

@@ -728,8 +728,6 @@ def generate_frame_hexes(
     *,
     source_geometry: CellGeometrySpec | None = None,
 ) -> BalancedCutHexConstruction:
-    if not isinstance(prepared, PreparedFrameHexGrid):
-        raise TypeError("prepared must be PreparedFrameHexGrid.")
     if prepared.obstruction is not None:
         raise FrameFieldRefusal(
             prepared.obstruction.kind,
@@ -1022,8 +1020,6 @@ def prepare_source_block_connection(
     prepared: PreparedSourceHexFrame, /
 ) -> SourceBlockConnection:
     """Derive exact tensor-axis transitions from shared root face vertices."""
-    if not isinstance(prepared, PreparedSourceHexFrame):
-        raise TypeError("prepared must be PreparedSourceHexFrame.")
     corners = np.asarray(reference_cell_topology("hexahedron").vertices, dtype=np.int64)
     faces = reference_cell_topology("hexahedron").entities[2]
     transports = np.zeros((prepared.face_connections.shape[0], 3, 3), dtype=np.int64)

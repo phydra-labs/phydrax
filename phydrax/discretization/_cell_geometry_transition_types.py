@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import itertools
+from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, NamedTuple, Protocol, runtime_checkable
 
 import equinox as eqx
 import numpy as np
@@ -19,6 +21,7 @@ from ._cell_geometry import (
     CellGeometrySpec,
     CellVertexGeometryElement,
     coordinate_effective_basis,
+    coordinate_reference_arguments,
     PerCellRestrictedCellGeometryElement,
     PolynomialComposedCellGeometryElement,
     RationalComposedCellGeometryElement,
@@ -39,6 +42,7 @@ from ._coordinate_enclosure import (
     linear_combinations,
     multiply,
     polynomial_bounds,
+    RationalPolynomial,
     scale,
 )
 from ._nested_reference_types import (
@@ -279,104 +283,339 @@ def _reference_shape_polynomials(cell_kind: str, /) -> tuple[Expression, ...]:
     raise ValueError(f"Exact reference-map proof does not support {cell_kind!r}.")
 
 
+type _CellMapParts = tuple[
+    tuple[Expression, ...] | None,
+    tuple[Expression, ...],
+    tuple[tuple[ExactScalar, ...], ...],
+]
+
+
+class _ExactCellMaps(NamedTuple):
+    """Memoized exact physical maps of one resolved coordinate geometry, by cell ID.
+
+    ``expressions`` composes each cell's basis into its physical map;
+    ``parts`` returns the uncomposed ``(chart arguments or None, basis,
+    coefficients)`` whose value at ``x`` is ``sum_i c_i b_i(chart(x))``.
+    """
+
+    expressions: Callable[[int], tuple[Expression, ...]]
+    parts: Callable[[int], _CellMapParts]
+
+
 def _geometry_map_expressions(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
-    cell_global_id: int,
+    resolved: tuple[tuple[CellGeometryElement, ...], tuple[Array, ...]],
     /,
-    *,
-    resolved: tuple[tuple[CellGeometryElement, ...], tuple[Array, ...]] | None = None,
-) -> tuple[Expression, ...]:
-    if resolved is None:
-        elements, routes, _ = geometry.resolve(mesh)
-    else:
-        elements, routes = resolved
+) -> _ExactCellMaps:
+    """Exact physical maps by cell ID, memoized over one resolved map.
+
+    The quotient-chart lift, exact source bank, host route tables and cell rows
+    are prepared once, so each cell costs only its own basis work.
+    """
+    elements, routes = resolved
     lift = _quotient_chart_lift(geometry, mesh, routes)
-    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-        rows = np.flatnonzero(
-            np.asarray(block.global_ids, dtype=np.int64) == int(cell_global_id)
+    source_bank = geometry.source_coordinates() if lift is None else ()
+    route_tables = tuple(np.asarray(route, dtype=np.int64) for route in routes)
+    # A cell resolves in the first block naming it; a repeated ID there is ambiguous.
+    owners: dict[int, tuple[int, int]] = {}
+    repeated: set[int] = set()
+    for block_index, block in enumerate(mesh.blocks):
+        identifiers = np.asarray(block.global_ids, dtype=np.int64).tolist()
+        first_rows: dict[int, int] = {}
+        for local_row, identifier in enumerate(identifiers):
+            if identifier in owners:
+                continue
+            if identifier in first_rows:
+                repeated.add(identifier)
+            else:
+                first_rows[identifier] = local_row
+        owners.update(
+            (identifier, (block_index, local_row))
+            for identifier, local_row in first_rows.items()
         )
-        if rows.size == 0:
-            continue
-        if rows.size != 1 or not isinstance(element, ScalarCoordinateElement):
+
+    def cell_row(
+        identifier: int, /
+    ) -> tuple[ScalarCoordinateElement, int, int, tuple[tuple[ExactScalar, ...], ...]]:
+        owner = owners.get(identifier)
+        if owner is None:
+            raise ValueError(
+                f"Coordinate geometry does not contain cell ID {identifier}."
+            )
+        block_index, local_row = owner
+        element = elements[block_index]
+        if identifier in repeated or not isinstance(element, ScalarCoordinateElement):
             raise ValueError(
                 "Exact same-domain map proof requires one fixed-family coordinate cell."
             )
-        local_row = int(rows[0])
+        route_rows = route_tables[block_index][local_row]
+        if lift is None:
+            if np.any(route_rows < 0) or np.any(route_rows >= len(source_bank)):
+                raise IndexError(
+                    "Coordinate source index lies outside the coefficient bank."
+                )
+            coefficients = tuple(source_bank[row] for row in route_rows.tolist())
+        else:
+            coefficients = lift(route_rows)
+        return element, block_index, local_row, coefficients
+
+    expression_cache: dict[int, tuple[Expression, ...]] = {}
+
+    def expressions(cell_global_id: int, /) -> tuple[Expression, ...]:
+        identifier = int(cell_global_id)
+        value = expression_cache.get(identifier)
+        if value is not None:
+            return value
+        element, _, local_row, coefficients = cell_row(identifier)
         basis = coordinate_effective_basis(element, cell_row=local_row)
-        route_rows = np.asarray(route)[local_row]
-        coefficients = (
-            geometry.source_coordinates(route_rows) if lift is None else lift(route_rows)
-        )
         if len(basis) != len(coefficients):
             raise ValueError(
                 "Coordinate basis and exact source coefficients are misaligned."
             )
-        return linear_combinations(
+        value = linear_combinations(
             basis,
             tuple(
                 tuple(coefficients[dof][axis] for dof in range(len(basis)))
                 for axis in range(mesh.ambient_dimension)
             ),
         )
-    raise ValueError(f"Coordinate geometry does not contain cell ID {cell_global_id}.")
+        expression_cache[identifier] = value
+        return value
+
+    # Root (composed elements) or own (other elements) bases depend only on the block.
+    block_bases: dict[int, tuple[Expression, ...]] = {}
+
+    def parts(cell_global_id: int, /) -> _CellMapParts:
+        element, block_index, local_row, coefficients = cell_row(int(cell_global_id))
+        arguments: tuple[Expression, ...] | None
+        root: ScalarCoordinateElement = element
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            arguments = tuple(element.chart_arguments(local_row))
+            root = element.source_element
+        elif isinstance(
+            element,
+            RestrictedCellGeometryElement
+            | PolynomialComposedCellGeometryElement
+            | RationalComposedCellGeometryElement,
+        ):
+            chart = coordinate_reference_arguments(element, cell_row=local_row)
+            if chart is None:
+                raise ValueError(
+                    "Composed coordinate element must retain its exact chart."
+                )
+            arguments = tuple(chart)
+            root = element.source_element
+        else:
+            arguments = None
+        basis = block_bases.get(block_index)
+        if basis is None:
+            basis = (
+                coordinate_effective_basis(element, cell_row=local_row)
+                if arguments is None
+                else coordinate_effective_basis(root)
+            )
+            block_bases[block_index] = basis
+        if len(basis) != len(coefficients):
+            raise ValueError(
+                "Coordinate basis and exact source coefficients are misaligned."
+            )
+        return arguments, basis, coefficients
+
+    return _ExactCellMaps(expressions, parts)
+
+
+type _RationalData = dict[tuple[int, ...], Fraction]
+type _RationalMap = tuple[
+    tuple[_RationalData, ...] | None,
+    tuple[_RationalData, ...],
+    tuple[tuple[Fraction, ...], ...],
+]
+
+
+def _rational_data(
+    expression: Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial, /
+) -> _RationalData | None:
+    """A polynomial with rational coefficients, or ``None`` for any other datum."""
+    if isinstance(expression, RationalPolynomial):
+        return None
+    data = {
+        exponent: coefficient
+        for exponent, coefficient in expression.items()
+        if isinstance(coefficient, Fraction)
+    }
+    return data if len(data) == len(expression) else None
+
+
+def _rational_polynomials(
+    expressions: Sequence[Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial],
+    /,
+) -> tuple[_RationalData, ...] | None:
+    result = []
+    for expression in expressions:
+        data = _rational_data(expression)
+        if data is None:
+            return None
+        result.append(data)
+    return tuple(result)
+
+
+def _rational_map(parts: _CellMapParts, /) -> _RationalMap | None:
+    chart, basis, coefficients = parts
+    rational_chart = None if chart is None else _rational_polynomials(chart)
+    rational_basis = _rational_polynomials(basis)
+    rows = tuple(
+        tuple(value for value in row if isinstance(value, Fraction))
+        for row in coefficients
+    )
+    if (
+        (chart is not None and rational_chart is None)
+        or rational_basis is None
+        or any(len(row) != len(source) for row, source in zip(rows, coefficients))
+    ):
+        return None
+    return rational_chart, rational_basis, rows
+
+
+def _polynomial_degree(expression: _RationalData, /) -> int:
+    return max((sum(exponent) for exponent in expression), default=0)
+
+
+def _polynomial_value(
+    expression: _RationalData, point: tuple[Fraction, ...], /
+) -> Fraction:
+    total = Fraction(0)
+    for exponent, coefficient in expression.items():
+        term = coefficient
+        for coordinate, power in zip(point, exponent, strict=True):
+            if power:
+                term *= coordinate**power
+        total += term
+    return total
+
+
+def _unisolvent_lattice(
+    cell_kind: str, degree: int, /
+) -> tuple[tuple[Fraction, ...], ...] | None:
+    """Reference points on which polynomials of total degree ``degree`` agree iff equal.
+
+    The principal simplex lattice is unisolvent for total degree on simplices;
+    the tensor grid (and the simplex-by-interval grid on prisms) is unisolvent
+    for a larger space containing it.
+    """
+    order = max(degree, 1)
+    dimension = reference_cell_topology(cell_kind).dimension
+    if cell_kind in ("triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
+        indices = (
+            index
+            for index in itertools.product(range(order + 1), repeat=dimension)
+            if sum(index) <= order
+        )
+    elif cell_kind in ("interval", "quadrilateral", "hexahedron") or cell_kind.startswith(
+        "tensor:"
+    ):
+        indices = itertools.product(range(order + 1), repeat=dimension)
+    elif cell_kind == "prism":
+        indices = (
+            index
+            for index in itertools.product(range(order + 1), repeat=3)
+            if index[0] + index[1] <= order
+        )
+    else:
+        return None
+    return tuple(tuple(Fraction(value, order) for value in index) for index in indices)
+
+
+def _lattice_map_equality(
+    input_parts: _CellMapParts,
+    mapped_parts: _CellMapParts,
+    arguments: Sequence[Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial],
+    cell_kind: str,
+    /,
+) -> bool | None:
+    """Decide ``input map == mapped map o arguments`` exactly without composing.
+
+    Both sides are polynomials of total degree at most the composed degree
+    bound, so they are identical iff they agree on a unisolvent lattice of that
+    order. ``None`` when a chart, basis or coefficient is not a rational
+    polynomial datum; the symbolic proof decides those maps.
+    """
+    input_map = _rational_map(input_parts)
+    mapped_map = _rational_map(mapped_parts)
+    reference_chart = _rational_polynomials(arguments)
+    if input_map is None or mapped_map is None or reference_chart is None:
+        return None
+
+    def chart_degree(chart: tuple[_RationalData, ...] | None, /) -> int:
+        if chart is None:
+            return 1
+        return max((_polynomial_degree(value) for value in chart), default=0)
+
+    degree = max(
+        chart_degree(input_map[1]) * chart_degree(input_map[0]),
+        chart_degree(mapped_map[1])
+        * chart_degree(mapped_map[0])
+        * chart_degree(reference_chart),
+    )
+    lattice = _unisolvent_lattice(cell_kind, degree)
+    if lattice is None:
+        return None
+
+    def value(
+        parts: _RationalMap, point: tuple[Fraction, ...], /
+    ) -> tuple[Fraction, ...]:
+        chart, basis, coefficients = parts
+        image = (
+            point
+            if chart is None
+            else tuple(_polynomial_value(component, point) for component in chart)
+        )
+        weights = tuple(_polynomial_value(function, image) for function in basis)
+        return tuple(
+            sum(
+                (coefficients[dof][axis] * weights[dof] for dof in range(len(weights))),
+                Fraction(0),
+            )
+            for axis in range(len(coefficients[0]))
+        )
+
+    return all(
+        value(input_map, point)
+        == value(
+            mapped_map,
+            tuple(_polynomial_value(component, point) for component in reference_chart),
+        )
+        for point in lattice
+    )
 
 
 def _require_exact_reference_group(
-    source_mesh: CellMesh,
-    source_geometry: CellGeometrySpec,
-    target_mesh: CellMesh,
-    target_geometry: CellGeometrySpec,
+    source_maps: _ExactCellMaps,
+    target_maps: _ExactCellMaps,
     witnesses: ReferenceCellMapWitnesses,
+    exact: tuple[tuple[tuple[Fraction, ...], ...], ...],
     /,
     *,
     reverse: bool = False,
 ) -> None:
-    validate_reference_cell_map_witnesses(witnesses)
+    """Prove each witnessed reference map composes one endpoint map into the other.
+
+    ``exact`` is the validated exact corner bank of ``witnesses``.
+    """
     shapes = _reference_shape_polynomials(witnesses.target_cell_kind)
-    exact = exact_reference_cell_vertices(witnesses)
-    target_ids = np.asarray(witnesses.target_cell_ids, dtype=np.int64)
-    source_ids = np.asarray(witnesses.source_cell_ids, dtype=np.int64)
-    source_resolved = source_geometry.resolve(source_mesh)
-    target_resolved = target_geometry.resolve(target_mesh)
-    source_cache: dict[int, tuple[Expression, ...]] = {}
-    target_cache: dict[int, tuple[Expression, ...]] = {}
-
-    def expressions(
-        mesh: CellMesh,
-        geometry: CellGeometrySpec,
-        identifier: int,
-        /,
-        *,
-        endpoint: str,
-    ) -> tuple[Expression, ...]:
-        cache = source_cache if endpoint == "source" else target_cache
-        value = cache.get(identifier)
-        if value is None:
-            resolved = source_resolved if endpoint == "source" else target_resolved
-            value = _geometry_map_expressions(
-                mesh, geometry, identifier, resolved=(resolved[0], resolved[1])
-            )
-            cache[identifier] = value
-        return value
-
-    for row, (target_id, source_id, reference_vertices) in enumerate(
+    target_ids = np.asarray(witnesses.target_cell_ids, dtype=np.int64).tolist()
+    source_ids = np.asarray(witnesses.source_cell_ids, dtype=np.int64).tolist()
+    if reverse:
+        input_maps, mapped_maps = source_maps, target_maps
+    else:
+        input_maps, mapped_maps = target_maps, source_maps
+    source_dimension = reference_cell_topology(witnesses.source_cell_kind).dimension
+    argument_bank = witnesses.source_reference_chart_arguments
+    for row, (input_id, mapped_id, reference_vertices) in enumerate(
         zip(target_ids, source_ids, exact, strict=True)
     ):
-        if reverse:
-            input_mesh, input_geometry = source_mesh, source_geometry
-            mapped_mesh, mapped_geometry = target_mesh, target_geometry
-            input_id, mapped_id = int(target_id), int(source_id)
-            input_endpoint, mapped_endpoint = "source", "target"
-        else:
-            input_mesh, input_geometry = target_mesh, target_geometry
-            mapped_mesh, mapped_geometry = source_mesh, source_geometry
-            input_id, mapped_id = int(target_id), int(source_id)
-            input_endpoint, mapped_endpoint = "target", "source"
-        source_dimension = reference_cell_topology(witnesses.source_cell_kind).dimension
-        argument_bank = witnesses.source_reference_chart_arguments
         if argument_bank is not None:
-            arguments = argument_bank[row]
+            arguments = tuple(argument_bank[row])
         else:
             arguments = tuple(
                 linear_combinations(
@@ -390,25 +629,26 @@ def _require_exact_reference_group(
                 )[0]
                 for axis in range(source_dimension)
             )
-        mapped = tuple(
-            compose_expression(expression, arguments)
-            for expression in expressions(
-                mapped_mesh,
-                mapped_geometry,
-                mapped_id,
-                endpoint=mapped_endpoint,
+        mapped_parts = mapped_maps.parts(mapped_id)
+        input_parts = input_maps.parts(input_id)
+        equal = (
+            _lattice_map_equality(
+                input_parts, mapped_parts, arguments, witnesses.target_cell_kind
             )
+            if len(input_parts[2][0]) == len(mapped_parts[2][0])
+            else None
         )
-        actual = expressions(
-            input_mesh,
-            input_geometry,
-            input_id,
-            endpoint=input_endpoint,
-        )
-        if len(mapped) != len(actual) or any(
-            not expression_equal(first, second)
-            for first, second in zip(mapped, actual, strict=True)
-        ):
+        if equal is None:
+            mapped = tuple(
+                compose_expression(expression, arguments)
+                for expression in mapped_maps.expressions(mapped_id)
+            )
+            actual = input_maps.expressions(input_id)
+            equal = len(mapped) == len(actual) and all(
+                expression_equal(first, second)
+                for first, second in zip(mapped, actual, strict=True)
+            )
+        if not equal:
             raise ValueError(
                 "Exact reference maps do not prove source/target coordinate-map equality."
             )
@@ -892,33 +1132,23 @@ def _surface_reconstruction_bounds(
     target_kinds = _cell_kinds(target_mesh)
     source_resolved = source_geometry.resolve(source_mesh)
     target_resolved = target_geometry.resolve(target_mesh)
-    source_cache: dict[int, tuple[Expression, ...]] = {}
-    target_cache: dict[int, tuple[Expression, ...]] = {}
+    source_expressions = _geometry_map_expressions(
+        source_mesh, source_geometry, (source_resolved[0], source_resolved[1])
+    )
+    target_expressions = _geometry_map_expressions(
+        target_mesh, target_geometry, (target_resolved[0], target_resolved[1])
+    )
     maximum_displacement = 0.0
     for target_id, (source_id, target_kind, arguments) in sorted(chart_rows.items()):
         if target_kinds.get(target_id) != target_kind or source_id not in source_kinds:
             raise ValueError(
                 f"Bounded source reconstruction chart for target cell ID {target_id} is stale."
             )
-        if source_id not in source_cache:
-            source_cache[source_id] = _geometry_map_expressions(
-                source_mesh,
-                source_geometry,
-                source_id,
-                resolved=(source_resolved[0], source_resolved[1]),
-            )
-        if target_id not in target_cache:
-            target_cache[target_id] = _geometry_map_expressions(
-                target_mesh,
-                target_geometry,
-                target_id,
-                resolved=(target_resolved[0], target_resolved[1]),
-            )
         source_map = tuple(
             compose_expression(expression, arguments)
-            for expression in source_cache[source_id]
+            for expression in source_expressions.expressions(source_id)
         )
-        target_map = target_cache[target_id]
+        target_map = target_expressions.expressions(target_id)
         if len(source_map) != len(target_map):
             raise ValueError(
                 f"Source and target physical dimensions disagree on target cell ID {target_id}."
@@ -974,21 +1204,19 @@ def _surface_shared_edge_continuity_bound(
     edge_uses: dict[tuple[int, int], list[tuple[int, tuple[Expression, ...]]]] = {}
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     cell_expressions: dict[int, tuple[Expression, ...]] = {}
+    expressions_by_cell = _geometry_map_expressions(
+        mesh, geometry, (resolved[0], resolved[1])
+    )
     for block in mesh.blocks:
         if not isinstance(block, CellBlock):
             raise ValueError(
                 "Shared-edge continuity requires fixed-family surface cells."
             )
+        cells = np.asarray(block.vertices, dtype=np.int64)
         for row, cell_id_value in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
             cell_id = int(cell_id_value)
-            expressions = _geometry_map_expressions(
-                mesh,
-                geometry,
-                cell_id,
-                resolved=(resolved[0], resolved[1]),
-            )
-            cell_expressions[cell_id] = expressions
-            cell_vertices = np.asarray(block.vertices, dtype=np.int64)[row]
+            cell_expressions[cell_id] = expressions_by_cell.expressions(cell_id)
+            cell_vertices = cells[row]
             topology = reference_cell_topology(block.cell_kind)
             for edge in topology.entities[1]:
                 first_local, second_local = int(edge[0]), int(edge[1])
@@ -1106,10 +1334,18 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
         _require_geometry_realizes_mesh(source_mesh, source_geometry)
         _require_geometry_realizes_mesh(target_mesh, target_geometry)
         source_kinds, target_kinds = _cell_kinds(source_mesh), _cell_kinds(target_mesh)
+        source_resolved = source_geometry.resolve(source_mesh)
+        target_resolved = target_geometry.resolve(target_mesh)
+        source_maps = _geometry_map_expressions(
+            source_mesh, source_geometry, (source_resolved[0], source_resolved[1])
+        )
+        target_maps = _geometry_map_expressions(
+            target_mesh, target_geometry, (target_resolved[0], target_resolved[1])
+        )
         map_count = 0
         seen_target_ids: set[int] = set()
         for group in _reference_map_groups(reference_map):
-            validate_reference_cell_map_witnesses(group)
+            exact = exact_reference_cell_vertices(group)
             source_ids = np.asarray(group.source_cell_ids, dtype=np.int64)
             target_ids = np.asarray(group.target_cell_ids, dtype=np.int64)
             if any(
@@ -1134,13 +1370,7 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                 )
             seen_target_ids.update(map(int, target_ids))
             if not bounded_reconstruction:
-                _require_exact_reference_group(
-                    source_mesh,
-                    source_geometry,
-                    target_mesh,
-                    target_geometry,
-                    group,
-                )
+                _require_exact_reference_group(source_maps, target_maps, group, exact)
             map_count += target_ids.size
         if refinement is not None:
             validate_nested_reference_witnesses(refinement)
@@ -1187,21 +1417,21 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                 )
         if reference_map is None and refinement is not None:
             for group in _nested_reference_groups(refinement, source_mesh, target_mesh):
-                validate_reference_cell_map_witnesses(group)
                 _require_exact_reference_group(
-                    source_mesh, source_geometry, target_mesh, target_geometry, group
+                    source_maps,
+                    target_maps,
+                    group,
+                    exact_reference_cell_vertices(group),
                 )
         if reference_map is None and coarsening is not None:
             for group in _nested_reference_groups(
                 coarsening, source_mesh, target_mesh, reverse=True
             ):
-                validate_reference_cell_map_witnesses(group)
                 _require_exact_reference_group(
-                    source_mesh,
-                    source_geometry,
-                    target_mesh,
-                    target_geometry,
+                    source_maps,
+                    target_maps,
                     group,
+                    exact_reference_cell_vertices(group),
                     reverse=True,
                 )
         if bounded_reconstruction:

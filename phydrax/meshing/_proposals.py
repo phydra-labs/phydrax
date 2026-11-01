@@ -31,9 +31,16 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, positive_integer
-from ..discretization import CellBlock, CellGeometrySpec, CellMesh, PolygonalConnectivity
+from ..discretization import (
+    CellBlock,
+    CellGeometrySpec,
+    CellMesh,
+    PolygonalConnectivity,
+    TetrahedralConnectivity,
+)
 from ..discretization._cell_geometry import PerCellRestrictedCellGeometryElement
 from ..discretization._cell_geometry_transition_types import cell_geometry_id
+from ..discretization._cell_mesh import SimplicialConnectivity
 from ..geometry.implicit import AnalyticImplicitProfile
 from ..optim import OptimizationTermination
 from ..typing import checked, Dim, Float64, Identifier, Identifiers, parse
@@ -841,14 +848,14 @@ def _optimization_bounds(source: Any, policy: Any) -> tuple[np.ndarray, np.ndarr
     return np.where(empty, points, lower), np.where(empty, points, upper)
 
 
-def _safe_marks(source: CellMeshingResult, scores: np.ndarray) -> np.ndarray:
+def _safe_marks(proposal: MeshMarkingProposal, /) -> np.ndarray:
     """Preserve every positive mark in canonical persistent-ID order.
 
     Native bisection owns protection and conformity closure. Selection here
     cannot silently discard a scientific request to fit a resource allowance.
     """
-    cells = np.asarray(source.mesh.blocks[0].global_ids)
-    return np.sort(cells[scores > 0]).astype(np.int64, copy=False)
+    cells = np.asarray(proposal.scope.entity_ids, dtype=np.int64)
+    return np.sort(cells[np.asarray(proposal.values) > 0])
 
 
 class MeshProposalProjection(StrictModule, NonTrainableState):
@@ -907,10 +914,11 @@ def project_mesh_proposal(
 ) -> MeshProposalProjection:
     """Deterministically project untrusted values without generating a mesh.
 
-    Marking proposals project onto capacity-bounded marks executed by native
-    bisection. Size and metric proposals project onto a graded size field or a
-    normalized metric executed by native planar anisotropic metric adaptation
-    (split, collapse, flip, relocation) toward the unit-mesh criterion.
+    Marking proposals project onto every positive mark, executed by native
+    triangle or tetrahedron bisection. Size and metric proposals project onto a
+    graded vertex size field or a normalized vertex metric executed by native
+    planar, surface-chart or tetrahedral anisotropic metric adaptation toward
+    the unit-mesh criterion.
     """
     _check_binding(source, proposal, policy)
     mesh = source.mesh
@@ -929,26 +937,33 @@ def project_mesh_proposal(
         else:
             raise ValueError("Coordinate proposal has no certifiable projected target.")
     else:
-        if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind != "triangle":
+        if len(mesh.blocks) != 1 or (
+            mesh.topological_dimension,
+            mesh.blocks[0].cell_kind,
+        ) not in ((2, "triangle"), (3, "tetrahedron"), (3, "simplex:3")):
             raise ValueError(
-                "Native marking, size and metric proposals require one T3 block."
+                "Native marking, size and metric proposals require one T3 or T4 block."
             )
-        connectivity = mesh.connectivity
-        if not isinstance(connectivity, PolygonalConnectivity):
-            raise TypeError("Native T3 proposals require polygonal connectivity.")
         if isinstance(proposal, MeshMarkingProposal):
-            scores = np.zeros(mesh.blocks[0].global_ids.size, dtype=np.float64)
-            scores[rows] = np.asarray(proposal.values)
-            marks = _safe_marks(source, scores)
+            marks = _safe_marks(proposal)
         else:
             if rows.size != mesh.coordinates.shape[0]:
                 raise ValueError(
                     "Size and metric proposals must cover every source vertex."
                 )
+            match mesh.connectivity:
+                case PolygonalConnectivity() | TetrahedralConnectivity() as connectivity:
+                    edges = np.asarray(connectivity.edges, dtype=np.int64)
+                case SimplicialConnectivity() as connectivity:
+                    edges = np.asarray(connectivity.entities[1], dtype=np.int64)
+                case _:
+                    raise TypeError(
+                        "Native simplex proposals require canonical edge connectivity."
+                    )
             # Field arrays are scope ordered; connectivity and points are mesh ordered.
             inverse = np.empty(rows.size, dtype=np.int64)
             inverse[rows] = np.arange(rows.size)
-            field_edges = inverse[np.asarray(connectivity.edges)]
+            field_edges = inverse[edges]
             field_points = np.asarray(mesh.coordinates)[rows]
             if isinstance(proposal, MeshSizeProposal):
                 sizes = ResolvedSizeField(

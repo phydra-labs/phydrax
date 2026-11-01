@@ -2747,8 +2747,8 @@ def _validate_surface_envelope_witness(
     witness: SurfaceEnvelopeDistanceWitness,
     /,
 ) -> None:
-    from .._meshcore import surface_envelope
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
+    from .reconstruction._envelope import envelope_reproduces
 
     if not isinstance(source, ReconstructedTriangleBoundarySource):
         raise TypeError(
@@ -2781,24 +2781,22 @@ def _validate_surface_envelope_witness(
         envelope_triangles=np.asarray(witness.envelope_triangles),
         target_vertex_global_ids=np.asarray(witness.target_vertex_global_ids),
         target_facet_global_ids=np.asarray(witness.target_facet_global_ids),
+        reproduction=witness.reproduction,
     )
     if renewed.witness_id != witness.witness_id:
         raise ValueError(
             "Surface envelope witness identity does not reproduce its retained arrays."
         )
-    # The envelope is the band-constrained remesh of the kernel's extraction.
-    fresh = surface_envelope(
+    # The envelope is the band-constrained remesh of the kernel's extraction; a
+    # retained reproduction record counts only for exactly this content.
+    if not envelope_reproduces(
         source._vertices,
         source._faces,
-        witness.offset,
-        witness.spacing,
-        witness.certificate_spacing,
-        remesh=True,
-    )
-    if (
-        not np.array_equal(fresh.bounds, witness.bounds)
-        or not np.array_equal(fresh.surface_vertices, witness.envelope_vertices)
-        or not np.array_equal(fresh.surface_triangles, witness.envelope_triangles)
+        (witness.offset, witness.spacing, witness.certificate_spacing),
+        witness.bounds,
+        witness.envelope_vertices,
+        witness.envelope_triangles,
+        witness.reproduction,
     ):
         raise ValueError(
             "Surface envelope kernel bounds or PWL output do not reproduce from the retained source."

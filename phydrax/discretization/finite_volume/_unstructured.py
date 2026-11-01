@@ -59,6 +59,7 @@ from ._structured import _component_names
 
 
 if TYPE_CHECKING:
+    from .._view_support import OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry
     from ._side_trace import FiniteVolumeFaceReconstruction, PreparedNonlinearFaceTrace
 
 
@@ -1742,10 +1743,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         return cls(None, _prepared=prepared)
 
     @classmethod
-    @checked
     def from_owner_local_geometry(
         cls,
-        view: Any,
+        view: OwnerLocalCellGeometry | OwnerLocalCompositeCellGeometry,
         /,
         *,
         field_name: str = "state",
@@ -2071,7 +2071,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
     def _with_owner_local_joins(
         cls,
         plan: UnstructuredFiniteVolumePlan,
-        view: Any,
+        view: Any | None,
         joins: np.ndarray,
         translations: np.ndarray,
         /,
@@ -2080,7 +2080,8 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
 
         `plan` labels every unwelded seam face with the seam patch only to
         satisfy the boundary partition of the lifted patch; joined, those faces
-        are interior faces of the quotient, so the patch is dropped.
+        are interior faces of the quotient, so the patch is dropped. Without a
+        view the plan is one serial owner holding the whole lifted quotient.
         """
         patch_names = plan.patch_names
         patch_faces = plan.patch_faces
@@ -2096,7 +2097,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         plan_identity: dict[str, Any] = {
             "kind": "owner-local-unstructured-fv-plan",
             "plan": plan.plan_id,
-            "view": view.local_view_id,
+            "view": None if view is None else view.local_view_id,
         }
         if joins.size:
             plan_identity["periodic_face_joins"] = array_tree_fingerprint(joins)
@@ -2140,8 +2141,8 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         """
         joins = self.periodic_face_joins
         translations = self.periodic_face_translations
-        if joins is None or translations is None or self.owner_local_view is None:
-            raise ValueError("Only owner-local periodic seam plans rejoin moved seams.")
+        if joins is None or translations is None:
+            raise ValueError("Only periodic seam plans rejoin moved seams.")
         points = np.asarray(vertices, dtype=np.float64)
         if points.shape != np.asarray(self.vertices).shape:
             raise ValueError("Moved seam vertices must keep the plan's vertex shape.")

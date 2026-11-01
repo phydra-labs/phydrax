@@ -258,9 +258,22 @@ topology events are intentionally host-side and occur between accepted steps.
 Without a `motion_policy` (or with the `PRESCRIBED` route) the motion callable maps
 every vertex. Any other `FiniteElementMeshMotionRoute` makes the callable prescribe only
 the boundary vertices; the interior follows the shared finite-element motion route
-(`monitor(time, points, args)` drives `MMPDE`). Vertex velocity is the exact time JVP of
-the realized vertices either way, so the discrete GCL holds by construction, and trial
-epochs are accepted through the shared `MotionValidityPlan` corner-Jacobian check.
+(`monitor(time, points, args)` drives `MMPDE`). Trial epochs are accepted through the
+shared `MotionValidityPlan` corner-Jacobian check.
+
+The discrete GCL holds for any vertex trajectory, including rotations and routed
+positions from an iterative solve. Each SSPRK(3,3) stage takes its face volume rates
+from exact swept volumes between the realized positions at `t`, `t + dt` and
+`t + dt / 2` (straight vertex paths; midpoint quadrature in 2-D, two-point Gauss in
+3-D). The rates are combined so that the stage volume recurrence reproduces the
+coordinate volumes of those positions at rounding: `v1 = V(t + dt)`,
+`v2 = V(t + dt / 2)` and `vnew = V(t + dt)` when `vn = V(t)`. The flux grid-normal
+velocity is the time-JVP vertex velocity, shifted uniformly on each face so that its
+quadrature equals that swept rate. The JVP velocity itself stays in the stage face
+block (`quadrature_kinematic_grid_normal_velocity`) as the kinematic witness that a
+`MovingSlipWallBoundary` follows its wall-velocity provider. The wall reflects about
+the flux (swept) velocity, so no volume or mass crosses the discrete wall.
+
 `VariablePatchGeometryPlan` takes the same `motion_policy`: its coordinate map then
 prescribes the level-zero grid boundary and every patch vertex interpolates the routed
 level-zero Q1 grid.
@@ -332,8 +345,14 @@ Every operator works in the frame of the cell it evaluates:
   lattice translate and moves with the same velocity. Otherwise the stage
   geometry is invalid, and a host epoch
   (`UnstructuredFiniteVolumePlan.with_periodic_seam_vertices`) refuses it.
-  Routed interior motion is not coupled across seams, so it is refused on
-  periodic plans.
+  Routed interior motion (`motion_policy` with a non-`PRESCRIBED` route) is
+  solved on the periodic quotient: the FE extension
+  (`FiniteElementMotionExtension(periodic_vertex_pairs=...)`) gives each seam
+  twin class one displacement unknown, keeps the lifted cell geometry in its
+  element tensors, and counts lattice copies of a seam edge once. Moved twins
+  stay exact lattice copies, so a moving or rotating obstacle inside a periodic
+  box drives the whole quotient mesh, and the swept-volume stage rates keep the
+  ALE GCL at rounding.
 
 Each operator is regression-tested against the same serial operator on a
 5×5 tiling of the single-owner periodic patch, comparing the central rows.

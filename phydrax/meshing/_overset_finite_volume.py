@@ -15,6 +15,7 @@ import jax
 import numpy as np
 
 from .._execution_runtime import ExecutionGroup
+from ..discretization._cell_locator import CellInverseRefusal, CellLocationRefusalError
 from ..discretization._cell_mesh import CellBlock, CellMesh
 from ..discretization._mapped_locator import prepare_owner_local_mapped_cell_locator
 from ..discretization._periodic_cell import PeriodicCell
@@ -362,7 +363,7 @@ def _serve_requests(
     neighbor_ids = np.asarray(donor_view.cell_neighbor_ids, dtype=np.int64)
     neighbor_owners = np.asarray(donor_view.cell_neighbor_owner_ranks, dtype=np.int32)
     replies: list[dict[str, Any]] = []
-    for request in requests:
+    for request_row, request in enumerate(requests):
         cell_id = int(request["cell"])
         if cell_id not in owned or cell_id not in corners:
             raise ValueError("A donor-cell request reached a rank that does not own it.")
@@ -386,6 +387,30 @@ def _serve_requests(
             location = prepare_owner_local_mapped_cell_locator(
                 donor_view, block_name
             ).locate(images, cell_mask=mask)
+            if not bool(np.all(np.asarray(location.candidates_complete))):
+                # Every lattice image is one query of this request row.
+                raise CellLocationRefusalError(
+                    f"Donor cell {cell_id} of block {block_name!r} has an undecided "
+                    "inverse map at its requester's point; refusal points index "
+                    "this owner's donor-cell requests and cells the block's local "
+                    "cells.",
+                    tuple(
+                        sorted(
+                            (
+                                CellInverseRefusal(
+                                    request_row,
+                                    refusal.cell,
+                                    refusal.reason,
+                                    refusal.lower,
+                                    refusal.upper,
+                                    refusal.witness,
+                                )
+                                for refusal in location.inverse_refusals
+                            ),
+                            key=lambda refusal: (refusal.point, refusal.cell),
+                        )
+                    ),
+                )
             found = np.flatnonzero(
                 np.any(np.asarray(location.candidate_cells) >= 0, axis=1)
             )
@@ -737,21 +762,40 @@ def prepare_owner_local_finite_volume_overset(
             f"{axis_name}_requests_{expansion_round}",
         )
         local_error = None
+        local_refusal: CellLocationRefusalError | None = None
         replies_by_requester: list[list[dict[str, Any]]] = [[] for _ in members]
         try:
             for requester, bank in incoming.items():
-                replies_by_requester[requester] = _serve_requests(
-                    donor_view,
-                    donor_status,
-                    donor_corners,
-                    _decode_rows(bank),
-                    rank,
-                )
+                try:
+                    replies_by_requester[requester] = _serve_requests(
+                        donor_view,
+                        donor_status,
+                        donor_corners,
+                        _decode_rows(bank),
+                        rank,
+                    )
+                except CellLocationRefusalError as refusal:
+                    raise CellLocationRefusalError(
+                        f"Requests from owner {requester}: {refusal}",
+                        refusal.inverse_refusals,
+                    ) from refusal
+        except CellLocationRefusalError as refusal:
+            local_refusal = refusal
+            local_error = f"{type(refusal).__name__}: {refusal}"
         except Exception as error:
             local_error = f"{type(error).__name__}: {error}"
-        _owner_group_fail_with_reasons(
-            local_error, execution_group, f"{axis_name}_serve_{expansion_round}"
-        )
+        try:
+            _owner_group_fail_with_reasons(
+                local_error, execution_group, f"{axis_name}_serve_{expansion_round}"
+            )
+        except ValueError as failure:
+            # Every owner refuses; the owner holding the undecided inverse
+            # maps keeps their typed evidence.
+            if local_refusal is None:
+                raise
+            raise CellLocationRefusalError(
+                str(failure), local_refusal.inverse_refusals
+            ) from local_refusal
         returned = _owner_exchange_message_banks(
             tuple(_encode_rows(rows) for rows in replies_by_requester),
             rank,

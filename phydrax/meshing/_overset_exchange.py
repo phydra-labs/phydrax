@@ -370,7 +370,11 @@ def _local_donor_candidates(
     dict[int, set[str]],
     set[int],
 ]:
-    from ..discretization._cell_locator import CellLocationStatus
+    from ..discretization._cell_locator import (
+        CellInverseRefusal,
+        CellLocationRefusalError,
+        CellLocationStatus,
+    )
     from ..discretization._mapped_locator import prepare_owner_local_mapped_cell_locator
     from ..discretization._polyhedral_locator import PreparedPolyhedralCellLocator
     from ._overset import _to_source
@@ -553,8 +557,26 @@ def _local_donor_candidates(
                     ),
                 )
             ):
-                raise ValueError(
-                    "Owner-local donor search has incomplete source-bound candidates."
+                # Refusal points are re-indexed from lattice images to receptor queries.
+                refusals = sorted(
+                    (
+                        CellInverseRefusal(
+                            int(image_queries[refusal.point]),
+                            refusal.cell,
+                            refusal.reason,
+                            refusal.lower,
+                            refusal.upper,
+                            refusal.witness,
+                        )
+                        for refusal in location.inverse_refusals
+                    ),
+                    key=lambda refusal: (refusal.point, refusal.cell),
+                )
+                raise CellLocationRefusalError(
+                    "Owner-local donor search has incomplete source-bound candidates "
+                    f"in donor block {block_name!r} of part {donor_name!r}; refusal "
+                    "points index receptor queries and cells the block's local cells.",
+                    tuple(refusals),
                 )
             candidates = np.asarray(location.candidate_cells, dtype=np.int64)
             references = np.asarray(location.candidate_reference, dtype=np.float64)
@@ -1102,6 +1124,8 @@ def _owner_local_donor_results(
                 residuals[indices],
                 measures[indices],
                 owners,
+                # The owner-local donor search raises with its refusals instead.
+                donor_refusals=(),
             )
         )
     resolved_receptors_tuple = tuple(resolved_receptors)
@@ -2349,10 +2373,6 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
         *,
         axis_name: str = "overset",
     ) -> None:
-        if not isinstance(transfer, PreparedOversetFieldTransfer):
-            raise TypeError("transfer must be PreparedOversetFieldTransfer.")
-        if not isinstance(execution_group, ExecutionGroup):
-            raise TypeError("execution_group must be ExecutionGroup.")
         if not isinstance(owner_local_geometry, Mapping):
             raise TypeError(
                 "owner_local_geometry must map local part names to source-bound views."

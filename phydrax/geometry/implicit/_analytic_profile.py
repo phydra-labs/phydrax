@@ -424,10 +424,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         source_id: str | None = None,
         source_revision: str | None = None,
     ) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be a CompiledGeometry.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
         if not bool(np.asarray(geometry.validity().accepted)):
             raise ValueError("geometry must have accepted validity evidence.")
         kernel = geometry.kernel

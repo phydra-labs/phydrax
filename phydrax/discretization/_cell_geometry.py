@@ -52,7 +52,6 @@ from ._nested_reference_types import (
     reference_chart_arguments_have_nonvanishing_denominators,
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
-    validate_reference_cell_map_witnesses,
 )
 from ._reference_cell import reference_cell_topology
 from .fem._reference import FiniteElementSpec
@@ -376,6 +375,9 @@ class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
         cells = []
         vertices = []
         reference_maps = []
+        # Exact corner banks of the validated reference maps, aligned with
+        # ``reference_maps``; each witness is validated exactly once.
+        exact_banks: list[tuple[tuple[tuple[Fraction, ...], ...], ...] | None] = []
         for name in names:
             cell_ids = np.asarray(block_parent_cell_ids[name], dtype=np.int64)
             vertex_ids = np.asarray(block_parent_vertex_ids[name], dtype=np.int64)
@@ -408,6 +410,7 @@ class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Parent vertex IDs must be unique with trailing -1 padding; empty support requires exact reference-map ancestry."
                     )
+            exact: tuple[tuple[tuple[Fraction, ...], ...], ...] | None = None
             if reference_map is not None:
                 chart_arguments = (
                     None
@@ -425,7 +428,7 @@ class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
                     reference_map.source_reference_exact_vertices,
                     chart_arguments,
                 )
-                validate_reference_cell_map_witnesses(retained_map)
+                exact = exact_reference_cell_vertices(retained_map)
                 target_ids = np.asarray(retained_map.target_cell_ids, dtype=np.int64)
                 source_ids = np.asarray(retained_map.source_cell_ids, dtype=np.int64)
                 if not np.array_equal(
@@ -434,7 +437,6 @@ class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Reference-map ancestry must align local targets and parent-cell IDs."
                     )
-                exact = exact_reference_cell_vertices(retained_map)
                 target_copy = target_ids.copy()
                 source_copy = source_ids.copy()
                 point_copy = np.asarray(
@@ -455,18 +457,18 @@ class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
             cells.append(jnp.asarray(cell_ids))
             vertices.append(jnp.asarray(vertex_ids))
             reference_maps.append(reference_map)
+            exact_banks.append(exact)
         reference_map_identity = []
-        for reference_map in reference_maps:
-            if reference_map is None:
+        for reference_map, exact_bank in zip(reference_maps, exact_banks, strict=True):
+            if reference_map is None or exact_bank is None:
                 reference_map_identity.append(None)
                 continue
-            exact = exact_reference_cell_vertices(reference_map)
             exact_payload = tuple(
                 tuple(
                     tuple((value.numerator, value.denominator) for value in point)
                     for point in cell
                 )
-                for cell in exact
+                for cell in exact_bank
             )
             reference_map_identity.append(
                 {
@@ -2246,8 +2248,9 @@ def _finite_element_source_basis(element: FiniteElementSpec, /) -> tuple[Express
     )
 
 
-# Root source bases keyed by element type and content identity; each is formed
-# once per process.
+# Reference element source bases (finite-element and layer-column) keyed by the
+# element's content identity, a static table of family, degree and layout.
+# Spline roots carry per-mesh extraction operators and are formed per call.
 _SOURCE_BASES: dict[tuple[str, str], tuple[Any, ...]] = {}
 
 
@@ -2256,8 +2259,8 @@ def coordinate_source_basis(
 ) -> tuple[Any, ...]:
     """Return exact root basis expressions without applying reference charts/actions.
 
-    The basis depends only on the element's content identity, so it is formed
-    once per element; every caller receives its own polynomial dictionaries.
+    Reference finite-element bases are formed once per reference element; every
+    caller receives its own polynomial dictionaries.
     """
     if isinstance(element, PerCellRestrictedCellGeometryElement):
         if cell_row is not None and not 0 <= int(cell_row) < len(element.target_cell_ids):
@@ -2271,10 +2274,9 @@ def coordinate_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_source_basis(element.source_element)
-    identity = getattr(element, "element_id", None)
-    if not isinstance(identity, str):
+    if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_source_basis(element)
-    key = (type(element).__name__, identity)
+    key = (type(element).__name__, element.element_id)
     basis = _SOURCE_BASES.get(key)
     if basis is None:
         basis = _root_source_basis(element)
@@ -2765,8 +2767,7 @@ def _finite_element_execution_basis(
         raise ValueError("Finite-element spec has no implemented native tabulator.")
 
 
-# Root execution bases keyed by element type and content identity, like
-# `_SOURCE_BASES`; each is formed once per process.
+# Reference element execution bases, keyed and scoped like `_SOURCE_BASES`.
 _EXECUTION_BASES: dict[tuple[str, str], tuple[Expression, ...]] = {}
 
 
@@ -2775,9 +2776,8 @@ def coordinate_execution_source_basis(
 ) -> tuple[Expression, ...]:
     """Return the native coefficient-shadow basis before reference composition.
 
-    The root basis depends only on the element's content identity, so it is
-    formed once per element; every caller receives its own polynomial
-    dictionaries.
+    Reference element bases are formed once per reference element; every caller
+    receives its own polynomial dictionaries.
     """
     if isinstance(
         element,
@@ -2788,10 +2788,9 @@ def coordinate_execution_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_execution_source_basis(element.source_element)
-    identity = getattr(element, "element_id", None)
-    if not isinstance(identity, str):
+    if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_execution_basis(element)
-    key = (type(element).__name__, identity)
+    key = (type(element).__name__, element.element_id)
     basis = _EXECUTION_BASES.get(key)
     if basis is None:
         basis = _root_execution_basis(element)
@@ -3345,6 +3344,8 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             raise ValueError("Exact reference point rows must align with cell IDs.")
         lift = _quotient_chart_lift(self, mesh, routes)
         source_bank = self.source_coordinates() if lift is None else ()
+        # One host copy per block route table; rows are read per requested cell.
+        route_tables = tuple(np.asarray(route, dtype=np.int64) for route in routes)
         row_by_cell: dict[int, tuple[int, int]] = {}
         for block_index, block in enumerate(mesh.blocks):
             for local_row, identifier in enumerate(
@@ -3391,6 +3392,47 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 return polynomial_value(expression.numerator) / denominator
             return polynomial_value(expression)
 
+        # A composed cell evaluates its chart at each point and its root basis
+        # (shared by the block) at the image. For polynomial charts and bases
+        # with rational data this is the exact value of the composed map,
+        # without composing the basis symbolically per cell.
+        root_bases: dict[int, tuple[tuple[Any, ...], bool]] = {}
+
+        def rational_polynomial(value: Any, /) -> bool:
+            return not isinstance(value, RationalPolynomial) and all(
+                isinstance(term, Fraction) for term in value.values()
+            )
+
+        def composed_parts(
+            element: ScalarCoordinateElement, block_index: int, local_row: int, /
+        ) -> tuple[tuple[Any, ...], tuple[Any, ...]] | None:
+            if isinstance(element, PerCellRestrictedCellGeometryElement):
+                arguments = element.chart_arguments(local_row)
+            elif isinstance(
+                element,
+                RestrictedCellGeometryElement
+                | PolynomialComposedCellGeometryElement
+                | RationalComposedCellGeometryElement,
+            ):
+                arguments = coordinate_reference_arguments(element, cell_row=local_row)
+                if arguments is None:
+                    raise ValueError(
+                        "Composed coordinate element must retain its exact chart."
+                    )
+            else:
+                return None
+            cached = root_bases.get(block_index)
+            if cached is None:
+                basis = coordinate_effective_basis(element.source_element)
+                cached = (basis, all(rational_polynomial(value) for value in basis))
+                root_bases[block_index] = cached
+            root_basis, rational_basis = cached
+            if not rational_basis or not all(
+                rational_polynomial(value) for value in arguments
+            ):
+                return None
+            return tuple(arguments), root_basis
+
         results = []
         for identifier, point_rows in zip(
             identifiers.tolist(), reference_points, strict=True
@@ -3407,12 +3449,52 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                     "Exact reference evaluation requires a scalar coordinate map."
                 )
             pyramid_target = reference_cell_topology(element.cell_kind).name == "pyramid"
-            route = np.asarray(routes[block_index], dtype=np.int64)[local_row]
+            route = route_tables[block_index][local_row]
             coefficients = (
                 tuple(source_bank[int(index)] for index in route)
                 if lift is None
                 else lift(route)
             )
+            for point in point_rows:
+                if any(
+                    not isinstance(value, (Fraction, RadicalElement)) for value in point
+                ):
+                    raise TypeError(
+                        "Exact reference points must use Fraction or RadicalElement scalars."
+                    )
+            composed = composed_parts(element, block_index, local_row)
+            if (
+                composed is not None
+                and all(
+                    isinstance(value, Fraction) for row in coefficients for value in row
+                )
+                and all(
+                    isinstance(value, Fraction) for point in point_rows for value in point
+                )
+            ):
+                arguments, root_basis = composed
+                if len(root_basis) != len(coefficients):
+                    raise ValueError(
+                        "Exact coordinate basis and local coefficient bank disagree."
+                    )
+                cell_results = []
+                for point in point_rows:
+                    image = tuple(evaluate(value, tuple(point)) for value in arguments)
+                    weights = tuple(evaluate(value, image) for value in root_basis)
+                    cell_results.append(
+                        tuple(
+                            sum(
+                                (
+                                    coefficients[dof][axis] * weights[dof]
+                                    for dof in range(len(weights))
+                                ),
+                                Fraction(0),
+                            )
+                            for axis in range(len(coefficients[0]))
+                        )
+                    )
+                results.append(tuple(cell_results))
+                continue
             basis = coordinate_effective_basis(element, cell_row=local_row)
             if len(basis) != len(coefficients):
                 raise ValueError(
@@ -3427,12 +3509,6 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             )
             cell_results = []
             for point in point_rows:
-                if any(
-                    not isinstance(value, (Fraction, RadicalElement)) for value in point
-                ):
-                    raise TypeError(
-                        "Exact reference points must use Fraction or RadicalElement scalars."
-                    )
                 exact_point = tuple(point)
                 cell_results.append(
                     tuple(

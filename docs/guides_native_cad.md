@@ -58,8 +58,15 @@ gets one node at the contact, and the edge vertex there keeps the replayable
 tangency through the CAD archive. A circle through a face corner ends its arcs
 on that corner's source vertex, and a source edge lying on a cylinder generator
 is one edge shared with the cylinder through its exact lift instead of a
-branch. The remaining refusals return typed unresolved regions: a junction of
-two branches whose partner faces are not both planes of one model.
+branch. A plane holding a cone's axis direction cuts exact trimmed section arcs
+from it, circle and straight edges meet planes and cones at exact radical
+roots, and branches whose partner faces are coaxial straight revolutions (a
+cylinder and a cone sharing a circle edge) join at that edge's roots once the
+faces are proved to meet only on it. The remaining refusals return typed
+unresolved regions: junctions whose curved partner faces are not coaxial
+straight revolutions, partially trimmed intersections between two curved faces
+of different operands, planes through a cone's axis, and tangent contacts of a
+cone section with a trim.
 
 T-spline B-rep intersections use cell-local rational Bézier source pieces and
 native interval enclosures. Transverse graph branches against planes, cylinders,

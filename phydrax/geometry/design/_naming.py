@@ -119,8 +119,6 @@ class RecipeEntityNames(StrictModule):
         edge_names: tuple[RecipeEntityName, ...] | None,
         /,
     ) -> None:
-        if not isinstance(model, BRepModel):
-            raise TypeError("model must be a BRepModel.")
         faces = _name_family(face_names, "face", model.topology.num_faces)
         edges = _name_family(edge_names, "edge", model.topology.num_edges)
         self.model_id = model.model_id

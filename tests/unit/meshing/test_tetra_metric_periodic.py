@@ -148,6 +148,49 @@ def test_native_tetra_metric_commits_complete_periodic_split_orbits() -> None:
     assert target_state.quotient_cells
 
 
+def test_periodic_quotient_ids_continue_once_and_new_entities_take_fresh_ids() -> None:
+    source = _periodic_tetra_source().mesh
+    topology = source.periodic_topology
+    assert topology is not None
+    lifted = CellMesh(
+        source.coordinates, source.blocks, vertex_global_ids=source.vertex_global_ids
+    )
+    orbit_rows = np.asarray(topology.orbit_indices, dtype=np.int64)[
+        : int(topology.lifted_offsets[1])
+    ]
+    source_ids = np.asarray(topology.quotient.entity_sets[0].entity_ids, dtype=np.int64)
+    ancestry = source_ids[orbit_rows].copy()
+    ancestry[orbit_rows == 0] = -1  # quotient row 0 is new
+    ancestry[np.flatnonzero(orbit_rows == 1)[0]] = source_ids[2]  # row 1 is ambiguous
+    ancestry[orbit_rows == 3] = source_ids[4]  # rows 3 and 4 both claim one ID
+
+    def rebuilt() -> PeriodicMeshTopology:
+        return PeriodicMeshTopology(
+            lifted,
+            topology.cell,
+            topology.vertex_representatives,
+            topology.vertex_shifts,
+            entity_allocator_next_ids={0: 1000},
+            quotient_id_ancestry={0: ancestry},
+        )
+
+    first, second = rebuilt(), rebuilt()
+    ids = np.asarray(first.quotient.entity_sets[0].entity_ids, dtype=np.int64)
+    np.testing.assert_array_equal(ids, second.quotient.entity_sets[0].entity_ids)
+    np.testing.assert_array_equal(ids[[2, 5, 6, 7]], source_ids[[2, 5, 6, 7]])
+    # New, ambiguous, and doubly claimed entities retire their IDs in quotient order.
+    np.testing.assert_array_equal(ids[[0, 1, 3, 4]], [1000, 1001, 1002, 1003])
+    assert first.allocator_next_ids[0] == 1004
+    with pytest.raises(ValueError, match="allocator"):
+        PeriodicMeshTopology(
+            lifted,
+            topology.cell,
+            topology.vertex_representatives,
+            topology.vertex_shifts,
+            quotient_id_ancestry={0: ancestry},
+        )
+
+
 def test_native_tetra_metric_rejects_non_equivariant_periodic_spd_data() -> None:
     source = _periodic_tetra_source()
     metric = np.broadcast_to(
@@ -228,6 +271,10 @@ def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
         volume_scope,
         phx.meshing.VolumeFillStrategy.SIMPLEX,
         size_controls=(phx.meshing.UniformSizeControl(size_scope, 0.25),),
+        # Equilateral tetrahedra do not tile space, so quotient-edge quantiles
+        # cannot all equal the target; the unit-metric band accepts lengths in
+        # [target / sqrt(2), target * sqrt(2)], i.e. relative deviation below 0.5.
+        size_compliance=phx.meshing.SizeCompliancePolicy(relative_tolerance=0.5),
     )
     result = phx.meshing.NativeMeshingProvider(
         phx.meshing.NativeMeshingOptions("periodic_delaunay")
@@ -246,5 +293,18 @@ def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
     )
     target_topology.require_coordinates(target.coordinates)
     assert result.compliance.issues == ()
+    for _, achieved in result.compliance.achieved:
+        assert 0.25 / np.sqrt(2.0) <= achieved <= 0.25 * np.sqrt(2.0)
+    # Surviving quotient vertices keep their IDs; new ones are fresh lineage IDs.
+    source_vertex_ids = set(map(int, np.asarray(quotient_vertices.entity_ids)))
+    target_vertex_ids = set(
+        map(int, np.asarray(target_topology.quotient.entity_sets[0].entity_ids))
+    )
+    assert source_vertex_ids < target_vertex_ids
+    assert min(target_vertex_ids - source_vertex_ids) > max(source_vertex_ids)
+    for degree, entities in enumerate(target_topology.quotient.entity_sets):
+        assert target_topology.allocator_next_ids[degree] > int(
+            np.max(np.asarray(entities.entity_ids))
+        )
 
 

@@ -20,7 +20,12 @@ from phydrax.meshing._topology_edit import entity_keys, TopologyEditBlock
 
 
 def _source(
-    shape: int = 3, /, *, nonuniform: bool = False, close_edge: bool = False
+    shape: int = 3,
+    /,
+    *,
+    nonuniform: bool = False,
+    close_edge: bool = False,
+    vertex_id_stride: int = 1,
 ) -> CellMeshingResult:
     vertex_rows = np.arange(shape**3, dtype=np.int64).reshape((shape,) * 3)
     axis = (
@@ -47,9 +52,10 @@ def _source(
             tetrahedron = np.asarray(
                 [vertex_rows[tuple(row)] for row in path], dtype=np.int32
             )
-            if np.linalg.det(
-                coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]]
-            ) < 0.0:
+            if (
+                np.linalg.det(coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]])
+                < 0.0
+            ):
                 tetrahedron[[1, 2]] = tetrahedron[[2, 1]]
             tetrahedra.append(tetrahedron)
     block = CellBlock(
@@ -61,7 +67,8 @@ def _source(
     mesh = CellMesh(
         coordinates,
         (block,),
-        vertex_global_ids=np.arange(shape**3, dtype=np.int64),
+        vertex_global_ids=100 * (vertex_id_stride - 1)
+        + vertex_id_stride * np.arange(shape**3, dtype=np.int64),
     )
     return certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -201,10 +208,33 @@ def test_relocation_uses_live_native_vertices_and_exact_source_stencils() -> Non
     assert relocated > 0
 
 
-def test_coarsening_updates_live_topology_and_conserves_region_volume() -> None:
-    outcome = _adapt(
-        _source(4, close_edge=True), np.eye(3) * 5.76, relocation=False
+def test_relocation_is_invariant_under_sparse_vertex_ids() -> None:
+    # Relocation reads source tetrahedra by snapshot row: global vertex IDs that
+    # are not row positions must not change any relocated coordinate.
+    contiguous = _adapt(
+        _source(4, nonuniform=True),
+        np.eye(3) * 4.0,
+        topology_operations=False,
+        relocation=True,
     )
+    sparse = _adapt(
+        _source(4, nonuniform=True, vertex_id_stride=7),
+        np.eye(3) * 4.0,
+        topology_operations=False,
+        relocation=True,
+    )
+
+    assert sparse.evidence.status is contiguous.evidence.status
+    assert sparse.evidence.relocations == contiguous.evidence.relocations > 0
+    np.testing.assert_array_equal(
+        (np.asarray(sparse.edit.vertex_global_ids) - 600) // 7,
+        contiguous.edit.vertex_global_ids,
+    )
+    np.testing.assert_array_equal(sparse.edit.coordinates, contiguous.edit.coordinates)
+
+
+def test_coarsening_updates_live_topology_and_conserves_region_volume() -> None:
+    outcome = _adapt(_source(4, close_edge=True), np.eye(3) * 5.76, relocation=False)
 
     assert outcome.evidence.status is TetraMetricStatus.STALLED
     assert outcome.evidence.collapses > 0
@@ -241,9 +271,7 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
             mesh.coordinates[identifier],
         )
 
-    invalid = np.broadcast_to(
-        np.eye(3), (mesh.vertex_global_ids.size, 3, 3)
-    ).copy()
+    invalid = np.broadcast_to(np.eye(3), (mesh.vertex_global_ids.size, 3, 3)).copy()
     invalid[0, 0, 1] = 1.0
     with pytest.raises(ValueError, match="symmetric positive-definite"):
         _adapt(source, invalid)

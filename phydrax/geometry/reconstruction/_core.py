@@ -747,10 +747,6 @@ class ReconstructedGeometrySource(GeometrySource):
         persistent_region_id: int | None = None,
         meshing_domain: MeshingDomain | None = None,
     ) -> None:
-        if not isinstance(source, GeometrySource):
-            raise TypeError("source must be a GeometrySource.")
-        if not isinstance(report, ReconstructionReport):
-            raise TypeError("report must be a ReconstructionReport.")
         feature = getattr(source, "feature_id", None)
         if not isinstance(feature, str) or not feature.strip():
             feature = f"{type(source).__module__}.{type(source).__qualname__}"

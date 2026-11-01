@@ -1754,6 +1754,12 @@ def periodic_topology_after_edit(
     ``exact_coordinate_source`` is the target's exact vertex bank when new
     vertices are canonical roundings of exact quotient-chart translates rather
     than translates of their rounded roots.
+
+    A quotient entity that continues one source quotient entity (some lifted
+    member keeps its vertex ID, sorted vertex IDs, or cell ID) keeps its
+    quotient ID; removed quotient IDs are retired, and new quotient entities
+    take consecutive IDs from :func:`periodic_next_entity_ids` in canonical
+    quotient order.
     """
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
         raise TypeError(
@@ -1956,22 +1962,61 @@ def periodic_topology_after_edit(
         target_shifts[rows] = reduce_periodic_exponents(
             anchors[rows] - anchors[representative], orders
         )
-    allocator = {}
-    for degree, next_id in enumerate(source_topology.allocator_next_ids):
-        if next_id >= 0:
-            target_entity_ids = np.asarray(
-                target.entity_set(degree).entity_ids, dtype=np.int64
-            )
-            allocator[degree] = max(
-                int(next_id), int(np.max(target_entity_ids, initial=-1)) + 1
-            )
+    # A target entity continues the source entity with its identity key (vertex
+    # ID, sorted vertex IDs, or cell ID); its quotient keeps that quotient ID.
+    # Every other quotient entity is new and draws a fresh allocator ID.
+    from ._topology_edit import entity_keys, key_rows
+
+    source_next = periodic_next_entity_ids(source)
+    ancestry: dict[int, np.ndarray] = {}
+    allocator: dict[int, int] = {}
+    for degree in range(source.topological_dimension + 1):
+        layout = _entity_layout(source, degree)
+        source_quotient_ids = layout.entity_ids[layout.orbit_rows]
+        rows = key_rows(entity_keys(source, degree), entity_keys(target, degree))
+        ancestry[degree] = np.where(
+            rows >= 0, source_quotient_ids[np.maximum(rows, 0)], -1
+        )
+        target_entity_ids = np.asarray(
+            target.entity_set(degree).entity_ids, dtype=np.int64
+        )
+        allocator[degree] = max(
+            source_next[degree], int(np.max(target_entity_ids, initial=-1)) + 1
+        )
     return PeriodicMeshTopology(
         target,
         source_topology.cell,
         target_representatives,
         target_shifts,
-        entity_allocator_next_ids=allocator or None,
+        entity_allocator_next_ids=allocator,
+        quotient_id_ancestry=ancestry,
         exact_coordinate_source=exact_coordinate_source,
+    )
+
+
+def periodic_next_entity_ids(mesh: CellMesh, /) -> tuple[int, ...]:
+    """First identifier per degree not yet issued in this periodic lineage.
+
+    It exceeds the topology's allocator and every current lifted and quotient
+    entity ID, so a new lifted or quotient entity drawn from it never reuses
+    the identity of an entity an earlier edit retired.
+    """
+    topology = mesh.periodic_topology
+    if topology is None:
+        raise ValueError("Periodic entity allocation requires periodic topology.")
+    return tuple(
+        max(
+            int(topology.allocator_next_ids[degree]),
+            int(np.max(np.asarray(mesh.entity_set(degree).entity_ids), initial=-1)) + 1,
+            int(
+                np.max(
+                    np.asarray(topology.quotient.entity_sets[degree].entity_ids),
+                    initial=-1,
+                )
+            )
+            + 1,
+        )
+        for degree in range(mesh.topological_dimension + 1)
     )
 
 
@@ -2276,6 +2321,7 @@ def stage_periodic_topology_edit(
         return None
     from ._lineage import VertexInterpolationStencil
     from ._topology_edit import (
+        _target_entity_ids,
         CellTopologyEdit,
         entity_keys,
         key_rows,
@@ -2306,10 +2352,24 @@ def stage_periodic_topology_edit(
         raise ValueError(
             "Periodic topology edits require a full-dimensional triangle or tetrahedron target."
         )
+    probe = CellMesh(
+        edit.coordinates,
+        blocks,
+        vertex_global_ids=edit.vertex_global_ids,
+    )
+    # Intermediate lifted entities keep their source IDs by vertex identity and
+    # new ones draw fresh lineage IDs, so a retired lifted ID never returns.
+    first_new_ids = periodic_next_entity_ids(source)
     target = CellMesh(
         edit.coordinates,
         blocks,
         vertex_global_ids=edit.vertex_global_ids,
+        entity_global_ids={
+            degree: _target_entity_ids(
+                source, probe, degree, (), first_new_id=first_new_ids[degree]
+            )
+            for degree in range(1, source.topological_dimension)
+        },
     )
     stencil = VertexInterpolationStencil(
         source.entity_set(0).entity_set_id,
@@ -2658,8 +2718,6 @@ def periodic_delaunay_mesh(
     initial_margin: float = 1.0,
 ) -> PeriodicMeshConstruction:
     """Construct a real periodic quotient Delaunay mesh with the native kernel."""
-    if not isinstance(source, PeriodicPointOrbits):
-        raise TypeError("source must be PeriodicPointOrbits.")
     if np.asarray(source.point_ids).size == 0:
         raise ValueError("Global periodic Delaunay requires at least one authored point.")
     dimension = source.ambient_dimension

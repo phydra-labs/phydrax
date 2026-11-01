@@ -52,8 +52,6 @@ class SketchDimensionSensitivity(StrictModule):
         root_evidence_id: str,
         /,
     ) -> None:
-        if not isinstance(parameter_id, ParameterId):
-            raise TypeError("parameter_id must be ParameterId.")
         if not isinstance(root_evidence_id, str) or not root_evidence_id:
             raise ValueError("root_evidence_id must be non-empty.")
         coordinates_ = jnp.asarray(coordinates, dtype=jnp.float64).reshape((-1,))

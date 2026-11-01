@@ -1547,8 +1547,6 @@ class ShardedOwnerDirectoryWitness(StrictModule, NonTrainableState):
     ) -> None:
         import jax
 
-        if not isinstance(execution_group, ExecutionGroup):
-            raise TypeError("execution_group must be ExecutionGroup.")
         members = execution_group.spec.process_indices
         devices = execution_group.devices
         if (
