@@ -126,6 +126,30 @@ def test_pack_and_restore_reuse_one_validated_descriptor_tree(
     assert restored.entries[0].value.mesh_id == value.entries[0].value.mesh_id
 
 
+def test_selected_archive_fields_retain_shared_payloads_and_refuse_wrong_root(
+    tmp_path: Path,
+) -> None:
+    from phydrax.meshing._model_codec import read_model_archive_fields
+
+    mesh = _mesh()
+    path = write_model_artifact(
+        tmp_path / "fields.phx", _composition(mesh, mesh), limits=None
+    )
+    selected = read_model_archive_fields(
+        path, expected_type=Composition, fields=("entries", "boundary_id"), limits=None
+    )
+    assert selected["boundary_id"] == "shared-archive"
+    assert [entry.value.mesh_id for entry in selected["entries"]] == [mesh.mesh_id] * 2
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            path, expected_type=CellMesh, fields=("entries",), limits=None
+        )
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            path, expected_type=Composition, fields=("absent",), limits=None
+        )
+
+
 def test_new_model_recipe_is_not_copied_for_sharing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -135,7 +159,9 @@ def test_new_model_recipe_is_not_copied_for_sharing(
         raise AssertionError("Fresh model recipes must not be expanded again.")
 
     monkeypatch.setattr(_model_codec, "_unaliased_recipe", forbidden)
-    path = write_model_artifact(tmp_path / "fresh.phx", _composition(_mesh()), limits=None)
+    path = write_model_artifact(
+        tmp_path / "fresh.phx", _composition(_mesh()), limits=None
+    )
     assert _read(path).entries[0].value.mesh_id == _mesh().mesh_id
 
 
