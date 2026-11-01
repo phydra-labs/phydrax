@@ -50,9 +50,14 @@ def _sha256_bytes(value: bytes, /) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+@jax.jit
+def _dialect_probe() -> jax.Array:
+    return jnp.zeros(())
+
+
 def _ir_context() -> ir.Context:
     # A JAX lowering context registers every dialect exported modules use.
-    module = jax.jit(lambda: jnp.zeros(())).lower().compiler_ir("stablehlo")
+    module = _dialect_probe.lower().compiler_ir("stablehlo")
     if module is None:
         raise RuntimeError("JAX produced no StableHLO module for the dialect context.")
     return module.context

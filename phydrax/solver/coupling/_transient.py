@@ -41,6 +41,7 @@ from jax.typing import ArrayLike
 
 from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._validation import canonical_identifier, positive_finite_float
 from ...dynamics import (
@@ -835,13 +836,14 @@ def _owner_norms(rows: NestedBlocks, /) -> Array:
     )
 
 
-def _certificate(
+def _certificate_samples(
     transient: PreparedCoupledTransient,
-    dae: DifferentialAlgebraicSolution,
+    times: Array,
+    states: Array,
+    state_rates: Array,
     parameters: object,
-    tolerance: float,
     /,
-) -> TransientCertificate:
+) -> tuple[Array, Array]:
     core = transient.core
 
     def sample(time: Array, native: Array, rate: Array) -> tuple[Array, Array]:
@@ -866,9 +868,26 @@ def _certificate(
         )
         return _owner_norms(total), scale
 
-    # One compiled evaluation certifies every sample.
-    norms, scales = eqx.filter_jit(jax.vmap(sample))(
-        dae.times, dae.states, dae.state_rates
+    return jax.vmap(sample)(times, states, state_rates)
+
+
+def _certificate(
+    transient: PreparedCoupledTransient,
+    dae: DifferentialAlgebraicSolution,
+    parameters: object,
+    tolerance: float,
+    /,
+) -> TransientCertificate:
+    # One compiled evaluation, owned by the prepared transient, certifies
+    # every sample of every solve.
+    norms, scales = run_owned_program(
+        transient,
+        "transient-certificate",
+        _certificate_samples,
+        dae.times,
+        dae.states,
+        dae.state_rates,
+        parameters,
     )
     accepted = jnp.all(jnp.isfinite(norms) & (norms <= tolerance * scales), axis=-1)
     return TransientCertificate(

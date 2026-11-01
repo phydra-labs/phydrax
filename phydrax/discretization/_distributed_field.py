@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._owned_programs import run_owned_program
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, RowRelation
@@ -782,9 +783,6 @@ class DistributedSparseTransfer(StrictModule, NonTrainableState):
     ) -> Array:
         values = jnp.asarray(owned_values)
         exchange = self.target_exchange if transpose_action else self.source_exchange
-        output_exchange = (
-            self.source_exchange if transpose_action else self.target_exchange
-        )
         expected = (self.part_count, exchange.owned_capacity)
         if values.ndim < 2 or values.shape[:2] != expected:
             raise ValueError(
@@ -805,6 +803,34 @@ class DistributedSparseTransfer(StrictModule, NonTrainableState):
             jnp.arange(self.part_count, dtype=jnp.int32),
             NamedSharding(mesh, part_spec),
         )
+        return run_owned_program(
+            self,
+            "distributed-action",
+            DistributedSparseTransfer._distributed_program,
+            sharded_values,
+            parts,
+            mesh,
+            axis_name,
+            transpose_action,
+        )
+
+    def _distributed_program(
+        self,
+        sharded_values: Array,
+        parts: Array,
+        mesh: Mesh,
+        axis_name: str,
+        transpose_action: bool,
+        /,
+    ) -> Array:
+        exchange = self.target_exchange if transpose_action else self.source_exchange
+        output_exchange = (
+            self.source_exchange if transpose_action else self.target_exchange
+        )
+        input_spec = PartitionSpec(
+            axis_name, *(None for _ in range(sharded_values.ndim - 1))
+        )
+        part_spec = PartitionSpec(axis_name)
 
         def action(local: Array, part: Array) -> Array:
             local_owned = local[0]
@@ -844,7 +870,9 @@ class DistributedSparseTransfer(StrictModule, NonTrainableState):
             )
             return result[None]
 
-        output_spec = PartitionSpec(axis_name, *(None for _ in range(values.ndim - 1)))
+        output_spec = PartitionSpec(
+            axis_name, *(None for _ in range(sharded_values.ndim - 1))
+        )
         mapped = jax.shard_map(
             action,
             mesh=mesh,
@@ -965,9 +993,45 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         part_spec = PartitionSpec(axis_name)
         packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
         parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
+        mapped = run_owned_program(
+            self,
+            "distributed",
+            DistributedLocalOperator._distributed_program,
+            packed,
+            parts,
+            mesh,
+            axis_name,
+            False,
+        )
+        return self.halo.unpack_owned(mapped)
+
+    def _distributed_program(
+        self,
+        packed: Array,
+        parts: Array,
+        mesh: Mesh,
+        axis_name: str,
+        transpose: bool,
+        /,
+    ) -> Array:
+        packed_spec = PartitionSpec(axis_name, *(None for _ in range(packed.ndim - 1)))
 
         def action(local: Array, part: Array) -> Array:
             part_index = part[0]
+            if transpose:
+                local_result = self.local_transpose(
+                    part_index,
+                    local[0],
+                    self.halo.local_global_ids[part_index],
+                    self.halo.local_valid[part_index],
+                    self.halo.local_owned[part_index],
+                )
+                accumulated = self.halo.accumulate_halo(
+                    local_result,
+                    part_index,
+                    axis_name=axis_name,
+                )
+                return accumulated[None, ...]
             exchanged = self.halo.exchange(
                 local[0],
                 part_index,
@@ -982,14 +1046,13 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
             )
             return result[None, ...]
 
-        mapped = jax.shard_map(
+        return jax.shard_map(
             action,
             mesh=mesh,
-            in_specs=(packed_spec, part_spec),
+            in_specs=(packed_spec, PartitionSpec(axis_name)),
             out_specs=packed_spec,
             check_vma=False,
-        )
-        return self.halo.unpack_owned(mapped(packed, parts))
+        )(packed, parts)
 
     def serial_transpose_reference(self, global_values: ArrayLike, /) -> Array:
         values = jnp.asarray(global_values)
@@ -1038,31 +1101,17 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         part_spec = PartitionSpec(axis_name)
         packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
         parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
-
-        def action(local: Array, part: Array) -> Array:
-            part_index = part[0]
-            local_result = self.local_transpose(
-                part_index,
-                local[0],
-                self.halo.local_global_ids[part_index],
-                self.halo.local_valid[part_index],
-                self.halo.local_owned[part_index],
-            )
-            accumulated = self.halo.accumulate_halo(
-                local_result,
-                part_index,
-                axis_name=axis_name,
-            )
-            return accumulated[None, ...]
-
-        mapped = jax.shard_map(
-            action,
-            mesh=mesh,
-            in_specs=(packed_spec, part_spec),
-            out_specs=packed_spec,
-            check_vma=False,
+        mapped = run_owned_program(
+            self,
+            "distributed",
+            DistributedLocalOperator._distributed_program,
+            packed,
+            parts,
+            mesh,
+            axis_name,
+            True,
         )
-        return self.halo.unpack_owned(mapped(packed, parts))
+        return self.halo.unpack_owned(mapped)
 
 
 __all__ = [

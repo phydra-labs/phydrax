@@ -141,6 +141,13 @@ class PosteriorDiagnostics(StrictModule):
         }
 
 
+@eqx.filter_jit
+def _compiled_value_and_grad(
+    problem: PosteriorProblem, position: PyTree[Any], /
+) -> tuple[Array, PyTree[Any]]:
+    return jax.value_and_grad(problem.log_density)(position)
+
+
 def diagnose_posterior(
     problem: PosteriorProblem,
     /,
@@ -172,7 +179,7 @@ def diagnose_posterior(
     value_and_grad = jax.value_and_grad(problem.log_density)
     initial_log_density, gradient = value_and_grad(position)
     repeated_log_density, repeated_gradient = value_and_grad(position)
-    compiled_log_density, compiled_gradient = jax.jit(value_and_grad)(position)
+    compiled_log_density, compiled_gradient = _compiled_value_and_grad(problem, position)
     batched_position = jax.tree_util.tree_map(
         lambda value: jnp.broadcast_to(value, (2, *value.shape)),
         position,

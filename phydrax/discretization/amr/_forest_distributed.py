@@ -25,6 +25,7 @@ from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation, linear_apply
@@ -331,6 +332,21 @@ class PreparedForestPartition(StrictModule, NonTrainableState):
             jnp.arange(self.halo.part_count, dtype=jnp.int32),
             NamedSharding(mesh, part_spec),
         )
+        return run_owned_program(
+            self,
+            "exchange-ghosts",
+            PreparedForestPartition._exchange_ghosts_program,
+            values,
+            parts,
+            mesh,
+        )
+
+    def _exchange_ghosts_program(
+        self, values: Array, parts: Array, mesh: Mesh, /
+    ) -> Array:
+        axis_name = self.plan.axis_name
+        packed_spec = PartitionSpec(axis_name, *(None for _ in range(values.ndim - 1)))
+        part_spec = PartitionSpec(axis_name)
         halo = self.halo
 
         def exchange(local: Any, part: Any) -> Any:

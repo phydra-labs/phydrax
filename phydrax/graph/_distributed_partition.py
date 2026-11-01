@@ -312,26 +312,54 @@ def _process_local_array(values: np.ndarray, mesh: Mesh, axis_name: str, /) -> A
     )
 
 
-def _group_allgather(values: ArrayLike, mesh: Mesh, axis_name: str, /) -> np.ndarray:
+@eqx.filter_jit
+def _allgather_program(distributed: Array, mesh: Mesh, axis_name: str, /) -> Array:
     from ..backends.distributed import JaxCollectiveProvider
-
-    local = np.asarray(values)
-    if local.ndim < 1 or local.dtype.hasobject:
-        raise TypeError(
-            "Distributed graph summaries must be typed arrays with a leading extent."
-        )
-    distributed = _process_local_array(local, mesh, axis_name)
 
     def gather(value: Array, /) -> Array:
         return JaxCollectiveProvider(axis_name).all_gather(value[0], axis=0, tiled=False)
 
-    gathered = jax.shard_map(
+    return jax.shard_map(
         gather,
         mesh=mesh,
         in_specs=PartitionSpec(axis_name),
         out_specs=PartitionSpec(),
         check_vma=False,
     )(distributed)
+
+
+@eqx.filter_jit
+def _all_to_all_program(distributed: Array, mesh: Mesh, axis_name: str, /) -> Array:
+    from ..backends.distributed import JaxCollectiveProvider
+
+    def exchange(value: Array, /) -> Array:
+        # Each shard block is (1, receivers, capacity, width); exchange the
+        # receiver axis of the single local block.
+        incoming = JaxCollectiveProvider(axis_name).all_to_all(
+            value[0],
+            split_axis=0,
+            concat_axis=0,
+        )
+        return incoming[None, ...]
+
+    return jax.shard_map(
+        exchange,
+        mesh=mesh,
+        in_specs=PartitionSpec(axis_name),
+        out_specs=PartitionSpec(axis_name),
+        check_vma=False,
+    )(distributed)
+
+
+def _group_allgather(values: ArrayLike, mesh: Mesh, axis_name: str, /) -> np.ndarray:
+    local = np.asarray(values)
+    if local.ndim < 1 or local.dtype.hasobject:
+        raise TypeError(
+            "Distributed graph summaries must be typed arrays with a leading extent."
+        )
+    gathered = _allgather_program(
+        _process_local_array(local, mesh, axis_name), mesh, axis_name
+    )
     return np.asarray(jax.device_get(gathered))
 
 
@@ -339,8 +367,6 @@ def _exchange_by_owner(
     outgoing_by_owner: tuple[np.ndarray, ...], mesh: Mesh, axis_name: str, rank: int, /
 ) -> dict[int, np.ndarray]:
     """Exchange typed variable-length row banks without gathering their payloads."""
-    from ..backends.distributed import JaxCollectiveProvider
-
     parts = mesh.devices.size
     if len(outgoing_by_owner) != parts:
         raise ValueError("One outgoing graph message bank is required per owner.")
@@ -373,25 +399,9 @@ def _exchange_by_owner(
     packed = np.zeros((parts, capacity, width), dtype=dtype)
     for receiver, rows in enumerate(banks):
         packed[receiver, : rows.shape[0]] = rows
-    distributed = _process_local_array(packed, mesh, axis_name)
-
-    def exchange(value: Array, /) -> Array:
-        # Each shard block is (1, receivers, capacity, width); exchange the
-        # receiver axis of the single local block.
-        incoming = JaxCollectiveProvider(axis_name).all_to_all(
-            value[0],
-            split_axis=0,
-            concat_axis=0,
-        )
-        return incoming[None, ...]
-
-    exchanged = jax.shard_map(
-        exchange,
-        mesh=mesh,
-        in_specs=PartitionSpec(axis_name),
-        out_specs=PartitionSpec(axis_name),
-        check_vma=False,
-    )(distributed)
+    exchanged = _all_to_all_program(
+        _process_local_array(packed, mesh, axis_name), mesh, axis_name
+    )
     received = np.asarray(jax.device_get(exchanged.addressable_data(0)))[0]
     return {
         sender: received[sender, : int(count_matrix[sender, rank])].copy()

@@ -74,15 +74,8 @@ def _local_array(value: Any, mesh: Mesh, axis: str, owner_count: int, /) -> Arra
     )
 
 
-def _all_gather_local(
-    value: Any,
-    mesh: Mesh,
-    axis: str,
-    owner_count: int,
-    /,
-) -> np.ndarray:
-    distributed = _local_array(value, mesh, axis, owner_count)
-
+@eqx.filter_jit
+def _all_gather_program(distributed: Array, mesh: Mesh, axis: str, /) -> Array:
     def gather(local: Array, /) -> Array:
         local_value = local[0]
         return jax.lax.all_gather(
@@ -92,13 +85,60 @@ def _all_gather_local(
             tiled=local_value.ndim != 0,
         )
 
-    gathered = jax.shard_map(
+    return jax.shard_map(
         gather,
         mesh=mesh,
         in_specs=PartitionSpec(axis),
         out_specs=PartitionSpec(),
         check_vma=False,
     )(distributed)
+
+
+@eqx.filter_jit
+def _all_to_all_program(distributed: Array, mesh: Mesh, axis: str, /) -> Array:
+    def exchange(local_packet: Array, /) -> Array:
+        received = jax.lax.all_to_all(
+            local_packet[0],
+            axis,
+            split_axis=0,
+            concat_axis=0,
+            tiled=True,
+        )
+        return received[None, ...]
+
+    return jax.shard_map(
+        exchange,
+        mesh=mesh,
+        in_specs=PartitionSpec(axis),
+        out_specs=PartitionSpec(axis),
+        check_vma=False,
+    )(distributed)
+
+
+@eqx.filter_jit
+def _group_sum_program(distributed: Array, mesh: Mesh, axis: str, /) -> Array:
+    def reduce(local_value: Array, /) -> Array:
+        return jax.lax.psum(local_value[0], axis)[None, ...]
+
+    return jax.shard_map(
+        reduce,
+        mesh=mesh,
+        in_specs=PartitionSpec(axis),
+        out_specs=PartitionSpec(axis),
+        check_vma=False,
+    )(distributed)
+
+
+def _all_gather_local(
+    value: Any,
+    mesh: Mesh,
+    axis: str,
+    owner_count: int,
+    /,
+) -> np.ndarray:
+    gathered = _all_gather_program(
+        _local_array(value, mesh, axis, owner_count), mesh, axis
+    )
     shards = gathered.addressable_shards
     if len(shards) != 1:
         raise ValueError("Owner-local remapping requires one addressable group shard.")
@@ -115,25 +155,9 @@ def _all_to_all_local(
     local = jnp.asarray(value)
     if local.ndim == 0 or local.shape[0] != owner_count:
         raise ValueError("Owner-routed packets need one leading row per group owner.")
-    distributed = _local_array(local, mesh, axis, owner_count)
-
-    def exchange(local_packet: Array, /) -> Array:
-        received = jax.lax.all_to_all(
-            local_packet[0],
-            axis,
-            split_axis=0,
-            concat_axis=0,
-            tiled=True,
-        )
-        return received[None, ...]
-
-    received = jax.shard_map(
-        exchange,
-        mesh=mesh,
-        in_specs=PartitionSpec(axis),
-        out_specs=PartitionSpec(axis),
-        check_vma=False,
-    )(distributed)
+    received = _all_to_all_program(
+        _local_array(local, mesh, axis, owner_count), mesh, axis
+    )
     shards = received.addressable_shards
     if len(shards) != 1:
         raise ValueError("Owner-local remapping requires one addressable group shard.")
@@ -148,19 +172,9 @@ def _group_max(value: int, mesh: Mesh, axis: str, owner_count: int, /) -> int:
 
 
 def _group_sum(value: Array, mesh: Mesh, axis: str, owner_count: int, /) -> Array:
-    local = jnp.asarray(value)
-    distributed = _local_array(local, mesh, axis, owner_count)
-
-    def reduce(local_value: Array, /) -> Array:
-        return jax.lax.psum(local_value[0], axis)[None, ...]
-
-    result = jax.shard_map(
-        reduce,
-        mesh=mesh,
-        in_specs=PartitionSpec(axis),
-        out_specs=PartitionSpec(axis),
-        check_vma=False,
-    )(distributed)
+    result = _group_sum_program(
+        _local_array(jnp.asarray(value), mesh, axis, owner_count), mesh, axis
+    )
     shards = result.addressable_shards
     if len(shards) != 1:
         raise ValueError("Owner-local remapping requires one addressable group shard.")
