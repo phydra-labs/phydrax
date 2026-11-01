@@ -2411,27 +2411,151 @@ def _collapse_round_periodic(
     return work, done, bits | overflow, count
 
 
+def _optimal_constant_remainder(
+    work: _Work, topology: _Topology, kept: Array, removed: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
+    """Search an interior edge's constant-metric star at floating resolution.
+
+    Interval operations are rounded outwards; uncertain predicate and terminal
+    boxes stay unresolved, rather than being treated as exclusions.  The stack
+    bounds the depth of binary subdivision of the parameter format, including
+    subnormals; it is not a work or scientific depth limit.
+    """
+    points = work.coordinates
+    dtype = points.dtype
+    info = np.finfo(dtype)
+    capacity = int(info.nmant - info.minexp + 4)
+    origin, destination = points[kept], points[removed]
+    ring = jnp.concatenate((topology.link[kept], topology.link[removed]))
+    present = (ring >= 0) & (ring != kept) & (ring != removed)
+    neighbor = jnp.maximum(ring, 0)
+    cells = jnp.concatenate((topology.ball[kept], topology.ball[removed]))
+    corners = work.cells[jnp.maximum(cells, 0)]
+    hit = (corners == kept) | (corners == removed)
+    star = (cells >= 0) & ~(
+        jnp.any(corners == kept, axis=1) & jnp.any(corners == removed, axis=1)
+    )
+    tensor = work.metric[kept]
+    constant = jnp.all(
+        ~present[:, None, None] | (work.metric[neighbor] == tensor)
+    ) & jnp.all(work.metric[removed] == tensor)
+
+    def down(value: Array) -> Array:
+        return jnp.nextafter(value, jnp.asarray(-jnp.inf, dtype=dtype))
+
+    def up(value: Array) -> Array:
+        return jnp.nextafter(value, jnp.asarray(jnp.inf, dtype=dtype))
+
+    def multiply(al: Array, ah: Array, bl: Array, bh: Array) -> tuple[Array, Array]:
+        values = jnp.stack((al * bl, al * bh, ah * bl, ah * bh))
+        return down(jnp.min(values, axis=0)), up(jnp.max(values, axis=0))
+
+    def point_box(lo: Array, hi: Array) -> tuple[Array, Array]:
+        # Enclose executed subtraction, multiplication and addition, including
+        # a fused multiply-add implementation.
+        difference = destination - origin
+        dl, dh = down(difference), up(difference)
+        pl, ph = multiply(lo, hi, dl, dh)
+        return down(origin + pl), up(origin + ph)
+
+    def bounds(lo: Array, hi: Array) -> tuple[Array, Array]:
+        point_low, point_high = point_box(lo, hi)
+        delta_low = down(points[neighbor] - point_high)
+        delta_high = up(points[neighbor] - point_low)
+        lower = jnp.zeros(ring.shape, dtype=dtype)
+        upper = jnp.zeros(ring.shape, dtype=dtype)
+        for i in range(2):
+            for j in range(2):
+                a, b = multiply(delta_low[:, i], delta_high[:, i],
+                                delta_low[:, j], delta_high[:, j])
+                a, b = multiply(a, b, tensor[i, j], tensor[i, j])
+                lower, upper = down(lower + a), up(upper + b)
+        return lower, upper
+
+    def geometry_excluded(lo: Array, hi: Array) -> Array:
+        point_low, point_high = point_box(lo, hi)
+        low = jnp.where(hit[..., None], point_low, points[corners])
+        high = jnp.where(hit[..., None], point_high, points[corners])
+        u_low, u_high = down(low[:, 1] - high[:, 0]), up(high[:, 1] - low[:, 0])
+        v_low, v_high = down(low[:, 2] - high[:, 0]), up(high[:, 2] - low[:, 0])
+        _, positive = multiply(u_low[:, 0], u_high[:, 0], v_low[:, 1], v_high[:, 1])
+        negative, _ = multiply(u_low[:, 1], u_high[:, 1], v_low[:, 0], v_high[:, 0])
+        return jnp.any(star & (up(positive - negative) <= 0.0))
+
+    def body(carry: Any) -> Any:
+        size, lows, highs, found, point, score, uncertain, overflow = carry
+        index = size - 1
+        lo, hi = lows[index], highs[index]
+        size = index
+        low, _ = bounds(lo, hi)
+        excluded = jnp.any(present & (low > 2.0)) | geometry_excluded(lo, hi)
+        middle = lo + (hi - lo) * 0.5
+        terminal = (middle == lo) | (middle == hi)
+        proposal = origin + middle * (destination - origin)
+        _, upper = bounds(middle, middle)
+        moved = jnp.where(hit[..., None], proposal, points[corners])
+        orientation = _orientation(moved[:, 0], moved[:, 1], moved[:, 2])
+        geometry = jnp.max(jnp.where(star, orientation, _OK))
+        pairs = jnp.stack(
+            (neighbor, jnp.full_like(neighbor, points.shape[0])), axis=1
+        )
+        measured = metric_edge_lengths(
+            jnp.concatenate((work.metric, tensor[None])),
+            jnp.concatenate((points, proposal[None])),
+            pairs,
+        )
+        candidate_score = jnp.max(jnp.where(present, measured, 0.0))
+        admitted = (
+            ~excluded & ~terminal & (geometry == _OK)
+            & jnp.all(~present | (upper <= 2.0))
+            & jnp.all(jnp.isfinite(upper))
+            & jnp.isfinite(candidate_score) & (candidate_score <= _UPPER)
+        )
+        subdivide = ~excluded & ~terminal & ~admitted
+        fits = size + 2 <= capacity
+        low_slot = jnp.minimum(size, capacity - 1)
+        high_slot = jnp.minimum(size + 1, capacity - 1)
+        lows = lows.at[low_slot].set(jnp.where(subdivide & fits, middle, lows[low_slot]))
+        highs = highs.at[low_slot].set(jnp.where(subdivide & fits, hi, highs[low_slot]))
+        lows = lows.at[high_slot].set(jnp.where(subdivide & fits, lo, lows[high_slot]))
+        highs = highs.at[high_slot].set(jnp.where(subdivide & fits, middle, highs[high_slot]))
+        return (
+            size + jnp.where(subdivide & fits, 2, 0), lows, highs,
+            found | admitted, jnp.where(admitted, proposal, point),
+            jnp.where(admitted, candidate_score, score),
+            uncertain | (~excluded & terminal), overflow | (subdivide & ~fits),
+        )
+
+    initial = (
+        jnp.int32(1), jnp.zeros((capacity,), dtype=dtype),
+        jnp.zeros((capacity,), dtype=dtype).at[0].set(1.0),
+        jnp.bool_(False), jnp.zeros((2,), dtype=dtype), jnp.asarray(jnp.inf, dtype=dtype),
+        ~constant, jnp.bool_(False),
+    )
+    result = jax.lax.while_loop(
+        lambda state: (state[0] > 0) & ~state[3] & ~state[6] & ~state[7],
+        body, initial,
+    )
+    return result[3], result[4], result[5], result[6], result[7]
+
+
 def _optimal_collapse_round(
     work: _Work, done: Array, layout: DeviceMetricLayout, /
 ) -> Any:
     """Optimal-point collapses, the host route's ``_optimal_collapse_search``.
 
-    A short edge whose removed end is admissible and whose link condition
-    holds merges both ends at a point of the merged star's kernel reached from
-    the kept end along a segment, ``kept + t (target - kept)`` with
-    ``t = j / _OPTIMAL_LATTICE``: along the edge (``target = removed``) when
-    the kept end is a free interior vertex off classified edges or a certified
-    straight curve vertex of the edge's own curve, or, when an interior removed
-    end merges into a certified straight curve vertex, along the curve toward
-    either curve neighbor. The point minimizes the longest metric edge of the
-    merged star among the points whose star cells are certified positive (and,
-    for a curve vertex, exactly collinear with its curve neighbors); ties take
-    the first segment and lowest ``j``. Its metric interpolates the segment's
-    end metrics log-Euclidean. The collapse is admitted when that longest edge
-    is at most sqrt(2). A periodic workspace admits only edges whose two
-    vertex orbits each have one lifted member. The kept end is a source vertex
-    rather than a birth where possible, then the lower vertex ID. Eligible
-    edges are searched in blocks of ``_OPTIMAL_BLOCK`` until all are searched.
+    A short admissible edge first tries the existing finite seed lattice on
+    its permitted edge or curve segments.  A missed nonperiodic interior edge
+    with an identical current star tensor is searched by outward interval
+    subdivision down to floating parameter resolution. Its actual binary64
+    point is authoritative, and commit reconstructs its exact source stencil.
+    A box is discarded only by a proved metric-band exclusion; otherwise a
+    filtered positive star and a certified band admit a point, or numerical
+    resolution returns ``NEEDS_HOST_RESOLUTION``. Nonconstant, curve, and
+    periodic remainders remain unresolved. Seed proposals are ranked by their
+    longest star edge, with the first segment and lowest lattice index tying.
+    The kept end is a source vertex rather than a birth where possible, then
+    the lower vertex ID. Eligible seeds are searched in bounded-memory blocks.
     """
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
@@ -2471,6 +2595,7 @@ def _optimal_collapse_round(
     removed = found.removed[direction]
     kept = found.kept[direction]
     eligible = short & (forward_ok | backward_ok)
+    periodic_unresolved = jnp.bool_(False)
     if work.periodic_enabled:
         representative = work.periodic_vertex_representative
         size = jnp.where(
@@ -2490,6 +2615,7 @@ def _optimal_collapse_round(
             & work.periodic_vertex_deck[kept]
             & (topology.neighbors.reshape((-1,)) >= 0)
         )
+        periodic_unresolved = jnp.any(short & (forward_ok | backward_ok) & ~eligible)
     steps = _OPTIMAL_LATTICE - 1
     lanes = 2 * steps
     lattice = jnp.arange(1, _OPTIMAL_LATTICE, dtype=points.dtype) / _OPTIMAL_LATTICE
@@ -2626,6 +2752,46 @@ def _optimal_collapse_round(
             jnp.zeros((edge_count, 2, 2), dtype=points.dtype),
         ),
     )
+    def remainder(carry: Any) -> Any:
+        index, longest_all, point_all, metric_all, unresolved, resource = carry
+        row = order[index]
+        missing = longest_all[row] > _UPPER
+        supported = (
+            (topology.kind[kept[row]] == _INTERIOR)
+            & ~sliding[row]
+            & jnp.bool_(not work.periodic_enabled)
+        )
+
+        def attempt(_: Any) -> Any:
+            return _optimal_constant_remainder(work, topology, kept[row], removed[row])
+
+        result = jax.lax.cond(
+            missing & supported,
+            attempt,
+            lambda _: (
+                jnp.bool_(False), jnp.zeros((2,), dtype=points.dtype),
+                jnp.asarray(jnp.inf, dtype=points.dtype),
+                missing & ~supported, jnp.bool_(False),
+            ),
+            operand=None,
+        )
+        found_point, proposal, score, uncertain, overflow = result
+        return (
+            index + 1,
+            longest_all.at[row].set(jnp.where(found_point, score, longest_all[row])),
+            point_all.at[row].set(jnp.where(found_point, proposal, point_all[row])),
+            metric_all.at[row].set(
+                jnp.where(found_point, work.metric[kept[row]], metric_all[row])
+            ),
+            unresolved | uncertain,
+            resource | overflow,
+        )
+
+    _, longest, point, metric, unresolved, resource = jax.lax.while_loop(
+        lambda carry: carry[0] < total,
+        remainder,
+        (jnp.int32(0), longest, point, metric, periodic_unresolved, jnp.bool_(False)),
+    )
     admitted = eligible & (longest <= _UPPER)
     rank = _ranks(admitted, topology.lengths, longest, ids[removed], ids[kept])
     selected = _independent(
@@ -2661,7 +2827,12 @@ def _optimal_collapse_round(
         .set(True, mode="drop")[: 2 * edge_count]
     )
     work, overflow = _apply_collapses(work, topology, found, directions, layout)
-    return work, done, overflow, count
+    bits = jnp.where(
+        unresolved & (count == 0),
+        int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION),
+        0,
+    ).astype(jnp.int32)
+    return work, done, overflow | bits | _overflow(resource), count
 
 
 def _collapse_round(

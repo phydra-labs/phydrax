@@ -610,6 +610,81 @@ def test_host_optimal_collapse_batches_preserve_candidate_order(
         assert first.exact == second.exact
 
 
+@pytest.mark.parametrize(
+    "scale, outcome", [
+        (0.999, "proposal"), (1.0, "unresolved"), (1.001, "excluded"),
+        (0.999, "nonconstant"),
+    ],
+)
+def test_device_optimal_remainder_searches_between_seed_parameters(
+    scale: float, outcome: str,
+) -> None:
+    center = -0.2 + 0.4 * (17.0 / 64.0)
+    points = np.asarray((
+        (center - 0.8 * scale, 0.6 * scale), (-0.2, 0.0), (0.2, 0.0),
+        (center + 0.8 * scale, -0.6 * scale), (center, 0.65), (center, -0.65),
+    ))
+    seeds = -0.2 + 0.4 * np.arange(1, local_metric._OPTIMAL_LATTICE) / (
+        local_metric._OPTIMAL_LATTICE
+    )
+    left = np.sqrt(2.0 * ((seeds - points[0, 0]) ** 2 + points[0, 1] ** 2))
+    right = np.sqrt(2.0 * ((seeds - points[3, 0]) ** 2 + points[3, 1] ** 2))
+    assert np.all(np.maximum(left, right) > _UPPER)
+    cells = np.asarray((
+        (0, 1, 4), (1, 2, 4), (2, 3, 4),
+        (1, 0, 5), (2, 1, 5), (3, 2, 5),
+    ), dtype=np.int32)
+    mesh = CellMesh.from_triangles(points, cells)
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    prepared = prepare_device_metric_adaptation(
+        source, MetricMeshAdaptation(_metric(source, 2.0 * np.eye(2))), policy=_policy()
+    )
+    work = _work(prepared.state)
+    if outcome == "nonconstant":
+        work = work._replace(metric=work.metric.at[0].set(2.1 * jnp.eye(2)))
+    updated, _, status, count = eqx.filter_jit(device_metric._optimal_collapse_round)(
+        work, jnp.asarray(False), prepared.layout
+    )
+    if outcome in ("unresolved", "nonconstant"):
+        assert int(count) == 0
+        assert int(status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+        return
+    assert int(status) == 0
+    if outcome == "excluded":
+        assert int(count) == 0
+        return
+    assert int(count) == 1
+    survivor = int(np.flatnonzero(np.asarray(updated.vertex_moved))[0])
+    point = np.asarray(updated.coordinates[survivor])
+    width = np.sqrt(1.0 - (0.6 * scale) ** 2) - 0.8 * scale
+    assert abs(point[0] - center) < width
+    host = device_metric._host_state(
+        prepared, device_metric._state(updated, prepared.layout, False)
+    )
+    order, _, _ = local_metric._target_order(host)
+    sources, _, valid, exact = local_metric._stencil(
+        host, prepared.anchor.source, order, PredicateMode.EXACT
+    )
+    target_row = int(np.flatnonzero(order == survivor)[0])
+    source_points = dict(zip(
+        prepared.anchor.source.vertex_ids.tolist(),
+        prepared.anchor.source.exact_points, strict=True,
+    ))
+    for axis in range(2):
+        image = sum((
+            exact[target_row][column] * source_points[int(sources[target_row, column])][axis]
+            for column in np.flatnonzero(valid[target_row])
+        ), Fraction(0))
+        assert image == Fraction(float(point[axis]))
+    topology = device_metric._topology(updated, prepared.layout)
+    ring = np.asarray(topology.link[survivor])
+    ring = ring[ring >= 0]
+    lengths = np.asarray(device_metric._lengths(
+        updated, jnp.asarray(np.stack((np.full(ring.shape, survivor), ring), axis=1))
+    ))
+    assert np.all(lengths <= _UPPER)
+
+
 @pytest.mark.parametrize("scale, feasible", [(0.999, True), (1.001, False)])
 def test_host_optimal_collapse_searches_between_seed_parameters(
     scale: float,
