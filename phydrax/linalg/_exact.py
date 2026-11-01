@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
+from math import gcd, isqrt, lcm, prod
 from numbers import Integral
 from typing import cast, Protocol, Self
 
@@ -49,9 +50,7 @@ def _exact_sparse_scalar[T: ExactField](value: T, name: str, /) -> T:
         raise TypeError(
             f"{name} must use exact field scalars, not {type(value).__name__}."
         )
-    if isinstance(
-        value, (float, complex, Decimal, np.floating, np.complexfloating)
-    ):
+    if isinstance(value, (float, complex, Decimal, np.floating, np.complexfloating)):
         raise TypeError(
             f"{name} must use exact field scalars, not {type(value).__name__}."
         )
@@ -71,9 +70,7 @@ def _exact_negative_product[T: ExactField](left: T, right: T, /) -> T:
     return (product - product) - product
 
 
-def _exact_subtract_product[T: ExactField](
-    minuend: T, left: T, right: T, /
-) -> T:
+def _exact_subtract_product[T: ExactField](minuend: T, left: T, right: T, /) -> T:
     return minuend - _exact_product(left, right)
 
 
@@ -87,7 +84,10 @@ def solve_exact[T: ExactField](
     """Solve using one deterministic exact factorization and triangular actions.
 
     Singular systems are refused instead of selecting a numerical pivot or
-    returning a least-squares result.
+    returning a least-squares result. Rational systems of at least
+    ``_RATIONAL_LIFTING_MIN_SIZE`` rows are solved by p-adic lifting (see
+    ``_solve_rational_lifting``); the exact solution is unique, so the result
+    equals the Fraction elimination result entry for entry.
     """
     size = len(matrix)
     matrix_width = _rectangular_width(matrix, "matrix")
@@ -98,11 +98,308 @@ def solve_exact[T: ExactField](
         raise ValueError(
             f"right must have {size} rows to match matrix; got {len(right)}."
         )
+    if (
+        size >= _RATIONAL_LIFTING_MIN_SIZE
+        and right
+        and right[0]
+        and all(type(value) is Fraction for row in matrix for value in row)
+        and all(type(value) is Fraction for row in right for value in row)
+    ):
+        solution = _solve_rational_lifting(
+            cast(Sequence[Sequence[Fraction]], matrix),
+            cast(Sequence[Sequence[Fraction]], right),
+        )
+        if solution is not None:
+            return cast(list[list[T]], solution)
     return factor_exact(
         matrix,
         singular_error=singular_error,
         singular_message=singular_message,
     ).solve(right)
+
+
+def matmul_exact(
+    left: Sequence[Sequence[Fraction]], right: Sequence[Sequence[Fraction]], /
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Exact rational ``left @ right`` as one integer accumulation per entry.
+
+    Each left row is scaled by its denominator LCM and each right column by its
+    own, products of nonzero entries accumulate in integers, and every entry is
+    normalized once, so it equals the Fraction sum of products.
+    """
+    inner = len(right)
+    if any(len(row) != inner for row in left):
+        raise ValueError("Exact matrix product has incompatible extents.")
+    column_count = _rectangular_width(right, "right")
+    column_scales = [1] * column_count
+    right_terms: list[tuple[tuple[int, Fraction], ...]] = []
+    for row in right:
+        entries = tuple((column, value) for column, value in enumerate(row) if value)
+        for column, value in entries:
+            column_scales[column] = lcm(column_scales[column], value.denominator)
+        right_terms.append(entries)
+    right_integers = [
+        tuple(
+            (column, value.numerator * (column_scales[column] // value.denominator))
+            for column, value in entries
+        )
+        for entries in right_terms
+    ]
+    result: list[tuple[Fraction, ...]] = []
+    for row in left:
+        terms = tuple((index, value) for index, value in enumerate(row) if value)
+        scale = lcm(1, *(value.denominator for _, value in terms))
+        accumulated = [0] * column_count
+        for index, value in terms:
+            weight = value.numerator * (scale // value.denominator)
+            for column, entry in right_integers[index]:
+                accumulated[column] += weight * entry
+        result.append(
+            tuple(
+                Fraction(total, scale * column_scales[column])
+                for column, total in enumerate(accumulated)
+            )
+        )
+    return tuple(result)
+
+
+# Below this many rows Fraction elimination is cheaper than lifting.
+_RATIONAL_LIFTING_MIN_SIZE = 24
+# Distinct primes tried before a system that is singular modulo each of them is
+# handed to Fraction elimination, which decides exact singularity.
+_RATIONAL_LIFTING_PRIME_ATTEMPTS = 3
+
+
+def _is_prime(value: int, /) -> bool:
+    if value < 2:
+        return False
+    if value % 2 == 0:
+        return value == 2
+    divisor = 3
+    while divisor * divisor <= value:
+        if value % divisor == 0:
+            return False
+        divisor += 2
+    return True
+
+
+def _lifting_primes(size: int, /) -> list[int]:
+    """Largest primes p with size * p**2 < 2**62, so int64 products never overflow."""
+    candidate = isqrt((1 << 62) // size)
+    primes: list[int] = []
+    while len(primes) < _RATIONAL_LIFTING_PRIME_ATTEMPTS and candidate > 2:
+        if _is_prime(candidate):
+            primes.append(candidate)
+        candidate -= 1
+    return primes
+
+
+def _inverse_modulo(matrix: np.ndarray, prime: int, /) -> np.ndarray | None:
+    """Gauss-Jordan inverse modulo ``prime``, or None when singular modulo it."""
+    size = matrix.shape[0]
+    work = np.concatenate((matrix, np.eye(size, dtype=np.int64)), axis=1)
+    for column in range(size):
+        nonzero = np.flatnonzero(work[column:, column])
+        if nonzero.size == 0:
+            return None
+        pivot = column + int(nonzero[0])
+        if pivot != column:
+            work[[column, pivot]] = work[[pivot, column]]
+        work[column, column:] = (
+            work[column, column:] * pow(int(work[column, column]), -1, prime) % prime
+        )
+        factors = work[:, column].copy()
+        factors[column] = 0
+        # Columns left of the pivot are already reduced unit columns.
+        work[:, column:] = (
+            work[:, column:] - np.outer(factors, work[column, column:])
+        ) % prime
+    return np.ascontiguousarray(work[:, size:])
+
+
+def _rational_reconstruction(
+    residue: int, modulus: int, bound: int, /
+) -> tuple[int, int] | None:
+    """The fraction a/b with |a|, 0 < b <= bound and a = b * residue mod modulus."""
+    previous_remainder, remainder = modulus, residue
+    previous_coefficient, coefficient = 0, 1
+    while remainder > bound:
+        quotient = previous_remainder // remainder
+        previous_remainder, remainder = (
+            remainder,
+            previous_remainder - quotient * remainder,
+        )
+        previous_coefficient, coefficient = (
+            coefficient,
+            previous_coefficient - quotient * coefficient,
+        )
+    if coefficient == 0 or abs(coefficient) > bound:
+        return None
+    if coefficient < 0:
+        return -remainder, -coefficient
+    return remainder, coefficient
+
+
+def _reconstruct_solution(
+    digits: np.ndarray, modulus: int, /
+) -> tuple[list[list[int]], int] | None:
+    """Integer numerators over one common denominator, or None if not yet liftable."""
+    bound = isqrt(modulus // 2)
+    half = modulus // 2
+    denominator = 1
+    rows: list[list[tuple[int, int]]] = []
+    for row in digits.tolist():
+        reconstructed: list[tuple[int, int]] = []
+        for residue in row:
+            scaled = residue * denominator % modulus
+            if scaled > half:
+                scaled -= modulus
+            if abs(scaled) <= bound:
+                reconstructed.append((scaled, denominator))
+                continue
+            fraction = _rational_reconstruction(scaled % modulus, modulus, bound)
+            if fraction is None:
+                return None
+            numerator, factor = fraction
+            denominator *= factor
+            if denominator > bound:
+                return None
+            reconstructed.append((numerator, denominator))
+        rows.append(reconstructed)
+    return (
+        [
+            [numerator * (denominator // partial) for numerator, partial in row]
+            for row in rows
+        ],
+        denominator,
+    )
+
+
+def _solve_rational_lifting(
+    matrix: Sequence[Sequence[Fraction]], right: Sequence[Sequence[Fraction]], /
+) -> list[list[Fraction]] | None:
+    """Dixon p-adic lifting with a certified rational reconstruction.
+
+    Rows are scaled to integers, ``A X = B``. One inverse ``C`` of ``A`` modulo a
+    word-size prime ``p`` lifts ``X`` digit by digit: ``x_k = C r_k mod p`` and
+    ``r_{k+1} = (r_k - A x_k) / p``, so ``A X_k = B - p^k r_k`` exactly for the
+    accumulated ``X_k``. Reconstructing ``X = N / d`` from ``X_k`` gives
+    ``A N - d B = 0 mod p^k``; once ``max_i |A_i|_1 max|N| + d max|B| < p^k``
+    that integer matrix is zero, which certifies ``N / d`` exactly. Hadamard
+    bounds on the Cramer numerators and ``det A`` give the step at which the
+    reconstruction and the certificate must hold. Returns None when ``A`` is
+    singular modulo every tried prime, deferring the exact singularity
+    decision to Fraction elimination.
+    """
+    size = len(matrix)
+    width = len(right[0])
+    integer_rows: list[list[int]] = []
+    integer_right: list[list[int]] = []
+    for matrix_row, right_row in zip(matrix, right, strict=True):
+        scale = lcm(*(value.denominator for value in (*matrix_row, *right_row)))
+        row = [value.numerator * (scale // value.denominator) for value in matrix_row]
+        rhs = [value.numerator * (scale // value.denominator) for value in right_row]
+        content = gcd(*row, *rhs)
+        if content > 1:
+            row = [value // content for value in row]
+            rhs = [value // content for value in rhs]
+        integer_rows.append(row)
+        integer_right.append(rhs)
+    for prime in _lifting_primes(size):
+        inverse = _inverse_modulo(
+            np.array(
+                [[value % prime for value in row] for row in integer_rows], dtype=np.int64
+            ),
+            prime,
+        )
+        if inverse is None:
+            continue
+        return _lift(integer_rows, integer_right, inverse, prime, width)
+    return None
+
+
+def _lift(
+    integer_rows: list[list[int]],
+    integer_right: list[list[int]],
+    inverse: np.ndarray,
+    prime: int,
+    width: int,
+    /,
+) -> list[list[Fraction]]:
+    size = len(integer_rows)
+    # Signed limbs of at most prime.bit_length() - 1 bits keep every limb product
+    # sum below size * prime**2 < 2**62.
+    limb_bits = prime.bit_length() - 1
+    limb_mask = (1 << limb_bits) - 1
+    largest = max(abs(value) for row in integer_rows for value in row)
+    limb_count = max(1, -(-largest.bit_length() // limb_bits))
+    magnitudes = np.array(
+        [[abs(value) for value in row] for row in integer_rows], dtype=object
+    )
+    signs = np.array(
+        [[-1 if value < 0 else 1 for value in row] for row in integer_rows],
+        dtype=np.int64,
+    )
+    limbs = [
+        signs * ((magnitudes >> (limb_bits * limb)) & limb_mask).astype(np.int64)
+        for limb in range(limb_count)
+    ]
+    # Hadamard bounds: |det A| <= prod_j |A_:j|_2 and every Cramer numerator
+    # (column j replaced by a right-hand column) is at most that product times
+    # max |b|_2 / min |A_:j|_2. Squares are bounded exactly in integers.
+    column_squares = [
+        sum(integer_rows[row][column] ** 2 for row in range(size))
+        for column in range(size)
+    ]
+    right_squares = max(
+        sum(integer_right[row][column] ** 2 for row in range(size))
+        for column in range(width)
+    )
+    determinant_square = prod(column_squares)
+    numerator_square = -(-determinant_square * right_squares // min(column_squares))
+    determinant_bound = isqrt(determinant_square) + 1
+    numerator_bound = isqrt(numerator_square) + 1
+    row_sum = max(sum(abs(value) for value in row) for row in integer_rows)
+    right_largest = max(abs(value) for row in integer_right for value in row)
+    required = max(
+        2 * max(determinant_bound, numerator_bound) ** 2,
+        row_sum * numerator_bound + determinant_bound * right_largest,
+    )
+    residual = np.array(integer_right, dtype=object)
+    digits = np.zeros((size, width), dtype=object)
+    modulus = 1
+    attempt_at = 1
+    step = 0
+    while True:
+        digit = inverse @ (residual % prime).astype(np.int64) % prime
+        product_ = limbs[0] @ digit
+        if limb_count == 1:
+            image = product_.astype(object)
+        else:
+            image = product_.astype(object)
+            for limb in range(1, limb_count):
+                image = image + (
+                    (limbs[limb] @ digit).astype(object) << (limb_bits * limb)
+                )
+        residual = (residual - image) // prime
+        digits = digits + digit.astype(object) * modulus
+        modulus *= prime
+        step += 1
+        if modulus <= required and step < attempt_at:
+            continue
+        attempt_at = step + max(1, step // 4)
+        reconstruction = _reconstruct_solution(digits, modulus)
+        if reconstruction is not None:
+            numerators, denominator = reconstruction
+            largest_numerator = max(abs(value) for row in numerators for value in row)
+            if row_sum * largest_numerator + denominator * right_largest < modulus:
+                return [
+                    [Fraction(value, denominator) for value in row] for row in numerators
+                ]
+        if modulus > required:
+            raise RuntimeError(
+                "Rational lifting passed its Hadamard bound without a certified solution."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,9 +438,7 @@ class ExactSparseRankFactorization[T: ExactField]:
         pivot_columns = evidence.pivot_columns
         pivot_set = frozenset(pivot_columns)
         free_columns = tuple(
-            column
-            for column in range(evidence.variable_count)
-            if column not in pivot_set
+            column for column in range(evidence.variable_count) if column not in pivot_set
         )
         pivot_rows = tuple(dict(row) for row in self.reduced_pivot_rows)
         basis: list[tuple[T | Fraction, ...]] = []
@@ -168,7 +463,6 @@ class ExactSparseRankFactorization[T: ExactField]:
                     vector[pivot_column] = Fraction(0)
             basis.append(tuple(vector))
         return tuple(basis)
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,10 +496,7 @@ class ExactLinearFactorization[T: ExactField]:
             raise ValueError(
                 f"right must have {size} rows to match matrix; got {len(right)}."
             )
-        solution = [
-            list(right[self.row_permutation[row]])
-            for row in range(size)
-        ]
+        solution = [list(right[self.row_permutation[row]]) for row in range(size)]
         for row in range(size):
             for column in range(width):
                 value = solution[row][column]
@@ -239,9 +530,7 @@ def factor_exact[T: ExactField](
     pivot_rows = []
     determinant: T | Fraction = Fraction(1)
     for column in range(size):
-        pivot = next(
-            (row for row in range(column, size) if factors[row][column]), None
-        )
+        pivot = next((row for row in range(column, size) if factors[row][column]), None)
         if pivot is None:
             raise singular_error(singular_message)
         if pivot != column:
@@ -308,19 +597,14 @@ class ExactRationalAlgebraicFactorization[T: ExactField]:
             if all(isinstance(row[column], Fraction) for row in right)
         )
         algebraic_columns = tuple(
-            column
-            for column in range(width)
-            if column not in rational_columns
+            column for column in range(width) if column not in rational_columns
         )
         solution: list[list[Fraction | T]] = [
             [Fraction(0) for _ in range(width)] for _ in range(size)
         ]
         if rational_columns:
             rational_right = [
-                [
-                    cast(Fraction, right[row][column])
-                    for column in rational_columns
-                ]
+                [cast(Fraction, right[row][column]) for column in rational_columns]
                 for row in range(size)
             ]
             rational_solution = self.rational_factorization.solve(rational_right)
@@ -329,10 +613,7 @@ class ExactRationalAlgebraicFactorization[T: ExactField]:
                     solution[row][column] = rational_solution[row][index]
         if algebraic_columns:
             algebraic_right = [
-                [
-                    self._lift_right(right[row][column])
-                    for column in algebraic_columns
-                ]
+                [self._lift_right(right[row][column]) for column in algebraic_columns]
                 for row in range(size)
             ]
             algebraic_solution = self.algebraic_factorization.solve(algebraic_right)
@@ -370,8 +651,6 @@ def factor_exact_rational_algebraic[T: ExactField](
         algebraic_factorization,
         rational_embedding,
     )
-
-
 
 
 class ExactInconsistentSystemError(ValueError):
@@ -493,8 +772,7 @@ def _exact_sparse_elimination[T: ExactField](
                 column_degree = len(incident_rows)
                 for row_index in incident_rows:
                     row_degree = sum(
-                        index in remaining_columns
-                        for index in rows[row_index][0]
+                        index in remaining_columns for index in rows[row_index][0]
                     )
                     key = (
                         (row_degree - 1) * (column_degree - 1),
@@ -534,14 +812,10 @@ def _exact_sparse_elimination[T: ExactField](
         )
         coefficients, values = rows[pivot_row]
         divisor = coefficients[column]
-        normalized = {
-            index: value / divisor for index, value in coefficients.items()
-        }
+        normalized = {index: value / divisor for index, value in coefficients.items()}
         normalized_right = [value / divisor for value in values]
         for row_index, (other, other_right) in enumerate(rows):
-            if row_index == pivot_row or (
-                not eliminate_above and row_index < pivot_row
-            ):
+            if row_index == pivot_row or (not eliminate_above and row_index < pivot_row):
                 continue
             factor = other.get(column)
             if factor is None:
@@ -710,7 +984,9 @@ def determinant_small_algebra[T](
     """
     dimension = len(matrix)
     if dimension not in (1, 2, 3) or any(len(row) != dimension for row in matrix):
-        raise ValueError("Small algebraic determinants require a square matrix of order one through three.")
+        raise ValueError(
+            "Small algebraic determinants require a square matrix of order one through three."
+        )
     if dimension == 1:
         return matrix[0][0]
     if dimension == 2:
