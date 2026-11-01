@@ -318,8 +318,11 @@ def test_discrete_field_views_scenario_2() -> None:
     )
     values = _nodal(discretization, lambda x, y: jnp.cos(2.0 * jnp.pi * x) + 0.0 * y)
 
+    support_geometry = reconstruction.support_geometry
+    if not isinstance(support_geometry, phx.geometry.CompiledGeometry):
+        raise TypeError("The tensor reconstruction must retain compiled support.")
     np.testing.assert_allclose(
-        np.asarray(reconstruction.support_geometry.bounds), ((0.0, 0.0), (1.0, 2.0))
+        np.asarray(support_geometry.bounds), ((0.0, 0.0), (1.0, 2.0))
     )
     # Between the last node x = 7/8 and the periodic image of x = 0.
     expected = np.cos(2.0 * np.pi * 7.0 / 8.0) * 0.4 + 1.0 * 0.6
