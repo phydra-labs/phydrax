@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
 import numpy as np
 import pytest
 
@@ -30,6 +31,7 @@ from phydrax.discretization._coordinate_enclosure import (
     RationalPolynomial,
 )
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+from tests._support.validity_reuse import assert_incremental_matches_full
 
 
 D = phx.discretization
@@ -176,18 +178,28 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
     certificate.require_current(geometry, mesh=mesh)
     certificate.revalidate(geometry, mesh=mesh)
+    public = D.CellValidityCertificate(geometry, mesh=mesh, policy=certificate.policy)
+    assert public.certificate_id == certificate.certificate_id
+    with pytest.raises(TypeError):
+        D.CellValidityCertificate(geometry, mesh=mesh, status=certificate.status)
     summary = certificate.stage_summary()
     for proof in ("execution", "source"):
         assert sum(summary[proof].values()) == certificate.status.shape[0]
 
     lower = np.asarray(certificate.determinant_lower) * 0.5
-    forged = validity_module.CellValidityCertificate(
-        certificate.execution_status,
+    fake_status = np.where(
+        np.asarray(certificate.execution_status) == Status.CERTIFIED_VALID,
+        Status.INVALID,
+        Status.CERTIFIED_VALID,
+    )
+    # Simulate an untrusted stored record, bypassing the computing public constructor.
+    forged = validity_module.CellValidityCertificate._from_computed(
+        fake_status,
         lower,
         certificate.determinant_upper,
         certificate.depth,
         source_proof=validity_module._BlockCertificate(
-            np.asarray(certificate.source_status),
+            fake_status,
             lower,
             np.asarray(certificate.source_determinant_upper),
             np.asarray(certificate.source_depth),
@@ -207,6 +219,7 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
         unsupported_block_names=certificate.unsupported_block_names,
         geometry_id=certificate.geometry_id,
         geometry_layout_id=certificate.geometry_layout_id,
+        cell_map_digests=certificate.cell_map_digests,
         policy_id=certificate.policy_id,
     )
     # require_current checks the binding and stored claims only; revalidate
@@ -214,12 +227,23 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     forged.require_current(geometry, mesh=mesh)
     with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
         forged.revalidate(geometry, mesh=mesh)
+    transformed = eqx.tree_at(
+        lambda value: value.status,
+        forged,
+        forged.status.copy(),
+    )
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=transformed)
 
     _, other_geometry = _p3_triangle(0.25)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):
         certificate.require_current(other_geometry, mesh=mesh)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):
         certificate.revalidate(other_geometry, mesh=mesh)
+    object.__setattr__(public, "cell_map_digests", bytes(len(public.cell_map_digests)))
+    assert public.certificate_id == certificate.certificate_id
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        public.revalidate(geometry, mesh=mesh)
 
 
 def test_coordinate_source_basis_is_formed_once_per_element(
@@ -1032,3 +1056,143 @@ def test_polygon_duplicate_vertices_match_dense_reference(ambient: int) -> None:
         repeated = np.any(coincident & ~np.eye(9, dtype=np.bool_))
         expected = Status.INVALID if repeated else Status.CERTIFIED_VALID
         assert _polygon_status(candidate) == expected
+
+
+def _prism_layer_points(levels: int) -> np.ndarray:
+    wall = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)), dtype=np.float64)
+    # A varying layer thickness makes every prism map bilinear (nonaffine).
+    thickness = 0.1 + 0.03 * wall[:, 0] + 0.02 * wall[:, 1]
+    return np.concatenate(
+        [np.column_stack((wall, level * thickness)) for level in range(levels + 1)]
+    )
+
+
+def _prism_layer(level: int) -> np.ndarray:
+    triangles = np.asarray(((0, 1, 2), (1, 3, 2)), dtype=np.int32)
+    return np.concatenate((4 * level + triangles, 4 * (level + 1) + triangles), axis=1)
+
+
+def test_layer_assembly_reuses_layer_proofs_by_exact_map(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    points = _prism_layer_points(2)
+    # The accepted first layer is certified on its own, renumbered vertex set.
+    order = np.arange(8, dtype=np.int32)[::-1]
+    first = D.CellMesh(
+        points[:8][order],
+        (D.CellBlock("cells", "prism", order[_prism_layer(0)]),),
+    )
+    layer_validity = D.certify_cell_geometry_validity(first)
+    assert layer_validity.all_certified
+    assembled = D.CellMesh(
+        points,
+        (
+            D.CellBlock(
+                "cells", "prism", np.concatenate((_prism_layer(0), _prism_layer(1)))
+            ),
+        ),
+    )
+
+    full, proofs = assert_incremental_matches_full(monkeypatch, assembled, layer_validity)
+
+    assert full.all_certified
+    assert proofs == 2
+
+
+def _curved_triangle_pair(
+    interior_shift: float,
+) -> tuple[Any, CellGeometrySpec, int]:
+    mesh = D.CellMesh(
+        np.asarray(
+            ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (2.0, 0.0), (3.0, 0.0), (2.0, 1.0)),
+            dtype=np.float64,
+        ),
+        (D.CellBlock("cells", "triangle", np.asarray(((0, 1, 2), (3, 4, 5)))),),
+    )
+    element = D.fem.lagrange_element("triangle", 3)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    u, v = nodes.T
+    cell = np.column_stack((((u - 0.5) ** 3) / 3.0 + u, v))
+    coordinates = np.concatenate((cell, cell + np.asarray((2.0, 0.0))))
+    interior = nodes.shape[0] + int(np.flatnonzero((u > 0) & (v > 0) & (u + v < 1))[0])
+    coordinates[interior, 1] += interior_shift
+    routes = np.arange(2 * nodes.shape[0], dtype=np.int64).reshape(2, -1)
+    return (
+        mesh,
+        D.CellGeometrySpec({"cells": element}, {"cells": routes}, coordinates),
+        interior,
+    )
+
+
+def _cell_maps(certificate: Any, cell: int) -> set[bytes]:
+    """The execution and source map digests of one cell."""
+    table = np.frombuffer(certificate.cell_map_digests, dtype=np.uint8).reshape(-1, 2, 16)
+    return {row.tobytes() for row in table[cell]}
+
+
+def test_relaxation_round_reproves_only_moved_cells(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh, previous, _ = _curved_triangle_pair(0.0)
+    previous_validity = D.certify_cell_geometry_validity(previous, mesh=mesh)
+    _, relaxed, _ = _curved_triangle_pair(1.0e-3)
+
+    full, proofs = assert_incremental_matches_full(
+        monkeypatch, relaxed, previous_validity, mesh=mesh
+    )
+
+    assert full.all_certified
+    # The rounded P3 basis gives each cell distinct execution and source maps.
+    assert proofs == len(_cell_maps(full, 1)) == 2
+    assert _cell_maps(full, 0) == _cell_maps(previous_validity, 0)
+
+
+def test_one_ulp_coefficient_change_is_reproved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh, geometry, interior = _curved_triangle_pair(0.0)
+    parent = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    coordinates = np.array(geometry.coordinates, dtype=np.float64)
+    coordinates[interior, 0] = np.nextafter(coordinates[interior, 0], np.inf)
+    nudged = D.CellGeometrySpec(
+        {"cells": geometry.elements[0]},
+        {"cells": np.asarray(geometry.geometry_dofs[0])},
+        coordinates,
+    )
+
+    full, proofs = assert_incremental_matches_full(monkeypatch, nudged, parent, mesh=mesh)
+
+    assert proofs == len(_cell_maps(full, 1))
+    assert _cell_maps(full, 0) == _cell_maps(parent, 0)
+    assert not _cell_maps(full, 1) & _cell_maps(parent, 1)
+
+
+def test_validated_parent_replays_once_before_target_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh, geometry, _ = _curved_triangle_pair(0.0)
+    parent = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    calls = [0]
+    original = validity_module.CellValidityCertificate.revalidate
+
+    def counted(self: Any, *args: Any, **kwargs: Any) -> None:
+        calls[0] += 1
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(validity_module.CellValidityCertificate, "revalidate", counted)
+    validated = validity_module.ValidatedCellValidityParent(parent)
+    assert calls == [1]
+    reused = D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=validated)
+    assert reused.certificate_id == parent.certificate_id
+    assert calls == [1]
+
+
+def test_parent_validity_requires_the_same_policy() -> None:
+    mesh, geometry, _ = _curved_triangle_pair(0.0)
+    parent = D.certify_cell_geometry_validity(
+        geometry,
+        mesh=mesh,
+        policy=D.CellValidityPolicy(relative_determinant_floor=1.0e-6),
+    )
+    with pytest.raises(ValueError, match="same validity policy"):
+        D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=parent)

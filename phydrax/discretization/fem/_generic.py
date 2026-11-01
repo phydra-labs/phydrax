@@ -1173,13 +1173,8 @@ def _coordinate_node_weights(
         raise TypeError("Finite-element DOF points require a scalar coordinate chart.")
     nodes = np.asarray(element.reference_nodes)
     if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
-        return np.stack(
-            tuple(
-                np.asarray(
-                    coordinate_tabulation(coordinate_element, nodes, cell_row=row)[0]
-                )
-                for row in range(cell_count)
-            )
+        return np.asarray(
+            coordinate_element.tabulate_cells(np.arange(cell_count), nodes)[0]
         )
     return np.asarray(coordinate_tabulation(coordinate_element, nodes)[0])
 
@@ -2893,19 +2888,35 @@ def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
 
 
 def _local_stiffness_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
-    if geometry.physical_gradients.ndim == 4:
+    """Contract a bounded cell block before advancing through the mesh."""
+    table = geometry.gradient_table
+    count = geometry.physical_weights.shape[0]
+    if count == 0:
+        width = geometry.reference_gradients.shape[1]
+        return jnp.empty((0, width, width), dtype=geometry.physical_weights.dtype)
+
+    def contract_cell(row: Array) -> Array:
+        if isinstance(table, _StoredGradientTable):
+            gradients = table.values[row]
+        elif isinstance(table, _InverseJacobianGradientTable):
+            gradients = ein.contract(
+                "qid,qki->qkd", table.inverse_jacobian[row], table.reference_gradients
+            )
+        else:
+            restricted = eqx.tree_at(
+                lambda value: value.routes, table, table.routes[row][None]
+            )
+            gradients = restricted()[0]
         return ein.contract(
-            "cq,cqid,cqjd->cij",
-            geometry.physical_weights,
-            geometry.physical_gradients,
-            geometry.physical_gradients,
+            "q,qid,qjd->ij" if gradients.ndim == 3 else "q,qivd,qjvd->ij",
+            geometry.physical_weights[row],
+            gradients,
+            gradients,
         )
-    return ein.contract(
-        "cq,cqivd,cqjvd->cij",
-        geometry.physical_weights,
-        geometry.physical_gradients,
-        geometry.physical_gradients,
-    )
+
+    # The ordering of cells and local entries is unchanged; only independent
+    # cell contractions are blocked. No dense global matrix is formed.
+    return jax.lax.map(contract_cell, jnp.arange(count, dtype=jnp.int32), batch_size=256)
 
 
 _NAMED_REFERENCE_LAYOUTS: dict[str, tuple[str, int]] = {
@@ -3078,16 +3089,11 @@ def _evaluate_coordinate_map(
             or rows.shape[0] != cell_coordinates.shape[0]
         ):
             raise ValueError("Per-cell coordinate rows must align with the cell workset.")
-        tabulations = tuple(
-            coordinate_tabulation(coordinate_element, points, cell_row=row)
-            for row in rows.tolist()
+        geometry_values, geometry_gradients = coordinate_element.tabulate_cells(
+            rows, points
         )
-        geometry_values = precision_policy.geometry(
-            jnp.stack(tuple(value for value, _ in tabulations), axis=0)
-        )
-        geometry_gradients = precision_policy.geometry(
-            jnp.stack(tuple(gradient for _, gradient in tabulations), axis=0)
-        )
+        geometry_values = precision_policy.geometry(geometry_values)
+        geometry_gradients = precision_policy.geometry(geometry_gradients)
     else:
         if cell_rows is not None:
             raise ValueError(
@@ -3106,10 +3112,12 @@ def _evaluate_coordinate_map(
             ein.contract("qir,qid->qdr", geometry_gradients, cell_coordinates),
         )
     if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
-        return _coordinate_map_values(
-            ein.contract("cqi,cid->cqd", geometry_values, cell_coordinates),
-            ein.contract("cqir,cid->cqdr", geometry_gradients, cell_coordinates),
+        _, values = jax.lax.scan(
+            _per_cell_chart_map,
+            None,
+            (geometry_values, geometry_gradients, cell_coordinates),
         )
+        return values
 
     # One shared chart: evaluate cell by cell so the Jacobian inversion's
     # intermediates stay one cell's quadrature wide; only the outputs span the
@@ -3128,6 +3136,16 @@ def _shared_chart_cell_map(
 ]:
     geometry_values, geometry_gradients = charts
     return charts, _coordinate_map_values(
+        ein.contract("qi,id->qd", geometry_values, nodes),
+        ein.contract("qir,id->qdr", geometry_gradients, nodes),
+    )
+
+
+def _per_cell_chart_map(
+    carry: None, cell: tuple[Array, Array, Array], /
+) -> tuple[None, tuple[Array, Array, Array, Array, Array, Array, Array, Array]]:
+    geometry_values, geometry_gradients, nodes = cell
+    return carry, _coordinate_map_values(
         ein.contract("qi,id->qd", geometry_values, nodes),
         ein.contract("qir,id->qdr", geometry_gradients, nodes),
     )
@@ -3371,7 +3389,11 @@ def _assemble_local_operator(
     for cell_dofs, values in zip(dof_map.cell_dofs, local_values, strict=True):
         block_index = len(source_parts)
         transform = dof_map.cell_transforms[block_index]
-        values = ein.contract("cai,cab,cbj->cij", transform, values, transform)
+        values = jax.lax.map(
+            lambda item: ein.contract("ai,ab,bj->ij", item[0], item[1], item[0]),
+            (transform, values),
+            batch_size=256,
+        )
         indices = jnp.asarray(cell_dofs, dtype=jnp.int32)
         width = indices.shape[1]
         components = jnp.arange(component_count, dtype=jnp.int32)

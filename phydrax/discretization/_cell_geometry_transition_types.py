@@ -617,6 +617,8 @@ def exact_linear_combinations(
     for row in coefficients:
         combined: dict[tuple[int, ...], ExactScalar] = {}
         for function, scalar in zip(basis, row, strict=True):
+            if not isinstance(function, dict):
+                return linear_combinations(basis, coefficients)
             if not scalar:
                 continue
             for index, term in function.items():
@@ -635,7 +637,7 @@ def exact_linear_combinations(
 def _structurally_equal_maps(
     input_parts: _CellMapParts,
     mapped_parts: _CellMapParts,
-    arguments: Sequence[Expression],
+    arguments: Sequence[Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial],
     equal_bases: dict[tuple[int, int], bool],
     /,
 ) -> bool:

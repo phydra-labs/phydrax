@@ -28,6 +28,7 @@ tabulation refuses them (collapsed quadrature never samples the apex).
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -53,7 +54,7 @@ from .._geometry_predicates import (
     PredicateSign,
     resolve_host_predicate_mode,
 )
-from .._strict import StrictModule
+from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
 from ..geometry._interval_enclosure import interval_divide
 from ..linalg import (
@@ -102,7 +103,11 @@ from ._coordinate_enclosure import (
     subtract,
     sum_polynomials,
 )
-from ._exact_algebraic_geometry import coefficient_endpoint, coefficient_payload
+from ._exact_algebraic_geometry import (
+    coefficient_endpoint,
+    coefficient_payload,
+    RadicalElement,
+)
 from ._reference_cell import reference_cell_topology
 from .fem._reference import FiniteElementSpec
 
@@ -323,6 +328,12 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     has physical-coordinate units. ``maximum_element_coefficient_rounding_error``
     is dimensionless and describes element-basis coefficient shadows. Neither
     quantity estimates whole-map or Jacobian error.
+
+    ``cell_map_digests`` names, per cell, the exact execution and source
+    coordinate maps (cell kind and exact coefficients in their stored order)
+    those proofs answer: ``cells x 2 x 16`` bytes, all-zero where no map record
+    exists. It is not identity-bearing; ``certify_cell_geometry_validity(...,
+    parent=...)`` reuses a cell's proof only for an identical digest.
     """
 
     status: Array
@@ -352,9 +363,50 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     topology_id: str | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
+    cell_map_digests: bytes = eqx.field(static=True)
 
     def __init__(
         self,
+        geometry: CellGeometrySpec | CellMesh,
+        /,
+        *,
+        mesh: CellMesh | None = None,
+        policy: CellValidityPolicy | None = None,
+    ) -> None:
+        """Compute validity; caller-supplied statuses are not proof premises."""
+        computed = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
+        self.execution_status = computed.execution_status
+        self.status = computed.status
+        self.determinant_lower = computed.determinant_lower
+        self.determinant_upper = computed.determinant_upper
+        self.depth = computed.depth
+        self.source_status = computed.source_status
+        self.source_determinant_lower = computed.source_determinant_lower
+        self.source_determinant_upper = computed.source_determinant_upper
+        self.source_depth = computed.source_depth
+        self.maximum_coefficient_rounding_error = computed.maximum_coefficient_rounding_error
+        self.maximum_element_coefficient_rounding_error = computed.maximum_element_coefficient_rounding_error
+        self.apex_derivative_unique = computed.apex_derivative_unique
+        self.geometry = computed.geometry
+        self.mesh = computed.mesh
+        self.policy = computed.policy
+        self.block_names = computed.block_names
+        self.block_offsets = computed.block_offsets
+        self.unsupported_block_names = computed.unsupported_block_names
+        self.certified_valid_count = computed.certified_valid_count
+        self.invalid_count = computed.invalid_count
+        self.unresolved_count = computed.unresolved_count
+        self.geometry_id = computed.geometry_id
+        self.geometry_layout_id = computed.geometry_layout_id
+        self.mesh_id = computed.mesh_id
+        self.topology_id = computed.topology_id
+        self.policy_id = computed.policy_id
+        self.certificate_id = computed.certificate_id
+        self.cell_map_digests = computed.cell_map_digests
+
+    @classmethod
+    def _from_computed(
+        cls,
         status: ConvertibleToArray,
         determinant_lower: ConvertibleToArray,
         determinant_upper: ConvertibleToArray,
@@ -374,7 +426,8 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         geometry_id: str,
         geometry_layout_id: str,
         policy_id: str,
-    ) -> None:
+        cell_map_digests: bytes | None = None,
+    ) -> CellValidityCertificate:
         execution = _normalize_proof_arrays(
             status, determinant_lower, determinant_upper, depth
         )
@@ -440,6 +493,13 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             )
         if not set(unsupported) <= set(names):
             raise ValueError("Unsupported validity blocks must be certificate blocks.")
+        digest_bytes = 2 * _MAP_DIGEST_SIZE * status_.size
+        if cell_map_digests is None:
+            cell_map_digests = bytes(digest_bytes)
+        if type(cell_map_digests) is not bytes or len(cell_map_digests) != digest_bytes:
+            raise ValueError(
+                "Cell map digests must be one execution and one source digest per cell."
+            )
         geometry_id_ = cell_geometry_id(geometry)
         if (
             geometry_id_ != geometry_id
@@ -455,60 +515,56 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             raise ValueError(
                 "Validity block names must follow the bound mesh block order."
             )
-        self.execution_status = jnp.asarray(execution.status)
-        self.status = (
-            self.execution_status if status_ is execution.status else jnp.asarray(status_)
-        )
-        self.determinant_lower = jnp.asarray(lower)
-        self.determinant_upper = jnp.asarray(upper)
-        self.depth = jnp.asarray(depth_)
-        self.source_status = (
-            self.execution_status
+        execution_status = jnp.asarray(execution.status)
+        values = {
+            "execution_status": execution_status,
+            "status": execution_status
+            if status_ is execution.status
+            else jnp.asarray(status_),
+            "determinant_lower": jnp.asarray(lower),
+            "determinant_upper": jnp.asarray(upper),
+            "depth": jnp.asarray(depth_),
+            "source_status": execution_status
             if source.status is execution.status
-            else jnp.asarray(source.status)
-        )
-        self.source_determinant_lower = (
-            self.determinant_lower if source.lower is lower else jnp.asarray(source.lower)
-        )
-        self.source_determinant_upper = (
-            self.determinant_upper if source.upper is upper else jnp.asarray(source.upper)
-        )
-        self.source_depth = (
-            self.depth if source.depth is depth_ else jnp.asarray(source.depth)
-        )
-        self.maximum_coefficient_rounding_error = jnp.asarray(
-            rounding_error, dtype=jnp.float64
-        )
-        self.maximum_element_coefficient_rounding_error = jnp.asarray(
-            element_rounding_error, dtype=jnp.float64
-        )
-        self.apex_derivative_unique = jnp.asarray(apex_unique, dtype=jnp.bool_)
-        self.geometry = geometry
-        self.mesh = mesh
-        self.policy = policy
-        self.block_names = names
-        self.block_offsets = offsets
-        self.unsupported_block_names = unsupported
-        self.certified_valid_count = int(
-            np.count_nonzero(status_ == CellValidityStatus.CERTIFIED_VALID)
-        )
-        self.invalid_count = int(np.count_nonzero(status_ == CellValidityStatus.INVALID))
-        self.unresolved_count = int(
-            np.count_nonzero(status_ == CellValidityStatus.UNRESOLVED)
-        )
-        self.geometry_id = geometry_id_
-        self.geometry_layout_id = geometry_layout_id
-        self.mesh_id = mesh_id_
-        self.topology_id = topology_id_
-        self.policy_id = policy_id
-        self.certificate_id = canonical_fingerprint(
+            else jnp.asarray(source.status),
+            "source_determinant_lower": jnp.asarray(source.lower),
+            "source_determinant_upper": jnp.asarray(source.upper),
+            "source_depth": jnp.asarray(source.depth),
+            "maximum_coefficient_rounding_error": jnp.asarray(
+                rounding_error, dtype=jnp.float64
+            ),
+            "maximum_element_coefficient_rounding_error": jnp.asarray(
+                element_rounding_error, dtype=jnp.float64
+            ),
+            "apex_derivative_unique": jnp.asarray(apex_unique, dtype=jnp.bool_),
+            "geometry": geometry,
+            "mesh": mesh,
+            "policy": policy,
+            "block_names": names,
+            "block_offsets": offsets,
+            "unsupported_block_names": unsupported,
+            "certified_valid_count": int(
+                np.count_nonzero(status_ == CellValidityStatus.CERTIFIED_VALID)
+            ),
+            "invalid_count": int(np.count_nonzero(status_ == CellValidityStatus.INVALID)),
+            "unresolved_count": int(
+                np.count_nonzero(status_ == CellValidityStatus.UNRESOLVED)
+            ),
+            "geometry_id": geometry_id_,
+            "geometry_layout_id": geometry_layout_id,
+            "mesh_id": mesh_id_,
+            "topology_id": topology_id_,
+            "policy_id": policy_id,
+            "cell_map_digests": cell_map_digests,
+        }
+        values["certificate_id"] = canonical_fingerprint(
             {
                 "kind": "cell-validity-certificate",
                 "geometry": geometry_id_,
-                "geometry_layout": self.geometry_layout_id,
+                "geometry_layout": geometry_layout_id,
                 "mesh": mesh_id_,
                 "topology": topology_id_,
-                "policy": self.policy_id,
+                "policy": policy_id,
                 "blocks": names,
                 "block_offsets": offsets,
                 "unsupported": unsupported,
@@ -525,6 +581,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
                 "maximum_element_coefficient_rounding_error": element_rounding_error,
             }
         )
+        return reconstruct_strict(cls, values)
 
     @classmethod
     def from_stored_fields(
@@ -650,10 +707,16 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         """Recompute both proofs; stored identities are not proof authority."""
         self.require_bound(geometry, mesh=mesh)
         fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
-        if fresh.certificate_id != self.certificate_id:
+        if (
+            fresh.certificate_id != self.certificate_id
+            or fresh.cell_map_digests != self.cell_map_digests
+        ):
             raise ValueError(
                 "Validity certificate does not reproduce the current mathematical proof."
             )
+
+
+register_strict_reconstruction(CellValidityCertificate)
 
 
 _EPSILON = float(np.finfo(np.float64).eps)
@@ -1849,17 +1912,75 @@ def _certify_nonlinear_source_map(
     return margin_certificate[0], lower, upper, max(depth, margin_certificate[3])
 
 
+# One cell's proof (status, determinant lower/upper endpoint, depth) is a pure
+# function of its exact coordinate map, cell kind and validity policy.
+type _CellProof = tuple[int, float, float, int]
+type _CellProofs = dict[bytes, _CellProof]
+_MAP_DIGEST_SIZE = 16
+
+
+def _polynomial_digest_terms(
+    polynomial: Mapping[tuple[int, ...], ExactScalar], parts: list[object], /
+) -> bool:
+    parts.append(len(polynomial))
+    for exponent, coefficient in polynomial.items():
+        if type(coefficient) is Fraction:
+            parts.append((exponent, coefficient.numerator, coefficient.denominator))
+        elif type(coefficient) is RadicalElement:
+            parts.append((exponent, "radical", coefficient.terms))
+        else:
+            return False
+    return True
+
+
+def _map_digest(cell_kind: str, expressions: tuple[Expression, ...], /) -> bytes | None:
+    """Digest a cell's exact coordinate map, or ``None`` when it has no record.
+
+    Coefficients are encoded with their exact type and in stored order, so an
+    equal digest means the prover receives identical operands.
+    """
+    parts: list[object] = [cell_kind, len(expressions)]
+    for expression in expressions:
+        if isinstance(expression, RationalPolynomial):
+            parts.append("rational")
+            if not _polynomial_digest_terms(
+                expression.numerator, parts
+            ) or not _polynomial_digest_terms(expression.denominator, parts):
+                return None
+        else:
+            parts.append("polynomial")
+            if not _polynomial_digest_terms(expression, parts):
+                return None
+    return hashlib.blake2b(
+        repr(parts).encode("ascii"), digest_size=_MAP_DIGEST_SIZE
+    ).digest()
+
+
+def _pyramid_apex_unique(expressions: tuple[Expression, ...], dimension: int, /) -> bool:
+    return all(
+        normalize_pyramid_reference_derivative(expression, axis).apex_value is not None
+        for expression in expressions
+        for axis in range(dimension)
+    )
+
+
 def _certify_source_block(
     element: ScalarCoordinateElement,
     cell_kind: str,
     coordinates: CoordinateSourceBank,
     routes: NDArray[np.int64],
     policy: CellValidityPolicy,
+    proofs: _CellProofs,
     /,
     *,
     execution_map: bool = False,
-) -> tuple[_BlockCertificate, bool]:
-    """Prove an exact-source or binary64-shadow coordinate map."""
+) -> tuple[_BlockCertificate, bool, NDArray[np.uint8]]:
+    """Prove an exact-source or binary64-shadow coordinate map.
+
+    ``proofs`` holds proofs of ``policy`` keyed by exact map digest; a cell
+    whose map is recorded there reuses its proof, and every proof made here
+    is recorded. Also returns each cell's map digest (zero when unrecorded).
+    """
     count = routes.shape[0]
     dimension = reference_cell_topology(cell_kind).dimension
     status = np.full(count, CellValidityStatus.UNRESOLVED, dtype=np.int32)
@@ -1867,6 +1988,7 @@ def _certify_source_block(
     upper = np.full(count, np.nan, dtype=np.float64)
     depth = np.zeros(count, dtype=np.int64)
     apex_unique = np.ones(count, dtype=np.bool_)
+    digests = np.zeros((count, _MAP_DIGEST_SIZE), dtype=np.uint8)
     pyramid = reference_cell_topology(cell_kind).family == "pyramid"
     domain = _source_proof_domain(cell_kind)
     has_unsupported_map = False
@@ -1879,6 +2001,17 @@ def _certify_source_block(
             if execution_map
             else coordinate_map_expressions(element, local, cell_row=row)
         )
+        # Without a proof domain an unsupported nonaffine map is reported, so
+        # only maps with a domain carry reusable records.
+        digest = None if domain is None else _map_digest(cell_kind, expressions)
+        if digest is not None:
+            digests[row] = np.frombuffer(digest, dtype=np.uint8)
+            recorded = proofs.get(digest)
+            if recorded is not None:
+                status[row], lower[row], upper[row], depth[row] = recorded
+                if pyramid and affine_map(expressions, dimension) is None:
+                    apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
+                continue
         affine = affine_map(expressions, dimension)
         if affine is None:
             if domain is None:
@@ -1890,21 +2023,94 @@ def _certify_source_block(
                 )
             )
             if pyramid:
-                apex_unique[row] = all(
-                    normalize_pyramid_reference_derivative(expression, axis).apex_value
-                    is not None
-                    for expression in expressions
-                    for axis in range(dimension)
-                )
-            continue
-        _, jacobian = affine
-        status[row], determinant = _affine_quality(jacobian, dimension, policy)
-        lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
-        upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
+                apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
+        else:
+            _, jacobian = affine
+            status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
+            upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
+        if digest is not None:
+            proofs[digest] = (
+                int(status[row]),
+                float(lower[row]),
+                float(upper[row]),
+                int(depth[row]),
+            )
     return (
         _BlockCertificate(status, lower, upper, depth, apex_unique),
         has_unsupported_map,
+        digests,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedCellValidityParent:
+    """Host-only mathematical replay of one parent validity proof."""
+
+    certificate: CellValidityCertificate
+
+    def __post_init__(self) -> None:
+        self.certificate.revalidate(self.certificate.geometry, mesh=self.certificate.mesh)
+
+
+def _parent_proofs(
+    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None,
+    policy: CellValidityPolicy,
+    /,
+) -> _CellProofs:
+    """Index the recorded execution and source proofs of parent certificates."""
+    match parent:
+        case None:
+            parents: tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] = ()
+        case CellValidityCertificate() | ValidatedCellValidityParent():
+            parents = (parent,)
+        case tuple():
+            parents = parent
+        case _:
+            raise TypeError(
+                "parent must be CellValidityCertificate, a tuple of them, or None."
+            )
+    proofs: _CellProofs = {}
+    for value in parents:
+        if type(value) is ValidatedCellValidityParent:
+            certificate = value.certificate
+            certificate.require_current(certificate.geometry, mesh=certificate.mesh)
+        elif type(value) is CellValidityCertificate:
+            certificate = value
+            certificate.revalidate(certificate.geometry, mesh=certificate.mesh)
+        else:
+            raise TypeError("parent must hold exact validity certificates or validations.")
+        if certificate.policy_id != policy.policy_id:
+            raise ValueError("Parent validity proofs must use the same validity policy.")
+        table = np.frombuffer(certificate.cell_map_digests, dtype=np.uint8).reshape(
+            -1, 2, _MAP_DIGEST_SIZE
+        )
+        for column, arrays in enumerate(
+            (
+                (
+                    certificate.execution_status,
+                    certificate.determinant_lower,
+                    certificate.determinant_upper,
+                    certificate.depth,
+                ),
+                (
+                    certificate.source_status,
+                    certificate.source_determinant_lower,
+                    certificate.source_determinant_upper,
+                    certificate.source_depth,
+                ),
+            )
+        ):
+            digests = table[:, column]
+            rows = np.flatnonzero(np.any(digests != 0, axis=1))
+            status, lower, upper, depth = (
+                np.asarray(value)[rows].tolist() for value in arrays
+            )
+            for row, values in zip(
+                rows.tolist(), zip(status, lower, upper, depth, strict=True), strict=True
+            ):
+                proofs.setdefault(digests[row].tobytes(), values)
+    return proofs
 
 
 def _polynomial_coefficient_difference(
@@ -2321,17 +2527,25 @@ def certify_cell_geometry_validity(
     *,
     mesh: CellMesh | None = None,
     policy: CellValidityPolicy | None = None,
+    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None = None,
 ) -> CellValidityCertificate:
     """Certify determinant positivity of every mapped cell with Bernstein bounds.
 
     A ``CellMesh`` is certified with its affine vertex geometry. A
     ``CellGeometrySpec`` is certified in mesh block order when ``mesh`` is given
     (required for polyhedral blocks) and in its own sorted block order otherwise.
+
+    ``parent`` passes earlier certificates of the same ``policy`` explicitly. A
+    cell whose exact coordinate map (cell kind and exact coefficients) equals a
+    map a parent proved reuses that recorded proof, matched by map digest and
+    never by cell index; every other cell is proved. The result is identical
+    to the certificate of a full proof.
     """
 
     policy_ = CellValidityPolicy() if policy is None else policy
     if not isinstance(policy_, CellValidityPolicy):
         raise TypeError("policy must be CellValidityPolicy or None.")
+    proofs = _parent_proofs(parent, policy_)
     if isinstance(geometry, CellMesh):
         if mesh is not None:
             raise ValueError("mesh is implied when certifying a CellMesh.")
@@ -2409,6 +2623,9 @@ def certify_cell_geometry_validity(
     offsets = [0]
     blocks: list[_BlockCertificate] = []
     source_blocks: list[_BlockCertificate] = []
+    digests = np.zeros(
+        (sum(route.shape[0] for route in routes), 2, _MAP_DIGEST_SIZE), dtype=np.uint8
+    )
     for name, kind, element, route in zip(names, kinds, elements, routes, strict=True):
         cell_count = route.shape[0]
         if isinstance(element, CellVertexGeometryElement) and kind == "polygon":
@@ -2438,12 +2655,13 @@ def certify_cell_geometry_validity(
             )
         elif isinstance(element, ScalarCoordinateElement):
             try:
-                certificate, has_unsupported_map = _certify_source_block(
+                certificate, has_unsupported_map, block_digests = _certify_source_block(
                     element,
                     kind,
                     execution_coordinates,
                     route,
                     policy_,
+                    proofs,
                     execution_map=True,
                 )
             except (OverflowError, TypeError, ValueError):
@@ -2454,6 +2672,8 @@ def certify_cell_geometry_validity(
                     np.full((cell_count,), np.nan),
                     np.zeros((cell_count,), dtype=np.int64),
                 )
+            else:
+                digests[cursor : cursor + cell_count, 0] = block_digests
             blocks.append(certificate)
             if has_unsupported_map:
                 unsupported.add(name)
@@ -2470,8 +2690,10 @@ def certify_cell_geometry_validity(
         if distinct_source:
             if isinstance(element, ScalarCoordinateElement):
                 try:
-                    source_certificate, source_unsupported = _certify_source_block(
-                        element, kind, source_bank, route, policy_
+                    source_certificate, source_unsupported, block_digests = (
+                        _certify_source_block(
+                            element, kind, source_bank, route, policy_, proofs
+                        )
                     )
                 except (OverflowError, TypeError, ValueError):
                     source_unsupported = True
@@ -2481,6 +2703,8 @@ def certify_cell_geometry_validity(
                         np.full((cell_count,), np.nan),
                         np.zeros((cell_count,), dtype=np.int64),
                     )
+                else:
+                    digests[cursor : cursor + cell_count, 1] = block_digests
                 if source_unsupported:
                     unsupported.add(name)
             elif (
@@ -2527,7 +2751,9 @@ def certify_cell_geometry_validity(
         if distinct_source
         else execution_proof
     )
-    return CellValidityCertificate(
+    if not distinct_source:
+        digests[:, 1] = digests[:, 0]
+    return CellValidityCertificate._from_computed(
         execution_proof.status,
         execution_proof.lower,
         execution_proof.upper,
@@ -2549,6 +2775,7 @@ def certify_cell_geometry_validity(
         geometry_id=cell_geometry_id(spec),
         geometry_layout_id=spec.geometry_layout_id,
         policy_id=policy_.policy_id,
+        cell_map_digests=digests.tobytes(),
     )
 
 

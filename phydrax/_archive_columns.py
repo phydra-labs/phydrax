@@ -15,7 +15,6 @@ exactly the original tuple.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Hashable
 from fractions import Fraction
 from typing import Any, NamedTuple
@@ -102,7 +101,7 @@ class TextColumnArchiveRecipe(NamedTuple):
             ends.size
             and (
                 int(ends[0]) < 0
-                or np.any(np.diff(ends) < 0)
+                or np.any(ends[1:] < ends[:-1])
                 or int(ends[-1]) != data.size
             )
         ):
@@ -160,8 +159,45 @@ class IntegerRowsArchiveRecipe(NamedTuple):
         ):
             raise ValueError("Integer row ends must partition their values.")
         return tuple(
-            values[start:end] for start, end in zip((0, *ends[:-1]), ends, strict=True)
+            values[start:end] for start, end in zip((0, *ends)[:-1], ends, strict=True)
         )
+
+
+class TextRowsArchiveRecipe(NamedTuple):
+    """Variable-length text rows with a first-occurrence UTF-8 value table."""
+
+    table: TextColumnArchiveRecipe
+    rows: IntegerRowsArchiveRecipe
+
+    @classmethod
+    def encode(cls, rows: tuple[tuple[str, ...], ...], /) -> TextRowsArchiveRecipe:
+        if any(not isinstance(row, tuple) for row in rows):
+            raise TypeError("Text rows must be tuples.")
+        column = StaticColumnArchiveRecipe.encode(
+            tuple(value for row in rows for value in row)
+        )
+        ends = np.cumsum(
+            np.asarray([len(row) for row in rows], dtype=np.int64), dtype=np.int64
+        )
+        return cls(
+            TextColumnArchiveRecipe.encode(column.table),
+            IntegerRowsArchiveRecipe(column.rows, ends),
+        )
+
+    def decode(self) -> tuple[tuple[str, ...], ...]:
+        if (
+            type(self.table) is not TextColumnArchiveRecipe
+            or type(self.rows) is not IntegerRowsArchiveRecipe
+        ):
+            raise TypeError("Text rows require their exact table and row recipes.")
+        rows = self.rows.decode()
+        values = StaticColumnArchiveRecipe(self.table.decode(), self.rows.values).decode()
+        position = 0
+        result = []
+        for row in rows:
+            result.append(values[position : position + len(row)])
+            position += len(row)
+        return tuple(result)
 
 
 class ExactTensorArchiveRecipe(NamedTuple):
@@ -201,6 +237,16 @@ class ExactTensorArchiveRecipe(NamedTuple):
                 visit(child, depth + 1)
 
         visit(value, 0)
+        if not leaves:
+            # Empty inner dimensions still create outer tuple objects on decode.
+            # Store one empty sentinel per such object so the archive carries
+            # proportional evidence for every allocation it asks us to make.
+            extent = 1
+            containers = 0
+            for size in shape:
+                containers += extent
+                extent *= size
+            leaves = [""] * containers
         return cls(TextColumnArchiveRecipe.encode(tuple(leaves)), tuple(shape), rational)
 
     def decode(self) -> tuple[Any, ...]:
@@ -212,11 +258,21 @@ class ExactTensorArchiveRecipe(NamedTuple):
         if not self.shape or type(self.rational) is not bool:
             raise TypeError("Exact tensor must be a tuple with one exact leaf type.")
         texts = self.text.decode()
-        if len(texts) != math.prod(self.shape):
-            raise ValueError("Exact tensor text does not match its shape.")
-        leaves = [Fraction(text) if self.rational else int(text) for text in texts]
-        if any(str(leaf) != text for leaf, text in zip(leaves, texts, strict=True)):
-            raise ValueError("Exact tensor text must be canonical.")
+        extent = 1
+        containers = 0
+        for size in self.shape:
+            containers += extent
+            extent *= size
+        if extent == 0:
+            if len(texts) != containers or any(texts):
+                raise ValueError("Empty exact tensor has invalid container evidence.")
+            leaves = []
+        else:
+            if len(texts) != extent:
+                raise ValueError("Exact tensor text does not match its shape.")
+            leaves = [Fraction(text) if self.rational else int(text) for text in texts]
+            if any(str(leaf) != text for leaf, text in zip(leaves, texts, strict=True)):
+                raise ValueError("Exact tensor text must be canonical.")
         position = 0
 
         def build(depth: int, /) -> Any:
@@ -236,4 +292,5 @@ __all__ = [
     "IntegerRowsArchiveRecipe",
     "StaticColumnArchiveRecipe",
     "TextColumnArchiveRecipe",
+    "TextRowsArchiveRecipe",
 ]

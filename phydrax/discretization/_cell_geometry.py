@@ -1707,10 +1707,25 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
         sources = _canonical_cell_id_tuple(source_cell_ids, "source_cell_ids")
         target_dimension = reference_cell_topology(target_cell_kind).dimension
         source_dimension = reference_cell_topology(source_element.cell_kind).dimension
-        charts = tuple(
-            _canonical_rational_chart_arguments(value, target_dimension)
-            for value in chart_arguments
-        )
+        # Repeated refinement templates share their immutable exact coefficients.
+        # This is call-local numeric storage, not a cache of proof verdicts.
+        canonical_by_identity: dict[
+            int, tuple[Sequence[ExpressionInput], tuple[_ExactRationalChartTerms, ...]]
+        ] = {}
+        distinct_charts: dict[
+            tuple[_ExactRationalChartTerms, ...], tuple[_ExactRationalChartTerms, ...]
+        ] = {}
+        chart_rows: list[tuple[_ExactRationalChartTerms, ...]] = []
+        for value in chart_arguments:
+            retained = canonical_by_identity.get(id(value))
+            if retained is None:
+                canonical = _canonical_rational_chart_arguments(value, target_dimension)
+                canonical = distinct_charts.setdefault(canonical, canonical)
+                canonical_by_identity[id(value)] = (value, canonical)
+            else:
+                canonical = retained[1]
+            chart_rows.append(canonical)
+        charts = tuple(chart_rows)
         if (
             not targets
             or len(set(targets)) != len(targets)

@@ -2622,13 +2622,14 @@ def _certify_cells(
     environment: _Environment,
     policy: BoundaryLayerPolicy,
     /,
-) -> tuple[dict[str, np.ndarray], int]:
-    """Invalid or intersecting new cells (per kind masks) and certified hit count."""
+) -> tuple[dict[str, np.ndarray], int, CellValidityCertificate | None]:
+    """Invalid or intersecting new cells (per kind masks), certified hit count and
+    the validity certificate of the new cells (``None`` without new cells)."""
     bad = {
         name: np.zeros((rows.shape[0],), dtype=np.bool_) for name, rows in cells.items()
     }
     if not any(rows.size for rows in cells.values()):
-        return bad, 0
+        return bad, 0, None
     mesh, _ = _cell_mesh(points, cells)
     certificate = certify_cell_geometry_validity(mesh, policy=policy.validity)
     status = np.asarray(certificate.status)
@@ -2697,7 +2698,7 @@ def _certify_cells(
             for kind_index, name in enumerate(_VOLUME_KINDS):
                 selected = new_owners[index[new_kinds[index] == kind_index]]
                 bad[name][selected] = True
-    return bad, count
+    return bad, count, certificate
 
 
 # ---------------------------------------------------------------- merge template
@@ -2786,6 +2787,8 @@ class _Resolution:
     points: np.ndarray
     detected: int
     iterations: int
+    # Validity proofs of the accepted layers' cells, reused by assembly.
+    validity: tuple[CellValidityCertificate, ...]
 
 
 def _initial_columns(
@@ -2913,6 +2916,7 @@ def _grow_layers(
     while True:
         accepted: list[dict[str, np.ndarray]] = []
         accepted_columns: list[dict[str, np.ndarray]] = []
+        accepted_validity: list[CellValidityCertificate] = []
         points = _positions(front, columns, wall.points)
         rows, arity, source_columns = _front_rows(front, columns)
         for layer in range(layers):
@@ -2923,14 +2927,24 @@ def _grow_layers(
                 _level_ids(front, columns, base, layer + 1),
                 source_columns,
             )
-            bad, hits = _certify_cells(points, cells, accepted, environment, policy)
+            bad, hits, certificate = _certify_cells(
+                points, cells, accepted, environment, policy
+            )
             if any(np.any(mask) for mask in bad.values()):
                 break
             accepted.append(cells)
             accepted_columns.append(cell_columns)
+            if certificate is not None:
+                accepted_validity.append(certificate)
         else:
             return _Resolution(
-                columns, accepted, accepted_columns, points, detected, iterations
+                columns,
+                accepted,
+                accepted_columns,
+                points,
+                detected,
+                iterations,
+                tuple(accepted_validity),
             )
         iterations += 1
         offending = np.unique(
@@ -3054,13 +3068,19 @@ def _cap_pyramids(
     environment: _Environment,
     policy: BoundaryLayerPolicy,
     /,
-) -> tuple[np.ndarray, dict[str, np.ndarray], np.ndarray, np.ndarray]:
+) -> tuple[
+    np.ndarray,
+    dict[str, np.ndarray],
+    np.ndarray,
+    np.ndarray,
+    tuple[CellValidityCertificate, ...],
+]:
     quads = cap[arity == 4]
     empty = {
         name: np.empty((0, _CELL_ARITY[name]), dtype=np.int64) for name in _VOLUME_KINDS
     }
     if not quads.size:
-        return points, empty, cap, arity
+        return points, empty, cap, arity, ()
     corners = points[quads]
     normal, _ = _newell_normals(points, quads, np.full((quads.shape[0],), 4))
     edge = np.linalg.norm(corners - np.roll(corners, -1, axis=1), axis=2)
@@ -3074,7 +3094,9 @@ def _cap_pyramids(
         pyramids = np.concatenate((quads[:, (0, 1, 2, 3)], apex_ids[:, None]), axis=1)
         cells = dict(empty)
         cells["pyramid"] = pyramids
-        bad, _ = _certify_cells(candidate, cells, accepted, environment, policy)
+        bad, _, certificate = _certify_cells(
+            candidate, cells, accepted, environment, policy
+        )
         if not np.any(bad["pyramid"]):
             sides = np.concatenate(
                 [
@@ -3089,7 +3111,13 @@ def _cap_pyramids(
                     np.pad(sides, ((0, 0), (0, 1)), constant_values=-1),
                 )
             )
-            return candidate, cells, faces, np.full((faces.shape[0],), 3)
+            return (
+                candidate,
+                cells,
+                faces,
+                np.full((faces.shape[0],), 3),
+                () if certificate is None else (certificate,),
+            )
         reduced = np.where(bad["pyramid"], 0.5 * height, height)
         if np.any(bad["pyramid"] & ((reduced == height) | (reduced == 0.0))):
             raise _failure(
@@ -3387,9 +3415,10 @@ def _assemble(
         name: np.empty((0, _CELL_ARITY[name]), dtype=np.int64) for name in _VOLUME_KINDS
     }
     pyramid_columns = np.empty((0,), dtype=np.int64)
+    pyramid_validity: tuple[CellValidityCertificate, ...] = ()
     if policy.simplex_cap:
         pyramid_columns = cap_columns[cap_arity == 4]
-        all_points, pyramids, cap, cap_arity = _cap_pyramids(
+        all_points, pyramids, cap, cap_arity, pyramid_validity = _cap_pyramids(
             all_points, cap, cap_arity, resolution.cells, environment, policy
         )
     cells = {}
@@ -3413,7 +3442,12 @@ def _assemble(
     mesh, used = _cell_mesh(all_points, cells)
     remap = np.full((all_points.shape[0],), -1, dtype=np.int64)
     remap[used] = np.arange(used.size)
-    certificate = certify_cell_geometry_validity(mesh, policy=policy.validity)
+    # Layer and pyramid cells keep the exact maps their acceptance proved.
+    certificate = certify_cell_geometry_validity(
+        mesh,
+        policy=policy.validity,
+        parent=resolution.validity + pyramid_validity,
+    )
     invalid = np.asarray(certificate.status) != int(CellValidityStatus.CERTIFIED_VALID)
     if np.any(invalid):
         offsets = np.cumsum([0, *(cells[name].shape[0] for name in _VOLUME_KINDS)])

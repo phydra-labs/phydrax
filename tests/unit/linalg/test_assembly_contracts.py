@@ -14,6 +14,25 @@ import phydrax as phx
 la = phx.linalg
 
 
+def test_sparse_assembly_defaults_follow_index_representability() -> None:
+    from phydrax.linalg._assembly import _check_contribution_budget
+
+    policy = la.SparseAssemblyPolicy()
+    # Ordinary FE assemblies may exceed historical logistics defaults.
+    assert policy.max_nnz > 1_000_000
+    _check_contribution_budget(policy, 4_000_001, arrays=8)
+    # Explicit caller limits remain effective.
+    with pytest.raises(la.LinearCapabilityError, match="symbolic contributions"):
+        _check_contribution_budget(
+            la.SparseAssemblyPolicy(max_contributions=4), 5, arrays=8
+        )
+    # Safety is independent of even an explicitly oversized caller limit.
+    with pytest.raises(la.LinearCapabilityError, match="32-bit contribution"):
+        _check_contribution_budget(
+            la.SparseAssemblyPolicy(max_contributions=2**40), 2**31, arrays=8
+        )
+
+
 def _materialized_diagonal(operator: la.AbstractLinearOperator) -> jax.Array:
     matrix = la.materialize(
         operator,

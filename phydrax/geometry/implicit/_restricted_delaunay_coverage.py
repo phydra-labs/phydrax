@@ -1077,9 +1077,7 @@ def validate_restricted_delaunay_boundary_witness(
     from ...discretization._cell_geometry_validity import (
         certify_cell_geometry_validity,
     )
-    from ...discretization._coordinate_enclosure import affine_map
-    from ...discretization._reference_cell import reference_cell_topology
-    from .._domain_numerics import cell_coordinate_expressions, evaluate_map
+    from .._embedding_cells import _iter_embedding_cells, UnsupportedEmbeddingMap
     from .._global_embedding import (
         certify_global_embedding,
         GlobalEmbeddingCertificate as EmbeddingCertificate,
@@ -1267,42 +1265,34 @@ def validate_restricted_delaunay_boundary_witness(
             "Target tetrahedron vertex rows do not align with all target cells.",
             status="violated",
         )
-    coordinate_maps = cell_coordinate_expressions(mesh, geometry)
-    reference_vertices = np.asarray(
-        reference_cell_topology("tetrahedron").vertices, dtype=np.float64
-    )
-    if len(coordinate_maps) != target_cell_count:
-        raise _unavailable(
-            "restricted_target_geometry",
-            "Target physical cell maps do not align with tetrahedron ancestry.",
-            status="violated",
-        )
-    physical_cell_points: list[tuple[ReferencePoint3, ...]] = []
     target_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
-    for row in range(target_cell_count):
-        expressions = coordinate_maps[row]
-        if expressions is None or affine_map(expressions, 3) is None:
-            raise _unavailable(
-                "restricted_target_map",
-                f"Target tetrahedron {row} has unsupported non-affine or unavailable coordinate-map evidence.",
+    exact_vertices = tuple(_fraction_point(point) for point in target_coordinates)
+    validated_cell_count = 0
+    try:
+        for row, cell in enumerate(_iter_embedding_cells(mesh, geometry)):
+            if not cell.affine:
+                raise _unavailable(
+                    "restricted_target_map",
+                    f"Target tetrahedron {row} has unsupported non-affine or unavailable coordinate-map evidence.",
+                )
+            expected = tuple(
+                exact_vertices[int(vertex)] for vertex in output_cell_rows[row]
             )
-        mapped_points: list[ReferencePoint3] = []
-        for local_vertex in range(4):
-            vertex_row = int(output_cell_rows[row, local_vertex])
-            reference = tuple(
-                Fraction(float(reference_vertices[local_vertex, axis]))
-                for axis in range(3)
-            )
-            mapped = evaluate_map(expressions, reference)
-            expected = _fraction_point(target_coordinates[int(vertex_row)])
-            if mapped != expected:
+            if cell.corner_images != expected:
                 raise _unavailable(
                     "restricted_target_geometry",
                     f"Target tetrahedron {row} does not realize its exact mesh-coordinate vertex map.",
                     status="violated",
                 )
-            mapped_points.append(expected)
-        physical_cell_points.append(tuple(mapped_points))
+            validated_cell_count += 1
+    except UnsupportedEmbeddingMap as error:
+        raise _unavailable("restricted_target_map", str(error)) from error
+    if validated_cell_count != target_cell_count:
+        raise _unavailable(
+            "restricted_target_geometry",
+            "Target physical cell maps do not align with tetrahedron ancestry.",
+            status="violated",
+        )
 
     interior_lower, interior_upper = profile.field_bounds.point_values(
         np.asarray(profile.interior_witness, dtype=np.float64).reshape((1, 3))
@@ -1417,9 +1407,9 @@ def validate_restricted_delaunay_boundary_witness(
             )
         owner_cell = owners[face_row][0]
         triangle: tuple[ReferencePoint3, ReferencePoint3, ReferencePoint3] = (
-            _fraction_point(target_coordinates[raw_vertices[0]]),
-            _fraction_point(target_coordinates[raw_vertices[1]]),
-            _fraction_point(target_coordinates[raw_vertices[2]]),
+            exact_vertices[raw_vertices[0]],
+            exact_vertices[raw_vertices[1]],
+            exact_vertices[raw_vertices[2]],
         )
         first_edge = _subtract3(triangle[1], triangle[0])
         second_edge = _subtract3(triangle[2], triangle[0])
@@ -1430,7 +1420,9 @@ def validate_restricted_delaunay_boundary_witness(
                 f"Target boundary face {int(boundary_ids[boundary_position])} is exactly degenerate.",
                 status="violated",
             )
-        cell_points = physical_cell_points[owner_cell]
+        cell_points = tuple(
+            exact_vertices[int(vertex)] for vertex in output_cell_rows[owner_cell]
+        )
         cell_center: ReferencePoint3 = (
             sum((cell_points[index][0] for index in range(4)), Fraction(0)) / 4,
             sum((cell_points[index][1] for index in range(4)), Fraction(0)) / 4,

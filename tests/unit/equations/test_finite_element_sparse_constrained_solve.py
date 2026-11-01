@@ -6,6 +6,8 @@
 
 from typing import Any
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -105,6 +107,30 @@ def _factorization(prepared: Any) -> Any:
     action = state.action
     assert isinstance(action, la.SparseFactorizationPreconditioner)
     return action.factorization
+
+
+def test_blocked_stiffness_assembly_keeps_cell_order_and_tail() -> None:
+    points, cells = _triangles(12)  # 288 cells: one full block and one tail.
+    space = phx.discretization.FiniteElementPlan(
+        CellMesh.from_triangles(jnp.asarray(points), jnp.asarray(cells)),
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 2)
+        ),
+    ).prepare()
+    geometry = space.block_geometries[0][0]
+    gradients = np.asarray(geometry.physical_gradients)
+    local = np.einsum(
+        "cq,cqid,cqjd->cij",
+        np.asarray(geometry.physical_weights),
+        gradients,
+        gradients,
+    )
+    transforms = np.asarray(space.dof_maps[0].cell_transforms[0])
+    expected = np.einsum("cai,cab,cbj->cij", transforms, local, transforms)
+    first = np.asarray(space.stiffness.coefficients)
+    second = np.asarray(space.stiffness.coefficients)
+    np.testing.assert_allclose(first, expected.ravel(), rtol=2.0e-13, atol=2.0e-14)
+    np.testing.assert_array_equal(first, second)
 
 
 def test_curved_p2_dirichlet_laplace_reproduces_x_through_the_sparse_route() -> None:
@@ -277,9 +303,12 @@ def test_large_dirichlet_laplace_stays_sparse() -> None:
     )
 
 
-@pytest.mark.parametrize("kind", ("triangle", "simplex:2"))
-def test_per_cell_exact_charts_prepare_and_solve(kind: str) -> None:
-    """Adapted curved results carry per-cell exact charts; FE prepares and solves."""
+def _restricted_curved_p2_spaces(
+    kind: str,
+) -> tuple[
+    phx.discretization.FiniteElementDiscretization,
+    phx.discretization.FiniteElementDiscretization,
+]:
     from phydrax.discretization._cell_geometry import (
         PerCellRestrictedCellGeometryElement,
     )
@@ -302,6 +331,13 @@ def test_per_cell_exact_charts_prepare_and_solve(kind: str) -> None:
         phx.discretization.FiniteElementFieldSpec("u", p2),
         coordinate_spec=geometry,
     ).prepare()
+    return shared, space
+
+
+@pytest.mark.parametrize("kind", ("triangle", "simplex:2"))
+def test_per_cell_exact_charts_prepare_and_solve(kind: str) -> None:
+    """Adapted curved results carry per-cell exact charts; FE prepares and solves."""
+    shared, space = _restricted_curved_p2_spaces(kind)
     points = np.asarray(space.dof_maps[0].dof_coordinates)
     np.testing.assert_allclose(
         points, np.asarray(shared.dof_maps[0].dof_coordinates), rtol=0.0, atol=1e-14
@@ -319,4 +355,54 @@ def test_per_cell_exact_charts_prepare_and_solve(kind: str) -> None:
         np.asarray(action_rhs),
         rtol=0.0,
         atol=1e-12,
+    )
+
+
+def test_restricted_triangle_boundary_geometry_is_differentiable() -> None:
+    # Prepared facet actions currently admit named triangle/tensor families;
+    # generic simplex:2 volume support is exercised separately above.
+    shared, space = _restricted_curved_p2_spaces("triangle")
+    points = np.asarray(space.dof_maps[0].dof_coordinates)
+    # Boundary geometry and its coordinate derivative also consume prepared
+    # per-cell charts, without converting traced entity routes to NumPy.
+    boundary_form = phx.equations.FiniteElementForm(
+        "restricted-boundary-load", "u", (phx.equations.BoundaryLoadAction("u", 1.0),)
+    )
+    boundary = phx.equations.compile_finite_element_problem(boundary_form, space)
+    shared_boundary = phx.equations.compile_finite_element_problem(boundary_form, shared)
+    state = jnp.zeros(points.shape[0])
+    np.testing.assert_allclose(
+        boundary.full_residual(state),
+        shared_boundary.full_residual(state),
+        rtol=2.0e-13,
+        atol=2.0e-14,
+    )
+
+    def load_at_coordinates(
+        problem: phx.equations.CompiledFiniteElementProblem,
+        coordinates: jax.Array,
+    ) -> jax.Array:
+        runtime = eqx.tree_at(
+            lambda value: value.coordinates,
+            problem.discretization.default_runtime,
+            coordinates,
+        )
+        return problem.full_residual(
+            state, phx.equations.FiniteElementExecutionContext(runtime)
+        )
+
+    coordinates = space.default_runtime.coordinates
+    direction = coordinates * 0.1
+    restricted_tangent = jax.jvp(
+        lambda value: load_at_coordinates(boundary, value),
+        (coordinates,),
+        (direction,),
+    )[1]
+    shared_tangent = jax.jvp(
+        lambda value: load_at_coordinates(shared_boundary, value),
+        (coordinates,),
+        (direction,),
+    )[1]
+    np.testing.assert_allclose(
+        restricted_tangent, shared_tangent, rtol=2.0e-13, atol=2.0e-14
     )

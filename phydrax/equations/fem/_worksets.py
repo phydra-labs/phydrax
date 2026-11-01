@@ -403,6 +403,10 @@ class CompiledWorkset(StrictModule, NonTrainableState):
     owner_permutations: Array
     neighbor_permutations: Array
     neighbor_trace_permutations: Array
+    owner_point_permutations: tuple[Array, ...]
+    neighbor_point_permutations: tuple[Array, ...]
+    coordinate_tabulations: tuple[tuple[Array, Array], ...]
+    neighbor_coordinate_tabulations: tuple[tuple[Array, Array], ...]
     gathers: tuple[tuple[str, Array], ...]
     neighbor_gathers: tuple[tuple[str, Array], ...]
     valid: Array
@@ -432,6 +436,10 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         owner_permutations: ArrayLike | None = None,
         neighbor_permutations: ArrayLike | None = None,
         neighbor_trace_permutations: ArrayLike | None = None,
+        owner_point_permutations: tuple[Array, ...] = (),
+        neighbor_point_permutations: tuple[Array, ...] = (),
+        coordinate_tabulations: tuple[tuple[Array, Array], ...] = (),
+        neighbor_coordinate_tabulations: tuple[tuple[Array, Array], ...] = (),
         valid: ArrayLike | None = None,
     ) -> None:
         actions, entities, owners, neighbors = _workset_index_routes(
@@ -483,6 +491,10 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         self.owner_permutations = jnp.asarray(owner_permutation)
         self.neighbor_permutations = jnp.asarray(neighbor_permutation)
         self.neighbor_trace_permutations = jnp.asarray(trace_permutations)
+        self.owner_point_permutations = owner_point_permutations
+        self.neighbor_point_permutations = neighbor_point_permutations
+        self.coordinate_tabulations = coordinate_tabulations
+        self.neighbor_coordinate_tabulations = neighbor_coordinate_tabulations
         self.gathers = tuple((name, jnp.asarray(route)) for name, route in gather_items)
         self.neighbor_gathers = tuple(
             (name, jnp.asarray(route)) for name, route in neighbor_items
@@ -514,6 +526,16 @@ class CompiledWorkset(StrictModule, NonTrainableState):
                 "owner_permutations": array_tree_fingerprint(owner_permutation),
                 "neighbor_permutations": array_tree_fingerprint(neighbor_permutation),
                 "neighbor_trace_permutations": array_tree_fingerprint(trace_permutations),
+                "owner_point_permutations": array_tree_fingerprint(
+                    owner_point_permutations
+                ),
+                "neighbor_point_permutations": array_tree_fingerprint(
+                    neighbor_point_permutations
+                ),
+                "coordinate_tabulations": array_tree_fingerprint(coordinate_tabulations),
+                "neighbor_coordinate_tabulations": array_tree_fingerprint(
+                    neighbor_coordinate_tabulations
+                ),
                 "gathers": [
                     [name, array_tree_fingerprint(route)] for name, route in gather_items
                 ],
