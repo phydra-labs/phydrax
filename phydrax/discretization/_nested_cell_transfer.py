@@ -39,6 +39,11 @@ def nested_cell_transfer(
         raise ValueError("Source and target cell components must match exactly.")
     if not np.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("Geometry tolerance must be positive and finite.")
+    source_field, target_field = source.cell_space, target.cell_space
+    if source_field is None or target_field is None:
+        raise ValueError(
+            "Nested cell transfer requires published source and target fields."
+        )
     parents = np.asarray(parent_cells)
     nc = source.cell_volumes.size
     nt = target.cell_volumes.size
@@ -57,10 +62,13 @@ def nested_cell_transfer(
     def cell_points(
         discretization: UnstructuredFiniteVolumeDiscretization,
     ) -> list[np.ndarray]:
+        mesh = discretization.mesh
+        if mesh is None:
+            raise TypeError("Nested cell containment requires a full CellMesh.")
         coordinates = np.asarray(discretization.vertices)
         return [
             coordinates[row[mask]]
-            for block in discretization.mesh.blocks
+            for block in mesh.blocks
             for row, mask in zip(
                 np.asarray(block.vertices), np.asarray(block.vertex_valid), strict=True
             )
@@ -105,8 +113,8 @@ def nested_cell_transfer(
                     "Child boundary leaves an unmatched internal parent boundary."
                 )
     parents_array = jnp.asarray(parents, dtype=jnp.int32)
-    source_space = source.cell_space.vector_space
-    target_space = target.cell_space.vector_space
+    source_space = source_field.vector_space
+    target_space = target_field.vector_space
     if not isinstance(source_space, ArraySpace) or not isinstance(
         target_space, ArraySpace
     ):
@@ -128,8 +136,8 @@ def nested_cell_transfer(
         ),
     )
     return FieldTransfer(
-        source.cell_space,
-        target.cell_space,
+        source_field,
+        target_field,
         operator,
         dual_pullback_operator=adjoint(operator),
         hilbert_adjoint_operator=adjoint(operator),

@@ -3958,6 +3958,20 @@ class _ProbeReport(TypedDict):
     restored_bitwise: bool
 
 
+@eqx.filter_jit
+def _probe_stage_sum(values: jax.Array, mesh: Mesh, axis: str, /) -> jax.Array:
+    def block_sum(block: jax.Array, /) -> jax.Array:
+        return JaxCollectiveProvider(axis).sum(block.sum())
+
+    return jax.shard_map(
+        block_sum,
+        mesh=mesh,
+        in_specs=PartitionSpec(axis),
+        out_specs=PartitionSpec(),
+        check_vma=False,
+    )(values)
+
+
 def stage_transport_probe_rank(directory: str, scenario: str, /) -> _ProbeReport:
     """Tiny real two-process stage-transport probe (one rank of the job).
 
@@ -4021,13 +4035,7 @@ def stage_transport_probe_rank(directory: str, scenario: str, /) -> _ProbeReport
             if device.process_index == me
         ]
         values = jax.make_array_from_single_device_arrays((count, 12), sharding, local)
-        total = jax.shard_map(
-            lambda block: JaxCollectiveProvider(axis).sum(block.sum()),
-            mesh=group.mesh,
-            in_specs=PartitionSpec(axis),
-            out_specs=PartitionSpec(),
-            check_vma=False,
-        )(values)
+        total = _probe_stage_sum(values, group.mesh, axis)
         return float(np.asarray(total.addressable_data(0)))
 
     if prepared.is_member("produce"):

@@ -2,6 +2,10 @@
 // Exact Bernstein kernels, interval restriction, separation screen and the BVH
 // pair stream: exact values, typed range refusals, and 1-vs-N thread identity.
 #include <algorithm>
+#include <atomic>
+#include <cfenv>
+#include <cstdlib>
+#include <new>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -12,8 +16,37 @@
 #include <vector>
 
 #include "check.hpp"
+#include "dyadic.hpp"
 #include "phydrax_meshcore.h"
 #include "wide_integer.hpp"
+
+namespace {
+thread_local int64_t allocation_countdown = -1;
+thread_local std::size_t refused_size = 0;
+std::atomic<int64_t> live_allocations{0};
+}
+
+void* operator new(std::size_t size) {
+  if (allocation_countdown == 0) {
+    refused_size = size;
+    allocation_countdown = -1;
+    throw std::bad_alloc();
+  }
+  if (allocation_countdown > 0) --allocation_countdown;
+  if (void* memory = std::malloc(size == 0 ? 1 : size)) {
+    live_allocations.fetch_add(1, std::memory_order_relaxed);
+    return memory;
+  }
+  throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void operator delete(void* memory) noexcept {
+  if (memory) live_allocations.fetch_sub(1, std::memory_order_relaxed);
+  std::free(memory);
+}
+void operator delete[](void* memory) noexcept { ::operator delete(memory); }
+void operator delete(void* memory, std::size_t) noexcept { ::operator delete(memory); }
+void operator delete[](void* memory, std::size_t) noexcept { ::operator delete(memory); }
 
 namespace {
 
@@ -546,6 +579,222 @@ void test_bvh_pair_stream() {
   PHX_CHECK(*std::max_element(sizes_small.begin(), sizes_small.end()) <= 8);
 }
 
+void test_interval_containment() {
+  using phx::mc::Dyadic;
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  const double inputs[][4] = {
+      {0, tiny, 0, .5}, {-tiny, 0, 0, .5}, {-tiny, tiny, -.5, .5},
+      {.1, .2, .3, .4}, {-3, -1, 2, 7}, {1e-300, 2e-300, .1, .2}};
+  const int original = std::fegetround();
+  PHX_CHECK(std::fesetround(FE_UPWARD) == 0);
+  for (const auto& in : inputs) {
+    double lo = 9, hi = 9;
+    PHX_CHECK(phx_mc_interval_multiply(1, in, in + 1, in + 2, in + 3, &lo, &hi) == PHX_MC_OK);
+    PHX_CHECK(std::fegetround() == FE_UPWARD);
+    for (int a = 0; a < 2; ++a) {
+      for (int b = 2; b < 4; ++b) {
+        const Dyadic exact = Dyadic(in[a]) * Dyadic(in[b]);
+        PHX_CHECK((exact - Dyadic(lo)).sign() >= 0);
+        PHX_CHECK((Dyadic(hi) - exact).sign() >= 0);
+      }
+    }
+  }
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double zero = 0, one = 1, negative = -1;
+  for (int subtract : {0, 1}) {
+    for (bool lower_nan : {false, true}) {
+      double lo = 9, hi = 9;
+      PHX_CHECK(phx_mc_interval_sum(1, lower_nan ? &nan : &zero,
+                                     lower_nan ? &negative : &nan, &zero, &one,
+                                     subtract, &lo, &hi) == PHX_MC_OK);
+      PHX_CHECK(lo == -INFINITY && hi == INFINITY);
+      PHX_CHECK(std::fegetround() == FE_UPWARD);
+    }
+  }
+  PHX_CHECK(std::fesetround(original) == 0);
+}
+
+void test_boundary_sizes_and_exponents() {
+  double output = 23;
+  int32_t exponent = 23, status = 23;
+  int64_t extremes[2] = {23, 23}, denominator = 23;
+  const int64_t offsets[2] = {0, 1};
+  const int32_t degrees[2] = {0, 0};
+  const int32_t indices[2] = {INT32_MAX, 1};
+  auto bytes = words({23});
+  const auto original = bytes;
+  PHX_CHECK(phx_mc_interval_bernstein_restrict(0, 3, int64_t{1} << 62, nullptr, nullptr,
+      nullptr, nullptr, &output, &output, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(output == 23);
+  PHX_CHECK(phx_mc_simplex_bernstein_blossoms(0, 1 << 30, nullptr, offsets, nullptr,
+      nullptr, bytes.data(), extremes, &status, 4, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_bernstein_bisect(0, int64_t{1} << 55, 2, INT32_MAX, indices, 0, 1,
+      nullptr, bytes.data(), bytes.data(), &exponent, &status, 4, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_bernstein_bisect(1, 1, 2, 1, indices, 0, 1, bytes.data(),
+      bytes.data(), bytes.data(), &exponent, &status, 4, 1) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(bytes == original && exponent == 23 && status == 23 && extremes[0] == 23);
+  const int32_t prism_exponents[3] = {INT32_MAX, INT32_MAX, 0};
+  PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_PRISM, 3, degrees, offsets,
+      prism_exponents, original.data(), offsets, bytes.data(), &denominator, extremes,
+      &status, 4, 1) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_INVALID_INPUT && bytes == original && denominator == 23);
+  // A million-part constant polynomial needs linear storage, not a million stack frames.
+  const int32_t dimension = 1000000;
+  const std::vector<int32_t> constant_exponents(static_cast<std::size_t>(dimension), 0);
+  PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_SIMPLEX, dimension, degrees,
+      offsets, constant_exponents.data(), original.data(), offsets, bytes.data(),
+      &denominator, extremes, &status, 4, 1) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK && bytes == original && denominator == 1);
+}
+
+void test_bvh_structure_and_failure() {
+  Tree leaf = build_tree({0, 0}, {1, 1});
+  auto leaf_view = leaf.view();
+  auto create = [&](const phx_mc_bvh_tree_view& a, phx_mc_bvh_pair_stream** stream) {
+    return phx_mc_bvh_pair_stream_create(&a, &leaf_view, 2, 1, 0, 0, 4, 1, 1, stream);
+  };
+  Tree malformed = leaf;
+  malformed.leaf[0] = -1;
+  malformed.left[0] = malformed.right[0] = 0;
+  auto view = malformed.view();
+  phx_mc_bvh_pair_stream* stream = nullptr;
+  PHX_CHECK(create(view, &stream) == PHX_MC_INVALID_ARGUMENT && stream == nullptr);
+  malformed = build_tree({0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1, 1});
+  malformed.leaf[1] = -1;
+  malformed.left[1] = 0;
+  malformed.right[1] = 2;
+  view = malformed.view();
+  PHX_CHECK(create(view, &stream) == PHX_MC_INVALID_ARGUMENT && stream == nullptr);
+  malformed.left[1] = malformed.right[1] = 2;
+  view = malformed.view();
+  PHX_CHECK(create(view, &stream) == PHX_MC_INVALID_ARGUMENT && stream == nullptr);
+  view = leaf_view;
+  view.leaf_count = 0;
+  view.leaf_width = INT64_MAX;
+  PHX_CHECK(create(view, &stream) == PHX_MC_INVALID_ARGUMENT && stream == nullptr);
+  PHX_CHECK(phx_mc_bvh_pair_stream_create(&leaf_view, &leaf_view, 2, 1, 0, 0,
+      INT64_MAX, 1, 1, &stream) == PHX_MC_INVALID_ARGUMENT && stream == nullptr);
+  // Iteratively built comb: every internal node owns a leaf and the next link.
+  constexpr int64_t depth = 100000;
+  Tree deep;
+  deep.leaf_width = 1;
+  deep.item_min = {0, 0};
+  deep.item_max = {1, 1};
+  deep.node_min.assign(static_cast<std::size_t>(2 * (2 * depth + 1)), 0);
+  deep.node_max.assign(deep.node_min.size(), 1);
+  deep.node_size.assign(static_cast<std::size_t>(2 * depth + 1), 2);
+  deep.left.assign(deep.node_size.size(), -1);
+  deep.right = deep.left;
+  deep.leaf.assign(deep.node_size.size(), -1);
+  deep.leaf_items.assign(static_cast<std::size_t>(depth + 1), 0);
+  // Last link is the final leaf; side leaves start at depth + 1.
+  for (int64_t i = 0; i < depth; ++i) {
+    deep.left[static_cast<std::size_t>(i)] = depth + 1 + i;
+    deep.right[static_cast<std::size_t>(i)] = i + 1;
+    deep.leaf[static_cast<std::size_t>(depth + 1 + i)] = i;
+  }
+  deep.leaf[static_cast<std::size_t>(depth)] = depth;
+  view = deep.view();
+  PHX_CHECK(create(view, &stream) == PHX_MC_OK);
+  phx_mc_bvh_pair_stream_free(stream);
+
+  const Tree dense = build_tree(std::vector<double>(32, 0), std::vector<double>(32, 1));
+  const auto dense_view = dense.view();
+  int64_t first[4], second[4], ends[1], blocks;
+  // Every allocation on the complete multi-level traversal is failed in turn,
+  // including flags.assign and pending-block splitting. Retry must stay terminal.
+  bool reached_success = false, failed_flags = false;
+  int64_t failures = 0;
+  for (int64_t fail_at = 0; !reached_success; ++fail_at) {
+    const auto baseline = live_allocations.load();
+    PHX_CHECK(create(dense_view, &stream) == PHX_MC_OK);
+    allocation_countdown = fail_at;
+    refused_size = 0;
+    int32_t result;
+    do {
+      result = phx_mc_bvh_pair_stream_next(stream, 4, 1, first, second, ends, &blocks);
+    } while (result == PHX_MC_OK && blocks != 0);
+    allocation_countdown = -1;
+    if (result == PHX_MC_ALLOCATION_FAILURE) {
+      ++failures;
+      failed_flags = failed_flags || refused_size == 4;
+      PHX_CHECK(phx_mc_bvh_pair_stream_next(stream, 4, 1, first, second, ends, &blocks) ==
+                PHX_MC_ALLOCATION_FAILURE);
+    } else {
+      PHX_CHECK(result == PHX_MC_OK);
+      reached_success = true;
+    }
+    phx_mc_bvh_pair_stream_free(stream);
+    PHX_CHECK(live_allocations.load() == baseline);
+  }
+  PHX_CHECK(failed_flags && failures > 20);
+  PHX_CHECK(create(leaf_view, &stream) == PHX_MC_OK);
+  blocks = 23;
+  PHX_CHECK(phx_mc_bvh_pair_stream_next(stream, 3, 1, first, second, ends, &blocks) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(blocks == 23);
+  PHX_CHECK(phx_mc_bvh_pair_stream_next(stream, 4, 1, first, second, ends, &blocks) == PHX_MC_OK);
+  PHX_CHECK(blocks == 1 && ends[0] == 1 && first[0] == 0 && second[0] == 0);
+  phx_mc_bvh_pair_stream_free(stream);
+}
+
+template <std::size_t Limbs>
+void test_multichunk_exact() {
+  using Wide = phx::mc::WideInt<Limbs>;
+  constexpr std::size_t count = 65, rows = 3;
+  const int32_t indices[] = {2, 0, 1, 1, 0, 2};
+  std::vector<int32_t> degrees(count, 2), exponents(count, 1), status(count), other_status(count);
+  std::vector<int64_t> offsets(count + 1), terms(count + 1), extremes(2 * count),
+      other_extremes(2 * count), denominators(count), other_denominators(count);
+  std::vector<uint8_t> nets(count * rows * Wide::kBytes), numerators(count * Wide::kBytes),
+      corners(count * 4 * Wide::kBytes);
+  for (std::size_t i = 0; i < count; ++i) {
+    offsets[i + 1] = static_cast<int64_t>((i + 1) * rows);
+    terms[i + 1] = static_cast<int64_t>(i + 1);
+    Wide value = Wide::from_int64(4);
+    if (i % 3 == 1) {
+      value = Wide{};
+      value.limb[Limbs - 1] = uint64_t{1} << 62;
+    }
+    value.store(numerators.data() + i * Wide::kBytes);
+    for (std::size_t r = 0; r < rows; ++r) value.store(nets.data() + (i * rows + r) * Wide::kBytes);
+    Wide::from_int64(2).store(corners.data() + (4 * i) * Wide::kBytes);
+    Wide::from_int64(2).store(corners.data() + (4 * i + 3) * Wide::kBytes);
+  }
+  for (int operation = 0; operation < 3; ++operation) {
+    std::vector<uint8_t> one(nets.size(), 0), many(nets.size(), 0),
+        right(nets.size(), 0), right_many(nets.size(), 0);
+    int32_t exponent = -1, other_exponent = -1;
+    auto run = [&](int threads, std::vector<uint8_t>& out, std::vector<uint8_t>& out_right,
+                   std::vector<int32_t>& statuses, std::vector<int64_t>& ext,
+                   std::vector<int64_t>& den, int32_t& exp) {
+      if (operation == 0) return phx_mc_bernstein_controls(count, PHX_MC_BERNSTEIN_BOX, 1,
+          degrees.data(), terms.data(), exponents.data(), numerators.data(), offsets.data(),
+          out.data(), den.data(), ext.data(), statuses.data(), Limbs, threads);
+      if (operation == 1) return phx_mc_simplex_bernstein_blossoms(count, 2, degrees.data(),
+          offsets.data(), nets.data(), corners.data(), out.data(), ext.data(), statuses.data(),
+          Limbs, threads);
+      return phx_mc_bernstein_bisect(count, rows, 2, 1, indices, 0, 1, nets.data(), out.data(),
+          out_right.data(), &exp, statuses.data(), Limbs, threads);
+    };
+    PHX_CHECK(run(1, one, right, status, extremes, denominators, exponent) == PHX_MC_OK);
+    PHX_CHECK(run(kThreads, many, right_many, other_status, other_extremes,
+                  other_denominators, other_exponent) == PHX_MC_OK);
+    PHX_CHECK(status == other_status && one == many && right == right_many);
+    PHX_CHECK(extremes == other_extremes && denominators == other_denominators);
+    PHX_CHECK(exponent == other_exponent);
+    for (std::size_t i = 0; i < count; ++i) {
+      PHX_CHECK(status[i] == (i % 3 == 1 ? PHX_MC_RANGE_ERROR : PHX_MC_OK));
+      if (status[i] != PHX_MC_OK) continue;
+      for (std::size_t r = 0; r < rows; ++r) {
+        const int64_t expected = operation == 0 ? static_cast<int64_t>(4 * r) : 16;
+        PHX_CHECK(phx::mc::compare(Wide::load(one.data() + (i * rows + r) * Wide::kBytes),
+                                    Wide::from_int64(expected)) == 0);
+      }
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -557,5 +806,13 @@ int main() {
   test_bisect();
   test_separation_screen();
   test_bvh_pair_stream();
+  test_interval_containment();
+  test_boundary_sizes_and_exponents();
+  test_bvh_structure_and_failure();
+  test_multichunk_exact<4>();
+  test_multichunk_exact<8>();
+  test_multichunk_exact<16>();
+  test_multichunk_exact<32>();
+  test_multichunk_exact<64>();
   return phx::mc::test::finish("test_exact_kernels");
 }

@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from .._differentiation import BranchDifferentiationPolicy
@@ -126,7 +126,7 @@ def _fold_retry_attempts(
     reverse-differentiable. Op-by-op (eager collective) steps keep the plain
     attempt sequence.
     """
-    if not any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(carry)):
+    if not any(isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(carry)):
         for retry in range(1, maximum_retries + 1):
             carry = attempt(retry, carry)
         return carry
@@ -429,6 +429,52 @@ def _prepare_owner_local_fv_stage_state_provider(
     devices = execution_group.devices
     stage_axis = f"{axis}_stage"
 
+    def exchange(local_state: Array, /) -> Array:
+        # pmap strips the single local-device axis: one (capacity, c) block.
+        values = local_state
+        components = local_state.shape[1]
+        rank = jax.lax.axis_index(stage_axis)
+        for (
+            pair,
+            sender,
+            receiver,
+            send_rows,
+            ghost_rows,
+            send_slot,
+            receive_slot,
+            count,
+        ) in routes:
+            payload_width = count * components
+            source_values = values[jnp.asarray(send_rows, dtype=jnp.int32)]
+            packed = jnp.where(
+                rank == sender,
+                source_values.reshape((payload_width,)),
+                jnp.zeros((payload_width,), dtype=values.dtype),
+            )
+            pair_values = (
+                jnp.zeros((pair.local_capacity, payload_width), dtype=values.dtype)
+                .at[send_slot]
+                .set(packed)
+            )
+            received = pair.exchange(
+                pair_values,
+                rank,
+                axis_name=stage_axis,
+            )
+            ghost_values = received[receive_slot].reshape((count, components))
+            values = jax.lax.cond(
+                rank == receiver,
+                lambda current: current.at[jnp.asarray(ghost_rows, dtype=jnp.int32)].set(
+                    ghost_values
+                ),
+                lambda current: current,
+                values,
+            )
+        return values
+
+    # One exchange program per prepared provider, reused by every stage call.
+    mapped = jax.pmap(exchange, axis_name=stage_axis, devices=devices)
+
     def exchange_stage_state(time: Array, state: Array, /) -> Array:
         del time
         if state.ndim < 2 or state.shape[0] != local_cell_count:
@@ -440,54 +486,6 @@ def _prepare_owner_local_fv_stage_state_provider(
         padded = jnp.pad(
             flattened,
             ((0, capacity - local_cell_count), (0, 0)),
-        )
-
-        def exchange(local_state: Array, /) -> Array:
-            # pmap strips the single local-device axis: one (capacity, c) block.
-            values = local_state
-            rank = jax.lax.axis_index(stage_axis)
-            for (
-                pair,
-                sender,
-                receiver,
-                send_rows,
-                ghost_rows,
-                send_slot,
-                receive_slot,
-                count,
-            ) in routes:
-                payload_width = count * components
-                source_values = values[jnp.asarray(send_rows, dtype=jnp.int32)]
-                packed = jnp.where(
-                    rank == sender,
-                    source_values.reshape((payload_width,)),
-                    jnp.zeros((payload_width,), dtype=values.dtype),
-                )
-                pair_values = (
-                    jnp.zeros((pair.local_capacity, payload_width), dtype=values.dtype)
-                    .at[send_slot]
-                    .set(packed)
-                )
-                received = pair.exchange(
-                    pair_values,
-                    rank,
-                    axis_name=stage_axis,
-                )
-                ghost_values = received[receive_slot].reshape((count, components))
-                values = jax.lax.cond(
-                    rank == receiver,
-                    lambda current: current.at[
-                        jnp.asarray(ghost_rows, dtype=jnp.int32)
-                    ].set(ghost_values),
-                    lambda current: current,
-                    values,
-                )
-            return values
-
-        mapped = jax.pmap(
-            exchange,
-            axis_name=stage_axis,
-            devices=devices,
         )
         exchanged = mapped(padded[None, ...])[0, :local_cell_count]
         view_values = exchanged
@@ -652,6 +650,51 @@ def _prepare_owner_local_fv_stage_route_provider(
     devices = execution_group.devices
     stage_axis = f"{axis_name}_stage"
 
+    def exchange(local_debits: Array, /) -> Array:
+        rank = jax.lax.axis_index(stage_axis)
+        components = local_debits.shape[1]
+        received = jnp.zeros_like(local_debits)
+        for (
+            pair,
+            sender,
+            receiver,
+            send_rows,
+            receive_rows,
+            send_slot,
+            receive_slot,
+            count,
+        ) in routes:
+            width = count * components
+            packed = jnp.where(
+                rank == sender,
+                local_debits[jnp.asarray(send_rows, dtype=jnp.int32)].reshape((width,)),
+                jnp.zeros((width,), dtype=local_debits.dtype),
+            )
+            payload = (
+                jnp.zeros((pair.local_capacity, width), dtype=local_debits.dtype)
+                .at[send_slot]
+                .set(packed)
+            )
+            arrived = pair.exchange(payload, rank, axis_name=stage_axis)
+            values = arrived[receive_slot].reshape((count, components))
+            received = jax.lax.cond(
+                rank == receiver,
+                lambda current: current.at[
+                    jnp.asarray(receive_rows, dtype=jnp.int32)
+                ].add(values),
+                lambda current: current,
+                received,
+            )
+            # Every owner must issue the pair permutes in one order; the
+            # barrier makes the next payload depend on this delivery.
+            local_debits, received = jax.lax.optimization_barrier(
+                (local_debits, received)
+            )
+        return received
+
+    # One exchange program per prepared provider, reused by every stage call.
+    mapped = jax.pmap(exchange, axis_name=stage_axis, devices=devices)
+
     def route_overset_debits(ledger: Any, /) -> Array:
         components = int(np.prod(ledger.component_shape))
         debits = jnp.zeros((capacity, components), dtype=ledger.source_rate.dtype)
@@ -669,51 +712,6 @@ def _prepare_owner_local_fv_stage_route_provider(
             debits = debits.at[
                 jnp.asarray(route_owners[ghost_routes], dtype=jnp.int32)
             ].add(-flat[jnp.asarray(ghost_routes, dtype=jnp.int32)])
-
-        def exchange(local_debits: Array, /) -> Array:
-            rank = jax.lax.axis_index(stage_axis)
-            received = jnp.zeros_like(local_debits)
-            for (
-                pair,
-                sender,
-                receiver,
-                send_rows,
-                receive_rows,
-                send_slot,
-                receive_slot,
-                count,
-            ) in routes:
-                width = count * components
-                packed = jnp.where(
-                    rank == sender,
-                    local_debits[jnp.asarray(send_rows, dtype=jnp.int32)].reshape(
-                        (width,)
-                    ),
-                    jnp.zeros((width,), dtype=local_debits.dtype),
-                )
-                payload = (
-                    jnp.zeros((pair.local_capacity, width), dtype=local_debits.dtype)
-                    .at[send_slot]
-                    .set(packed)
-                )
-                arrived = pair.exchange(payload, rank, axis_name=stage_axis)
-                values = arrived[receive_slot].reshape((count, components))
-                received = jax.lax.cond(
-                    rank == receiver,
-                    lambda current: current.at[
-                        jnp.asarray(receive_rows, dtype=jnp.int32)
-                    ].add(values),
-                    lambda current: current,
-                    received,
-                )
-                # Every owner must issue the pair permutes in one order; the
-                # barrier makes the next payload depend on this delivery.
-                local_debits, received = jax.lax.optimization_barrier(
-                    (local_debits, received)
-                )
-            return received
-
-        mapped = jax.pmap(exchange, axis_name=stage_axis, devices=devices)
         received = mapped(debits[None, ...])[0, :cell_count]
         return received.reshape((cell_count, *ledger.component_shape))
 

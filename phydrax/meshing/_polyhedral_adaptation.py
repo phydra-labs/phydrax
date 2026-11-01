@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from fractions import Fraction
-from typing import NamedTuple, final
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -35,8 +35,8 @@ from ..geometry._source_boundary_records import SourceBoundaryDistanceWitness
 from ..geometry._supermesh import (
     CommonRefinementPolicy,
     CommonRefinementStatus,
-    PreparedCommonRefinement,
     prepare_common_refinement,
+    PreparedCommonRefinement,
 )
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.implicit._restricted_delaunay_coverage import (
@@ -46,22 +46,22 @@ from ..geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayCoverageWitness,
     validate_restricted_delaunay_coverage_witness,
 )
-from ..typing import checked, parse
+from ..typing import checked, ConvertibleToArray, parse
 from ._contracts import MeshingFailureCategory, VolumeMeshingSpec
 from ._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
 from ._polyhedral_adaptation_shared import (
-    PolyhedralAdaptationError,
     build_polyhedral_topology_edit,
     polyhedral_face_loops,
     polyhedral_signed_volume,
+    PolyhedralAdaptationError,
 )
 from ._polyhedral_generation import (
+    generate_polyhedral_volume,
     NativePolyhedralSchedule,
     PolyhedralConstruction,
-    generate_polyhedral_volume,
 )
 from ._polyhedral_plane_restriction import restrict_polyhedral_plane
-from ._topology_edit import CellTopologyEdit, assemble_topology_edit
+from ._topology_edit import assemble_topology_edit, CellTopologyEdit
 from ._volume_generation import NativeVolumeSchedule
 from .providers._native_sources import NativePolyhedralSource
 
@@ -98,7 +98,7 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
         operation: PolyhedralAdaptationOperation,
         /,
         *,
-        planes: ArrayLike = (),
+        planes: ConvertibleToArray = (),
         agglomerations: Sequence[Sequence[int]] = (),
         regeneration_source: NativePolyhedralSource | None = None,
         volume_specification: VolumeMeshingSpec | None = None,
@@ -320,16 +320,28 @@ def _exact_coordinate_bank(
     if geometry.coordinates.shape != mesh.coordinates.shape or not np.array_equal(
         np.asarray(geometry.coordinates), np.asarray(mesh.coordinates)
     ):
-        raise ValueError("Polyhedral adaptation requires one P1 coordinate per mesh vertex.")
-    bank = geometry.source_coordinates()
-    if len(bank) != mesh.coordinates.shape[0] or any(
-        len(point) != 3 or any(not isinstance(value, Fraction) for value in point)
-        for point in bank
-    ):
         raise ValueError(
-            "Exact polyhedral plane edits require rational represented source coordinates."
+            "Polyhedral adaptation requires one P1 coordinate per mesh vertex."
         )
-    return tuple((point[0], point[1], point[2]) for point in bank)
+    bank = geometry.source_coordinates()
+    message = (
+        "Exact polyhedral plane edits require rational represented source coordinates."
+    )
+    if len(bank) != mesh.coordinates.shape[0]:
+        raise ValueError(message)
+    coordinates: list[tuple[Fraction, Fraction, Fraction]] = []
+    for point in bank:
+        if len(point) != 3:
+            raise ValueError(message)
+        x, y, z = point
+        if (
+            not isinstance(x, Fraction)
+            or not isinstance(y, Fraction)
+            or not isinstance(z, Fraction)
+        ):
+            raise ValueError(message)
+        coordinates.append((x, y, z))
+    return tuple(coordinates)
 
 
 def _require_piecewise_linear_geometry(mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
@@ -402,7 +414,7 @@ def _classes_by_cell(
     }
 
 
-def _protected_faces(mesh: CellMesh, values: ArrayLike, /) -> set[int]:
+def _protected_faces(mesh: CellMesh, values: ConvertibleToArray, /) -> set[int]:
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("mesh must have packed polyhedral connectivity.")
@@ -446,7 +458,9 @@ def _split_candidate(
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("mesh must have packed polyhedral connectivity.")
     source_ids = tuple(int(value) for value in np.asarray(connectivity.cell_global_ids))
-    ancestors = {identifier: (identifier,) for identifier in source_ids}
+    ancestors: dict[int, tuple[int, ...]] = {
+        identifier: (identifier,) for identifier in source_ids
+    }
     maximum_error = 0.0
     for plane in np.asarray(request.planes, dtype=np.float64):
         restricted = restrict_polyhedral_plane(
@@ -471,13 +485,14 @@ def _split_candidate(
             )
         ancestors = next_ancestors
         current = restricted.mesh
+        connectivity = next_connectivity
         exact_coordinates = restricted.exact_coordinates
         maximum_error = max(maximum_error, restricted.maximum_coordinate_rounding_error)
     source_ids_set = set(source_ids)
     changed = tuple(
         sorted(
             int(identifier)
-            for identifier in np.asarray(current.connectivity.cell_global_ids)
+            for identifier in np.asarray(connectivity.cell_global_ids)
             if int(identifier) not in source_ids_set
         )
     )
@@ -962,7 +977,7 @@ def adapt_polyhedral_mesh(
     *,
     source_geometry: CellGeometrySpec | None = None,
     cell_classes: ArrayLike | None = None,
-    protected_face_ids: ArrayLike = (),
+    protected_face_ids: ConvertibleToArray = (),
     common_refinement_policy: CommonRefinementPolicy | None = None,
     source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None,
     source_distance_witness: SourceBoundaryDistanceWitness | None = None,
@@ -1101,7 +1116,10 @@ def adapt_polyhedral_mesh(
             refinement, source_fv, target_fv, remap = _physical_transfer(
                 mesh, target, policy
             )
-    target_ids = np.asarray(target.connectivity.cell_global_ids, dtype=np.int64)
+    target_connectivity = target.connectivity
+    if not isinstance(target_connectivity, PolyhedralConnectivity):
+        raise TypeError("An adapted target lost polyhedral connectivity.")
+    target_ids = np.asarray(target_connectivity.cell_global_ids, dtype=np.int64)
     if not target_classes:
         target_classes = {
             int(identifier): classes[parent_map[int(identifier)][0]]

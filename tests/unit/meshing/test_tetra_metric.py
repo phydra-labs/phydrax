@@ -8,10 +8,14 @@ import pytest
 
 import phydrax as phx
 from phydrax._geometry_predicates import PredicateMode
+from phydrax._meshcore import TetMeshEdit, TetMeshEditKind, TetMeshEditStatus
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._tetra_metric import (
+    _facet_group_map,
+    _NativeState,
+    _prepare_native_state,
     _prepare_native_state,
     _split_phase,
     _unit_metric_status,
@@ -351,3 +355,118 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
     invalid[0, 0, 1] = 1.0
     with pytest.raises(ValueError, match="symmetric positive-definite"):
         _adapt(source, invalid)
+
+
+def _mesh_result(
+    coordinates: np.ndarray, tetrahedra: list[list[int]], /
+) -> CellMeshingResult:
+    cells = np.asarray(tetrahedra, dtype=np.int32)
+    for cell in cells:
+        if np.linalg.det(coordinates[cell[1:]] - coordinates[cell[0]]) < 0.0:
+            cell[[1, 2]] = cell[[2, 1]]
+    block = CellBlock(
+        "tetrahedra",
+        "tetrahedron",
+        cells,
+        global_ids=np.arange(3000, 3000 + cells.shape[0], dtype=np.int64),
+    )
+    mesh = CellMesh(
+        coordinates,
+        (block,),
+        vertex_global_ids=np.arange(coordinates.shape[0], dtype=np.int64),
+    )
+    return certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+
+def _state(source: CellMeshingResult, metric: np.ndarray, /) -> _NativeState:
+    mesh = source.mesh
+    edge_count = mesh.entity_set(1).entity_ids.size
+    return _prepare_native_state(
+        source,
+        np.broadcast_to(metric, (mesh.vertex_global_ids.size, 3, 3)).copy(),
+        cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
+        facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+        edge_classes=np.zeros(edge_count, dtype=np.int64),
+        protected_edges=np.zeros(edge_count, dtype=np.bool_),
+        fixed_vertices=np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_),
+    )
+
+@pytest.mark.parametrize("layout", ("C", "F", "strided"))
+@pytest.mark.parametrize("explicit_removed", (False, True))
+def test_multi_pair_collapse_edit_commits_through_the_native_wrapper(
+    layout: str, explicit_removed: bool
+) -> None:
+    # Axis vertices A p q s t B of a double cone over a hexagon: one COLLAPSE
+    # edit removes p into q and t into s. The wrapper hands C the pair columns;
+    # a strided survivor column was read as (q, t), naming a removed vertex.
+    angles = np.arange(6) * (np.pi / 3.0)
+    ring = np.stack((np.zeros(6), 0.9 * np.cos(angles), 0.9 * np.sin(angles)), axis=-1)
+    axis = np.asarray((-1.6, -0.7, -0.3, 0.3, 0.7, 1.6))
+    coordinates = np.concatenate(
+        (np.stack((axis, np.zeros(6), np.zeros(6)), axis=-1), ring)
+    )
+    cells = [
+        [first, first + 1, 6 + index, 6 + (index + 1) % 6]
+        for index in range(6)
+        for first in range(5)
+    ]
+    state = _state(_mesh_result(coordinates, cells), np.eye(3))
+    snapshot = state.snapshot
+    vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
+    cell_vertices = vertex_ids[np.asarray(snapshot.tetrahedra, dtype=np.int64)]
+    cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
+    groups = _facet_group_map(state, snapshot)
+    pairs = ((1, 2), (4, 3))
+    survivor = dict(pairs)
+    removed_cells: list[int] = []
+    parents: list[int] = []
+    replacements: list[list[int]] = []
+    for identifier, vertices in zip(
+        cell_ids.tolist(), cell_vertices.tolist(), strict=True
+    ):
+        removed = [vertex for vertex in vertices if vertex in survivor]
+        if not removed:
+            continue
+        removed_cells.append(identifier)
+        if survivor[removed[0]] in vertices:
+            continue
+        parents.append(identifier)
+        replacements.append([survivor.get(vertex, vertex) for vertex in vertices])
+    facet_sources = np.asarray(
+        [
+            [
+                groups.get(tuple(sorted(cell[corner] for corner in face)), -1)
+                for face in ((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2))
+            ]
+            for cell in replacements
+        ],
+        dtype=np.int32,
+    )
+    count = len(replacements)
+    pair_bank = np.asarray(pairs, dtype=np.int32, order="F" if layout == "F" else "C")
+    if layout == "strided":
+        padded = np.zeros((4, 4), dtype=np.int32)
+        padded[::2, ::2] = pair_bank
+        pair_bank = padded[::2, ::2]
+    edit = TetMeshEdit(
+        kind=TetMeshEditKind.COLLAPSE,
+        expected_generation=int(snapshot.generation),
+        source_id=state.source_identity[0],
+        source_revision=state.source_identity[1],
+        source_map_id=state.source_identity[2],
+        frame_id=state.source_identity[3],
+        collapse_pairs=pair_bank,
+        removed_vertex_ids=np.asarray((1, 4), dtype=np.uint64) if explicit_removed else None,
+        removed_cell_ids=np.asarray(sorted(removed_cells), dtype=np.uint64),
+        replacement_cell_ancestry_offsets=np.arange(count + 1, dtype=np.int64),
+        replacement_cell_ancestor_ids=np.asarray(parents, dtype=np.uint64),
+        replacement_cell_ids=np.arange(
+            state.next_native_cell, state.next_native_cell + count, dtype=np.uint64
+        ),
+        replacement_cell_vertices=np.asarray(replacements, dtype=np.uint64),
+        replacement_cell_facet_sources=facet_sources,
+        replacement_regions=np.zeros((count,), dtype=np.int32),
+    )
+
+    assert state.native.apply_edit(edit) is TetMeshEditStatus.APPLIED
+    live = set(np.asarray(state.native.arrays().vertex_ids).tolist())
+    assert {1, 4}.isdisjoint(live) and {0, 2, 3, 5} <= live

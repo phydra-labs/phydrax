@@ -56,22 +56,49 @@ def _space_metadata(structure: PyTree[jax.ShapeDtypeStruct], /) -> list[dict[str
     ]
 
 
+def _pairing_array_structure(value: Any, /) -> jax.ShapeDtypeStruct:
+    abstract = jax.typeof(value)
+    return jax.ShapeDtypeStruct(
+        abstract.shape, abstract.dtype, weak_type=abstract.weak_type
+    )
+
+
+@eqx.filter_jit
+def _pairing_actions(
+    pairing: AbstractPairing, vector: PyTree[Array], /
+) -> tuple[PyTree[Array], PyTree[Array], Array]:
+    """Trace and validate each action before invoking its dependent action."""
+    structure = jax.tree.map(_pairing_array_structure, vector)
+    image = pairing.riesz(vector)
+    if (
+        eqx.tree_equal(jax.tree.map(_pairing_array_structure, image), structure)
+        is not True
+    ):
+        raise TypeError("Pairing Riesz output must match the vector-space structure.")
+    inverse = pairing.inverse_riesz(image)
+    if (
+        eqx.tree_equal(jax.tree.map(_pairing_array_structure, inverse), structure)
+        is not True
+    ):
+        raise TypeError(
+            "Pairing inverse-Riesz output must match the vector-space structure."
+        )
+    inner = pairing.inner(vector, vector)
+    inner_structure = jax.tree.map(_pairing_array_structure, inner)
+    if (
+        not isinstance(inner_structure, jax.ShapeDtypeStruct)
+        or inner_structure.shape != ()
+    ):
+        raise TypeError("Pairing inner products must return one scalar array.")
+    return image, inverse, inner
+
+
 def _validate_pairing(
     pairing: AbstractPairing,
     structure: PyTree[jax.ShapeDtypeStruct],
     /,
 ) -> None:
-    riesz = jax.eval_shape(pairing.riesz, structure)
-    if eqx.tree_equal(riesz, structure) is not True:
-        raise TypeError("Pairing Riesz output must match the vector-space structure.")
-    inverse = jax.eval_shape(pairing.inverse_riesz, riesz)
-    if eqx.tree_equal(inverse, structure) is not True:
-        raise TypeError(
-            "Pairing inverse-Riesz output must match the vector-space structure."
-        )
-    inner = jax.eval_shape(pairing.inner, structure, structure)
-    if not isinstance(inner, jax.ShapeDtypeStruct) or inner.shape != ():
-        raise TypeError("Pairing inner products must return one scalar array.")
+    eqx.filter_eval_shape(_pairing_actions, pairing, structure)
 
 
 class ArraySpaceArchiveRecipe(NamedTuple):

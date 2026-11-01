@@ -20,6 +20,7 @@ from jax.typing import ArrayLike
 
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._owned_programs import run_owned_program
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._distributed_field import DistributedHaloPlan
@@ -991,14 +992,125 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             raise ValueError(
                 "relative_node_floor must lie strictly between zero and one."
             )
-        axis_name = self.hierarchy.partition.axis_name
-        routes = self.routes
-        halo = routes.halo
-        dimension = len(self.hierarchy.topology.plan.grid.shape)
         lengths = tuple(
             float(np.asarray(axis.bounds[1] - axis.bounds[0]))
             for axis in self.hierarchy.topology.plan.grid.structured_axes
         )
+        probability, current, winding, node_count, finite = run_owned_program(
+            self,
+            "observables",
+            PreparedDistributedWaveAMR._observables_program,
+            checked,
+            floor,
+            lengths,
+        )
+        routes = self.routes
+        dimension = len(self.hierarchy.topology.plan.grid.shape)
+        if dimension < 2:
+            vortex_count = jnp.asarray(0, dtype=jnp.int32)
+        else:
+            real = tuple(jnp.real(value) for value in checked.psi)
+            imaginary = tuple(jnp.imag(value) for value in checked.psi)
+
+            def fill(
+                values: tuple[Array, ...],
+            ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
+                boundaries, supplied = self.hierarchy._boundary_inputs(values, None)
+                return self.hierarchy._packed_fill_values(
+                    values,
+                    values,
+                    values,
+                    boundaries,
+                    supplied,
+                    0.0,
+                    0.0,
+                    0.0,
+                    distributed=True,
+                )
+
+            real_filled, real_valid = fill(real)
+            imaginary_filled, imaginary_valid = fill(imaginary)
+            vortex_count = jnp.asarray(0, dtype=jnp.int32)
+            fill_complete = jnp.asarray(True)
+            for level, (
+                real_workspace,
+                imaginary_workspace,
+                valid_real,
+                valid_imaginary,
+                leaf_mask,
+                level_plan,
+                fill_route,
+            ) in enumerate(
+                zip(
+                    real_filled,
+                    imaginary_filled,
+                    real_valid,
+                    imaginary_valid,
+                    routes.level_leaf_masks,
+                    self.hierarchy.topology.plan.levels,
+                    self.hierarchy.fill_routes,
+                    strict=True,
+                )
+            ):
+                del level
+                workspace = jax.lax.complex(real_workspace, imaginary_workspace)
+                target = fill_route.target_valid.reshape(
+                    fill_route.target_valid.shape + (1,) * (valid_real.ndim - 2)
+                )
+                fill_complete = fill_complete & jnp.all(
+                    (valid_real & valid_imaginary) | ~target
+                )
+                halo_width = level_plan.halo_width
+
+                def point(first: int, second: int, /) -> Array:
+                    slices = [slice(None), slice(None)]
+                    for component, (width, size) in enumerate(
+                        zip(
+                            halo_width,
+                            level_plan.block_shape,
+                            strict=True,
+                        )
+                    ):
+                        offset = int(component == first) + int(component == second)
+                        slices.append(slice(width + offset, width + offset + size))
+                    return workspace[tuple(slices)]
+
+                center = point(-1, -1)
+                for first_axis in range(dimension):
+                    for second_axis in range(first_axis + 1, dimension):
+                        first = point(first_axis, -1)
+                        second = point(second_axis, -1)
+                        diagonal = point(first_axis, second_axis)
+                        circulation = (
+                            jnp.angle(jnp.conj(center) * first)
+                            + jnp.angle(jnp.conj(first) * diagonal)
+                            + jnp.angle(jnp.conj(diagonal) * second)
+                            + jnp.angle(jnp.conj(second) * center)
+                        )
+                        vortex_count = vortex_count + jnp.sum(
+                            leaf_mask & (jnp.abs(circulation) >= pi)
+                        ).astype(jnp.int32)
+            finite = finite & fill_complete & jnp.isfinite(vortex_count)
+        return DistributedWaveAMRObservables(
+            probability,
+            current,
+            winding,
+            node_count,
+            vortex_count,
+            finite,
+        )
+
+    def _observables_program(
+        self,
+        checked: DistributedWaveAMRState,
+        floor: float,
+        lengths: tuple[float, ...],
+        /,
+    ) -> tuple[Array, Array, Array, Array, Array]:
+        axis_name = self.hierarchy.partition.axis_name
+        routes = self.routes
+        halo = routes.halo
+        dimension = len(self.hierarchy.topology.plan.grid.shape)
         volume = prod(lengths)
         hbar = self.reduced_planck_constant
         mass = self.boson_mass
@@ -1096,99 +1208,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             ),
             check_vma=False,
         )(checked.psi)
-        if dimension < 2:
-            vortex_count = jnp.asarray(0, dtype=jnp.int32)
-        else:
-            real = tuple(jnp.real(value) for value in checked.psi)
-            imaginary = tuple(jnp.imag(value) for value in checked.psi)
-
-            def fill(
-                values: tuple[Array, ...],
-            ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
-                boundaries, supplied = self.hierarchy._boundary_inputs(values, None)
-                return self.hierarchy._packed_fill_values(
-                    values,
-                    values,
-                    values,
-                    boundaries,
-                    supplied,
-                    0.0,
-                    0.0,
-                    0.0,
-                    distributed=True,
-                )
-
-            real_filled, real_valid = fill(real)
-            imaginary_filled, imaginary_valid = fill(imaginary)
-            vortex_count = jnp.asarray(0, dtype=jnp.int32)
-            fill_complete = jnp.asarray(True)
-            for level, (
-                real_workspace,
-                imaginary_workspace,
-                valid_real,
-                valid_imaginary,
-                leaf_mask,
-                level_plan,
-                fill_route,
-            ) in enumerate(
-                zip(
-                    real_filled,
-                    imaginary_filled,
-                    real_valid,
-                    imaginary_valid,
-                    routes.level_leaf_masks,
-                    self.hierarchy.topology.plan.levels,
-                    self.hierarchy.fill_routes,
-                    strict=True,
-                )
-            ):
-                del level
-                workspace = jax.lax.complex(real_workspace, imaginary_workspace)
-                target = fill_route.target_valid.reshape(
-                    fill_route.target_valid.shape + (1,) * (valid_real.ndim - 2)
-                )
-                fill_complete = fill_complete & jnp.all(
-                    (valid_real & valid_imaginary) | ~target
-                )
-                halo_width = level_plan.halo_width
-
-                def point(first: int, second: int, /) -> Array:
-                    slices = [slice(None), slice(None)]
-                    for component, (width, size) in enumerate(
-                        zip(
-                            halo_width,
-                            level_plan.block_shape,
-                            strict=True,
-                        )
-                    ):
-                        offset = int(component == first) + int(component == second)
-                        slices.append(slice(width + offset, width + offset + size))
-                    return workspace[tuple(slices)]
-
-                center = point(-1, -1)
-                for first_axis in range(dimension):
-                    for second_axis in range(first_axis + 1, dimension):
-                        first = point(first_axis, -1)
-                        second = point(second_axis, -1)
-                        diagonal = point(first_axis, second_axis)
-                        circulation = (
-                            jnp.angle(jnp.conj(center) * first)
-                            + jnp.angle(jnp.conj(first) * diagonal)
-                            + jnp.angle(jnp.conj(diagonal) * second)
-                            + jnp.angle(jnp.conj(second) * center)
-                        )
-                        vortex_count = vortex_count + jnp.sum(
-                            leaf_mask & (jnp.abs(circulation) >= pi)
-                        ).astype(jnp.int32)
-            finite = finite & fill_complete & jnp.isfinite(vortex_count)
-        return DistributedWaveAMRObservables(
-            probability,
-            current,
-            winding,
-            node_count,
-            vortex_count,
-            finite,
-        )
+        return probability, current, winding, node_count, finite
 
     def step(
         self,
@@ -1226,6 +1246,24 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         end = self._replicate_scalar(end_scale_factor, self.real_dtype)
         kick = self._replicate_scalar(kick_factor, self.real_dtype)
         drift = self._replicate_scalar(drift_factor, self.real_dtype)
+        return run_owned_program(
+            self,
+            "step",
+            PreparedDistributedWaveAMR._step_program,
+            checked,
+            end,
+            kick,
+            drift,
+        )
+
+    def _step_program(
+        self,
+        checked: DistributedWaveAMRState,
+        end: Array,
+        kick: Array,
+        drift: Array,
+        /,
+    ) -> DistributedWaveAMRResult:
         axis = self.hierarchy.partition.axis_name
         routes = self.routes
         halo = routes.halo
@@ -2571,8 +2609,41 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             raise ValueError(
                 "relative_node_floor must lie strictly between zero and one."
             )
+        (
+            candidate_values,
+            conservation_defect,
+            phase_defect,
+            negative_density,
+            route_complete,
+            finite,
+            successful,
+        ) = run_owned_program(
+            self,
+            "execute",
+            PreparedDistributedWaveAMRTopologyTransition._execute_program,
+            checked,
+            floor,
+        )
+        candidate = self.target.bind_packed_state(
+            candidate_values,
+            checked.scale_factor,
+            accepted_boundary=True,
+        )
+        return DistributedWaveAMRTopologyTransferResult(
+            candidate,
+            conservation_defect,
+            phase_defect,
+            negative_density,
+            route_complete,
+            finite,
+            successful,
+            self.transition_id,
+        )
+
+    def _execute_program(
+        self, checked: DistributedWaveAMRState, floor: float, /
+    ) -> tuple[tuple[Array, ...], Array, Array, Array, Array, Array, Array]:
         axis_name = self.source.hierarchy.partition.axis_name
-        self.target_displacements.shape[-1]
         source_shapes = self.source.routes.level_local_shapes
         target_shapes = self.target.routes.level_local_shapes
         target_sizes = self.target.routes.level_local_sizes
@@ -2796,20 +2867,14 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             ),
             check_vma=False,
         )(checked.psi)
-        candidate = self.target.bind_packed_state(
+        return (
             candidate_values,
-            checked.scale_factor,
-            accepted_boundary=True,
-        )
-        return DistributedWaveAMRTopologyTransferResult(
-            candidate,
             conservation_defect,
             phase_defect,
             negative_density,
             route_complete,
             finite,
             successful,
-            self.transition_id,
         )
 
 

@@ -874,7 +874,10 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
             np.asarray(refinement.source_first_moments, dtype=np.float64)
             / measures[:, None]
         )
-        neighbors, valid = _vertex_neighbor_stencils(source.mesh)
+        source_mesh = source.mesh
+        if source_mesh is None:
+            raise TypeError("Second-order remap stencils require a source CellMesh.")
+        neighbors, valid = _vertex_neighbor_stencils(source_mesh)
         solution = _least_squares_gradient(
             centroids, measures, neighbors, valid, condition_limit
         )

@@ -54,6 +54,11 @@ if TYPE_CHECKING:
     from ..sparse._linear import _SparseStoragePlan
 
 
+# Abstract validation and execution share the same trace; coefficients remain
+# dynamic, so no numerical result or certificate is memoized.
+_diagonal_program = eqx.filter_jit(_assemble_operator_diagonal)
+
+
 def assemble_diagonal(
     operator: AbstractLinearOperator,
     /,
@@ -72,14 +77,14 @@ def assemble_diagonal(
 
     if operator.capabilities.diagonal_assembly:
         expected = operator.batch_shape + (operator.source.size,)
-        abstract = jax.eval_shape(lambda: _assemble_operator_diagonal(operator))
+        abstract = eqx.filter_eval_shape(_diagonal_program, operator)
         if not isinstance(abstract, jax.ShapeDtypeStruct):
             raise TypeError("Diagonal assembly must return one array.")
         if abstract.shape != expected:
             raise ValueError(
                 f"Diagonal assembly must have shape {expected}; got {abstract.shape}."
             )
-        diagonal = jnp.asarray(_assemble_operator_diagonal(operator))
+        diagonal = jnp.asarray(_diagonal_program(operator))
         if diagonal.shape != expected or diagonal.dtype != abstract.dtype:
             raise ValueError(
                 "Diagonal assembly changed shape or dtype between abstract evaluation and execution."

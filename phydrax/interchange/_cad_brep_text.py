@@ -108,6 +108,7 @@ from ._cad import (
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_physical_tag_losses,
+    cad_export_pole_identity_losses,
     cad_import_stage_losses,
     CadExportPolicy,
     CadExportResult,
@@ -3434,6 +3435,9 @@ def write_brep_text(
                 model, writer.surface_carriers, "OCCT BRep text"
             ),
             *_brep_text_scalar_identity_losses(model),
+            *cad_export_pole_identity_losses(
+                writer.surface_carriers, "OCCT BRep text", "record-ordinal"
+            ),
         ),
         waiver_format_name="OCCT BRep text",
         coordinate_mapping=(
