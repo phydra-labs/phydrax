@@ -1087,114 +1087,106 @@ def _assign_tetrahedral_face_dofs(
             ] = face_starts[face] + positions
 
 
+def _coordinate_node_weights(
+    element: FiniteElementSpec,
+    coordinate_element: CellGeometryElement,
+    cell_count: int,
+    /,
+) -> np.ndarray:
+    """Coordinate-map basis at the field's reference nodes.
+
+    Shared charts give ``(node, coordinate dof)``; per-cell charts give
+    ``(cell, node, coordinate dof)``.
+    """
+    if not isinstance(coordinate_element, ScalarCoordinateElement):
+        raise TypeError("Finite-element DOF points require a scalar coordinate chart.")
+    nodes = np.asarray(element.reference_nodes)
+    if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
+        return np.stack(
+            tuple(
+                np.asarray(
+                    coordinate_tabulation(coordinate_element, nodes, cell_row=row)[0]
+                )
+                for row in range(cell_count)
+            )
+        )
+    return np.asarray(coordinate_tabulation(coordinate_element, nodes)[0])
+
+
+def _mapped_reference_nodes(weights: ArrayLike, cell_coordinates: ArrayLike, /) -> Any:
+    """Physical images ``(cell, node, ambient)`` of the field's reference nodes."""
+    specification = "ia,cad->cid" if np.ndim(weights) == 2 else "cia,cad->cid"
+    return ein.contract(specification, weights, cell_coordinates)
+
+
+def _dof_coordinate_owners(
+    block_dofs: tuple[Array, ...], global_count: int, /
+) -> np.ndarray:
+    """First routed ``(block, cell, node)`` slot of every global DOF.
+
+    The coordinate map is continuous across shared entities, so one deterministic
+    owner gives the DOF point without averaging away exact interpolatory nodes.
+    """
+    routed = np.concatenate(
+        tuple(np.asarray(routes).reshape((-1,)) for routes in block_dofs)
+    )
+    dofs, owners = np.unique(routed, return_index=True)
+    if not np.array_equal(dofs, np.arange(global_count)):
+        raise ValueError("Finite-element DOF points contain unassigned DOFs.")
+    return owners.astype(np.int32)
+
+
 def _build_finite_element_dof_coordinates(
     mesh: CellMesh,
     resolved: tuple[FiniteElementSpec, ...],
     layout: _FiniteElementDofLayout,
     block_dofs: tuple[Array, ...],
+    coordinate_spec: CellGeometrySpec,
     /,
-) -> tuple[tuple[Array, ...], Array, Array]:
-    global_count = layout.global_count
+) -> tuple[
+    tuple[np.ndarray, ...], tuple[Array, ...], np.ndarray, int, np.ndarray, np.ndarray
+]:
+    """DOF points are the cell coordinate map evaluated at the field's nodes."""
+    coordinate_elements, coordinate_routes, coordinate_values = coordinate_spec.resolve(
+        mesh
+    )
     coordinate_weights = tuple(
-        _linear_reference_element(block.cell_kind).tabulate(element.reference_nodes)[0]
-        for block, element in zip(mesh.blocks, resolved, strict=True)
+        _coordinate_node_weights(element, coordinate_element, block.cell_count)
+        for block, element, coordinate_element in zip(
+            mesh.blocks, resolved, coordinate_elements, strict=True
+        )
     )
     match layout.association:
         case "cell":
-            boundary = np.zeros((global_count,), dtype=np.bool_)
-            dof_coordinates = _cell_dof_coordinates(mesh, coordinate_weights)
-        case "edge":
-            connectivity = mesh.connectivity
-            if not isinstance(connectivity, PolygonalConnectivity):
-                raise TypeError("Compatible edge map requires polygonal connectivity.")
-            boundary = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
-            edge_vertices = np.asarray(connectivity.edges, dtype=np.int32)
-            dof_coordinates = np.mean(
-                np.asarray(mesh.coordinates)[edge_vertices],
-                axis=1,
-            )
+            boundary = np.zeros((layout.global_count,), dtype=np.bool_)
         case "form_entity":
             if layout.canonical_boundary is None:
                 raise RuntimeError("Canonical form boundary was not prepared.")
             boundary = layout.canonical_boundary
-            dof_coordinates = _averaged_dof_coordinates(
-                mesh,
-                coordinate_weights,
-                block_dofs,
-                global_count,
-                "Canonical form coordinates contain unassigned DOFs.",
-            )
         case "entity":
             boundary = _high_order_h1_boundary_mask(mesh, layout)
-            dof_coordinates = _averaged_dof_coordinates(
-                mesh,
-                coordinate_weights,
-                block_dofs,
-                global_count,
-                "High-order H1 coordinates contain unassigned DOFs.",
-            )
         case "vertex":
-            boundary = _vertex_boundary_mask(mesh, global_count)
-            dof_coordinates = np.asarray(mesh.coordinates)
+            boundary = _vertex_boundary_mask(mesh, layout.global_count)
         case _:
             raise ValueError("Unsupported finite-element DOF map.")
-    # ty: ignore[invalid-return-type]
-    return coordinate_weights, boundary, dof_coordinates
-
-
-def _cell_dof_coordinates(
-    mesh: CellMesh,
-    coordinate_weights: tuple[Array, ...],
-    /,
-) -> np.ndarray:
-    coordinate_blocks = []
-    mesh_coordinates = np.asarray(mesh.coordinates)
-    for block, weights_ in zip(mesh.blocks, coordinate_weights, strict=True):
-        cell_coordinates = mesh_coordinates[np.asarray(block.vertices, dtype=np.int32)]
-        mapped = ein.contract(
-            "ia,cad->cid",
-            np.asarray(weights_),
-            cell_coordinates,
+    owners = _dof_coordinate_owners(block_dofs, layout.global_count)
+    values = np.asarray(coordinate_values)
+    mapped = np.concatenate(
+        tuple(
+            np.asarray(
+                _mapped_reference_nodes(weights, values[np.asarray(routes)])
+            ).reshape((-1, values.shape[1]))
+            for weights, routes in zip(coordinate_weights, coordinate_routes, strict=True)
         )
-        coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
-    return np.concatenate(tuple(coordinate_blocks), axis=0)
-
-
-def _averaged_dof_coordinates(
-    mesh: CellMesh,
-    coordinate_weights: tuple[Array, ...],
-    block_dofs: tuple[Array, ...],
-    global_count: int,
-    unassigned_message: str,
-    /,
-) -> np.ndarray:
-    """Average each shared DOF's mapped node over every cell that routes to it."""
-    accumulated = np.zeros(
-        (global_count, mesh.ambient_dimension),
-        dtype=np.asarray(mesh.coordinates).dtype,
     )
-    counts = np.zeros((global_count,), dtype=np.int32)
-    for block, weights_, routes in zip(
-        mesh.blocks,
+    return (
         coordinate_weights,
-        block_dofs,
-        strict=True,
-    ):
-        mapped = ein.contract(
-            "ia,cad->cid",
-            np.asarray(weights_),
-            np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
-        )
-        routes_ = np.asarray(routes)
-        np.add.at(
-            accumulated,
-            routes_.reshape((-1,)),
-            mapped.reshape((-1, mesh.ambient_dimension)),
-        )
-        np.add.at(counts, routes_.reshape((-1,)), 1)
-    if np.any(counts == 0):
-        raise ValueError(unassigned_message)
-    return accumulated / counts[:, None]
+        coordinate_routes,
+        owners,
+        values.shape[0],
+        boundary,
+        mapped[owners],
+    )
 
 
 def _vertex_boundary_mask(mesh: CellMesh, global_count: int, /) -> np.ndarray:
@@ -1257,7 +1249,12 @@ def _canonical_finite_element_routes(
 
 @final
 class FiniteElementDofMap(StrictModule, NonTrainableState):
-    """Per-block FE local gathers into one global field coordinate array."""
+    """Per-block FE local gathers into one global field coordinate array.
+
+    DOF points are the bound cell coordinate map (affine by default) evaluated at
+    each element's reference nodes, so iso- and superparametric curved cells
+    place every node on the represented geometry.
+    """
 
     block_names: tuple[str, ...] = eqx.field(static=True)
     cell_dofs: tuple[Array, ...]
@@ -1265,6 +1262,9 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
     orientations: tuple[Array, ...]
     cell_transforms: tuple[Array, ...]
     cell_coordinate_weights: tuple[Array, ...]
+    coordinate_routes: tuple[Array, ...]
+    coordinate_owners: Array
+    coordinate_count: int = eqx.field(static=True)
     global_dof_count: int = eqx.field(static=True)
     entity_dof_counts: tuple[int, ...] = eqx.field(static=True)
     entity_dofs_per_entity: tuple[int, ...] = eqx.field(static=True)
@@ -1281,6 +1281,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
+        coordinate_spec: CellGeometrySpec | None = None,
     ) -> None:
         resolved = tuple(elements)
         if len(resolved) != len(mesh.blocks):
@@ -1298,8 +1299,20 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
             mesh, resolved, layout
         )
 
-        coordinate_weights, boundary, dof_coordinates = (
-            _build_finite_element_dof_coordinates(mesh, resolved, layout, block_dofs)
+        geometry = (
+            CellGeometrySpec.affine(mesh) if coordinate_spec is None else coordinate_spec
+        )
+        if not isinstance(geometry, CellGeometrySpec):
+            raise TypeError("coordinate_spec must be CellGeometrySpec or None.")
+        (
+            coordinate_weights,
+            coordinate_routes,
+            coordinate_owners,
+            coordinate_count,
+            boundary,
+            dof_coordinates,
+        ) = _build_finite_element_dof_coordinates(
+            mesh, resolved, layout, block_dofs, geometry
         )
 
         canonical_routes, canonical_orientations = _canonical_finite_element_routes(
@@ -1319,6 +1332,9 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         self.cell_coordinate_weights = tuple(
             jnp.asarray(value) for value in coordinate_weights
         )
+        self.coordinate_routes = tuple(jnp.asarray(value) for value in coordinate_routes)
+        self.coordinate_owners = jnp.asarray(coordinate_owners)
+        self.coordinate_count = coordinate_count
         self.relations = tuple(relations)
         self.global_dof_count = global_count
         self.entity_dof_counts = entity_dof_counts
@@ -1350,58 +1366,25 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate_coordinates(
-        self,
-        mesh: CellMesh,
-        coordinates: ArrayLike,
-        /,
-    ) -> Array:
+    def evaluate_coordinates(self, coordinates: ArrayLike, /) -> Array:
+        """DOF points for runtime coordinate-map values of the bound geometry."""
         points = jnp.asarray(coordinates)
-        if points.shape != mesh.coordinates.shape:
-            raise ValueError("DOF coordinate evaluation must preserve mesh shape.")
-        if self.association == "vertex":
-            return points
-        connectivity = mesh.connectivity
-        if self.association == "edge":
-            if not isinstance(connectivity, PolygonalConnectivity):
-                raise TypeError("Edge DOF coordinates require polygonal connectivity.")
-            edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
-            return 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
-        if self.association in ("entity", "face", "form_entity"):
-            accumulated = jnp.zeros(
-                (self.global_dof_count, mesh.ambient_dimension),
-                dtype=points.dtype,
+        if points.ndim != 2 or points.shape[0] != self.coordinate_count:
+            raise ValueError(
+                "DOF coordinate evaluation requires the bound coordinate-map values."
             )
-            counts = jnp.zeros((self.global_dof_count,), dtype=jnp.int32)
-            for block, weights_, routes in zip(
-                mesh.blocks,
-                self.cell_coordinate_weights,
-                self.cell_dofs,
-                strict=True,
-            ):
-                mapped = ein.contract(
-                    "ia,cad->cid",
-                    weights_,
-                    points[block.vertices],
+        mapped = jnp.concatenate(
+            tuple(
+                _mapped_reference_nodes(weights, points[routes]).reshape(
+                    (-1, points.shape[1])
                 )
-                accumulated = accumulated.at[routes].add(mapped)
-                counts = counts.at[routes].add(1)
-            return accumulated / counts[:, None]
-        if self.association == "cell":
-            coordinate_blocks = []
-            for block, weights_ in zip(
-                mesh.blocks,
-                self.cell_coordinate_weights,
-                strict=True,
-            ):
-                mapped = ein.contract(
-                    "ia,cad->cid",
-                    weights_,
-                    points[block.vertices],
+                for weights, routes in zip(
+                    self.cell_coordinate_weights, self.coordinate_routes, strict=True
                 )
-                coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
-            return jnp.concatenate(tuple(coordinate_blocks), axis=0)
-        raise ValueError("Unknown finite-element DOF association.")
+            ),
+            axis=0,
+        )
+        return mapped[self.coordinate_owners]
 
 
 class FiniteElementBlockGeometry(StrictModule, NonTrainableState):
@@ -1848,9 +1831,7 @@ def _prepare_finite_element_field(
     mesh: CellMesh,
     field: FiniteElementFieldSpec,
     coefficient_dtype: np.dtype,
-    coordinate_elements: tuple[CellGeometryElement, ...],
-    coordinate_dofs: tuple[Array, ...],
-    coordinate_values: Array,
+    coordinate_spec: CellGeometrySpec,
     precision_policy: FiniteElementPrecisionPolicy,
     /,
     *,
@@ -1862,7 +1843,15 @@ def _prepare_finite_element_field(
     tuple[FiniteElementBlockGeometry, ...],
 ]:
     elements = field.resolve(mesh)
-    dof_map = FiniteElementDofMap(mesh, elements, component_shape=field.component_shape)
+    coordinate_elements, coordinate_dofs, coordinate_values = coordinate_spec.resolve(
+        mesh
+    )
+    dof_map = FiniteElementDofMap(
+        mesh,
+        elements,
+        component_shape=field.component_shape,
+        coordinate_spec=coordinate_spec,
+    )
     vector_shape = (dof_map.global_dof_count,) + field.component_shape
     vector_space = ArraySpace(vector_shape, dtype=coefficient_dtype)
     layout = _finite_element_field_layout(mesh, dof_map, field.component_shape)
@@ -1992,9 +1981,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 mesh,
                 field,
                 plan.coefficient_dtype,
-                coordinate_elements,
-                coordinate_dofs,
-                coordinate_values,
+                plan.coordinate_spec,
                 plan.precision_policy,
                 coordinate_measure=plan.coordinate_measure,
             )
@@ -2331,8 +2318,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                     counts = counts.at[routes].add(1)
             return moments / counts
         coordinates = self.dof_maps[field_index].evaluate_coordinates(
-            self.mesh,
-            realized.coordinates,
+            realized.coordinates
         )
         values = jnp.asarray(function(coordinates, args))
         return self.field_spaces[field_index].vector_space.validate(values)
@@ -2416,8 +2402,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         values = self.field_spaces[field_index].vector_space.validate(coefficients)
         realized = self.default_runtime if runtime is None else runtime
         coordinates = self.dof_maps[field_index].evaluate_coordinates(
-            self.mesh,
-            realized.coordinates,
+            realized.coordinates
         )
         mask = self.dof_maps[field_index].boundary_dof_mask
         return coordinates[mask], values[mask]
@@ -2844,14 +2829,33 @@ def _evaluate_coordinate_map(
             raise ValueError(
                 "Paired cell-map evaluation requires one reference point per cell index."
             )
-        physical_points = ein.contract("qi,qid->qd", geometry_values, cell_coordinates)
-        jacobian = ein.contract("qir,qid->qdr", geometry_gradients, cell_coordinates)
-    elif isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
-        physical_points = ein.contract("cqi,cid->cqd", geometry_values, cell_coordinates)
-        jacobian = ein.contract("cqir,cid->cqdr", geometry_gradients, cell_coordinates)
-    else:
-        physical_points = ein.contract("qi,cid->cqd", geometry_values, cell_coordinates)
-        jacobian = ein.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
+        return _coordinate_map_values(
+            ein.contract("qi,qid->qd", geometry_values, cell_coordinates),
+            ein.contract("qir,qid->qdr", geometry_gradients, cell_coordinates),
+        )
+    if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
+        return _coordinate_map_values(
+            ein.contract("cqi,cid->cqd", geometry_values, cell_coordinates),
+            ein.contract("cqir,cid->cqdr", geometry_gradients, cell_coordinates),
+        )
+
+    # One shared chart: evaluate cell by cell so the Jacobian inversion's
+    # intermediates stay one cell's quadrature wide; only the outputs span the
+    # block.
+    def evaluate_cell(
+        nodes: Array, /
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+        return _coordinate_map_values(
+            ein.contract("qi,id->qd", geometry_values, nodes),
+            ein.contract("qir,id->qdr", geometry_gradients, nodes),
+        )
+
+    return jax.lax.map(evaluate_cell, cell_coordinates)
+
+
+def _coordinate_map_values(
+    physical_points: Array, jacobian: Array, /
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
     metric = ein.contract("...di,...dj->...ij", jacobian, jacobian)
     # Full-dimensional maps evaluate det(J) itself (its sign survives binary64
     # down to a few u relative to the column-norm product, where the Gram
