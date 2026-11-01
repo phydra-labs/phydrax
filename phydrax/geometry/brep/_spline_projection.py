@@ -609,7 +609,7 @@ def _surface_pieces(model: BRepModel, face: int, /) -> tuple[_SplinePiece, ...]:
         full_u = (domain[0], domain[1])
         full_v = (domain[2], domain[3])
     elif isinstance(patch, BSplineSurfacePatch):
-        spans = patch.rational_spans()
+        spans = patch.prepare_spans().spans
         for span in spans:
             u_lower, u_upper = span.parameter_bounds[0]
             v_lower, v_upper = span.parameter_bounds[1]

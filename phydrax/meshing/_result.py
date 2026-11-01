@@ -15,6 +15,7 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..geometry._mesh_certificates import _same_tree_content
 from ..geometry._planar_embedding import PlanarEmbedding
+from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.surface import SurfaceModel
 from ..interchange import AdapterReport
@@ -253,15 +254,21 @@ def _require_result_certification(
     geometry: CellGeometrySpec,
     audit: CellMeshAuditReport,
     boundary: SurfaceModel | None,
+    validated: tuple[ValidatedSourceFidelityWitness, ...],
     /,
 ) -> None:
     if certification is None:
+        if validated:
+            raise ValueError(
+                "Validated fidelity witnesses are reused only by certified results."
+            )
         return
     certification.inputs.require_current(
         mesh,
         geometry,
         domain=certification.inputs.domain,
         source=certification.inputs.source,
+        validated=validated,
     )
     certification.require_passed()
     if not _same_tree_content(audit, certification.audit):
@@ -324,7 +331,14 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         planar_embedding: PlanarEmbedding | None = None,
         certification: MeshCertificationReport | None = None,
         layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
+        validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
     ) -> None:
+        """Bind one meshing result to its reports and computed acceptance.
+
+        ``validated_witnesses`` are fidelity-witness validations already made
+        for exactly these mesh, coordinate map and source objects; checking the
+        retained acceptance does not repeat them.
+        """
         geometry.resolve(mesh)
         _require_result_reports(
             mesh,
@@ -358,7 +372,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             labels_,
             patches_,
         )
-        _require_result_certification(certification, mesh, geometry, audit, boundary)
+        _require_result_certification(
+            certification, mesh, geometry, audit, boundary, validated_witnesses
+        )
         if layer_curving_evidence is not None:
             if layer_curving_evidence.frame_id != coordinate_contract.spatial_id:
                 raise ValueError(

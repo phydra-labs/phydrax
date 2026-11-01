@@ -25,6 +25,7 @@ from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
 from ..geometry._planar_embedding import PlanarEmbedding
+from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
@@ -227,11 +228,15 @@ def certify_cell_mesh(
     layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
     embedding: GlobalEmbeddingCertificate | None = None,
     manifold_scope: CellMeshManifoldScope | None = None,
+    validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
 ) -> CellMeshingResult:
     """Canonicalize and certify one existing CellMesh through native substrates.
 
     ``embedding`` is a prepared global-embedding certificate of the canonical
     mesh; acceptance with ``certification_inputs`` checks and reuses it.
+    ``validated_witnesses`` are fidelity-witness validations the caller made
+    for exactly these mesh, coordinate map and source objects; acceptance with
+    ``certification_inputs`` does not repeat them.
     ``manifold_scope`` declares the vertex stars a resident patch of a
     distributed mesh certifies; it applies to the direct audit only.
     """
@@ -249,9 +254,14 @@ def certify_cell_mesh(
         raise TypeError("geometry must be CellGeometrySpec or None.")
     if embedding is not None and certification_inputs is None:
         raise ValueError("A prepared embedding is reused only by certified acceptance.")
+    if validated_witnesses and certification_inputs is None:
+        raise ValueError(
+            "Validated fidelity witnesses are reused only by certified acceptance."
+        )
     if manifold_scope is not None and certification_inputs is not None:
         raise ValueError("A manifold scope applies only to the direct cell-mesh audit.")
     certification = None
+    validated: tuple[ValidatedSourceFidelityWitness, ...] = ()
     if certification_inputs is None:
         audit = audit_cell_mesh(
             canonical,
@@ -266,11 +276,12 @@ def certify_cell_mesh(
             manifold_scope=manifold_scope,
         )
     else:
-        certification_inputs.require_current(
+        validated = certification_inputs.require_current(
             canonical,
             geometry_,
             domain=certification_inputs.domain,
             source=certification_inputs.source,
+            validated=validated_witnesses,
         )
         certification = MeshCertificationReport(
             certification_inputs,
@@ -286,6 +297,7 @@ def certify_cell_mesh(
                 region_boundary_evidence=region_boundary_evidence,
             ),
             embedding=embedding,
+            validated=validated,
         )
         certification.require_passed()
         audit = certification.audit
@@ -392,6 +404,7 @@ def certify_cell_mesh(
         region_boundary_evidence=region_boundary_evidence,
         planar_embedding=planar_embedding,
         layer_curving_evidence=layer_curving_evidence,
+        validated_witnesses=validated,
     )
 
 
@@ -522,8 +535,14 @@ def _accept_native_construction(
         source_coverage_witness=request.source_coverage_witness,
     )
     organization = construction.organization
+    validated = inputs.require_current(
+        mesh, geometry, domain=inputs.domain, source=inputs.source
+    )
     certification = MeshCertificationReport(
-        inputs, organization=organization, embedding=request.global_embedding
+        inputs,
+        organization=organization,
+        embedding=request.global_embedding,
+        validated=validated,
     )
     certification.require_passed()
     runtime = MeshingRuntimeInfo(
@@ -565,6 +584,7 @@ def _accept_native_construction(
         planar_embedding=construction.planar_embedding,
         certification=certification,
         layer_curving_evidence=construction.layer_curving_evidence,
+        validated_witnesses=validated,
     )
 
 

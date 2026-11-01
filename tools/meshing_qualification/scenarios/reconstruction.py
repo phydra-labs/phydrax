@@ -178,23 +178,25 @@ def _affine_harmonic_solve(
         dirichlet_values=lambda values: (
             1.0 + 2.0 * values[..., 0] - values[..., 1] + 0.5 * values[..., 2]
         ),
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(realization="sparse"),
     )
-    operator, rhs = problem.linear_system()
-    # The oracle is roundoff reproduction of affine data. The default iterative stop
-    # (relative residual 1e-8) leaves affine errors of order 1e-8 on the envelope
-    # volumes, so the matrix-free solve converges to relative residual 1e-12.
-    solve = phx.linalg.solve(
+    # The oracle is roundoff reproduction of affine data, so the Dirichlet-reduced
+    # stiffness is handed over as sparse coordinates and factorized by the native
+    # sparse LU. The matrix-free action applies the linearized residual program per
+    # Krylov step and holds its whole quadrature workset per step. The right-hand
+    # side is the residual program at the lift, so the affine reproduction below
+    # checks the stored coordinates against it; the residual is read from them.
+    operator, rhs = problem.linear_system(storage="sparse")
+    prepared = phx.linalg.prepare(
         operator,
-        rhs,
-        policy=phx.linalg.LinearSolvePolicy(
-            tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=0.0)
-        ),
+        phx.linalg.LinearSolvePolicy(phx.linalg.SparseLU(provider="jax-cpu")),
     )
+    solve = phx.linalg.solve(prepared, rhs)
     values = np.asarray(problem.expand(solve.value), dtype=np.float64)
     points = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     exact = 1.0 + 2.0 * points[:, 0] - points[:, 1] + 0.5 * points[:, 2]
     error = float(np.max(np.abs(values - exact), initial=0.0))
-    residual = float(jnp.linalg.norm(problem.residual(solve.value)))
+    residual = float(jnp.linalg.norm(operator.operator.mv(solve.value) - rhs))
     rhs_norm = float(jnp.linalg.norm(rhs))
     if (
         not bool(jnp.all(solve.successful))
@@ -211,6 +213,12 @@ def _affine_harmonic_solve(
         "maximum_affine_error": error,
         "normalized_residual": residual / max(1.0, rhs_norm),
         "tolerance": 2.0e-9,
+        "solver": {
+            "backend": str(prepared.plan.backend),
+            "method": str(prepared.plan.method),
+            "status": int(np.asarray(solve.status)),
+            "unknowns": int(operator.operator.source.size),
+        },
     }
 
 

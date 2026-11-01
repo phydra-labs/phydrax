@@ -408,6 +408,7 @@ def _local_patches(
 def _initial_curve_parameters(
     prepared: PreparedDistributedSurfaceGeneration,
     local_patch_rows: tuple[int, ...],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[dict[int, set[Fraction]], native_surface_owner._PoleCharts]:
     """Serial initial seam samples restricted to the curves this owner trims.
@@ -428,6 +429,7 @@ def _initial_curve_parameters(
         surface.size_values,
         surface.specification,
         surface.schedule,
+        preparation,
     )
     pole_charts = native_surface_owner._pole_sampling(
         surface.domain,
@@ -436,6 +438,7 @@ def _initial_curve_parameters(
         surface.specification,
         surface.schedule,
         parameters,
+        preparation,
     )
     native_surface_owner._integrate_pole_ring_parameters(
         surface.domain, patches, pole_charts, parameters
@@ -1114,6 +1117,7 @@ def execute_distributed_surface_initial(
     """
     rank = _execution_rank(prepared.execution_group)
     domain = prepared.surface.domain
+    preparation = domain_owner.SourcePreparation(domain)
     local_patch_rows: tuple[int, ...] = ()
     local_parameters: dict[int, set[Fraction]] = {}
     pole_charts: native_surface_owner._PoleCharts = {}
@@ -1126,7 +1130,7 @@ def execute_distributed_surface_initial(
             if owner == rank
         )
         local_parameters, pole_charts = _initial_curve_parameters(
-            prepared, local_patch_rows
+            prepared, local_patch_rows, preparation
         )
     except Exception as error:
         local_error = error
@@ -1220,6 +1224,7 @@ def execute_distributed_surface_initial(
                 local_sizes,
                 prepared.surface.specification,
                 prepared.surface.schedule,
+                preparation,
                 seam_rounds=rounds,
             )
         else:

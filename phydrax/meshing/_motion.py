@@ -815,6 +815,7 @@ def _motion_target(
 ]:
     """Recompute source claims and optional material correspondence on one motion epoch."""
     inputs = None
+    validated_witnesses = ()
     audit_policy = None
     patches = zones = labels = boundaries = ()
     attributes = ()
@@ -875,7 +876,7 @@ def _motion_target(
                 lineage,
                 identity_maps,
             )
-        inputs = _renew_transition_certification_inputs(
+        renewed_inputs = _renew_transition_certification_inputs(
             source,
             mesh,
             geometry,
@@ -883,6 +884,8 @@ def _motion_target(
             reference_maps=identity_maps,
             transition=transition,
         )
+        if renewed_inputs is not None:
+            inputs, validated_witnesses = renewed_inputs
         audit_policy = (
             None if source.certification is None else source.certification.audit_policy
         )
@@ -892,6 +895,7 @@ def _motion_target(
             geometry=geometry,
             audit_policy=audit_policy,
             certification_inputs=inputs,
+            validated_witnesses=validated_witnesses,
             boundary=source.boundary,
             patches=patches,
             zones=zones,
