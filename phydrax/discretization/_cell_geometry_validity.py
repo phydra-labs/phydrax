@@ -28,6 +28,7 @@ tabulation refuses them (collapsed quadrature never samples the apex).
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -102,7 +103,11 @@ from ._coordinate_enclosure import (
     subtract,
     sum_polynomials,
 )
-from ._exact_algebraic_geometry import coefficient_endpoint, coefficient_payload
+from ._exact_algebraic_geometry import (
+    coefficient_endpoint,
+    coefficient_payload,
+    RadicalElement,
+)
 from ._reference_cell import reference_cell_topology
 from .fem._reference import FiniteElementSpec
 
@@ -323,6 +328,12 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     has physical-coordinate units. ``maximum_element_coefficient_rounding_error``
     is dimensionless and describes element-basis coefficient shadows. Neither
     quantity estimates whole-map or Jacobian error.
+
+    ``cell_map_digests`` names, per cell, the exact execution and source
+    coordinate maps (cell kind and exact coefficients in their stored order)
+    those proofs answer: ``cells x 2 x 16`` bytes, all-zero where no map record
+    exists. It is not identity-bearing; ``certify_cell_geometry_validity(...,
+    parent=...)`` reuses a cell's proof only for an identical digest.
     """
 
     status: Array
@@ -352,6 +363,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     topology_id: str | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
+    cell_map_digests: bytes = eqx.field(static=True)
 
     def __init__(
         self,
@@ -374,6 +386,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         geometry_id: str,
         geometry_layout_id: str,
         policy_id: str,
+        cell_map_digests: bytes | None = None,
     ) -> None:
         execution = _normalize_proof_arrays(
             status, determinant_lower, determinant_upper, depth
@@ -440,6 +453,13 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             )
         if not set(unsupported) <= set(names):
             raise ValueError("Unsupported validity blocks must be certificate blocks.")
+        digest_bytes = 2 * _MAP_DIGEST_SIZE * status_.size
+        if cell_map_digests is None:
+            cell_map_digests = bytes(digest_bytes)
+        if type(cell_map_digests) is not bytes or len(cell_map_digests) != digest_bytes:
+            raise ValueError(
+                "Cell map digests must be one execution and one source digest per cell."
+            )
         geometry_id_ = cell_geometry_id(geometry)
         if (
             geometry_id_ != geometry_id
@@ -525,6 +545,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
                 "maximum_element_coefficient_rounding_error": element_rounding_error,
             }
         )
+        self.cell_map_digests = cell_map_digests
 
     @classmethod
     def from_stored_fields(
@@ -1849,17 +1870,75 @@ def _certify_nonlinear_source_map(
     return margin_certificate[0], lower, upper, max(depth, margin_certificate[3])
 
 
+# One cell's proof (status, determinant lower/upper endpoint, depth) is a pure
+# function of its exact coordinate map, cell kind and validity policy.
+type _CellProof = tuple[int, float, float, int]
+type _CellProofs = dict[bytes, _CellProof]
+_MAP_DIGEST_SIZE = 16
+
+
+def _polynomial_digest_terms(
+    polynomial: Mapping[tuple[int, ...], ExactScalar], parts: list[object], /
+) -> bool:
+    parts.append(len(polynomial))
+    for exponent, coefficient in polynomial.items():
+        if type(coefficient) is Fraction:
+            parts.append((exponent, coefficient.numerator, coefficient.denominator))
+        elif type(coefficient) is RadicalElement:
+            parts.append((exponent, "radical", coefficient.terms))
+        else:
+            return False
+    return True
+
+
+def _map_digest(cell_kind: str, expressions: tuple[Expression, ...], /) -> bytes | None:
+    """Digest a cell's exact coordinate map, or ``None`` when it has no record.
+
+    Coefficients are encoded with their exact type and in stored order, so an
+    equal digest means the prover receives identical operands.
+    """
+    parts: list[object] = [cell_kind, len(expressions)]
+    for expression in expressions:
+        if isinstance(expression, RationalPolynomial):
+            parts.append("rational")
+            if not _polynomial_digest_terms(
+                expression.numerator, parts
+            ) or not _polynomial_digest_terms(expression.denominator, parts):
+                return None
+        else:
+            parts.append("polynomial")
+            if not _polynomial_digest_terms(expression, parts):
+                return None
+    return hashlib.blake2b(
+        repr(parts).encode("ascii"), digest_size=_MAP_DIGEST_SIZE
+    ).digest()
+
+
+def _pyramid_apex_unique(expressions: tuple[Expression, ...], dimension: int, /) -> bool:
+    return all(
+        normalize_pyramid_reference_derivative(expression, axis).apex_value is not None
+        for expression in expressions
+        for axis in range(dimension)
+    )
+
+
 def _certify_source_block(
     element: ScalarCoordinateElement,
     cell_kind: str,
     coordinates: CoordinateSourceBank,
     routes: NDArray[np.int64],
     policy: CellValidityPolicy,
+    proofs: _CellProofs,
     /,
     *,
     execution_map: bool = False,
-) -> tuple[_BlockCertificate, bool]:
-    """Prove an exact-source or binary64-shadow coordinate map."""
+) -> tuple[_BlockCertificate, bool, NDArray[np.uint8]]:
+    """Prove an exact-source or binary64-shadow coordinate map.
+
+    ``proofs`` holds proofs of ``policy`` keyed by exact map digest; a cell
+    whose map is recorded there reuses its proof, and every proof made here
+    is recorded. Also returns each cell's map digest (zero when unrecorded).
+    """
     count = routes.shape[0]
     dimension = reference_cell_topology(cell_kind).dimension
     status = np.full(count, CellValidityStatus.UNRESOLVED, dtype=np.int32)
@@ -1867,6 +1946,7 @@ def _certify_source_block(
     upper = np.full(count, np.nan, dtype=np.float64)
     depth = np.zeros(count, dtype=np.int64)
     apex_unique = np.ones(count, dtype=np.bool_)
+    digests = np.zeros((count, _MAP_DIGEST_SIZE), dtype=np.uint8)
     pyramid = reference_cell_topology(cell_kind).family == "pyramid"
     domain = _source_proof_domain(cell_kind)
     has_unsupported_map = False
@@ -1879,6 +1959,17 @@ def _certify_source_block(
             if execution_map
             else coordinate_map_expressions(element, local, cell_row=row)
         )
+        # Without a proof domain an unsupported nonaffine map is reported, so
+        # only maps with a domain carry reusable records.
+        digest = None if domain is None else _map_digest(cell_kind, expressions)
+        if digest is not None:
+            digests[row] = np.frombuffer(digest, dtype=np.uint8)
+            recorded = proofs.get(digest)
+            if recorded is not None:
+                status[row], lower[row], upper[row], depth[row] = recorded
+                if pyramid and affine_map(expressions, dimension) is None:
+                    apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
+                continue
         affine = affine_map(expressions, dimension)
         if affine is None:
             if domain is None:
@@ -1890,21 +1981,78 @@ def _certify_source_block(
                 )
             )
             if pyramid:
-                apex_unique[row] = all(
-                    normalize_pyramid_reference_derivative(expression, axis).apex_value
-                    is not None
-                    for expression in expressions
-                    for axis in range(dimension)
-                )
-            continue
-        _, jacobian = affine
-        status[row], determinant = _affine_quality(jacobian, dimension, policy)
-        lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
-        upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
+                apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
+        else:
+            _, jacobian = affine
+            status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
+            upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
+        if digest is not None:
+            proofs[digest] = (
+                int(status[row]),
+                float(lower[row]),
+                float(upper[row]),
+                int(depth[row]),
+            )
     return (
         _BlockCertificate(status, lower, upper, depth, apex_unique),
         has_unsupported_map,
+        digests,
     )
+
+
+def _parent_proofs(
+    parent: CellValidityCertificate | tuple[CellValidityCertificate, ...] | None,
+    policy: CellValidityPolicy,
+    /,
+) -> _CellProofs:
+    """Index the recorded execution and source proofs of parent certificates."""
+    match parent:
+        case None:
+            parents: tuple[CellValidityCertificate, ...] = ()
+        case CellValidityCertificate():
+            parents = (parent,)
+        case tuple():
+            parents = parent
+        case _:
+            raise TypeError(
+                "parent must be CellValidityCertificate, a tuple of them, or None."
+            )
+    proofs: _CellProofs = {}
+    for certificate in parents:
+        if not isinstance(certificate, CellValidityCertificate):
+            raise TypeError("parent must hold CellValidityCertificate values.")
+        if certificate.policy_id != policy.policy_id:
+            raise ValueError("Parent validity proofs must use the same validity policy.")
+        table = np.frombuffer(certificate.cell_map_digests, dtype=np.uint8).reshape(
+            -1, 2, _MAP_DIGEST_SIZE
+        )
+        for column, arrays in enumerate(
+            (
+                (
+                    certificate.execution_status,
+                    certificate.determinant_lower,
+                    certificate.determinant_upper,
+                    certificate.depth,
+                ),
+                (
+                    certificate.source_status,
+                    certificate.source_determinant_lower,
+                    certificate.source_determinant_upper,
+                    certificate.source_depth,
+                ),
+            )
+        ):
+            digests = table[:, column]
+            rows = np.flatnonzero(np.any(digests != 0, axis=1))
+            status, lower, upper, depth = (
+                np.asarray(value)[rows].tolist() for value in arrays
+            )
+            for row, values in zip(
+                rows.tolist(), zip(status, lower, upper, depth, strict=True), strict=True
+            ):
+                proofs.setdefault(digests[row].tobytes(), values)
+    return proofs
 
 
 def _polynomial_coefficient_difference(
@@ -2321,17 +2469,25 @@ def certify_cell_geometry_validity(
     *,
     mesh: CellMesh | None = None,
     policy: CellValidityPolicy | None = None,
+    parent: CellValidityCertificate | tuple[CellValidityCertificate, ...] | None = None,
 ) -> CellValidityCertificate:
     """Certify determinant positivity of every mapped cell with Bernstein bounds.
 
     A ``CellMesh`` is certified with its affine vertex geometry. A
     ``CellGeometrySpec`` is certified in mesh block order when ``mesh`` is given
     (required for polyhedral blocks) and in its own sorted block order otherwise.
+
+    ``parent`` passes earlier certificates of the same ``policy`` explicitly. A
+    cell whose exact coordinate map (cell kind and exact coefficients) equals a
+    map a parent proved reuses that recorded proof, matched by map digest and
+    never by cell index; every other cell is proved. The result is identical
+    to the certificate of a full proof.
     """
 
     policy_ = CellValidityPolicy() if policy is None else policy
     if not isinstance(policy_, CellValidityPolicy):
         raise TypeError("policy must be CellValidityPolicy or None.")
+    proofs = _parent_proofs(parent, policy_)
     if isinstance(geometry, CellMesh):
         if mesh is not None:
             raise ValueError("mesh is implied when certifying a CellMesh.")
@@ -2409,6 +2565,9 @@ def certify_cell_geometry_validity(
     offsets = [0]
     blocks: list[_BlockCertificate] = []
     source_blocks: list[_BlockCertificate] = []
+    digests = np.zeros(
+        (sum(route.shape[0] for route in routes), 2, _MAP_DIGEST_SIZE), dtype=np.uint8
+    )
     for name, kind, element, route in zip(names, kinds, elements, routes, strict=True):
         cell_count = route.shape[0]
         if isinstance(element, CellVertexGeometryElement) and kind == "polygon":
@@ -2438,12 +2597,13 @@ def certify_cell_geometry_validity(
             )
         elif isinstance(element, ScalarCoordinateElement):
             try:
-                certificate, has_unsupported_map = _certify_source_block(
+                certificate, has_unsupported_map, block_digests = _certify_source_block(
                     element,
                     kind,
                     execution_coordinates,
                     route,
                     policy_,
+                    proofs,
                     execution_map=True,
                 )
             except (OverflowError, TypeError, ValueError):
@@ -2454,6 +2614,8 @@ def certify_cell_geometry_validity(
                     np.full((cell_count,), np.nan),
                     np.zeros((cell_count,), dtype=np.int64),
                 )
+            else:
+                digests[cursor : cursor + cell_count, 0] = block_digests
             blocks.append(certificate)
             if has_unsupported_map:
                 unsupported.add(name)
@@ -2470,8 +2632,10 @@ def certify_cell_geometry_validity(
         if distinct_source:
             if isinstance(element, ScalarCoordinateElement):
                 try:
-                    source_certificate, source_unsupported = _certify_source_block(
-                        element, kind, source_bank, route, policy_
+                    source_certificate, source_unsupported, block_digests = (
+                        _certify_source_block(
+                            element, kind, source_bank, route, policy_, proofs
+                        )
                     )
                 except (OverflowError, TypeError, ValueError):
                     source_unsupported = True
@@ -2481,6 +2645,8 @@ def certify_cell_geometry_validity(
                         np.full((cell_count,), np.nan),
                         np.zeros((cell_count,), dtype=np.int64),
                     )
+                else:
+                    digests[cursor : cursor + cell_count, 1] = block_digests
                 if source_unsupported:
                     unsupported.add(name)
             elif (
@@ -2527,6 +2693,8 @@ def certify_cell_geometry_validity(
         if distinct_source
         else execution_proof
     )
+    if not distinct_source:
+        digests[:, 1] = digests[:, 0]
     return CellValidityCertificate(
         execution_proof.status,
         execution_proof.lower,
@@ -2549,6 +2717,7 @@ def certify_cell_geometry_validity(
         geometry_id=cell_geometry_id(spec),
         geometry_layout_id=spec.geometry_layout_id,
         policy_id=policy_.policy_id,
+        cell_map_digests=digests.tobytes(),
     )
 
 

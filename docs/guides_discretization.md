@@ -365,9 +365,12 @@ density over positive Bernstein patches; pyramid volumes use the collapsed-box
 chart with its exact Jacobian weight. Every result retains per-cell outward
 measure errors; quadrature samples are never used as certification evidence.
 `SourceGeometryRealization` binds two independently certified embeddings on a
-shared reference complex with a displacement bound and endpoint measures. A
-`CellGeometryPredecessor` matches complete unchanged-cell coordinate laws and
-reuses their bound validity proof rows when preparing target evidence.
+shared reference complex with a displacement bound and endpoint measures.
+`certify_cell_geometry_validity(..., parent=...)` takes earlier validity
+certificates of the same policy explicitly: a cell whose exact coordinate map
+(cell kind and exact coefficients) has the digest of a map a parent proved
+reuses that proof, every other cell is proved, and the certificate equals the
+one a full proof produces.
 
 ## Virtual elements
 
