@@ -117,6 +117,128 @@ _FORMAT_WRITERS = {
     "iges": (".iges", "write_iges"),
 }
 
+# STEP entity types without a geometric interpretation: measure records and
+# presentation containers. The native reader ignores them by design but reports
+# every unreached non-metadata record as a declared drop.
+_NON_GEOMETRIC_STEP_ENTITIES = frozenset(
+    {
+        "DRAUGHTING_MODEL",
+        "LENGTH_MEASURE_WITH_UNIT",
+        "MEASURE_WITH_UNIT",
+        "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION",
+        "PLANE_ANGLE_MEASURE_WITH_UNIT",
+        "SOLID_ANGLE_MEASURE_WITH_UNIT",
+        "UNCERTAINTY_MEASURE_WITH_UNIT",
+    }
+)
+_IGNORED_STEP_ENTITIES = "geometry.ignored-step-entities"
+_SOURCE_TOLERANCE_LOSS = "source-tolerance:"
+
+
+def _ignored_step_entities(rationale: str, /) -> tuple[tuple[str, frozenset[str]], ...]:
+    """Parse ``#id NAME[+NAME]`` records of an ignored-STEP-entities declaration."""
+    _, separator, listed = rationale.partition(": ")
+    if not separator or not listed.strip():
+        raise RuntimeError(
+            f"Ignored STEP entity declaration lists no entities: {rationale!r}."
+        )
+    records = []
+    for item in listed.split(", "):
+        label, _, names = item.strip().partition(" ")
+        if not label.startswith("#") or not names:
+            raise RuntimeError(f"Ignored STEP entity record is malformed: {item!r}.")
+        records.append((label, frozenset(names.split("+"))))
+    return tuple(records)
+
+
+def _require_geometric_losslessness(
+    imported: phx.interchange.CadImportResult, /
+) -> dict[str, object]:
+    """Require exact geometry and every source p-curve honored within tolerance.
+
+    A declared loss is admitted only for ignored non-geometric STEP entities and
+    for source tolerance declarations the native model cannot carry as its own
+    limit; the latter are bounded below by requiring every certified edge/p-curve
+    gap to lie within the file's declared tolerance.
+    """
+    report = imported.report
+    status = report.status.name
+    if status not in ("LOSSLESS", "DECLARED_LOSS"):
+        raise RuntimeError(
+            f"Native {imported.format} import declared {status} semantics: {report.losses!r}."
+        )
+    ignored: list[str] = []
+    tolerance_records: list[str] = []
+    for loss in report.losses:
+        if loss.path == _IGNORED_STEP_ENTITIES and imported.format == "step":
+            records = _ignored_step_entities(loss.rationale)
+            geometric = [
+                label
+                for label, names in records
+                if not names <= _NON_GEOMETRIC_STEP_ENTITIES
+            ]
+            if geometric:
+                raise RuntimeError(
+                    f"Native STEP import ignored geometry-bearing entities {geometric!r}."
+                )
+            ignored.extend(
+                f"{label} {'+'.join(sorted(names))}" for label, names in records
+            )
+        elif loss.path.startswith(_SOURCE_TOLERANCE_LOSS):
+            tolerance_records.append(loss.rationale)
+        else:
+            raise RuntimeError(
+                f"Native {imported.format} import declared a geometry loss: {loss.path} ({loss.category}): {loss.rationale}"
+            )
+    model = imported.model
+    geometry = model.geometry
+    if geometry is None:
+        raise RuntimeError(
+            f"Native {imported.format} import lost its exact B-Rep carriers."
+        )
+    coedges = len(geometry.coedge_edges)
+    if imported.coverage.pcurves_honored != coedges:
+        raise RuntimeError(
+            f"Native {imported.format} import honored {imported.coverage.pcurves_honored} of {coedges} source p-curves."
+        )
+    evidence = imported.tolerance_evidence
+    if evidence is None:
+        raise RuntimeError(
+            f"Native {imported.format} import carries no tolerance evidence."
+        )
+    edges_with_coedges = {int(edge) for edge in geometry.coedge_edges}
+    gaps: list[tuple[int, float, float]] = []
+    for entity, certified, declared in zip(
+        evidence.entities, evidence.certified_bounds, evidence.source_bounds, strict=True
+    ):
+        if entity.kind != "edge" or entity.index not in edges_with_coedges:
+            continue
+        limit = (
+            declared
+            if declared is not None
+            else evidence.source_tolerance
+            if evidence.source_tolerance is not None
+            else evidence.declared_limit
+        )
+        if certified is None or not certified <= limit:
+            raise RuntimeError(
+                f"Native {imported.format} edge {entity.index} p-curve gap {certified!r} is not certified within the declared tolerance {limit!r}."
+            )
+        gaps.append((entity.index, certified, limit))
+    if {index for index, _, _ in gaps} != edges_with_coedges:
+        raise RuntimeError(
+            f"Native {imported.format} import certified p-curve gaps on {len({index for index, _, _ in gaps})} of {len(edges_with_coedges)} edges."
+        )
+    return {
+        "status": status,
+        "ignored_non_geometric_step_entities": ignored,
+        "uncarried_source_tolerances": tolerance_records,
+        "pcurves_honored": imported.coverage.pcurves_honored,
+        "coedges": coedges,
+        "maximum_certified_pcurve_gap": max(gap for _, gap, _ in gaps),
+        "minimum_declared_tolerance": min(limit for _, _, limit in gaps),
+    }
+
 
 def _contract() -> SpatialCoordinateContract:
     return SpatialCoordinateContract.si()
@@ -211,17 +333,7 @@ def _import_cad(
         trusted_root=directory,
         source_length_unit=source_length_unit,
     )
-    if imported.report.status.name != "LOSSLESS":
-        raise RuntimeError(
-            f"Native {imported.format} import declared {imported.report.status.name} semantics: {imported.report.losses!r}."
-        )
-    if (
-        imported.coverage.pcurves_honored != imported.coverage.pcurves_exact
-        or imported.model.geometry is None
-    ):
-        raise RuntimeError(
-            f"Native {imported.format} import did not retain exact source carriers and p-curves: honored={imported.coverage.pcurves_honored}, exact={imported.coverage.pcurves_exact}."
-        )
+    _require_geometric_losslessness(imported)
     return imported
 
 
@@ -456,14 +568,7 @@ def _external_case(
         raise RuntimeError(
             f"Native STEP import did not retain the NIST millimeter unit: {imported.source_length_unit_meters!r} m/unit."
         )
-    if (
-        imported.report.status.name != "LOSSLESS"
-        or imported.coverage.pcurves_honored != imported.coverage.pcurves_exact
-        or imported.model.geometry is None
-    ):
-        raise RuntimeError(
-            f"Native STEP import did not retain the exact NIST source representation: status={imported.report.status.name}, pcurves_honored={imported.coverage.pcurves_honored}, pcurves_exact={imported.coverage.pcurves_exact}."
-        )
+    source_losslessness = _require_geometric_losslessness(imported)
     model, roundtrip = _roundtrip(
         imported.model, "external-washer", format_name, directory
     )
@@ -516,6 +621,7 @@ def _external_case(
             "pcurves_honored": imported.coverage.pcurves_honored,
             "pcurves_exact": imported.coverage.pcurves_exact,
             "pcurve_fit": "disabled",
+            "geometric_losslessness": source_losslessness,
         },
         "requested_format_roundtrip": roundtrip,
         "analytic_volume_m3": expected_volume,

@@ -2248,8 +2248,9 @@ def _finite_element_source_basis(element: FiniteElementSpec, /) -> tuple[Express
     )
 
 
-# Root source bases keyed by element type and content identity; each is formed
-# once per process.
+# Reference element source bases (finite-element and layer-column) keyed by the
+# element's content identity, a static table of family, degree and layout.
+# Spline roots carry per-mesh extraction operators and are formed per call.
 _SOURCE_BASES: dict[tuple[str, str], tuple[Any, ...]] = {}
 
 
@@ -2258,8 +2259,8 @@ def coordinate_source_basis(
 ) -> tuple[Any, ...]:
     """Return exact root basis expressions without applying reference charts/actions.
 
-    The basis depends only on the element's content identity, so it is formed
-    once per element; every caller receives its own polynomial dictionaries.
+    Reference finite-element bases are formed once per reference element; every
+    caller receives its own polynomial dictionaries.
     """
     if isinstance(element, PerCellRestrictedCellGeometryElement):
         if cell_row is not None and not 0 <= int(cell_row) < len(element.target_cell_ids):
@@ -2273,10 +2274,9 @@ def coordinate_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_source_basis(element.source_element)
-    identity = getattr(element, "element_id", None)
-    if not isinstance(identity, str):
+    if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_source_basis(element)
-    key = (type(element).__name__, identity)
+    key = (type(element).__name__, element.element_id)
     basis = _SOURCE_BASES.get(key)
     if basis is None:
         basis = _root_source_basis(element)
@@ -2767,8 +2767,7 @@ def _finite_element_execution_basis(
         raise ValueError("Finite-element spec has no implemented native tabulator.")
 
 
-# Root execution bases keyed by element type and content identity, like
-# `_SOURCE_BASES`; each is formed once per process.
+# Reference element execution bases, keyed and scoped like `_SOURCE_BASES`.
 _EXECUTION_BASES: dict[tuple[str, str], tuple[Expression, ...]] = {}
 
 
@@ -2777,9 +2776,8 @@ def coordinate_execution_source_basis(
 ) -> tuple[Expression, ...]:
     """Return the native coefficient-shadow basis before reference composition.
 
-    The root basis depends only on the element's content identity, so it is
-    formed once per element; every caller receives its own polynomial
-    dictionaries.
+    Reference element bases are formed once per reference element; every caller
+    receives its own polynomial dictionaries.
     """
     if isinstance(
         element,
@@ -2790,10 +2788,9 @@ def coordinate_execution_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_execution_source_basis(element.source_element)
-    identity = getattr(element, "element_id", None)
-    if not isinstance(identity, str):
+    if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_execution_basis(element)
-    key = (type(element).__name__, identity)
+    key = (type(element).__name__, element.element_id)
     basis = _EXECUTION_BASES.get(key)
     if basis is None:
         basis = _root_execution_basis(element)

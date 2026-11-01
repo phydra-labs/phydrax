@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import weakref
 from collections.abc import Sequence
 from fractions import Fraction
 from math import inf, isfinite, nextafter
@@ -56,52 +55,6 @@ def _float_bank(values: tuple[tuple[Fraction, ...], ...], /) -> np.ndarray:
     return np.asarray(
         [[float(value) for value in row] for row in values], dtype=np.float64
     )
-
-
-# Proved exact transfer chains, keyed by patch object identity. Each entry holds
-# a weak reference to its patch (never the patch itself, so the entry cannot keep
-# its key alive) and the content identity of the exact chain the proof consumed.
-# A hit requires the same live object AND the same recomputed content identity,
-# so constructor-bypassing restores or edits that change the chain re-prove it.
-_PROVED_TRANSFER_CHAINS: dict[int, tuple[weakref.ref[TSplineSurfacePatch], str]] = {}
-
-
-def _transfer_chain_identity(patch: TSplineSurfacePatch, /) -> str:
-    """Fingerprint the exact inputs the transfer-chain proof consumes."""
-    return canonical_fingerprint(
-        {
-            "kind": "tspline-transfer-chain-proof-input",
-            "definition": _surface_definition_id(
-                patch.source_mesh.mesh_id,
-                patch.mesh.mesh_id,
-                tuple(plan.plan_id for plan in patch.transfer_plans),
-                tuple(mesh.mesh_id for mesh in patch.transfer_meshes),
-                patch.exact_source_control_points,
-                patch.exact_source_weights,
-                patch.exact_target_homogeneous,
-            ),
-            "basis_certificates": [
-                certificate.certificate_id
-                for certificate in patch.transfer_basis_certificates
-            ],
-        }
-    )
-
-
-def _proved_transfer_chain(patch: TSplineSurfacePatch, identity: str, /) -> bool:
-    proved = _PROVED_TRANSFER_CHAINS.get(id(patch))
-    return proved is not None and proved[0]() is patch and proved[1] == identity
-
-
-def _record_proved_transfer_chain(patch: TSplineSurfacePatch, identity: str, /) -> None:
-    key = id(patch)
-
-    def _forget(reference: weakref.ref[TSplineSurfacePatch], /) -> None:
-        entry = _PROVED_TRANSFER_CHAINS.get(key)
-        if entry is not None and entry[0] is reference:
-            del _PROVED_TRANSFER_CHAINS[key]
-
-    _PROVED_TRANSFER_CHAINS[key] = (weakref.ref(patch, _forget), identity)
 
 
 def _exact_digest(values: Sequence[Sequence[Fraction]], /) -> list[list[list[int]]]:
@@ -506,9 +459,6 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
     def validate_exact_transfer_chain(self, /) -> None:
         """Revalidate the retained exact source-to-target geometry chain."""
         self.validate_source_bank()
-        chain_identity = _transfer_chain_identity(self)
-        if _proved_transfer_chain(self, chain_identity):
-            return
         if len(self.transfer_meshes) != len(self.transfer_plans) + 1 or len(
             self.transfer_basis_certificates
         ) != len(self.transfer_meshes):
@@ -541,7 +491,6 @@ class TSplineSurfacePatch(AbstractSurfacePatch):
             raise ValueError(
                 "Retained exact T-spline target bank differs from its transfer chain."
             )
-        _record_proved_transfer_chain(self, chain_identity)
 
     @property
     def basis_certificate(self, /) -> ASTSCertificate:
