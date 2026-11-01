@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from phydrax import SpatialCoordinateContract
-from phydrax.discretization import CellMesh
+from phydrax.discretization import CellBlock, CellMesh
 from phydrax.geometry import Sphere
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
@@ -21,6 +21,8 @@ from phydrax.meshing._adaptation import (
     prepare_mesh_adaptation,
 )
 from phydrax.meshing._association import (
+    AssociationEntityClasses,
+    AssociationPropagationError,
     GeometryAssociation,
     GeometryAssociationKind,
     GeometrySourceEntityRole,
@@ -241,6 +243,52 @@ def test_implicit_sphere_association_survives_bisection_split_and_collapse() -> 
         and all(role is GeometrySourceEntityRole.FACET for role in value.source_roles)
         for value in coarsened.target.associations
     )
+
+
+def test_implicit_collapse_into_born_vertex_follows_its_target_stratum() -> None:
+    profile = _profile()
+    source = _implicit_surface_result(profile)
+    transfer = ImplicitAssociationTransfer(profile)
+    source_points = np.asarray(source.mesh.coordinates, dtype=np.float64)
+    source_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    born = int(np.max(source_ids)) + 1
+    # A source vertex collapses into a vertex born during adaptation (a split point).
+    target = CellMesh(
+        np.stack(
+            (
+                0.5 * (source_points[0] + source_points[1]),
+                source_points[1],
+                source_points[2],
+            )
+        ),
+        (CellBlock("surface", "triangle", np.asarray([[0, 1, 2]], dtype=np.int64)),),
+        vertex_global_ids=np.asarray([born, source_ids[1], source_ids[2]]),
+    )
+    record = EntityLineage(
+        0,
+        source.mesh.entity_set(0).entity_set_id,
+        target.entity_set(0).entity_set_id,
+        source_ids[:1],
+        np.asarray([born], dtype=np.int64),
+        np.asarray([EntityLineageKind.COLLAPSED_INTO], dtype=np.int32),
+    )
+    lineage = MeshLineage(source.mesh.topology_id, target.topology_id, (record,))
+    source_classes = transfer.classes(source)
+    surface_classes = AssociationEntityClasses(
+        np.full((3,), 2, dtype=np.int64),
+        np.zeros((3,), dtype=np.int64),
+        np.ones((3,), dtype=np.bool_),
+        np.ones((3,), dtype=np.int64),
+    )
+    # The born vertex lies on the zero set, so the collapse keeps stratum closure.
+    transfer._check_collapses(source, lineage, source_classes, target, (surface_classes,))
+    # A zero-set vertex collapsing into a born region-interior vertex leaves its
+    # stratum and stays refused.
+    region_classes = surface_classes._replace(dimensions=np.full((3,), 3, dtype=np.int64))
+    with pytest.raises(AssociationPropagationError):
+        transfer._check_collapses(
+            source, lineage, source_classes, target, (region_classes,)
+        )
 
 
 def _curve_rows(result: CellMeshingResult) -> dict[int, tuple[object, ...]]:
