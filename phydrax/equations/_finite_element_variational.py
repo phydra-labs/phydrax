@@ -21,7 +21,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
@@ -85,6 +85,7 @@ from ..linalg import (
     plan_sparse_assembly,
     prepare_sparse_assembly,
     PreparedSparseAssembly,
+    PropertyEvidence,
     solve,
     SparseAssemblyPlan,
     SparseAssemblyPolicy,
@@ -1546,6 +1547,114 @@ def _assemble_tensor_diffusion_action(
     )
 
 
+def _concrete_real_sign(scale: Array, /) -> float | None:
+    """Sign of one concrete real scale; ``None`` when traced or complex."""
+    if isinstance(scale, jax_core.Tracer) or not jnp.isrealobj(scale):
+        return None
+    return float(np.sign(np.asarray(scale)))
+
+
+def _dirichlet_reduced_sparse_operator(
+    terms: Sequence[tuple[Array | None, SparseLinearMap]],
+    constraint: ConstraintMap,
+    /,
+    *,
+    operator_id: str,
+) -> SparseLinearMap | None:
+    """Restrict summed full-field coordinate storage to strong-Dirichlet free DOFs.
+
+    The strong Dirichlet prolongation ``P`` is a unit selection of the free
+    coordinates, so ``P^T (sum_k s_k A_k) P`` keeps every route of ``A_k`` whose
+    row and column are both free, renumbered into reduced coordinates. Routes
+    touching a constrained coordinate stay as invalid slots, so the storage has
+    the full operators' fixed capacity and the restriction is traceable.
+    Congruence by an injective selection preserves self-adjointness,
+    semidefiniteness and definiteness of each nonnegatively scaled term.
+    """
+    prolongation = constraint.prolongation
+    if not isinstance(prolongation, SparseCoordinateOperator) or not isinstance(
+        prolongation.relation, EdgeRelation
+    ):
+        return None
+    selection = prolongation.relation
+    reduced_size = selection.source_size
+    full_size = selection.target_size
+    reduced_index = (
+        jnp.full((full_size,), -1, dtype=jnp.int32)
+        .at[jnp.where(selection.valid, selection.target_indices, full_size)]
+        .set(selection.source_indices.astype(jnp.int32), mode="drop")
+    )
+    sources, targets, valid, coefficients = [], [], [], []
+    self_adjoint = True
+    semidefinite = True
+    definite = False
+    for scale, operator in terms:
+        relation = operator.relation
+        if (
+            not isinstance(relation, EdgeRelation)
+            or operator.batch_shape
+            or relation.source_size != full_size
+            or relation.target_size != full_size
+        ):
+            return None
+        sign = 1.0 if scale is None else _concrete_real_sign(scale)
+        properties = operator.properties
+        self_adjoint = (
+            self_adjoint
+            and properties.certifies("self_adjoint")
+            and (scale is None or jnp.isrealobj(scale))
+        )
+        semidefinite = (
+            semidefinite
+            and sign is not None
+            and sign >= 0.0
+            and (
+                properties.certifies("positive_semidefinite")
+                or properties.certifies("positive_definite")
+            )
+        )
+        definite = definite or (
+            sign is not None and sign > 0.0 and properties.certifies("positive_definite")
+        )
+        row = reduced_index[relation.target_indices]
+        column = reduced_index[relation.source_indices]
+        free = relation.valid & (row >= 0) & (column >= 0)
+        sources.append(jnp.where(free, column, 0))
+        targets.append(jnp.where(free, row, 0))
+        valid.append(free)
+        coefficients.append(
+            operator.coefficients if scale is None else scale * operator.coefficients
+        )
+    semidefinite = self_adjoint and semidefinite
+    definite = semidefinite and definite
+    claims: dict[str, PropertyEvidence] = {
+        name: "construction"
+        for name, claimed in (
+            ("self_adjoint", self_adjoint),
+            ("positive_semidefinite", semidefinite),
+            ("positive_definite", definite),
+        )
+        if claimed
+    }
+    return SparseLinearMap(
+        EdgeRelation(
+            jnp.concatenate(sources),
+            jnp.concatenate(targets),
+            source_size=reduced_size,
+            target_size=reduced_size,
+            valid=jnp.concatenate(valid),
+        ),
+        jnp.concatenate(coefficients),
+        properties=OperatorProperties(
+            self_adjoint=self_adjoint,
+            positive_semidefinite=semidefinite,
+            positive_definite=definite,
+            evidence=claims,
+        ),
+        operator_id=operator_id,
+    )
+
+
 def _dirichlet_rows(
     constraint: AbstractDiscreteDirichletConstraint, layout: DofLayout, /
 ) -> Array:
@@ -2749,23 +2858,33 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         if (
             self.execution_policy.realization != "sparse"
             or len(self.form.field_names) != 1
-            or self.constraint is not None
         ):
+            return None
+        constraint = self.constraint
+        if constraint is not None and self.dirichlet_rows[0] is None:
+            # Only strong Dirichlet constraints are unit selections by construction;
+            # general affine prolongations keep the linearized program.
             return None
         # Sparse realization is offered only by finite-element local providers.
         discretization = cast(FiniteElementDiscretization, self.discretization)
         context = self._execution_context(args)
         if _runtime_id(context) != discretization.default_runtime.runtime_id:
             return None
-        operators = []
+        # ``None`` scales keep a term's own storage and properties unscaled.
+        terms: list[tuple[Array | None, SparseLinearMap]] = []
         mass, stiffness = discretization.assemble_field_operators(
             self.form.field_name,
             _finite_element_runtime(context),
         )
         for action in self.form.actions:
             if isinstance(action, TensorDiffusionAction):
-                operators.append(
-                    _assemble_tensor_diffusion_action(action, discretization, context)
+                terms.append(
+                    (
+                        None,
+                        _assemble_tensor_diffusion_action(
+                            action, discretization, context
+                        ),
+                    )
                 )
             elif (
                 isinstance(action, DiffusionAction)
@@ -2774,7 +2893,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 and action.diffusivity.constant
                 and action.diffusivity.value.shape == ()
             ):
-                operators.append(action.diffusivity.value * stiffness)
+                terms.append((jnp.asarray(action.diffusivity.value), stiffness))
             elif (
                 isinstance(action, MassAction)
                 and action.domain is None
@@ -2782,13 +2901,28 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 and action.coefficient.constant
                 and action.coefficient.value.shape == ()
             ):
-                operators.append(action.coefficient.value * mass)
+                terms.append((jnp.asarray(action.coefficient.value), mass))
             elif isinstance(action, (SourceAction, BoundaryLoadAction)):
                 continue
             else:
                 return None
-        if not operators:
+        if not terms:
             return None
+        if constraint is not None:
+            return _dirichlet_reduced_sparse_operator(
+                terms,
+                constraint,
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-element-dirichlet-reduced-affine-operator",
+                        "compilation": self.compilation_id,
+                        "runtime": _runtime_id(context),
+                    }
+                ),
+            )
+        operators = [
+            operator if scale is None else scale * operator for scale, operator in terms
+        ]
         result = operators[0]
         for operator in operators[1:]:
             result = result + operator
@@ -2953,19 +3087,40 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         nullspace_policy: NullspacePolicy | None = None,
     ) -> tuple[LinearSystem, object]:
         raw_operator = self.affine_operator(args)
-        properties = self.form.declared_properties
-        primal_operator = FunctionLinearOperator(
-            lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
-            source=self.state_space,
-            target=self.state_space,
-            properties=properties,
-            operator_id=canonical_fingerprint(
-                {
-                    "kind": "riesz-finite-element-affine-operator",
-                    "compilation": self.compilation_id,
-                }
-            ),
+        primal_operator: AbstractLinearOperator
+        structural = (
+            isinstance(raw_operator, SparseLinearMap)
+            and self.state_space.compatible(raw_operator.source)
+            and self.state_space.compatible(raw_operator.target)
         )
+        if structural and not any(
+            isinstance(indices, jax_core.Tracer)
+            for indices in (
+                raw_operator.relation.source_indices,
+                raw_operator.relation.valid,
+            )
+        ):
+            # Host-topology coordinate storage on the state space itself has the
+            # identity Riesz map; keep it so solves select sparse direct or
+            # certified Krylov routes. Traced topology has no storage plan.
+            primal_operator = raw_operator
+        else:
+            primal_operator = FunctionLinearOperator(
+                lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
+                source=self.state_space,
+                target=self.state_space,
+                properties=(
+                    raw_operator.properties
+                    if structural
+                    else self.form.declared_properties
+                ),
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "riesz-finite-element-affine-operator",
+                        "compilation": self.compilation_id,
+                    }
+                ),
+            )
         if nullspace_policy is None and _pure_neumann_sipg(self.form):
             constant_modes = _sipg_constant_subspace(
                 self.form,

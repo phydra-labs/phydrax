@@ -180,7 +180,15 @@ constrained stiffness/mass operators.
 `FiniteElementExecutionPolicy` independently selects matrix-free versus sparse
 realization, dense/partial/sum-factorized/collocated local kernels, and
 fast/deterministic/compensated residual accumulation. Sparse execution uses the
-existing `SparseAssemblyPlan` prepare/refresh lifecycle.
+existing `SparseAssemblyPlan` prepare/refresh lifecycle. With a strong Dirichlet
+constraint, constant scalar diffusion, mass and tensor-diffusion forms keep the
+free-DOF restriction `P^T A P` as coordinate storage on the reduced state space,
+with self-adjoint, semidefinite and (for a positive mass term) definite
+properties by construction. `linear_system()` hands that `SparseLinearMap` to
+`phydrax.linalg` directly when its topology is host data, so `SparseLU`,
+`SparseCholesky` and certified Krylov routes apply. The automatic route stays a
+sparse Krylov solve and never factors densely. Under tracing it keeps the same
+matrix-free action with those properties.
 
 ## Materials, compatible methods, and hierarchy
 
