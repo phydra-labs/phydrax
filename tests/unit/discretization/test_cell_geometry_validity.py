@@ -3,7 +3,7 @@
 #
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from fractions import Fraction
 from typing import Any
 
@@ -1193,6 +1193,43 @@ def test_validated_parent_replays_once_before_target_reuse(
     reused = D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=validated)
     assert reused.certificate_id == parent.certificate_id
     assert calls == [1]
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("certified_valid_count", "invalid_count", "unresolved_count", "block_names",
+     "block_offsets", "unsupported_block_names"),
+)
+def test_stored_validity_refuses_forged_static_claim(field_name: str) -> None:
+    from phydrax._strict import reconstruct_strict
+
+    mesh, geometry, _ = _curved_triangle_pair(0.0)
+    parent = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    values = {field.name: getattr(parent, field.name) for field in fields(parent)}
+    old = values[field_name]
+    values[field_name] = old + 1 if isinstance(old, int) else old + ("forged",)
+    forged = reconstruct_strict(type(parent), values)
+    assert forged.certificate_id == parent.certificate_id
+    with pytest.raises(ValueError):
+        D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=forged)
+
+
+def test_stored_validity_refuses_policy_with_stale_identity() -> None:
+    from phydrax._model._structure import _restore_dataclass
+    from phydrax._strict import reconstruct_strict
+
+    mesh, geometry, _ = _curved_triangle_pair(0.0)
+    parent = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    policy_fields = {
+        field.name: getattr(parent.policy, field.name) for field in fields(parent.policy)
+    }
+    policy_fields["relative_planarity_tolerance"] = 0.25
+    forged_policy = _restore_dataclass(type(parent.policy), policy_fields)
+    values = {field.name: getattr(parent, field.name) for field in fields(parent)}
+    values["policy"] = forged_policy
+    forged = reconstruct_strict(type(parent), values)
+    with pytest.raises(ValueError, match="policy does not reproduce"):
+        D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=forged)
 
 
 def test_parent_validity_requires_the_same_policy() -> None:

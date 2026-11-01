@@ -705,11 +705,23 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         mesh: CellMesh | None = None,
     ) -> None:
         """Recompute both proofs; stored identities are not proof authority."""
-        self.require_bound(geometry, mesh=mesh)
+        self.require_current(geometry, mesh=mesh)
+        renewed_policy = CellValidityPolicy(
+            relative_determinant_floor=self.policy.relative_determinant_floor,
+            relative_planarity_tolerance=self.policy.relative_planarity_tolerance,
+        )
+        if renewed_policy.policy_id != self.policy_id:
+            raise ValueError("Validity certificate policy does not reproduce its controls.")
         fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
         if (
             fresh.certificate_id != self.certificate_id
             or fresh.cell_map_digests != self.cell_map_digests
+            or fresh.block_names != self.block_names
+            or fresh.block_offsets != self.block_offsets
+            or fresh.unsupported_block_names != self.unsupported_block_names
+            or fresh.certified_valid_count != self.certified_valid_count
+            or fresh.invalid_count != self.invalid_count
+            or fresh.unresolved_count != self.unresolved_count
             or any(
                 not np.array_equal(
                     np.asarray(getattr(fresh, name)), np.asarray(getattr(self, name))
