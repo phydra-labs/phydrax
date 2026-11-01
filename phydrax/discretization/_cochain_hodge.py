@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
+from .._owned_programs import run_owned_program
 from .._strict import StrictModule
 from ..linalg import (
     AbstractLinearOperator,
@@ -154,6 +155,13 @@ def _admission_pattern(
     return plan, tuple(int(index) for index in order), storage_plan
 
 
+def _admission_succeeds(plan: SparseFactorizationPlan, values: Array, /) -> Array:
+    evidence = refresh_sparse_factorization_values(plan, values)
+    return (evidence.status == int(SparseFactorizationStatus.SUCCESS)) & (
+        evidence.diagnostics.finite
+    )
+
+
 @final
 class SparseHodge(StrictModule):
     """A fixed upper pattern and dynamic real SPD metric, symmetric by construction."""
@@ -233,12 +241,12 @@ class SparseHodge(StrictModule):
         mirror = jnp.asarray(self._mirror, dtype=jnp.int32)
         order = jnp.asarray(self._admission_order, dtype=jnp.int32)
         values = jnp.concatenate((self.upper_values, self.upper_values[mirror]))[order]
-        evidence = refresh_sparse_factorization_values(plan, values)
-        return (
-            (evidence.status == int(SparseFactorizationStatus.SUCCESS))
-            & evidence.diagnostics.finite
-            & jnp.all(jnp.isfinite(self.upper_values))
+        # One compiled factorization per admission plan: run eagerly, its
+        # elimination loop would compile and retain a new executable per call.
+        succeeded = run_owned_program(
+            plan, "hodge-admission", _admission_succeeds, values
         )
+        return succeeded & jnp.all(jnp.isfinite(self.upper_values))
 
     def admit(self) -> SparseHodge:
         if not bool(np.asarray(self.valid)):
