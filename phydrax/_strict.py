@@ -16,6 +16,8 @@ Phydrax-specific deviations (kept intentionally):
   fields, so each method access cost the size of the receiver.
 """
 
+from __future__ import annotations
+
 import abc
 import dataclasses
 import re
@@ -176,17 +178,20 @@ def mark_strict_initialized(instance: Any, /) -> None:
     if not isinstance(instance, eqx.Module):
         object.__setattr__(instance, "_strict_initialized", True)
 
-_reconstructible_strict_types: set[type] = set()
+_reconstructible_strict_types: set[type[StrictModule]] = set()
+_ReconstructedStrict = TypeVar("_ReconstructedStrict", bound="StrictModule")
 
 
-def register_strict_reconstruction(value_type: type, /) -> None:
+def register_strict_reconstruction(value_type: type[StrictModule], /) -> None:
     """Admit one exact concrete StrictModule type for structural reconstruction."""
     if not issubclass(value_type, StrictModule) or value_type._strict_is_abstract_:
         raise TypeError("Strict reconstruction requires a concrete StrictModule type.")
     _reconstructible_strict_types.add(value_type)
 
 
-def reconstruct_strict(value_type: type, values: dict[str, Any], /) -> Any:
+def reconstruct_strict(
+    value_type: type[_ReconstructedStrict], values: dict[str, Any], /
+) -> _ReconstructedStrict:
     """Reconstruct registered structure, not mathematical proof authority."""
     if value_type not in _reconstructible_strict_types:
         raise TypeError("Strict reconstruction requires an explicitly registered type.")
