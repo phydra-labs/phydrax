@@ -85,7 +85,7 @@ from ._layer_curving_records import (
     _fraction_chart3,
     _implicit_cell_key,
     _implicit_root_edge_row,
-    _implicit_root_witness_row,
+    _implicit_root_witness_rows,
     _ImplicitCellKey,
     _ImplicitRootEdgeRow,
     _mapped_chart_reference_contexts,
@@ -2806,16 +2806,17 @@ def _transition_source_faces(
         if charts is None
         else {int(cell_id): row for row, cell_id in enumerate(charts.cell_global_ids)}
     )
+    column = source_evidence.chart_column_identity
     root_rows = (
         ()
         if root_witness is None
-        else tuple(
-            _implicit_root_witness_row(root_witness, target_witness, row)
-            for row in range(len(target_witness.source_chart_ids))
+        else _implicit_root_witness_rows(
+            root_witness,
+            target_witness,
+            tuple(int(column.source_wall_cell_ids[row]) for row in old_chart_rows),
         )
     )
     result: list[_SourceFace] = []
-    column = source_evidence.chart_column_identity
     for chart_row, old_row in enumerate(old_chart_rows):
         target_cell_id = int(target_witness.cell_global_ids[chart_row])
         try:
@@ -2866,10 +2867,6 @@ def _transition_source_faces(
         else:
             assert root_witness is not None and root_vertices is not None
             root_row = root_rows[chart_row]
-            if source_cell_id != int(root_witness.cell_global_ids[root_row]):
-                raise ValueError(
-                    "Implicit chart column ancestry changed its source-wall cell."
-                )
             root_cell_id = source_cell_id
             implicit_cell_key = tuple(
                 int(value) for value in root_witness.implicit_cell_keys[root_row]
