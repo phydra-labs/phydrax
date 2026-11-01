@@ -152,11 +152,16 @@ def test_selected_archive_fields_retain_shared_payloads_and_refuse_wrong_root(
         read_model_archive_fields(
             path, expected_type=Composition, fields=("boundary_id.value",), limits=None
         )
-    mesh_path = write_model_artifact(tmp_path / "mesh.phx", mesh, limits=None)
-    nested = read_model_archive_fields(
-        mesh_path, expected_type=CellMesh, fields=("connectivity.edges",), limits=None
+    entry_path = write_model_artifact(
+        tmp_path / "entry.phx", _entry(mesh, "mesh"), limits=None
     )
-    np.testing.assert_array_equal(nested["connectivity.edges"], mesh.connectivity.edges)
+    nested = read_model_archive_fields(
+        entry_path,
+        expected_type=CompositionEntry,
+        fields=("value.coordinates",),
+        limits=None,
+    )
+    np.testing.assert_array_equal(nested["value.coordinates"], mesh.coordinates)
 
 
 def test_new_model_recipe_is_not_copied_for_sharing(
