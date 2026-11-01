@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
@@ -505,20 +506,25 @@ def _periodic_rows(
     return representatives, shifts, orbit_codes
 
 
-def _chart_differentials(
+# The sphere chart (polar, azimuth) collapses the azimuth axis at the poles: the
+# exact pullback there is rank one, ``R**2 * u.T @ M @ u`` on the polar axis and
+# zero on the azimuth axis. The azimuth stretch ``R * sin(polar)`` along the
+# tangent-plane direction ``w`` is therefore floored at this binary64 resolution:
+# the azimuth/polar eigenvalue ratio stays at least ``sqrt(eps)``, the smallest
+# ratio a backward-stable 2x2 eigendecomposition (log-Euclidean interpolation,
+# SPD evidence) still resolves to half precision.
+_AZIMUTH_STRETCH_FLOOR = float(np.finfo(np.float64).eps) ** 0.25
+
+
+def _pullback_metrics(
     domain: MeshingDomain | _ImplicitMetricDomain,
     patches: np.ndarray,
-    charts: tuple[_ExactPoint, ...],
-    physical_metric: np.ndarray,
-    source_rows: np.ndarray,
-    periods: tuple[Fraction, ...],
-    orbit_codes: np.ndarray,
+    chart_values: np.ndarray,
+    physical: np.ndarray,
     /,
 ) -> np.ndarray:
-    result = np.empty((len(charts), 2, 2), dtype=np.float64)
-    chart_values = np.asarray(
-        [[float(value) for value in point] for point in charts], dtype=np.float64
-    )
+    """``J.T @ M @ J`` at binary64 chart points, with witnessed singular frames."""
+    result = np.empty((chart_values.shape[0], 2, 2), dtype=np.float64)
     for patch in np.unique(patches).tolist():
         rows = np.flatnonzero(patches == patch)
         surface = domain.patches[int(patch)].surface
@@ -585,15 +591,43 @@ def _chart_differentials(
                 isinstance(surface, _ImplicitParameterSurface)
                 and surface.profile.family == "sphere"
             ):
-                polar = chart_values[row, 0]
-                if min(abs(polar), abs(np.pi - polar)) <= 32.0 * np.finfo(np.float64).eps:
-                    frame = np.asarray(
-                        ((1.0, 0.0), (0.0, 1.0), (0.0, 0.0)),
-                        dtype=np.float64,
+                polar, azimuth = (float(value) for value in chart_values[row])
+                if abs(math.sin(polar)) < _AZIMUTH_STRETCH_FLOOR:
+                    # Exact polar derivative; azimuth axis on the pole's tangent
+                    # plane, aligned with this chart point's azimuth.
+                    tangent = np.asarray(
+                        (-math.sin(azimuth), math.cos(azimuth), 0.0), dtype=np.float64
                     )
-                    jacobian = 2.0 * surface.profile.radius * frame
-            value = jacobian.T @ physical_metric[int(source_rows[row])] @ jacobian
+                    jacobian = np.stack(
+                        (
+                            jacobian[:, 0],
+                            float(surface.profile.radius)
+                            * _AZIMUTH_STRETCH_FLOOR
+                            * tangent,
+                        ),
+                        axis=1,
+                    )
+            value = jacobian.T @ physical[row] @ jacobian
             result[row] = 0.5 * (value + value.T)
+    return result
+
+
+def _chart_differentials(
+    domain: MeshingDomain | _ImplicitMetricDomain,
+    patches: np.ndarray,
+    charts: tuple[_ExactPoint, ...],
+    physical_metric: np.ndarray,
+    source_rows: np.ndarray,
+    periods: tuple[Fraction, ...],
+    orbit_codes: np.ndarray,
+    /,
+) -> np.ndarray:
+    chart_values = np.asarray(
+        [[float(value) for value in point] for point in charts], dtype=np.float64
+    )
+    result = _pullback_metrics(
+        domain, patches, chart_values, physical_metric[np.asarray(source_rows)]
+    )
     for code in np.unique(orbit_codes).tolist():
         members = np.flatnonzero(orbit_codes == code)
         if members.size < 2:
@@ -909,6 +943,11 @@ def prepare_surface_metric_source(
     else:
         edge_orbits = np.arange(edge_count_work, dtype=np.int64)
         orbit_sizes = np.ones((edge_count_work,), dtype=np.int64)
+    source_collapsed_rows = (
+        np.asarray(source_charts.collapsed_vertices, dtype=np.bool_)[source_vertex_rows]
+        if implicit_source
+        else np.zeros((source_vertex_rows.size,), dtype=np.bool_)
+    )
     for row, source_edge_row in enumerate(work_edge_source_rows.tolist()):
         if (
             counts[row] == 1
@@ -916,8 +955,14 @@ def prepare_surface_metric_source(
             and source_counts[int(source_edge_row)] == 2
             and orbit_sizes[edge_orbits[row]] == 1
         ):
+            # A chart cut. At a collapsed point copy it guards only the copy:
+            # the regular end stays free (the local engine follows the cut).
             work_protected[row] = True
-            work_fixed[work_edge_vertex_rows[row]] = True
+            ends = work_edge_vertex_rows[row]
+            if np.any(source_collapsed_rows[ends]):
+                work_fixed[ends[source_collapsed_rows[ends]]] = True
+            else:
+                work_fixed[ends] = True
     incidence = work_mesh.topology.incidences[1].relation
     valid_incidence = np.asarray(incidence.valid, dtype=np.bool_)
     incident_edges = np.asarray(incidence.source_indices, dtype=np.int64)[valid_incidence]
@@ -1311,10 +1356,18 @@ def _parent_face_stencils(
     work_boundary = {
         edge for edge, count in _edge_counts(work_cells).items() if count == 1
     }
+    # Edges at a copy of a collapsed chart point (a pole) are chart cuts, not
+    # carrier boundary: the regular vertex there is a free interior point.
+    collapsed_work = source.collapsed_source_vertices[source.work_to_source_rows]
+    copies = {
+        vertex
+        for vertex, stencil in enumerate(stencils)
+        if len(stencil) == 1 and bool(collapsed_work[stencil[0][0]])
+    }
     target_boundary_vertices = {
         vertex
         for edge, count in _edge_counts(target_cells).items()
-        if count == 1
+        if count == 1 and not copies.intersection(edge)
         for vertex in edge
     }
     parents_by_vertex: dict[int, set[int]] = defaultdict(set)
@@ -2323,6 +2376,34 @@ def _physical_edit(
     return edit, target_metric, geometry
 
 
+def _pullback_field(
+    source: SurfaceMetricSource, /
+) -> Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
+    """Exact chart metric of generated points: the physical metric interpolated
+    log-Euclidean over the source location, pulled back by the chart Jacobian at
+    the point itself (``_pullback_metrics``)."""
+
+    def field(points: np.ndarray, rows: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
+        count = points.shape[0]
+        capacity = 1 << max(count - 1, 0).bit_length()
+        samples = np.broadcast_to(np.eye(3), (capacity, rows.shape[1], 3, 3)).copy()
+        samples[:count] = source.physical_metric[source.work_to_source_rows[rows]]
+        coefficients = np.zeros((capacity, rows.shape[1]), dtype=np.float64)
+        coefficients[:, 0] = 1.0
+        coefficients[:count] = weights
+        physical = np.asarray(
+            interpolate_mesh_metric(samples, coefficients), dtype=np.float64
+        )[:count]
+        return _pullback_metrics(
+            source.domain,
+            source.work_vertex_patches[rows[:, 0]],
+            points,
+            physical,
+        )
+
+    return field
+
+
 def execute_surface_metric_adaptation(
     source: SurfaceMetricSource,
     /,
@@ -2336,6 +2417,10 @@ def execute_surface_metric_adaptation(
         raise TypeError("source must be SurfaceMetricSource.")
     if not isinstance(topology_operations, bool) or not isinstance(relocation, bool):
         raise TypeError("topology_operations and relocation must be bool values.")
+    # Every UV copy of a collapsed source vertex (a sphere pole) is one physical
+    # vertex: the local engine frees the regular vertices around it and decides
+    # collapses and flips on the physical surface.
+    collapsed = source.collapsed_source_vertices[source.work_to_source_rows]
     local = execute_local_metric_adaptation(
         source.work_mesh,
         source.pullback_metric,
@@ -2346,6 +2431,14 @@ def execute_surface_metric_adaptation(
         predicate_mode=predicate_mode,
         topology_operations=topology_operations,
         relocation=relocation,
+        collapsed_groups=(
+            np.where(collapsed, source.work_to_source_rows, -1)
+            if np.any(collapsed)
+            else None
+        ),
+        # A collapsed chart point makes the pullback singular there, so generated
+        # points take the exact pullback rather than chart-linear interpolation.
+        metric_field=_pullback_field(source) if np.any(collapsed) else None,
     )
     edit, target_metric, geometry = _physical_edit(source, local)
     evidence = local.evidence

@@ -2210,7 +2210,7 @@ def _bspline_boundary_line_lift(
         tuple(Fraction.from_float(float(value)) for value in box[:, axis])
         for axis in range(2)
     )
-    spans = patch.rational_spans()
+    spans = patch.prepare_spans().spans
     for fixed_axis in range(2):
         free_axis = 1 - fixed_axis
         fixed_value = chart_origin[fixed_axis]
@@ -2489,7 +2489,7 @@ def _exact_bspline_curve_spans(
         for value in (*curve.exact_weights, *curve.exact_knots)
     ):
         return None
-    spans = curve.rational_spans()
+    spans = curve.prepare_spans().spans
     result = []
     for span in spans:
         lower, upper = span.parameter_bounds
@@ -2592,7 +2592,7 @@ def _exact_spline_surface_boundary_spans(
     from ._tspline import TSplineSurfacePatch
 
     if isinstance(patch, BSplineSurfacePatch):
-        spans = patch.rational_spans()
+        spans = patch.prepare_spans().spans
         exact_knots = (patch.exact_u_knots, patch.exact_v_knots)
         degrees = (patch.u_degree, patch.v_degree)
         counts = (len(patch.exact_control_points), len(patch.exact_control_points[0]))

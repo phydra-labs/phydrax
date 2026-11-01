@@ -554,6 +554,49 @@ def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> No
     )
 
 
+@pytest.mark.parametrize(
+    "size_tensor",
+    (16.0, 25.0, 49.0, 81.0),
+    ids=("size-1/4", "size-1/5", "size-1/7", "size-1/9"),
+)
+def test_implicit_sphere_pole_fans_reach_unit_mesh_across_scales(
+    size_tensor: float,
+) -> None:
+    # Isotropic sizes 1/4 to 1/9 straddle the extraction's median edge (0.15): the
+    # coarse sizes collapse the rings around both poles and 1/9 refines them. Every
+    # UV copy of a pole is one physical vertex, so the ring vertices stay free and
+    # the unit-mesh criterion is met everywhere, the pole fans included.
+    profile, source, contract = _implicit_sphere_source()
+    certification = source.certification
+    if certification is None:
+        raise AssertionError("Implicit sphere source lost its mesh certification.")
+    witness = certification.inputs.fidelity_witness
+    fidelity_source = certification.inputs.source
+    if not isinstance(witness, SourceBoundaryChartWitness) or fidelity_source is None:
+        raise AssertionError(
+            "Implicit sphere source lost its exact chart witness or query."
+        )
+    tensor = np.diag(np.full((3,), size_tensor, dtype=np.float64))
+    prepared = prepare_implicit_surface_metric_source(
+        source.mesh,
+        source.geometry,
+        contract,
+        profile,
+        witness,
+        fidelity_source,
+        np.broadcast_to(tensor, (source.mesh.coordinates.shape[0], 3, 3)).copy(),
+    )
+    outcome = execute_surface_metric_adaptation(
+        prepared,
+        predicate_mode=PredicateMode.EXACT,
+        topology_operations=True,
+        relocation=True,
+    )
+    assert outcome.status is SurfaceMetricStatus.COMPLETE
+    assert outcome.out_of_range_edges == 0
+    assert not outcome.evidence.stalled_edges
+
+
 def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere() -> None:
     profile, source, _ = _implicit_sphere_source()
     transfer = ImplicitAssociationTransfer(profile)

@@ -1458,9 +1458,20 @@ size. The route reuses the native local split, collapse, flip, and relocation
 operations, evaluating proposal vertices on the fixed source chart. Regular
 periodic UV seams use an exact quotient so every lifted edit is staged as one
 orbit; a singular periodic direction, such as the polar axis of a sphere chart,
-is instead a fixed chart cut whose seam edges are protected. Every target vertex
-keeps an exact chart point on the source face shared by its parent cells, so a
-split of a source-cell interface stays on that exact edge.
+is instead a chart cut whose seam edges are protected. On a B-Rep source chart
+the cut and its vertices are fixed. On an implicit sphere the poles are
+collapsed chart points: every UV copy of a pole is one physical vertex. The
+copies stay fixed, but the ring vertices around them are free, and collapses
+and flips check the link condition on the physical surface, where all copies
+are one vertex. The exact pullback is rank one at a pole (the azimuth stretch
+`R sin(polar)` vanishes), so there the azimuth axis lies on the pole's tangent
+plane, aligned with the copy's own azimuth, with its stretch floored at
+`R eps**0.25`; the azimuth/polar eigenvalue ratio thus stays at least
+`sqrt(eps)`, the smallest a binary64 eigendecomposition still resolves. Split
+and relocation points on such a source take the exact pullback at their own
+chart point of the physical metric interpolated over their source location.
+Every target vertex keeps an exact chart point on the source face shared by its
+parent cells, so a split of a source-cell interface stays on that exact edge.
 
 The source must retain either `SurfaceSourceCharts` for a `MeshingDomain` or an
 analytic implicit `SourceBoundaryChartWitness` together with its authoring
@@ -1923,8 +1934,12 @@ material reference.
 
 `HighOrderCurvingResult.relaxation_statuses` records every relaxation's native
 termination status and `accepted_round` names the accepted candidate (0 for the
-projection). Without an accepted candidate the result rolls back to the straight
-geometry with the rejected candidate's evidence (`HighOrderCurvingStatus`,
+projection). Cell validity and CAD residuals are certified for every candidate
+that may be accepted; global embedding and source acceptance run on locally
+valid candidates latest round first and stop at the first accepted one, which is
+the candidate certifying every round would select. Without an accepted candidate
+the result rolls back to the straight geometry with the last round's fully
+certified evidence (`HighOrderCurvingStatus`,
 including `ROLLED_BACK_NONCONVERGED`). `PeriodicCoupling` vertex pairs make target-side
 high-order nodes the declared isometry of their source-side nodes
 (`PeriodicCoupling.match_points` pairs the nodes). `verify_curved_geometry`
@@ -1941,9 +1956,10 @@ affine glue places the second reference cell across the facet so that the union
 is convex; a constant preconditioner then makes the glued map strictly monotone
 at every (uniformly refined) Jacobian Bernstein control. Single-cell injectivity
 uses the same preconditioner. It is found by Kelley cutting planes, whose
-linear-program bound also proves when no preconditioner exists. Containment rays
-that meet a trim edge or a face tangentially are retried along the next fixed
-direction.
+linear-program bound also proves when no preconditioner exists. Solid containment
+casts exact rays along an unbounded dense sequence of dyadic directions until one
+meets every face transversally away from trim edges; points on the solid boundary
+stay unresolved, and every other point is decided after finitely many rays.
 
 `curve_layer_core_construction(construction, layers, source_surface_charts, policy=...)`
 builds a source-aware high-order mixed-cell map for a boundary-layer/core mesh.
