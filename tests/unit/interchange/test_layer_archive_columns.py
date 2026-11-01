@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -246,7 +247,9 @@ def test_exact_reference_map_columns_preserve_polynomial_expression_kinds() -> N
     from phydrax.discretization._coordinate_enclosure import RationalPolynomial
     from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
 
-    polynomial = MappingProxyType({(1,): Fraction(1, 3)})
+    polynomial: Mapping[tuple[int, ...], Fraction] = MappingProxyType(
+        {(1,): Fraction(1, 3)}
+    )
     rational = RationalPolynomial({(1,): Fraction(2)}, {(0,): Fraction(3)})
     witness = ReferenceCellMapWitnesses(
         np.asarray([0, 1], np.int64),

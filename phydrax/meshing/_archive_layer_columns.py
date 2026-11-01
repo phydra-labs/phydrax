@@ -519,7 +519,7 @@ class LayerRecordArchiveRecipe(NamedTuple):
         names = (
             tuple(field.name for field in dataclasses.fields(owner))
             if dataclasses.is_dataclass(owner)
-            else owner._fields
+            else getattr(owner, "_fields")
         )
         if type(self.fields) is not dict or set(self.fields) != set(names):
             raise ValueError("Layer archive record must retain its exact field set.")
