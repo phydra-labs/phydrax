@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
-from typing import get_args, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
 import jax
 import numpy as np
@@ -1021,15 +1021,71 @@ def _validate_piecewise_linear_chart_witness(
         raise ValueError("PWL chart witness changes source/target orientation ancestry.")
 
 
+_VALIDATION_TOKEN = object()
+
+
+@final
+class ValidatedSourceFidelityWitness:
+    """A source-fidelity witness validated against exact operand objects.
+
+    Only :func:`validate_source_fidelity_witness` creates it. It binds the mesh,
+    coordinate map, source query and witness by object identity; all four are
+    immutable, so handing it on together with those same objects proves the
+    validation without repeating it. Any other operand is validated again.
+    """
+
+    __slots__ = ("geometry", "mesh", "source", "witness")
+
+    def __init__(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: SourceBoundaryQuery,
+        witness: SourceFidelityWitness,
+        /,
+        *,
+        token: object,
+    ) -> None:
+        if token is not _VALIDATION_TOKEN:
+            raise TypeError(
+                "Validated witnesses are created only by validate_source_fidelity_witness."
+            )
+        self.mesh = mesh
+        self.geometry = geometry
+        self.source = source
+        self.witness = witness
+
+    def binds(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: SourceBoundaryQuery,
+        /,
+    ) -> bool:
+        """Whether this validation was made against exactly these operands."""
+        return self.mesh is mesh and self.geometry is geometry and self.source is source
+
+
 def validate_source_fidelity_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
-    witness: SourceFidelityWitness,
+    witness: SourceFidelityWitness | ValidatedSourceFidelityWitness,
     /,
-) -> None:
-    """Revalidate witness identity and its actual source/target mathematical premises."""
+) -> ValidatedSourceFidelityWitness:
+    """Revalidate witness identity and its actual source/target mathematical premises.
+
+    A :class:`ValidatedSourceFidelityWitness` made for these exact operands is
+    returned unchanged; for other operands its witness is validated again.
+    """
+    if isinstance(witness, ValidatedSourceFidelityWitness):
+        if witness.binds(mesh, geometry, source):
+            return witness
+        witness = witness.witness
     _validate_source_fidelity_witness(mesh, geometry, source, witness)
+    return ValidatedSourceFidelityWitness(
+        mesh, geometry, source, witness, token=_VALIDATION_TOKEN
+    )
 
 
 def _validate_source_fidelity_witness(
@@ -1353,6 +1409,7 @@ def _validate_source_fidelity_witness(
 
 
 __all__ = [
+    "ValidatedSourceFidelityWitness",
     "certify_source_fidelity",
     "polyhedral_face_triangle_vertex_ids",
     "validate_source_fidelity_witness",
@@ -4801,8 +4858,10 @@ def _certify_surface_envelope_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
-    _validate_surface_envelope_witness(mesh, geometry, source, witness)
+    if validated is None or not validated.binds(mesh, geometry, source):
+        _validate_surface_envelope_witness(mesh, geometry, source, witness)
     source_to_mesh_upper = Fraction.from_float(float(witness.bounds[0]))
     mesh_to_source_upper = Fraction.from_float(float(witness.bounds[1]))
     mesh_to_source_lower = Fraction.from_float(float(witness.bounds[2]))
@@ -5004,14 +5063,16 @@ def _certify_domain_surface_chart_fidelity(
     tolerance: float,
     maximum_normal_deviation: float | None,
     domain_coverage: SourceBoundaryChartCover | None = None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._source_interpolation import certify_domain_surface_charts
 
     domain_source = _surface_query_root(source)
 
-    _validate_source_fidelity_witness(
-        mesh, geometry, source, witness, domain_coverage=domain_coverage
-    )
+    if validated is None or not validated.binds(mesh, geometry, source):
+        _validate_source_fidelity_witness(
+            mesh, geometry, source, witness, domain_coverage=domain_coverage
+        )
     patch_rows, charts, plane_patches = _surface_source_chart_rows(domain_source, witness)
     target_rows, _, _ = _surface_target_chart_rows(mesh, geometry, domain_source, witness)
     evidence = certify_domain_surface_charts(
@@ -5207,6 +5268,7 @@ def _certify_curve_chart_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._curve_boundary import ParametricCurveBoundarySource
     from ._source_interpolation import certify_parametric_curve_chart
@@ -5215,7 +5277,9 @@ def _certify_curve_chart_fidelity(
         raise TypeError(
             "A one-dimensional source chart witness requires a parametric curve source."
         )
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     target_rows = _curve_target_chart_rows(mesh, witness)
     evidence = certify_parametric_curve_chart(
         mesh, geometry, source, witness, target_rows, tolerance
@@ -5272,6 +5336,7 @@ def _certify_piecewise_linear_curve_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
     from ._source_interpolation import certify_piecewise_linear_curve_charts
@@ -5281,7 +5346,9 @@ def _certify_piecewise_linear_curve_fidelity(
         or source.entity_dimension != 1
     ):
         raise TypeError("PWL edge fidelity requires a one-dimensional boundary query.")
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     target_rows = _curve_target_chart_rows(mesh, witness)
     evidence = certify_piecewise_linear_curve_charts(
         mesh, geometry, source, witness, target_rows, tolerance
@@ -5338,13 +5405,16 @@ def _certify_piecewise_linear_surface_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._mapped_reference_interpolation import certify_surface_chart_maps
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 
     if not isinstance(source, PiecewiseLinearBoundarySource):
         raise TypeError("PWL source fidelity requires PiecewiseLinearBoundarySource.")
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     target_rows, _, _ = _surface_target_chart_rows(
         mesh,
         geometry,
@@ -5411,6 +5481,7 @@ def _certify_mapped_root_chart_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    validated: ValidatedSourceFidelityWitness | None = None,
 ) -> SourceFidelityCertificate:
     from ._mapped_reference_boundary import MappedReferenceBoundarySource
     from ._mapped_reference_interpolation import (
@@ -5420,7 +5491,9 @@ def _certify_mapped_root_chart_fidelity(
 
     if not isinstance(source, MappedReferenceBoundarySource):
         raise TypeError("Mapped-root fidelity requires MappedReferenceBoundarySource.")
-    validate_source_fidelity_witness(mesh, geometry, source, witness)
+    validate_source_fidelity_witness(
+        mesh, geometry, source, witness if validated is None else validated
+    )
     coverage = None
     if witness.chart_dimension == 2:
         target_rows, _, _ = _surface_target_chart_rows(
@@ -5513,14 +5586,20 @@ def certify_source_fidelity(
     *,
     tolerance: float,
     maximum_normal_deviation: float | None = None,
-    witness: SourceFidelityWitness | None = None,
+    witness: SourceFidelityWitness | ValidatedSourceFidelityWitness | None = None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> SourceFidelityCertificate:
     """Certify continuous physical source fidelity from one typed witness.
 
     ``root_charts`` passes adaptive implicit root charts the caller already
     prepared for exactly this request; other sources and witnesses refuse it.
+    A :class:`ValidatedSourceFidelityWitness` for exactly these operands is not
+    validated again.
     """
+    validated = None
+    if isinstance(witness, ValidatedSourceFidelityWitness):
+        validated = witness
+        witness = validated.witness
     if root_charts is not None:
         from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
         from .implicit._source_charts import _AdaptiveImplicitBoundaryCarrier
@@ -5568,6 +5647,7 @@ def certify_source_fidelity(
             witness,
             tolerance=tolerance_,
             maximum_normal_deviation=normal_limit,
+            validated=validated,
         )
     if isinstance(witness, SourceBoundaryPointWitness):
         return _certify_source_point_fidelity(
@@ -5590,6 +5670,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    validated=validated,
                 )
             if witness.chart_dimension == 2:
                 return _certify_piecewise_linear_surface_fidelity(
@@ -5599,6 +5680,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    validated=validated,
                 )
             raise ValueError("PWL chart fidelity supports only edge and face strata.")
         from ._mapped_reference_boundary import MappedReferenceBoundarySource
@@ -5611,6 +5693,7 @@ def certify_source_fidelity(
                 witness,
                 tolerance=tolerance_,
                 maximum_normal_deviation=normal_limit,
+                validated=validated,
             )
         if witness.chart_dimension == 1:
             return _certify_curve_chart_fidelity(
@@ -5620,6 +5703,7 @@ def certify_source_fidelity(
                 witness,
                 tolerance=tolerance_,
                 maximum_normal_deviation=normal_limit,
+                validated=validated,
             )
         if witness.chart_dimension == 2:
             try:
@@ -5634,6 +5718,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    validated=validated,
                 )
         from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
@@ -5662,7 +5747,7 @@ def certify_source_fidelity(
                     mesh,
                     geometry,
                     source,
-                    witness,
+                    witness if validated is None else validated,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
                     root_charts=root_charts,

@@ -1312,6 +1312,7 @@ def _curving_target_result(
     if source_result is None:
         return None, None, None, None, None
     inputs = None
+    validated_witnesses = ()
     audit_policy = None
     layer_curving_evidence = None
     coordinate_transition = None
@@ -1368,7 +1369,7 @@ def _curving_target_result(
                 raise ValueError(
                     "Curving projection and retained source revision disagree."
                 )
-            inputs = _renew_transition_certification_inputs(
+            renewed_inputs = _renew_transition_certification_inputs(
                 source_result,
                 mesh,
                 geometry,
@@ -1376,6 +1377,8 @@ def _curving_target_result(
                 reference_maps=identity_maps,
                 transition=coordinate_transition,
             )
+            if renewed_inputs is not None:
+                inputs, validated_witnesses = renewed_inputs
             audit_policy = source_result.certification.audit_policy
         result = certify_cell_mesh(
             mesh,
@@ -1383,6 +1386,7 @@ def _curving_target_result(
             geometry=geometry,
             audit_policy=audit_policy,
             certification_inputs=inputs,
+            validated_witnesses=validated_witnesses,
             boundary=source_result.boundary,
             patches=source_result.patches,
             zones=source_result.zones,
