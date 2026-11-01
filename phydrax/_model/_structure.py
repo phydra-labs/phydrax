@@ -1342,7 +1342,22 @@ def model_archive_root_projection(value: Any, /) -> Any:
     Row-record column recipes replace nested records only. An archive root must
     stay its registered dataclass, so a row-record root projects its fields.
     """
-    from ..meshing._archive_layer_columns import is_layer_archive_record
+    from ..meshing._archive_layer_columns import (
+        is_layer_archive_record,
+        layer_record_archive_recipe,
+    )
+
+    if (
+        type(value).__module__ == "phydrax.geometry._source_fidelity_certificate"
+        and type(value).__name__ == "SourceFidelityCertificate"
+    ):
+        row = layer_record_archive_recipe(value)
+        if row is None:
+            raise TypeError("Source fidelity archive root must use its canonical type.")
+        fields = {
+            name: model_archive_projection(field) for name, field in row.fields.items()
+        }
+        return _restore_dataclass(type(value), fields)
 
     if (type(value).__module__, type(value).__name__) not in _ROW_RECORD_TYPES and not (
         dataclasses.is_dataclass(value) and is_layer_archive_record(value)
@@ -1496,7 +1511,19 @@ def restore_row_record_recipes(value: Any, /) -> Any:
         memo[identity] = result
         return result
 
-    return visit(value)
+    result = visit(value)
+    if (
+        type(result).__module__ == "phydrax.geometry._source_fidelity_certificate"
+        and type(result).__name__ == "SourceFidelityCertificate"
+    ):
+        from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
+
+        fields = {
+            field.name: object.__getattribute__(result, field.name)
+            for field in dataclasses.fields(result)
+        }
+        return LayerRecordArchiveRecipe(type(result).__name__, fields).restore()
+    return result
 
 
 def model_archive_projection(value: Any, /) -> Any:

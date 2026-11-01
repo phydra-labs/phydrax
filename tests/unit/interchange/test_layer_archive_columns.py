@@ -84,6 +84,38 @@ def test_empty_exact_tensor_extents_are_backed_before_allocation() -> None:
         recipe._replace(shape=(10**12, 0)).decode()
 
 
+def test_fidelity_root_and_nested_records_project_row_banks() -> None:
+    import dataclasses
+
+    from phydrax._model._structure import (
+        _restore_dataclass,
+        model_archive_projection,
+        model_archive_root_projection,
+        restore_row_record_recipes,
+    )
+    from phydrax.geometry._source_fidelity_certificate import SourceFidelityCertificate
+
+    fields = {field.name: None for field in dataclasses.fields(SourceFidelityCertificate)}
+    fields.update(
+        source_cell_global_ids=tuple(range(4096)),
+        source_patch_ids=(0,) * 4096,
+        source_occurrence_paths=((),) * 4096,
+    )
+    certificate = _restore_dataclass(SourceFidelityCertificate, fields)
+    root = model_archive_root_projection(certificate)
+    assert isinstance(root.source_cell_global_ids, ExactTensorArchiveRecipe)
+    again = model_archive_root_projection(root)
+    restored = restore_row_record_recipes(again)
+    assert restored.source_cell_global_ids == certificate.source_cell_global_ids
+    assert restored.source_patch_ids == certificate.source_patch_ids
+    assert restored.source_occurrence_paths == certificate.source_occurrence_paths
+    nested = model_archive_projection((certificate,))
+    assert (
+        restore_row_record_recipes(nested)[0].source_cell_global_ids
+        == fields["source_cell_global_ids"]
+    )
+
+
 def test_nested_reference_exact_bank_uses_column_recipe() -> None:
     exact = (((Fraction(0),), (Fraction(1, 3),)),) * 4096
     witness = NestedReferenceWitnesses(

@@ -72,6 +72,11 @@ _COLUMNS = {
         **dict.fromkeys(("source_chart_ids", "source_entity_ids"), "text"),
         "occurrence_paths": "text_rows",
     },
+    "SourceFidelityCertificate": {
+        "source_cell_global_ids": "integer_tensor",
+        "source_patch_ids": "integer_tensor",
+        "source_occurrence_paths": "text_rows",
+    },
     "NestedReferenceWitnesses": {"fine_reference_exact_vertices": "exact"},
     "ReferenceCellMapWitnesses": {
         "source_reference_exact_vertices": "exact",
@@ -97,6 +102,7 @@ def _record_types() -> dict[str, type]:
         ReferenceCellMapWitnesses,
     )
     from ..geometry._source_boundary_records import SourceBoundaryChartWitness
+    from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ._curving import _ExactCoordinateBankMap
     from ._layer_curving_records import (
         LayerColumnProjectionIdentity,
@@ -113,6 +119,7 @@ def _record_types() -> dict[str, type]:
             PerCellRestrictedCellGeometryElement,
             NestedReferenceWitnesses,
             ReferenceCellMapWitnesses,
+            SourceFidelityCertificate,
             SourceBoundaryChartWitness,
             _ExactCoordinateBankMap,
             LayerColumnProjectionIdentity,
@@ -127,6 +134,16 @@ def _record_types() -> dict[str, type]:
 def _encode_column(value: Any, kind: str) -> Any:
     if value is None:
         return None
+    if type(value) in (
+        TextColumnArchiveRecipe,
+        TextRowsArchiveRecipe,
+        IntegerRowsArchiveRecipe,
+        ExactTensorArchiveRecipe,
+        StaticColumnArchiveRecipe,
+        ImplicitChartRowsArchiveRecipe,
+        ExactExpressionRowsArchiveRecipe,
+    ):
+        return value
     if kind == "text":
         return TextColumnArchiveRecipe.encode(value)
     if kind == "text_rows":
