@@ -29,9 +29,9 @@ if TYPE_CHECKING:
     from ..discretization._cell_geometry import CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh
     from ..discretization._exact_algebraic_geometry import RadicalElement
-    from ..geometry._surface_source_support import Corners
     from ..meshing._association import GeometryAssociation
 
+from .._archive_columns import ExactTensorArchiveRecipe, IntegerRowsArchiveRecipe
 from .._array_archive import (
     _read_npy_metadata,
     ArrayArchiveCorruptionError,
@@ -99,13 +99,24 @@ class SurfaceSourceChartsArchiveRecipe(NamedTuple):
     geometry: CellGeometrySpec
     coordinate_contract: SpatialCoordinateContract
     root_parameters: np.ndarray
-    root_parameter_exact: tuple[Corners, ...]
+    # Exact chart corners as canonical rational text; source pieces as int rows.
+    root_parameter_exact: ExactTensorArchiveRecipe
     root_patches: np.ndarray
     associations: tuple[GeometryAssociation, ...]
     boundary_source: MeshingDomainBoundarySourceArchiveRecipe
     source_root_cell_ids: np.ndarray
-    source_piece_ids: tuple[tuple[int, ...], ...]
+    source_piece_ids: IntegerRowsArchiveRecipe
     expected_source_chart_id: str
+
+
+class PreparedSurfaceSourceSupportArchiveRecipe(NamedTuple):
+    """Constructor inputs of a prepared surface support; root banks are recomputed."""
+
+    domain: MeshingDomainArchiveRecipe
+    original: object
+    root_parameters: np.ndarray
+    root_boundary_source: MeshingDomainBoundarySourceArchiveRecipe
+    expected_support_id: str
 
 
 class SurfaceChartBoundarySourceArchiveRecipe(NamedTuple):
@@ -679,7 +690,10 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
     from ..geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
     from ..geometry._source_boundary_records import SourceBoundaryQuery
     from ..geometry._sphere_material_atlas import SphereMaterialCellAtlas
-    from ..geometry._surface_source_support import SurfaceSourceCharts
+    from ..geometry._surface_source_support import (
+        PreparedSurfaceSourceSupport,
+        SurfaceSourceCharts,
+    )
     from ..geometry.implicit._adaptive_discovery import (
         AdaptiveImplicitBoundarySource,
         AdaptiveImplicitSurface,
@@ -791,13 +805,29 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.geometry,
             value.coordinate_contract,
             value.root_parameters,
-            value.root_parameter_exact,
+            ExactTensorArchiveRecipe.encode(value.root_parameter_exact, rational=True),
             value.root_patches,
             value.associations,
             boundary_recipe,
             value.source_root_cell_ids,
-            value.source_piece_ids,
+            IntegerRowsArchiveRecipe.encode(value.source_piece_ids),
             value.source_chart_id,
+        )
+    if type(value) is PreparedSurfaceSourceSupport:
+        value.require_current()
+        domain_recipe = _source_query_archive_recipe(value.domain)
+        boundary_recipe = _source_query_archive_recipe(value.root_boundary_source)
+        if (
+            type(domain_recipe) is not MeshingDomainArchiveRecipe
+            or type(boundary_recipe) is not MeshingDomainBoundarySourceArchiveRecipe
+        ):
+            raise TypeError("Prepared surface support lost its exact source recipes.")
+        return PreparedSurfaceSourceSupportArchiveRecipe(
+            domain_recipe,
+            value.original,
+            value.root_parameters,
+            boundary_recipe,
+            value.support_id,
         )
     if type(value) is SurfaceEnvelopeSource:
         value.require_current()
@@ -1283,6 +1313,37 @@ def _cell_quality_report_archive_recipe(value: Any, /) -> object | None:
     return recipe
 
 
+# Records whose archive form is a row-column recipe (``_row_record_archive_recipe``).
+_ROW_RECORD_TYPES = frozenset(
+    {
+        ("phydrax.meshing._association", "GeometryAssociation"),
+        ("phydrax.geometry._embedding_state", "MeshEmbeddingWitness"),
+        ("phydrax.geometry.surface._contracts", "SurfaceMetadata"),
+        ("phydrax.discretization._surface_chart_records", "SurfaceChartWitness"),
+    }
+)
+
+
+def model_archive_root_projection(value: Any, /) -> Any:
+    """Project an archive root; a row record root keeps its registered type.
+
+    Row-record column recipes replace nested records only. An archive root must
+    stay its registered dataclass, so a row-record root projects its fields.
+    """
+    if (type(value).__module__, type(value).__name__) not in _ROW_RECORD_TYPES:
+        return model_archive_projection(value)
+    fields = {
+        field.name: model_archive_projection(object.__getattribute__(value, field.name))
+        for field in dataclasses.fields(value)
+    }
+    if all(
+        fields[field.name] is object.__getattribute__(value, field.name)
+        for field in dataclasses.fields(value)
+    ):
+        return value
+    return _restore_dataclass(type(value), fields)
+
+
 def _row_record_archive_recipe(value: Any, /) -> object | None:
     """Project records with one static value per mesh entity to column recipes."""
     module, name = type(value).__module__, type(value).__name__
@@ -1313,10 +1374,23 @@ def _row_record_archive_recipe(value: Any, /) -> object | None:
         if type(value) is not SurfaceMetadata:
             raise TypeError("Surface metadata projection requires its owner type.")
         return SurfaceMetadataArchiveRecipe.from_metadata(value)
+    if (
+        module == "phydrax.discretization._surface_chart_records"
+        and name == "SurfaceChartWitness"
+    ):
+        from ..discretization._surface_chart_records import (
+            SurfaceChartWitness,
+            SurfaceChartWitnessArchiveRecipe,
+        )
+
+        if type(value) is not SurfaceChartWitness:
+            raise TypeError("Surface chart witness projection requires its owner type.")
+        return SurfaceChartWitnessArchiveRecipe.from_witness(value)
     return None
 
 
 def _row_record_recipe_types() -> frozenset[type]:
+    from ..discretization._surface_chart_records import SurfaceChartWitnessArchiveRecipe
     from ..geometry._embedding_state import MeshEmbeddingWitnessArchiveRecipe
     from ..geometry.surface._contracts import SurfaceMetadataArchiveRecipe
     from ..meshing._association import GeometryAssociationArchiveRecipe
@@ -1325,6 +1399,7 @@ def _row_record_recipe_types() -> frozenset[type]:
         {
             GeometryAssociationArchiveRecipe,
             MeshEmbeddingWitnessArchiveRecipe,
+            SurfaceChartWitnessArchiveRecipe,
             SurfaceMetadataArchiveRecipe,
         }
     )
@@ -1681,7 +1756,7 @@ def model_structure_recipe(
 ) -> dict[str, Any]:
     """Encode static model structure without embedding Python module paths."""
     if path == "model":
-        value = model_archive_projection(value)
+        value = model_archive_root_projection(value)
     if _is_prng_key(value):
         data = np.asarray(jr.key_data(value))
         return {
@@ -2550,7 +2625,7 @@ def pack_model_array_tree(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> dict[str, np.ndarray]:
     """Extract the exact dynamic arrays declared by a canonical recipe."""
-    value = model_archive_projection(value)
+    value = model_archive_root_projection(value)
 
     descriptor_tree = _descriptor_tree(recipe, limits)
     descriptor_leaves, descriptor_definition = jax.tree_util.tree_flatten_with_path(

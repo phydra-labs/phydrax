@@ -950,7 +950,7 @@ def _rational_spline_line_gap_squared(
     if source is None or len(source[0]) != 3:
         return None
     source_origin, source_direction = source
-    from .._meshing_domain import _exact_rational_surface_spans
+    from .._meshing_domain import _prepare_surface_spans
     from .._source_interpolation import (
         _exact_rational_span_interpolation_bounds,
         _exact_rational_surface_chart_breakpoints,
@@ -972,7 +972,7 @@ def _rational_spline_line_gap_squared(
     exact_origin = (origin_u, origin_v)
     exact_direction = (chart_direction[0], chart_direction[1])
     surface = source_region.patch
-    spans = _exact_rational_surface_spans(surface)
+    spans = _prepare_surface_spans(surface)
     if spans is None:
         return None
     first_exact, last_exact = Fraction.from_float(first), Fraction.from_float(last)
@@ -1012,7 +1012,7 @@ def _rational_spline_line_gap_squared(
             for axis in range(2)
         ):
             return None
-        target = _exact_rational_surface_point_bounds(surface, uv)
+        target = _exact_rational_surface_point_bounds(spans, uv)
         if target is None or len(target) != 3:
             return None
         point = source_point(parameter)
@@ -1032,7 +1032,7 @@ def _rational_spline_line_gap_squared(
         endpoint = endpoint_gap_squared(first_exact)
         return None if endpoint is None else endpoint
     breakpoints = _exact_rational_surface_chart_breakpoints(
-        surface, exact_origin, exact_direction, first_exact, last_exact
+        spans, exact_origin, exact_direction, first_exact, last_exact
     )
     if breakpoints is None:
         return None
@@ -1051,7 +1051,7 @@ def _rational_spline_line_gap_squared(
             upper_uv,
         )
         interpolation = _exact_rational_span_interpolation_bounds(
-            surface, (chart_triangle,)
+            spans, (chart_triangle,)
         )
         if interpolation.shape != (1,) or not np.isfinite(interpolation[0]):
             return None
@@ -1112,18 +1112,22 @@ def native_face_gap_squared(
     from ._tspline import TSplineSurfacePatch
 
     if isinstance(patch, (BSplineSurfacePatch, TSplineSurfacePatch)):
-        spline_gap = _rational_spline_line_gap_squared(
-            curve, pcurve, source_region, first, last
-        )
-        if spline_gap is not None:
-            return spline_gap
         from ._spline_face_gap import rational_spline_face_gap_squared
 
+        # The exact Bernstein enclosure of the composed difference refines to
+        # within a factor of an attained gap (exactly zero for exact identities);
+        # the endpoint-plus-interpolation line bound carries binary64 rounding
+        # and only serves correspondences the exact enclosure does not support.
         composed_gap = rational_spline_face_gap_squared(
             curve, pcurve, source_region, first, last
         )
         if composed_gap is not None:
             return composed_gap
+        spline_gap = _rational_spline_line_gap_squared(
+            curve, pcurve, source_region, first, last
+        )
+        if spline_gap is not None:
+            return spline_gap
     revolution_gap = (
         _revolution_circle_gap_squared(curve, pcurve, source_region, first, last)
         if isinstance(curve, CircleCurve)

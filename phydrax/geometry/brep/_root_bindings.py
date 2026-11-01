@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from fractions import Fraction
 from typing import cast, TYPE_CHECKING, TypeAlias, Union
 
@@ -59,8 +58,7 @@ from ._trim_helpers import period_offset, period_scalar_bounds, PeriodOffset
 
 
 if TYPE_CHECKING:
-    from ..._interpolation import RationalBSplineSurfaceSpan
-    from ._tspline import TSplineSurfacePatch
+    from ..._interpolation import PreparedSourceSpans, RationalBSplineSurfaceSpan
 
 
 BRepPrimaryVertexRoot: TypeAlias = Union[
@@ -276,18 +274,8 @@ def _exact_torus_patch_box(
     return np.asarray((lower_values, upper_values), dtype=np.float64)
 
 
-def _exact_bspline_surface_box(
-    patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
-) -> np.ndarray:
-    from ._patches import BSplineSurfacePatch
-
-    if not isinstance(patch, BSplineSurfacePatch):
-        raise TypeError("Exact B-spline bounds require a BSplineSurfacePatch.")
-    return _exact_span_surface_box(patch.rational_spans(), lower, upper)
-
-
 def _exact_span_surface_box(
-    spans: Sequence[RationalBSplineSurfaceSpan],
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     lower: np.ndarray,
     upper: np.ndarray,
     /,
@@ -303,7 +291,7 @@ def _exact_span_surface_box(
         for axis in range(2)
     )
     component_bounds: list[list[tuple[Fraction, Fraction]]] = [[], [], []]
-    for span in spans:
+    for span, restrictions in zip(spans.spans, spans.restrictions, strict=True):
         restricted = tuple(
             (
                 max(query[axis][0], span.parameter_bounds[axis][0]),
@@ -313,7 +301,7 @@ def _exact_span_surface_box(
         )
         if any(first > last for first, last in restricted):
             continue
-        enclosure = span.enclose(restricted)
+        enclosure = span.enclose(restricted, restrictions=restrictions)
         if not enclosure.positive_denominator:
             raise ValueError(
                 "A rational B-spline surface span has no positive denominator."
@@ -335,32 +323,6 @@ def _exact_span_surface_box(
         for component in component_bounds
     )
     return np.asarray((lower_values, upper_values), dtype=np.float64)
-
-
-_TSPLINE_SPAN_CAPACITY = 16
-_TSPLINE_SPANS: dict[str, tuple[RationalBSplineSurfaceSpan, ...]] = {}
-
-
-def _tspline_spans(
-    patch: TSplineSurfacePatch, /
-) -> tuple[RationalBSplineSurfaceSpan, ...]:
-    """Exact Bernstein spans of one T-spline definition, extracted once per definition.
-
-    Source certification encloses every chart corner; re-extracting the
-    rational pieces per query dominated whole-mesh certification time.
-    """
-    from .._meshing_domain import _exact_rational_surface_spans
-
-    key = patch.source_definition_id
-    spans = _TSPLINE_SPANS.get(key)
-    if spans is None:
-        spans = _exact_rational_surface_spans(patch)
-        if not spans:
-            raise ValueError("A T-spline source has no exact rational Bernstein spans.")
-        if len(_TSPLINE_SPANS) >= _TSPLINE_SPAN_CAPACITY:
-            del _TSPLINE_SPANS[next(iter(_TSPLINE_SPANS))]
-        _TSPLINE_SPANS[key] = spans
-    return spans
 
 
 def _exact_line_extrusion_box(
@@ -415,6 +377,11 @@ def _exact_line_extrusion_box(
 def _patch_box(
     patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
+    """Enclose ``patch`` on a UV box.
+
+    Spline carriers extract their exact spans for this one query; consumers
+    of many queries restrict spans they prepared once (`_exact_span_surface_box`).
+    """
     from ._patches import (
         BSplineSurfacePatch,
         CircleCurve,
@@ -434,10 +401,8 @@ def _patch_box(
         isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve)
     ):
         return np.asarray(patch.bounding_box(np.stack((lower, upper))), dtype=np.float64)
-    if isinstance(patch, BSplineSurfacePatch):
-        return _exact_bspline_surface_box(patch, lower, upper)
-    if isinstance(patch, TSplineSurfacePatch):
-        return _exact_span_surface_box(_tspline_spans(patch), lower, upper)
+    if isinstance(patch, (BSplineSurfacePatch, TSplineSurfacePatch)):
+        return _exact_span_surface_box(patch.prepare_spans(), lower, upper)
     if isinstance(patch, CylinderPatch) and not _source_coefficients_are_binary(patch):
         return _exact_cylinder_patch_box(patch, lower, upper)
     if isinstance(patch, ExtrusionSurface) and not _source_coefficients_are_binary(patch):

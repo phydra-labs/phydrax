@@ -199,22 +199,35 @@ available; interval evaluation of numerical coefficients is admitted only when
 those coefficients represent the source exactly. Unsupported exact coefficient
 families refuse rather than substitute sampled extrema.
 
-`brep_mass_properties(model, subdivisions=8)` computes source-defined volume
-enclosures in the cube of the model's length unit, separately for each solid
-occurrence. `subdivisions` initializes the interval integration grid; it is not
-an accuracy claim or a work ceiling. Consume `volume_enclosures` together with
-the per-occurrence `status` and `reasons`. The `volume` midpoint is a numerical
-convenience, not an independent certificate. Unsupported or unresolved source
-integration retains an infinite enclosure and a NaN midpoint rather than
-substituting a sampled or tessellated volume.
+`brep_mass_properties(model, relative_tolerance=1e-6)` encloses each solid
+occurrence's volume, in the cube of the model's length unit, as the flux of
+`x / 3` through its source faces (`x . (S_u x S_v) / 3` per chart). Affine faces
+with line p-curves and polynomial B-spline faces spanning their chart integrate
+exactly in rationals (Bernstein triple products); planar faces with other
+p-curves integrate their Green area along the p-curves; other curved faces
+integrate over parameter cells split at every smoothness break, either as
+Green strips swept from the chart edge or as chart cells classified against
+the source trim. Inside a smooth cell the second-order midpoint/Hessian
+enclosure `f(c) A + sum f_ii A h_i^2 / 24 +- rad(f_uv) A h_u h_v / 16` applies
+(intersected with `f(box) A`); trim-crossing chart cells hold their
+zero-extended range. Certified edge-face and vertex gaps add the flux of their
+closing strips and fans. Batched rounds refine the widest cells until the
+half-width is at most `relative_tolerance` times the positive lower bound.
+Cell programs run on the native interval executor when they lower completely,
+otherwise on the host reference interpreter. Consume `volume_enclosures` with
+the per-occurrence `status`, `reasons` and `exact`; the `volume` midpoint is a
+numerical convenience. Unsupported carriers or trims, and requests below the
+binary64 parameter or rounding resolution, keep an infinite certified enclosure
+and a NaN midpoint; `reached_enclosures` keeps the tightest enclosure reached as
+evidence. `BRepSource` reports the same owner's result as `interior_mass`
+(`ExactMass` for exact volumes, otherwise `EstimatedMass` with the certified
+half-width as uncertainty, at `measure_relative_tolerance`) and raises
+`BRepMeasureRefusal` carrying the full evidence when an occurrence is refused.
 
 `brep_shell_volume_sign(model, shell)` certifies the orientation of one closed
-shell from the divergence-theorem integrand `x . (S_u x S_v) / 3` over each
-face's trimmed chart. Cells use a centered (gradient) enclosure, partial sums
-are exact rationals, and a cell whose interior lies wholly inside or outside the
-trim is classified once and inherits that status under refinement; trim curves
-running along cell edges carry no area. A shell whose sign stays unresolved is
-refused rather than oriented from a sample.
+shell with the same flux enclosure, refined until it excludes zero. A shell
+whose sign stays unresolved raises `BRepMeasureRefusal` rather than being
+oriented from a sample.
 
 ## Native interval evaluation for source charts
 
@@ -258,10 +271,18 @@ derivative or analytic normal enclosures over the source trims, refining cells
 that can affect an angle extremum or requested threshold. Revolved line and
 circle profiles lying in a plane through their axis use the meridian normal,
 which stays regular where a profile meets the axis (disc caps, cone apices,
-sphere poles). Cells whose normal is undefined, such as a profile crossing the
-axis, are subdivided to 1/256 of the face parameter range and then reported in
-`unresolved_cells` with spatial boxes in `singular_points`; they contribute the
-full `[0, pi]` range and are never replaced by a point sample.
+sphere poles). A cell whose normal is undefined is subdivided, at knot lines
+first, until a positive lower bound on `|S_u x S_v|` makes it regular or it is
+certified to contain a singular point: it meets a degenerate edge p-curve
+whose exact pole collapse the model proved (or a collapsed clamped spline
+boundary row), or a Krawczyk box isolates the unique zero of two cross-product
+components at an exact rational point where the third vanishes exactly.
+Certified cells are returned in `singular_cells` with `singularities` evidence
+and exact `singular_points` and contribute the full `[0, pi]` range; regular
+cells are then not refined further, because they cannot change that range.
+Cells still undecided at binary64 parameter resolution are returned in
+`unresolved_cells` with a typed `unresolved_reasons` entry. No cell is decided
+by a point sample.
 
 `CadExportPolicy(intersection_approximation=CadCurveFitPolicy(...))` requests a
 fitted B-spline edge and its two source p-curves for an otherwise unrepresented

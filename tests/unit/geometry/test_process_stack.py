@@ -103,7 +103,7 @@ def test_vertical_stack_lowers_to_in_memory_exact_partition_history() -> None:
         angular_deflection=0.2,
         trim_samples_per_edge=9,
     )
-    mass = brep_mass_properties(result.model, subdivisions=8)
+    mass = brep_mass_properties(result.model, relative_tolerance=1e-6)
     volume_enclosures = np.asarray(mass.volume_enclosures)
 
     assert stack.region_precedence == ("high", "low")

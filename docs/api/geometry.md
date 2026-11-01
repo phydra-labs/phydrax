@@ -642,8 +642,11 @@ returns a whole-trim angle enclosure in radians and an explicit face status.
 Analytic and interval derivative enclosures are subdivided until the requested
 angular enclosure is resolved or parameter resolution prevents refinement.
 Meridian line/circle revolution faces use a normal that stays regular on the
-axis; cells with an undefined normal stop at 1/256 of the face parameter range
-and are returned as `unresolved_cells` with spatial `singular_points` boxes.
+axis. Cells with an undefined normal are refined until they are regular or
+certified to contain a declared degenerate-edge pole or an exactly verified
+isolated zero of `S_u x S_v` (`singular_cells`, `singularities`,
+`singular_points`); cells undecided at binary64 resolution are returned as
+`unresolved_cells` with typed `unresolved_reasons`.
 
 Rational spline evaluation uses the shared span-local B-spline kernel. Each
 curve query gathers `degree + 1` controls; each surface query gathers only the

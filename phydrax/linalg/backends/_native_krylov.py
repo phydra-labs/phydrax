@@ -215,6 +215,30 @@ def _pcg_checkpoint_block(max_steps: int, /) -> int:
     return max(1, math.isqrt(max_steps))
 
 
+# Restarted Arnoldi has no finite-termination step count: `n` steps bound only
+# unrestarted GMRES, and a restart shorter than `n` makes that bound an
+# arbitrary cap. Without a declared step budget an early-exit (F)GMRES therefore
+# runs until its true residual is decided: converged, stagnant at binary64
+# resolution for `stagnation_iterations` steps, broken down, or nonfinite. The
+# int32 iteration counter is the only loop bound left.
+_UNDECLARED_ARNOLDI_STEPS = int(jnp.iinfo(jnp.int32).max)
+
+
+def _restarted_arnoldi_step_budget(
+    declared: int | None, dimension: int, driver: KrylovLoopDriver, /
+) -> int:
+    """Structural step bound of restarted (F)GMRES.
+
+    A declared budget is honored. A fixed-trip (algorithmic-differentiation)
+    loop needs a static trip count and keeps the unrestarted bound ``n``.
+    """
+    if declared is not None:
+        return declared
+    if _fixed_trip(driver):
+        return max(1, dimension)
+    return _UNDECLARED_ARNOLDI_STEPS
+
+
 class NativeKrylovState(StrictModule):
     problem: Any
     preconditioner: AbstractPreconditioner | None
@@ -426,6 +450,10 @@ def _runtime_controls(
         if plan.method == BiCGStab().name
         else max(problem.operator.source.size, problem.operator.target.size)
         if isinstance(problem, (LeastSquaresProblem, MinimumNormProblem))
+        else _restarted_arnoldi_step_budget(
+            None, problem.operator.source.size, _loop_driver(plan)
+        )
+        if plan.method in (GMRES().name, FGMRES().name)
         else max(1, problem.operator.source.size)
     )
     relative = jnp.asarray(
@@ -908,7 +936,9 @@ def _square_solve(
                     else FGMRES()
                 )
                 selected_preconditioner = precondition
-            restart = min(selected_method.restart, structural_max_steps)
+            restart = min(
+                selected_method.restart, structural_max_steps, operator.source.size
+            )
             value, cycle_auxiliary, next_iteration_state = _fgmres_raw(
                 selected_action,
                 target,

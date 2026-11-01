@@ -28,6 +28,7 @@ from phydrax.geometry._meshing_domain import (
     MeshingSurfacePatch,
     PatchCurveUse,
     PatchPoleUse,
+    SourcePreparation,
 )
 from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from phydrax.geometry._source_boundary_records import (
@@ -1373,7 +1374,7 @@ def test_curved_cell_normal_deviation_bound_is_first_order_in_cell_width() -> No
                 Fraction(float(target[1])),
                 Fraction(float(target[2])),
             ),
-            _DerivativeCache(),
+            _DerivativeCache(SourcePreparation(domain)),
         )
         # The true deviation is below the angular span of the corners about the
         # axis. A first-order bound stays within a fixed multiple of that span,
@@ -1408,9 +1409,11 @@ def test_sphere_cell_normal_bound_splits_until_it_decides_the_limit() -> None:
         Fraction(float(cross[2])),
     )
     limit = Fraction(1, 5)
-    whole = _normal_deviation_for_cell(domain, 0, triangle, target, _DerivativeCache())
+    whole = _normal_deviation_for_cell(
+        domain, 0, triangle, target, _DerivativeCache(SourcePreparation(domain))
+    )
     split = _normal_deviation_for_cell(
-        domain, 0, triangle, target, _DerivativeCache(), limit
+        domain, 0, triangle, target, _DerivativeCache(SourcePreparation(domain)), limit
     )
     assert whole is not None and split is not None
     assert whole[1] > limit
@@ -1550,7 +1553,7 @@ def test_source_partition_respects_authored_patch_orientation() -> None:
         np.asarray(target_triangles, dtype=np.float64),
     )
 
-    assert _partition_findings(source, witness) == ()
+    assert _partition_findings(source, witness, SourcePreparation(source.domain)) == ()
 
     positive_source = MeshingDomainBoundarySource(base, (0,))
     positive_witness = _witness(
@@ -1559,7 +1562,9 @@ def test_source_partition_respects_authored_patch_orientation() -> None:
         base,
         np.asarray(target_triangles, dtype=np.float64),
     )
-    positive_findings = _partition_findings(positive_source, positive_witness)
+    positive_findings = _partition_findings(
+        positive_source, positive_witness, SourcePreparation(positive_source.domain)
+    )
     assert any(
         finding.check == "source_chart_orientation" and finding.status == "violated"
         for finding in positive_findings
@@ -1662,7 +1667,8 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
     assert len(slivers) == 6
     # Owners are the fan cells holding a pole-side edge to the sliver apex.
     assert {owner for owner, _ in slivers} == {0, 1, 6, 7}
-    assert _partition_findings(source, complete) == ()
+    preparation = SourcePreparation(source.domain)
+    assert _partition_findings(source, complete, preparation) == ()
 
     rng = np.random.default_rng(7)
     for _owner, sliver in slivers:
@@ -1679,7 +1685,7 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
     missing_fan = witness_for(tuple(range(1, len(charts))))
     assert any(
         finding.check == "source_chart_coverage" and finding.status == "violated"
-        for finding in _partition_findings(source, missing_fan)
+        for finding in _partition_findings(source, missing_fan, preparation)
     )
 
 
@@ -1936,9 +1942,7 @@ def test_chart_overlap_candidates_agree_on_host_and_bvh_broad_phases(
     def triangles(count: int, /):
         corners = rng.integers(-40, 40, size=(count, 3, 2))
         return tuple(
-            tuple(
-                (Fraction(int(x), 16), Fraction(int(y), 16)) for x, y in triangle
-            )
+            tuple((Fraction(int(x), 16), Fraction(int(y), 16)) for x, y in triangle)
             for triangle in corners
         )
 

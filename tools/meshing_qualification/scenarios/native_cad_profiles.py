@@ -159,7 +159,9 @@ def _require_geometric_losslessness(
     A declared loss is admitted only for ignored non-geometric STEP entities and
     for source tolerance declarations the native model cannot carry as its own
     limit; the latter are bounded below by requiring every certified edge/p-curve
-    gap to lie within the file's declared tolerance.
+    gap to lie within the file's declared tolerance. Pole (degenerate) coedges a
+    format cannot carry (STEP) are re-created by the reader from exact
+    source-period evidence; every other coedge must honor a supplied p-curve.
     """
     report = imported.report
     status = report.status.name
@@ -197,9 +199,12 @@ def _require_geometric_losslessness(
             f"Native {imported.format} import lost its exact B-Rep carriers."
         )
     coedges = len(geometry.coedge_edges)
-    if imported.coverage.pcurves_honored != coedges:
+    poles = sum(1 for edge in geometry.coedge_edges if geometry.edge_curves[edge] == -1)
+    honored = imported.coverage.pcurves_honored
+    if honored < coedges - poles:
         raise RuntimeError(
-            f"Native {imported.format} import honored {imported.coverage.pcurves_honored} of {coedges} source p-curves."
+            f"Native {imported.format} import honored {honored} of {coedges - poles} "
+            f"source p-curves ({poles} pole coedges re-created)."
         )
     evidence = imported.tolerance_evidence
     if evidence is None:
@@ -233,7 +238,8 @@ def _require_geometric_losslessness(
         "status": status,
         "ignored_non_geometric_step_entities": ignored,
         "uncarried_source_tolerances": tolerance_records,
-        "pcurves_honored": imported.coverage.pcurves_honored,
+        "pcurves_honored": honored,
+        "pole_coedges": poles,
         "coedges": coedges,
         "maximum_certified_pcurve_gap": max(gap for _, gap, _ in gaps),
         "minimum_declared_tolerance": min(limit for _, _, limit in gaps),
@@ -823,7 +829,7 @@ def _source_volume_oracle(
         raise RuntimeError(
             f"{case} source volume oracle requires one solid; got {model.topology.num_solids}."
         )
-    measured = brep_mass_properties(model, subdivisions=8)
+    measured = brep_mass_properties(model, relative_tolerance=_VOLUME_RELATIVE_TOLERANCE)
     if measured.status != ("certified",):
         raise RuntimeError(
             f"{case} exact B-Rep volume query failed: status={measured.status!r}, reasons={measured.reasons!r}."

@@ -29,7 +29,10 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryDistanceWitness,
     SourceBoundaryQuery,
 )
-from ..geometry._source_fidelity import validate_source_fidelity_witness
+from ..geometry._source_fidelity import (
+    validate_source_fidelity_witness,
+    ValidatedSourceFidelityWitness,
+)
 from ..geometry._source_fidelity_certificate import SourceFidelityWitness
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.implicit._restricted_delaunay_coverage import (
@@ -292,13 +295,32 @@ def _require_coverage_witness_binding(
         )
 
 
-def _prepare_scoped_fidelity(
+def validated_fidelity_witness(
+    validated: tuple[ValidatedSourceFidelityWitness, ...],
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    witness: SourceFidelityWitness,
+    /,
+) -> SourceFidelityWitness | ValidatedSourceFidelityWitness:
+    """Return the validation of ``witness`` for exactly these operands, if handed one.
+
+    Otherwise ``witness`` itself is returned, so its consumer validates it.
+    """
+    for value in validated:
+        if value.witness is witness and value.binds(mesh, geometry, source):
+            return value
+    return witness
+
+
+def _validate_scoped_fidelity(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     values: tuple[ScopedFidelityInput, ...],
+    validated: tuple[ValidatedSourceFidelityWitness, ...],
     /,
-) -> tuple[ScopedFidelityInput, ...]:
-    scoped: list[ScopedFidelityInput] = []
+) -> tuple[tuple[SourceBoundaryQuery, ValidatedSourceFidelityWitness, float], ...]:
+    scoped: list[tuple[SourceBoundaryQuery, ValidatedSourceFidelityWitness, float]] = []
     for query, witness, tolerance in values:
         if not isinstance(query, SourceBoundaryQuery) or not isinstance(
             query, StrictModule
@@ -308,15 +330,20 @@ def _prepare_scoped_fidelity(
             )
         if not math.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("scoped fidelity tolerances must be finite and nonnegative.")
-        validate_source_fidelity_witness(mesh, geometry, query, witness)
-        scoped.append((query, witness, float(tolerance)))
+        token = validate_source_fidelity_witness(
+            mesh,
+            geometry,
+            query,
+            validated_fidelity_witness(validated, mesh, geometry, query, witness),
+        )
+        scoped.append((query, token, float(tolerance)))
     return tuple(
         sorted(
             scoped,
             key=lambda item: (
                 item[0].source_id,
                 item[0].source_revision,
-                item[1].witness_id,
+                item[1].witness.witness_id,
                 item[2],
             ),
         )
@@ -370,7 +397,13 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         fidelity_witness: SourceFidelityWitness | None = None,
         feature_source: _SourceEntityScopes | None = None,
         source_coverage_witness: SourceCoverageWitness | None = None,
+        validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
     ) -> None:
+        """Retain the inputs; their fidelity witnesses must validate on ``mesh``.
+
+        ``validated`` holds validations the caller already made for exactly
+        these operands; a witness with one is not validated again.
+        """
         source_id_ = canonical_identifier(source_id, "source_id")
         source_revision_ = canonical_identifier(source_revision, "source_revision")
         normal_limit = _validate_fidelity_source(
@@ -386,7 +419,14 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                 raise ValueError(
                     "A fidelity witness requires its authoritative source query."
                 )
-            validate_source_fidelity_witness(mesh, geometry, source, fidelity_witness)
+            validate_source_fidelity_witness(
+                mesh,
+                geometry,
+                source,
+                validated_fidelity_witness(
+                    validated, mesh, geometry, source, fidelity_witness
+                ),
+            )
         cell_ids, regions = _prepare_region_assignments(
             mesh,
             schedule,
@@ -402,7 +442,12 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             source_revision_,
             feature_source,
         )
-        scoped = _prepare_scoped_fidelity(mesh, geometry, scoped_fidelity)
+        scoped = tuple(
+            (query, token.witness, tolerance)
+            for query, token, tolerance in _validate_scoped_fidelity(
+                mesh, geometry, scoped_fidelity, validated
+            )
+        )
         _require_coverage_witness_binding(
             source_coverage_witness,
             mesh,
@@ -491,7 +536,15 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         *,
         domain: CoverageDomain | None = None,
         source: SourceBoundaryQuery | None = None,
-    ) -> None:
+        validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
+    ) -> tuple[ValidatedSourceFidelityWitness, ...]:
+        """Require these operands to match and return their witness validations.
+
+        ``validated`` holds validations already made for exactly these operands;
+        a witness with one is not validated again. The returned validations
+        (retained witness first, then scoped witnesses) are handed on explicitly
+        to the consumers of the same operands.
+        """
         if (
             not _same_tree_content(mesh, self.mesh)
             or not _same_tree_content(geometry, self.geometry)
@@ -507,13 +560,26 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             raise ValueError(
                 "MeshCertificationInputs no longer match the retained scientific content."
             )
+        tokens: list[ValidatedSourceFidelityWitness] = []
         if self.fidelity_witness is not None:
             if source is None:
                 raise ValueError("A retained fidelity witness requires its source query.")
-            validate_source_fidelity_witness(
-                mesh, geometry, source, self.fidelity_witness
+            tokens.append(
+                validate_source_fidelity_witness(
+                    mesh,
+                    geometry,
+                    source,
+                    validated_fidelity_witness(
+                        validated, mesh, geometry, source, self.fidelity_witness
+                    ),
+                )
             )
-        _prepare_scoped_fidelity(mesh, geometry, self.scoped_fidelity)
+        tokens.extend(
+            token
+            for _, token, _ in _validate_scoped_fidelity(
+                mesh, geometry, self.scoped_fidelity, validated
+            )
+        )
         _prepare_features(
             self.protected_features,
             self.schedule,
@@ -528,9 +594,38 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             domain,
             self.fidelity_witness,
         )
+        return tuple(tokens)
+
+
+def validate_fidelity_witnesses(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery | None,
+    fidelity_witness: SourceFidelityWitness | None,
+    scoped_fidelity: tuple[ScopedFidelityInput, ...],
+    /,
+) -> tuple[ValidatedSourceFidelityWitness, ...]:
+    """Validate a certification request's fidelity witnesses once, to hand on.
+
+    The result is passed as ``validated`` to :class:`MeshCertificationInputs`
+    and its consumers for these same operands. A witness without its source is
+    left to the inputs, which refuse it.
+    """
+    tokens = []
+    if fidelity_witness is not None and source is not None:
+        tokens.append(
+            validate_source_fidelity_witness(mesh, geometry, source, fidelity_witness)
+        )
+    tokens.extend(
+        validate_source_fidelity_witness(mesh, geometry, query, witness)
+        for query, witness, _ in scoped_fidelity
+    )
+    return tuple(tokens)
 
 
 __all__ = [
     "MeshCertificationInputs",
     "ScopedFidelityInput",
+    "validate_fidelity_witnesses",
+    "validated_fidelity_witness",
 ]

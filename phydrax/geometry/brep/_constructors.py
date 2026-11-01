@@ -372,8 +372,10 @@ class PlanarProfile:
                 rows
                 if normalized[index] is original_loops[index]
                 else tuple(
-                    (rows[(len(rows) - edge - 2) % len(rows)][1],
-                     rows[(len(rows) - edge - 2) % len(rows)][0])
+                    (
+                        rows[(len(rows) - edge - 2) % len(rows)][1],
+                        rows[(len(rows) - edge - 2) % len(rows)][0],
+                    )
                     for edge in range(len(rows))
                 )
                 for index, rows in enumerate(gap_rows)
@@ -2185,6 +2187,7 @@ def assemble_brep_model(
         report=report,
         tessellation=realization,
         tessellation_certificate=certificate,
+        binding_proof=model.binding_proof,
     )
 
 

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import final, TYPE_CHECKING
 
 import equinox as eqx
@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from ..._coordinate_measure import CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from .._cell_geometry import PerCellRestrictedCellGeometryElement
 from .._cell_geometry_validity import cell_jacobian_inverse_and_measure
 from .._integration_domain import IntegrationDomain
 from .._local_variational import (
@@ -34,16 +35,56 @@ from .._local_variational import (
 
 if TYPE_CHECKING:
     from ._generic import FiniteElementDiscretization
-    from ._reference import FiniteElementSpec
 
 
-def _tabulation_hessians(element: FiniteElementSpec, points: Array, /) -> Array:
-    """Differentiate the element's owned reference-gradient action."""
+def _tabulation_hessians(
+    tabulate: Callable[[Array], tuple[Array, Array]], points: Array, /
+) -> Array:
+    """Differentiate an owned reference-gradient tabulation."""
 
     def point_gradient(point: Array) -> Array:
-        return element.tabulate(point[None, :])[1][0]
+        return tabulate(point[None, :])[1][0]
 
     return jax.vmap(jax.jacfwd(point_gradient))(points)
+
+
+def _coordinate_actions(
+    coordinate_element: object,
+    points: Array,
+    cell_rows: np.ndarray,
+    /,
+    *,
+    hessians: bool,
+) -> tuple[Array, Array, Array | None]:
+    """Coordinate basis, gradients and optional Hessians at reference points.
+
+    Shared charts give ``(q, i)``-leading arrays; exact per-cell charts give
+    ``(cell, q, i)``-leading arrays for the block rows ``cell_rows``, tabulated
+    once per distinct chart.
+    """
+    if isinstance(coordinate_element, PerCellRestrictedCellGeometryElement):
+        rows = np.asarray(cell_rows)
+        basis, gradients = coordinate_element.tabulate_cells(rows, points)
+        if not hessians:
+            return basis, gradients, None
+
+        def point_gradients(point: Array) -> Array:
+            return coordinate_element.tabulate_cells(rows, point[None, :])[1][:, 0]
+
+        # (q, cell, i, r, s) -> (cell, q, i, r, s)
+        second = jax.vmap(jax.jacfwd(point_gradients))(points)
+        return basis, gradients, jnp.moveaxis(second, 0, 1)
+    tabulate = getattr(coordinate_element, "tabulate", None)
+    if not callable(tabulate):
+        raise TypeError(
+            f"{type(coordinate_element).__name__} has no scalar coordinate tabulator."
+        )
+    basis, gradients = tabulate(points)
+    return (
+        basis,
+        gradients,
+        _tabulation_hessians(tabulate, points) if hessians else None,
+    )
 
 
 @final
@@ -264,19 +305,23 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         )
         gathers = jnp.asarray(coordinate_gathers, dtype=jnp.int32)
         weights = jnp.asarray(reference_weights)
+        # Shared charts store (q, i)-leading tabulations; exact per-cell charts
+        # store one (cell, q, i)-leading tabulation per gathered cell.
+        per_cell = basis.ndim == 3
         if (
             not layout
             or kind != "cell"
-            or basis.ndim != 2
-            or gradients.ndim != 3
-            or gradients.shape[:2] != basis.shape
+            or basis.ndim not in (2, 3)
+            or gradients.ndim != basis.ndim + 1
+            or gradients.shape[: basis.ndim] != basis.shape
             or (
                 hessians.size
                 and hessians.shape != gradients.shape + (gradients.shape[-1],)
             )
             or gathers.ndim != 2
-            or gathers.shape[1] != basis.shape[1]
-            or weights.shape != (basis.shape[0],)
+            or gathers.shape[1] != basis.shape[-1]
+            or (per_cell and basis.shape[0] != gathers.shape[0])
+            or weights.shape != (basis.shape[-2],)
         ):
             raise ValueError("FE local geometry actions are inconsistent.")
         self.runtime_layout_id = layout
@@ -315,8 +360,11 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         if not isinstance(runtime, FiniteElementRuntimeData):
             raise TypeError("runtime must be FiniteElementRuntimeData.")
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
-        points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
-        jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
+        cells = "c" if self.coordinate_basis.ndim == 3 else ""
+        points = ein.contract(f"{cells}qi,cid->cqd", self.coordinate_basis, coordinates)
+        jacobian = ein.contract(
+            f"{cells}qir,cid->cqdr", self.coordinate_gradients, coordinates
+        )
         inverse, _, measure, _, successful = cell_jacobian_inverse_and_measure(jacobian)
         measure = eqx.error_if(
             measure,
@@ -326,7 +374,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         inverse_hessian = None
         if self.coordinate_hessians.size:
             mapping_hessian = ein.contract(
-                "qirs,cid->cqdrs", self.coordinate_hessians, coordinates
+                f"{cells}qirs,cid->cqdrs", self.coordinate_hessians, coordinates
             )
             inverse_hessian = -ein.contract(
                 "cqrd,cqdst,cqsa,cqtb->cqrab",
@@ -553,7 +601,7 @@ class FiniteElementLocalProvider(StrictModule):
                 element = discretization.elements[field_index][block_index]
                 basis, gradients = element.tabulate(points)
                 hessians = (
-                    _tabulation_hessians(element, points)
+                    _tabulation_hessians(element.tabulate, points)
                     if maximum_derivative_order == 2
                     else None
                 )
@@ -589,14 +637,13 @@ class FiniteElementLocalProvider(StrictModule):
                 gathers.append(
                     discretization.dof_maps[field_index].cell_dofs[block_index][selected]
                 )
-            coordinate_element = discretization.coordinate_elements[block_index]
-            # ty: ignore[unresolved-attribute]
-            coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
-            coordinate_hessians = (
-                # ty: ignore[invalid-argument-type]
-                _tabulation_hessians(coordinate_element, points)
-                if maximum_derivative_order == 2
-                else None
+            coordinate_basis, coordinate_gradients, coordinate_hessians = (
+                _coordinate_actions(
+                    discretization.coordinate_elements[block_index],
+                    points,
+                    selected,
+                    hessians=maximum_derivative_order == 2,
+                )
             )
             geometry = FiniteElementGeometryActions(
                 discretization.default_runtime.geometry_layout_id,

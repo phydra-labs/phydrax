@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from fractions import Fraction
 
@@ -12,26 +13,30 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax._fingerprint import canonical_fingerprint
-from phydrax._interpolation import TMesh2D
-from phydrax._physical import SpatialCoordinateContract
+from phydrax import SpatialCoordinateContract
 from phydrax.discretization import iga
-from phydrax.geometry._meshing_domain import MeshingDomain
-from phydrax.geometry._source_fidelity import (
-    certify_source_fidelity,
-    validate_source_fidelity_witness,
+from phydrax.discretization.iga import TMesh2D
+from phydrax.geometry.brep import (
+    BRepGeometry,
+    BRepImportReport,
+    BRepModel,
+    LineCurve,
+    TSplineSurfacePatch,
 )
-from phydrax.geometry.brep._model import BRepGeometry, BRepImportReport, BRepModel
-from phydrax.geometry.brep._patches import LineCurve
-from phydrax.geometry.brep._tspline import TSplineSurfacePatch
-from phydrax.meshing._contracts import (
+from phydrax.meshing import (
     CellFamilyPolicy,
     CellMeshingTarget,
+    MeshingScope,
     SurfaceMeshingSpec,
+    UniformSizeControl,
 )
-from phydrax.meshing._scope import MeshingScope
-from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
+
+
+def _example_digest(payload: dict[str, object]) -> str:
+    """Content digest of this example's authored source description."""
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _source_patch() -> TSplineSurfacePatch:
@@ -124,14 +129,14 @@ def _brep_model(
         shell_orientations=(),
         solid_shells=(),
     )
-    source_digest = canonical_fingerprint(
+    source_digest = _example_digest(
         {
             "kind": "native-tspline-cad-example-source",
             "surface_definition": patch.source_definition_id,
             "boundary_points": points.tolist(),
         }
     )
-    import_policy_id = canonical_fingerprint(
+    import_policy_id = _example_digest(
         {"kind": "native-tspline-cad-example-import-policy"}
     )
     report = BRepImportReport(
@@ -166,8 +171,7 @@ def main() -> None:
     coordinate_contract = SpatialCoordinateContract.si()
     surface = _source_patch()
     model = _brep_model(surface, coordinate_contract)
-    domain = MeshingDomain.from_brep(model)
-    scope = MeshingScope.whole(domain, 2)
+    scope = MeshingScope.whole(model, 2)
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(
             2,
@@ -180,7 +184,7 @@ def main() -> None:
     )
     native_result = (
         NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
-        .plan(domain, specification)
+        .plan(model, specification, coordinate_contract=coordinate_contract)
         .execute()
     )
     native_mesh_cell_count = sum(block.cell_count for block in native_result.mesh.blocks)
@@ -198,30 +202,12 @@ def main() -> None:
             "Accepted native CAD meshing discarded its source-chart proof."
         )
     acceptance.require_passed()
-    request = acceptance.inputs
-    source_query = request.source
-    tolerance = request.fidelity_tolerance
-    witness = request.fidelity_witness
-    if source_query is None or tolerance is None or witness is None:
-        raise RuntimeError("Accepted native CAD meshing discarded its fidelity inputs.")
-    if witness.witness_id != surface_source.chart_witness.witness_id:
+    witness = acceptance.inputs.fidelity_witness
+    if witness is None or witness.witness_id != surface_source.chart_witness.witness_id:
         raise RuntimeError(
             "Accepted fidelity and retained source chart use different witnesses."
         )
-    validate_source_fidelity_witness(
-        native_result.mesh,
-        native_result.geometry,
-        source_query,
-        surface_source.chart_witness,
-    )
-    fidelity = certify_source_fidelity(
-        native_result.mesh,
-        native_result.geometry,
-        source_query,
-        tolerance=tolerance,
-        maximum_normal_deviation=request.maximum_normal_deviation,
-        witness=surface_source.chart_witness,
-    )
+    fidelity = acceptance.fidelity
     if fidelity.status != "certified":
         raise RuntimeError(
             "Accepted native CAD surface failed exact chart-bound source fidelity: "
@@ -229,8 +215,6 @@ def main() -> None:
                 f"{finding.check}: {finding.detail}" for finding in fidelity.findings
             )
         )
-    if fidelity.certificate_id != acceptance.fidelity.certificate_id:
-        raise RuntimeError("Accepted source-fidelity evidence did not renew exactly.")
     if any(len(piece) != 3 for piece in surface_source.source_piece_ids):
         raise RuntimeError(
             "T-spline CAD ancestry must retain patch, control-cell, and extraction-piece IDs."
@@ -326,7 +310,6 @@ def main() -> None:
                 "native_source_fidelity_certificate_id": (
                     acceptance.fidelity.certificate_id
                 ),
-                "native_source_fidelity_revalidation_id": fidelity.certificate_id,
                 "native_source_fidelity_status": acceptance.fidelity.status,
                 "native_source_piece_keys": sorted(
                     {
