@@ -314,9 +314,14 @@ geometry evaluation is JAX-differentiable through
 `space.evaluate_geometry(field_name, coordinates)`.
 For a single field, `space.mass` and `space.stiffness` each assemble only the
 requested operator. `space.assemble_field_operators(field_name, runtime)` explicitly
-assembles both and shares their geometry evaluation. Runtime coordinates are
-numeric inputs, not cache identities; moved geometry is always evaluated anew,
-and operator values, precision policy, and IDs retain the same contract.
+assembles both and shares their geometry evaluation. Assembly runs as one
+compiled program owned by the discretization. The default runtime
+(`space.default_runtime`) reads the block geometry prepared with the space.
+Any other runtime is a numeric input, not a cache identity: its moved geometry
+is always evaluated anew, and operator values, precision policy, and IDs keep
+the same contract. Preparation evaluates shared-chart identity-mapped geometry
+one cell's quadrature at a time, so only the retained points, physical
+gradients and weights span the block.
 
 See [Finite elements](guides_finite_elements.md) for reference tabulation,
 DOF maps, constraints, functionals, sparse lowering, and DAE integration.
