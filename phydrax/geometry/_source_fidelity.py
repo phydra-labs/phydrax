@@ -11,7 +11,6 @@ from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
 from typing import get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
-import jax
 import numpy as np
 from jax.typing import ArrayLike
 
@@ -48,13 +47,12 @@ from ._interval_enclosure import (
     interval_cos,
     interval_sin,
     IntervalExtensionError,
-    prepare_interval_function,
     PreparedIntervalFunction,
 )
 from ._mesh_certificates import (
     MeshCertificateBinding,
 )
-from ._meshing_domain import MeshingDomain
+from ._meshing_domain import MeshingDomain, SourcePreparation
 from ._planar_primitives import (
     area2 as _polygon_area2,
     cross as _polygon_cross,
@@ -88,6 +86,7 @@ from .brep._patches import (
 
 if TYPE_CHECKING:
     from .._interpolation._bspline_extraction import (
+        PreparedSourceSpans,
         RationalBSplineSurfaceHessianEnclosure,
         RationalBSplineSurfaceSpan,
     )
@@ -535,6 +534,7 @@ def _reconstructed_domain_query(
 def _partition_findings(
     source: MeshingDomainBoundarySource,
     witness: SurfaceChartWitness | SourceBoundaryChartWitness,
+    preparation: SourcePreparation,
     /,
     *,
     checked_current: bool = False,
@@ -606,7 +606,7 @@ def _partition_findings(
                 *(sliver for _, sliver in source.collapsed_pole_slivers(patch, target)),
             )
         declared, _ = source._trim_partition_reference_unchecked(
-            patch, target, plane=plane
+            patch, target, preparation, plane=plane
         )
         source_areas = tuple(abs(_area2(triangle)) for triangle in declared)
         target_areas = tuple(abs(_area2(triangle)) for triangle in target)
@@ -1040,9 +1040,11 @@ def _validate_source_fidelity_witness(
     /,
     *,
     domain_coverage: SourceBoundaryChartCover | None = None,
+    preparation: SourcePreparation | None = None,
 ) -> None:
     # `domain_coverage`: the domain source's chart cover, already computed by a
     # caller that holds it (a reconstructed query's prepared domain cover).
+    # `preparation`: the caller's `SourcePreparation` of the domain source.
     if not isinstance(source, SourceBoundaryQuery):
         raise TypeError("source must implement SourceBoundaryQuery.")
     if not isinstance(witness, get_args(SourceFidelityWitness.__value__)):
@@ -1112,7 +1114,11 @@ def _validate_source_fidelity_witness(
             raise ValueError(
                 "Surface chart witness identity does not reproduce its current arrays."
             )
-        findings = _partition_findings(domain_source, witness)
+        findings = _partition_findings(
+            domain_source,
+            witness,
+            SourcePreparation.of(domain_source.domain, preparation),
+        )
         if any(finding.status != "certified" for finding in findings):
             raise ValueError(
                 "Surface chart witness is not a complete exact source partition."
@@ -1264,7 +1270,12 @@ def _validate_source_fidelity_witness(
                 "Reconstructed chart witness changes its persistent source scope."
             )
         _, charts, _ = _surface_source_chart_rows(domain_source, witness)
-        findings = _partition_findings(domain_source, witness, checked_current=True)
+        findings = _partition_findings(
+            domain_source,
+            witness,
+            SourcePreparation.of(domain_source.domain, preparation),
+            checked_current=True,
+        )
         if any(finding.status != "certified" for finding in findings):
             raise ValueError(
                 "Reconstructed source chart witness is not a complete exact partition."
@@ -1303,9 +1314,11 @@ def _validate_source_fidelity_witness(
             else:
                 domain_source.require_current()
             patch_rows, charts, _ = _surface_source_chart_rows(domain_source, witness)
+            preparation = SourcePreparation.of(domain_source.domain, preparation)
             findings = _partition_findings(
                 domain_source,
                 witness,
+                preparation,
                 checked_current=not isinstance(
                     source, SurfaceNativeRestrictionBoundarySource
                 ),
@@ -1328,7 +1341,7 @@ def _validate_source_fidelity_witness(
                     "Surface source chart witness changes target/source chart orientation."
                 )
             coverage = (
-                domain_source.boundary_chart_cover()
+                domain_source.boundary_chart_cover(preparation=preparation)
                 if domain_coverage is None
                 else domain_coverage
             )
@@ -3820,7 +3833,10 @@ def _plane_axes_normal_deviation(
 
 
 def _surface_jacobian_bounds(
-    surface: AbstractSurfacePatch, uv_triangle: Triangle2, /
+    surface: AbstractSurfacePatch,
+    uv_triangle: Triangle2,
+    preparation: SourcePreparation,
+    /,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Enclose the physical Jacobian columns of a source surface on a chart triangle."""
     from ._source_interpolation import (
@@ -3858,7 +3874,7 @@ def _surface_jacobian_bounds(
     )
     if np.any(~np.isfinite(box_lower)) or np.any(~np.isfinite(box_upper)):
         return None
-    jacobian = prepare_interval_function(jax.jacfwd(surface.evaluate), 2)
+    jacobian = preparation.derivative_program(surface, 1)
     low, high = jacobian.evaluate(box_lower.reshape((1, 2)), box_upper.reshape((1, 2)))
     if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
         return None
@@ -3866,7 +3882,7 @@ def _surface_jacobian_bounds(
 
 
 type _PatchDerivativeSource = (
-    tuple[RationalBSplineSurfaceSpan, ...] | PreparedIntervalFunction
+    PreparedSourceSpans[RationalBSplineSurfaceSpan] | PreparedIntervalFunction
 )
 
 
@@ -3875,47 +3891,36 @@ type _IntervalNet = tuple[np.ndarray, np.ndarray]
 
 
 class _DerivativeCache:
-    """Per-certification derivative sources and exact span enclosures.
+    """Per-certification exact span enclosures over the caller's source preparation.
 
     A spline cell's Bernstein restriction is the dominant exact cost; its
     enclosures serve both the interpolation and the normal bound of the cell.
     """
 
-    __slots__ = ("enclosures", "intervals", "normal_nets", "spans")
+    __slots__ = ("enclosures", "normal_nets", "preparation")
 
-    def __init__(self) -> None:
-        self.spans: dict[int, tuple[RationalBSplineSurfaceSpan, ...] | None] = {}
-        self.intervals: dict[int, PreparedIntervalFunction] = {}
+    def __init__(self, preparation: SourcePreparation, /) -> None:
+        self.preparation = preparation
         self.enclosures: dict[
             tuple[int, Triangle2], tuple[RationalBSplineSurfaceHessianEnclosure, ...]
         ] = {}
         self.normal_nets: dict[tuple[int, tuple[int, int]], _IntervalNet] = {}
 
     def patch_spans(
-        self, patch: int, surface: AbstractSurfacePatch, /
-    ) -> tuple[RationalBSplineSurfaceSpan, ...] | None:
-        if patch not in self.spans:
-            from ._meshing_domain import _exact_rational_surface_spans
+        self, surface: AbstractSurfacePatch, /
+    ) -> PreparedSourceSpans[RationalBSplineSurfaceSpan] | None:
+        return self.preparation.surface_spans(surface)
 
-            self.spans[patch] = _exact_rational_surface_spans(surface)
-        return self.spans[patch]
-
-    def source(
-        self, patch: int, surface: AbstractSurfacePatch, /
-    ) -> _PatchDerivativeSource:
-        spans = self.patch_spans(patch, surface)
+    def source(self, surface: AbstractSurfacePatch, /) -> _PatchDerivativeSource:
+        spans = self.preparation.surface_spans(surface)
         if spans is not None:
             return spans
-        interval = self.intervals.get(patch)
-        if interval is None:
-            interval = prepare_interval_function(jax.jacfwd(surface.evaluate), 2)
-            self.intervals[patch] = interval
-        return interval
+        return self.preparation.derivative_program(surface, 1)
 
     def span_enclosures(
         self,
         patch: int,
-        spans: tuple[RationalBSplineSurfaceSpan, ...],
+        spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
         uv_triangle: Triangle2,
         /,
     ) -> tuple[RationalBSplineSurfaceHessianEnclosure, ...]:
@@ -3931,7 +3936,7 @@ class _DerivativeCache:
     def span_normal_nets(
         self,
         patch: int,
-        spans: tuple[RationalBSplineSurfaceSpan, ...],
+        spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
         span_indices: tuple[int, int],
         /,
     ) -> _IntervalNet:
@@ -3950,7 +3955,7 @@ class _DerivativeCache:
                 _tensor_bernstein_product,
             )
 
-            span = next(span for span in spans if span.span_indices == span_indices)
+            span = next(span for span in spans.spans if span.span_indices == span_indices)
             first, second = span._du_numerators, span._dv_numerators
             if len(first) != 3 or len(second) != 3:
                 raise ValueError("Surface spline spans must map into three-space.")
@@ -3978,7 +3983,7 @@ class _DerivativeCache:
     def span_normal_cone_cosine(
         self,
         patch: int,
-        spans: tuple[RationalBSplineSurfaceSpan, ...],
+        spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
         enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...],
         orientation: int,
         target: tuple[tuple[Fraction, Fraction], ...],
@@ -4553,7 +4558,7 @@ def _normal_deviation_for_cell(
         )
         if np.any(~np.isfinite(box_lower)) or np.any(~np.isfinite(box_upper)):
             return None
-        source = derivatives.source(patch, surface)
+        source = derivatives.source(surface)
         if isinstance(source, PreparedIntervalFunction):
             bounds = source.evaluate(box_lower.reshape((1, 2)), box_upper.reshape((1, 2)))
             low, high = bounds[0][0], bounds[1][0]
@@ -4612,6 +4617,7 @@ def _curved_trim_lens_caps(
     surface: AbstractSurfacePatch,
     chart_rows: list[tuple[int, Triangle2]],
     lenses: tuple[CurvedTrimLens, ...],
+    preparation: SourcePreparation,
     /,
 ) -> dict[int, Fraction]:
     """Bound the physical distance a curved-trim lens adds to each target cell.
@@ -4652,7 +4658,7 @@ def _curved_trim_lens_caps(
             (lower, (upper[0], lower[1]), upper),
             (lower, upper, (lower[0], upper[1])),
         ):
-            bounds = _surface_jacobian_bounds(surface, triangle)
+            bounds = _surface_jacobian_bounds(surface, triangle, preparation)
             if bounds is None:
                 raise ValueError("A curved trim lens has no surface Jacobian enclosure.")
             magnitude = np.maximum(np.abs(bounds[0]), np.abs(bounds[1]))
@@ -4996,13 +5002,20 @@ def _certify_domain_surface_chart_fidelity(
     tolerance: float,
     maximum_normal_deviation: float | None,
     domain_coverage: SourceBoundaryChartCover | None = None,
+    preparation: SourcePreparation | None = None,
 ) -> SourceFidelityCertificate:
     from ._source_interpolation import certify_domain_surface_charts
 
     domain_source = _surface_query_root(source)
+    preparation = SourcePreparation.of(domain_source.domain, preparation)
 
     _validate_source_fidelity_witness(
-        mesh, geometry, source, witness, domain_coverage=domain_coverage
+        mesh,
+        geometry,
+        source,
+        witness,
+        domain_coverage=domain_coverage,
+        preparation=preparation,
     )
     patch_rows, charts, plane_patches = _surface_source_chart_rows(domain_source, witness)
     target_rows, _, _ = _surface_target_chart_rows(mesh, geometry, domain_source, witness)
@@ -5015,9 +5028,10 @@ def _certify_domain_surface_chart_fidelity(
         target_rows,
         tolerance=tolerance,
         plane_patches=plane_patches,
+        preparation=preparation,
     )
     coverage = (
-        domain_source.boundary_chart_cover()
+        domain_source.boundary_chart_cover(preparation=preparation)
         if domain_coverage is None
         else domain_coverage
     )
@@ -5038,7 +5052,7 @@ def _certify_domain_surface_chart_fidelity(
             (len(evidence.cell_global_ids),), np.inf, dtype=np.float64
         )
         normal_limit = Fraction.from_float(float(maximum_normal_deviation))
-        derivatives = _DerivativeCache()
+        derivatives = _DerivativeCache(preparation)
         for row, (patch, chart) in enumerate(zip(patch_rows, charts, strict=True)):
             if not evidence.target_affine or not evidence.target_affine[row]:
                 findings.append(
@@ -5507,11 +5521,15 @@ def certify_source_fidelity(
     maximum_normal_deviation: float | None = None,
     witness: SourceFidelityWitness | None = None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
+    preparation: SourcePreparation | None = None,
 ) -> SourceFidelityCertificate:
     """Certify continuous physical source fidelity from one typed witness.
 
     ``root_charts`` passes adaptive implicit root charts the caller already
     prepared for exactly this request; other sources and witnesses refuse it.
+    ``preparation`` is the caller's `SourcePreparation` of the meshing domain
+    behind a domain boundary source; without one the domain is prepared for
+    this certification alone.
     """
     if root_charts is not None:
         from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
@@ -5626,6 +5644,7 @@ def certify_source_fidelity(
                     witness,
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
+                    preparation=preparation,
                 )
         from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
@@ -5717,7 +5736,8 @@ def certify_source_fidelity(
                 ),
             ),
         )
-    coverage = domain_source.boundary_chart_cover()
+    preparation = SourcePreparation.of(domain_source.domain, preparation)
+    coverage = domain_source.boundary_chart_cover(preparation=preparation)
     findings = list(coverage.findings)
     if not coverage.complete or coverage.semantics != "certified" or findings:
         findings.append(
@@ -5729,7 +5749,7 @@ def certify_source_fidelity(
             )
         )
     try:
-        findings.extend(_partition_findings(domain_source, witness))
+        findings.extend(_partition_findings(domain_source, witness, preparation))
         _, cell_ids, patch_ids, occurrence_paths = _chart_point_tables(
             domain_source, witness, mesh, geometry
         )
@@ -5829,7 +5849,7 @@ def certify_source_fidelity(
         None if normal_limit is None else np.full((cell_count,), np.inf, dtype=np.float64)
     )
     normal_lower_max = Fraction(0)
-    derivatives = _DerivativeCache()
+    derivatives = _DerivativeCache(preparation)
     mesh_to_source_upper = Fraction(0)
     source_to_mesh_upper = Fraction(0)
     witness_cell_ids = np.asarray(witness.cell_global_ids, dtype=np.int64)
@@ -5893,7 +5913,7 @@ def certify_source_fidelity(
             spans = (
                 None
                 if exact_surface_map is not None
-                else derivatives.patch_spans(patch, surface)
+                else derivatives.patch_spans(surface)
             )
             # Generic carriers are bounded after the endpoint errors fix each row's budget.
             interpolation: np.ndarray | None = None
@@ -5938,9 +5958,7 @@ def certify_source_fidelity(
                             (u_bounds[0], v_bounds[0]),
                             (u_bounds[1], v_bounds[1]),
                         )
-                        point_box = np.asarray(
-                            surface.bounding_box(parameter_box), dtype=np.float64
-                        )
+                        point_box = preparation.surface_box(surface, parameter_box)
                         if (
                             point_box.shape != (2, 3)
                             or np.any(~np.isfinite(point_box))
@@ -5962,16 +5980,20 @@ def certify_source_fidelity(
                 owner = chart_rows[owner_row][0]
                 sliver_caps[owner] = max(
                     sliver_caps.get(owner, Fraction(0)),
-                    domain_source.pole_sliver_cap_bound(patch, sliver),
+                    domain_source.pole_sliver_cap_bound(
+                        patch, sliver, preparation=preparation
+                    ),
                 )
             # Target charts follow a curved trim by chords. A chart point between a
             # chord and its arc is within the lens bound of both, so the directed
             # distances of every cell meeting the lens box grow by its surface image.
             # Currentness was validated once above, before the per-patch loop.
             _, lenses = domain_source._trim_partition_reference_unchecked(
-                patch, (*target_charts, *(sliver for _, sliver in slivers))
+                patch,
+                (*target_charts, *(sliver for _, sliver in slivers)),
+                preparation,
             )
-            lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses)
+            lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses, preparation)
         except (
             ArithmeticError,
             FloatingPointError,
@@ -6107,6 +6129,7 @@ def certify_source_fidelity(
                         - lens_caps.get(chart_rows[chart_row][0], Fraction(0))
                         for chart_row in budget_rows
                     ),
+                    preparation=preparation,
                 )
             except (
                 ArithmeticError,

@@ -17,6 +17,10 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._interpolation._bspline_extraction import (
+    PreparedSourceSpans,
+    RationalBSplineSurfaceSpan,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, positive_integer
@@ -29,8 +33,13 @@ from ..linalg._exact import determinant_exact
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked
 from ._embedding_state import MeshCertificateFinding
-from ._interval_enclosure import prepare_interval_function, PreparedIntervalFunction
-from ._meshing_domain import MeshingDomain, PatchCurveUse, PatchPoleUse
+from ._interval_enclosure import PreparedIntervalFunction
+from ._meshing_domain import (
+    MeshingDomain,
+    PatchCurveUse,
+    PatchPoleUse,
+    SourcePreparation,
+)
 from ._rational import fraction_down, fraction_endpoint, fraction_up, rational_vector
 from ._source_boundary_records import (
     SourceBoundaryChartCover,
@@ -75,14 +84,8 @@ def _triangle3(values: tuple[tuple[object, ...], ...], /) -> _Triangle3:
     return (_point3(values[0]), _point3(values[1]), _point3(values[2]))
 
 
-def _has_exact_rational_surface_span_source(surface: AbstractSurfacePatch, /) -> bool:
-    from ._meshing_domain import _exact_rational_surface_spans
-
-    return _exact_rational_surface_spans(surface) is not None
-
-
 def _exact_span_point_gap_upper(
-    surface: AbstractSurfacePatch,
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     parameters: _Point2,
     realized: np.ndarray,
     /,
@@ -90,7 +93,7 @@ def _exact_span_point_gap_upper(
     """Bound a realized corner's distance to its exact rational span source point."""
     from ._source_interpolation import _exact_rational_surface_point_bounds
 
-    source = _exact_rational_surface_point_bounds(surface, parameters)
+    source = _exact_rational_surface_point_bounds(spans, parameters)
     target = np.asarray(realized, dtype=np.float64)
     if (
         source is None
@@ -402,7 +405,7 @@ class _ChartedPatch(NamedTuple):
     patch: int
     surface: AbstractSurfacePatch
     exact_surface: tuple[Polynomial, ...] | None
-    exact_span_source: bool
+    exact_spans: PreparedSourceSpans[RationalBSplineSurfaceSpan] | None
     uv_points: tuple[_Point2, ...]
     exact_charts: tuple[_Triangle2, ...]
     uv_triangles: np.ndarray
@@ -762,6 +765,7 @@ def _curved_trim_lens(
     second: _Point2,
     first_parameter: float,
     second_parameter: float,
+    preparation: SourcePreparation,
     /,
 ) -> CurvedTrimLens:
     """Certify the lens between one target chord and the arc between its ends.
@@ -783,15 +787,19 @@ def _curved_trim_lens(
             "Target chart points do not advance along their curved source trim."
         )
     pcurve = use.pcurve
-    arc = _chart_box_corners(pcurve.bounding_box(low, high))
+    arc = _chart_box_corners(preparation.curve_box(pcurve, low, high))
     ends = (
         (
             first,
-            _chart_box_corners(pcurve.bounding_box(first_parameter, first_parameter)),
+            _chart_box_corners(
+                preparation.curve_box(pcurve, first_parameter, first_parameter)
+            ),
         ),
         (
             second,
-            _chart_box_corners(pcurve.bounding_box(second_parameter, second_parameter)),
+            _chart_box_corners(
+                preparation.curve_box(pcurve, second_parameter, second_parameter)
+            ),
         ),
     )
     direction = (second[0] - first[0], second[1] - first[1])
@@ -807,7 +815,7 @@ def _curved_trim_lens(
 
     across_bound = max(abs(across(corner)) for corner in arc)
     try:
-        rate_lower, rate_upper = pcurve.derivative_bounds(low, high)
+        rate_lower, rate_upper = preparation.curve_derivative_bounds(pcurve, low, high)
     except (ArithmeticError, NotImplementedError, TypeError, ValueError):
         pass
     else:
@@ -857,6 +865,7 @@ def _curved_trim_lens(
 def _trim_enclosure_triangles(
     domain: MeshingDomain,
     patch: int,
+    preparation: SourcePreparation,
     /,
 ) -> tuple[_Triangle2, ...]:
     """Triangulate continuous chart boxes enclosing curved trim-to-chord gaps."""
@@ -865,11 +874,8 @@ def _trim_enclosure_triangles(
         for use in loop:
             if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
                 continue
-            bounds = np.asarray(
-                use.pcurve.bounding_box(
-                    min(use.first, use.last), max(use.first, use.last)
-                ),
-                dtype=np.float64,
+            bounds = preparation.curve_box(
+                use.pcurve, min(use.first, use.last), max(use.first, use.last)
             )
             if (
                 bounds.shape != (2, 2)
@@ -1201,7 +1207,13 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         return tuple(result)
 
     def trim_partition_reference(
-        self, patch: int, triangles: tuple[_Triangle2, ...], /, *, plane: bool = False
+        self,
+        patch: int,
+        triangles: tuple[_Triangle2, ...],
+        /,
+        *,
+        plane: bool = False,
+        preparation: SourcePreparation | None = None,
     ) -> tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]]:
         """Return the exact reference partition of one trim for target chart triangles.
 
@@ -1210,15 +1222,28 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         every chain point is located in order on the source arc; each chord then
         carries the certified lens separating it from the exact curved trim. With
         ``plane`` the triangles and trim are in the patch's `exact_plane_chart`.
+        ``preparation`` is the caller's `SourcePreparation` of this domain.
         """
         self.require_current()
-        return self._trim_partition_reference_unchecked(patch, triangles, plane=plane)
+        return self._trim_partition_reference_unchecked(
+            patch,
+            triangles,
+            SourcePreparation.of(self.domain, preparation),
+            plane=plane,
+        )
 
     def _trim_partition_reference_unchecked(
-        self, patch: int, triangles: tuple[_Triangle2, ...], /, *, plane: bool = False
+        self,
+        patch: int,
+        triangles: tuple[_Triangle2, ...],
+        preparation: SourcePreparation,
+        /,
+        *,
+        plane: bool = False,
     ) -> tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]]:
         # Per-patch callers validate currentness once before their loop: the
         # check fingerprints the whole domain, so it must not run per patch.
+        preparation.require(self.domain)
         successors = _target_boundary_successors(triangles)
         lenses: list[CurvedTrimLens] = []
 
@@ -1229,7 +1254,12 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             parameters = _chain_parameters(use, chain)
             lenses.extend(
                 _curved_trim_lens(
-                    use, chain[row], chain[row + 1], parameters[row], parameters[row + 1]
+                    use,
+                    chain[row],
+                    chain[row + 1],
+                    parameters[row],
+                    parameters[row + 1],
+                    preparation,
                 )
                 for row in range(len(chain) - 1)
             )
@@ -1349,17 +1379,26 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     slivers.append((owners[0], sliver))
         return tuple(slivers)
 
-    def pole_sliver_cap_bound(self, patch: int, sliver: _Triangle2, /) -> Fraction:
+    def pole_sliver_cap_bound(
+        self,
+        patch: int,
+        sliver: _Triangle2,
+        /,
+        *,
+        preparation: SourcePreparation | None = None,
+    ) -> Fraction:
         """Upper bound on the source-image diameter of one collapsed pole sliver.
 
         The sliver contains its owner's pole chart corner, so every source point of
         the sliver lies within this bound of that corner's exact source point. The
         chart box is enclosed by pieces no wider than its short side, because a
-        source box enclosure widens with its longest chart extent.
+        source box enclosure widens with its longest chart extent. ``preparation``
+        is the caller's `SourcePreparation` of this domain.
         """
         from ._meshing_domain import _outward_surface_parameter_box
         from ._source_interpolation import _fraction_float_interval
 
+        preparation = SourcePreparation.of(self.domain, preparation)
         surface = self.domain.patches[patch].surface
         lower = tuple(
             _fraction_float_interval(min(point[axis] for point in sliver))[0]
@@ -1384,11 +1423,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         for first, last in zip(cuts[:-1], cuts[1:], strict=True):
             piece_lower, piece_upper = list(lower), list(upper)
             piece_lower[long_axis], piece_upper[long_axis] = float(first), float(last)
-            piece = np.asarray(
-                surface.bounding_box(
-                    _outward_surface_parameter_box(surface, piece_lower, piece_upper)
-                ),
-                dtype=np.float64,
+            piece = preparation.surface_box(
+                surface,
+                _outward_surface_parameter_box(surface, piece_lower, piece_upper),
             )
             if (
                 piece.shape != (2, 3)
@@ -1408,7 +1445,14 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             sum((width * width for width in widths), Fraction(0))
         )[1]
 
-    def boundary_chart_cover(self, /) -> SourceBoundaryChartCover:
+    def boundary_chart_cover(
+        self, /, *, preparation: SourcePreparation | None = None
+    ) -> SourceBoundaryChartCover:
+        """Continuous chart cover of the selected patches.
+
+        ``preparation`` is the caller's `SourcePreparation` of this domain.
+        """
+        preparation = SourcePreparation.of(self.domain, preparation)
         images: list[np.ndarray] = []
         deviations: list[np.ndarray] = []
         findings: list[MeshCertificateFinding] = []
@@ -1435,16 +1479,16 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             else:
                 exact_surface_failed = False
 
-            exact_span_source = False
+            exact_spans = None
             if exact_surface is None and not exact_surface_failed:
                 try:
-                    exact_span_source = _has_exact_rational_surface_span_source(surface)
+                    exact_spans = preparation.surface_spans(surface)
                 except (ArithmeticError, FloatingPointError, TypeError, ValueError):
-                    exact_span_source = False
+                    exact_spans = None
             if exact_surface is None and (
                 exact_surface_failed
                 or (
-                    not exact_span_source
+                    exact_spans is None
                     and (
                         not _source_coefficients_are_binary(surface)
                         or _has_unexpanded_exact_surface_carrier(surface)
@@ -1482,7 +1526,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 complete = False
                 pending.append(chord_charts)
                 continue
-            exact_charts = chord_charts + _trim_enclosure_triangles(self.domain, patch)
+            exact_charts = chord_charts + _trim_enclosure_triangles(
+                self.domain, patch, preparation
+            )
             uv_triangles = np.asarray(
                 [
                     [[float(value) for value in point] for point in triangle]
@@ -1495,7 +1541,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     patch,
                     surface,
                     exact_surface,
-                    exact_span_source,
+                    exact_spans,
                     chart[0],
                     exact_charts,
                     uv_triangles,
@@ -1523,7 +1569,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             patch = entry.patch
             surface = entry.surface
             exact_surface = entry.exact_surface
-            exact_span_source = entry.exact_span_source
+            exact_spans = entry.exact_spans
             uv_points = entry.uv_points
             exact_charts = entry.exact_charts
             uv_triangles = entry.uv_triangles
@@ -1531,15 +1577,15 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             start += len(exact_charts)
             if exact_surface is None:
                 try:
-                    if exact_span_source:
+                    if exact_spans is not None:
                         interpolation = _exact_rational_span_interpolation_bounds(
-                            surface, exact_charts
+                            exact_spans, exact_charts
                         )
                     else:
                         interpolation = self.domain.interpolation_bounds(
-                            patch, uv_triangles
+                            patch, uv_triangles, preparation=preparation
                         )
-                    if exact_span_source:
+                    if exact_spans is not None:
                         if interpolation.shape != (len(exact_charts),) or not np.all(
                             np.isfinite(interpolation)
                         ):
@@ -1549,7 +1595,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                         for row, exact_chart in enumerate(exact_charts):
                             endpoint_error = max(
                                 _exact_span_point_gap_upper(
-                                    surface, exact_point, physical[row, corner]
+                                    exact_spans, exact_point, physical[row, corner]
                                 )
                                 for corner, exact_point in enumerate(exact_chart)
                             )
@@ -1679,8 +1725,18 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             restriction_ids=tuple(restrictions),
         )
 
-    def boundary_cover(self, maximum_radius: float, /) -> SourceBoundarySamples:
-        """Return a complete physical-radius cover of the selected source patches."""
+    def boundary_cover(
+        self,
+        maximum_radius: float,
+        /,
+        *,
+        preparation: SourcePreparation | None = None,
+    ) -> SourceBoundarySamples:
+        """Return a complete physical-radius cover of the selected source patches.
+
+        ``preparation`` is the caller's `SourcePreparation` of this domain.
+        """
+        preparation = SourcePreparation.of(self.domain, preparation)
         if isinstance(maximum_radius, (bool, np.bool_)):
             raise TypeError(
                 "maximum_radius must be a finite nonnegative physical distance."
@@ -1795,7 +1851,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 complete = False
                 continue
             try:
-                evaluator = prepare_interval_function(surface.evaluate, 2)
+                evaluator = preparation.derivative_program(surface, 0)
             except (ArithmeticError, NotImplementedError, TypeError, ValueError):
                 complete = False
                 continue
@@ -1834,7 +1890,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                         dtype=np.float64,
                     )
                     deviation_value = float(
-                        self.domain.interpolation_bounds(patch, interval_cell)[0]
+                        self.domain.interpolation_bounds(
+                            patch, interval_cell, preparation=preparation
+                        )[0]
                     )
                 except (ArithmeticError, NotImplementedError, TypeError, ValueError):
                     complete = False

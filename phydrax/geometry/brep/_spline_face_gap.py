@@ -247,16 +247,16 @@ type _Piece = _SurfacePiece | _PlanePiece
 
 
 def _surface_pieces(surface: AbstractSurfacePatch, /) -> tuple[_Piece, ...] | None:
-    from .._meshing_domain import _exact_rational_surface_spans
+    from .._meshing_domain import _prepare_surface_spans
 
     if isinstance(surface, PlanePatch):
         return (_PlanePiece(surface),)
 
-    spans = _exact_rational_surface_spans(surface)
-    if not spans:
+    prepared = _prepare_surface_spans(surface)
+    if prepared is None or not prepared.spans:
         return None
     pieces: list[_SurfacePiece] = []
-    for span in spans:
+    for span in prepared.spans:
         u_bounds = _fractions(span.parameter_bounds[0])
         v_bounds = _fractions(span.parameter_bounds[1])
         if (

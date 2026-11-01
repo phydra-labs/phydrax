@@ -20,7 +20,7 @@ from phydrax.geometry._domain_boundary import (
     MeshingDomainBoundarySource,
 )
 from phydrax.geometry._meshing_domain import (
-    _exact_rational_surface_spans,
+    _prepare_surface_spans,
     _span_enclosures_for_chart,
     MeshingDomain,
     MeshingDomainCurve,
@@ -451,10 +451,10 @@ def _assert_hessian_encloses_exact_extrema(
 
 def test_rational_bernstein_surface_hessian_encloses_exact_extrema() -> None:
     for surface in _rational_spline_surfaces():
-        spans = _exact_rational_surface_spans(surface)
+        spans = _prepare_surface_spans(surface)
         assert spans is not None
-        assert spans
-        for span in spans:
+        assert spans.spans
+        for span in spans.spans:
             assert span.has_hessian
             _assert_hessian_encloses_exact_extrema(span)
 
@@ -1034,7 +1034,7 @@ def test_meshing_domain_spline_spans_cover_crossing_and_touching_knot_charts() -
     )
 
     for index, surface in enumerate(_rational_spline_surfaces()):
-        spans = _exact_rational_surface_spans(surface)
+        spans = _prepare_surface_spans(surface)
         assert spans is not None
         np.testing.assert_allclose(
             np.asarray(surface.evaluate(jnp.asarray(sample))),
