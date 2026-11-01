@@ -6,16 +6,21 @@
 from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._geometry_predicates import PredicateMode
 from phydrax.discretization import AdaptiveSimplexPolicy, AdaptiveSimplexStatus
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_topology import PeriodicMeshTopology
 from phydrax.meshing import (
+    _device_metric as device_metric,
+    _local_metric as local_metric,
     adapt_device_metric,
     commit_device_metric_adaptation,
     execute_mesh_adaptation,
@@ -419,9 +424,10 @@ def test_device_metric_scenario_1() -> None:
     assert not report.failed
     assert report.rejected_uncertain > 0
     result = commit_device_metric_adaptation(prepared, update.state)
-    # ty: ignore[unresolved-attribute]
-    assert result.evidence.status & AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION
-    # ty: ignore[unresolved-attribute]
+    assert isinstance(result.evidence, DeviceMetricEvidence)
+    status = result.evidence.status
+    assert isinstance(status, AdaptiveSimplexStatus)
+    assert status & AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION
     assert result.evidence.collapses > 0
     points = np.asarray(source.mesh.coordinates)
     identifiers = np.asarray(source.mesh.vertex_global_ids)
@@ -482,3 +488,57 @@ def test_device_metric_rejects_non_equivariant_periodic_spd_data() -> None:
 
     with pytest.raises(ValueError, match="equivariantly"):
         prepare_device_metric_adaptation(source, request, policy=_policy())
+
+
+def test_host_and_device_optimal_collapse_relocate_the_survivor() -> None:
+    # The short birth edge is 0.6 long. Either endpoint collapse produces a
+    # spoke of length 1.5, whereas merging at the origin leaves all edges in
+    # the unit band. Hull vertices and the six source triangles are unchanged.
+    points = np.asarray(
+        ((-1.2, 0.0), (-0.3, 0.0), (0.3, 0.0), (1.2, 0.0), (0.0, 0.72), (0.0, -0.72))
+    )
+    triangles = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)), dtype=np.int32
+    )
+    mesh = CellMesh.from_triangles(points, triangles)
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    tensors = np.broadcast_to(np.eye(2), (6, 2, 2))
+    edge_count = mesh.entity_set(1).count
+    host, host_source = local_metric._initial_state(
+        mesh,
+        tensors,
+        np.zeros(6, dtype=np.int64),
+        np.zeros(edge_count, dtype=np.int64),
+        np.zeros(edge_count, dtype=np.bool_),
+        np.zeros(6, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    births = host.source_rows.copy()
+    births[1:3] = -1
+    host = host._replace(source_rows=births)
+    topology = local_metric._topology(host, PredicateMode.EXACT)
+    candidates = local_metric._collapse_candidates(
+        host, topology, PredicateMode.EXACT, False
+    )
+    assert not np.any(candidates.status == local_metric._OK)
+    host, _, count = local_metric._optimal_collapse_round(
+        host, topology, local_metric._Counts(), PredicateMode.EXACT, None, host_source
+    )
+    assert count == 1
+    assert local_metric._unit(local_metric._topology(host, PredicateMode.EXACT))
+    np.testing.assert_allclose(host.points[1], (0.0, 0.0), rtol=0.0, atol=1e-15)
+
+    prepared = prepare_device_metric_adaptation(
+        source, MetricMeshAdaptation(_metric(source, np.eye(2))), policy=_policy()
+    )
+    work = _work(prepared.state)
+    work = work._replace(source_rows=work.source_rows.at[1:3].set(-1))
+    updated, _, overflow, count = eqx.filter_jit(device_metric._optimal_collapse_round)(
+        work, jnp.asarray(False), prepared.layout
+    )
+    assert int(count) == 1 and not int(overflow)
+    assert bool(device_metric._unit(updated))
+    np.testing.assert_allclose(
+        np.asarray(updated.coordinates[1]), (0.0, 0.0), rtol=0.0, atol=1e-15
+    )
+    np.testing.assert_array_equal(np.asarray(updated.vertex_active[:6]), host.alive)

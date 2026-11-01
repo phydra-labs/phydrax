@@ -221,9 +221,9 @@ def test_closed_brep_source_chart_metric_adaptation(family: str) -> None:
     np.testing.assert_array_equal(np.sort(mapped_cells), np.sort(target_cell_ids))
 
 
-def _implicit_sphere_source() -> tuple[
-    AnalyticImplicitProfile, CellMeshingResult, SpatialCoordinateContract
-]:
+def _implicit_sphere_source(
+    maximum_deviation: float = 0.5,
+) -> tuple[AnalyticImplicitProfile, CellMeshingResult, SpatialCoordinateContract]:
     contract = SpatialCoordinateContract.si()
     source_id = "surface-metric-implicit-sphere"
     revision = f"{source_id}-r1"
@@ -271,10 +271,7 @@ def _implicit_sphere_source() -> tuple[
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
         scope,
         size_controls=(),
-        # The deviation bound sets the discovery resolution: 0.5 keeps the certified
-        # root charts to about a thousand triangles, so one process builds, adapts and
-        # recertifies the sphere well inside the per-node budget.
-        maximum_deviation=0.5,
+        maximum_deviation=maximum_deviation,
     )
     options = NativeMeshingOptions(
         "implicit_surface",
@@ -513,6 +510,12 @@ def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> No
     )
     # Extraction vertices are not features: the cap refines across the seam and the
     # pole fan while the coarser remainder collapses and relocates free vertices.
+    # Regular passes stall on one short birth edge whose endpoint collapses both
+    # create an edge above sqrt(2); the stall escape merges its ends at the edge
+    # point that minimizes the longest star edge, and the unit mesh is reached.
+    assert outcome.status is SurfaceMetricStatus.COMPLETE
+    assert outcome.out_of_range_edges == 0
+    assert not outcome.evidence.stalled_edges
     assert outcome.splits > 0
     assert outcome.collapses > 0
     assert outcome.relocations > 0
@@ -597,8 +600,11 @@ def test_implicit_sphere_pole_fans_reach_unit_mesh_across_scales(
     assert not outcome.evidence.stalled_edges
 
 
-def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere() -> None:
-    profile, source, _ = _implicit_sphere_source()
+@pytest.mark.parametrize("maximum_deviation", (0.5, 0.2), ids=("coarse", "fine"))
+def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
+    maximum_deviation: float,
+) -> None:
+    profile, source, _ = _implicit_sphere_source(maximum_deviation)
     transfer = ImplicitAssociationTransfer(profile)
     transfer.validate_source(source)
     values = _coarsening_metric(source.mesh)

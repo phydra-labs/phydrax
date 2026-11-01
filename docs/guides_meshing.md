@@ -1417,22 +1417,29 @@ bound to the source vertices). Routes:
   raises its star's minimum quality or keeps it and strictly improves the
   worst-first quantized deviations of its edges. Neither rule creates vertices,
   so each phase terminates. A full pass that applies nothing outside the unit
-  criterion is a stall; it runs one escape phase of the split/collapse
-  hysteresis that admits every collapse up to metric length 2, births included
-  (the next split phase splits the long edges). The escape stands when the run
-  then reaches the unit criterion or a stall whose potential
+  criterion is a stall. It first tries optimal-point collapse: both endpoints
+  merge at a dyadic edge point (or slide on the survivor's straight source
+  curve), minimizing the merged star's longest metric edge without creating
+  an edge above `sqrt(2)`. All merged-star cells and source stencils are
+  rechecked, including periodic orphan retirement. If this does not improve
+  the stall, an endpoint escape admits every collapse up to metric length 2,
+  births included (the next split phase splits the long edges). An escape
+  stands when the run reaches the unit criterion or a stall whose potential
   `(out-of-band edges, sum of floor(band excess of |ln L| / 2^-20))` is
-  strictly lower (which may escape again); otherwise the run returns the
-  escaped stall's state. Escaped stall potentials strictly decrease in the
+  strictly lower; otherwise it rolls back to the escaped stall and tries the
+  next escape, returning that stall if neither improves it. Host and device
+  routes use this same ordering. Escaped stall potentials strictly decrease in the
   well-founded lexicographic order on pairs of natural numbers, so escapes are
   finitely many and no pass cap is needed. Orientation decisions use the
   policy's predicate mode; unresolved filtered signs reject the operation. The
   status is COMPLETE when the unit-mesh criterion holds, STALLED or
   NUMERICAL_STOP otherwise; a stalled `LocalMetricEvidence.stalled_edges`
   lists every remaining edge (one per quotient orbit) with its metric length
-  and refusal reasons, for example `collapse=hysteresis+inadmissible;flip=invalid`
-  (`hysteresis`: above the split threshold, and the escape did not lower the
-  stall potential; `long`: above 2). `RelocationMeshAdaptation` moves vertices
+  and refusal reasons, for example
+  `collapse=hysteresis+inadmissible;optimal=long;flip=invalid`
+  (`hysteresis`: endpoint collapse exceeds the split threshold and its escape
+  did not lower the stall potential; `optimal=long`: no searched survivor point
+  keeps the star below `sqrt(2)`). `RelocationMeshAdaptation` moves vertices
   only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,

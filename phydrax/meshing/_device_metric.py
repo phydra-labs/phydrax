@@ -81,6 +81,7 @@ from ._local_metric import (
     _lookup,
     _LOWER,
     _measured,
+    _OPTIMAL_LATTICE,
     _periodic_state_context,
     _REFINED,
     _RELOCATED,
@@ -112,6 +113,12 @@ if TYPE_CHECKING:
 _RECORDS_PER_SLOT = 2
 # (cell, source cell) ancestry pairs per cell slot.
 _PAIRS_PER_CELL = 8
+# Short edges searched per optimal-point collapse block; blocks repeat until
+# every eligible edge is searched, so the block bounds memory, not the search.
+_OPTIMAL_BLOCK = 256
+# Collapse round modes, also the escape attempt of a pass: regular passes, then
+# the stall-escape attempts in order (see ``_adapted``).
+_REGULAR, _OPTIMAL, _ENDPOINT = 0, 1, 2
 
 # Operation statuses, worst last; the minimum over the two collapse directions
 # of one edge is its tallied outcome.
@@ -1924,6 +1931,11 @@ class _CollapseCandidates(NamedTuple):
     moved: Array
     longest: Array
     status: Array
+    # Classification of the removed end (straight curve vertices certified),
+    # the link condition, and a ball wider than the layout.
+    admissible: Array
+    linked: Array
+    cavity: Array
 
 
 def _collapse_candidates(
@@ -2000,7 +2012,17 @@ def _collapse_candidates(
         interior | curve, jnp.where(cavity, _CAVITY, geometric), _INADMISSIBLE
     )
     return _CollapseCandidates(
-        edge, removed, kept, ball, holds_kept, moved, longest, status
+        edge,
+        removed,
+        kept,
+        ball,
+        holds_kept,
+        moved,
+        longest,
+        status,
+        interior | (curve & (straight == _OK)),
+        linked,
+        cavity,
     )
 
 
@@ -2077,12 +2099,51 @@ def _collapse_children(
     return children, replaced
 
 
+def _apply_collapses(
+    work: _Work,
+    topology: _Topology,
+    found: _CollapseCandidates,
+    selected: Array,
+    layout: DeviceMetricLayout,
+    /,
+) -> tuple[_Work, Array]:
+    """Collapse each selected direction's removed vertex onto its kept vertex."""
+    vertex_capacity = layout.vertex_capacity
+    children, replaced = _collapse_children(work, topology, found, selected, layout)
+    work, cell_overflow = _replace_cells(work, replaced, children, layout)
+    target = jnp.where(selected, found.removed, vertex_capacity)
+    work = work._replace(
+        vertex_active=work.vertex_active.at[target].set(False, mode="drop"),
+        collapse_to=work.collapse_to.at[target].set(found.kept, mode="drop"),
+    )
+    # Records follow the removed vertex; the collapsed edge's records vanish.
+    remap = (
+        jnp.arange(vertex_capacity, dtype=jnp.int32)
+        .at[target]
+        .set(found.kept, mode="drop")
+    )
+    gone = (
+        jnp.zeros((vertex_capacity,), dtype=jnp.bool_).at[target].set(True, mode="drop")
+    )
+    keys = work.record_keys
+    remapped = jnp.sort(remap[keys], axis=1)
+    touched = jnp.any(gone[keys], axis=1)
+    work, record_overflow = _store_records(
+        work,
+        _live_records(work) & (remapped[:, 0] != remapped[:, 1]),
+        remapped,
+        work.record_sources,
+        jnp.where(touched, jnp.maximum(work.record_ranks, _COLLAPSED), work.record_ranks),
+        layout,
+    )
+    return work, _overflow(cell_overflow | record_overflow)
+
+
 def _collapse_round_nonperiodic(
     work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any, /
 ) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
-    vertex_capacity = layout.vertex_capacity
     halves_count = 3 * layout.cell_capacity
     short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
     found = _collapse_candidates(work, topology, layout, escape)
@@ -2105,31 +2166,8 @@ def _collapse_round_nonperiodic(
     )
     count = jnp.sum(selected, dtype=jnp.int32)
     work = work._replace(counters=counters.at[_COLLAPSES].add(count))
-    children, replaced = _collapse_children(work, topology, found, selected, layout)
-    work, cell_overflow = _replace_cells(work, replaced, children, layout)
-    target = jnp.where(selected, removed, vertex_capacity)
-    work = work._replace(
-        vertex_active=work.vertex_active.at[target].set(False, mode="drop"),
-        collapse_to=work.collapse_to.at[target].set(kept, mode="drop"),
-    )
-    # Records follow the removed vertex; the collapsed edge's records vanish.
-    remap = jnp.arange(vertex_capacity, dtype=jnp.int32).at[target].set(kept, mode="drop")
-    gone = (
-        jnp.zeros((vertex_capacity,), dtype=jnp.bool_).at[target].set(True, mode="drop")
-    )
-    keys = work.record_keys
-    remapped = jnp.sort(remap[keys], axis=1)
-    touched = jnp.any(gone[keys], axis=1)
-    work, record_overflow = _store_records(
-        work,
-        _live_records(work) & (remapped[:, 0] != remapped[:, 1]),
-        remapped,
-        work.record_sources,
-        jnp.where(touched, jnp.maximum(work.record_ranks, _COLLAPSED), work.record_ranks),
-        layout,
-    )
-    bits = bits | _overflow(cell_overflow | record_overflow)
-    return work, done, bits, count
+    work, overflow = _apply_collapses(work, topology, found, selected, layout)
+    return work, done, bits | overflow, count
 
 
 class _QuotientLink(NamedTuple):
@@ -2234,7 +2272,6 @@ def _collapse_round_periodic(
     """Collapse only when every lifted member of one quotient edge is valid."""
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
-    vertex_capacity = layout.vertex_capacity
     edge_count = 3 * layout.cell_capacity
     halves = jnp.arange(edge_count, dtype=jnp.int32)
     found = _collapse_candidates(work, topology, layout, escape)
@@ -2373,47 +2410,279 @@ def _collapse_round_periodic(
     )
     count = jnp.sum(selected, dtype=jnp.int32)
     work = work._replace(counters=counters.at[_COLLAPSES].add(count))
-    children, replaced = _collapse_children(work, topology, found, selected, layout)
-    work, cell_overflow = _replace_cells(work, replaced, children, layout)
-    removed, kept = found.removed, found.kept
-    target = jnp.where(selected, removed, vertex_capacity)
-    work = work._replace(
-        vertex_active=work.vertex_active.at[target].set(False, mode="drop"),
-        collapse_to=work.collapse_to.at[target].set(kept, mode="drop"),
+    work, overflow = _apply_collapses(work, topology, found, selected, layout)
+    return work, done, bits | overflow, count
+
+
+def _optimal_collapse_round(
+    work: _Work, done: Array, layout: DeviceMetricLayout, /
+) -> Any:
+    """Optimal-point collapses, the host route's ``_optimal_collapse_search``.
+
+    A short edge whose removed end is admissible and whose link condition
+    holds merges both ends at a point of the merged star's kernel reached from
+    the kept end along a segment, ``kept + t (target - kept)`` with
+    ``t = j / _OPTIMAL_LATTICE``: along the edge (``target = removed``) when
+    the kept end is a free interior vertex off classified edges or a certified
+    straight curve vertex of the edge's own curve, or, when an interior removed
+    end merges into a certified straight curve vertex, along the curve toward
+    either curve neighbor. The point minimizes the longest metric edge of the
+    merged star among the points whose star cells are certified positive (and,
+    for a curve vertex, exactly collinear with its curve neighbors); ties take
+    the first segment and lowest ``j``. Its metric interpolates the segment's
+    end metrics log-Euclidean. The collapse is admitted when that longest edge
+    is at most sqrt(2). A periodic workspace admits only edges whose two
+    vertex orbits each have one lifted member. The kept end is a source vertex
+    rather than a birth where possible, then the lower vertex ID. Eligible
+    edges are searched in blocks of ``_OPTIMAL_BLOCK`` until all are searched.
+    """
+    work = _compact_cells(work, layout)
+    topology = _topology(work, layout)
+    vertex_capacity = layout.vertex_capacity
+    edge_count = 3 * layout.cell_capacity
+    halves = jnp.arange(edge_count, dtype=jnp.int32)
+    points = work.coordinates
+    found = _collapse_candidates(work, topology, layout, True)
+    short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
+    label = topology.classes
+
+    def movable(direction: Array, /) -> tuple[Array, Array]:
+        kept = found.kept[direction]
+        kind = topology.kind[kept]
+        curve = (kind == _CURVE) & (topology.straight[kept] == _OK)
+        along_edge = ((kind == _INTERIOR) & (label == 0) & topology.uniform[kept]) | (
+            curve & (label > 0) & (topology.curve_class[kept] == label)
+        )
+        along_curve = (
+            curve & (label == 0) & (topology.kind[found.removed[direction]] == _INTERIOR)
+        )
+        valid = found.admissible[direction] & found.linked[direction]
+        valid = valid & ~found.cavity[direction]
+        return valid & (along_edge | along_curve), along_curve & ~along_edge
+
+    forward_ok, forward_slide = movable(halves)
+    backward_ok, backward_slide = movable(halves + edge_count)
+    low, high = topology.ends[:, 0], topology.ends[:, 1]
+    births = work.source_rows < 0
+    ids = work.vertex_ids
+    keep_high = (births[high] < births[low]) | (
+        (births[high] == births[low]) & (ids[high] < ids[low])
     )
-    remap = jnp.arange(vertex_capacity, dtype=jnp.int32).at[target].set(kept, mode="drop")
-    gone = (
+    forward = forward_ok & (~backward_ok | keep_high)
+    direction = jnp.where(forward, halves, halves + edge_count)
+    sliding = jnp.where(forward, forward_slide, backward_slide)
+    removed = found.removed[direction]
+    kept = found.kept[direction]
+    eligible = short & (forward_ok | backward_ok)
+    if work.periodic_enabled:
+        representative = work.periodic_vertex_representative
+        size = jnp.where(
+            representative >= 0,
+            jnp.sum(
+                work.periodic_vertex_members[jnp.maximum(representative, 0)] >= 0,
+                axis=1,
+                dtype=jnp.int32,
+            ),
+            1,
+        )
+        eligible = (
+            eligible
+            & (size[removed] == 1)
+            & (size[kept] == 1)
+            & work.periodic_vertex_deck[removed]
+            & work.periodic_vertex_deck[kept]
+            & (topology.neighbors.reshape((-1,)) >= 0)
+        )
+    steps = _OPTIMAL_LATTICE - 1
+    lanes = 2 * steps
+    lattice = jnp.arange(1, _OPTIMAL_LATTICE, dtype=points.dtype) / _OPTIMAL_LATTICE
+    block = min(_OPTIMAL_BLOCK, edge_count)
+    order = jnp.argsort(~eligible, stable=True).astype(jnp.int32)
+    total = jnp.sum(eligible, dtype=jnp.int32)
+    lane = jnp.arange(lanes, dtype=jnp.int32)
+    merged = vertex_capacity + jnp.arange(block, dtype=jnp.int32)[:, None] * lanes + lane
+
+    def search(carry: Any) -> Any:
+        start, longest_all, point_all, metric_all = carry
+        rows = jax.lax.dynamic_slice(
+            order, (jnp.minimum(start, edge_count - block),), (block,)
+        )
+        live = eligible[rows]
+        kept_rows, removed_rows = kept[rows], removed[rows]
+        slide = sliding[rows]
+        kept_neighbors = jnp.maximum(topology.curve_neighbors[kept_rows], 0)
+        # Segment targets: the removed end (second segment absent), or the
+        # kept curve vertex's two curve neighbors.
+        targets = jnp.stack(
+            (
+                jnp.where(slide, kept_neighbors[:, 0], removed_rows),
+                jnp.where(slide, kept_neighbors[:, 1], kept_rows),
+            ),
+            axis=1,
+        )
+        absent = jnp.repeat(
+            jnp.stack((jnp.zeros_like(slide), ~slide), axis=1), steps, axis=1
+        )
+        origin = points[kept_rows]
+        candidate = (
+            origin[:, None, None, :]
+            + lattice[None, None, :, None]
+            * (points[targets] - origin[:, None, :])[:, :, None, :]
+        ).reshape((block, lanes, 2))
+        weight = lattice[None, None, :, None, None]
+        proposal = hermitian_exp(
+            (1.0 - weight) * hermitian_log(work.metric[kept_rows]).value[:, None, None]
+            + weight * hermitian_log(work.metric[targets]).value[:, :, None]
+        ).value.reshape((block, lanes, 2, 2))
+        extended_points = jnp.concatenate((points, candidate.reshape((-1, 2))))
+        extended_metric = jnp.concatenate((work.metric, proposal.reshape((-1, 2, 2))))
+        # Star edges: every neighbor of either end but the ends themselves.
+        ring = jnp.concatenate(
+            (topology.link[kept_rows], topology.link[removed_rows]), axis=1
+        )
+        ring_present = (
+            (ring >= 0) & (ring != kept_rows[:, None]) & (ring != removed_rows[:, None])
+        )
+        pairs = jnp.stack(
+            jnp.broadcast_arrays(jnp.maximum(ring, 0)[:, None, :], merged[:, :, None]),
+            axis=-1,
+        )
+        lengths = metric_edge_lengths(
+            extended_metric, extended_points, pairs.reshape((-1, 2))
+        ).reshape(pairs.shape[:-1])
+        longest = jnp.max(jnp.where(ring_present[:, None, :], lengths, 0.0), axis=2)
+        # Star cells: every ball cell of either end but the edge cells.
+        cells = jnp.concatenate(
+            (topology.ball[kept_rows], topology.ball[removed_rows]), axis=1
+        )
+        corners = work.cells[jnp.maximum(cells, 0)]
+        hit_kept = corners == kept_rows[:, None, None]
+        hit_removed = corners == removed_rows[:, None, None]
+        star = (cells >= 0) & ~(jnp.any(hit_kept, axis=2) & jnp.any(hit_removed, axis=2))
+        moved = jnp.where(
+            (hit_kept | hit_removed)[:, None], merged[:, :, None, None], corners[:, None]
+        )
+        orientation = _orientation(
+            extended_points[moved[..., 0]],
+            extended_points[moved[..., 1]],
+            extended_points[moved[..., 2]],
+        )
+        status = jnp.max(jnp.where(star[:, None], orientation, _OK), axis=2)
+        removed_neighbors = topology.curve_neighbors[removed_rows]
+        # The merged point's curve neighbors: the outer curve neighbor of each
+        # end along a curve edge, the kept vertex's own when sliding.
+        outer_kept = jnp.where(
+            slide | (kept_neighbors[:, 0] != removed_rows),
+            kept_neighbors[:, 0],
+            kept_neighbors[:, 1],
+        )
+        outer_removed = jnp.where(
+            slide,
+            kept_neighbors[:, 1],
+            jnp.where(
+                removed_neighbors[:, 0] == kept_rows,
+                removed_neighbors[:, 1],
+                removed_neighbors[:, 0],
+            ),
+        )
+        collinear = _collinear(
+            jnp.broadcast_to(
+                points[jnp.maximum(outer_kept, 0)][:, None], candidate.shape
+            ),
+            candidate,
+            jnp.broadcast_to(
+                points[jnp.maximum(outer_removed, 0)][:, None], candidate.shape
+            ),
+        )
+        status = jnp.where(
+            (topology.kind[kept_rows] == _CURVE)[:, None],
+            jnp.maximum(status, collinear),
+            status,
+        )
+        status = jnp.where(absent, _INVALID, status)
+        score = jnp.where(status == _OK, longest, jnp.inf)
+        best = jnp.argmin(score, axis=1)
+        chosen = jnp.arange(block)
+        target = jnp.where(live, rows, edge_count)
+        return (
+            start + block,
+            longest_all.at[target].set(score[chosen, best], mode="drop"),
+            point_all.at[target].set(candidate[chosen, best], mode="drop"),
+            metric_all.at[target].set(proposal[chosen, best], mode="drop"),
+        )
+
+    _, longest, point, metric = jax.lax.while_loop(
+        lambda carry: carry[0] < total,
+        search,
+        (
+            jnp.int32(0),
+            jnp.full((edge_count,), jnp.inf, dtype=points.dtype),
+            jnp.zeros((edge_count, 2), dtype=points.dtype),
+            jnp.zeros((edge_count, 2, 2), dtype=points.dtype),
+        ),
+    )
+    admitted = eligible & (longest <= _UPPER)
+    rank = _ranks(admitted, topology.lengths, longest, ids[removed], ids[kept])
+    selected = _independent(
+        rank,
+        admitted,
+        jnp.concatenate((topology.ball[removed], topology.ball[kept]), axis=1),
+        layout.cell_capacity,
+    )
+    count = jnp.sum(selected, dtype=jnp.int32)
+    target = jnp.where(selected, kept, vertex_capacity)
+    moved = (
         jnp.zeros((vertex_capacity,), dtype=jnp.bool_).at[target].set(True, mode="drop")
     )
-    keys = work.record_keys
-    remapped = jnp.sort(remap[keys], axis=1)
-    touched = jnp.any(gone[keys], axis=1)
-    work, record_overflow = _store_records(
-        work,
-        _live_records(work) & (remapped[:, 0] != remapped[:, 1]),
-        remapped,
-        work.record_sources,
-        jnp.where(touched, jnp.maximum(work.record_ranks, _COLLAPSED), work.record_ranks),
-        layout,
+    touched_cells = jnp.any(moved[work.cells], axis=1)
+    touched_records = _live_records(work) & jnp.any(moved[work.record_keys], axis=1)
+    work = work._replace(
+        coordinates=points.at[target].set(point, mode="drop"),
+        metric=work.metric.at[target].set(metric, mode="drop"),
+        vertex_moved=work.vertex_moved | moved,
+        cell_ranks=jnp.where(
+            touched_cells, jnp.maximum(work.cell_ranks, _RELOCATED), work.cell_ranks
+        ),
+        record_ranks=jnp.where(
+            touched_records,
+            jnp.maximum(work.record_ranks, _RELOCATED),
+            work.record_ranks,
+        ),
+        counters=work.counters.at[_COLLAPSES].add(count),
     )
-    bits = bits | _overflow(cell_overflow | record_overflow)
-    return work, done, bits, count
+    directions = (
+        jnp.zeros((2 * edge_count + 1,), dtype=jnp.bool_)
+        .at[jnp.where(selected, direction, 2 * edge_count)]
+        .set(True, mode="drop")[: 2 * edge_count]
+    )
+    work, overflow = _apply_collapses(work, topology, found, directions, layout)
+    return work, done, overflow, count
 
 
 def _collapse_round(
-    work: _Work, done: Array, layout: DeviceMetricLayout, escape: Any = False, /
+    work: _Work, done: Array, layout: DeviceMetricLayout, mode: Any = _REGULAR, /
 ) -> Any:
-    """One collapse round; ``escape`` (traced) selects the stall-escape admission."""
+    """One collapse round of ``mode`` (traced or static): ``_REGULAR`` endpoint
+    collapses, the ``_OPTIMAL`` stall-escape attempt (``_optimal_collapse_round``),
+    or the ``_ENDPOINT`` stall-escape attempt (every endpoint collapse up to
+    ``_COLLAPSE_LIMIT``, births included)."""
 
-    def periodic(operands: Any) -> Any:
-        return _collapse_round_periodic(operands[0], operands[1], layout, escape)
+    def endpoint(escape: bool, /) -> Any:
+        def run(operand: Any) -> Any:
+            work, done = operand
+            if work.periodic_enabled:
+                return _collapse_round_periodic(work, done, layout, escape)
+            return _collapse_round_nonperiodic(work, done, layout, escape)
 
-    def ordinary(operands: Any) -> Any:
-        return _collapse_round_nonperiodic(operands[0], operands[1], layout, escape)
+        return run
 
-    if work.periodic_enabled:
-        return periodic((work, done))
-    return ordinary((work, done))
+    def optimal(operand: tuple[_Work, Array]) -> Any:
+        return _optimal_collapse_round(operand[0], operand[1], layout)
+
+    branches = (endpoint(False), optimal, endpoint(True))
+    if isinstance(mode, int):
+        return branches[mode]((work, done))
+    return jax.lax.switch(mode, branches, (work, done))
 
 
 # ------------------------------------------------------------------ flip
@@ -3086,11 +3355,12 @@ def _pass(
 ) -> Any:
     """Split, collapse, and flip phases, then relocation (each vertex once).
 
-    An escaping pass (``_adapted``) runs only the escape collapse phase; the
-    collapse rounds are compiled once with the traced admission flag.
+    An escaping pass (``escaping``, a traced collapse mode, ``_adapted``) runs
+    only the collapse phase of that stall-escape attempt; the collapse rounds
+    are compiled once with the traced mode.
     """
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
-    regular = ~escaping
+    regular = escaping == _REGULAR
 
     def skipped(operand: Any) -> Any:
         work, bits = operand
@@ -3122,9 +3392,7 @@ def _pass(
     work, bits, moved = jax.lax.cond(
         (work.controls[_RELOCATION] != 0) & regular, relocating, skipped, (work, bits)
     )
-    work = work._replace(
-        counters=work.counters.at[_PASSES].add(jnp.where(escaping, 0, 1))
-    )
+    work = work._replace(counters=work.counters.at[_PASSES].add(jnp.where(regular, 1, 0)))
     return work, bits, changed + moved
 
 
@@ -3201,8 +3469,9 @@ def _periodic_round(
 ) -> _DeviceMetricRound:
     """Execute one source-bound orbit transaction without host synchronization.
 
-    Operations: split, collapse, flip, relocate, and (4) the stall-escape
-    collapse, which shares the collapse branch through its traced flag.
+    Operations: split, collapse, flip, relocate, and the stall-escape attempts
+    (4) endpoint collapses up to ``_COLLAPSE_LIMIT`` and (5) optimal-point
+    collapses, which share the collapse branch through its traced mode.
     """
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
 
@@ -3213,7 +3482,10 @@ def _periodic_round(
 
     def collapse(operand: Any) -> Any:
         work, done = operand
-        work, _, bits, count = _collapse_round(work, done, layout, operation == 4)
+        mode = jnp.where(
+            operation == 4, _ENDPOINT, jnp.where(operation == 5, _OPTIMAL, _REGULAR)
+        )
+        work, _, bits, count = _collapse_round(work, done, layout, mode)
         return work, bits, count
 
     def flip(operand: Any) -> Any:
@@ -3227,7 +3499,7 @@ def _periodic_round(
         return work, bits, count
 
     work, bits, _ = jax.lax.switch(
-        jnp.where(operation == 4, 1, operation),
+        jnp.where(operation >= 4, 1, operation),
         (split, collapse, flip, relocate),
         (source, done),
     )
@@ -3293,13 +3565,17 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
 
     Stall escape (the host route's, ``execute_local_metric_adaptation``): at a
     pass that applies nothing outside the unit criterion, an escape phase runs
-    every collapse up to ``_COLLAPSE_LIMIT`` (births included). It stands when
-    the run reaches the unit criterion or a stall of strictly lower
-    ``_stall_potential``; otherwise the run returns the escaped stall's state
-    and status bits as a stall. Termination: the escaped stalls' potentials
-    strictly decrease in a well-founded order (pairs of natural numbers), each
-    escape phase removes a vertex per collapse, and between escapes the regular
-    passes are unchanged.
+    optimal-point collapses (``_optimal_collapse_round``: the merged vertex at
+    the edge or curve point minimizing the longest star edge, admitted at most
+    sqrt(2)) and, once none applies, every endpoint collapse up to
+    ``_COLLAPSE_LIMIT`` (births included). It stands when the run reaches the
+    unit criterion or a stall of strictly lower ``_stall_potential``;
+    otherwise the run returns the escaped stall's state and status bits as a
+    stall. Termination: the measure is ``_stall_potential``, the pair
+    (out-of-band measured edges, quantized band excess) of natural numbers;
+    the escaped stalls' potentials strictly decrease in its well-founded
+    lexicographic order, each escape phase removes a vertex per collapse, and
+    between escapes the regular passes are unchanged.
     """
 
     def proceed(carry: Any) -> Any:
@@ -3307,31 +3583,41 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
         return ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
 
     def adaptation_pass(carry: Any) -> Any:
-        work, bits, _, escaping, escaped, bound, anchor, anchor_bits = carry
+        work, bits, _, escaping, escaped, bound, anchor, anchor_bits, attempt = carry
         work, bits, applied = _pass(work, bits, layout, escaping)
         quiet = applied == 0
         potential = _stall_potential(work)
+        healthy = (bits & _FAILURES) == 0
         stall = (
             quiet
-            & ~escaping
-            & ((bits & _FAILURES) == 0)
+            & (escaping == _REGULAR)
+            & healthy
             & (work.controls[_TOPOLOGY] != 0)
             & ~_unit(work)
         )
         admitted = ~escaped | _potential_below(potential, bound)
         start = stall & admitted
         # A stall that does not lower the last escaped stall's potential
-        # returns that stall; an escape phase that applies nothing stalls.
+        # returns to that stall for its next escape attempt, or stalls there
+        # when none is left; an optimal-point attempt that applies nothing
+        # passes to the endpoint attempt, and an endpoint attempt that applies
+        # nothing stalls.
         restore = stall & ~admitted
+        retry = restore & (attempt == _OPTIMAL)
+        advance = quiet & (escaping == _OPTIMAL) & healthy
+        following = retry | advance
         return (
             _select(restore, anchor, work),
             jnp.where(restore, anchor_bits, bits),
-            quiet & ~start,
-            start,
+            quiet & ~start & ~following,
+            jnp.where(start, _OPTIMAL, jnp.where(following, _ENDPOINT, _REGULAR)).astype(
+                jnp.int32
+            ),
             escaped | start,
             jnp.where(start, potential, bound),
             _select(start, work, anchor),
             jnp.where(start, bits, anchor_bits),
+            jnp.where(start, _OPTIMAL, jnp.where(following, _ENDPOINT, attempt)),
         )
 
     work, bits, stalled, *_ = jax.lax.while_loop(
@@ -3341,11 +3627,12 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
             source,
             jnp.int32(0),
             jnp.bool_(False),
-            jnp.bool_(False),
+            jnp.int32(_REGULAR),
             jnp.bool_(False),
             jnp.zeros((2,), dtype=jnp.int64),
             source,
             jnp.int32(0),
+            jnp.int32(_REGULAR),
         ),
     )
     converged = _unit(work)
@@ -3781,16 +4068,21 @@ def _periodic_device_adaptation(
 
     controls = np.asarray(jax.device_get(current_state.controls), dtype=np.int32)
     stalled = False
-    # The last escaped stall: its layout, state, preparation, and potential.
+    # The last escaped stall: its layout, state, preparation, potential, and the
+    # index of the escape attempt that ran from it.
     escaped_from: (
         tuple[
             DeviceMetricLayout,
             DeviceMetricState,
             PreparedDeviceMetricAdaptation,
             tuple[int, ...],
+            int,
         ]
         | None
     ) = None
+    # Stall-escape attempts in order (``_periodic_round`` operations): optimal-
+    # point collapses, then endpoint collapses up to ``_COLLAPSE_LIMIT``.
+    escape_operations = (5, 4)
     while True:
         if bool(np.asarray(jax.device_get(_unit(_work(current_state))))):
             break
@@ -3828,17 +4120,26 @@ def _periodic_device_adaptation(
                 jax.device_get(_stall_potential(_work(current_state)))
             ).tolist()
         )
+        first = 0
         if escaped_from is not None and potential >= escaped_from[3]:
-            current_layout, current_state, current_prepared, _ = escaped_from
-            break
+            # Return to the escaped stall and try its next attempt.
+            current_layout, current_state, current_prepared, potential, attempt = (
+                escaped_from
+            )
+            first = attempt + 1
         stall = (current_layout, current_state, current_prepared, potential)
-        applied, failure = run_phase(4)
-        if failure:
-            return rollback(failure)
+        applied = 0
+        attempt = first
+        for attempt in range(first, len(escape_operations)):
+            applied, failure = run_phase(escape_operations[attempt])
+            if failure:
+                return rollback(failure)
+            if applied:
+                break
         if applied == 0:
             break
         stalled = False
-        escaped_from = stall
+        escaped_from = (*stall, attempt)
     converged = bool(np.asarray(jax.device_get(_unit(_work(current_state)))))
     stalled = stalled and not converged
     result_work = _work(current_state)
