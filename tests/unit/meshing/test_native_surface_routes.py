@@ -16,6 +16,7 @@ from phydrax.discretization._cell_geometry import ScalarCoordinateElement
 from phydrax.discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
+from phydrax.discretization._surface_chart_records import SurfaceChartWitness
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._meshing_domain import (
@@ -29,6 +30,10 @@ from phydrax.geometry._meshing_domain import (
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
+)
+from phydrax.geometry._source_fidelity import (
+    certify_source_fidelity,
+    validate_source_fidelity_witness,
 )
 from phydrax.geometry.brep import brep_cone, brep_cylinder, brep_sphere
 from phydrax.geometry.brep._patches import (
@@ -702,6 +707,170 @@ def test_parametric_surface_route_certifies_hard_curve_and_corner_features() -> 
     assert point_witness.source_entity_ids == (
         domain.source_entity_key_for_scope(0, point_id)[0],
     )
+
+
+@pytest.mark.parametrize("hard", (True, False), ids=("hard", "soft"))
+def test_parametric_surface_feature_preserves_requested_fidelity(hard: bool) -> None:
+    domain = _square_domain()
+    base = _surface_specification(domain)
+    tolerance = 0.003 if hard else 0.0
+    feature = ProtectedFeature(
+        base.scope, FeatureKind.SURFACE, maximum_deviation=tolerance, hard=hard
+    )
+    specification = SurfaceMeshingSpec(
+        base.target,
+        base.scope,
+        size_controls=base.size_controls,
+        protected_features=(feature,),
+        maximum_deviation=base.maximum_deviation,
+    )
+    construction = prepare_native_surface(
+        domain,
+        specification,
+        NativeMeshingOptions("parametric_surface"),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    key = f"feature:{feature.feature_id}:maximum_deviation"
+    assert dict(construction.compliance.requested)[key] == tolerance
+    observed = dict(construction.compliance.achieved)[key]
+    if hard:
+        assert observed <= tolerance
+        query, witness, limit = construction.certification.scoped_fidelity[0]
+        certificate = certify_source_fidelity(
+            construction.mesh,
+            construction.geometry,
+            query,
+            tolerance=limit,
+            witness=witness,
+        )
+        assert certificate.status == "certified"
+        assert certificate.mesh_to_source_upper <= tolerance
+        assert certificate.source_to_mesh_upper <= tolerance
+    else:
+        assert observed > tolerance
+        assert base.maximum_deviation is not None
+        assert observed <= base.maximum_deviation
+
+
+def test_public_parametric_surface_protected_feature() -> None:
+    from phydrax.meshing import NativeMeshingOptions, NativeMeshingProvider
+
+    domain = _square_domain()
+    base = _surface_specification(domain)
+    feature = ProtectedFeature(
+        base.scope, FeatureKind.SURFACE, maximum_deviation=0.003
+    )
+    specification = SurfaceMeshingSpec(
+        base.target,
+        base.scope,
+        size_controls=base.size_controls,
+        maximum_deviation=base.maximum_deviation,
+        protected_features=(feature,),
+    )
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
+        .plan(domain, specification, coordinate_contract=SpatialCoordinateContract.si())
+        .execute()
+    )
+    key = f"feature:{feature.feature_id}:maximum_deviation"
+    assert dict(result.compliance.requested)[key] == 0.003
+    assert dict(result.compliance.achieved)[key] <= 0.003
+
+
+def test_surface_feature_scope_does_not_tighten_an_unselected_curved_patch() -> None:
+    uv = np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=np.float64)
+    surfaces = (_flat_nurbs_surface(-2.0, -1.0, 100), _warped_surface())
+    domain = MeshingDomain(
+        tuple(
+            MeshingSurfacePatch(
+                surface,
+                (
+                    tuple(
+                        PatchCurveUse(
+                            4 * patch + edge,
+                            LineCurve(uv[edge], uv[(edge + 1) % 4] - uv[edge]),
+                            0.0,
+                            1.0,
+                        )
+                        for edge in range(4)
+                    ),
+                ),
+            )
+            for patch, surface in enumerate(surfaces)
+        ),
+        tuple(
+            MeshingDomainCurve(4 * patch + edge, 4 * patch + (edge + 1) % 4)
+            for patch in range(2)
+            for edge in range(4)
+        ),
+        8,
+        source_id="independent-protected-surface-patches",
+        source_revision="authored",
+    )
+    base = _surface_specification(domain)
+    selected_key = (domain.entity_id(2, 0), domain.source_occurrences[2][0])
+    face_id = next(
+        int(identifier)
+        for identifier in domain.scope_entity_ids(2)
+        if domain.source_entity_key_for_scope(2, int(identifier)) == selected_key
+    )
+    feature_scope = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        np.asarray((face_id,), dtype=np.int64),
+    )
+    feature = ProtectedFeature(feature_scope, FeatureKind.SURFACE, maximum_deviation=0.0)
+    specification = SurfaceMeshingSpec(
+        base.target,
+        base.scope,
+        size_controls=base.size_controls,
+        maximum_deviation=base.maximum_deviation,
+        protected_features=(feature,),
+    )
+    construction = prepare_native_surface(
+        domain,
+        specification,
+        NativeMeshingOptions("parametric_surface"),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    query, witness, tolerance = construction.certification.scoped_fidelity[0]
+    assert isinstance(query, MeshingDomainBoundarySource)
+    assert isinstance(witness, SurfaceChartWitness)
+    assert query.patches == (0,)
+    certificate = certify_source_fidelity(
+        construction.mesh,
+        construction.geometry,
+        query,
+        tolerance=tolerance,
+        witness=witness,
+    )
+    assert certificate.status == "certified", certificate.findings
+    assert certificate.mesh_to_source_upper == certificate.source_to_mesh_upper == 0.0
+    assert set(np.asarray(certificate.source_cell_global_ids).tolist()) == set(
+        np.asarray(witness.cell_global_ids)[np.asarray(witness.patches) == 0].tolist()
+    )
+    assert dict(construction.compliance.achieved)["maximum_deviation"] > 0.0
+    incomplete = SurfaceChartWitness(
+        geometry_id=witness.geometry_id,
+        topology_id=witness.topology_id,
+        domain_id=witness.domain_id,
+        cell_global_ids=witness.cell_global_ids[:-1],
+        patches=witness.patches[:-1],
+        charts=witness.charts[:-1],
+        source_root_cell_ids=witness.source_root_cell_ids[:-1],
+        source_piece_ids=witness.source_piece_ids[:-1],
+        geometry_entity_ids=witness.geometry_entity_ids[:-1],
+        occurrence_paths=witness.occurrence_paths[:-1],
+        chart_rational_tokens=tuple(witness.chart_rational_tokens[:-1]),
+        root_mesh_cell_bindings=witness.root_mesh_cell_bindings[:-1],
+    )
+    with pytest.raises(ValueError, match="every target cell global ID"):
+        validate_source_fidelity_witness(
+            construction.mesh, construction.geometry, query, incomplete
+        )
 
 
 def test_parametric_surface_route_retains_bounded_source_accuracy() -> None:
