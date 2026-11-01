@@ -56,18 +56,30 @@ def rational_cross[T: ExactField](
     )
 
 
-def rational_cross_2d[T: ExactField](
-    first: tuple[T, T], second: tuple[T, T], /
-) -> T:
+def rational_cross_2d[T: ExactField](first: tuple[T, T], second: tuple[T, T], /) -> T:
     """Return the signed planar cross product over coefficient-field values."""
     return first[0] * second[1] - first[1] * second[0]
 
 
+_BINARY64_MAXIMUM = float(np.finfo(np.float64).max)
+_RATIONAL_BINARY64_MAXIMUM = Fraction(_BINARY64_MAXIMUM)
+
+
 def _float_overflow_endpoint(value: Fraction, /, *, upper: bool) -> float:
-    maximum = float(np.finfo(np.float64).max)
     if value > 0:
-        return math.inf if upper else maximum
-    return -maximum if upper else -math.inf
+        return math.inf if upper else _BINARY64_MAXIMUM
+    return -_BINARY64_MAXIMUM if upper else -math.inf
+
+
+def _rounding_sign(result: float, value: Fraction, /) -> int:
+    """Sign of ``result - value``; rationals use one integer cross-multiplication."""
+    if type(value) is not Fraction and type(value) is not int:
+        represented = Fraction(result)
+        return (represented > value) - (represented < value)
+    numerator, denominator = result.as_integer_ratio()
+    left = numerator * value.denominator
+    right = value.numerator * denominator
+    return (left > right) - (left < right)
 
 
 def fraction_down(value: Fraction, /) -> float:
@@ -76,7 +88,11 @@ def fraction_down(value: Fraction, /) -> float:
         result = float(value)
     except OverflowError:
         return _float_overflow_endpoint(value, upper=False)
-    return result if Fraction(result) <= value else float(np.nextafter(result, -np.inf))
+    return (
+        result
+        if _rounding_sign(result, value) <= 0
+        else math.nextafter(result, -math.inf)
+    )
 
 
 def fraction_up(value: Fraction, /) -> float:
@@ -85,7 +101,9 @@ def fraction_up(value: Fraction, /) -> float:
         result = float(value)
     except OverflowError:
         return _float_overflow_endpoint(value, upper=True)
-    return result if Fraction(result) >= value else float(np.nextafter(result, np.inf))
+    return (
+        result if _rounding_sign(result, value) >= 0 else math.nextafter(result, math.inf)
+    )
 
 
 def fraction_endpoint(
@@ -93,11 +111,10 @@ def fraction_endpoint(
 ) -> float:
     """Return a directed binary64 endpoint, optionally saturating overflow."""
     if saturate:
-        maximum = float(np.finfo(np.float64).max)
-        if value > Fraction(maximum):
-            return math.inf if upper else maximum
-        if value < -Fraction(maximum):
-            return -maximum if upper else -math.inf
+        if value > _RATIONAL_BINARY64_MAXIMUM:
+            return math.inf if upper else _BINARY64_MAXIMUM
+        if value < -_RATIONAL_BINARY64_MAXIMUM:
+            return -_BINARY64_MAXIMUM if upper else -math.inf
     return fraction_up(value) if upper else fraction_down(value)
 
 
@@ -113,7 +130,7 @@ def exact_float(
         result = float(value)
     except OverflowError as failure:
         raise error(message) from failure
-    if not math.isfinite(result) or Fraction(result) != value:
+    if not math.isfinite(result) or _rounding_sign(result, value):
         raise error(message)
     return result
 
@@ -132,7 +149,9 @@ def upper_float(value: Fraction, /) -> float:
         raise ValueError(
             f"upper_float.value must convert to finite binary64; got {value!r}"
         )
-    return float(np.nextafter(result, np.inf)) if Fraction(result) < value else result
+    return (
+        math.nextafter(result, math.inf) if _rounding_sign(result, value) < 0 else result
+    )
 
 
 def dyadic_integers(values: np.ndarray, /) -> tuple[np.ndarray, int]:
@@ -167,7 +186,9 @@ def translation_ranges(
         return ()
     dimension = len(vectors[0])
     if any(len(vector) != dimension for vector in vectors) or any(
-        lower.shape != (dimension,) or upper.shape != (dimension,) or np.any(lower > upper)
+        lower.shape != (dimension,)
+        or upper.shape != (dimension,)
+        or np.any(lower > upper)
         for lower, upper in boxes
     ):
         raise ValueError("translation_ranges requires aligned source vectors and boxes.")

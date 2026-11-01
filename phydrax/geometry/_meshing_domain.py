@@ -50,7 +50,8 @@ from .brep._patches import (
     bspline_curve_derivative_bounds,
     BSplineCurve,
     BSplineSurfacePatch,
-    surface_differential,
+    bucketed_query_rows,
+    surface_differential_rows,
     SurfaceMappedCurve,
 )
 
@@ -774,10 +775,13 @@ class SourcePreparation:
     request. A computation over one domain (native surface meshing, source
     fidelity certification, boundary chart covers) creates one preparation,
     passes it explicitly to every routine and drops it when done, so span
-    extraction, placement, interval nets and restrictions, interval programs
-    and mapped p-curve Hessians are derived once per carrier for exactly that
-    lifetime. Entries are keyed by carrier identity and retain their carrier,
-    so an entry answers only the carrier object it was prepared from.
+    extraction, placement, interval nets, interval programs and mapped p-curve
+    Hessians are derived once per carrier for exactly that lifetime. Span
+    restrictions to query boxes are recomputed per query: on the three-section
+    loft import only 16% of 100k restrictions repeated a box, and keeping them
+    cost about 100 MB for no measurable CPU. Entries are keyed by carrier
+    identity and retain their carrier, so an entry answers only the carrier
+    object it was prepared from.
     """
 
     __slots__ = (
@@ -1051,8 +1055,8 @@ def _span_enclosures_for_chart(
     ):
         return ()
     enclosures: list[RationalBSplineSurfaceHessianEnclosure] = []
-    for span, restrictions, ((lower_u, upper_u), (lower_v, upper_v)) in zip(
-        spans.spans, spans.restrictions, rational_span_bounds, strict=True
+    for span, ((lower_u, upper_u), (lower_v, upper_v)) in zip(
+        spans.spans, rational_span_bounds, strict=True
     ):
         clipped = polygon
         for axis, bound, keep_greater in (
@@ -1076,7 +1080,7 @@ def _span_enclosures_for_chart(
                 max(point[1] for point in clipped),
             ),
         )
-        enclosure = span.enclose_hessian(sub_bounds, restrictions=restrictions)
+        enclosure = span.enclose_hessian(sub_bounds)
         if not enclosure.positive_denominator:
             raise ValueError(
                 "Every spline extraction intersecting a chart must have a positive denominator enclosure."
@@ -3248,9 +3252,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 stacked.setdefault(type(surface), []).append(index)
                 continue
             selected = order[starts[index] : stops[index]]
-            result[selected] = np.asarray(
-                surface.evaluate(jnp.asarray(charts_[selected])), dtype=np.float64
-            )
+            result[selected] = bucketed_query_rows(surface.evaluate, charts_[selected])
         for kind, members in stacked.items():
             selected = np.concatenate(
                 [order[starts[index] : stops[index]] for index in members]
@@ -3277,10 +3279,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         for patch_index in np.unique(rows):
             selected = rows == patch_index
             patch = self.patches[int(patch_index)]
-            differential = np.asarray(
-                surface_differential(patch.surface, jnp.asarray(charts_[selected])),
-                dtype=np.float64,
-            )
+            differential = surface_differential_rows(patch.surface, charts_[selected])
             raw = patch.orientation * np.cross(
                 differential[..., :, 0], differential[..., :, 1]
             )
@@ -3468,9 +3467,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         jacobian_lower, jacobian_upper = first.evaluate(lower, upper)
         hessian_lower, hessian_upper = second.evaluate(lower, upper)
         centers = np.mean(cells, axis=1)
-        center_jacobians = np.asarray(
-            surface_differential(surface, jnp.asarray(centers)), dtype=np.float64
-        )
+        center_jacobians = surface_differential_rows(surface, centers)
         result = np.full((cells.shape[0],), np.inf, dtype=np.float64)
         pi_upper = Fraction(float(np.nextafter(math.pi, math.inf)))
         for row in range(cells.shape[0]):

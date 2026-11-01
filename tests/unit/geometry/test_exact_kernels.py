@@ -138,19 +138,43 @@ def test_rational_bernstein_nets_equal_fraction_controls(
         )
 
 
-def test_rational_bernstein_nets_refuse_out_of_range_items() -> None:
-    huge: enclosure.Polynomial = {(1, 0): Fraction(2**300), (0, 1): Fraction(1, 3)}
-    wide: enclosure.Polynomial = {(1, 0): Fraction(2**252), (0, 0): Fraction(1)}
+def test_rational_bernstein_nets_widen_words_and_refuse_beyond_them() -> None:
+    wide: enclosure.Polynomial = {
+        (index, 12 - index): Fraction(3**600 + index, 2**700) for index in range(13)
+    }
+    huge: enclosure.Polynomial = {(1, 0): Fraction(2**5000), (0, 1): Fraction(1, 3)}
     plain: enclosure.Polynomial = {(1, 1): Fraction(3, 7), (0, 0): Fraction(-1)}
-    nets = rational_bernstein_nets([huge, wide, plain], "simplex", 2, [(1,), (8,), (2,)])
-    assert nets[0] is None
+    nets = rational_bernstein_nets(
+        [wide, huge, plain, {(0, 0): 0.5}], "box", 2, [(12, 12), (1, 1), (1, 1), (0, 0)]
+    )
+    assert nets[0] is not None and nets[0].word_bytes > 32
+    assert nets[0].controls() == enclosure._fraction_controls(wide, "box", 2, (12, 12))
     assert nets[1] is None
     assert nets[2] is not None
-    assert nets[2].controls() == enclosure._fraction_controls(plain, "simplex", 2, (2,))
-    # The refused items still have exact Fraction controls on the host path.
+    assert nets[2].controls() == enclosure._fraction_controls(plain, "box", 2, (1, 1))
+    assert nets[3] is None
+    # Refused items keep exact Fraction controls on the host path.
     assert enclosure.bernstein_coefficients(
-        huge, "simplex", 2
-    ) == enclosure._fraction_controls(huge, "simplex", 2, (1,))
+        huge, "box", 2
+    ) == enclosure._fraction_controls(huge, "box", 2, (1, 1))
+
+
+def test_dense_box_bounds_use_wide_words() -> None:
+    generator = random.Random(41)
+    polynomial: enclosure.Polynomial = {
+        (a, b, c): Fraction(generator.randint(-(2**900), 2**900), 2**950)
+        for a in range(7)
+        for b in range(7)
+        for c in range(7)
+    }
+    net = rational_bernstein_nets([polynomial], "box", 3, [(6, 6, 6)])[0]
+    assert net is not None
+    reference = enclosure._fraction_controls(polynomial, "box", 3, (6, 6, 6))
+    assert net.controls() == reference
+    assert enclosure.polynomial_bounds(polynomial, "box", 3) == (
+        coefficient_endpoint(min(reference), upper=False, saturate=True),
+        coefficient_endpoint(max(reference), upper=True, saturate=True),
+    )
 
 
 def test_interval_restriction_is_bit_identical_to_the_host_steps() -> None:
@@ -231,7 +255,16 @@ def test_simplex_blossoms_match_the_integer_corner_walk() -> None:
     assert (
         simplex_blossom_extremes(nets, corners, degrees, 3, parallelism=4) == references
     )
-    refused = simplex_blossom_extremes([nets[0]], [[(2**200, 0, 0)] * 3], [degrees[0]], 3)
+    wide = [(2**300, 0, 0), (2**299, 2**299, 0), (2**299, 0, 2**299)]
+    expected = _blossom_reference(
+        dict(zip(_compositions(degrees[0], 3), nets[0], strict=True)), wide, degrees[0]
+    )
+    assert simplex_blossom_extremes([nets[0]], [wide], [degrees[0]], 3) == [
+        (min(expected), max(expected))
+    ]
+    refused = simplex_blossom_extremes(
+        [nets[0]], [[(2**5000, 0, 0)] * 3], [degrees[0]], 3
+    )
     assert refused == [None]
 
 

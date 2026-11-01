@@ -1646,7 +1646,15 @@ class _Resolver:
                         str(error),
                         (*chain, wire.label, "Curve2ds"),
                     ) from error
-            loop.append(StagedCoedge(edge, sense, honored, shape.label))
+            loop.append(
+                StagedCoedge(
+                    edge,
+                    sense,
+                    honored,
+                    shape.label,
+                    origin="absent" if honored is None else "file",
+                )
+            )
         return loop
 
     def face(

@@ -291,7 +291,7 @@ def _exact_span_surface_box(
         for axis in range(2)
     )
     component_bounds: list[list[tuple[Fraction, Fraction]]] = [[], [], []]
-    for span, restrictions in zip(spans.spans, spans.restrictions, strict=True):
+    for span in spans.spans:
         restricted = tuple(
             (
                 max(query[axis][0], span.parameter_bounds[axis][0]),
@@ -301,7 +301,7 @@ def _exact_span_surface_box(
         )
         if any(first > last for first, last in restricted):
             continue
-        enclosure = span.enclose(restricted, restrictions=restrictions)
+        enclosure = span.enclose(restricted)
         if not enclosure.positive_denominator:
             raise ValueError(
                 "A rational B-spline surface span has no positive denominator."

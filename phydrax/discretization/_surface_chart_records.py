@@ -88,6 +88,14 @@ else:
             /,
         ) -> None: ...
 
+        def revalidate(
+            self,
+            mesh: CellMesh,
+            geometry: CellGeometrySpec,
+            source: _MeshingDomainBoundarySource,
+            /,
+        ) -> None: ...
+
     MeshingDomainBoundarySource = _MeshingDomainBoundarySource
     GlobalEmbeddingCertificate = _GlobalEmbeddingCertificate
     SourceFidelityCertificate = _SourceFidelityCertificate
@@ -1076,12 +1084,13 @@ class PreparedSurfaceChartDeformation(StrictModule, NonTrainableState):
             value.target_mesh,
             value.target_geometry,
         )
-        value.source_fidelity_certificate.require_current(
+        # Stored identities are not proof authority: renew both proofs.
+        value.source_fidelity_certificate.revalidate(
             value.source_mesh,
             value.source_geometry,
             value.source_fidelity_certificate.source,
         )
-        value.target_fidelity_certificate.require_current(
+        value.target_fidelity_certificate.revalidate(
             value.target_mesh,
             value.target_geometry,
             value.target_fidelity_certificate.source,
