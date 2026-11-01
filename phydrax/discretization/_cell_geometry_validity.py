@@ -31,7 +31,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 from functools import cache
@@ -54,7 +54,7 @@ from .._geometry_predicates import (
     PredicateSign,
     resolve_host_predicate_mode,
 )
-from .._strict import StrictModule
+from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
 from ..geometry._interval_enclosure import interval_divide
 from ..linalg import (
@@ -375,8 +375,34 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     ) -> None:
         """Compute validity; caller-supplied statuses are not proof premises."""
         computed = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
-        for item in fields(computed):
-            object.__setattr__(self, item.name, getattr(computed, item.name))
+        self.execution_status = computed.execution_status
+        self.status = computed.status
+        self.determinant_lower = computed.determinant_lower
+        self.determinant_upper = computed.determinant_upper
+        self.depth = computed.depth
+        self.source_status = computed.source_status
+        self.source_determinant_lower = computed.source_determinant_lower
+        self.source_determinant_upper = computed.source_determinant_upper
+        self.source_depth = computed.source_depth
+        self.maximum_coefficient_rounding_error = computed.maximum_coefficient_rounding_error
+        self.maximum_element_coefficient_rounding_error = computed.maximum_element_coefficient_rounding_error
+        self.apex_derivative_unique = computed.apex_derivative_unique
+        self.geometry = computed.geometry
+        self.mesh = computed.mesh
+        self.policy = computed.policy
+        self.block_names = computed.block_names
+        self.block_offsets = computed.block_offsets
+        self.unsupported_block_names = computed.unsupported_block_names
+        self.certified_valid_count = computed.certified_valid_count
+        self.invalid_count = computed.invalid_count
+        self.unresolved_count = computed.unresolved_count
+        self.geometry_id = computed.geometry_id
+        self.geometry_layout_id = computed.geometry_layout_id
+        self.mesh_id = computed.mesh_id
+        self.topology_id = computed.topology_id
+        self.policy_id = computed.policy_id
+        self.certificate_id = computed.certificate_id
+        self.cell_map_digests = computed.cell_map_digests
 
     @classmethod
     def _from_computed(
@@ -490,7 +516,6 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
                 "Validity block names must follow the bound mesh block order."
             )
         execution_status = jnp.asarray(execution.status)
-        result = object.__new__(cls)
         values = {
             "execution_status": execution_status,
             "status": execution_status
@@ -556,9 +581,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
                 "maximum_element_coefficient_rounding_error": element_rounding_error,
             }
         )
-        for name, value in values.items():
-            object.__setattr__(result, name, value)
-        return result
+        return reconstruct_strict(cls, values)
 
     @classmethod
     def from_stored_fields(
@@ -691,6 +714,9 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             raise ValueError(
                 "Validity certificate does not reproduce the current mathematical proof."
             )
+
+
+register_strict_reconstruction(CellValidityCertificate)
 
 
 _EPSILON = float(np.finfo(np.float64).eps)
@@ -2017,16 +2043,26 @@ def _certify_source_block(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ValidatedCellValidityParent:
+    """Host-only mathematical replay of one parent validity proof."""
+
+    certificate: CellValidityCertificate
+
+    def __post_init__(self) -> None:
+        self.certificate.revalidate(self.certificate.geometry, mesh=self.certificate.mesh)
+
+
 def _parent_proofs(
-    parent: CellValidityCertificate | tuple[CellValidityCertificate, ...] | None,
+    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None,
     policy: CellValidityPolicy,
     /,
 ) -> _CellProofs:
     """Index the recorded execution and source proofs of parent certificates."""
     match parent:
         case None:
-            parents: tuple[CellValidityCertificate, ...] = ()
-        case CellValidityCertificate():
+            parents: tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] = ()
+        case CellValidityCertificate() | ValidatedCellValidityParent():
             parents = (parent,)
         case tuple():
             parents = parent
@@ -2035,12 +2071,17 @@ def _parent_proofs(
                 "parent must be CellValidityCertificate, a tuple of them, or None."
             )
     proofs: _CellProofs = {}
-    for certificate in parents:
-        if type(certificate) is not CellValidityCertificate:
-            raise TypeError("parent must hold CellValidityCertificate values.")
+    for value in parents:
+        if type(value) is ValidatedCellValidityParent:
+            certificate = value.certificate
+            certificate.require_current(certificate.geometry, mesh=certificate.mesh)
+        elif type(value) is CellValidityCertificate:
+            certificate = value
+            certificate.revalidate(certificate.geometry, mesh=certificate.mesh)
+        else:
+            raise TypeError("parent must hold exact validity certificates or validations.")
         if certificate.policy_id != policy.policy_id:
             raise ValueError("Parent validity proofs must use the same validity policy.")
-        certificate.require_current(certificate.geometry, mesh=certificate.mesh)
         table = np.frombuffer(certificate.cell_map_digests, dtype=np.uint8).reshape(
             -1, 2, _MAP_DIGEST_SIZE
         )
@@ -2486,7 +2527,7 @@ def certify_cell_geometry_validity(
     *,
     mesh: CellMesh | None = None,
     policy: CellValidityPolicy | None = None,
-    parent: CellValidityCertificate | tuple[CellValidityCertificate, ...] | None = None,
+    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None = None,
 ) -> CellValidityCertificate:
     """Certify determinant positivity of every mapped cell with Bernstein bounds.
 

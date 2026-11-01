@@ -17,6 +17,7 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
+    ValidatedCellValidityParent,
     certify_cell_geometry_validity,
 )
 from ..discretization._surface_chart_records import SurfaceChartWitness
@@ -54,7 +55,7 @@ from ..geometry._source_fidelity_certificate import (
     SourceFidelityCertificate,
     SourceFidelityWitness,
 )
-from ..geometry.implicit._chart_restriction import ImplicitChartPremise
+from ..geometry.implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
 from ._audit import (
@@ -289,7 +290,7 @@ def _acceptance_validity(
     inputs: MeshCertificationInputs,
     policy: CellMeshAuditPolicy,
     validity: CellValidityCertificate | None,
-    parent: CellValidityCertificate | tuple[CellValidityCertificate, ...] | None,
+    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None,
     /,
 ) -> CellValidityCertificate:
     """Reuse an in-hand proof of exactly these inputs or prove with parent records."""
@@ -301,12 +302,12 @@ def _acceptance_validity(
             raise ValueError(
                 "An in-hand validity proof must use the acceptance validity policy."
             )
-        validity.require_current(inputs.geometry, mesh=inputs.mesh)
+        validity.revalidate(inputs.geometry, mesh=inputs.mesh)
         return validity
     match parent:
         case None:
-            parents: tuple[CellValidityCertificate, ...] = ()
-        case CellValidityCertificate():
+            parents: tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] = ()
+        case CellValidityCertificate() | ValidatedCellValidityParent():
             parents = (parent,)
         case tuple():
             parents = parent
@@ -314,15 +315,16 @@ def _acceptance_validity(
             raise TypeError(
                 "validity_parent must be CellValidityCertificate, a tuple of them, or None."
             )
-    if not all(type(value) is CellValidityCertificate for value in parents):
-        raise TypeError("validity_parent must hold CellValidityCertificate values.")
+    if not all(type(value) in (CellValidityCertificate, ValidatedCellValidityParent) for value in parents):
+        raise TypeError("validity_parent must hold validity certificates or validations.")
     # Proofs under another validity policy answer no acceptance obligation.
     return certify_cell_geometry_validity(
         inputs.geometry,
         mesh=inputs.mesh,
         policy=validity_policy,
         parent=tuple(
-            value for value in parents if value.policy_id == validity_policy.policy_id
+            value for value in parents
+            if (value.certificate if isinstance(value, ValidatedCellValidityParent) else value).policy_id == validity_policy.policy_id
         ),
     )
 
@@ -365,9 +367,10 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         embedding_premise: NestedRestrictionPremise | None = None,
         validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
         fidelity_premise: ImplicitChartPremise | None = None,
+        validated_chart_parent: ValidatedImplicitChartParent | None = None,
         validity: CellValidityCertificate | None = None,
-        validity_parent: CellValidityCertificate
-        | tuple[CellValidityCertificate, ...]
+        validity_parent: CellValidityCertificate | ValidatedCellValidityParent
+        | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
         | None = None,
     ) -> None:
         """Compute acceptance from ``inputs``.
@@ -463,6 +466,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                     inputs.fidelity_witness,
                 ),
                 chart_parent=fidelity_premise,
+                validated_chart_parent=validated_chart_parent,
             )
             findings.extend(fidelity.findings)
         scoped = tuple(

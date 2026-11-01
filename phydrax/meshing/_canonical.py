@@ -23,6 +23,7 @@ from ..discretization._cell_geometry import (
 from ..discretization._cell_geometry_validity import (
     CellValidityCertificate,
     CellValidityStatus,
+    ValidatedCellValidityParent,
 )
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
@@ -31,7 +32,7 @@ from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry._surface_source_support import SurfaceSourceCharts
-from ..geometry.implicit._chart_restriction import ImplicitChartPremise
+from ..geometry.implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshManifoldScope
@@ -237,11 +238,12 @@ def certify_cell_mesh(
     embedding: GlobalEmbeddingCertificate | None = None,
     embedding_premise: NestedRestrictionPremise | None = None,
     fidelity_premise: ImplicitChartPremise | None = None,
+    validated_chart_parent: ValidatedImplicitChartParent | None = None,
     manifold_scope: CellMeshManifoldScope | None = None,
     validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
     validity: CellValidityCertificate | None = None,
-    validity_parent: CellValidityCertificate
-    | tuple[CellValidityCertificate, ...]
+    validity_parent: CellValidityCertificate | ValidatedCellValidityParent
+    | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
     | None = None,
 ) -> CellMeshingResult:
     """Canonicalize and certify one existing CellMesh through native substrates.
@@ -331,6 +333,7 @@ def certify_cell_mesh(
             embedding=embedding,
             embedding_premise=embedding_premise,
             fidelity_premise=fidelity_premise,
+            validated_chart_parent=validated_chart_parent,
             validated=validated,
             validity=validity,
             validity_parent=validity_parent,

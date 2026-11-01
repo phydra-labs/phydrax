@@ -12,14 +12,13 @@ at runtime without importing the proof machinery that consumes those models.
 from __future__ import annotations
 
 import math
-from dataclasses import fields
-from typing import final
+from typing import Any, final
 
 import numpy as np
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
+from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import cell_geometry_id
@@ -85,6 +84,37 @@ def _source_domain_id(source: SourceBoundaryQuery, /) -> str:
     return source.source_revision
 
 
+def _fidelity_certificate_identity(fields: dict[str, Any], /) -> str:
+    values = tuple(float(fields[name]) for name in (
+        "mesh_to_source_lower", "mesh_to_source_upper",
+        "source_to_mesh_lower", "source_to_mesh_upper",
+    ))
+    witness, coverage = fields["witness"], fields["coverage"]
+    normal = fields["normal_deviation_bounds"]
+    identity = {
+        "kind": "source-fidelity-certificate",
+        "binding": fields["binding"].binding_id,
+        "source": (fields["source_id"], fields["source_revision"], fields["domain_id"]),
+        "tolerance": fields["tolerance"],
+        "maximum_normal_deviation": fields["maximum_normal_deviation"],
+        "deviation_bounds": array_tree_fingerprint(fields["deviation_bounds"]),
+        "directed_bounds": tuple(value if math.isfinite(value) else value.hex() for value in values),
+        "normal_bounds": None if normal is None else array_tree_fingerprint(normal),
+        "normal_lower": fields["maximum_normal_deviation_lower"],
+        "cells": fields["source_cell_global_ids"],
+        "patches": fields["source_patch_ids"],
+        "occurrences": fields["source_occurrence_paths"],
+        "witness": None if witness is None else witness.witness_id,
+        "coverage": None if coverage is None else coverage.cover_id,
+        "findings": tuple(finding.finding_id for finding in fields["findings"]),
+        "status": fields["status"],
+    }
+    restriction = fields["chart_restriction"]
+    if restriction is not None:
+        identity["chart_restriction"] = restriction.evidence_id
+    return canonical_fingerprint(identity)
+
+
 @final
 class SourceFidelityCertificate(StrictModule, NonTrainableState):
     """Continuous two-directed bounds and optional oriented-normal evidence."""
@@ -146,8 +176,35 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             maximum_normal_deviation=maximum_normal_deviation,
             witness=witness,
         )
-        for item in fields(computed):
-            object.__setattr__(self, item.name, getattr(computed, item.name))
+        self.binding = computed.binding
+        self.source = computed.source
+        self.source_id = computed.source_id
+        self.source_revision = computed.source_revision
+        self.domain_id = computed.domain_id
+        self.mesh_id = computed.mesh_id
+        self.topology_id = computed.topology_id
+        self.geometry_id = computed.geometry_id
+        self.tolerance = computed.tolerance
+        self.maximum_normal_deviation = computed.maximum_normal_deviation
+        self.deviation_bounds = computed.deviation_bounds
+        self.mesh_to_source_lower = computed.mesh_to_source_lower
+        self.mesh_to_source_upper = computed.mesh_to_source_upper
+        self.source_to_mesh_lower = computed.source_to_mesh_lower
+        self.source_to_mesh_upper = computed.source_to_mesh_upper
+        self.normal_deviation_bounds = computed.normal_deviation_bounds
+        self.maximum_normal_deviation_lower = computed.maximum_normal_deviation_lower
+        self.maximum_normal_deviation_bound = computed.maximum_normal_deviation_bound
+        self.source_cell_global_ids = computed.source_cell_global_ids
+        self.source_patch_ids = computed.source_patch_ids
+        self.source_occurrence_paths = computed.source_occurrence_paths
+        self.witness = computed.witness
+        self.coverage = computed.coverage
+        self.status = computed.status
+        self.findings = computed.findings
+        self.chart_rows = computed.chart_rows
+        self.chart_restriction = computed.chart_restriction
+        self.chart_premise = computed.chart_premise
+        self.certificate_id = computed.certificate_id
 
     @classmethod
     def _from_computed(
@@ -249,7 +306,6 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "Source fidelity cell identities must align with per-cell bounds."
             )
         status = certificate_status(findings)
-        result = object.__new__(cls)
         attributes = {
             "binding": binding,
             "source": source,
@@ -288,49 +344,34 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             "chart_restriction": chart_restriction,
             "chart_premise": chart_premise,
         }
-        for name, value in attributes.items():
-            object.__setattr__(result, name, value)
-        object.__setattr__(result, "certificate_id", result._derived_certificate_id())
-        return result
+        attributes["certificate_id"] = _fidelity_certificate_identity(attributes)
+        return reconstruct_strict(cls, attributes)
 
     def _derived_certificate_id(self) -> str:
         """The content identity these stored claims determine."""
-        values = tuple(
-            float(value)
-            for value in (
-                self.mesh_to_source_lower,
-                self.mesh_to_source_upper,
-                self.source_to_mesh_lower,
-                self.source_to_mesh_upper,
-            )
-        )
-        witness, coverage = self.witness, self.coverage
-        identity = {
-            "kind": "source-fidelity-certificate",
-            "binding": self.binding.binding_id,
-            "source": (self.source_id, self.source_revision, self.domain_id),
+        return _fidelity_certificate_identity({
+            "binding": self.binding,
+            "source_id": self.source_id,
+            "source_revision": self.source_revision,
+            "domain_id": self.domain_id,
             "tolerance": self.tolerance,
             "maximum_normal_deviation": self.maximum_normal_deviation,
-            "deviation_bounds": array_tree_fingerprint(self.deviation_bounds),
-            "directed_bounds": tuple(
-                value if math.isfinite(value) else value.hex() for value in values
-            ),
-            "normal_bounds": None
-            if self.normal_deviation_bounds is None
-            else array_tree_fingerprint(self.normal_deviation_bounds),
-            "normal_lower": self.maximum_normal_deviation_lower,
-            "cells": self.source_cell_global_ids,
-            "patches": self.source_patch_ids,
-            "occurrences": self.source_occurrence_paths,
-            "witness": None if witness is None else witness.witness_id,
-            "coverage": None if coverage is None else coverage.cover_id,
-            "findings": tuple(finding.finding_id for finding in self.findings),
+            "deviation_bounds": self.deviation_bounds,
+            "mesh_to_source_lower": self.mesh_to_source_lower,
+            "mesh_to_source_upper": self.mesh_to_source_upper,
+            "source_to_mesh_lower": self.source_to_mesh_lower,
+            "source_to_mesh_upper": self.source_to_mesh_upper,
+            "normal_deviation_bounds": self.normal_deviation_bounds,
+            "maximum_normal_deviation_lower": self.maximum_normal_deviation_lower,
+            "source_cell_global_ids": self.source_cell_global_ids,
+            "source_patch_ids": self.source_patch_ids,
+            "source_occurrence_paths": self.source_occurrence_paths,
+            "witness": self.witness,
+            "coverage": self.coverage,
+            "findings": self.findings,
             "status": self.status,
-        }
-        # Full proofs keep their identity; inherited bounds name their theorem.
-        if self.chart_restriction is not None:
-            identity["chart_restriction"] = self.chart_restriction.evidence_id
-        return canonical_fingerprint(identity)
+            "chart_restriction": self.chart_restriction,
+        })
 
     def require_current(
         self,
@@ -376,12 +417,9 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         """Recompute the proof; stored identities are not proof authority."""
         from ._source_fidelity import certify_source_fidelity
 
-        self.binding.require(mesh, geometry, source=source)
+        self.require_current(mesh, geometry, source)
         if self.chart_premise is not None:
             premise = self.chart_premise
-            premise.parent_certificate.revalidate(
-                premise.parent_mesh, premise.parent_geometry, source
-            )
             if premise.transition is not None:
                 type(premise.transition).from_stored_fields(premise.transition)
         fresh = certify_source_fidelity(
@@ -466,6 +504,9 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             None if self.witness is None else self.witness.witness_id
         ):
             raise ValueError("Source fidelity certificate binds another witness.")
+
+
+register_strict_reconstruction(SourceFidelityCertificate)
 
 
 __all__ = ["SourceFidelityCertificate", "SourceFidelityWitness"]

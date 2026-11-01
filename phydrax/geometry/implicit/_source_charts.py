@@ -80,6 +80,7 @@ from ._chart_restriction import (
     ImplicitChartPremise,
     ImplicitChartRestriction,
     ImplicitChartRows,
+    ValidatedImplicitChartParent,
 )
 
 
@@ -4607,6 +4608,7 @@ def certify_adaptive_implicit_charts(
     maximum_normal_deviation: float | None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
     chart_parent: ImplicitChartPremise | None = None,
+    validated_chart_parent: ValidatedImplicitChartParent | None = None,
 ) -> SourceFidelityCertificate:
     """Certify nonlinear P1/P2/P3 target maps against an adaptive implicit root cover.
 
@@ -4641,7 +4643,7 @@ def certify_adaptive_implicit_charts(
         if not isinstance(chart_parent, ImplicitChartPremise):
             raise TypeError("chart_parent must be ImplicitChartPremise or None.")
         parent = chart_parent.certified_parent(
-            source, tolerance, maximum_normal_deviation
+            source, tolerance, maximum_normal_deviation, validated=validated_chart_parent
         )
         if parent is not None:
             restriction = certify_implicit_chart_restriction(

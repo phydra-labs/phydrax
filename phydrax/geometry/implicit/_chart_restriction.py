@@ -143,6 +143,19 @@ class ImplicitChartRows(StrictModule):
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class ValidatedImplicitChartParent:
+    """Host-only mathematical replay bound to the exact parent operands."""
+
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    source: SourceBoundaryQuery
+    certificate: SourceFidelityCertificate
+
+    def __post_init__(self) -> None:
+        self.certificate.revalidate(self.mesh, self.geometry, self.source)
+
+
 class ImplicitChartPremise(StrictModule):
     """A parent fidelity certificate and, optionally, the exact transition to the target."""
 
@@ -179,11 +192,22 @@ class ImplicitChartPremise(StrictModule):
         source: SourceBoundaryQuery,
         tolerance: float,
         maximum_normal_deviation: float | None,
-        /,
+        *,
+        validated: ValidatedImplicitChartParent | None = None,
     ) -> SourceFidelityCertificate | None:
         """The parent certificate when it answers this source and these controls."""
         parent = self.parent_certificate
-        parent.require_current(self.parent_mesh, self.parent_geometry, source)
+        if validated is None:
+            parent.revalidate(self.parent_mesh, self.parent_geometry, source)
+        else:
+            if (
+                validated.mesh is not self.parent_mesh
+                or validated.geometry is not self.parent_geometry
+                or validated.source is not source
+                or validated.certificate is not parent
+            ):
+                raise ValueError("Validated chart parent binds different exact operands.")
+            parent.require_current(self.parent_mesh, self.parent_geometry, source)
         normal = (
             None if maximum_normal_deviation is None else float(maximum_normal_deviation)
         )

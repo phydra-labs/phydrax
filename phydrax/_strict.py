@@ -176,6 +176,32 @@ def mark_strict_initialized(instance: Any, /) -> None:
     if not isinstance(instance, eqx.Module):
         object.__setattr__(instance, "_strict_initialized", True)
 
+_reconstructible_strict_types: set[type] = set()
+
+
+def register_strict_reconstruction(value_type: type, /) -> None:
+    """Admit one exact concrete StrictModule type for structural reconstruction."""
+    if not issubclass(value_type, StrictModule) or value_type._strict_is_abstract_:
+        raise TypeError("Strict reconstruction requires a concrete StrictModule type.")
+    _reconstructible_strict_types.add(value_type)
+
+
+def reconstruct_strict(value_type: type, values: dict[str, Any], /) -> Any:
+    """Reconstruct registered structure, not mathematical proof authority."""
+    if value_type not in _reconstructible_strict_types:
+        raise TypeError("Strict reconstruction requires an explicitly registered type.")
+    expected = {field.name for field in dataclasses.fields(value_type)}
+    if set(values) != expected:
+        raise ValueError("Strict reconstruction requires the complete declared field set.")
+    result = object.__new__(value_type)
+    for name, value in values.items():
+        object.__setattr__(result, name, value)
+    if value_type._strict_contract_:
+        validate_constructed(result)
+    mark_strict_initialized(result)
+    return result
+
+
 
 class Strict(metaclass=_StrictMeta):
     """

@@ -923,6 +923,18 @@ def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
     assert parent.chart_rows is not None
     assert bool(np.all(parent.chart_rows.reusable))
     premise = ImplicitChartPremise(mesh, geometry, parent, None)
+    from phydrax.geometry.implicit._chart_restriction import ValidatedImplicitChartParent
+
+    replay_count = [0]
+    original_revalidate = SourceFidelityCertificate.revalidate
+
+    def counted_revalidate(*args: object, **kwargs: object) -> None:
+        replay_count[0] += 1
+        original_revalidate(*args, **kwargs)
+
+    monkeypatch.setattr(SourceFidelityCertificate, "revalidate", counted_revalidate)
+    validated_parent = ValidatedImplicitChartParent(mesh, geometry, source, parent)
+    assert replay_count == [1]
 
     # Unchanged rows of a new mesh: every row is checked by identity.
     target_mesh, target_geometry, target_witness = _extend_implicit_target_mesh(
@@ -945,6 +957,7 @@ def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
         tolerance=0.5,
         maximum_normal_deviation=np.pi,
         chart_parent=premise,
+        validated_chart_parent=validated_parent,
     )
     assert proved == []
     assert reused.certificate_id == full.certificate_id
@@ -982,6 +995,7 @@ def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
         tolerance=0.5,
         maximum_normal_deviation=np.pi,
         chart_parent=premise,
+        validated_chart_parent=validated_parent,
     )
     incident = sorted(
         row
@@ -1001,8 +1015,10 @@ def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
         tolerance=0.25,
         maximum_normal_deviation=np.pi,
         chart_parent=premise,
+        validated_chart_parent=validated_parent,
     )
     assert len(proved) == len(target_witness.source_chart_ids)
+    assert replay_count == [1]
     assert other.certificate_id != full.certificate_id
 
     # Negative: altered retained evidence is refused, never reused.

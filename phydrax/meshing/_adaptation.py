@@ -44,7 +44,7 @@ from ..discretization._cell_geometry_transition_types import (
     CellGeometryTransitionEvidence,
     exact_linear_combinations,
 )
-from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._cell_geometry_validity import cell_geometry_id, ValidatedCellValidityParent
 from ..discretization._coordinate_enclosure import (
     axes,
     compose_expression,
@@ -110,7 +110,7 @@ from ..geometry._volume_material_deformation import (
 )
 from ..geometry._volume_material_map import VolumeMaterialChain, VolumeMaterialMap
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
-from ..geometry.implicit._chart_restriction import ImplicitChartPremise
+from ..geometry.implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
 from ..geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayBoundaryWitness,
     RestrictedDelaunayCoverageTransportWitness,
@@ -5497,6 +5497,21 @@ def _finalize_native(
     """Assemble, inherit organization and associations, certify, and bind transfer."""
 
     source = prepared.source
+    source_certification = source.certification
+    parent_fidelity = None if source_certification is None else source_certification.fidelity
+    validated_chart_parent = (
+        ValidatedImplicitChartParent(
+            source.mesh, source.geometry, parent_fidelity.source, parent_fidelity
+        )
+        if parent_fidelity is not None
+        and isinstance(parent_fidelity.witness, SourceBoundaryChartWitness)
+        and parent_fidelity.chart_rows is not None
+        else None
+    )
+    validated_validity_parent = (
+        None if source_certification is None
+        else ValidatedCellValidityParent(source.audit.validity)
+    )
     periodic_source = source.mesh.periodic_topology is not None
     if polyhedral_outcome is None:
         mesh, lineage, stencil = assemble_topology_edit(
@@ -5805,6 +5820,7 @@ def _finalize_native(
         fidelity_premise=_fidelity_premise(
             source, certification_inputs, transition_geometry
         ),
+        validated_chart_parent=validated_chart_parent,
         patches=patches,
         zones=zones,
         labels=labels,
@@ -5813,7 +5829,7 @@ def _finalize_native(
         region_boundary_evidence=boundaries,
         planar_embedding=source.planar_embedding,
         layer_curving_evidence=layer_curving_evidence,
-        validity_parent=None if certification_inputs is None else source.audit.validity,
+        validity_parent=validated_validity_parent,
     )
     if target.mesh.topology_id != mesh.topology_id:
         raise ValueError("Certification reordered the adapted topology.")

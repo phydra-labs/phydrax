@@ -97,7 +97,7 @@ if TYPE_CHECKING:
         AdaptiveImplicitBoundarySource,
         AdaptiveImplicitSurface,
     )
-    from .implicit._chart_restriction import ImplicitChartPremise
+    from .implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
     from .implicit._source_charts import AdaptiveImplicitRootChartMap
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
@@ -5531,6 +5531,7 @@ def certify_source_fidelity(
     root_charts: AdaptiveImplicitRootChartMap | None = None,
     preparation: SourcePreparation | None = None,
     chart_parent: ImplicitChartPremise | None = None,
+    validated_chart_parent: ValidatedImplicitChartParent | None = None,
 ) -> SourceFidelityCertificate:
     """Certify continuous physical source fidelity from one typed witness.
 
@@ -5701,6 +5702,7 @@ def certify_source_fidelity(
                     maximum_normal_deviation=normal_limit,
                     root_charts=root_charts,
                     chart_parent=chart_parent,
+                    validated_chart_parent=validated_chart_parent,
                 )
         return _unresolved_fidelity(
             mesh,

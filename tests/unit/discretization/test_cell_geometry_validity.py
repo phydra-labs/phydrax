@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
 import numpy as np
 import pytest
 
@@ -186,14 +187,19 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
         assert sum(summary[proof].values()) == certificate.status.shape[0]
 
     lower = np.asarray(certificate.determinant_lower) * 0.5
+    fake_status = np.where(
+        np.asarray(certificate.execution_status) == Status.CERTIFIED_VALID,
+        Status.INVALID,
+        Status.CERTIFIED_VALID,
+    )
     # Simulate an untrusted stored record, bypassing the computing public constructor.
     forged = validity_module.CellValidityCertificate._from_computed(
-        certificate.execution_status,
+        fake_status,
         lower,
         certificate.determinant_upper,
         certificate.depth,
         source_proof=validity_module._BlockCertificate(
-            np.asarray(certificate.source_status),
+            fake_status,
             lower,
             np.asarray(certificate.source_determinant_upper),
             np.asarray(certificate.source_depth),
@@ -213,6 +219,7 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
         unsupported_block_names=certificate.unsupported_block_names,
         geometry_id=certificate.geometry_id,
         geometry_layout_id=certificate.geometry_layout_id,
+        cell_map_digests=certificate.cell_map_digests,
         policy_id=certificate.policy_id,
     )
     # require_current checks the binding and stored claims only; revalidate
@@ -220,6 +227,13 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     forged.require_current(geometry, mesh=mesh)
     with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
         forged.revalidate(geometry, mesh=mesh)
+    transformed = eqx.tree_at(
+        lambda value: value.status,
+        forged,
+        forged.status.copy(),
+    )
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=transformed)
 
     _, other_geometry = _p3_triangle(0.25)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):
@@ -1151,6 +1165,26 @@ def test_one_ulp_coefficient_change_is_reproved(
     assert proofs == len(_cell_maps(full, 1))
     assert _cell_maps(full, 0) == _cell_maps(parent, 0)
     assert not _cell_maps(full, 1) & _cell_maps(parent, 1)
+
+
+def test_validated_parent_replays_once_before_target_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh, geometry, _ = _curved_triangle_pair(0.0)
+    parent = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    calls = [0]
+    original = validity_module.CellValidityCertificate.revalidate
+
+    def counted(self: Any, *args: Any, **kwargs: Any) -> None:
+        calls[0] += 1
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(validity_module.CellValidityCertificate, "revalidate", counted)
+    validated = validity_module.ValidatedCellValidityParent(parent)
+    assert calls == [1]
+    reused = D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=validated)
+    assert reused.certificate_id == parent.certificate_id
+    assert calls == [1]
 
 
 def test_parent_validity_requires_the_same_policy() -> None:
