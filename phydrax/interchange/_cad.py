@@ -3503,10 +3503,71 @@ class CadStage:
             elif edge in discovered:
                 self.native_phases.pop(edge)
 
+    def _closed_conic_loop_endpoints(
+        self,
+        coedge_edges: Sequence[int],
+        coedge_senses: Sequence[int],
+        face_loops: Sequence[tuple[tuple[int, ...], ...]],
+        /,
+    ) -> dict[tuple[int, int], tuple[Fraction, int]]:
+        """Recover a split full turn from exact carrier and authored incidence.
+
+        This is the multi-edge counterpart of ``edge``'s closed-conic rule.
+        Every child must share one parameterized conic, consecutive stored
+        intervals and the same topological junction vertices. Only a complete
+        native interval closing back to its first vertex authors a turn.
+        Intermediate decimal trims remain ordinary parameters; neither nearby
+        multiples of pi nor geometrically nearby vertices are identified.
+        """
+        endpoints: dict[tuple[int, int], tuple[Fraction, int]] = {}
+        for loops in face_loops:
+            for loop in loops:
+                edges = [coedge_edges[coedge] for coedge in loop]
+                if len(edges) < 2 or len(set(edges)) != len(edges):
+                    continue
+                if len({coedge_senses[coedge] for coedge in loop}) != 1:
+                    continue
+                directed = [
+                    self.edge_vertices[coedge_edges[coedge]][:: coedge_senses[coedge]]
+                    for coedge in loop
+                ]
+                if any(
+                    left[1] != right[0]
+                    for left, right in zip(
+                        directed, (*directed[1:], directed[0]), strict=True
+                    )
+                ):
+                    continue
+                indices = [self.edge_curves[edge] for edge in edges]
+                # A shared bank row is a shared authored definition. Equal
+                # coefficients in independently authored rows are not enough.
+                if indices[0] < 0 or any(index != indices[0] for index in indices[1:]):
+                    continue
+                carrier = self.curves[indices[0]]
+                if not isinstance(carrier, (CircleCurve, EllipseCurve)):
+                    continue
+                edges.sort(key=lambda edge: self.edge_ranges[edge][0])
+                first = self.edge_ranges[edges[0]][0]
+                last = self.edge_ranges[edges[-1]][1]
+                if last != first + _TWO_PI:
+                    continue
+                if any(
+                    self.edge_ranges[left][1] != self.edge_ranges[right][0]
+                    or self.edge_vertices[left][1] != self.edge_vertices[right][0]
+                    for left, right in zip(edges[:-1], edges[1:], strict=True)
+                ):
+                    continue
+                if self.edge_vertices[edges[-1]][1] != self.edge_vertices[edges[0]][0]:
+                    continue
+                endpoints[edges[0], 0] = Fraction(first), 0
+                endpoints[edges[-1], 1] = Fraction(first), 1
+        return endpoints
+
     def _native_phase_roots(
         self,
         pcurves: Sequence[AbstractCurve],
         coedge_edges: Sequence[int],
+        coedge_senses: Sequence[int],
         face_loops: Sequence[tuple[tuple[int, ...], ...]],
         /,
     ) -> tuple[
@@ -3519,7 +3580,14 @@ class CadStage:
         the face carries that patch, else a declared period of the face patch
         aligned with the use, else the p-curve's own native turn.
         """
-        if not self.native_phases and not self.split_endpoint_phases:
+        closed_endpoints = self._closed_conic_loop_endpoints(
+            coedge_edges, coedge_senses, face_loops
+        )
+        if (
+            not self.native_phases
+            and not self.split_endpoint_phases
+            and not closed_endpoints
+        ):
             return None, None
         edge_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = [
             (None, None)
@@ -3592,6 +3660,25 @@ class CadStage:
                     for phase in phases
                 ]
                 coedge_roots[coedge] = endpoints[0], endpoints[1]
+        for (edge, endpoint), (rational, turns) in closed_endpoints.items():
+            pair = list(edge_roots[edge])
+            if pair[endpoint] is None:
+                pair[endpoint] = NativePeriodEndpoint(
+                    self.curves[self.edge_curves[edge]], rational=rational, turns=turns
+                )
+                edge_roots[edge] = pair[0], pair[1]
+            for coedge, source in enumerate(coedge_edges):
+                if source != edge or coedge_roots[coedge][endpoint] is not None:
+                    continue
+                binding = _coedge_period_binding(
+                    self.faces[coedge_faces[coedge]].patch, None, None, pcurves[coedge]
+                )
+                if binding is not None:
+                    pair = list(coedge_roots[coedge])
+                    pair[endpoint] = NativePeriodEndpoint(
+                        pcurves[coedge], *binding, rational=rational, turns=turns
+                    )
+                    coedge_roots[coedge] = pair[0], pair[1]
         return tuple(edge_roots), tuple(coedge_roots)
 
     def _junction_window(
@@ -4011,7 +4098,7 @@ class CadStage:
         self.pcurve_origins = tuple(origins)
         self._bind_native_phase_surfaces(resolved)
         edge_roots, coedge_roots = self._native_phase_roots(
-            pcurves, coedge_edges, face_loops
+            pcurves, coedge_edges, coedge_senses, face_loops
         )
         vertex_roots, edge_roots, coedge_roots = self._bind_incidence_roots(
             pcurves,
