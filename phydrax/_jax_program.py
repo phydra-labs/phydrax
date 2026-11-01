@@ -14,6 +14,7 @@ derivative, batching and effect rules are not visible in the program.
 from __future__ import annotations
 
 import functools
+from inspect import getclosurevars
 from typing import Any, Literal, TypeAlias
 
 import jax
@@ -116,8 +117,27 @@ def lowered_expansion(equation: jax_core.JaxprEqn, /) -> jax_core.ClosedJaxpr | 
     return stock_high_expansion(equation)
 
 
+def custom_jvp_rule_owner(thunk: Any, /) -> Any | None:
+    """Rule owner (a wrapped function) of a staged ``custom_jvp_call`` thunk.
+
+    Unwraps only JAX's own memoized ``jvp_jaxpr_fun`` protocol; the owner's
+    ``f`` is the declared JVP rule and ``transforms`` its applied wrappers.
+    Returns ``None`` for any other thunk.
+    """
+    function = getattr(thunk, "f", None)
+    if (
+        function is None
+        or function.__module__ != "jax._src.interpreters.partial_eval"
+        or function.__qualname__ != "_memoize.<locals>.memoized"
+    ):
+        return None
+    memoized = getclosurevars(function).nonlocals["fn"]
+    return getclosurevars(memoized).nonlocals["jvp"]
+
+
 __all__ = [
     "StockHighOperation",
+    "custom_jvp_rule_owner",
     "is_opaque_high_operation",
     "lowered_expansion",
     "stock_high_expansion",
