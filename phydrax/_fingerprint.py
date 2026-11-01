@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from operator import itemgetter
 from typing import Any
 
@@ -30,6 +30,22 @@ _ITEM_KEY = itemgetter(0)
 def canonical_json(value: Any, /) -> str:
     """Serialize a JSON-compatible value with one deterministic representation."""
     return _ENCODER.encode(value)
+
+
+class LazyCanonicalSequence:
+    """A JSON array whose items are produced while it is written.
+
+    ``canonical_fingerprint`` encodes it exactly as the tuple of the same items,
+    without holding that tuple: large identity payloads stay bounded.
+    """
+
+    __slots__ = ("_items",)
+
+    def __init__(self, items: Callable[[], Iterable[Any]], /) -> None:
+        self._items = items
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._items())
 
 
 def canonical_fingerprint(value: Any, /) -> str:
@@ -216,8 +232,33 @@ def _write_canonical(value: Any, write: Callable[[str], object], /) -> None:
         _write_mapping(value, write)
     elif isinstance(value, (tuple, list)):
         _write_sequence(value, write)
+    elif kind is LazyCanonicalSequence:
+        write("[")
+        for index, item in enumerate(value):
+            if index:
+                write(",")
+            _write_canonical(item, write)
+        write("]")
     else:
         write(_ENCODER.encode(value))
+
+
+def _plain_json_size(value: tuple[Any, ...] | list[Any], budget: int, /) -> int:
+    """Remaining ``budget`` after the items of a nest of tuples/lists of JSON
+    scalars, or -1 when the nest holds anything else or exceeds the budget."""
+    for item in value:
+        budget -= 1
+        if budget < 0:
+            return -1
+        kind = type(item)
+        if kind in _JSON_SCALAR_TYPES:
+            continue
+        if kind is not tuple and kind is not list:
+            return -1
+        budget = _plain_json_size(item, budget)
+        if budget < 0:
+            return -1
+    return budget
 
 
 def _write_sequence(
@@ -233,6 +274,11 @@ def _write_sequence(
                 write(",")
             write(_ENCODER.encode(value[start : start + _SEQUENCE_CHUNK])[1:-1])
         write("]")
+        return
+    if _plain_json_size(value, _SEQUENCE_CHUNK) >= 0:
+        # A bounded nest of tuples/lists of JSON scalars encodes as JSON
+        # arrays exactly as the item-by-item walk below writes it.
+        write(_ENCODER.encode(value))
         return
     write("[")
     for index, item in enumerate(value):
@@ -293,6 +339,7 @@ def _array_records(tree: PyTree[Any], /) -> list[tuple[str, np.ndarray]]:
 
 
 __all__ = [
+    "LazyCanonicalSequence",
     "array_tree_fingerprint",
     "array_bytes_digest",
     "array_tree_signature",

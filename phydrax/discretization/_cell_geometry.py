@@ -17,7 +17,11 @@ import numpy as np
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    LazyCanonicalSequence,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..exterior._form_type import FormType, FormValueSpec
@@ -396,20 +400,22 @@ class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
                 if block_parent_reference_maps is None
                 else block_parent_reference_maps[name]
             )
-            for row in vertex_ids:
-                valid = row[row >= 0]
-                if (
-                    (
-                        valid.size < 2
-                        and not (valid.size == 0 and reference_map is not None)
-                    )
-                    or np.unique(valid).size != valid.size
-                    or np.any(row[: valid.size] < 0)
-                    or np.any(row[valid.size :] != -1)
-                ):
-                    raise ValueError(
-                        "Parent vertex IDs must be unique with trailing -1 padding; empty support requires exact reference-map ancestry."
-                    )
+            # Every row: unique valid IDs first, then -1 padding (entries below
+            # -1 are refused above); fewer than two valid IDs only as empty
+            # support with exact reference-map ancestry.
+            valid = vertex_ids >= 0
+            counts = np.count_nonzero(valid, axis=1)
+            ordered = np.sort(vertex_ids, axis=1)
+            if (
+                np.any((counts < 2) & ~((counts == 0) & (reference_map is not None)))
+                or not np.array_equal(
+                    valid, np.arange(vertex_ids.shape[1]) < counts[:, None]
+                )
+                or np.any((ordered[:, 1:] == ordered[:, :-1]) & (ordered[:, 1:] >= 0))
+            ):
+                raise ValueError(
+                    "Parent vertex IDs must be unique with trailing -1 padding; empty support requires exact reference-map ancestry."
+                )
             exact: tuple[tuple[tuple[Fraction, ...], ...], ...] | None = None
             if reference_map is not None:
                 chart_arguments = (
@@ -463,12 +469,14 @@ class CellGeometryRestrictionSource(StrictModule, NonTrainableState):
             if reference_map is None or exact_bank is None:
                 reference_map_identity.append(None)
                 continue
-            exact_payload = tuple(
-                tuple(
-                    tuple((value.numerator, value.denominator) for value in point)
-                    for point in cell
+            exact_payload = LazyCanonicalSequence(
+                lambda exact_bank=exact_bank: (
+                    tuple(
+                        tuple((value.numerator, value.denominator) for value in point)
+                        for point in cell
+                    )
+                    for cell in exact_bank
                 )
-                for cell in exact_bank
             )
             reference_map_identity.append(
                 {
@@ -618,8 +626,31 @@ def _canonical_rational_chart_arguments(
 ) -> tuple[_ExactRationalChartTerms, ...]:
     zero = (0,) * target_dimension
     unit = {zero: Fraction(1)}
+    unit_terms: _ExactPolynomialTerms = ((zero, Fraction(1)),)
     result = []
     for value in values:
+        if type(value) is dict and all(
+            type(exponent) is tuple
+            and len(exponent) == target_dimension
+            and all(type(power) is int and power >= 0 for power in exponent)
+            and type(coefficient) is Fraction
+            for exponent, coefficient in value.items()
+        ):
+            # Rational-coefficient polynomials over canonical exponents: the
+            # canonical terms are the nonzero terms in exponent order.
+            result.append(
+                (
+                    tuple(
+                        sorted(
+                            (exponent, coefficient)
+                            for exponent, coefficient in value.items()
+                            if coefficient
+                        )
+                    ),
+                    unit_terms,
+                )
+            )
+            continue
         if isinstance(value, RationalPolynomial):
             rational = value
         elif isinstance(value, Mapping):
@@ -1736,21 +1767,29 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
                 "target_kind": self.cell_kind,
                 "target_cells": targets,
                 "source_cells": sources,
-                "charts": tuple(
-                    tuple(
-                        (
-                            tuple(
-                                (exponent, _coordinate_coefficient_identity(coefficient))
-                                for exponent, coefficient in numerator
-                            ),
-                            tuple(
-                                (exponent, _coordinate_coefficient_identity(coefficient))
-                                for exponent, coefficient in denominator
-                            ),
+                "charts": LazyCanonicalSequence(
+                    lambda: (
+                        tuple(
+                            (
+                                tuple(
+                                    (
+                                        exponent,
+                                        _coordinate_coefficient_identity(coefficient),
+                                    )
+                                    for exponent, coefficient in numerator
+                                ),
+                                tuple(
+                                    (
+                                        exponent,
+                                        _coordinate_coefficient_identity(coefficient),
+                                    )
+                                    for exponent, coefficient in denominator
+                                ),
+                            )
+                            for numerator, denominator in chart
                         )
-                        for numerator, denominator in chart
+                        for chart in charts
                     )
-                    for chart in charts
                 ),
             }
         )
@@ -3367,7 +3406,10 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 for exponent, coefficient in polynomial.items():
                     term: ExactScalar = coefficient
                     for coordinate, power in zip(point, exponent, strict=True):
-                        term *= coordinate**power
+                        if power == 1:
+                            term *= coordinate
+                        elif power or type(coordinate) is not Fraction:
+                            term *= coordinate**power
                     total = total + term
                 return total
 
@@ -3403,6 +3445,25 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 isinstance(term, Fraction) for term in value.values()
             )
 
+        def _plain_basis(basis: tuple[Any, ...], /) -> tuple[tuple[Any, ...], bool]:
+            return basis, all(rational_polynomial(value) for value in basis)
+
+        plain_bases: dict[int, tuple[tuple[Any, ...], bool]] = {}
+
+        def combine(
+            coefficients: tuple[tuple[Any, ...], ...], weights: tuple[Any, ...], /
+        ) -> tuple[Any, ...]:
+            return tuple(
+                sum(
+                    (
+                        coefficients[dof][axis] * weights[dof]
+                        for dof in range(len(weights))
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(len(coefficients[0]))
+            )
+
         def composed_parts(
             element: ScalarCoordinateElement, block_index: int, local_row: int, /
         ) -> tuple[tuple[Any, ...], tuple[Any, ...]] | None:
@@ -3433,6 +3494,9 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 return None
             return tuple(arguments), root_basis
 
+        # Exact images by (block, coefficient route, root reference point):
+        # cells sharing coefficients and a root point share one evaluation.
+        images: dict[tuple[int, bytes, tuple[Any, ...]], tuple[Any, ...]] = {}
         results = []
         for identifier, point_rows in zip(
             identifiers.tolist(), reference_points, strict=True
@@ -3463,36 +3527,71 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         "Exact reference points must use Fraction or RadicalElement scalars."
                     )
             composed = composed_parts(element, block_index, local_row)
-            if (
-                composed is not None
-                and all(
-                    isinstance(value, Fraction) for row in coefficients for value in row
-                )
-                and all(
-                    isinstance(value, Fraction) for point in point_rows for value in point
-                )
-            ):
+            rational_data = all(
+                isinstance(value, Fraction) for row in coefficients for value in row
+            ) and all(
+                isinstance(value, Fraction) for point in point_rows for value in point
+            )
+            if composed is None and rational_data:
+                # A cell-independent polynomial basis is formed once per block
+                # and evaluated at each point: the exact value of its linear
+                # combination, without combining it symbolically per cell.
+                plain = plain_bases.get(block_index)
+                if plain is None:
+                    plain = (
+                        ((), False)
+                        if isinstance(
+                            element,
+                            PerCellRestrictedCellGeometryElement
+                            | RestrictedCellGeometryElement
+                            | PolynomialComposedCellGeometryElement
+                            | RationalComposedCellGeometryElement,
+                        )
+                        else _plain_basis(
+                            coordinate_effective_basis(element, cell_row=local_row)
+                        )
+                    )
+                    plain_bases[block_index] = plain
+                plain_basis, plain_rational = plain
+                if plain_rational:
+                    if len(plain_basis) != len(coefficients):
+                        raise ValueError(
+                            "Exact coordinate basis and local coefficient bank disagree."
+                        )
+                    route_key = route.tobytes()
+                    cell_results = []
+                    for point in point_rows:
+                        exact_point = tuple(point)
+                        key = (block_index, route_key, exact_point)
+                        value = images.get(key)
+                        if value is None:
+                            value = combine(
+                                coefficients,
+                                tuple(
+                                    evaluate(basis, exact_point) for basis in plain_basis
+                                ),
+                            )
+                            images[key] = value
+                        cell_results.append(value)
+                    results.append(tuple(cell_results))
+                    continue
+            if composed is not None and rational_data:
                 arguments, root_basis = composed
                 if len(root_basis) != len(coefficients):
                     raise ValueError(
                         "Exact coordinate basis and local coefficient bank disagree."
                     )
+                route_key = route.tobytes()
                 cell_results = []
                 for point in point_rows:
                     image = tuple(evaluate(value, tuple(point)) for value in arguments)
-                    weights = tuple(evaluate(value, image) for value in root_basis)
-                    cell_results.append(
-                        tuple(
-                            sum(
-                                (
-                                    coefficients[dof][axis] * weights[dof]
-                                    for dof in range(len(weights))
-                                ),
-                                Fraction(0),
-                            )
-                            for axis in range(len(coefficients[0]))
-                        )
-                    )
+                    key = (block_index, route_key, image)
+                    value = images.get(key)
+                    if value is None:
+                        weights = tuple(evaluate(basis, image) for basis in root_basis)
+                        value = combine(coefficients, weights)
+                        images[key] = value
+                    cell_results.append(value)
                 results.append(tuple(cell_results))
                 continue
             basis = coordinate_effective_basis(element, cell_row=local_row)
