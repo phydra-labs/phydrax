@@ -10,7 +10,8 @@ from collections.abc import Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, product
-from typing import Any
+from math import lcm
+from typing import Any, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -407,15 +408,114 @@ def _tetrahedron_contact_axes(
             yield _cross3(first_edge, second_edge)
 
 
+type _IntegerPoint3 = tuple[int, int, int]
+type _Projections = tuple[tuple[ExactScalar | int, ...], tuple[ExactScalar | int, ...]]
+
+
+def _shared_integer_points(
+    points: Sequence[Point3], /
+) -> tuple[_IntegerPoint3, ...] | None:
+    """Rational points scaled by their common denominator, or None for radicals.
+
+    A positive common scale preserves every sign, order, and equality decision
+    of affine separation tests, which then run in integer arithmetic.
+    """
+    rationals: list[tuple[Fraction | int, ...]] = []
+    for point in points:
+        if not all(type(value) is Fraction or type(value) is int for value in point):
+            return None
+        rationals.append(cast(tuple[Fraction | int, ...], point))
+    denominator = lcm(*(value.denominator for point in rationals for value in point))
+    return tuple(
+        (
+            point[0].numerator * (denominator // point[0].denominator),
+            point[1].numerator * (denominator // point[1].denominator),
+            point[2].numerator * (denominator // point[2].denominator),
+        )
+        for point in rationals
+    )
+
+
+def _integer_sub3(first: _IntegerPoint3, second: _IntegerPoint3, /) -> _IntegerPoint3:
+    return first[0] - second[0], first[1] - second[1], first[2] - second[2]
+
+
+def _integer_cross3(first: _IntegerPoint3, second: _IntegerPoint3, /) -> _IntegerPoint3:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _integer_dot3(first: _IntegerPoint3, second: _IntegerPoint3, /) -> int:
+    return first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+
+
+def _integer_orientation(cell: tuple[_IntegerPoint3, ...], /) -> int:
+    first, second, third, fourth = cell
+    return _integer_dot3(
+        _integer_cross3(_integer_sub3(second, first), _integer_sub3(third, first)),
+        _integer_sub3(fourth, first),
+    )
+
+
+def _integer_contact_axes(
+    first: tuple[_IntegerPoint3, ...], second: tuple[_IntegerPoint3, ...], /
+) -> Iterator[_IntegerPoint3]:
+    """`_tetrahedron_contact_axes` of integer-scaled cells, in the same order."""
+    for cell in (first, second):
+        for a, b, c in combinations(cell, 3):
+            yield _integer_cross3(_integer_sub3(b, a), _integer_sub3(c, a))
+    second_edges = tuple(_integer_sub3(b, a) for a, b in combinations(second, 2))
+    for a, b in combinations(first, 2):
+        first_edge = _integer_sub3(b, a)
+        for second_edge in second_edges:
+            yield _integer_cross3(first_edge, second_edge)
+
+
+def _tetrahedron_axis_projections(
+    first: tuple[Point3, ...],
+    second: tuple[Point3, ...],
+    scaled: tuple[tuple[_IntegerPoint3, ...], tuple[_IntegerPoint3, ...]] | None,
+    /,
+) -> Iterator[_Projections]:
+    """Both cells' projections onto every nonzero candidate separating axis.
+
+    `scaled` carries both cells over one shared positive integer scale when
+    every coordinate is rational, so the projections are integers ordered and
+    tied exactly as the rational ones.
+    """
+    if scaled is None:
+        for axis in _tetrahedron_contact_axes(first, second):
+            if any(axis):
+                yield (
+                    tuple(_dot3(axis, point) for point in first),
+                    tuple(_dot3(axis, point) for point in second),
+                )
+        return
+    first_scaled, second_scaled = scaled
+    for integer_axis in _integer_contact_axes(first_scaled, second_scaled):
+        if any(integer_axis):
+            yield (
+                tuple(_integer_dot3(integer_axis, point) for point in first_scaled),
+                tuple(_integer_dot3(integer_axis, point) for point in second_scaled),
+            )
+
+
 def _tetrahedron_support_contacts(
-    first: tuple[Point3, ...], second: tuple[Point3, ...], /
+    first: tuple[Point3, ...],
+    second: tuple[Point3, ...],
+    scaled: tuple[tuple[_IntegerPoint3, ...], tuple[_IntegerPoint3, ...]] | None,
+    /,
 ) -> tuple[Point3, ...] | None:
-    """Prove empty/lower-dimensional contact; None retains volumetric clipping."""
-    for axis in _tetrahedron_contact_axes(first, second):
-        if not any(axis):
-            continue
-        first_projection = tuple(_dot3(axis, point) for point in first)
-        second_projection = tuple(_dot3(axis, point) for point in second)
+    """Prove empty/lower-dimensional contact; None retains volumetric clipping.
+
+    Contacts are always formed from the exact input points.
+    """
+    for first_projection, second_projection in _tetrahedron_axis_projections(
+        first, second, scaled
+    ):
         first_lower, first_upper = min(first_projection), max(first_projection)
         second_lower, second_upper = min(second_projection), max(second_projection)
         if first_upper < second_lower or second_upper < first_lower:
@@ -449,9 +549,18 @@ def tetrahedron_contact_points(
     """Return exact vertices of the closed intersection of two affine tetrahedra."""
     if len(first) != 4 or len(second) != 4:
         raise ValueError("Tetrahedron contact requires two four-vertex cells.")
-    if not determinant3(*first) or not determinant3(*second):
+    integer_points = _shared_integer_points((*first, *second))
+    if integer_points is None:
+        scaled = None
+        degenerate = not determinant3(*first) or not determinant3(*second)
+    else:
+        scaled = integer_points[:4], integer_points[4:]
+        degenerate = not _integer_orientation(scaled[0]) or not _integer_orientation(
+            scaled[1]
+        )
+    if degenerate:
         raise ValueError("Tetrahedron contact requires nondegenerate exact cells.")
-    support_contacts = _tetrahedron_support_contacts(first, second)
+    support_contacts = _tetrahedron_support_contacts(first, second, scaled)
     if support_contacts is not None:
         return support_contacts
     points: set[Point3] = set()
