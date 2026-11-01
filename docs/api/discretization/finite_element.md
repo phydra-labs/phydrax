@@ -243,13 +243,18 @@ extends the boundary displacement to the interior along the policy's
 `HARMONIC` (graph-Laplacian extension), `LINEAR_ELASTICITY` (finite-element elasticity
 with Jacobian stiffening `E = (J_max / J)**chi`), `WINSLOW` (inverse harmonic map with
 an inversion barrier), `MMPDE` (steady state of the Huang–Russell moving-mesh PDE for a
-monitor passed to `realize(..., monitor=...)`, relaxation time `tau`), and `PRESCRIBED`
+`AbstractMeshMonitor` passed to `realize(..., monitor=...)`, relaxation time `tau`), and
+`PRESCRIBED`
 (the provider realizes every vertex). Linear routes solve matrix-free element tensors
 through one prepared Krylov solve; nonlinear routes solve their stationarity equations
 through `phydrax.nonlinear` with implicit root derivatives, so realizations are
 differentiable in the boundary design and the monitor parameters.
 `FiniteElementMotionExtension` is the reusable route owner consumed by fixed-connectivity
 finite-volume ALE and variable-patch ALE.
+A monitor is a callable PyTree (`AbstractMeshMonitor` subclass): its array fields are the
+dynamic parameters and its class and other fields the static structure. Outside an
+enclosing trace `extend` runs as one compiled program owned by the extension, so repeated
+solves with new boundary or monitor values reuse it and release it with the extension.
 
 `realize(design, numeric_version=...)` requires a nonempty caller-owned identifier for
 the proposed numeric coordinate state. That version participates in runtime identity
@@ -276,6 +281,10 @@ host-epoch Bernstein certificate of a moved state.
 ---
 
 ::: phydrax.discretization.FiniteElementMotionExtensionResult
+
+---
+
+::: phydrax.discretization.AbstractMeshMonitor
 
 ---
 

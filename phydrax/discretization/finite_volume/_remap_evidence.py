@@ -43,10 +43,6 @@ class MappedNestedRemapEvidence(StrictModule, NonTrainableState):
         reason: str,
         /,
     ) -> None:
-        if not isinstance(transition, CellGeometryTransition):
-            raise TypeError("transition must be a CellGeometryTransition.")
-        if not isinstance(report, UnstructuredRemapReport):
-            raise TypeError("report must be an UnstructuredRemapReport.")
         bound = float(geometry_error_bound)
         if not np.isfinite(bound) or bound < 0.0:
             raise ValueError("geometry_error_bound must be finite and nonnegative.")
@@ -111,8 +107,6 @@ class MappedSurfaceChartRemapEvidence(StrictModule, NonTrainableState):
             (PreparedSurfaceChartDeformation, PreparedSphereChartDeformation),
         ):
             raise TypeError("deformation must be a prepared surface or sphere chart map.")
-        if not isinstance(report, UnstructuredRemapReport):
-            raise TypeError("report must be an UnstructuredRemapReport.")
         contents = jnp.asarray(physical_contents)
         measures = jnp.asarray(target_measures)
         source_count = sum(block.cell_count for block in deformation.source_mesh.blocks)
@@ -164,7 +158,6 @@ class RemapPreparationFailure(StrictModule, NonTrainableState):
     reason: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         source_discretization_id: str,

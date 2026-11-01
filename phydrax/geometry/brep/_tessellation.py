@@ -535,14 +535,6 @@ def tessellate_brep_model(
     it; pass both to ``BRepModel`` so the model binds that proof instead of
     recomputing it.
     """
-    from ._model import BRepModel, BRepTessellation
-
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
-    from ._constructors import BRepTessellationPolicy
-
-    if not isinstance(policy, BRepTessellationPolicy):
-        raise TypeError("policy must be a BRepTessellationPolicy.")
     if not model.patches:
         raise ValueError("A faceless B-Rep has no surface tessellation.")
 

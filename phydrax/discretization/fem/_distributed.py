@@ -47,7 +47,6 @@ class FiniteElementDofOwnership(StrictModule, NonTrainableState):
     part_count: int = eqx.field(static=True)
     ownership_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         dof_keys: ArrayLike,
@@ -166,7 +165,6 @@ class FiniteElementDofIdentityPlan(StrictModule, NonTrainableState):
     part_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         dof_keys: ArrayLike,

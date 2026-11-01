@@ -133,6 +133,7 @@ from ._separating_normals import (
 )
 from ._stratum_subdivision import (
     glued_face_monotone,
+    glued_facet_monotone,
     StratumSubdivisionCache,
     subdivided_stratum_separation,
 )
@@ -4775,17 +4776,21 @@ def _nonperiodic_contacts(
                         )
                     )
                     continue
-                if (
-                    trace is True
-                    and len(shared) == first_cell.dimension
-                    and glued_face_monotone(first_cell, second_cell, shared)
-                ):
-                    if proof_values is not None:
-                        proof_values.append(
-                            f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
-                            "glued-face-monotone-map"
-                        )
-                    continue
+                if trace is True and len(shared) >= first_cell.dimension:
+                    glued = (
+                        "glued-face-monotone-map"
+                        if glued_face_monotone(first_cell, second_cell, shared)
+                        else "glued-facet-monotone-map"
+                        if glued_facet_monotone(first_cell, second_cell, shared)
+                        else None
+                    )
+                    if glued is not None:
+                        if proof_values is not None:
+                            proof_values.append(
+                                f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                                f"{glued}"
+                            )
+                        continue
                 if trace is True and len(shared) <= 2:
                     stratum_key = tuple(sorted(shared))
                     if stratum_key not in stratum_residuals:

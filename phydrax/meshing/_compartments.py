@@ -347,8 +347,6 @@ def prepare_compartment_plc(
     come from categorical voxel adjacency; no extracted mesh row or centroid
     determines source identity or material ownership.
     """
-    if not isinstance(source, CompartmentMeshingSource):
-        raise TypeError("source must be a CompartmentMeshingSource.")
     if source.outer_geometry is not None:
         raise ValueError(
             "A mapped outer geometry needs a source-to-lattice coverage proof before image PLC construction."

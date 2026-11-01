@@ -3087,7 +3087,6 @@ class PreparedNativeLayer(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.core_specification = core_specification
 
-    @checked
     def execute(self) -> construction_owner.NativeMeshConstruction:
         schedule = self.options.volume_schedule
         if schedule is None:

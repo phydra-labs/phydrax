@@ -396,6 +396,18 @@ def _exact_trim_triangles(
 _TURN = 2.0 * math.pi
 
 
+class _ChartedPatch(NamedTuple):
+    """A patch's exact chart cover awaiting its batched physical evaluation."""
+
+    patch: int
+    surface: AbstractSurfacePatch
+    exact_surface: tuple[Polynomial, ...] | None
+    exact_span_source: bool
+    uv_points: tuple[_Point2, ...]
+    exact_charts: tuple[_Triangle2, ...]
+    uv_triangles: np.ndarray
+
+
 class ExactPlaneChart(NamedTuple):
     """Exact affine chart of a planar patch whose authored chart is not affine.
 
@@ -635,10 +647,6 @@ class CurvedTrimLens(NamedTuple):
     parameter_bound: Fraction
 
 
-_CHAIN_PARAMETER_REFINEMENTS = 14
-_POLE_SLIVER_PIECE_LIMIT = 256
-
-
 def _target_boundary_successors(
     triangles: tuple[_Triangle2, ...], /
 ) -> dict[_Point2, list[_Point2]]:
@@ -722,7 +730,11 @@ def _chain_parameters(
     width = (high - low) / count
     offsets = np.linspace(-1.0, 1.0, 17, dtype=np.float64)
     rows = np.arange(targets.shape[0])
-    for _ in range(_CHAIN_PARAMETER_REFINEMENTS):
+    # Each round shrinks the candidate spacing ``width / 8`` eightfold; refinement
+    # ends at binary64 resolution of the parameter, where candidates stop being
+    # distinct values.
+    resolution = float(np.spacing(max(abs(low), abs(high))))
+    while width / 8.0 > resolution:
         candidates = np.clip(parameters[:, None] + width * offsets[None], low, high)
         distance = np.sum((evaluate(candidates) - targets[:, None]) ** 2, axis=-1)
         parameters = candidates[rows, np.argmin(distance, axis=1)]
@@ -1360,14 +1372,11 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         extents = (upper[0] - lower[0], upper[1] - lower[1])
         long_axis = 0 if extents[0] >= extents[1] else 1
         short = extents[1 - long_axis]
-        pieces = (
-            _POLE_SLIVER_PIECE_LIMIT
-            if short <= 0.0
-            else min(
-                _POLE_SLIVER_PIECE_LIMIT,
-                max(1, math.ceil(extents[long_axis] / short)),
+        if not short > 0.0:
+            raise ValueError(
+                "Collapsed pole sliver has no positive chart extent across its long axis."
             )
-        )
+        pieces = max(1, math.ceil(extents[long_axis] / short))
         cuts = np.linspace(lower[long_axis], upper[long_axis], pieces + 1)
         cuts[0], cuts[-1] = lower[long_axis], upper[long_axis]
         bounds = np.empty((2, 3), dtype=np.float64)
@@ -1413,6 +1422,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         )
         from .brep._root_bindings import _source_coefficients_are_binary
 
+        # Every charted patch's corners are evaluated in one batched call; the
+        # findings and cover rows keep patch order.
+        pending: list[MeshCertificateFinding | _ChartedPatch] = []
         for patch in self.patches:
             surface = self.domain.patches[patch].surface
             try:
@@ -1440,7 +1452,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 )
             ):
                 complete = False
-                findings.append(
+                pending.append(
                     MeshCertificateFinding(
                         "source_surface_coefficients",
                         "unresolved",
@@ -1455,7 +1467,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             )
             if chart is None:
                 complete = False
-                findings.append(
+                pending.append(
                     MeshCertificateFinding(
                         "source_trim_coverage",
                         "unresolved",
@@ -1465,11 +1477,10 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     )
                 )
                 continue
-            uv_points = chart[0]
             chord_charts = _cover_chord_triangles(patch, *chart)
             if isinstance(chord_charts, MeshCertificateFinding):
                 complete = False
-                findings.append(chord_charts)
+                pending.append(chord_charts)
                 continue
             exact_charts = chord_charts + _trim_enclosure_triangles(self.domain, patch)
             uv_triangles = np.asarray(
@@ -1479,10 +1490,45 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 ],
                 dtype=np.float64,
             )
-            patch_rows = np.full((len(exact_charts) * 3,), patch, dtype=np.int64)
-            physical = self.domain.evaluate(
-                patch_rows, uv_triangles.reshape((-1, 2))
-            ).reshape((-1, 3, 3))
+            pending.append(
+                _ChartedPatch(
+                    patch,
+                    surface,
+                    exact_surface,
+                    exact_span_source,
+                    chart[0],
+                    exact_charts,
+                    uv_triangles,
+                )
+            )
+        charted = [entry for entry in pending if isinstance(entry, _ChartedPatch)]
+        realized = self.domain.evaluate(
+            np.concatenate(
+                [
+                    np.full((len(entry.exact_charts) * 3,), entry.patch, dtype=np.int64)
+                    for entry in charted
+                ]
+                or [np.empty((0,), dtype=np.int64)]
+            ),
+            np.concatenate(
+                [entry.uv_triangles.reshape((-1, 2)) for entry in charted]
+                or [np.empty((0, 2), dtype=np.float64)]
+            ),
+        ).reshape((-1, 3, 3))
+        start = 0
+        for entry in pending:
+            if isinstance(entry, MeshCertificateFinding):
+                findings.append(entry)
+                continue
+            patch = entry.patch
+            surface = entry.surface
+            exact_surface = entry.exact_surface
+            exact_span_source = entry.exact_span_source
+            uv_points = entry.uv_points
+            exact_charts = entry.exact_charts
+            uv_triangles = entry.uv_triangles
+            physical = realized[start : start + len(exact_charts)]
+            start += len(exact_charts)
             if exact_surface is None:
                 try:
                     if exact_span_source:

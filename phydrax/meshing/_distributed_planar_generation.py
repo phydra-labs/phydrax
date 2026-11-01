@@ -59,7 +59,6 @@ class PlanarTileSchedule(StrictModule, NonTrainableState):
     tile_span_sizes: int = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(self, *, tile_span_sizes: int = 2) -> None:
         if isinstance(tile_span_sizes, bool) or not isinstance(tile_span_sizes, int):
             raise TypeError("tile_span_sizes must be an integer.")
@@ -200,12 +199,6 @@ class PlanarTileComplex(StrictModule, NonTrainableState):
         schedule: PlanarTileSchedule,
         /,
     ) -> None:
-        if not isinstance(source, sources_owner.NativePlanarSource):
-            raise TypeError("source must be NativePlanarSource.")
-        if not isinstance(specification, SurfaceMeshingSpec):
-            raise TypeError("specification must be SurfaceMeshingSpec.")
-        if not isinstance(schedule, PlanarTileSchedule):
-            raise TypeError("schedule must be PlanarTileSchedule.")
         unsupported = planar_support_issues(source, specification)
         if unsupported:
             raise MeshingFailure(
@@ -1720,8 +1713,6 @@ def prepare_distributed_planar_generation(
     partition_plan: GraphPartitionPlan | None = None,
 ) -> PreparedDistributedPlanarGeneration:
     """Prepare canonical tiles and assign them with native owner-local graph partitioning."""
-    if not isinstance(execution_group, ExecutionGroup):
-        raise TypeError("execution_group must be ExecutionGroup.")
     _group_rank(execution_group)
     plan = (
         GraphPartitionPlan(
@@ -2225,8 +2216,6 @@ def execute_distributed_planar_initial(
     prepared: PreparedDistributedPlanarGeneration, /
 ) -> DistributedPlanarConstruction:
     """Triangulate owned tiles and exchange seam constraints to a fixed point."""
-    if not isinstance(prepared, PreparedDistributedPlanarGeneration):
-        raise TypeError("prepared must be PreparedDistributedPlanarGeneration.")
     tiles = prepared.tiles
     group = prepared.execution_group
     rank = _group_rank(group)

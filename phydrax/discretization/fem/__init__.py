@@ -48,6 +48,7 @@ from ._distributed import (
     DistributedFiniteElementConstraint,
     DistributedFiniteElementMortarPlan,
     DistributedFiniteElementOperator,
+    finite_element_dof_identity_plan,
     finite_element_partition_workset_plan,
     FiniteElementDistributedPhasePlan,
     FiniteElementDofIdentityPlan,
@@ -87,6 +88,7 @@ from ._generic import (
     MaskedFiniteElementSystem,
 )
 from ._geometry_motion import (
+    AbstractMeshMonitor,
     FiniteElementBoundaryProvider,
     FiniteElementBoundaryRealization,
     FiniteElementMeshMotionEvidence,
@@ -432,6 +434,7 @@ __all__ = [
     "FiniteElementMortarPlan",
     "FiniteElementMotionExtension",
     "FiniteElementMotionExtensionResult",
+    "AbstractMeshMonitor",
     "FiniteElementPMultigridPlan",
     "FiniteElementPMultigridPolicy",
     "FiniteElementPTransfer",

@@ -5140,20 +5140,10 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         """Commit a pure owner-local FE state migration and lifecycle rebind."""
         import jax
 
-        if not isinstance(source_manifest, FiniteElementRestartManifest):
-            raise TypeError("source_manifest must be FiniteElementRestartManifest.")
         if not isinstance(
             source_compiled, CompiledFiniteElementProblem
         ) or not isinstance(target_compiled, CompiledFiniteElementProblem):
             raise TypeError("Source and target authority must be compiled FE problems.")
-        if not isinstance(source_composition, Composition):
-            raise TypeError("source_composition must be Composition.")
-        if not isinstance(execution_group, ExecutionGroup):
-            raise TypeError("FE repartition requires an ExecutionGroup.")
-        if not isinstance(migration_evidence, OwnerLocalGraphMigrationEvidence):
-            raise TypeError(
-                "migration_evidence must be OwnerLocalGraphMigrationEvidence."
-            )
         parts = len(execution_group.spec.process_indices)
         try:
             rank = execution_group.spec.process_indices.index(jax.process_index())
@@ -5280,8 +5270,6 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         """Atomically transfer accepted owner-local FE state through an adaptive topology."""
         import jax
 
-        if not isinstance(execution_group, ExecutionGroup):
-            raise TypeError("FE topology adaptation requires an ExecutionGroup.")
         members = execution_group.spec.process_indices
         try:
             rank = members.index(jax.process_index())

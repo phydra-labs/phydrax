@@ -173,8 +173,6 @@ def prepare_periodic_layer_core_source(
     /,
 ) -> sources_owner.NativeLayerCoreSource:
     """Bind source-authored core orbits to a periodic layer and its source charts."""
-    if not isinstance(source, sources_owner.NativeLayerCoreSource):
-        raise TypeError("source must be a NativeLayerCoreSource.")
     periodic = source.layers.mesh.periodic_topology
     if periodic is None or source.periodic_topology_id != periodic.periodic_topology_id:
         raise ValueError(

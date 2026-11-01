@@ -230,7 +230,6 @@ def _gram_density(
     return _determinant(gram, dimension)
 
 
-@checked
 def mapped_coordinate_expressions(
     element: CellGeometryElement,
     local: tuple[tuple[ExactScalar, ...], ...],
@@ -334,7 +333,6 @@ def _volume_density(
     )
 
 
-@checked
 def mapped_density_expression(
     element: CellGeometryElement,
     local: tuple[tuple[ExactScalar, ...], ...],

@@ -453,12 +453,19 @@ def test_open_trimmed_sheet_adaptation_keeps_boundary_and_exact_source_points(
 
 
 def _polar_cap_refinement_metric(mesh: CellMesh, /) -> np.ndarray:
-    # Source vertices anchor the exact source charts, so only refinement is admissible.
     # The cap z > 0.5 of the radius-0.75 sphere holds the north pole fan and crosses
-    # the longitude seam; quadrupling the tensor halves its requested edge length.
+    # the longitude seam; quadrupling the tensor halves its requested edge length
+    # there, while the rest of the sphere asks for edges longer than the extraction's.
     values = _anisotropic_metric(mesh)
     values[np.asarray(mesh.coordinates, dtype=np.float64)[:, 2] > 0.5] *= 4.0
     return values
+
+
+def _coarsening_metric(mesh: CellMesh, /) -> np.ndarray:
+    # An isotropic size of 1/sqrt(30), about 0.18, lies above most extraction edges
+    # (median 0.15, shortest 0.016), so the extraction's short edges must collapse.
+    tensor = np.diag(np.full((3,), 30.0, dtype=np.float64))
+    return np.broadcast_to(tensor, (mesh.coordinates.shape[0], 3, 3)).copy()
 
 
 def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> None:
@@ -504,7 +511,11 @@ def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> No
         topology_operations=True,
         relocation=True,
     )
+    # Extraction vertices are not features: the cap refines across the seam and the
+    # pole fan while the coarser remainder collapses and relocates free vertices.
     assert outcome.splits > 0
+    assert outcome.collapses > 0
+    assert outcome.relocations > 0
     target_witness = outcome.geometry.target_chart_witness
     if not isinstance(target_witness, SourceBoundaryChartWitness):
         raise AssertionError("Implicit metric adaptation lost its source-bound witness.")
@@ -547,7 +558,7 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     profile, source, _ = _implicit_sphere_source()
     transfer = ImplicitAssociationTransfer(profile)
     transfer.validate_source(source)
-    values = _polar_cap_refinement_metric(source.mesh)
+    values = _coarsening_metric(source.mesh)
     vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
     order = np.argsort(vertex_ids, kind="stable")
     vertex_set = source.mesh.entity_set(0)
@@ -562,7 +573,7 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     metric = MeshMetricField(
         scope,
         values[order],
-        minimum_size=0.01,
+        minimum_size=0.1,
         maximum_size=0.6,
         maximum_anisotropy=2.0,
     )
@@ -580,13 +591,28 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     )
     assert result.route is MeshAdaptationRoute.NATIVE_METRIC_SURFACE
     assert isinstance(result.evidence, SurfaceMetricOutcome)
-    # The cap is refined, but anchored source vertices keep the extraction's short
-    # edges, so the route stalls with that unmet request instead of completing.
-    assert result.status is MeshAdaptationStatus.STALLED
-    assert result.evidence.out_of_range_edges > 0
-    assert result.evidence.splits > 0
+    # Only declared features anchor the implicit chart, so the coarsening request
+    # collapses the extraction's short edges and completes.
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    assert result.evidence.out_of_range_edges == 0
+    assert result.evidence.collapses > 0
     assert result.transition is not None
     assert result.transition.geometry_transition is not None
+    # Target cells overlap several source cells, so vertex data move through the
+    # general vertex-stencil transfer: exact on constants, not on ambient linear
+    # functions, since target vertices are exact source projections.
+    field_transfer = result.transfer
+    assert field_transfer is not None
+    assert field_transfer.preserves_constants
+    assert not field_transfer.preserves_linear
+    source_points = np.asarray(source.mesh.coordinates, dtype=np.float64)
+    target_points = np.asarray(result.target.mesh.coordinates, dtype=np.float64)
+    np.testing.assert_allclose(
+        np.asarray(field_transfer.apply(np.ones((source_points.shape[0],)))),
+        np.ones((target_points.shape[0],)),
+        rtol=0.0,
+        atol=1.0e-13,
+    )
     assert result.surface_chart_witness is not None
     if not isinstance(result.surface_chart_witness, SourceBoundaryChartWitness):
         raise AssertionError(
@@ -601,6 +627,7 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     result.surface_chart_witness.require_current(
         result.target.mesh, result.target.geometry, target_source_query
     )
+    assert result.target.associations
     transfer.validate_source(result.target)
     target_witness = result.surface_chart_witness
     standard_chart = ((0, 0), (1, 0), (0, 1))
@@ -617,7 +644,8 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
         np.asarray(result.target.mesh.coordinates, dtype=np.float64)
     )
     assert np.all(np.asarray(projected.resolved, dtype=np.bool_))
-    assert np.max(np.asarray(projected.residuals, dtype=np.float64)) <= tolerance
+    # Target vertices are exact source projections, not resampled source chords.
+    assert np.max(np.asarray(projected.residuals, dtype=np.float64)) <= 1.0e-12
 
 
 def test_native_surface_metric_route_rebinds_trimmed_sheet_source_charts(

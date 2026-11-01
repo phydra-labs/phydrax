@@ -59,6 +59,7 @@ from ._structured import _component_names
 
 
 if TYPE_CHECKING:
+    from .._view_support import OwnerLocalCellGeometry, OwnerLocalCompositeCellGeometry
     from ._side_trace import FiniteVolumeFaceReconstruction, PreparedNonlinearFaceTrace
 
 
@@ -1742,10 +1743,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         return cls(None, _prepared=prepared)
 
     @classmethod
-    @checked
     def from_owner_local_geometry(
         cls,
-        view: Any,
+        view: OwnerLocalCellGeometry | OwnerLocalCompositeCellGeometry,
         /,
         *,
         field_name: str = "state",

@@ -1913,6 +1913,20 @@ high-order nodes the declared isometry of their source-side nodes
 certifies an existing high-order geometry, such as a Gmsh high-order output,
 without moving it.
 
+Constrained nodes without a finite projection frame are pinned to their foot
+during relaxation. Global embedding of curved maps (triangles in the plane,
+tetrahedra and prisms in space) proves that neighbours meet only in their
+declared shared stratum. Cells sharing a vertex or an edge are handled by exact
+Bernstein subdivision (tensor triangle-times-line pieces for prisms), using
+hull separation or stratum-residual cones. For cells sharing a facet, an exact
+affine glue places the second reference cell across the facet so that the union
+is convex; a constant preconditioner then makes the glued map strictly monotone
+at every (uniformly refined) Jacobian Bernstein control. Single-cell injectivity
+uses the same preconditioner. It is found by Kelley cutting planes, whose
+linear-program bound also proves when no preconditioner exists. Containment rays
+that meet a trim edge or a face tangentially are retried along the next fixed
+direction.
+
 `curve_layer_core_construction(construction, layers, source_surface_charts, policy=...)`
 builds a source-aware high-order mixed-cell map for a boundary-layer/core mesh.
 Parametric sources retain exact chart ancestry and projection traces; adaptive
@@ -2198,7 +2212,18 @@ These native source routes do not import PyVista, Open3D, or Qhull.
 The surface source of a reconstructed triangle complex is an exact
 `MeshingDomain`: each triangle chart evaluates in barycentric form, so every chart
 corner reproduces its authored vertex bit for bit, and shared corners are compared
-with zero tolerance.
+with zero tolerance. `MeshingDomain.evaluate` evaluates all reconstructed
+triangle charts of a query in one stacked call with the same arithmetic, so the
+coordinates are unchanged.
+
+A `ReconstructedTriangleBoundarySource` prepares the whole-domain boundary query
+of its source's `MeshingDomain` once, at construction (`domain_query`), with the
+domain's exact chart cover (`domain_cover`) and the proof that this cover is the
+query's own physical triangles, or records why it cannot (`domain_refusal`).
+Source-fidelity validation and certification reuse them after checking that the
+source still reproduces the query's triangles and still retains a domain of the
+same content (the domain is checked current), instead of recomputing the chart
+cover of every source triangle on each validation. Certificates are unchanged.
 
 ## Native unsigned-distance surface envelopes
 
@@ -2295,7 +2320,20 @@ the score by `(pi - turn) / (pi - allowed)`, so the quality pass removes it.
 Without this factor a folded cluster of well-shaped envelope triangles scores
 full, and two boundary triangles meeting at turn `t` bound every tetrahedron on
 their edge to a dihedral angle of at most `pi - t`. Cones are computed only for
-edges turning beyond the cheap lower bound of both cones' half-angles.
+edges turning beyond the cheap lower bound of both cones' half-angles or closing
+a convex wedge sharper than the minimum angle.
+
+Near the source's medial axis an offset's cones open up and carry no
+information, so the source-relative factor admits any turn there. The score
+therefore also holds every convex edge (seen from the enclosed solid) to a
+solid wedge `pi - turn` of at least the minimum angle, scoring
+`(pi - turn) / minimum_angle` below it, unless the two cones force the sharper
+wedge (the angle between their axes minus both half-angles is at least
+`pi - minimum_angle`). On torus:1 a partial relocation had folded a valence-3
+envelope vertex into a fin closing a 1.6 degree convex wedge inside the inner
+offset tube (minor radius about `h`): every tetrahedron on that edge was bounded
+to a 1.6 degree dihedral angle, and the volume stages kept 5 slivers that no
+volume operation could improve while the envelope faces stay protected.
 
 A quality edit for one triangle tries, in order: a split of an over-long longest
 edge, flips of its edges, a collapse of its shortest edge, relocation of each

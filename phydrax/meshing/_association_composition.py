@@ -74,7 +74,6 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
     transfers: tuple[AssociationTransfer, ...]
     transfer_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(self, transfers: tuple[AssociationTransfer, ...], /) -> None:
         from ._association import BRepAssociationTransfer
         from ._implicit_association_transfer import ImplicitAssociationTransfer
