@@ -2105,7 +2105,7 @@ void replacement_facet_requires_its_own_source_geometry() {
   edit.replacement_facet_sources = replacement_face_source.data();
   int32_t edit_status = -1;
   PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &edit, &edit_status) == PHX_MC_OK);
-  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_UNCERTAIN_PREDICATE);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_INVALID_GEOMETRY);
 
   // The rejected edit must not consume IDs or advance the generation.
   replacement_sources[0] = 0;
@@ -2250,6 +2250,113 @@ void split_edge_preserves_exact_ghost_boundary_coverage() {
   PHX_CHECK(transact(1, nullptr) != TetEditStatus::kApplied);
   PHX_CHECK(transact(2, nullptr) != TetEditStatus::kApplied);
   PHX_CHECK(transact(3, nullptr) != TetEditStatus::kApplied);
+}
+
+// An edge on the shared diagonal of two coplanar source facets in different
+// groups. A split carrier that is only the rounding of its edge point leaves
+// the diagonal: the exact coverage predicate refuses it with certainty
+// (invalid geometry, not an uncertain predicate). A short dyadic parameter
+// whose edge point is exact lies on the diagonal and is accepted.
+void split_on_shared_source_diagonal_needs_an_exact_edge_point() {
+  using namespace phx::mc;
+  // A, B span the diagonal of the z = 0 square; C, D close it; E lies below.
+  constexpr std::array<double, 15> points{
+      0.0, 0.5, 0.0, 0.5, 1.0, 0.0, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.25, 0.75, -0.5};
+  constexpr std::array<std::int32_t, 8> tetrahedra{0, 1, 2, 4, 0, 3, 1, 4};
+  constexpr std::array<std::int32_t, 2> regions{0, 0};
+  constexpr std::array<std::int32_t, 18> faces{
+      0, 1, 2, 0, 3, 1, 1, 4, 2, 0, 2, 4, 3, 4, 1, 0, 4, 3};
+  constexpr std::array<std::int32_t, 6> face_sources{0, 1, 2, 3, 4, 5};
+  constexpr std::array<std::int8_t, 6> face_orientations{1, 1, 1, 1, 1, 1};
+  constexpr std::array<std::int32_t, 6> source_face_groups{0, 1, 2, 3, 4, 5};
+  constexpr std::array<std::int64_t, 6> source_face_ids{300, 301, 302, 303, 304, 305};
+  constexpr std::array<double, 6> source_face_tolerances{};
+  constexpr std::array<std::int32_t, 0> no_segments{};
+  constexpr std::array<std::int64_t, 0> no_segment_ids{};
+  constexpr std::array<double, 0> no_segment_tolerances{};
+  constexpr std::array<SourceWitness, 0> no_witnesses{};
+  const SourceComplexView source{
+      std::span<const double>(points),
+      std::span<const std::int32_t>(faces),
+      std::span<const std::int32_t>(source_face_groups),
+      std::span<const std::int64_t>(source_face_ids),
+      std::span<const double>(source_face_tolerances),
+      std::span<const std::int32_t>(no_segments),
+      std::span<const std::int32_t>(no_segments),
+      std::span<const std::int64_t>(no_segment_ids),
+      std::span<const double>(no_segment_tolerances),
+      std::span<const SourceWitness>(no_witnesses)};
+
+  const auto split = [&](double parameter) {
+    TetMesh mesh(BoundaryPolicy::kConforming);
+    const std::int32_t build_status = mesh.build(
+        points, tetrahedra, regions, faces, face_sources, face_orientations,
+        no_segments, no_segments, std::span<const double>{}, &source);
+    PHX_CHECK(build_status == PHX_MC_OK);
+    if (build_status != PHX_MC_OK) return TetEditStatus::kRejectedTopology;
+    constexpr std::array<std::uint64_t, 5> vertex_ids{0, 1, 2, 3, 4};
+    constexpr std::array<std::uint64_t, 2> cell_ids{100, 101};
+    constexpr std::array<std::uint64_t, 6> facet_ids{200, 201, 202, 203, 204, 205};
+    PHX_CHECK(mesh.assign_initial_ids(vertex_ids, cell_ids, facet_ids,
+                                      std::span<const std::uint64_t>{}) == PHX_MC_OK);
+
+    TetEditVertex inserted;
+    inserted.id = 5;
+    // Each coordinate is one correctly rounded operation on exact values.
+    inserted.carrier = {0.5 * parameter, 0.5 + 0.5 * parameter, 0.0};
+    inserted.has_edge_parameter = true;
+    inserted.edge_witness_supplied = true;
+    inserted.edge_endpoints = {0, 1};
+    inserted.edge_parameter = parameter;
+
+    const auto cell = [](std::uint64_t id, std::array<std::uint64_t, 4> vertices,
+                         std::array<std::int32_t, 4> sources, std::uint64_t parent) {
+      TetEditCell result;
+      result.id = id;
+      result.vertices = vertices;
+      result.facet_sources = sources;
+      result.region = 0;
+      result.ancestor_cell_ids = {parent};
+      return result;
+    };
+    TetEdit operation;
+    operation.kind = TetEditKind::kSplit;
+    operation.split_edges.push_back({0, 1});
+    operation.removed_cell_ids = {100, 101};
+    operation.changed_vertices.push_back(inserted);
+    operation.replacement_cells = {
+        cell(102, {0, 5, 2, 4}, {kNoConstraint, 3, kNoConstraint, 0}, 100),
+        cell(103, {5, 1, 2, 4}, {2, kNoConstraint, kNoConstraint, 0}, 100),
+        cell(104, {0, 3, 5, 4}, {kNoConstraint, kNoConstraint, 5, 1}, 101),
+        cell(105, {5, 3, 1, 4}, {4, kNoConstraint, kNoConstraint, 1}, 101)};
+    operation.removed_facet_ids = {200, 201};
+    operation.replacement_facets = {
+        {206, {0, 5, 2}, 0, 1, false},
+        {207, {5, 1, 2}, 0, 1, false},
+        {208, {1, 5, 3}, 1, 1, false},
+        {209, {5, 0, 3}, 1, 1, false}};
+    TetEditBatch batch;
+    batch.expected_generation = mesh.generation();
+    batch.source_revision = mesh.source_revision();
+    batch.frame_id = mesh.frame_id();
+    batch.identity_bound = mesh.identity_bound();
+    batch.operations.push_back(std::move(operation));
+    batch.source_id = mesh.source_id();
+    batch.source_map_id = mesh.source_map_id();
+    batch.periodic_identity = mesh.periodic_identity();
+    std::vector<TetEditResult> results;
+    const TetEditStatus batch_status = mesh.apply_edit_batch(batch, results);
+    if (batch_status != TetEditStatus::kApplied) return batch_status;
+    if (results.size() != 1) return TetEditStatus::kRejectedTopology;
+    return results.front().status;
+  };
+
+  // The full-precision metric midpoint rounds y off the diagonal y = x + 0.5
+  // (y - 0.5 is exact for y in [0.5, 1)).
+  constexpr double rounded = 0x1.9aed20c368972p-2;
+  PHX_CHECK((0.5 + 0.5 * rounded) - 0.5 != 0.5 * rounded);
+  PHX_CHECK(split(rounded) == TetEditStatus::kInvalidGeometry);
+  PHX_CHECK(split(13.0 / 32.0) == TetEditStatus::kApplied);
 }
 
 void relocation_checks_incident_source_facets_atomically() {
@@ -2418,7 +2525,7 @@ void relocation_checks_incident_source_facets_atomically() {
   off_adjacent_source.protection_radius = mesh.protection_radius(midpoint_slot);
   off_adjacent_source.protected_vertex = mesh.protected_vertex(midpoint_slot);
   PHX_CHECK(mesh.relocate(std::span(&off_adjacent_source, 1), affected) ==
-            TetEditStatus::kUncertainPredicate);
+            TetEditStatus::kInvalidGeometry);
   TetMeshSnapshot after_rejection;
   PHX_CHECK(mesh.snapshot(after_rejection) == TetEditStatus::kApplied);
   PHX_CHECK(after_rejection.generation == before_invalid.generation);
@@ -2861,6 +2968,7 @@ int main() {
   relocation_preserves_or_clears_edge_witnesses_explicitly();
   replacement_facet_requires_its_own_source_geometry();
   split_edge_preserves_exact_ghost_boundary_coverage();
+  split_on_shared_source_diagonal_needs_an_exact_edge_point();
   relocation_checks_incident_source_facets_atomically();
   exact_boundary_subface_coverage_rejects_gap_reversal_and_overlap();
   declared_plane_admission_refuses_and_records_vertices();
