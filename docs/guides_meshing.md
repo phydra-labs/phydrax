@@ -708,6 +708,10 @@ segments and original polygon-loop edges, including shared seams between polygon
 of one facet. Edges introduced only by recovery triangulation are not source curves;
 they retain their incident source-facet and region-side ancestry and are associated
 to the facet rather than assigned a new curve identity.
+Coplanar grouped facets, including internal material interfaces, need not be
+faces of the initial tetrahedralization. Recovery retains their authored
+subfaces until an alternative planar mesh covers the group exactly, then
+preserves its facet identity and region sides on the recovered faces.
 
 Native PLC boundary recovery splits a missing segment or subface only at exactly
 witnessed source points (`S = A + t(B - A)` or `A + l1(B - A) + l2(C - A)` with
