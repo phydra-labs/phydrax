@@ -261,7 +261,6 @@ class BRepDefeatureResult(StrictModule):
     g1_edges: tuple[BRepEntityId, ...] = eqx.field(static=True)
     model: BRepModel | None
     volume_change_enclosure: Array
-    volume_gap_error_bound: Array
     hausdorff_enclosure: Array
     intersection_rounding_bounds: Array
     g1_angle_bounds: Array
@@ -279,7 +278,6 @@ class BRepDefeatureResult(StrictModule):
         model: BRepModel | None,
         volume_coefficients: tuple[Fraction, Fraction, Fraction] | None = None,
         volume_enclosure: tuple[float, float] | None = None,
-        volume_gap_error_bound: float = 0.0,
         hausdorff_enclosure: tuple[float, float] = (0.0, 0.0),
         intersection_kind: BRepDefeatureIntersectionKind = "none",
         carrier_intent_points: tuple[_Vector, ...] = (),
@@ -420,9 +418,6 @@ class BRepDefeatureResult(StrictModule):
         self.volume_change_enclosure = jnp.asarray(
             () if bounds is None else bounds, dtype=jnp.float64
         )
-        self.volume_gap_error_bound = jnp.asarray(
-            () if model is None else volume_gap_error_bound, dtype=jnp.float64
-        )
         self.hausdorff_enclosure = jnp.asarray(
             () if model is None else hausdorff_enclosure, dtype=jnp.float64
         )
@@ -555,11 +550,10 @@ def brep_defeature(
         margin = fraction_up(
             Fraction(margin) + Fraction(source_gap) + Fraction(target_gap)
         )
-        volume_gap = 0.0
         enclosure = None
         if coefficients is None or margin:
             coefficients = None
-            enclosure, volume_gap = _volume_difference(
+            enclosure = _volume_difference(
                 model, target, builder, points, float(volume_relative_tolerance)
             )
         distance = (
@@ -633,7 +627,6 @@ def brep_defeature(
         model=target,
         volume_coefficients=coefficients,
         volume_enclosure=enclosure,
-        volume_gap_error_bound=volume_gap,
         hausdorff_enclosure=distance,
         intersection_kind=intersection_kind,
         carrier_intent_points=points,
@@ -750,7 +743,12 @@ def _volume_difference(
     points: tuple[_Vector, ...],
     relative_tolerance: float,
     /,
-) -> tuple[tuple[float, float], float]:
+) -> tuple[float, float]:
+    """Enclose the volume change from the two certified source measures.
+
+    Each measure already includes the flux of the strips and fans closing its
+    model's certified edge-face and vertex gaps.
+    """
     source_mass = brep_mass_properties(source, relative_tolerance=relative_tolerance)
     target_mass = brep_mass_properties(target, relative_tolerance=relative_tolerance)
     for label, measured in (("source", source_mass), ("target", target_mass)):
@@ -763,18 +761,13 @@ def _volume_difference(
     intent = _planar_volume_intent(builder, target.geometry, points)
     if intent is not None:
         target_bounds = min(target_bounds[0], intent[0]), max(target_bounds[1], intent[1])
-    gap = _gap_flux_bound(source) + _gap_flux_bound(target)
-    lower = (
-        Fraction(target_bounds[0])
-        - Fraction(float(source_mass.volume_enclosures[0, 1]))
-        - gap
+    lower = Fraction(target_bounds[0]) - Fraction(
+        float(source_mass.volume_enclosures[0, 1])
     )
-    upper = (
-        Fraction(target_bounds[1])
-        - Fraction(float(source_mass.volume_enclosures[0, 0]))
-        + gap
+    upper = Fraction(target_bounds[1]) - Fraction(
+        float(source_mass.volume_enclosures[0, 0])
     )
-    return (fraction_down(lower), fraction_up(upper)), fraction_up(gap)
+    return fraction_down(lower), fraction_up(upper)
 
 
 def _gap_upper(geometry: BRepGeometry, /) -> float:
@@ -831,106 +824,6 @@ def _planar_volume_intent(
             "brep_defeature.publication lost its rational rounding enclosure."
         )
     return float(enclosure[0]), float(enclosure[1])
-
-
-def _interval_norm_upper(lower: np.ndarray, upper: np.ndarray, /) -> Fraction:
-    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
-        raise _Unresolved(
-            "brep_defeature.certificate must decide the requested operation; "
-            "native first-jet bounds do not certify a finite closing-gap flux"
-        )
-    magnitude = tuple(
-        max(abs(Fraction(float(a))), abs(Fraction(float(b))))
-        for a, b in zip(lower.reshape(-1), upper.reshape(-1), strict=True)
-    )
-    return Fraction(square_root_interval(_dot(magnitude, magnitude))[1])
-
-
-def _gap_flux_bound(model: BRepModel, /) -> Fraction:
-    """Bound the volume flux caused by certified curve-to-vertex/face gaps.
-
-    A same-parameter bridge of width d contributes at most
-    d*(length(source)+length(lift)); endpoint closing triangles add 2*d**2
-    per coedge. Whole-range first-jet bounds enclose both lengths.
-    """
-    geometry = model.geometry
-    delta = Fraction(_gap_upper(geometry))
-    if delta == 0:
-        return Fraction()
-    total = Fraction()
-    for face, loops in enumerate(geometry.face_loops):
-        active = tuple(
-            (coedge, gap)
-            for loop in loops
-            for coedge in loop
-            if (gap := _coedge_gap(geometry, coedge)) > 0
-        )
-        if not active:
-            continue
-        patch = model.patches[face]
-        box = np.asarray(model.parameter_bounds[face])
-        positions = _source_surface_box(model, face)
-        coordinate = tuple(
-            max(abs(Fraction(float(a))), abs(Fraction(float(b)))) + delta
-            for a, b in zip(positions[0], positions[1], strict=True)
-        )
-        radius = Fraction(square_root_interval(_dot(coordinate, coordinate))[1])
-        jacobian = patch.derivative_bounds(box)
-        for coedge, gap in active:
-            length = _gap_bridge_length(geometry, coedge, jacobian)
-            total += radius * (gap * length + 2 * gap**2) / 3
-    return total
-
-
-def _coedge_gap(geometry: BRepGeometry, coedge: int, /) -> Fraction:
-    edge = geometry.coedge_edges[coedge]
-    endpoint_rows = geometry.edge_vertex_gap_bounds
-    face_rows = geometry.edge_face_gap_bounds
-    vertex_gap = (
-        Fraction(max(endpoint_rows[edge])) if endpoint_rows is not None else Fraction()
-    )
-    face_gap = Fraction(face_rows[coedge]) if face_rows is not None else Fraction()
-    return vertex_gap + face_gap
-
-
-def _gap_bridge_length(
-    geometry: BRepGeometry,
-    coedge: int,
-    jacobian: tuple[np.ndarray, np.ndarray],
-    /,
-) -> Fraction:
-    edge = geometry.coedge_edges[coedge]
-    curve_index = geometry.edge_curves[edge]
-    if curve_index < 0:
-        raise _Refusal(
-            "brep_defeature.family must have a supported analytic certificate; "
-            "closing positive pole-edge gaps requires a separate flux certificate"
-        )
-    first, last = geometry.source_curve_parameter_domain(edge)
-    curve = geometry.curves[curve_index]
-    pcurve = geometry.pcurves[coedge]
-    curve_speed = _interval_norm_upper(*curve.derivative_bounds(first, last))
-    du, dv = pcurve.derivative_bounds(first, last)
-    parameter = tuple(
-        max(abs(Fraction(float(a))), abs(Fraction(float(b))))
-        for a, b in zip(du, dv, strict=True)
-    )
-    velocity = tuple(
-        sum(
-            (
-                max(
-                    abs(Fraction(float(jacobian[0][row, axis]))),
-                    abs(Fraction(float(jacobian[1][row, axis]))),
-                )
-                * parameter[axis]
-                for axis in range(2)
-            ),
-            Fraction(),
-        )
-        for row in range(3)
-    )
-    lift_speed = Fraction(square_root_interval(_dot(velocity, velocity))[1])
-    return (Fraction(last) - Fraction(first)) * (curve_speed + lift_speed)
 
 
 def _transport_names(
