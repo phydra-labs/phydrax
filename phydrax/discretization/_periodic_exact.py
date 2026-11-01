@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg._exact import determinant_exact, factor_exact_sparse
 from ._periodic_cell import PeriodicCell
 
 
@@ -108,27 +109,6 @@ def _inverse_isometry(matrix: ExactIsometry, /) -> ExactIsometry:
     return tuple(
         tuple(inverse_rotation[row]) + (inverse_offset[row],) for row in range(dimension)
     ) + (tuple(Fraction() for _ in range(dimension)) + (Fraction(1),),)
-
-
-def _determinant(matrix: tuple[tuple[Fraction, ...], ...], /) -> Fraction:
-    rows = [list(row) for row in matrix]
-    determinant = Fraction(1)
-    for column in range(len(rows)):
-        pivot = next((row for row in range(column, len(rows)) if rows[row][column]), None)
-        if pivot is None:
-            return Fraction()
-        if pivot != column:
-            rows[column], rows[pivot] = rows[pivot], rows[column]
-            determinant = -determinant
-        value = rows[column][column]
-        determinant *= value
-        for row in range(column + 1, len(rows)):
-            if not rows[row][column]:
-                continue
-            scale = rows[row][column] / value
-            for inner in range(column + 1, len(rows)):
-                rows[row][inner] -= scale * rows[column][inner]
-    return determinant
 
 
 def _totient(value: int, /) -> int:
@@ -245,30 +225,11 @@ def _validate_faithful_generators(
                 )
             finite.append((matrix, order))
     if translations:
-        rows = [list(row) for row in zip(*translations, strict=True)]
-        rank = 0
-        column = 0
-        while rank < len(rows) and column < len(translations):
-            pivot = next(
-                (index for index in range(rank, len(rows)) if rows[index][column]),
-                None,
-            )
-            if pivot is None:
-                column += 1
-                continue
-            rows[rank], rows[pivot] = rows[pivot], rows[rank]
-            divisor = rows[rank][column]
-            rows[rank] = [value / divisor for value in rows[rank]]
-            for index in range(len(rows)):
-                if index == rank or not rows[index][column]:
-                    continue
-                factor = rows[index][column]
-                rows[index] = [
-                    value - factor * pivot_value
-                    for value, pivot_value in zip(rows[index], rows[rank], strict=True)
-                ]
-            rank += 1
-            column += 1
+        rows = [
+            {column: value for column, value in enumerate(row) if value}
+            for row in zip(*translations, strict=True)
+        ]
+        rank = factor_exact_sparse(rows, len(translations)).evidence.rank
         if rank != len(translations):
             raise PeriodicIsometryIdentityError(
                 "Infinite translational generators must be rationally independent."
@@ -317,7 +278,7 @@ def _proper_isometry(matrix: ExactIsometry, /) -> None:
         raise PeriodicIsometryIdentityError(
             "Periodic generators must be exact Euclidean isometries of represented coordinates."
         )
-    if _determinant(linear) != 1:
+    if determinant_exact(linear) != 1:
         raise PeriodicIsometryIdentityError(
             "Periodic generators must preserve orientation exactly."
         )

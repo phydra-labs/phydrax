@@ -9,13 +9,15 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
-from math import comb, nextafter, prod
+from math import comb, lcm, nextafter, prod
 from numbers import Integral
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING
 
 import numpy as np
 
+from .._exact_kernels import interval_bernstein_restrict
 from .._fingerprint import canonical_fingerprint
+from .._meshcore import meshcore_available
 
 
 if TYPE_CHECKING:
@@ -466,10 +468,45 @@ def tensor_bspline_span_extraction(
     return anchor_ids, operator
 
 
+def _shared_denominator(values: Sequence[ExactScalar], /) -> tuple[list[int], int]:
+    """Integer numerators over the least common denominator of `Fraction` values.
+
+    Callers establish with `_all_fractions` that every value is rational.
+    """
+    rationals = cast(Sequence[Fraction], values)
+    denominator = lcm(*(value.denominator for value in rationals))
+    return [
+        value.numerator * (denominator // value.denominator) for value in rationals
+    ], denominator
+
+
+def _all_fractions(*groups: Sequence[object]) -> bool:
+    return all(isinstance(value, Fraction) for group in groups for value in group)
+
+
 def _bernstein_product(
     left: Sequence[ExactScalar], right: Sequence[ExactScalar], /
 ) -> tuple[ExactScalar, ...]:
     left_degree, right_degree = len(left) - 1, len(right) - 1
+    if _all_fractions(left, right):
+        # Rational nets multiply as integer numerators over one shared
+        # denominator; each product coefficient is normalized once.
+        left_numerators, left_denominator = _shared_denominator(left)
+        right_numerators, right_denominator = _shared_denominator(right)
+        sums = [0] * (left_degree + right_degree + 1)
+        for left_index, left_value in enumerate(left_numerators):
+            if not left_value:
+                continue
+            left_weight = comb(left_degree, left_index) * left_value
+            for right_index, right_value in enumerate(right_numerators):
+                sums[left_index + right_index] += (
+                    left_weight * comb(right_degree, right_index) * right_value
+                )
+        denominator = left_denominator * right_denominator
+        return tuple(
+            Fraction(value, comb(left_degree + right_degree, index) * denominator)
+            for index, value in enumerate(sums)
+        )
     result: list[ExactScalar] = [
         Fraction(0) for _ in range(left_degree + right_degree + 1)
     ]
@@ -525,6 +562,21 @@ def _bernstein_split(
     row = tuple(coefficients)
     left = [row[0]]
     right = [row[-1]]
+    if isinstance(parameter, Fraction) and _all_fractions(row):
+        # De Casteljau on integer numerators: with t = p / q, level k shares
+        # the denominator D * q**k, so each step is integer arithmetic.
+        level, denominator = _shared_denominator(row)
+        step, scale = parameter.numerator, parameter.denominator
+        complement = scale - step
+        while len(level) > 1:
+            level = [
+                complement * first + step * second
+                for first, second in zip(level[:-1], level[1:], strict=True)
+            ]
+            denominator *= scale
+            left.append(Fraction(level[0], denominator))
+            right.append(Fraction(level[-1], denominator))
+        return tuple(left), tuple(reversed(right))
     while len(row) > 1:
         row = tuple(
             (1 - parameter) * first + parameter * second
@@ -1129,6 +1181,52 @@ def _tensor_bernstein_product(
 ) -> tuple[tuple[ExactScalar, ...], ...]:
     first_u, first_v = _tensor_bernstein_shape(first)
     second_u, second_v = _tensor_bernstein_shape(second)
+    if _all_fractions(*first, *second):
+        # Integer numerators over one shared denominator per net; the binomial
+        # weights are integers until the single normalization per coefficient.
+        first_numerators, first_denominator = _shared_denominator(
+            [value for row in first for value in row]
+        )
+        second_numerators, second_denominator = _shared_denominator(
+            [value for row in second for value in row]
+        )
+        sums = [[0] * (first_v + second_v + 1) for _ in range(first_u + second_u + 1)]
+        second_terms = tuple(
+            (
+                second_u_index,
+                second_v_index,
+                comb(second_u, second_u_index)
+                * comb(second_v, second_v_index)
+                * second_numerators[second_u_index * (second_v + 1) + second_v_index],
+            )
+            for second_u_index in range(second_u + 1)
+            for second_v_index in range(second_v + 1)
+        )
+        for first_u_index in range(first_u + 1):
+            for first_v_index in range(first_v + 1):
+                value = first_numerators[first_u_index * (first_v + 1) + first_v_index]
+                if not value:
+                    continue
+                weight = (
+                    comb(first_u, first_u_index) * comb(first_v, first_v_index) * value
+                )
+                for second_u_index, second_v_index, second_value in second_terms:
+                    sums[first_u_index + second_u_index][
+                        first_v_index + second_v_index
+                    ] += weight * second_value
+        denominator = first_denominator * second_denominator
+        return tuple(
+            tuple(
+                Fraction(
+                    value,
+                    comb(first_u + second_u, u_index)
+                    * comb(first_v + second_v, v_index)
+                    * denominator,
+                )
+                for v_index, value in enumerate(row)
+            )
+            for u_index, row in enumerate(sums)
+        )
     result: list[list[ExactScalar]] = [
         [Fraction(0) for _ in range(first_v + second_v + 1)]
         for _ in range(first_u + second_u + 1)
@@ -1228,20 +1326,27 @@ def _tensor_bernstein_derivative(
 # smallest subnormal covers gradual underflow.
 _INTERVAL_ROUNDING = 4.0 * float(np.finfo(np.float64).eps)
 _INTERVAL_UNDERFLOW = float(np.finfo(np.float64).smallest_subnormal)
-# Restricted group bounds of one surface span per (group, exact relative box).
-type SpanRestrictions = dict[
-    tuple[str, tuple[ExactScalar, ...]], tuple[tuple[Fraction, Fraction], ...]
-]
+
+
+def _rounding_sign(result: float, value: Fraction, /) -> int:
+    """Sign of ``result - value``; rationals use one integer cross-multiplication."""
+    if type(value) is not Fraction and type(value) is not int:
+        represented = Fraction(result)
+        return (represented > value) - (represented < value)
+    numerator, denominator = result.as_integer_ratio()
+    left = numerator * value.denominator
+    right = value.numerator * denominator
+    return (left > right) - (left < right)
 
 
 def _binary64_down(value: Fraction, /) -> float:
     result = float(value)
-    return result if Fraction(result) <= value else nextafter(result, -np.inf)
+    return result if _rounding_sign(result, value) <= 0 else nextafter(result, -np.inf)
 
 
 def _binary64_up(value: Fraction, /) -> float:
     result = float(value)
-    return result if Fraction(result) >= value else nextafter(result, np.inf)
+    return result if _rounding_sign(result, value) >= 0 else nextafter(result, np.inf)
 
 
 def _interval_stack(
@@ -1362,6 +1467,21 @@ def _interval_restrict_axis0(
         raise ValueError(
             "Bernstein restriction bounds must satisfy 0 <= lower <= upper <= 1."
         )
+    if (last < 1 or first > 0) and meshcore_available():
+        # The native kernel repeats `_interval_casteljau_step` operation for
+        # operation, so the restricted net is bit-identical.
+        parameters = np.zeros((1, 4), dtype=np.float64)
+        sides = 0
+        if last < 1:
+            parameters[0, :2] = _interval_parameter(last)
+            sides |= 1
+        if first > 0:
+            parameters[0, 2:] = _interval_ratio(first, last)
+            sides |= 2
+        restricted_lower, restricted_upper = interval_bernstein_restrict(
+            lower[None], upper[None], parameters, np.asarray((sides,), dtype=np.int32)
+        )
+        return restricted_lower[0], restricted_upper[0]
     if last < 1:
         parameter = _interval_parameter(last)
         left_lower, left_upper = [lower[0]], [upper[0]]
@@ -1572,29 +1692,16 @@ class RationalBSplineSurfaceSpan:
         self,
         name: str,
         relative_bounds: tuple[ExactScalar, ExactScalar, ExactScalar, ExactScalar],
-        restrictions: SpanRestrictions | None,
         /,
     ) -> tuple[tuple[Fraction, Fraction], ...]:
-        """Outward-rounded bounds of one prepared net group on a relative sub-box.
-
-        ``restrictions`` is the restriction memo a `PreparedSourceSpans` owns
-        for this span; without it the restriction is computed for this query.
-        """
-        key = (name, relative_bounds)
-        if restrictions is not None:
-            restricted = restrictions.get(key)
-            if restricted is not None:
-                return restricted
+        """Outward-rounded bounds of one prepared net group on a relative sub-box."""
         net = self._interval_nets.get(name)
         if net is None:
             net = _interval_tensor_stack(self._exact_group(name))
             self._interval_nets[name] = net
-        restricted = _interval_component_bounds(
+        return _interval_component_bounds(
             *_interval_tensor_restrict(net, *relative_bounds)
         )
-        if restrictions is not None:
-            restrictions[key] = restricted
-        return restricted
 
     def _derivative_data(
         self,
@@ -1602,7 +1709,6 @@ class RationalBSplineSurfaceSpan:
         /,
         *,
         include_hessian: bool,
-        restrictions: SpanRestrictions | None,
     ) -> _RationalSurfaceDerivativeData:
         if len(parameter_bounds) != 2 or any(
             len(axis_bounds) != 2 for axis_bounds in parameter_bounds
@@ -1632,7 +1738,7 @@ class RationalBSplineSurfaceSpan:
             relative_lower_v,
             relative_upper_v,
         )
-        homogeneous_bounds = self._bounds("homogeneous", relative_bounds, restrictions)
+        homogeneous_bounds = self._bounds("homogeneous", relative_bounds)
         # Every restricted weight is a convex combination of the span weights.
         denominator_bounds = (
             max(homogeneous_bounds[-1][0], self.positive_denominator_lower_bound),
@@ -1644,11 +1750,11 @@ class RationalBSplineSurfaceSpan:
         )
         du_bounds = tuple(
             _positive_quotient_bounds(bounds, denominator_squared_bounds)
-            for bounds in self._bounds("du", relative_bounds, restrictions)
+            for bounds in self._bounds("du", relative_bounds)
         )
         dv_bounds = tuple(
             _positive_quotient_bounds(bounds, denominator_squared_bounds)
-            for bounds in self._bounds("dv", relative_bounds, restrictions)
+            for bounds in self._bounds("dv", relative_bounds)
         )
         duu_bounds = None
         duv_bounds = None
@@ -1665,7 +1771,7 @@ class RationalBSplineSurfaceSpan:
             duu_bounds, duv_bounds, dvv_bounds = (
                 tuple(
                     _positive_quotient_bounds(bounds, denominator_cubed_bounds)
-                    for bounds in self._bounds(name, relative_bounds, restrictions)
+                    for bounds in self._bounds(name, relative_bounds)
                 )
                 for name in ("duu", "duv", "dvv")
             )
@@ -1685,12 +1791,8 @@ class RationalBSplineSurfaceSpan:
         self,
         parameter_bounds: Sequence[Sequence[ExactScalar | int | float]],
         /,
-        *,
-        restrictions: SpanRestrictions | None = None,
     ) -> RationalBSplineSurfaceDerivativeEnclosure:
-        data = self._derivative_data(
-            parameter_bounds, include_hessian=False, restrictions=restrictions
-        )
+        data = self._derivative_data(parameter_bounds, include_hessian=False)
         return RationalBSplineSurfaceDerivativeEnclosure(
             self.source_id,
             self.span_indices,
@@ -1705,12 +1807,8 @@ class RationalBSplineSurfaceSpan:
         self,
         parameter_bounds: Sequence[Sequence[ExactScalar | int | float]],
         /,
-        *,
-        restrictions: SpanRestrictions | None = None,
     ) -> RationalBSplineSurfaceHessianEnclosure:
-        data = self._derivative_data(
-            parameter_bounds, include_hessian=True, restrictions=restrictions
-        )
+        data = self._derivative_data(parameter_bounds, include_hessian=True)
         if data.duu_bounds is None or data.duv_bounds is None or data.dvv_bounds is None:
             raise RuntimeError(
                 "Exact Hessian bounds require prepared Hessian numerators."
@@ -1732,12 +1830,8 @@ class RationalBSplineSurfaceSpan:
         self,
         parameter_bounds: Sequence[Sequence[ExactScalar | int | float]],
         /,
-        *,
-        restrictions: SpanRestrictions | None = None,
     ) -> RationalBSplineSurfaceSpanEnclosure:
-        data = self._derivative_data(
-            parameter_bounds, include_hessian=False, restrictions=restrictions
-        )
+        data = self._derivative_data(parameter_bounds, include_hessian=False)
         value_bounds = tuple(
             _positive_quotient_bounds(bounds, data.denominator_bounds)
             for bounds in data.homogeneous_bounds[:-1]
@@ -1950,19 +2044,10 @@ class PreparedSourceSpans[SpanT: (RationalBSplineCurveSpan, RationalBSplineSurfa
     from. Carriers build this artifact on request without keeping it; a
     consumer that runs a long computation prepares it once per carrier, owns
     it for the computation's lifetime and passes it to every routine.
-    ``restrictions[row]`` memoizes the restricted bounds of ``spans[row]`` per
-    exact relative box: refinement and certification query the same cell
-    boxes, so each restriction runs once while the consumer holds the spans.
     """
 
     source_id: str
     spans: tuple[SpanT, ...]
-    restrictions: tuple[SpanRestrictions, ...] = field(
-        init=False, repr=False, compare=False
-    )
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "restrictions", tuple({} for _ in self.spans))
 
 
 def _matches_binary64_shadow(numeric: object, exact: ExactScalar, /) -> bool:
