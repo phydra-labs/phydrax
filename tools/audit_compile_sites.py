@@ -23,10 +23,13 @@ configuration. The audit statically reports every other construction:
 - ``closure-owned-method``: such a callable passed as the method of
   ``run_owned_program``, whose program key is the owner and phase only.
 
-Sites with an owned lifetime that the rules cannot see are recorded with a
+Sites with an owned lifetime that the rules cannot see, explicit compile APIs,
+and deliberate one-shot qualification/calibration programs are recorded with a
 rationale in ``tools/audit_compile_sites_allowlist.toml`` (matched by file,
-qualified function and kind). ``--check`` exits non-zero on findings outside
-the allowlist and on allowlist entries that no longer match a finding.
+qualified function and kind). A clean report is not a claim that every transform
+is cached or that every wrapper is faster: AD, abstract evaluation and eager
+control-flow tracing require focused runtime measurements. ``--check`` exits
+non-zero on findings outside the allowlist and on stale allowlist entries.
 """
 
 from __future__ import annotations

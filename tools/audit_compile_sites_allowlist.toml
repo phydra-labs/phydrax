@@ -1,5 +1,12 @@
-# Compile sites with an owned lifetime the audit rules cannot see (tools/audit_compile_sites.py).
+# Reviewed compile sites (tools/audit_compile_sites.py): owned lifetimes, explicit
+# compile/export APIs, and deliberately one-shot qualification or calibration.
+# A one-shot exemption is not a claim that repeated calls reuse an executable.
 # Each entry matches by file, qualified function and kind; every entry needs a rationale.
+# The audit does not enumerate AD/eval_shape/control-flow tracing. In particular,
+# ScheduledFiniteVolumeRolloutPlan.gradient_report retains independent JVP/grad
+# diagnostics: whole-report wrappers regressed measured cold time and memory.
+# Linalg pairing/diagonal shapes, custom-root closures, prepared Riesz inverses,
+# and sparse route-order loops have separate runtime trace-reuse regressions.
 
 [[site]]
 file = "phydrax/_execution_collectives.py"
@@ -59,7 +66,7 @@ rationale = "One-shot AOT evidence: lowered, compiled, workspace-admitted and ru
 file = "phydrax/atomistic/_training_distribution.py"
 function = "AtomisticTrainingDistributionPlan.map.mapped"
 kind = "per-call-compile"
-rationale = "Transform combinator: returns the shard_map transform; the program is compiled by the caller's enclosing trace."
+rationale = "Transform combinator: the returned mapped callable builds shard_map inside its caller's trace. Direct eager calls rebuild the transform; this exemption is not an eager-reuse claim."
 
 [[site]]
 file = "phydrax/discretization/_lowered_operator.py"
@@ -209,7 +216,7 @@ rationale = "Prepare-time: native method state is prepared once per training run
 file = "phydrax/solver/_moving_overset_poisson.py"
 function = "_owner_local_poisson_part"
 kind = "per-call-compile"
-rationale = "Per-solve topology: gather indices and shapes are this solve's owner-route topology, which every mesh move changes, so no later call could reuse it."
+rationale = "One-shot owner-part solve: constructs and executes a pmap over this solve's route indices and shapes. Separate calls, including identical topology, rebuild it; no cross-solve reuse or speedup is claimed."
 
 [[site]]
 file = "phydrax/solver/_production_resources.py"
