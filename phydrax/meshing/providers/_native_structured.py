@@ -602,10 +602,10 @@ def _structured_curve_witness(
     /,
 ) -> SourceBoundaryChartWitness | None:
     query = source.fidelity_source
-    if combined.mesh.topological_dimension != 2:
+    if (combined.mesh.topological_dimension, combined.mesh.ambient_dimension) != (2, 2):
         return None
     if not isinstance(query, ParametricCurveBoundarySource):
-        raise ValueError("Structured surface fidelity requires authored curve charts.")
+        raise ValueError("Planar structured fidelity requires authored curve charts.")
     mesh = combined.mesh
     source_blocks = {block.name: block for block in source.blocks}
     local_blocks = {item.mesh.blocks[0].name: item for item in constructions}

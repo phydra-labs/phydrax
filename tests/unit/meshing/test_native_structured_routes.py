@@ -58,7 +58,7 @@ from phydrax.meshing.providers._native_structured import (
 
 
 def _curve(
-    points: tuple[tuple[float, float], ...],
+    points: tuple[tuple[float, ...], ...],
     /,
     *,
     source_id: str,
@@ -582,6 +582,56 @@ def test_native_structured_provider_returns_canonical_construction_data() -> Non
         label.name.startswith("structured-boundary:")
         for label in construction.organization.labels
     )
+
+
+def test_embedded_structured_surface_preserves_its_surface_query() -> None:
+    domain = PiecewiseLinearDomain(
+        np.asarray(((0., 0., 0.), (2., 0., 0.), (0., 2., 0.), (0., 0., 2.))),
+        np.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=np.int64),
+        np.tile(np.asarray((0, -1), dtype=np.int64), (4, 1)),
+        ("solid",),
+        source_id="embedded-structured-source",
+    )
+    query = PiecewiseLinearBoundarySource(
+        _SweepPwlDomainOwner(domain), 2, entity_ids=np.asarray((0,), dtype=np.int64)
+    )
+    edges = (
+        ((0., 0., 0.), (0., 0.5, 0.)),
+        ((0.5, 0., 0.), (0.5, 0.5, 0.)),
+        ((0., 0., 0.), (0.5, 0., 0.)),
+        ((0., 0.5, 0.), (0.5, 0.5, 0.)),
+    )
+    block = TransfiniteBlock(
+        "embedded",
+        tuple(
+            _curve(points, source_id=f"embedded:edge:{row}", intervals=2)
+            for row, points in enumerate(edges)
+        ),
+    )
+    source = NativeStructuredSource(
+        (block,), (), domain.source_id, domain.source_revision,
+        fidelity_source=query, maximum_deviation=1e-12,
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("quadrilateral",))),
+        MeshingScope.whole(source, 2),
+        size_controls=(),
+        quality_target=MeshQualityTarget(minimum_angle=0.2),
+    )
+    construction = prepare_native_structured(
+        source, specification,
+        NativeMeshingOptions(
+            "structured_transfinite", structured_schedule=NativeStructuredSchedule()
+        ),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    assert construction.mesh.ambient_dimension == 3
+    assert construction.mesh.blocks[0].cell_kind == "quadrilateral"
+    assert construction.compliance.passed
+    assert construction.certification.schedule.route == "surface"
+    assert construction.certification.fidelity_source is query
+    assert construction.certification.fidelity_witness is None
+    np.testing.assert_array_equal(np.asarray(construction.mesh.coordinates)[:, 2], 0.)
 
 
 @pytest.mark.parametrize("hard", (True, False))

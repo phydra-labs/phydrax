@@ -393,11 +393,15 @@ the independently authored `PiecewiseLinearDomain`. Canonical acceptance uses
 the planar coverage route and the declared block-to-region assignment, rather
 than treating the mesh as an embedded three-dimensional surface. Missing domain
 coverage premises are refused during source inspection.
-Surface block fidelity uses a `ParametricCurveBoundarySource` retaining the
+Planar block fidelity uses a `ParametricCurveBoundarySource` retaining the
 authored exterior curves and parameter intervals. Publication carries exact
 source/target chart coordinates and boundary curve associations; explicitly
 glued internal faces are excluded from the physical boundary witness. Association
 endpoint residuals are diagnostics, not substitutes for continuous fidelity.
+Embedded two-dimensional blocks in three-space instead retain their authored
+`SourceBoundaryQuery` and use surface certification. The planar curve witness
+does not apply to these blocks: their source query describes the surface, not
+only its one-dimensional boundary, and is not required to be a curve query.
 
 ### Sweep source identity and chart maps
 
