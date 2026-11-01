@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from ..._bvh import bvh_overlap_pairs_host, PackedBVH, prepare_bvh
+from ..._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -4145,43 +4145,61 @@ def _distance_lower(
     return np.nextafter(np.sqrt(total), 0.0)
 
 
-def _boxes_near_faces(
+def _box_face_pair_blocks(
     maps: _FaceMaps, lower: np.ndarray, upper: np.ndarray, reach: float, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """``(box, face)`` pairs whose boxes come within ``reach`` in every coordinate.
+) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
+    """Blocks of ``(box, face)`` pairs whose boxes come within ``reach`` in every coordinate.
 
     A face missing a box's pairs is farther than ``reach`` from the whole box.
+    Blocks stream, so no query materializes all pairs at once.
     """
-
+    if lower.shape[0] == 0:
+        return
     reached = prepare_bvh(
         np.nextafter(lower - reach, -np.inf),
         np.nextafter(upper + reach, np.inf),
         dtype=np.float64,
     )
-    faces, boxes = bvh_overlap_pairs_host(maps.bvh, reached, include_touching=True)
-    order = np.lexsort((faces, boxes))
-    return boxes[order], faces[order]
+    for faces, boxes in bvh_overlap_pair_blocks(maps.bvh, reached, include_touching=True):
+        yield np.asarray(boxes, dtype=np.int64), np.asarray(faces, dtype=np.int64)
+
+
+def _box_face_distance_lower(
+    maps: _FaceMaps, lower: np.ndarray, upper: np.ndarray, reach: float, /
+) -> np.ndarray:
+    """Per box, the least lower distance to the face boxes within ``reach``; else ``inf``."""
+    nearest = np.full((lower.shape[0],), np.inf, dtype=np.float64)
+    for boxes, faces in _box_face_pair_blocks(maps, lower, upper, reach):
+        np.minimum.at(
+            nearest,
+            boxes,
+            _distance_lower(
+                lower[boxes], upper[boxes], maps.box_lower[faces], maps.box_upper[faces]
+            ),
+        )
+    return nearest
 
 
 def _witness_distance_lower(
-    maps: _FaceMaps, points: np.ndarray, errors: np.ndarray, reach: float, /
+    maps: _FaceMaps, points: np.ndarray, errors: np.ndarray, tolerance: float, /
 ) -> float:
     """The largest certified distance from a retained source root to the target mesh.
 
-    Faces outside a root's ``reach`` are farther than ``reach`` from it, so the
-    root's distance is at least the lesser of ``reach`` and its nearby faces'.
+    Faces outside a reach ``r`` are farther than ``r`` from a root, so its
+    distance is the least lower distance to the faces within ``r`` once that is
+    below ``r``, and at least ``r`` when nothing comes within ``r``. The reach
+    doubles from a small fraction of the tolerance until one of these holds or
+    it exceeds the tolerance, so each query only meets the faces near a root.
     """
-    if points.shape[0] == 0:
-        return 0.0
-    nearest = np.full((points.shape[0],), reach, dtype=np.float64)
-    boxes, faces = _boxes_near_faces(maps, points, points, reach)
-    np.minimum.at(
-        nearest,
-        boxes,
-        _distance_lower(
-            points[boxes], points[boxes], maps.box_lower[faces], maps.box_upper[faces]
-        ),
-    )
+    nearest = np.empty((points.shape[0],), dtype=np.float64)
+    pending = np.arange(points.shape[0])
+    reach = tolerance * 2.0**-6
+    while pending.shape[0]:
+        found = _box_face_distance_lower(maps, points[pending], points[pending], reach)
+        settled = (found < reach) | (reach > tolerance)
+        nearest[pending[settled]] = np.minimum(found[settled], reach)
+        pending = pending[~settled]
+        reach = math.nextafter(2.0 * reach, math.inf)
     return float(
         np.max(np.maximum(np.nextafter(nearest - errors, -np.inf), 0.0), initial=0.0)
     )
@@ -4210,7 +4228,7 @@ def _source_to_mesh_bounds(
         maps,
         np.asarray(surface.boundary_witnesses, dtype=np.float64).reshape((-1, 3)),
         np.asarray(surface.boundary_errors, dtype=np.float64).reshape((-1,)),
-        math.nextafter(2.0 * tolerance, math.inf),
+        tolerance,
     )
     upper_bound = 0.0
     floor = tolerance * _REVERSE_COVER_FLOOR
@@ -4235,26 +4253,42 @@ def _source_to_mesh_bounds(
             0.5 * box_lower + 0.5 * box_upper,
             0.5 * box_lower + 0.5 * box_upper,
         )
-        boxes, faces = _boxes_near_faces(maps, box_lower, box_upper, tolerance)
-        near = np.zeros((pending.shape[0],), dtype=np.bool_)
-        near[boxes] = True
-        trial = radius[boxes] <= tolerance
-        boxes, faces = boxes[trial], faces[trial]
+        # Acceptance tries the faces nearest each small box's centre: the
+        # centre's reach doubles from a small fraction of the tolerance until
+        # some face box comes within it, so each query meets only nearby faces.
         reach = np.full((pending.shape[0],), np.inf, dtype=np.float64)
-        if boxes.shape[0]:
-            centers = 0.5 * box_lower[boxes] + 0.5 * box_upper[boxes]
-            first, second = _nearest_face_parameters(maps, faces, centers)
-            point_lower, point_upper = _face_point_enclosures(maps, faces, first, second)
-            np.minimum.at(
-                reach,
-                boxes,
-                _distance_upper(
-                    box_lower[boxes], box_upper[boxes], point_lower, point_upper
-                ),
-            )
+        trial = np.flatnonzero(radius <= tolerance)
+        centers = 0.5 * box_lower + 0.5 * box_upper
+        search = tolerance * 2.0**-6
+        while trial.shape[0] and search <= 2.0 * tolerance:
+            found = np.zeros((trial.shape[0],), dtype=np.bool_)
+            for boxes, faces in _box_face_pair_blocks(
+                maps, centers[trial], centers[trial], search
+            ):
+                found[boxes] = True
+                rows = trial[boxes]
+                first, second = _nearest_face_parameters(maps, faces, centers[rows])
+                point_lower, point_upper = _face_point_enclosures(
+                    maps, faces, first, second
+                )
+                np.minimum.at(
+                    reach,
+                    rows,
+                    _distance_upper(
+                        box_lower[rows], box_upper[rows], point_lower, point_upper
+                    ),
+                )
+            trial = trial[~found]
+            search = math.nextafter(2.0 * search, math.inf)
         accepted = reach <= tolerance
         if np.any(accepted):
             upper_bound = max(upper_bound, float(np.max(reach[accepted])))
+        near = accepted.copy()
+        undecided = np.flatnonzero(~accepted)
+        for boxes, _faces in _box_face_pair_blocks(
+            maps, box_lower[undecided], box_upper[undecided], tolerance
+        ):
+            near[undecided[boxes]] = True
         far = ~near & ~accepted
         for row in np.flatnonzero(far):
             corners = np.where(
