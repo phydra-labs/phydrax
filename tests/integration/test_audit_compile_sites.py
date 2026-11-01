@@ -168,3 +168,12 @@ def test_allowlist_matches_by_function_and_reports_stale_entries() -> None:
     assert report.findings == (findings[1],)
     assert report.allowed == (findings[0],)
     assert report.stale == (entries[1],)
+
+
+def test_package_has_no_unallowlisted_compile_sites() -> None:
+    report = audit.classify(
+        audit.audit(audit.PACKAGE), audit.load_allowlist(audit.ALLOWLIST)
+    )
+
+    assert report.findings == ()
+    assert report.stale == ()

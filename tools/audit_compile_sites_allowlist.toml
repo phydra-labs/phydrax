@@ -1,0 +1,284 @@
+# Compile sites with an owned lifetime the audit rules cannot see (tools/audit_compile_sites.py).
+# Each entry matches by file, qualified function and kind; every entry needs a rationale.
+
+[[site]]
+file = "phydrax/_execution_collectives.py"
+function = "prepare_collective_program"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: stages the collective program once; the returned CollectiveProgram owns its executable."
+
+[[site]]
+file = "phydrax/_owned_programs.py"
+function = "run_owned_program"
+kind = "per-call-compile"
+rationale = "The owned-program registry itself: one jitted program per (owner, phase), released with the owner."
+
+[[site]]
+file = "phydrax/_precision_rewrite.py"
+function = "prepare_precision_selection"
+kind = "per-call-compile"
+rationale = "Calibration: each candidate rewrite is compiled once to time its compiled latency; the measurement is the purpose."
+
+[[site]]
+file = "phydrax/applications/cardiovascular/_execution.py"
+function = "execute_cardiovascular_distributed_collective"
+kind = "per-call-compile"
+rationale = "One collective qualification solve per call over that call's distributed system, compared against the serial solve."
+
+[[site]]
+file = "phydrax/applications/incompressible_flow/_operator_data.py"
+function = "_dataset_values"
+kind = "per-call-compile"
+rationale = "One-shot dataset evaluation: shape-evaluated then run once over that dataset's restriction and projector."
+
+[[site]]
+file = "phydrax/applications/incompressible_flow/_statistical_evidence.py"
+function = "_shared_values"
+kind = "per-call-compile"
+rationale = "One-shot AOT evidence: lowered, compiled, workspace-admitted and run once per evidence computation over its own data."
+
+[[site]]
+file = "phydrax/applications/incompressible_flow/_statistical_evidence.py"
+function = "componentwise_empirical_wasserstein"
+kind = "per-call-compile"
+rationale = "One-shot AOT evidence: lowered, compiled, workspace-admitted and run once per evidence computation over its own data."
+
+[[site]]
+file = "phydrax/applications/incompressible_flow/_statistical_evidence.py"
+function = "paired_coupling_upper_bound"
+kind = "per-call-compile"
+rationale = "One-shot AOT evidence: lowered, compiled, workspace-admitted and run once per evidence computation over its own data."
+
+[[site]]
+file = "phydrax/applications/incompressible_flow/_statistical_evidence.py"
+function = "sliced_joint_marginal_distance"
+kind = "per-call-compile"
+rationale = "One-shot AOT evidence: lowered, compiled, workspace-admitted and run once per evidence computation over its own data."
+
+[[site]]
+file = "phydrax/atomistic/_training_distribution.py"
+function = "AtomisticTrainingDistributionPlan.map.mapped"
+kind = "per-call-compile"
+rationale = "Transform combinator: returns the shard_map transform; the program is compiled by the caller's enclosing trace."
+
+[[site]]
+file = "phydrax/discretization/_lowered_operator.py"
+function = "LoweredJAXBackend.compile"
+kind = "per-call-compile"
+rationale = "Explicit compile API: the jitted backend is the return value, owned by the caller."
+
+[[site]]
+file = "phydrax/discretization/amr/_signature_cache.py"
+function = "PatchExecutableCachePlan.install"
+kind = "per-call-compile"
+rationale = "AOT install: compiles each missing signature once and stores it in the returned cache state."
+
+[[site]]
+file = "phydrax/discretization/finite_volume/_distributed.py"
+function = "PreparedFiniteVolumeDecomposition.compile_residual"
+kind = "per-call-compile"
+rationale = "Explicit compile API: the sharded residual program is the return value, owned by the caller."
+
+[[site]]
+file = "phydrax/discretization/spatial/_distributed_relations.py"
+function = "DistributedOwnershipPlan.map"
+kind = "per-call-compile"
+rationale = "Transform combinator: returns the shard_map transform; the program is compiled by the caller's enclosing trace."
+
+[[site]]
+file = "phydrax/domain/_base.py"
+function = "_make_compact_boundary_factor"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: builds the gate once when an enforcement plan or ansatz is constructed; the consumer holds the returned program."
+
+[[site]]
+file = "phydrax/domain/_base.py"
+function = "_make_compact_enforcement_gate"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: builds the gate once when an enforcement plan or ansatz is constructed; the consumer holds the returned program."
+
+[[site]]
+file = "phydrax/domain/_base.py"
+function = "_make_global_enforcement_gate"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: builds the gate once when an enforcement plan or ansatz is constructed; the consumer holds the returned program."
+
+[[site]]
+file = "phydrax/domain/_hyperrectangle.py"
+function = "HyperRectangle._make_enforcement_gate"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: builds the gate once when an enforcement plan or ansatz is constructed; the consumer holds the returned program."
+
+[[site]]
+file = "phydrax/domain/geometry1d/_primitives.py"
+function = "Interval1d._make_enforcement_gate"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: builds the gate once when an enforcement plan or ansatz is constructed; the consumer holds the returned program."
+
+[[site]]
+file = "phydrax/export/_atomistic.py"
+function = "_require_runtime_free_lowering"
+kind = "per-call-compile"
+rationale = "Export: lowering the caller's model once is the product of the export (and its runtime-free check)."
+
+[[site]]
+file = "phydrax/export/_atomistic.py"
+function = "save_atomistic_iree"
+kind = "per-call-compile"
+rationale = "Export: lowering the caller's model once is the product of the export (and its runtime-free check)."
+
+[[site]]
+file = "phydrax/export/_atomistic_export_worker.py"
+function = "_export"
+kind = "per-call-compile"
+rationale = "Isolated export subprocess entry: runs once per process, after its environment checks, before importing the model."
+
+[[site]]
+file = "phydrax/export/_iree.py"
+function = "save_iree"
+kind = "per-call-compile"
+rationale = "Export: lowering the caller's function once is the product of the export."
+
+[[site]]
+file = "phydrax/meshing/_migration_execution.py"
+function = "partition_map"
+kind = "per-call-compile"
+rationale = "Transform combinator: returns the shard_map transform; the program is compiled by the caller's enclosing trace."
+
+[[site]]
+file = "phydrax/nn/operator/training/_adaptation.py"
+function = "adapt_operator_context"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per adaptation run around the caller's objective and reused by every iteration of the run."
+
+[[site]]
+file = "phydrax/nn/operator/training/_streaming.py"
+function = "decode_query_chunks"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per decode around the model and batch and reused by every query chunk."
+
+[[site]]
+file = "phydrax/optim/_finite.py"
+function = "search_finite"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per search around the caller's evaluator and reused by every batch of the search."
+
+[[site]]
+file = "phydrax/solver/_distributed_pic.py"
+function = "AbstractDistributedPICFieldSolver.map"
+kind = "per-call-compile"
+rationale = "Transform combinator used only while tracing the module-level compiled entry points."
+
+[[site]]
+file = "phydrax/solver/_finite_volume_runtime.py"
+function = "_owner_local_global_decision_provider"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: the pmap program is built once per prepared owner-local provider and reused by every stage call."
+
+[[site]]
+file = "phydrax/solver/_finite_volume_runtime.py"
+function = "_owner_local_global_scalar_min_provider"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: the pmap program is built once per prepared owner-local provider and reused by every stage call."
+
+[[site]]
+file = "phydrax/solver/_finite_volume_runtime.py"
+function = "_prepare_owner_local_fv_stage_route_provider"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: the pmap program is built once per prepared owner-local provider and reused by every stage call."
+
+[[site]]
+file = "phydrax/solver/_finite_volume_runtime.py"
+function = "_prepare_owner_local_fv_stage_state_provider"
+kind = "per-call-compile"
+rationale = "Prepare-time factory: the pmap program is built once per prepared owner-local provider and reused by every stage call."
+
+[[site]]
+file = "phydrax/solver/_functional_evolution.py"
+function = "_solve_distribution_evolution"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per evolution run around its prepared objective and reused by every generation."
+
+[[site]]
+file = "phydrax/solver/_functional_gradient.py"
+function = "_prepared_native_state"
+kind = "per-call-compile"
+rationale = "Prepare-time: native method state is prepared once per training run on one representative attempt."
+
+[[site]]
+file = "phydrax/solver/_moving_overset_poisson.py"
+function = "_owner_local_poisson_part"
+kind = "per-call-compile"
+rationale = "Per-solve topology: gather indices and shapes are this solve's owner-route topology, which every mesh move changes, so no later call could reuse it."
+
+[[site]]
+file = "phydrax/solver/_production_resources.py"
+function = "PreparedCompilationService.compile"
+kind = "per-call-compile"
+rationale = "Memoized: compiled once per cache key and stored in the service's executable cache."
+
+[[site]]
+file = "phydrax/uq/_flow_mcmc.py"
+function = "sample_flow_nuts"
+kind = "closure-static-arg"
+rationale = "Run-scoped static callable: the flattened log density is built once per sampling run and reused by every chunk of the run."
+
+[[site]]
+file = "phydrax/uq/_interleaved_nuts.py"
+function = "build_interleaved_nuts_advancer"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per sampling run around the caller's log density and reused by every chunk."
+
+[[site]]
+file = "phydrax/uq/_mcmc.py"
+function = "_adapt_mcmc"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per sampling run (warmup or advancer) around the caller's log density and reused by every chunk."
+
+[[site]]
+file = "phydrax/uq/_mcmc.py"
+function = "_build_prepared_interleaved_nuts_advancer"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per sampling run (warmup or advancer) around the caller's log density and reused by every chunk."
+
+[[site]]
+file = "phydrax/uq/_mcmc.py"
+function = "_build_prepared_mcmc_advancer"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per sampling run (warmup or advancer) around the caller's log density and reused by every chunk."
+
+[[site]]
+file = "phydrax/uq/_rao_blackwellized_smoothing.py"
+function = "rao_blackwellized_backward_simulation"
+kind = "per-call-compile"
+rationale = "Run-scoped program: one vectorized program per smoothing call over the caller's model callables."
+
+[[site]]
+file = "phydrax/uq/_rao_blackwellized_smoothing.py"
+function = "rao_blackwellized_particle_smoother"
+kind = "per-call-compile"
+rationale = "Run-scoped program: one vectorized program per smoothing call over the caller's model callables."
+
+[[site]]
+file = "phydrax/uq/_sgmcmc.py"
+function = "_compile_transition"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per SG-MCMC run around the caller's gradient estimator and reused by every step."
+
+[[site]]
+file = "phydrax/uq/_sgmcmc.py"
+function = "_initialize_states"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per SG-MCMC run around the caller's gradient estimator and reused by every step."
+
+[[site]]
+file = "phydrax/uq/_sgmcmc.py"
+function = "build_sgmcmc_control_variate"
+kind = "per-call-compile"
+rationale = "Run-scoped program: built once per SG-MCMC run around the caller's gradient estimator and reused by every step."
+
+[[site]]
+file = "phydrax/uq/_smc.py"
+function = "sample_tempered_smc"
+kind = "per-call-compile"
+rationale = "Run-scoped program: the tempered kernel is built once per SMC run and reused by every tempering step."
