@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .._exact_kernels import interval_bernstein_restrict
 from .._fingerprint import canonical_fingerprint
+from .._meshcore import meshcore_available
 
 
 if TYPE_CHECKING:
@@ -1358,6 +1360,21 @@ def _interval_restrict_axis0(
         raise ValueError(
             "Bernstein restriction bounds must satisfy 0 <= lower <= upper <= 1."
         )
+    if (last < 1 or first > 0) and meshcore_available():
+        # The native kernel repeats `_interval_casteljau_step` operation for
+        # operation, so the restricted net is bit-identical.
+        parameters = np.zeros((1, 4), dtype=np.float64)
+        sides = 0
+        if last < 1:
+            parameters[0, :2] = _interval_parameter(last)
+            sides |= 1
+        if first > 0:
+            parameters[0, 2:] = _interval_ratio(first, last)
+            sides |= 2
+        restricted_lower, restricted_upper = interval_bernstein_restrict(
+            lower[None], upper[None], parameters, np.asarray((sides,), dtype=np.int32)
+        )
+        return restricted_lower[0], restricted_upper[0]
     if last < 1:
         parameter = _interval_parameter(last)
         left_lower, left_upper = [lower[0]], [upper[0]]
