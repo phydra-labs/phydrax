@@ -214,31 +214,44 @@ _HEXAHEDRAL_EDGE_BY_VERTICES = {
 _TETRAHEDRAL_TOPOLOGY = reference_cell_topology("tetrahedron")
 _TETRAHEDRAL_EDGES = _TETRAHEDRAL_TOPOLOGY.entities[1]
 _TETRAHEDRAL_FACES = _TETRAHEDRAL_TOPOLOGY.entities[2]
+_TRIANGULAR_EDGES = reference_cell_topology("triangle").entities[1]
 
 
-def _tetrahedral_entity_routes(
-    connectivity: TetrahedralConnectivity,
+def _simplex_entity_routes(
+    edges: np.ndarray,
+    faces: np.ndarray | None,
     cells: np.ndarray,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    edge_by_vertices = {
-        tuple(edge): index for index, edge in enumerate(np.asarray(connectivity.edges))
-    }
-    face_by_vertices = {
-        tuple(face): index for index, face in enumerate(np.asarray(connectivity.faces))
-    }
-    edge_routes = np.empty((cells.shape[0], len(_TETRAHEDRAL_EDGES)), dtype=np.int32)
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Reference-ordered edge routes, signs and face routes of triangles or tetrahedra.
+
+    ``edges`` and ``faces`` hold canonical (ascending) vertex rows; triangles have
+    no face routes.
+    """
+    edge_by_vertices = {tuple(edge): index for index, edge in enumerate(edges)}
+    reference_edges = _TETRAHEDRAL_EDGES if faces is not None else _TRIANGULAR_EDGES
+    edge_routes = np.empty((cells.shape[0], len(reference_edges)), dtype=np.int32)
     edge_signs = np.empty_like(edge_routes, dtype=np.float64)
-    face_routes = np.empty((cells.shape[0], len(_TETRAHEDRAL_FACES)), dtype=np.int32)
+    face_routes = (
+        None
+        if faces is None
+        else np.empty((cells.shape[0], len(_TETRAHEDRAL_FACES)), dtype=np.int32)
+    )
+    face_by_vertices = (
+        {} if faces is None else {tuple(face): index for index, face in enumerate(faces)}
+    )
     for cell, vertices in enumerate(cells):
-        for local_edge, (start, stop) in enumerate(_TETRAHEDRAL_EDGES):
+        for local_edge, (start, stop) in enumerate(reference_edges):
             oriented = (int(vertices[start]), int(vertices[stop]))
             canonical = tuple(sorted(oriented))
             edge_routes[cell, local_edge] = edge_by_vertices[canonical]
             edge_signs[cell, local_edge] = 1.0 if oriented == canonical else -1.0
-        for local_face, local_vertices in enumerate(_TETRAHEDRAL_FACES):
-            canonical = tuple(sorted(int(vertices[index]) for index in local_vertices))
-            face_routes[cell, local_face] = face_by_vertices[canonical]
+        if face_routes is not None:
+            for local_face, local_vertices in enumerate(_TETRAHEDRAL_FACES):
+                canonical = tuple(
+                    sorted(int(vertices[index]) for index in local_vertices)
+                )
+                face_routes[cell, local_face] = face_by_vertices[canonical]
     return edge_routes, edge_signs, face_routes
 
 
@@ -593,7 +606,62 @@ _HIGH_ORDER_H1_CONNECTIVITIES = (
     PolygonalConnectivity,
     TetrahedralConnectivity,
     HexahedralConnectivity,
+    SimplicialConnectivity,
 )
+type _HighOrderH1Connectivity = (
+    PolygonalConnectivity
+    | TetrahedralConnectivity
+    | HexahedralConnectivity
+    | SimplicialConnectivity
+)
+
+
+def _h1_simplex_entities(
+    connectivity: TetrahedralConnectivity | SimplicialConnectivity, /
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Canonical edge and (tetrahedral) face rows of a simplex connectivity."""
+    if isinstance(connectivity, TetrahedralConnectivity):
+        return np.asarray(connectivity.edges), np.asarray(connectivity.faces)
+    if connectivity.dimension == 2:
+        return np.asarray(connectivity.entities[1]), None
+    if connectivity.dimension == 3:
+        return np.asarray(connectivity.entities[1]), np.asarray(connectivity.entities[2])
+    raise ValueError(
+        "High-order H1 routing on simplicial complexes requires triangles or tetrahedra."
+    )
+
+
+def _h1_edge_count(connectivity: _HighOrderH1Connectivity, /) -> int:
+    if isinstance(connectivity, (PolygonalConnectivity, HexahedralConnectivity)):
+        return int(connectivity.edges.shape[0])
+    return int(_h1_simplex_entities(connectivity)[0].shape[0])
+
+
+def _h1_cell_entity_routes(
+    connectivity: _HighOrderH1Connectivity,
+    vertices: np.ndarray,
+    rows: slice,
+    local_edge_count: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
+    """Reference-ordered edge routes and signs, then face routes and canonical faces.
+
+    Face entries are present only for tetrahedral simplex routing; polygonal and
+    hexahedral connectivities publish their own cell-edge routes.
+    """
+    if isinstance(connectivity, (PolygonalConnectivity, HexahedralConnectivity)):
+        edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
+            rows, :local_edge_count
+        ]
+        signs = np.asarray(connectivity.cell_edge_signs, dtype=np.float64)[
+            rows, :local_edge_count
+        ]
+        return edges, signs, None, None
+    canonical_edges, canonical_faces = _h1_simplex_entities(connectivity)
+    edges, signs, faces = _simplex_entity_routes(
+        canonical_edges, canonical_faces, vertices
+    )
+    return edges, signs, faces, canonical_faces
 
 
 def _prepare_finite_element_dof_layout(
@@ -719,18 +787,22 @@ def _high_order_h1_entity_widths(
     connectivity = mesh.connectivity
     if not isinstance(connectivity, _HIGH_ORDER_H1_CONNECTIVITIES):
         raise ValueError(
-            "High-order H1 entity routing requires polygonal, tetrahedral, or hexahedral connectivity."
+            "High-order H1 entity routing requires polygonal, tetrahedral, hexahedral, "
+            "or simplicial connectivity."
         )
-    edge_widths = np.full((connectivity.edges.shape[0],), -1, dtype=np.int32)
+    edge_widths = np.full((_h1_edge_count(connectivity),), -1, dtype=np.int32)
     total_cell_count = sum(block.cell_count for block in mesh.blocks)
     cell_widths = np.empty((total_cell_count,), dtype=np.int32)
     face_widths = None
     face_shapes = None
-    if isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+    if isinstance(connectivity, HexahedralConnectivity):
         face_count = connectivity.faces.shape[0]
         face_widths = np.full((face_count,), -1, dtype=np.int32)
-    if isinstance(connectivity, HexahedralConnectivity):
         face_shapes = np.full((face_count, 2), -1, dtype=np.int32)
+    elif not isinstance(connectivity, PolygonalConnectivity):
+        canonical_faces = _h1_simplex_entities(connectivity)[1]
+        if canonical_faces is not None:
+            face_widths = np.full((canonical_faces.shape[0],), -1, dtype=np.int32)
 
     cell_offset = 0
     for block, element in zip(mesh.blocks, resolved, strict=True):
@@ -759,9 +831,7 @@ def _high_order_h1_entity_widths(
 
 
 def _record_high_order_h1_trace_widths(
-    connectivity: PolygonalConnectivity
-    | TetrahedralConnectivity
-    | HexahedralConnectivity,
+    connectivity: _HighOrderH1Connectivity,
     block: CellBlock | PolyhedralBlock,
     element: FiniteElementSpec,
     cell_offset: int,
@@ -774,22 +844,22 @@ def _record_high_order_h1_trace_widths(
     local_edge_count = len(element.entity_dofs[1])
     if isinstance(connectivity, PolygonalConnectivity):
         expected_edge_count = block.arity
-    elif isinstance(connectivity, TetrahedralConnectivity):
-        expected_edge_count = len(_TETRAHEDRAL_EDGES)
-    else:
+    elif isinstance(connectivity, HexahedralConnectivity):
         expected_edge_count = len(_HEXAHEDRAL_EDGES)
+    else:
+        expected_edge_count = len(
+            _TRIANGULAR_EDGES
+            if _h1_simplex_entities(connectivity)[1] is None
+            else _TETRAHEDRAL_EDGES
+        )
     if local_edge_count != expected_edge_count:
         raise ValueError("H1 edge entities must match the reference cell edges.")
-    if isinstance(connectivity, TetrahedralConnectivity):
-        block_cell_edges, _, block_cell_faces = _tetrahedral_entity_routes(
-            connectivity,
-            np.asarray(block.vertices, dtype=np.int32),
-        )
-    else:
-        block_cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
-            cell_offset : cell_offset + block.cell_count,
-            :local_edge_count,
-        ]
+    block_cell_edges, _, block_cell_faces, _ = _h1_cell_entity_routes(
+        connectivity,
+        np.asarray(block.vertices, dtype=np.int32),
+        slice(cell_offset, cell_offset + block.cell_count),
+        local_edge_count,
+    )
     _record_shared_entity_widths(
         edge_widths,
         block_cell_edges,
@@ -801,7 +871,7 @@ def _record_high_order_h1_trace_widths(
         _record_hexahedral_face_widths(
             connectivity, block, element, cell_offset, face_shapes, face_widths
         )
-    elif isinstance(connectivity, TetrahedralConnectivity):
+    elif block_cell_faces is not None:
         if face_widths is None:
             raise RuntimeError("Tetrahedral H1 routing requires allocated face widths.")
         if len(element.entity_dofs[2]) != len(_TETRAHEDRAL_FACES):
@@ -962,21 +1032,17 @@ def _high_order_h1_block_routes(
         local[:, entity_dofs[0]] = vertices[:, local_vertex]
 
     local_edge_count = len(element.entity_dofs[1])
-    if isinstance(connectivity, TetrahedralConnectivity):
-        (
-            block_cell_edges,
-            block_cell_signs,
-            block_cell_faces,
-        ) = _tetrahedral_entity_routes(connectivity, vertices)
-    else:
-        rows = slice(cell_offset, cell_offset + block.cell_count)
-        block_cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
-            rows, :local_edge_count
-        ]
-        block_cell_signs = np.asarray(
-            connectivity.cell_edge_signs,
-            dtype=np.float64,
-        )[rows, :local_edge_count]
+    (
+        block_cell_edges,
+        block_cell_signs,
+        block_cell_faces,
+        canonical_faces,
+    ) = _h1_cell_entity_routes(
+        connectivity,
+        vertices,
+        slice(cell_offset, cell_offset + block.cell_count),
+        local_edge_count,
+    )
     # Edge-interior DOFs are stored along the canonical edge direction.
     for local_edge, entity_dofs in enumerate(element.entity_dofs[1]):
         width = len(entity_dofs)
@@ -991,14 +1057,18 @@ def _high_order_h1_block_routes(
         local[:, np.asarray(entity_dofs, dtype=np.int32)] = (
             edge_starts[block_cell_edges[:, local_edge], None] + canonical_positions
         )
-
     if isinstance(connectivity, HexahedralConnectivity):
         _assign_hexahedral_face_dofs(
             local, connectivity, element, layout.face_starts, cell_offset
         )
-    elif isinstance(connectivity, TetrahedralConnectivity):
+    elif block_cell_faces is not None and canonical_faces is not None:
         _assign_tetrahedral_face_dofs(
-            local, connectivity, element, layout.face_starts, vertices, block_cell_faces
+            local,
+            canonical_faces,
+            element,
+            layout.face_starts,
+            vertices,
+            block_cell_faces,
         )
 
     interior_dofs = element.entity_dofs[mesh.topological_dimension][0]
@@ -1054,7 +1124,7 @@ def _assign_hexahedral_face_dofs(
 
 def _assign_tetrahedral_face_dofs(
     local: np.ndarray,
-    connectivity: TetrahedralConnectivity,
+    faces: np.ndarray,
     element: FiniteElementSpec,
     face_starts: np.ndarray | None,
     vertices: np.ndarray,
@@ -1064,7 +1134,7 @@ def _assign_tetrahedral_face_dofs(
     """Route triangular face-interior DOFs by canonical face barycentric order."""
     if face_starts is None:
         raise TypeError("Tetrahedral H1 face offsets are unavailable.")
-    canonical_faces = np.asarray(connectivity.faces, dtype=np.int32)
+    canonical_faces = np.asarray(faces, dtype=np.int32)
     for local_face, face_dofs in enumerate(element.entity_dofs[2]):
         if not face_dofs:
             continue
@@ -1214,7 +1284,9 @@ def _high_order_h1_boundary_mask(
     for edge in np.flatnonzero(np.asarray(connectivity.boundary_edges, dtype=np.bool_)):
         start = int(edge_starts[edge])
         boundary[start : start + int(edge_widths[edge])] = True
-    if isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+    if isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)) or (
+        isinstance(connectivity, SimplicialConnectivity) and connectivity.dimension == 3
+    ):
         face_starts = layout.face_starts
         face_widths = layout.face_widths
         if face_starts is None or face_widths is None:
