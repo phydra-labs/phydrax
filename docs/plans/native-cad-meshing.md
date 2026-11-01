@@ -524,6 +524,12 @@ Then run installed typing, affected import-boundary and executable-doc/example t
 
 Critical dependencies: native source truth precedes source-fidelity claims; coordinate-map transfer precedes high-order adaptation; shared T-spline mathematics precedes CAD/IGA adapters; periodic quotient precedes orbit-aware distributed edits; actual geometric overlaps/maps precede conservative field claims; collective accepted-state contracts precede distributed publication; final native binary and Python bindings must match before any integration evidence is trusted.
 
+The approved extensions in section 13 follow blocking performance/correctness
+closure. Reuse the stable foundations and focused evidence before starting their
+implementation; they do not replace any original positive gate. Extend the final
+acceptance matrix once these additions are integrated, rather than repeatedly
+running broad qualification on incomplete prerequisites.
+
 Use one compact implementation/verification record: changed ownership surface, exact command/scenario, material tree/backend/dependency identity, result and failing node/scenario. This is development evidence, not a new runtime accounting graph. Reuse passed evidence while its inputs are unchanged. No concurrent unrestricted test jobs or benchmarks under build/test contention.
 
 ### 12.7 Completion conditions
@@ -536,3 +542,185 @@ Use one compact implementation/verification record: changed ownership surface, e
 - Every current caller, example, type fixture, codec, generated record and affected consumer uses the clean API. No compatibility aliases, old quota signatures, fake fallbacks or resource-only tests survive.
 - Fresh-process and changed-placement continuation reconstruct the real scientific state without original objects or live proof issuers.
 - Measured performance claims match actual comparable workloads and hardware. Lack of evidence is stated, not replaced with capability counts or cost-model counters.
+
+## 13. Selected Solidcraft-derived extensions
+
+Added by explicit user request after the source review of
+[Solidcraft at `147d1cfaddcc6fe824399a58fea36a022278961e`](https://github.com/tangency-labs/solidcraft/tree/147d1cfaddcc6fe824399a58fea36a022278961e).
+This is a plan addition, not a claim that the donor was built or its advertised
+coverage independently reproduced. Adopt useful mechanisms within Phydrax's
+canonical owners, not another kernel, solver, naming system, or document model.
+
+### 13.1 Priority and readiness
+
+1. Complete current safety fixes and blocking performance work first:
+   incremental mathematical certification, bounded geometry/archive construction,
+   and repeated-compilation removal. Continue independent original capability
+   fixes alongside them.
+2. Add selected operation-sequence reference cases to the existing qualification
+   corpus as their owning routes stabilize. These provide evidence for the later
+   extensions, not a separate testing framework.
+3. Implement constructive sketch preparation and exact non-bijective recipe-name
+   transport as independent extensions of existing design owners.
+4. Apply placement-only invalidation/reuse within the existing preparation work;
+   introduce no standalone cache subsystem.
+5. Extend continuity-driven bridge construction only after the source-jet,
+   whole-seam continuity, and corner-compatibility contracts below are explicit.
+   This is a later mathematical extension, not an immediate broad G3/fillet claim.
+6. Run integrated acceptance and uncontended phase-separated benchmarks after
+   these inputs stabilize. No useful extension is considered implemented merely
+   because its design, dispatcher, or negative tests exist.
+
+### 13.2 Constructive sketch preparation and branch-aware continuation
+
+**Mechanism:** recognize supported line/circle/arc relations; propagate certified
+constructions and rigid clusters; use uncertain/tangent constructions only as
+initial guesses; solve the remaining variables through native numerical owners.
+Source references:
+[construction](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/crates/sketch/src/construct.rs),
+[cluster decomposition](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/crates/sketch/src/decompose.rs),
+[solver/continuation](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/crates/sketch/src/solver.rs).
+
+**Owners:** extend `geometry/design/_sketch.py`, `_constraints.py`, `_solve.py`,
+`_continuation.py`, and `_sketch_certificate.py`; lower factor-local residuals and
+incidence through `optim/_residual_graph.py` and `_graph_least_squares.py` where
+beneficial. Reuse `RootDOFEvidence`, native nonlinear linearization and linalg
+rank/nullspace evidence. General `GraphIR` is not a replacement residual solver.
+
+**Required behavior and evidence:**
+- Keep constructive eligibility, a numerical seed, numerical rank/DOF, residual
+  convergence, and root uniqueness as distinct claims.
+- Retain explicit reference layout and branch witnesses across edits. Gauge and
+  least-motion choices are declared semantics, not hidden regularization.
+- Unsupported constructive relations remain in the declared numerical problem;
+  failed or non-transversal constructions never become exact elimination facts.
+- Test rigid and underconstrained clusters, mirrored solutions, tangency,
+  coincident/degenerate loci, redundant versus inconsistent constraints, parameter
+  edits, rollback, and independent restoration.
+- Compare the reduced route with the unreduced native residual system and an
+  independent geometric oracle. Verify JVP/VJP on fixed regular branches;
+  invalidate sensitivity at branch/rank/topology events.
+- Measure preparation, derivative work, solve cost and retained memory separately
+  as constraint count grows. Do not import the donor's dense LM, finite-difference
+  Jacobians, local rank thresholds, or work caps.
+
+### 13.3 Exact split/merge lineage and ambiguity-aware selections
+
+**Mechanism:** compose kept/modified/split/merged/generated face and edge origins
+through operations; distinguish output pieces by proved source-qualified
+construction or adjacency roles when possible.
+Source references:
+[operation history](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/crates/kernel/src/history.rs),
+[naming semantics](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/docs/book/src/dev/naming.md).
+
+**Owners:** extend `geometry/design/_naming.py`, `geometry/_cad_revision.py`,
+B-Rep operation provenance/selection owners, existing `AssociationGraph`, and
+`meshing/_scope.py`. Current `RecipeEntityName` transport deliberately requires
+bijective lineage; extend it rather than introducing another naming vocabulary.
+
+**Required behavior and evidence:**
+- Distinguish single-entity intent from set-valued selection of exact descendants.
+  A boundary condition attached to an authored wall may follow all proved
+  descendants when that is its declared meaning.
+- Preserve definition, occurrence, source revision, orientation, region side,
+  and operation-role identity. Equal geometry, display labels, sizes, array order
+  or nearby centroids do not establish correspondence.
+- Single-entity ambiguity, deletion, insufficient provenance and incompatible
+  merge semantics remain explicit unresolved/refusal outcomes. Never silently
+  reattach a scientific boundary condition using a geometric fallback.
+- Verify composed split/merge chains, symmetric ambiguous pieces, independent
+  coincident definitions, repeated assembly occurrences, deletion and changed
+  parameter branches. Exercise actual boundary/source selections downstream in
+  meshing and FE/FV, plus cold persistence and tamper refusal.
+- Provenance describes derivation; geometry and field claims still require their
+  independent mathematical acceptance. Retain existing bijective behavior.
+
+### 13.4 Independent operation-sequence reference corpus
+
+**Mechanism:** adapt selected authored recipes combining extrusion, shelling,
+blends, patterned holes, parameter changes and interchange. Use independent
+analytic or externally produced reference data, not donor success labels.
+Source references:
+[oracle specification](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/docs/oracle.md),
+[Boolean locality and measure checks](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/crates/kernel/src/boolean_guard.rs).
+
+**Owners:** extend `tools/meshing_qualification` scenario/oracle registrations,
+owning geometry/interchange tests and existing test support. Preserve deterministic
+case identities, physical units, authorship, reference-generation provenance and
+applicable fixture licenses. No new command language or corpus schema generation.
+
+**Acceptance:** include thin walls, tangent/coincident contacts, body-splitting
+cuts, mixed curved intersections and modifications of already-modified bodies.
+Check appropriate combinations of volume, area, centroid, moments, bounds,
+topology, region/material identity and interchange loss. Add independent Boolean
+monotonicity/algebraic checks and preservation outside a tool's proved influence.
+Use exact/enclosed or independently justified numerical oracles; apply deliberate
+faults where plausible wrong geometry could preserve a single scalar measure.
+Sampled distances/locality checks are diagnostics, never substitutes for continuous
+source fidelity, coverage or embedding certificates. Optional comparison engines
+stay outside mandatory package execution.
+
+### 13.5 Continuity-driven surface bridges
+
+**Mechanism:** use Hermite control-row constraints to organize boundary position,
+tangent, curvature and higher-jet matching.
+Source reference:
+[bridge formulation](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/crates/kernel/src/bridge.rs).
+
+**Owners:** extend existing `geometry/brep` blend/match operations, shared spline
+basis/extraction, differential operators, native linalg and enclosure owners.
+Do not add a parallel spline fitter, surface representation or derivative engine.
+
+**Readiness and acceptance:**
+- State admitted source families, parameterization/reparameterization, regularity,
+  boundary and corner-compatibility hypotheses before implementing a continuity
+  order. G1/G2/G3 are geometric claims, not merely equality of sampled derivatives.
+- Use analytic/AD/exact source jets with certified enclosures. Do not transplant
+  sampled arc-length tables, finite-difference stencils or fixed refinement/shrink
+  counts as proof of whole-seam continuity.
+- Supply positive curved-source examples for each advertised order, full seam
+  verification, denominator positivity, nonfolding/embedding, and incompatible
+  corner/singular-source refusals. Check fixed-branch derivatives and native
+  archive reproduction; exercise a smoothness-sensitive analysis consumer only
+  when its actual formulation prerequisites are qualified.
+- Document unsupported corner networks and general rolling-ball cases explicitly;
+  the admitted bridge profile is not a claim of arbitrary fillet support.
+
+### 13.6 Dependency-scoped placement reuse
+
+**Mechanism:** explicitly identify placement-only edits whose dependencies admit
+reuse of local geometry; unknown dependencies take ordinary evaluation.
+Source reference:
+[placement reuse](https://github.com/tangency-labs/solidcraft/blob/147d1cfaddcc6fe824399a58fea36a022278961e/crates/doc/src/placement_reuse.rs).
+
+**Owners:** existing `CompiledGeometry`/`DesignState`, source preparation, exact
+placement/occurrence, certification and lifecycle owners. Share this work with the
+current prove-once/incremental wave; do not create a document timeline or another
+cache framework.
+
+**Acceptance:** explicit dependency/effect contracts distinguish local geometry,
+placement, derived queries and coupled scientific consumers. Reuse in-hand
+artifacts only against validated inputs and transformation premises; stale or
+unknown dependencies re-evaluate. A proved rigid transform can preserve a
+component's internal claims, but independently moved instances require renewed
+assembly contact/embedding and affected PDE-coupling checks. Compare cold versus
+reused outcomes, IDs where semantics are unchanged, derivative behavior, failure
+and rollback; measure avoided work on repeated-instance motion without competing
+benchmarks. No process-global proof memos or numerical arrays hidden as static
+cache metadata.
+
+### 13.7 Explicit exclusions and extension completion
+
+- No wholesale Solidcraft/truck kernel, separate-branch SMLib migration, UI/MCP
+  command system, document lifecycle, compatibility format or resource accounting
+  layer is imported. Current native owners remain canonical.
+- No heuristic reference repair, retry nudges, sampled-success certificates,
+  arbitrary work caps or unsupported continuity/rank claims.
+- Review file-level and fixture provenance/licenses before copying any material;
+  the workspace's MIT-or-Apache-2.0 declaration does not replace vendored/asset review.
+- Update authored docs, examples, typing/callers, canonical persistence and generated
+  capability data with each accepted extension. Run the actual changed scientific
+  workflow and its conservative dependent checks.
+- These items extend the plan's acceptance obligations; none is marked implemented
+  by this addition. Preserve all original section 12 completion requirements and
+  explicitly track remaining extension work rather than silently dropping it.
