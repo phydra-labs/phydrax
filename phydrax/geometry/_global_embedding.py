@@ -1846,8 +1846,14 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             periodic_restriction=value.periodic_restriction_premise,
             nested_restriction=value.nested_restriction_premise,
         )
+        from ._mesh_certificates import _same_tree_content
+
         if (
             rebuilt.certificate_id != value.certificate_id
+            or any(
+                not _same_tree_content(getattr(rebuilt, name), getattr(value, name))
+                for name in ("status", "findings", "evaluated_checks", "counts", "witnesses")
+            )
             or rebuilt.nested_restriction != value.nested_restriction
             or (
                 None

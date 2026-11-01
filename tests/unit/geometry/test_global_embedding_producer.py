@@ -1125,6 +1125,10 @@ def test_restored_embedding_refuses_a_forged_stored_validity_proof() -> None:
         ((0, 1, 2), (0, 2, 3)),
     )
     certificate = certify_global_embedding(mesh, geometry, validity)
+    altered_claim = eqx.tree_at(lambda value: value.status, certificate, "violated")
+    assert altered_claim.certificate_id == certificate.certificate_id
+    with pytest.raises(ValueError, match="do not reproduce"):
+        GlobalEmbeddingCertificate.from_stored_fields(altered_claim)
     lower = np.asarray(validity.determinant_lower) * 0.5
     # Simulate stored field injection, not a public certificate construction.
     forged = CellValidityCertificate._from_computed(
