@@ -591,10 +591,13 @@ def _exact_interval(value: ExactScalar) -> tuple[float, float]:
     represented = float(value)
     if not math.isfinite(represented):
         return (-math.inf, math.inf)
-    exact = Fraction.from_float(represented)
+    numerator, denominator = represented.as_integer_ratio()
+    left = numerator * value.denominator
+    right = value.numerator * denominator
+    sign = (left > right) - (left < right)
     return (
-        represented if exact <= value else math.nextafter(represented, -math.inf),
-        represented if exact >= value else math.nextafter(represented, math.inf),
+        represented if sign <= 0 else math.nextafter(represented, -math.inf),
+        represented if sign >= 0 else math.nextafter(represented, math.inf),
     )
 
 
