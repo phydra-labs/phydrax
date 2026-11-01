@@ -139,6 +139,13 @@ class MinibatchPosteriorDiagnostics(StrictModule):
         }
 
 
+@eqx.filter_jit
+def _compiled_estimate_value_and_grad(
+    problem: MinibatchPosteriorProblem, position: PyTree[Any], batch: Any, /
+) -> tuple[Array, PyTree[Any]]:
+    return jax.value_and_grad(problem.log_density_estimate)(position, batch)
+
+
 def diagnose_minibatch_posterior(
     problem: MinibatchPosteriorProblem,
     source: MinibatchSource,
@@ -178,11 +185,9 @@ def diagnose_minibatch_posterior(
     value_and_grad = jax.value_and_grad(problem.log_density_estimate)
     initial_value, stochastic_gradient = value_and_grad(position, first_batch)
     repeated_value, repeated_gradient = value_and_grad(position, first_batch)
-    compiled_value, compiled_gradient = eqx.filter_jit(
-        lambda current, current_batch: jax.value_and_grad(problem.log_density_estimate)(
-            current, current_batch
-        )
-    )(position, first_batch)
+    compiled_value, compiled_gradient = _compiled_estimate_value_and_grad(
+        problem, position, first_batch
+    )
 
     def epoch_log_density(current: PyTree[Any]) -> Array:
         physical = problem.parameter_space.constrain(current)
