@@ -649,6 +649,8 @@ def _prepare_overset_face_artifact(
             raise ValueError(
                 "Overset receptor face artifacts are stale or do not match the identified physical faces."
             )
+        # Mixed triangle/quadrilateral faces pad their quadrature with zero
+        # weights; those points carry no measure and no flux.
         normal_norms = np.linalg.norm(face_normals, axis=-1)
         if (
             np.any(~np.isfinite(face_points))
@@ -656,10 +658,12 @@ def _prepare_overset_face_artifact(
             or np.any(~np.isfinite(face_measures))
             or np.any(~np.isfinite(normal_norms))
             or np.any(np.abs(normal_norms - 1.0) > tolerance_)
-            or np.any(face_measures <= 0.0)
+            or np.any(face_measures < 0.0)
+            or np.any(np.sum(face_measures, axis=-1) <= 0.0)
         ):
             raise ValueError(
-                "Overset receptor face artifacts require finite unit normals and positive measures."
+                "Overset receptor face artifacts require finite unit normals, "
+                "nonnegative quadrature measures and positive face measures."
             )
         route_faces, route_face_fractions = _prepare_overset_route_faces(
             routes_data, face_cells, receptor_route_faces
