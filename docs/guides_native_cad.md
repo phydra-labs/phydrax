@@ -258,10 +258,18 @@ derivative or analytic normal enclosures over the source trims, refining cells
 that can affect an angle extremum or requested threshold. Revolved line and
 circle profiles lying in a plane through their axis use the meridian normal,
 which stays regular where a profile meets the axis (disc caps, cone apices,
-sphere poles). Cells whose normal is undefined, such as a profile crossing the
-axis, are subdivided to 1/256 of the face parameter range and then reported in
-`unresolved_cells` with spatial boxes in `singular_points`; they contribute the
-full `[0, pi]` range and are never replaced by a point sample.
+sphere poles). A cell whose normal is undefined is subdivided, at knot lines
+first, until a positive lower bound on `|S_u x S_v|` makes it regular or it is
+certified to contain a singular point: it meets a degenerate edge p-curve
+whose exact pole collapse the model proved (or a collapsed clamped spline
+boundary row), or a Krawczyk box isolates the unique zero of two cross-product
+components at an exact rational point where the third vanishes exactly.
+Certified cells are returned in `singular_cells` with `singularities` evidence
+and exact `singular_points` and contribute the full `[0, pi]` range; regular
+cells are then not refined further, because they cannot change that range.
+Cells still undecided at binary64 parameter resolution are returned in
+`unresolved_cells` with a typed `unresolved_reasons` entry. No cell is decided
+by a point sample.
 
 `CadExportPolicy(intersection_approximation=CadCurveFitPolicy(...))` requests a
 fitted B-spline edge and its two source p-curves for an otherwise unrepresented

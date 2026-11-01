@@ -3440,8 +3440,12 @@ def _callable_gmres_for_policy(
     method = policy.method
     if not isinstance(method, (GMRES, FGMRES)):
         raise TypeError("Callable GMRES requires an explicit GMRES or FGMRES policy.")
+    from .backends._native_krylov import _restarted_arnoldi_step_budget
+
     dimension = rhs.shape[0]
-    max_steps = policy.tolerance.max_steps or dimension
+    max_steps = _restarted_arnoldi_step_budget(
+        policy.tolerance.max_steps, dimension, "early-exit"
+    )
     result = _run_callable_gmres(
         action,
         rhs,
