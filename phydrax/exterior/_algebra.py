@@ -5,6 +5,7 @@ from __future__ import annotations
 from math import prod
 from numbers import Integral
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -391,7 +392,7 @@ def _solve_mapping(matrix: Array, rhs: Array, /) -> Array:
     flat_rhs = rhs.reshape((rows, n, columns))
     chunk = max(1, _MAPPING_SOLVE_ELEMENT_BUDGET // (n * n * max(columns, 1)))
     parts = [
-        _solve_mapping_rows(
+        _compiled_solve_mapping_rows(
             flat_matrix[start : start + chunk], flat_rhs[start : start + chunk]
         )
         for start in range(0, rows, chunk)
@@ -433,6 +434,11 @@ def _solve_mapping_rows(matrix: Array, rhs: Array, /) -> Array:
     return jnp.where(
         successful[..., None, None], value, jnp.asarray(jnp.nan, dtype=value.dtype)
     )
+
+
+# One compiled solve per row shape: executed op by op, the dense solve rebuilds
+# its spaces and implicit-root closures and compiles new programs on every call.
+_compiled_solve_mapping_rows = jax.jit(_solve_mapping_rows)
 
 
 def _solve_components(matrix: Array, values: Array, form_type: FormType, /) -> Array:
