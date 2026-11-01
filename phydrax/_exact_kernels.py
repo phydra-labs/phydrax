@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 from math import comb, lcm, prod
-from typing import Literal
+from typing import cast, Literal
 
 import numpy as np
 
@@ -33,10 +33,10 @@ type BernsteinDomain = Literal["simplex", "prism", "box"]
 type HostTree = tuple[np.ndarray, ...]
 type _IntegerRows = tuple[tuple[int, ...], ...]
 
-_WORD_BYTES = 32
+# Native exact word widths in 64-bit limbs (256 to 4096 bits).
+_WORD_LIMBS = (4, 8, 16, 32, 64)
 _DOMAIN_CODES = {"simplex": 0, "box": 1, "prism": 2}
 _RANGE_ERROR = int(MeshcoreStatus.RANGE_ERROR)
-_OK = int(MeshcoreStatus.OK)
 _PARALLELISM_ENVIRONMENT = "PHX_MESHCORE_THREADS"
 
 
@@ -70,19 +70,23 @@ def _workers(parallelism: int | None, /) -> int:
     return parallelism
 
 
-def _words(values: Sequence[int], /) -> bytes | None:
-    """256-bit little-endian two's-complement words, or ``None`` when out of range."""
-    try:
-        return b"".join(
-            value.to_bytes(_WORD_BYTES, "little", signed=True) for value in values
-        )
-    except OverflowError:
-        return None
+def _limbs_for(bits: int, /) -> int | None:
+    """Least native word width (in 64-bit limbs) holding ``bits``-bit magnitudes."""
+    for limbs in _WORD_LIMBS:
+        if bits < 64 * limbs - 1:
+            return limbs
+    return None
 
 
-def _word(buffer: bytes, index: int, /) -> int:
-    start = index * _WORD_BYTES
-    return int.from_bytes(buffer[start : start + _WORD_BYTES], "little", signed=True)
+def _words(values: Sequence[int], limbs: int, /) -> bytes:
+    """Little-endian two's-complement native words of ``limbs`` limbs."""
+    width = 8 * limbs
+    return b"".join(value.to_bytes(width, "little", signed=True) for value in values)
+
+
+def _word(buffer: bytes, index: int, width: int, /) -> int:
+    start = index * width
+    return int.from_bytes(buffer[start : start + width], "little", signed=True)
 
 
 def _pointer(array: np.ndarray, /) -> int:
@@ -159,10 +163,12 @@ class IntegerBernsteinNet:
     """Exact Bernstein controls ``numerator(i) / scale`` of one polynomial.
 
     ``least`` and ``greatest`` index a least and a greatest control (the first
-    in control order). Numerators decode lazily from their native words.
+    in control order). Numerators decode lazily from their native words of
+    ``word_bytes`` bytes.
     """
 
     words: bytes
+    word_bytes: int
     count: int
     scale: int
     least: int
@@ -171,10 +177,12 @@ class IntegerBernsteinNet:
     def numerator(self, index: int, /) -> int:
         if not 0 <= index < self.count:
             raise IndexError("control index out of range.")
-        return _word(self.words, index)
+        return _word(self.words, index, self.word_bytes)
 
     def numerators(self) -> tuple[int, ...]:
-        return tuple(_word(self.words, index) for index in range(self.count))
+        return tuple(
+            _word(self.words, index, self.word_bytes) for index in range(self.count)
+        )
 
     def control(self, index: int, /) -> Fraction:
         return Fraction(self.numerator(index), self.scale)
@@ -182,6 +190,119 @@ class IntegerBernsteinNet:
     def controls(self) -> tuple[Fraction, ...]:
         scale = self.scale
         return tuple(Fraction(value, scale) for value in self.numerators())
+
+
+@dataclass(frozen=True, slots=True)
+class _RationalItem:
+    row: int
+    scale: int
+    degree: tuple[int, ...]
+    exponents: tuple[int, ...]
+    numerators: tuple[int, ...]
+    controls: int
+    limbs: int
+
+
+def _rational_item(
+    row: int,
+    polynomial: Mapping[tuple[int, ...], object],
+    domain: BernsteinDomain,
+    dimension: int,
+    degree: Sequence[int],
+    /,
+) -> _RationalItem | None:
+    coefficients = [
+        value
+        for value in polynomial.values()
+        if isinstance(value, (Fraction, int)) and not isinstance(value, bool)
+    ]
+    if len(coefficients) != len(polynomial):
+        return None
+    scale = lcm(*(value.denominator for value in coefficients)) if coefficients else 1
+    numerators = tuple(
+        value.numerator * (scale // value.denominator) for value in coefficients
+    )
+    exponents: list[int] = []
+    for index in polynomial:
+        if len(index) != dimension:
+            raise ValueError(
+                "Bernstein dimension must match polynomial monomial dimensions."
+            )
+        exponents.extend(index)
+    # Integer weights stay below 2**64; the sum adds the term-count bits.
+    bits = max((value.bit_length() for value in numerators), default=0)
+    limbs = _limbs_for(bits + 64 + len(numerators).bit_length())
+    if limbs is None:
+        return None
+    return _RationalItem(
+        row,
+        scale,
+        tuple(int(value) for value in degree),
+        tuple(exponents),
+        numerators,
+        _control_count(domain, dimension, degree),
+        limbs,
+    )
+
+
+def _rational_call(
+    items: Sequence[_RationalItem], code: int, dimension: int, limbs: int, workers: int, /
+) -> list[IntegerBernsteinNet | None]:
+    width = 8 * limbs
+    term_offsets = [0]
+    control_offsets = [0]
+    for item in items:
+        term_offsets.append(term_offsets[-1] + len(item.numerators))
+        control_offsets.append(control_offsets[-1] + item.controls)
+    count = len(items)
+    # Small calls dominate: bytes inputs and ctypes buffers avoid per-call
+    # NumPy array construction.
+    controls = ctypes.create_string_buffer(control_offsets[-1] * width)
+    denominators = ctypes.create_string_buffer(8 * count)
+    extremes = ctypes.create_string_buffer(16 * count)
+    status = ctypes.create_string_buffer(4 * count)
+    call = load_meshcore()["phx_mc_bernstein_controls"](
+        count,
+        code,
+        dimension,
+        array("i", [value for item in items for value in item.degree]).tobytes(),
+        array("q", term_offsets).tobytes(),
+        array("i", [value for item in items for value in item.exponents]).tobytes(),
+        _words([value for item in items for value in item.numerators], limbs),
+        array("q", control_offsets).tobytes(),
+        controls,
+        denominators,
+        extremes,
+        status,
+        limbs,
+        workers,
+    )
+    _raise_for_call(call, "bernstein_controls")
+    payload = controls.raw
+    denominator_values = array("q", denominators.raw)
+    extreme_values = array("q", extremes.raw)
+    status_values = array("i", status.raw)
+    results: list[IntegerBernsteinNet | None] = []
+    for position, item in enumerate(items):
+        item_status = status_values[position]
+        if item_status == _RANGE_ERROR:
+            results.append(None)
+            continue
+        _raise_for_call(item_status, "bernstein_controls")
+        results.append(
+            IntegerBernsteinNet(
+                payload[
+                    control_offsets[position] * width : control_offsets[position + 1]
+                    * width
+                ],
+                width,
+                item.controls,
+                item.scale * denominator_values[position],
+                extreme_values[2 * position],
+                extreme_values[2 * position + 1],
+            )
+        )
+    return results
 
 
 def rational_bernstein_nets(
@@ -196,9 +317,11 @@ def rational_bernstein_nets(
     """Exact Bernstein controls of rational polynomials, in `bernstein_coefficients` order.
 
     Every ``degrees[i]`` must be at least the least Bernstein degree of
-    ``polynomials[i]``. An item is ``None`` (typed refusal) when a coefficient
-    is not rational or a value leaves the native exact representation; the
-    caller then evaluates it on its Python exact path.
+    ``polynomials[i]``. Each item runs at the least word width its numerators
+    allow and is retried wider on a range refusal. An item is ``None`` (typed
+    refusal) when a coefficient is not rational or its exact controls exceed
+    the widest native word; the caller then evaluates it on its Python exact
+    path.
     """
     code = _DOMAIN_CODES.get(domain)
     if code is None:
@@ -207,89 +330,27 @@ def rational_bernstein_nets(
         raise ValueError("every polynomial needs one Bernstein degree.")
     width = 1 if domain == "simplex" else (2 if domain == "prism" else dimension)
     results: list[IntegerBernsteinNet | None] = [None] * len(polynomials)
-    rows: list[int] = []
-    scales: list[int] = []
-    degree_values: list[int] = []
-    exponents: list[int] = []
-    numerators: list[int] = []
-    term_offsets = [0]
-    control_offsets = [0]
+    pending: list[_RationalItem] = []
     for row, (polynomial, degree) in enumerate(zip(polynomials, degrees, strict=True)):
         if len(degree) != width:
             raise ValueError("Bernstein degree width does not match the domain.")
-        coefficients = [
-            value
-            for value in polynomial.values()
-            if isinstance(value, (Fraction, int)) and not isinstance(value, bool)
-        ]
-        if len(coefficients) != len(polynomial):
+        item = _rational_item(row, polynomial, domain, dimension, degree)
+        if item is not None:
+            pending.append(item)
+    workers = _workers(parallelism)
+    for limbs in _WORD_LIMBS:
+        batch = [item for item in pending if item.limbs <= limbs]
+        if not batch:
             continue
-        scale = lcm(*(value.denominator for value in coefficients)) if coefficients else 1
-        item_numerators = [
-            value.numerator * (scale // value.denominator) for value in coefficients
-        ]
-        if any(value.bit_length() >= 8 * _WORD_BYTES - 1 for value in item_numerators):
-            continue
-        for index in polynomial:
-            if len(index) != dimension:
-                raise ValueError(
-                    "Bernstein dimension must match polynomial monomial dimensions."
-                )
-            exponents.extend(index)
-        numerators.extend(item_numerators)
-        rows.append(row)
-        scales.append(scale)
-        degree_values.extend(int(value) for value in degree)
-        term_offsets.append(term_offsets[-1] + len(coefficients))
-        control_offsets.append(
-            control_offsets[-1] + _control_count(domain, dimension, degree)
-        )
-    if not rows:
-        return results
-    numerator_words = _words(numerators)
-    if numerator_words is None:
-        raise AssertionError("checked numerators must fit their native words.")
-    count = len(rows)
-    # Small calls dominate: bytes inputs and ctypes buffers avoid per-call
-    # NumPy array construction.
-    controls = ctypes.create_string_buffer(control_offsets[-1] * _WORD_BYTES)
-    denominators = ctypes.create_string_buffer(8 * count)
-    extremes = ctypes.create_string_buffer(16 * count)
-    status = ctypes.create_string_buffer(4 * count)
-    call = load_meshcore()["phx_mc_bernstein_controls"](
-        count,
-        code,
-        dimension,
-        array("i", degree_values).tobytes(),
-        array("q", term_offsets).tobytes(),
-        array("i", exponents).tobytes(),
-        numerator_words,
-        array("q", control_offsets).tobytes(),
-        controls,
-        denominators,
-        extremes,
-        status,
-        _workers(parallelism),
-    )
-    _raise_for_call(call, "bernstein_controls")
-    payload = controls.raw
-    denominator_values = array("q", denominators.raw)
-    extreme_values = array("q", extremes.raw)
-    status_values = array("i", status.raw)
-    for position, row in enumerate(rows):
-        item_status = status_values[position]
-        if item_status == _RANGE_ERROR:
-            continue
-        _raise_for_call(item_status, "bernstein_controls")
-        start = control_offsets[position] * _WORD_BYTES
-        stop = control_offsets[position + 1] * _WORD_BYTES
-        results[row] = IntegerBernsteinNet(
-            payload[start:stop],
-            control_offsets[position + 1] - control_offsets[position],
-            scales[position] * denominator_values[position],
-            extreme_values[2 * position],
-            extreme_values[2 * position + 1],
-        )
+        refused = []
+        for item, net in zip(
+            batch, _rational_call(batch, code, dimension, limbs, workers), strict=True
+        ):
+            if net is None:
+                refused.append(item)
+            else:
+                results[item.row] = net
+        pending = [item for item in pending if item.limbs > limbs] + refused
     return results
 
 
@@ -309,60 +370,70 @@ def simplex_blossom_extremes(
     lists the integer barycentric weights of subsimplex corner ``j`` over one
     common positive scale ``s``. Each returned value is a restricted control
     times ``s ** degree``; ``None`` is the typed refusal of an item whose exact
-    blossoms leave the native representation.
+    blossoms exceed the widest native word.
     """
     count = len(nets)
     if len(corners) != count or len(degrees) != count:
         raise ValueError("every net needs its corners and degree.")
-    offsets = [0]
-    flat: list[int] = []
-    corner_values: list[int] = []
+    starts: list[int | None] = []
     for net, corner_rows, degree in zip(nets, corners, degrees, strict=True):
         if len(net) != comb(int(degree) + parts - 1, parts - 1):
             raise ValueError("a simplex net must hold every control of its degree.")
         if len(corner_rows) != parts or any(len(row) != parts for row in corner_rows):
             raise ValueError("corners must be (parts, parts) integer weights.")
-        flat.extend(net)
-        corner_values.extend(value for row in corner_rows for value in row)
-        offsets.append(offsets[-1] + len(net))
-    if not count:
-        return []
-    net_words = _words(flat)
-    corner_words = _words(corner_values)
-    if net_words is None or corner_words is None:
-        return [None] * count
-    values = np.empty((offsets[-1] * _WORD_BYTES,), dtype=np.uint8)
-    extremes = np.empty((count, 2), dtype=np.int64)
-    status = np.empty((count,), dtype=np.int32)
-    degree_array = np.asarray(degrees, dtype=np.int32)
-    offset_array = np.asarray(offsets, dtype=np.int64)
-    call = load_meshcore()["phx_mc_simplex_bernstein_blossoms"](
-        count,
-        parts,
-        _pointer(degree_array),
-        _pointer(offset_array),
-        net_words,
-        corner_words,
-        _pointer(values),
-        _pointer(extremes),
-        _pointer(status),
-        _workers(parallelism),
-    )
-    _raise_for_call(call, "simplex_bernstein_blossoms")
-    payload = values.tobytes()
-    results: list[tuple[int, int] | None] = []
-    for item in range(count):
-        item_status = int(status[item])
-        if item_status == _RANGE_ERROR:
-            results.append(None)
-            continue
-        _raise_for_call(item_status, "simplex_bernstein_blossoms")
-        results.append(
-            (
-                _word(payload, offsets[item] + int(extremes[item, 0])),
-                _word(payload, offsets[item] + int(extremes[item, 1])),
-            )
+        net_bits = max((value.bit_length() for value in net), default=0)
+        corner_bits = max(
+            (value.bit_length() for row in corner_rows for value in row), default=0
         )
+        starts.append(
+            _limbs_for(net_bits + int(degree) * (corner_bits + parts.bit_length()) + 2)
+        )
+    results: list[tuple[int, int] | None] = [None] * count
+    pending = [item for item in range(count) if starts[item] is not None]
+    workers = _workers(parallelism)
+    for limbs in _WORD_LIMBS:
+        batch = [item for item in pending if cast(int, starts[item]) <= limbs]
+        if not batch:
+            continue
+        width = 8 * limbs
+        offsets = [0]
+        for item in batch:
+            offsets.append(offsets[-1] + len(nets[item]))
+        values = ctypes.create_string_buffer(offsets[-1] * width)
+        extremes = ctypes.create_string_buffer(16 * len(batch))
+        status = ctypes.create_string_buffer(4 * len(batch))
+        call = load_meshcore()["phx_mc_simplex_bernstein_blossoms"](
+            len(batch),
+            parts,
+            array("i", [int(degrees[item]) for item in batch]).tobytes(),
+            array("q", offsets).tobytes(),
+            _words([value for item in batch for value in nets[item]], limbs),
+            _words(
+                [value for item in batch for row in corners[item] for value in row], limbs
+            ),
+            values,
+            extremes,
+            status,
+            limbs,
+            workers,
+        )
+        _raise_for_call(call, "simplex_bernstein_blossoms")
+        payload = values.raw
+        extreme_values = array("q", extremes.raw)
+        status_values = array("i", status.raw)
+        refused = []
+        for position, item in enumerate(batch):
+            if status_values[position] == _RANGE_ERROR:
+                refused.append(item)
+                continue
+            _raise_for_call(status_values[position], "simplex_bernstein_blossoms")
+            results[item] = (
+                _word(payload, offsets[position] + extreme_values[2 * position], width),
+                _word(
+                    payload, offsets[position] + extreme_values[2 * position + 1], width
+                ),
+            )
+        pending = [item for item in pending if cast(int, starts[item]) > limbs] + refused
     return results
 
 
@@ -371,7 +442,7 @@ class BisectedNets:
     """Halves of integer Bernstein nets over ``2 ** exponent`` times the input scale.
 
     ``halves[i]`` is ``(left, right)`` as ``(controls, components)`` integer rows,
-    or ``None`` (typed refusal) when item ``i`` left the native representation.
+    or ``None`` (typed refusal) when item ``i`` exceeds the widest native word.
     """
 
     exponent: int
@@ -399,62 +470,78 @@ def bisect_integer_nets(
         raise ValueError("bisection needs at least one control.")
     slot_count = len(indices[0])
     components = len(nets[0][0]) if count else 1
-    flat: list[int] = []
     for net in nets:
         if len(net) != control_count or any(len(row) != components for row in net):
             raise ValueError("nets must be (controls, components) integer rows.")
-        for row in net:
-            flat.extend(row)
-    index_array = np.asarray(indices, dtype=np.int32)
-    if index_array.shape != (control_count, slot_count):
+    index_bytes = array("i", [int(value) for row in indices for value in row]).tobytes()
+    if len(index_bytes) != 4 * control_count * slot_count:
         raise ValueError("indices must share one slot count.")
-    words = _words(flat) if count else b""
-    if words is None:
-        exponent = max(int(row[first]) + int(row[second]) for row in indices)
-        return BisectedNets(exponent, (None,) * count)
-    size = count * control_count * components * _WORD_BYTES
-    left = np.empty((max(size, 1),), dtype=np.uint8)
-    right = np.empty((max(size, 1),), dtype=np.uint8)
-    exponent_out = np.zeros((1,), dtype=np.int32)
-    status = np.empty((max(count, 1),), dtype=np.int32)
-    call = load_meshcore()["phx_mc_bernstein_bisect"](
-        count,
-        control_count,
-        slot_count,
-        components,
-        _pointer(index_array),
-        first,
-        second,
-        words if count else None,
-        _pointer(left),
-        _pointer(right),
-        _pointer(exponent_out),
-        _pointer(status),
-        _workers(parallelism),
-    )
-    _raise_for_call(call, "bernstein_bisect")
-    left_bytes = left.tobytes()
-    right_bytes = right.tobytes()
-    halves: list[tuple[_IntegerRows, _IntegerRows] | None] = []
-    for item in range(count):
-        item_status = int(status[item])
-        if item_status == _RANGE_ERROR:
-            halves.append(None)
-            continue
-        _raise_for_call(item_status, "bernstein_bisect")
-        base = item * control_count * components
-        left_rows, right_rows = (
-            tuple(
-                tuple(
-                    _word(payload, base + row * components + component)
-                    for component in range(components)
-                )
-                for row in range(control_count)
-            )
-            for payload in (left_bytes, right_bytes)
+    exponent = max(int(row[first]) + int(row[second]) for row in indices)
+    starts = [
+        _limbs_for(
+            max((value.bit_length() for row in net for value in row), default=0)
+            + exponent
+            + 2
         )
-        halves.append((left_rows, right_rows))
-    return BisectedNets(int(exponent_out[0]), tuple(halves))
+        for net in nets
+    ]
+    halves: list[tuple[_IntegerRows, _IntegerRows] | None] = [None] * count
+    pending = [item for item in range(count) if starts[item] is not None]
+    workers = _workers(parallelism)
+    for limbs in _WORD_LIMBS:
+        batch = [item for item in pending if cast(int, starts[item]) <= limbs]
+        if not batch:
+            continue
+        width = 8 * limbs
+        size = len(batch) * control_count * components * width
+        left = ctypes.create_string_buffer(size)
+        right = ctypes.create_string_buffer(size)
+        exponent_out = ctypes.create_string_buffer(4)
+        status = ctypes.create_string_buffer(4 * len(batch))
+        call = load_meshcore()["phx_mc_bernstein_bisect"](
+            len(batch),
+            control_count,
+            slot_count,
+            components,
+            index_bytes,
+            first,
+            second,
+            _words(
+                [value for item in batch for row in nets[item] for value in row], limbs
+            ),
+            left,
+            right,
+            exponent_out,
+            status,
+            limbs,
+            workers,
+        )
+        _raise_for_call(call, "bernstein_bisect")
+        if array("i", exponent_out.raw)[0] != exponent:
+            raise AssertionError("native bisection exponent disagrees with the indices.")
+        left_bytes = left.raw
+        right_bytes = right.raw
+        status_values = array("i", status.raw)
+        refused = []
+        for position, item in enumerate(batch):
+            if status_values[position] == _RANGE_ERROR:
+                refused.append(item)
+                continue
+            _raise_for_call(status_values[position], "bernstein_bisect")
+            base = position * control_count * components
+            left_rows, right_rows = (
+                tuple(
+                    tuple(
+                        _word(payload, base + row * components + component, width)
+                        for component in range(components)
+                    )
+                    for row in range(control_count)
+                )
+                for payload in (left_bytes, right_bytes)
+            )
+            halves[item] = (left_rows, right_rows)
+        pending = [item for item in pending if cast(int, starts[item]) > limbs] + refused
+    return BisectedNets(exponent, tuple(halves))
 
 
 # ---------------------------------------------------------- separation screen

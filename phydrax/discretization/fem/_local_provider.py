@@ -36,6 +36,54 @@ from .._local_variational import (
 if TYPE_CHECKING:
     from ._generic import FiniteElementDiscretization
 
+# Quadrature-point Jacobians inverted per scanned batch while realizing a
+# local metric. The unrolled small inverse materializes dozens of
+# intermediates per point; batching keeps them this many points wide instead
+# of the whole region (cells x quadrature points).
+_JACOBIAN_INVERSE_BATCH = 1 << 12
+
+
+def _jacobian_inverse_batch(
+    carry: None, jacobian: Array, /
+) -> tuple[None, tuple[Array, Array, Array]]:
+    inverse, _, measure, _, successful = cell_jacobian_inverse_and_measure(jacobian)
+    return carry, (inverse, measure, successful)
+
+
+def _batched_jacobian_inverse(jacobian: Array, /) -> tuple[Array, Array, Array]:
+    """Pseudo-inverse, measure and evidence of ``(..., ambient, reference)`` rows.
+
+    Row by row this is `cell_jacobian_inverse_and_measure`; regions wider than
+    one batch are scanned in batches by a module-level body, the tail padded
+    with exact identity Jacobians whose rows are dropped.
+    """
+    leading = jacobian.shape[:-2]
+    rows = jacobian.reshape((-1,) + jacobian.shape[-2:])
+    count = rows.shape[0]
+    if count <= _JACOBIAN_INVERSE_BATCH:
+        _, (inverse, measure, successful) = _jacobian_inverse_batch(None, rows)
+    else:
+        batches = -(-count // _JACOBIAN_INVERSE_BATCH)
+        padding = jnp.broadcast_to(
+            jnp.eye(rows.shape[1], rows.shape[2], dtype=rows.dtype),
+            (batches * _JACOBIAN_INVERSE_BATCH - count,) + rows.shape[1:],
+        )
+        _, (inverse, measure, successful) = jax.lax.scan(
+            _jacobian_inverse_batch,
+            None,
+            jnp.concatenate((rows, padding)).reshape(
+                (batches, _JACOBIAN_INVERSE_BATCH) + rows.shape[1:]
+            ),
+        )
+        inverse = inverse.reshape((-1,) + inverse.shape[2:])[:count]
+        measure = measure.reshape((-1,))[:count]
+        successful = successful.reshape((-1,))[:count]
+    return (
+        inverse.reshape(leading + inverse.shape[1:]),
+        measure.reshape(leading),
+        successful.reshape(leading),
+    )
+
 
 def _tabulation_hessians(
     tabulate: Callable[[Array], tuple[Array, Array]], points: Array, /
@@ -365,7 +413,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         jacobian = ein.contract(
             f"{cells}qir,cid->cqdr", self.coordinate_gradients, coordinates
         )
-        inverse, _, measure, _, successful = cell_jacobian_inverse_and_measure(jacobian)
+        inverse, measure, successful = _batched_jacobian_inverse(jacobian)
         measure = eqx.error_if(
             measure,
             jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),

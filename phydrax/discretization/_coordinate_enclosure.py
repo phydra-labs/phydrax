@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
 from functools import cache
 from itertools import product
-from math import comb, prod
+from math import comb, lcm, prod
 from types import MappingProxyType
 from typing import cast, Literal, NamedTuple, overload, Protocol, TYPE_CHECKING
 
@@ -350,12 +350,51 @@ def multiply(first: ExpressionInput, second: ExpressionInput, /) -> Expression:
     first_dimension = _polynomial_dimension(first)
     if _polynomial_dimension(second) != first_dimension:
         raise ValueError("polynomial multiplication requires equal parameter dimensions.")
+    if _rational_values(first.values()) and _rational_values(second.values()):
+        # Integer numerators over one shared denominator per factor; each
+        # product coefficient is normalized once.
+        first_numerators, first_denominator = _shared_denominator(first)
+        second_numerators, second_denominator = _shared_denominator(second)
+        integer_result: dict[tuple[int, ...], int] = {}
+        for left_index, left_value in first_numerators.items():
+            for right_index, right_value in second_numerators.items():
+                index = tuple(a + b for a, b in zip(left_index, right_index, strict=True))
+                integer_result[index] = (
+                    integer_result.get(index, 0) + left_value * right_value
+                )
+        denominator = first_denominator * second_denominator
+        return {
+            index: Fraction(value, denominator)
+            for index, value in integer_result.items()
+            if value
+        }
     result: Polynomial = {}
     for left_index, left_value in first.items():
         for right_index, right_value in second.items():
             index = tuple(a + b for a, b in zip(left_index, right_index, strict=True))
             result[index] = result.get(index, Fraction(0)) + left_value * right_value
     return {index: coefficient for index, coefficient in result.items() if coefficient}
+
+
+def _rational_values(values: Iterable[object], /) -> bool:
+    """Whether every value is a `Fraction` or a plain integer (never a bool)."""
+    return all(type(value) is Fraction or type(value) is int for value in values)
+
+
+def _shared_denominator(
+    polynomial: Mapping[tuple[int, ...], ExactScalar], /
+) -> tuple[dict[tuple[int, ...], int], int]:
+    """Integer coefficient numerators over the least common denominator.
+
+    Callers establish with `_rational_values` that every coefficient is a
+    `Fraction` or a plain integer.
+    """
+    rationals = cast(Mapping[tuple[int, ...], Fraction | int], polynomial)
+    denominator = lcm(*(value.denominator for value in rationals.values()))
+    return {
+        index: value.numerator * (denominator // value.denominator)
+        for index, value in rationals.items()
+    }, denominator
 
 
 def power(
@@ -724,11 +763,31 @@ def _box_weight(
     return weight
 
 
-type _WeightColumn = tuple[tuple[Fraction, ...], tuple[tuple[int, Fraction], ...]]
+class _WeightColumn(NamedTuple):
+    """Exact Bernstein weights of one monomial and their integer form.
+
+    `integer_nonzero` holds ``(row, weight * denominator)`` for the nonzero
+    weights over the column's least common `denominator`.
+    """
+
+    weights: tuple[Fraction, ...]
+    nonzero: tuple[tuple[int, Fraction], ...]
+    denominator: int
+    integer_nonzero: tuple[tuple[int, int], ...]
 
 
 def _weight_column(weights: tuple[Fraction, ...], /) -> _WeightColumn:
-    return weights, tuple((row, weight) for row, weight in enumerate(weights) if weight)
+    nonzero = tuple((row, weight) for row, weight in enumerate(weights) if weight)
+    denominator = lcm(*(weight.denominator for _, weight in nonzero))
+    return _WeightColumn(
+        weights,
+        nonzero,
+        denominator,
+        tuple(
+            (row, weight.numerator * (denominator // weight.denominator))
+            for row, weight in nonzero
+        ),
+    )
 
 
 @cache
@@ -774,14 +833,43 @@ def _prism_weight_column(
 def _accumulate_controls(
     controls: list[ExactScalar], coefficient: ExactScalar, column: _WeightColumn, /
 ) -> None:
-    weights, nonzero = column
     if isinstance(coefficient, Fraction):
         # A rational zero product leaves a rational control unchanged.
-        for row, weight in nonzero:
+        for row, weight in column.nonzero:
             controls[row] += coefficient * weight
         return
-    for row, weight in enumerate(weights):
+    for row, weight in enumerate(column.weights):
         controls[row] += coefficient * weight
+
+
+def _bernstein_controls(
+    size: int, terms: Sequence[tuple[ExactScalar, _WeightColumn]], /
+) -> tuple[ExactScalar, ...]:
+    """Sum ``coefficient * weight`` per control.
+
+    Rational coefficients accumulate as integers over the product of the least
+    common coefficient and weight denominators, and each control is
+    normalized once; any radical coefficient keeps exact field arithmetic.
+    """
+    if not all(type(coefficient) is Fraction for coefficient, _ in terms):
+        controls: list[ExactScalar] = [Fraction(0) for _ in range(size)]
+        for coefficient, column in terms:
+            _accumulate_controls(controls, coefficient, column)
+        return tuple(controls)
+    rationals = cast(Sequence[tuple[Fraction, _WeightColumn]], terms)
+    coefficient_denominator = lcm(*(value.denominator for value, _ in rationals))
+    weight_denominator = lcm(*(column.denominator for _, column in rationals))
+    sums = [0] * size
+    for value, column in rationals:
+        scale = (
+            value.numerator
+            * (coefficient_denominator // value.denominator)
+            * (weight_denominator // column.denominator)
+        )
+        for row, numerator in column.integer_nonzero:
+            sums[row] += scale * numerator
+    denominator = coefficient_denominator * weight_denominator
+    return tuple(Fraction(total, denominator) for total in sums)
 
 
 def bernstein_degree(
@@ -887,39 +975,39 @@ def bernstein_coefficients(
 def _fraction_controls(
     value: Polynomial, domain: BernsteinDomain, dimension: int, degree: tuple[int, ...], /
 ) -> tuple[ExactScalar, ...]:
-    controls: list[ExactScalar]
     match domain:
         case "simplex":
             (total,) = degree
-            betas = _compositions(total, dimension + 1)
-            controls = [Fraction(0) for _ in betas]
-            for index, coefficient in value.items():
-                _accumulate_controls(
-                    controls,
-                    coefficient,
-                    _simplex_weight_column((0, *index), total, dimension + 1),
-                )
-            return tuple(controls)
+            return _bernstein_controls(
+                len(_compositions(total, dimension + 1)),
+                tuple(
+                    (
+                        coefficient,
+                        _simplex_weight_column((0, *index), total, dimension + 1),
+                    )
+                    for index, coefficient in value.items()
+                ),
+            )
         case "box":
-            controls = [Fraction(0) for _ in range(prod(axis + 1 for axis in degree))]
-            for index, coefficient in value.items():
-                _accumulate_controls(
-                    controls, coefficient, _box_weight_column(index, degree)
-                )
-            return tuple(controls)
+            return _bernstein_controls(
+                prod(axis + 1 for axis in degree),
+                tuple(
+                    (coefficient, _box_weight_column(index, degree))
+                    for index, coefficient in value.items()
+                ),
+            )
         case "prism":
             triangle_degree, line_degree = degree
-            controls = [
-                Fraction(0)
-                for _ in range(len(_compositions(triangle_degree, 3)) * (line_degree + 1))
-            ]
-            for index, coefficient in value.items():
-                _accumulate_controls(
-                    controls,
-                    coefficient,
-                    _prism_weight_column(index, triangle_degree, line_degree),
-                )
-            return tuple(controls)
+            return _bernstein_controls(
+                len(_compositions(triangle_degree, 3)) * (line_degree + 1),
+                tuple(
+                    (
+                        coefficient,
+                        _prism_weight_column(index, triangle_degree, line_degree),
+                    )
+                    for index, coefficient in value.items()
+                ),
+            )
     raise ValueError(f"Unsupported Bernstein domain {domain!r}.")
 
 
@@ -1000,18 +1088,62 @@ def affine_arguments(origin: np.ndarray, matrix: np.ndarray, /) -> tuple[Polynom
 def evaluate_polynomial(
     polynomial: Mapping[tuple[int, ...], ExactScalar], point: tuple[ExactScalar, ...], /
 ) -> ExactScalar:
+    if any(len(exponent) != len(point) for exponent in polynomial):
+        raise ValueError("evaluation point dimension must match polynomial variables.")
+    if _rational_values(point) and _rational_values(polynomial.values()):
+        return _evaluate_rational_polynomial(polynomial, point)
     total: ExactScalar = Fraction(0)
     for exponent, coefficient in polynomial.items():
-        if len(exponent) != len(point):
-            raise ValueError(
-                "evaluation point dimension must match polynomial variables."
-            )
         monomial: ExactScalar = coefficient
         for coordinate, power_ in zip(point, exponent, strict=True):
             if power_:
                 monomial *= coordinate**power_
         total += monomial
     return total
+
+
+def _evaluate_rational_polynomial(
+    polynomial: Mapping[tuple[int, ...], ExactScalar],
+    point: tuple[ExactScalar, ...],
+    /,
+) -> Fraction:
+    """Evaluate on integer numerators over one shared denominator.
+
+    With ``x_i = p_i / q_i`` and per-axis maximal degree ``E_i``, each monomial
+    is ``c * prod(p_i**e_i * q_i**(E_i - e_i)) / prod(q_i**E_i)``; the sum is
+    integer arithmetic and the result is normalized once.
+    """
+    numerators, coefficient_denominator = _shared_denominator(polynomial)
+    degrees = [0] * len(point)
+    for exponent in polynomial:
+        for axis, power_ in enumerate(exponent):
+            if power_ > degrees[axis]:
+                degrees[axis] = power_
+    numerator_powers = []
+    denominator_powers = []
+    for coordinate, degree in zip(
+        cast(tuple[Fraction | int, ...], point), degrees, strict=True
+    ):
+        numerator_row = [1]
+        denominator_row = [1]
+        for _ in range(degree):
+            numerator_row.append(numerator_row[-1] * coordinate.numerator)
+            denominator_row.append(denominator_row[-1] * coordinate.denominator)
+        numerator_powers.append(numerator_row)
+        denominator_powers.append(denominator_row)
+    total = 0
+    for exponent, coefficient in numerators.items():
+        term = coefficient
+        for axis, power_ in enumerate(exponent):
+            term *= (
+                numerator_powers[axis][power_]
+                * denominator_powers[axis][degrees[axis] - power_]
+            )
+        total += term
+    denominator = coefficient_denominator
+    for axis, degree in enumerate(degrees):
+        denominator *= denominator_powers[axis][degree]
+    return Fraction(total, denominator)
 
 
 def evaluate_expression(

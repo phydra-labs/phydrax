@@ -458,6 +458,115 @@ def _exact_determinant(matrix: _ExactMatrix, /) -> ExactScalar:
     return total
 
 
+# Primal feasibility tolerance of the Kelley cutting-plane programs (controls are
+# normalized to unit magnitude and ``M`` to the unit box, so it is absolute).
+_KELLEY_FEASIBILITY_TOLERANCE = 1.0e-7
+
+
+def _least_eigenpairs(
+    matrix: np.ndarray, controls: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Least eigenvalue and eigenvector of every ``sym(M C_k)``."""
+    products = matrix @ controls
+    values, vectors = np.linalg.eigh(0.5 * (products + np.swapaxes(products, 1, 2)))
+    return values[:, 0], vectors[:, :, 0]
+
+
+def _seed_indices(count: int, /) -> np.ndarray:
+    return np.unique(np.linspace(0, count - 1, 8).astype(int))
+
+
+def _search_starts(controls: np.ndarray, /) -> list[np.ndarray]:
+    """Unit-box inverses of the mean and of the seed controls."""
+    # Seeds only start the cuts (the program is complete from any seed).
+    starts = []
+    for matrix in (controls.mean(axis=0), *controls[_seed_indices(len(controls))]):
+        try:
+            inverse = np.linalg.inv(matrix)
+        except np.linalg.LinAlgError:
+            continue
+        if np.all(np.isfinite(inverse)):
+            starts.append(inverse / np.max(np.abs(inverse)))
+    return starts
+
+
+def _singular_combination(
+    first: _ExactMatrix, second: _ExactMatrix, weight: Fraction, /
+) -> bool:
+    """Exactly decide a singular matrix on the segment from ``second`` to ``first``.
+
+    A zero of ``det(first)``, or a determinant at ``weight first + (1 - weight)
+    second`` that is zero or of the opposite sign (a root on ``[weight, 1]``).
+    """
+    sign = _sign(_exact_determinant(first))
+    if sign == 0:
+        return True
+    complement = 1 - weight
+    combination = tuple(
+        tuple(
+            weight * left + complement * right
+            for left, right in zip(first_row, second_row, strict=True)
+        )
+        for first_row, second_row in zip(first, second, strict=True)
+    )
+    return _sign(_exact_determinant(combination)) != sign
+
+
+def _singular_control_hull(
+    controls: tuple[_ExactMatrix, ...], floats: np.ndarray, /
+) -> bool:
+    """Exactly prove that no constant monotone preconditioner exists.
+
+    ``sym(M C)`` positive definite makes ``M C`` nonsingular, and the positive
+    definite cone is convex, so a preconditioner keeps every convex combination
+    of the controls nonsingular. A negative real eigenvalue ``lambda`` of
+    ``B^-1 A`` puts the singular matrix ``A - lambda B`` on the segment, at
+    ``t A + (1 - t) B`` with ``t = 1 / (1 - lambda)``. Floats propose the pairs
+    and ``t``; `_singular_combination` decides each proposal exactly. Partners
+    are the search seeds, then every control on which the best seeded
+    preconditioner is not positive definite, worst first (the controls that
+    refute it). Only an exact singular combination returns ``True``.
+    """
+    if floats.size == 0 or not np.all(np.isfinite(floats)):
+        return False
+    magnitude = float(np.max(np.abs(floats)))
+    if magnitude == 0.0:
+        return False
+    floats = floats / magnitude
+    seeds = _seed_indices(len(floats))
+    partners = list(seeds)
+    starts = _search_starts(floats)
+    if starts:
+        margins = max(
+            (_least_eigenpairs(start, floats)[0] for start in starts),
+            key=lambda values: float(np.min(values)),
+        )
+        refuting = np.flatnonzero(margins <= 0.0)
+        tried = set(partners)
+        partners.extend(
+            int(index)
+            for index in refuting[np.argsort(margins[refuting], kind="stable")]
+            if int(index) not in tried
+        )
+    for partner in partners:
+        try:
+            inverse = np.linalg.inv(floats[partner])
+        except np.linalg.LinAlgError:
+            continue
+        if not np.all(np.isfinite(inverse)):
+            continue
+        eigenvalues = np.linalg.eigvals(inverse @ floats)
+        hits = np.argwhere((eigenvalues.imag == 0.0) & (eigenvalues.real < 0.0))
+        order = np.argsort(eigenvalues.real[hits[:, 0], hits[:, 1]], kind="stable")
+        for control, column in hits[order]:
+            weight = Fraction(1.0 / (1.0 - float(eigenvalues.real[control, column])))
+            if 0 < weight < 1 and _singular_combination(
+                controls[int(control)], controls[partner], weight
+            ):
+                return True
+    return False
+
+
 def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
     """A box-bounded ``M`` maximizing ``min_k lambda_min(sym(M C_k))``, if positive.
 
@@ -466,10 +575,12 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
     least-eigenvalue vectors ``v`` give linear programs whose optima bound it
     from above: an optimum ``t <= 0`` proves that no preconditioner exists;
     otherwise every iterate cuts off the previous program point, and the search
-    stops once the attained margin is positive and within half the bound, or
-    the bound and the attained margin agree to binary64 resolution. Inverses
-    of the mean and of each control seed the cuts. Floats only propose ``M``;
-    the caller decides positivity exactly.
+    stops once the attained margin is positive and within half the bound, the
+    bound and the attained margin agree to binary64 resolution, or the new cuts
+    are violated by no more than the program's primal feasibility tolerance (the
+    program point cannot move). Inverses of the mean and of each control seed
+    the cuts. Floats only propose ``M``; the caller decides positivity exactly,
+    and ``None`` only means that no proposal was found.
     """
     from scipy.optimize import linprog
 
@@ -486,9 +597,7 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
     size = controls.shape[1]
 
     def margins(matrix: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-        products = matrix @ controls
-        values, vectors = np.linalg.eigh(0.5 * (products + np.swapaxes(products, 1, 2)))
-        return values[:, 0], vectors[:, :, 0]
+        return _least_eigenpairs(matrix, controls)
 
     def cuts(vectors: np.ndarray, selected: np.ndarray, /) -> list[np.ndarray]:
         # Row of t - v^T M (C v) <= 0 over the unknowns (M row-major, t).
@@ -496,16 +605,7 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
         coefficients = np.einsum("ki,kj->kij", vectors[selected], applied)
         return [np.concatenate((-row.ravel(), (1.0,))) for row in coefficients]
 
-    # Seeds only start the cuts (the program is complete from any seed).
-    seeds = controls[np.unique(np.linspace(0, len(controls) - 1, 8).astype(int))]
-    starts = []
-    for matrix in (controls.mean(axis=0), *seeds):
-        try:
-            inverse = np.linalg.inv(matrix)
-        except np.linalg.LinAlgError:
-            continue
-        if np.all(np.isfinite(inverse)):
-            starts.append(inverse / np.max(np.abs(inverse)))
+    starts = _search_starts(controls)
     if not starts:
         return None
     best = max(starts, key=lambda matrix: float(np.min(margins(matrix)[0])))
@@ -521,6 +621,7 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
             b_ub=np.zeros(len(rows)),
             bounds=bounds,
             method="highs",
+            options={"primal_feasibility_tolerance": _KELLEY_FEASIBILITY_TOLERANCE},
         )
         point = solution.x
         if not solution.success or point is None:
@@ -535,6 +636,10 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
         if best_margin > 0.0 and best_margin >= 0.5 * bound:
             return best
         if bound - best_margin <= 1.0e-12 * max(1.0, bound):
+            return best if best_margin > 0.0 else None
+        # Cuts violated by no more than the feasibility tolerance leave the
+        # program point in place: further rounds cannot tighten the bound.
+        if bound - float(np.min(values)) <= _KELLEY_FEASIBILITY_TOLERANCE:
             return best if best_margin > 0.0 else None
         rows.extend(cuts(vectors, np.flatnonzero(values < bound)))
 
@@ -551,12 +656,15 @@ def monotone_preconditioner(
     if not controls:
         return None
     size = len(controls[0])
-    proposal = _float_search_preconditioner(
-        np.asarray(
-            [[[float(value) for value in row] for row in matrix] for matrix in controls],
-            dtype=np.float64,
-        )
+    floats = np.asarray(
+        [[[float(value) for value in row] for row in matrix] for matrix in controls],
+        dtype=np.float64,
     )
+    # Cheap exact refutation first: the cutting-plane search spends nearly all of
+    # its programs proving that no preconditioner exists.
+    if _singular_control_hull(controls, floats):
+        return None
+    proposal = _float_search_preconditioner(floats)
     if proposal is None:
         return None
     scale = float(np.max(np.abs(proposal)))

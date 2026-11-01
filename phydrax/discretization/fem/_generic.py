@@ -20,6 +20,7 @@ import phydrax.ein as ein
 
 from ..._coordinate_measure import CoordinateFrame, CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._algebra import map_reference_values, pullback, vector_to_form
@@ -2227,19 +2228,17 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     def mass(self) -> SparseLinearMap:
         if len(self.field_spaces) != 1:
             raise ValueError("mass is only unambiguous for one field.")
-        dof_map, geometries = self._field_operator_geometry(
-            self.field_spaces[0].name, self.default_runtime
-        )
-        return self._assemble_geometry_operator(dof_map, geometries, mass=True)
+        return self._field_operators(
+            self.field_spaces[0].name, self.default_runtime, (True,)
+        )[0]
 
     @property
     def stiffness(self) -> SparseLinearMap:
         if len(self.field_spaces) != 1:
             raise ValueError("stiffness is only unambiguous for one field.")
-        dof_map, geometries = self._field_operator_geometry(
-            self.field_spaces[0].name, self.default_runtime
-        )
-        return self._assemble_geometry_operator(dof_map, geometries, mass=False)
+        return self._field_operators(
+            self.field_spaces[0].name, self.default_runtime, (False,)
+        )[0]
 
     @property
     def vertices(self) -> Array:
@@ -2653,10 +2652,61 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     def assemble_field_operators(
         self, field_name: str, runtime: FiniteElementRuntimeData, /
     ) -> tuple[SparseLinearMap, SparseLinearMap]:
+        mass, stiffness = self._field_operators(field_name, runtime, (True, False))
+        return mass, stiffness
+
+    def _field_operators(
+        self,
+        field_name: str,
+        runtime: FiniteElementRuntimeData,
+        kinds: tuple[bool, ...],
+        /,
+    ) -> tuple[SparseLinearMap, ...]:
+        """Assemble mass (``True``) and stiffness (``False``) operators.
+
+        Assembly runs as one compiled program per discretization. The default
+        runtime reads the prepared block geometry; any other runtime evaluates
+        its geometry anew inside the program.
+        """
+        if runtime is self.default_runtime:
+            return run_owned_program(
+                self,
+                "prepared-field-operators",
+                FiniteElementDiscretization._prepared_field_operators,
+                str(field_name),
+                kinds,
+            )
+        return run_owned_program(
+            self,
+            "runtime-field-operators",
+            FiniteElementDiscretization._runtime_field_operators,
+            str(field_name),
+            runtime,
+            kinds,
+        )
+
+    def _prepared_field_operators(
+        self, field_name: str, kinds: tuple[bool, ...], /
+    ) -> tuple[SparseLinearMap, ...]:
+        field_index = self._field_index(field_name)
+        return tuple(
+            self._assemble_geometry_operator(
+                self.dof_maps[field_index], self.block_geometries[field_index], mass=mass
+            )
+            for mass in kinds
+        )
+
+    def _runtime_field_operators(
+        self,
+        field_name: str,
+        runtime: FiniteElementRuntimeData,
+        kinds: tuple[bool, ...],
+        /,
+    ) -> tuple[SparseLinearMap, ...]:
         dof_map, geometries = self._field_operator_geometry(field_name, runtime)
-        return (
-            self._assemble_geometry_operator(dof_map, geometries, mass=True),
-            self._assemble_geometry_operator(dof_map, geometries, mass=False),
+        return tuple(
+            self._assemble_geometry_operator(dof_map, geometries, mass=mass)
+            for mass in kinds
         )
 
     def assemble_cell_operator(
@@ -2952,16 +3002,70 @@ def _evaluate_coordinate_map(
 
     # One shared chart: evaluate cell by cell so the Jacobian inversion's
     # intermediates stay one cell's quadrature wide; only the outputs span the
-    # block.
-    def evaluate_cell(
-        nodes: Array, /
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
-        return _coordinate_map_values(
-            ein.contract("qi,id->qd", geometry_values, nodes),
-            ein.contract("qir,id->qdr", geometry_gradients, nodes),
-        )
+    # block. The scanned body is one module-level function, so executing it op
+    # by op reuses one compiled loop instead of compiling a fresh closure.
+    _, values = jax.lax.scan(
+        _shared_chart_cell_map, (geometry_values, geometry_gradients), cell_coordinates
+    )
+    return values
 
-    return jax.lax.map(evaluate_cell, cell_coordinates)
+
+def _shared_chart_cell_map(
+    charts: tuple[Array, Array], nodes: Array, /
+) -> tuple[
+    tuple[Array, Array], tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+]:
+    geometry_values, geometry_gradients = charts
+    return charts, _coordinate_map_values(
+        ein.contract("qi,id->qd", geometry_values, nodes),
+        ein.contract("qir,id->qdr", geometry_gradients, nodes),
+    )
+
+
+def _shared_chart_identity_cell(
+    charts: tuple[Array, Array, Array], nodes: Array, /
+) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array]]:
+    geometry_values, geometry_gradients, reference_gradients = charts
+    points, _, _, _, inverse_jacobian, _, measure, _ = _coordinate_map_values(
+        ein.contract("qi,id->qd", geometry_values, nodes),
+        ein.contract("qir,id->qdr", geometry_gradients, nodes),
+    )
+    # Physical gradients are J^+T grad = J (J^T J)^-1 grad, formed from the
+    # (pseudo-)inverse Jacobian rather than J times the inverse metric: the
+    # metric is conditioned like r^-2, the Jacobian like r^-1.
+    gradients = ein.contract("qid,qki->qkd", inverse_jacobian, reference_gradients)
+    return charts, (points, gradients, measure)
+
+
+def _shared_chart_identity_geometry(
+    coordinate_element: ScalarCoordinateElement,
+    coordinate_routes: ArrayLike,
+    coordinates: ArrayLike,
+    reference_points: Array,
+    reference_gradients: Array,
+    /,
+    *,
+    precision_policy: FiniteElementPrecisionPolicy,
+) -> tuple[Array, Array, Array]:
+    """Points, identity-mapped gradients and measure of one shared-chart block.
+
+    Only these retained outputs span the block; the Jacobian, its inverse and
+    the metric stay one cell's quadrature wide inside the scanned body.
+    """
+    values, gradients = coordinate_element.tabulate(reference_points)
+    cell_coordinates = precision_policy.geometry(coordinates)[
+        jnp.asarray(coordinate_routes)
+    ]
+    _, outputs = jax.lax.scan(
+        _shared_chart_identity_cell,
+        (
+            precision_policy.geometry(values),
+            precision_policy.geometry(gradients),
+            reference_gradients,
+        ),
+        cell_coordinates,
+    )
+    return outputs
 
 
 def _coordinate_map_values(
@@ -3038,52 +3142,70 @@ def _prepare_block_geometry(
         weights_ = jnp.asarray(reference_weights)
     reference_points = precision_policy.geometry(points_)
     reference_weights = precision_policy.accumulation(weights_)
-    (
-        physical_points,
-        jacobian,
-        _,
-        inverse_metric,
-        inverse_jacobian,
-        _,
-        measure_factor,
-        _,
-    ) = _evaluate_coordinate_map(
-        geometry_element,
-        block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs),
-        mesh.coordinates if coordinates is None else coordinates,
-        reference_points,
-        precision_policy=precision_policy,
-        paired=False,
-        cell_rows=(
-            np.arange(block.cell_count, dtype=np.int32)
-            if isinstance(geometry_element, PerCellRestrictedCellGeometryElement)
-            else None
-        ),
-    )
     basis_values, reference_gradients = element.tabulate(reference_points)
     basis_values = precision_policy.evaluation(basis_values)
     reference_gradients = precision_policy.evaluation(reference_gradients)
+    identity_mapped = (
+        element.mapping == "identity"
+        and element.value_spec.form_type.twist == "untwisted"
+    )
+    routes = block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
+    coordinate_values = mesh.coordinates if coordinates is None else coordinates
+    if identity_mapped and not isinstance(
+        geometry_element, PerCellRestrictedCellGeometryElement
+    ):
+        physical_points, physical_gradients, measure_factor = (
+            _shared_chart_identity_geometry(
+                geometry_element,
+                routes,
+                coordinate_values,
+                reference_points,
+                reference_gradients,
+                precision_policy=precision_policy,
+            )
+        )
+    else:
+        (
+            physical_points,
+            jacobian,
+            _,
+            _,
+            inverse_jacobian,
+            _,
+            measure_factor,
+            _,
+        ) = _evaluate_coordinate_map(
+            geometry_element,
+            routes,
+            coordinate_values,
+            reference_points,
+            precision_policy=precision_policy,
+            paired=False,
+            cell_rows=(
+                np.arange(block.cell_count, dtype=np.int32)
+                if isinstance(geometry_element, PerCellRestrictedCellGeometryElement)
+                else None
+            ),
+        )
+        if identity_mapped:
+            # Physical gradients are J^+T grad = J (J^T J)^-1 grad, formed from
+            # the (pseudo-)inverse Jacobian rather than J times the inverse
+            # metric: the metric is conditioned like r^-2, the Jacobian like r^-1.
+            physical_gradients = ein.contract(
+                "cqid,qki->cqkd", inverse_jacobian, reference_gradients
+            )
+        else:
+            physical_basis = map_reference_values(
+                basis_values[None], element.value_spec, jacobian[:, :, None]
+            )
     measure_factor = eqx.error_if(
         measure_factor,
         jnp.any(~jnp.isfinite(measure_factor) | (measure_factor <= 0.0)),
         "Finite-element geometry requires positive finite metric determinant.",
     )
-    if (
-        element.mapping == "identity"
-        and element.value_spec.form_type.twist == "untwisted"
-    ):
+    if identity_mapped:
         physical_basis = basis_values
-        # Physical gradients are J^+T grad = J (J^T J)^-1 grad, formed from the
-        # (pseudo-)inverse Jacobian rather than J times the inverse metric:
-        # the metric is conditioned like r^-2, the Jacobian like r^-1.
-        physical_gradients = ein.contract(
-            "cqid,qki->cqkd", inverse_jacobian, reference_gradients
-        )
     else:
-        physical_basis = map_reference_values(
-            basis_values[None], element.value_spec, jacobian[:, :, None]
-        )
-
         routes_ = block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
         coordinates_ = (
             mesh.coordinates if coordinates is None else jnp.asarray(coordinates)
