@@ -357,6 +357,26 @@ def _rational_spline_surfaces() -> tuple[BSplineSurfacePatch, TSplineSurfacePatc
     return bspline, tspline
 
 
+@pytest.mark.parametrize("surface_index", (0, 1), ids=("bspline", "tspline"))
+def test_surface_span_exact_points_match_independent_rational_map(
+    surface_index: int,
+) -> None:
+    surface = _rational_spline_surfaces()[surface_index]
+    for span in surface.prepare_spans().spans:
+        (u0, u1), (v0, v1) = span.parameter_bounds
+        for u, v in ((u0, v0), (u1, v1), ((u0 + u1) / 2, (v0 + v1) / 2)):
+            expected = (u / (1 + u), v, u * v / (1 + u))
+            assert span.evaluate_exact((u, v)) == expected, (span.span_indices, u, v)
+
+
+@pytest.mark.parametrize("surface_index", (0, 1), ids=("bspline", "tspline"))
+def test_surface_span_exact_point_refuses_outside_span(surface_index: int) -> None:
+    span = _rational_spline_surfaces()[surface_index].prepare_spans().spans[0]
+    (u0, _), (v0, _) = span.parameter_bounds
+    with pytest.raises(ValueError, match="declared nonempty span"):
+        span.evaluate_exact((u0 - 1, v0))
+
+
 def _rational_spline_domain(
     surface: BSplineSurfacePatch | TSplineSurfacePatch, source_id: str
 ) -> MeshingDomain:

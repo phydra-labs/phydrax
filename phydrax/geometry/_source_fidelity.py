@@ -97,7 +97,10 @@ if TYPE_CHECKING:
         AdaptiveImplicitBoundarySource,
         AdaptiveImplicitSurface,
     )
-    from .implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
+    from .implicit._chart_restriction import (
+        ImplicitChartPremise,
+        ValidatedImplicitChartParent,
+    )
     from .implicit._source_charts import AdaptiveImplicitRootChartMap
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
@@ -480,6 +483,17 @@ def _partition_findings(
     for patch, chart in zip(patches, charts, strict=True):
         target_triangles.setdefault(int(patch), []).append(chart)
     findings: list[MeshCertificateFinding] = []
+    if isinstance(witness, SurfaceChartWitness) and set(target_triangles) <= set(
+        range(len(domain.patches))
+    ):
+        # The witness still binds every target cell. A scoped query certifies
+        # only its declared source patches; their complete partitions remain required.
+        selected_patches = set(source.patches)
+        target_triangles = {
+            patch: triangles
+            for patch, triangles in target_triangles.items()
+            if patch in selected_patches
+        }
     if set(target_triangles) != set(source.patches):
         findings.append(
             MeshCertificateFinding(
@@ -1416,11 +1430,14 @@ def _chart_point_tables(
             )
         patch_ids[witness_row] = patch
         occurrence_by_id[cell_id] = expected_path
-    rows = tuple(mesh_cells)
     by_id: dict[int, tuple[int, Triangle2]] = {
         cell_id: (witness_patches[row], witness_charts[row])
         for row, cell_id in enumerate(witness_ids)
     }
+    selected_patches = set(source.patches)
+    rows = tuple(
+        cell_id for cell_id in mesh_cells if by_id[cell_id][0] in selected_patches
+    )
     output: dict[int, tuple[int, int, tuple[int, Triangle2]]] = {
         cell_id: (mesh_cells[cell_id][0], mesh_cells[cell_id][1], by_id[cell_id])
         for cell_id in rows
@@ -5810,6 +5827,7 @@ def certify_source_fidelity(
     elements, routes, _ = geometry.resolve(mesh)
     coefficients = geometry.source_coordinates()
     target_corners: dict[int, tuple[tuple[ExactScalar, ...], ...]] = {}
+    selected_cells = set(cell_ids)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
         if not isinstance(block, CellBlock) or block.cell_kind != "triangle":
             findings.append(
@@ -5836,6 +5854,8 @@ def certify_source_fidelity(
         for row_index in range(route_rows.shape[0]):
             row = route_rows[row_index]
             cell_id = int(block.global_ids[row_index])
+            if cell_id not in selected_cells:
+                continue
             local = tuple(
                 coefficients[int(row[route_index])] for route_index in range(row.shape[0])
             )
@@ -5880,11 +5900,7 @@ def certify_source_fidelity(
     source_to_mesh_upper = Fraction(0)
     witness_cell_ids = np.asarray(witness.cell_global_ids, dtype=np.int64)
     witness_patch_ids = np.asarray(witness.patches, dtype=np.int64)
-    if (
-        witness_cell_ids.ndim != 1
-        or witness_patch_ids.shape != witness_cell_ids.shape
-        or witness_cell_ids.size != cell_count
-    ):
+    if witness_cell_ids.ndim != 1 or witness_patch_ids.shape != witness_cell_ids.shape:
         raise ValueError(
             "Surface chart witness rows do not align with actual target cells."
         )
@@ -5902,11 +5918,13 @@ def certify_source_fidelity(
     for cell_id, patch, chart in zip(
         witness_ids, witness_patches, witness_charts, strict=True
     ):
-        by_patch.setdefault(patch, []).append((cell_id, chart))
+        if cell_id in selected_cells:
+            by_patch.setdefault(patch, []).append((cell_id, chart))
     for patch, chart_rows in by_patch.items():
         surface = domain_source.domain.patches[patch].surface
         from ._meshing_domain import _outward_surface_parameter_box
         from ._source_interpolation import (
+            _exact_rational_surface_point_bounds,
             _exact_surface_interpolation_bound,
             _fraction_float_interval,
             exact_surface_coordinate_expressions,
@@ -5977,14 +5995,34 @@ def certify_source_fidelity(
                 for corner, uv in enumerate(chart):
                     point_box = corner_boxes.get(uv)
                     if point_box is None:
-                        u_bounds = _fraction_float_interval(uv[0])
-                        v_bounds = _fraction_float_interval(uv[1])
-                        parameter_box = _outward_surface_parameter_box(
-                            surface,
-                            (u_bounds[0], v_bounds[0]),
-                            (u_bounds[1], v_bounds[1]),
+                        exact_box = (
+                            _exact_rational_surface_point_bounds(spans, uv)
+                            if spans is not None
+                            else None
                         )
-                        point_box = preparation.surface_box(surface, parameter_box)
+                        if exact_box is not None:
+                            point_box = np.asarray(
+                                (
+                                    tuple(
+                                        fraction_endpoint(value[0], upper=False)
+                                        for value in exact_box
+                                    ),
+                                    tuple(
+                                        fraction_endpoint(value[1], upper=True)
+                                        for value in exact_box
+                                    ),
+                                ),
+                                dtype=np.float64,
+                            )
+                        else:
+                            u_bounds = _fraction_float_interval(uv[0])
+                            v_bounds = _fraction_float_interval(uv[1])
+                            parameter_box = _outward_surface_parameter_box(
+                                surface,
+                                (u_bounds[0], v_bounds[0]),
+                                (u_bounds[1], v_bounds[1]),
+                            )
+                            point_box = preparation.surface_box(surface, parameter_box)
                         if (
                             point_box.shape != (2, 3)
                             or np.any(~np.isfinite(point_box))

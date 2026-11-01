@@ -1660,6 +1660,33 @@ class RationalBSplineSurfaceSpan:
         default_factory=dict, repr=False, compare=False
     )
 
+    def evaluate_exact(
+        self, parameters: Sequence[ExactScalar], /
+    ) -> tuple[ExactScalar, ...]:
+        """Evaluate the authored homogeneous net without an interval-rounding floor."""
+        if len(parameters) != 2:
+            raise ValueError("A surface span point must have two parameters.")
+        relative: list[ExactScalar] = []
+        for value, (lower, upper) in zip(parameters, self.parameter_bounds, strict=True):
+            if upper <= lower or not lower <= value <= upper:
+                raise ValueError(
+                    "A surface span point must lie in its declared nonempty span."
+                )
+            relative.append((value - lower) / (upper - lower))
+        u, v = relative
+        net = self.homogeneous_bernstein_coefficients
+        homogeneous: list[ExactScalar] = []
+        for component in range(len(net[0][0])):
+            along_v = tuple(
+                _bernstein_restrict(tuple(row[column][component] for row in net), u, u)[0]
+                for column in range(len(net[0]))
+            )
+            homogeneous.append(_bernstein_restrict(along_v, v, v)[0])
+        weight = homogeneous[-1]
+        if weight <= 0:
+            raise ValueError("An exact rational span point requires a positive weight.")
+        return tuple(value / weight for value in homogeneous[:-1])
+
     @property
     def has_hessian(self) -> bool:
         return (
@@ -1695,12 +1722,22 @@ class RationalBSplineSurfaceSpan:
         /,
     ) -> tuple[tuple[Fraction, Fraction], ...]:
         """Outward-rounded bounds of one prepared net group on a relative sub-box."""
+        exact = self._exact_group(name)
+        zero_components = tuple(
+            all(value == 0 for row in component for value in row) for component in exact
+        )
+        if all(zero_components):
+            return tuple((Fraction(0), Fraction(0)) for _ in exact)
         net = self._interval_nets.get(name)
         if net is None:
-            net = _interval_tensor_stack(self._exact_group(name))
+            net = _interval_tensor_stack(exact)
             self._interval_nets[name] = net
-        return _interval_component_bounds(
+        bounds = _interval_component_bounds(
             *_interval_tensor_restrict(net, *relative_bounds)
+        )
+        return tuple(
+            (Fraction(0), Fraction(0)) if zero else component
+            for zero, component in zip(zero_components, bounds, strict=True)
         )
 
     def _derivative_data(

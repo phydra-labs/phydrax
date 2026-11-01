@@ -11,7 +11,7 @@ from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import final, Literal
+from typing import assert_never, final, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -22,6 +22,7 @@ import phydrax.geometry._domain_boundary as domain_boundary_owner
 import phydrax.geometry._meshing_domain as domain_owner
 import phydrax.geometry._surface_source_support as surface_support_owner
 import phydrax.meshing._association as association_owner
+from phydrax.discretization._exact_algebraic_geometry import coefficient_interval
 from phydrax.geometry import ConstrainedDelaunayTriangulation
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._interval_enclosure import (
@@ -51,6 +52,7 @@ from phydrax.meshing._contracts import (
     MeshingFailureCategory,
     SurfaceMeshingSpec,
 )
+from phydrax.meshing._controls import FeatureKind
 from phydrax.meshing._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
@@ -77,6 +79,7 @@ from ..._trainable import NonTrainableState
 from ...discretization import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._reference_cell import reference_cell_topology
+from ...geometry.brep._source_correspondence import _affine_curve_coefficients
 from .._plc_source import _numeric_entity_ids
 from ._native_options import NativeMeshingOptions
 from ._native_schedules import NativeSurfaceSchedule
@@ -487,10 +490,12 @@ def _support_issues(
                 "patch-size growth controls without a source geodesic size field"
             )
     for feature in specification.protected_features:
-        expected_dimension = 1 if feature.feature_kind.value == "curve" else 0
-        if feature.feature_kind.value not in ("curve", "corner"):
-            issues.append("protected surface features of kind curve or corner")
+        if feature.feature_kind is FeatureKind.MATERIAL_INTERFACE:
+            issues.append(
+                "material-interface feature constraints on a surface-only route"
+            )
             continue
+        expected_dimension = _feature_dimension(feature.feature_kind)
         feature_scope = feature.scope
         if (
             feature_scope.source_id != domain.source_id
@@ -505,9 +510,13 @@ def _support_issues(
                 )
             )
         ):
-            issues.append("protected curves and corners scoped to this source revision")
+            issues.append("protected features scoped to this source revision")
         selected_source_ids = (
-            selected_curve_ids if expected_dimension == 1 else selected_corner_ids
+            {_scope_id_for_row(scope_ids, 2, patch) for patch in selected}
+            if expected_dimension == 2
+            else selected_curve_ids
+            if expected_dimension == 1
+            else selected_corner_ids
         )
         if not set(
             np.asarray(feature_scope.entity_ids, dtype=np.int64).tolist()
@@ -537,6 +546,38 @@ def _support_issues(
         if not selected_ids.issubset(set(active.tolist())):
             issues.append("uniform size controls covering every selected source patch")
     return list(dict.fromkeys(issues))
+
+
+def _feature_dimension(kind: FeatureKind, /) -> int:
+    match kind:
+        case FeatureKind.CORNER:
+            return 0
+        case FeatureKind.CURVE:
+            return 1
+        case FeatureKind.SURFACE | FeatureKind.MATERIAL_INTERFACE:
+            return 2
+        case _:
+            assert_never(kind)
+
+
+def _hard_feature_tolerances(
+    domain: domain_owner.MeshingDomain,
+    specification: SurfaceMeshingSpec,
+    kind: FeatureKind,
+    /,
+) -> dict[int, float]:
+    """Bind declared scope identifiers to source rows, never array-order aliases."""
+    scopes, _ = _scope_banks(domain)
+    rows = _scope_rows(scopes, _feature_dimension(kind))
+    result: dict[int, float] = {}
+    for feature in specification.protected_features:
+        if feature.feature_kind is kind and feature.hard:
+            for identifier in np.asarray(
+                feature.scope.entity_ids, dtype=np.int64
+            ).tolist():
+                row = rows[identifier]
+                result[row] = min(result.get(row, math.inf), feature.maximum_deviation)
+    return result
 
 
 def _validate_chart_trims(
@@ -2400,10 +2441,34 @@ def _mapped_curve_is_c1(
     return pcurve.is_c1_on(first, last) and source.is_c1_on(chart_box)
 
 
+def _chord_endpoint_error(
+    endpoints: tuple[np.ndarray, np.ndarray],
+    chord: tuple[np.ndarray, np.ndarray],
+    /,
+) -> Fraction | None:
+    errors: list[Fraction] = []
+    for bounds, target in zip(endpoints, chord, strict=True):
+        if bounds.shape != (2, target.size) or not np.all(np.isfinite(bounds)):
+            return None
+        squared = sum(
+            (
+                max(
+                    abs(Fraction(float(bounds[0, axis])) - Fraction(float(target[axis]))),
+                    abs(Fraction(float(bounds[1, axis])) - Fraction(float(target[axis]))),
+                )
+                ** 2
+                for axis in range(target.size)
+            ),
+            Fraction(0),
+        )
+        errors.append(fraction_sqrt_interval(squared)[1])
+    return max(errors)
+
+
 def _second_order_chord_bound(
     program: PreparedIntervalFunction,
     endpoints: tuple[np.ndarray, np.ndarray],
-    native: tuple[float, float],
+    native: tuple[Fraction, Fraction],
     chord: tuple[np.ndarray, np.ndarray],
     /,
 ) -> float:
@@ -2411,10 +2476,11 @@ def _second_order_chord_bound(
 
     Componentwise linear interpolation of ``g = surface o pcurve`` over a
     parameter interval of width ``h`` deviates by at most
-    ``h^2 / 8 * sup|g_i''|``; the interpolant of ``g``'s endpoints is within
-    the larger endpoint offset of the chord between the canonical points.
+    ``h^2 / 8 * sup|g_i''|``. Endpoint enclosures include source evaluation and
+    parameter rounding, rather than treating rounded point evaluations as exact.
     """
-    lower, upper = min(native), max(native)
+    lower = float(fraction_endpoint(min(native), upper=False))
+    upper = float(fraction_endpoint(max(native), upper=True))
     try:
         low, high = program.evaluate(
             np.asarray(((lower,),), dtype=np.float64),
@@ -2425,15 +2491,14 @@ def _second_order_chord_bound(
     if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
         return math.inf
     magnitudes = np.maximum(np.abs(low), np.abs(high)).reshape((-1,))
-    width = Fraction(upper) - Fraction(lower)
+    width = abs(native[1] - native[0])
     squared = sum((Fraction(float(value)) ** 2 for value in magnitudes), Fraction(0))
     interpolation = fraction_sqrt_interval(squared)[1] * width * width / 8
-    offset = max(
-        float(np.linalg.norm(point - target))
-        for point, target in zip(endpoints, chord, strict=True)
-    )
-    bound = float(fraction_endpoint(interpolation, upper=True, saturate=True)) + offset
-    return float(np.nextafter(np.nextafter(bound, math.inf), math.inf))
+    endpoint_error = _chord_endpoint_error(endpoints, chord)
+    if endpoint_error is None:
+        return math.inf
+    bound = interpolation + endpoint_error
+    return float(fraction_endpoint(bound, upper=True, saturate=True))
 
 
 @final
@@ -2456,6 +2521,12 @@ class _CurveChordBounds:
         default_factory=dict
     )
     use_points: dict[tuple[int, int, Fraction], np.ndarray] = field(default_factory=dict)
+    use_point_bounds: dict[tuple[int, int, Fraction], np.ndarray] = field(
+        default_factory=dict
+    )
+    affine_uses: dict[
+        int, tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] | None
+    ] = field(default_factory=dict)
 
     @property
     def domain(self) -> domain_owner.MeshingDomain:
@@ -2484,6 +2555,129 @@ class _CurveChordBounds:
             point = self.use_points[key] = _use_point(self.domain, patch, use, parameter)
         return point
 
+    def _affine_parameters(
+        self, use: domain_owner.PatchCurveUse, /
+    ) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] | None:
+        key = id(use)
+        if key not in self.affine_uses:
+            data = _affine_curve_coefficients(use.pcurve, (Fraction(0), Fraction(0)))
+            result = None
+            if data is not None:
+                (u, v), (du, dv) = data
+                if (
+                    isinstance(u, Fraction)
+                    and isinstance(v, Fraction)
+                    and isinstance(du, Fraction)
+                    and isinstance(dv, Fraction)
+                ):
+                    result = ((u, v), (du, dv))
+            self.affine_uses[key] = result
+        return self.affine_uses[key]
+
+    def _rational_chord_bound(
+        self,
+        patch: int,
+        use: domain_owner.PatchCurveUse,
+        native: tuple[Fraction, Fraction],
+        endpoints: tuple[np.ndarray, np.ndarray],
+        chord: tuple[np.ndarray, np.ndarray],
+        /,
+    ) -> float:
+        affine = self._affine_parameters(use)
+        spans = self.preparation.surface_spans(self.domain.patches[patch].surface)
+        if affine is None or spans is None:
+            return math.inf
+        origin, direction = affine
+        first = tuple(origin[axis] + direction[axis] * native[0] for axis in range(2))
+        last = tuple(origin[axis] + direction[axis] * native[1] for axis in range(2))
+        if not any(
+            all(
+                span.parameter_bounds[axis][0] <= min(first[axis], last[axis])
+                and max(first[axis], last[axis]) <= span.parameter_bounds[axis][1]
+                for axis in range(2)
+            )
+            for span in spans.spans
+        ):
+            return math.inf
+        # A degenerate reference triangle parameterizes this line segment.
+        # The existing rational interpolation owner still bounds its full image.
+        interpolation = float(
+            self.domain.interpolation_bounds(
+                patch, ((first, last, first),), preparation=self.preparation
+            )[0]
+        )
+        endpoint_error = _chord_endpoint_error(endpoints, chord)
+        if not math.isfinite(interpolation) or endpoint_error is None:
+            return math.inf
+        return float(
+            fraction_endpoint(Fraction(interpolation) + endpoint_error, upper=True)
+        )
+
+    def _point_bounds(
+        self,
+        patch: int,
+        use: domain_owner.PatchCurveUse,
+        parameter: Fraction,
+        /,
+    ) -> np.ndarray:
+        key = (patch, id(use), parameter)
+        bounds = self.use_point_bounds.get(key)
+        if bounds is None:
+            native = _use_source_parameter(use, parameter)
+            affine = self._affine_parameters(use)
+            spans = self.preparation.surface_spans(self.domain.patches[patch].surface)
+            if affine is not None and spans is not None:
+                origin, direction = affine
+                point = tuple(
+                    origin[axis] + direction[axis] * native for axis in range(2)
+                )
+                owners = tuple(
+                    span
+                    for span in spans.spans
+                    if all(
+                        span.parameter_bounds[axis][0]
+                        <= point[axis]
+                        <= span.parameter_bounds[axis][1]
+                        for axis in range(2)
+                    )
+                )
+                if owners:
+                    boxes = tuple(
+                        tuple(
+                            coefficient_interval(value)
+                            for value in span.evaluate_exact(point)
+                        )
+                        for span in owners
+                    )
+                    bounds = np.asarray(
+                        (
+                            tuple(
+                                fraction_endpoint(
+                                    min(box[axis][0] for box in boxes), upper=False
+                                )
+                                for axis in range(3)
+                            ),
+                            tuple(
+                                fraction_endpoint(
+                                    max(box[axis][1] for box in boxes), upper=True
+                                )
+                                for axis in range(3)
+                            ),
+                        ),
+                        dtype=np.float64,
+                    )
+                    self.use_point_bounds[key] = bounds
+                    return bounds
+            _, bounds = _surface_mapped_curve_bounds(
+                self.domain.patches[patch].surface,
+                use.pcurve,
+                float(fraction_endpoint(native, upper=False)),
+                float(fraction_endpoint(native, upper=True)),
+                self.preparation,
+            )
+            self.use_point_bounds[key] = bounds
+        return bounds
+
     def _curve_point(self, curve: int, parameter: Fraction, /) -> np.ndarray:
         """`_source_curve_point` through the per-use point memo."""
         patch, use = _curve_owner_use(self.domain, curve)
@@ -2508,10 +2702,14 @@ class _CurveChordBounds:
             if not isinstance(use, domain_owner.PatchCurveUse):
                 continue
             surface = domain.patches[patch].surface
-            native_first = float(_use_source_parameter(use, lower))
-            native_last = float(_use_source_parameter(use, upper))
-            interval_first = min(native_first, native_last)
-            interval_last = max(native_first, native_last)
+            native_first = _use_source_parameter(use, lower)
+            native_last = _use_source_parameter(use, upper)
+            interval_first = float(
+                fraction_endpoint(min(native_first, native_last), upper=False)
+            )
+            interval_last = float(
+                fraction_endpoint(max(native_first, native_last), upper=True)
+            )
             try:
                 chart_box, bounds = _surface_mapped_curve_bounds(
                     surface, use.pcurve, interval_first, interval_last, self.preparation
@@ -2529,6 +2727,20 @@ class _CurveChordBounds:
                     entity_ids=(int(curve),),
                 )
             use_deviation = _box_chord_bound(bounds, first, last)
+            endpoint_bounds = (
+                self._point_bounds(patch, use, lower),
+                self._point_bounds(patch, use, upper),
+            )
+            use_deviation = min(
+                use_deviation,
+                self._rational_chord_bound(
+                    patch,
+                    use,
+                    (native_first, native_last),
+                    endpoint_bounds,
+                    (first, last),
+                ),
+            )
             program = (
                 self.preparation.mapped_curve_hessian(surface, use.pcurve)
                 if _mapped_curve_is_c1(
@@ -2537,14 +2749,11 @@ class _CurveChordBounds:
                 else None
             )
             if program is not None:
-                endpoints = tuple(
-                    self._point(patch, use, parameter) for parameter in (lower, upper)
-                )
                 use_deviation = min(
                     use_deviation,
                     _second_order_chord_bound(
                         program,
-                        (endpoints[0], endpoints[1]),
+                        endpoint_bounds,
                         (native_first, native_last),
                         (first, last),
                     ),
@@ -2576,16 +2785,10 @@ def _curve_parameters(
         for patch, size in zip(selected_patches, patch_sizes, strict=True)
     }
     parameters: dict[int, set[Fraction]] = {}
-    hard_tolerances: dict[int, float] = {}
-    for feature in specification.protected_features:
-        if feature.feature_kind.value == "curve" and feature.hard:
-            for identifier in np.asarray(
-                feature.scope.entity_ids, dtype=np.int64
-            ).tolist():
-                hard_tolerances[int(identifier)] = min(
-                    hard_tolerances.get(int(identifier), math.inf),
-                    feature.maximum_deviation,
-                )
+    hard_tolerances = _hard_feature_tolerances(domain, specification, FeatureKind.CURVE)
+    surface_tolerances = _hard_feature_tolerances(
+        domain, specification, FeatureKind.SURFACE
+    )
     chords = _CurveChordBounds(preparation)
     for curve in curve_ids:
         selected_uses = tuple(
@@ -2607,6 +2810,11 @@ def _curve_parameters(
             fidelity_limits.append(domain.tolerance)
         if curve in hard_tolerances:
             fidelity_limits.append(hard_tolerances[curve])
+        fidelity_limits.extend(
+            surface_tolerances[patch]
+            for patch, _ in selected_uses
+            if patch in surface_tolerances
+        )
         fidelity_limit = min(fidelity_limits)
         initial = {
             Fraction(index, schedule.minimum_edge_samples - 1)
@@ -2976,8 +3184,17 @@ def _pole_sampling(
         for patch, size in zip(selected_patches, patch_sizes, strict=True)
     }
     result: _PoleCharts = {}
-    fidelity_tolerance = _surface_fidelity_tolerance(domain, specification)
+    global_fidelity_tolerance = _surface_fidelity_tolerance(domain, specification)
+    surface_tolerances = _hard_feature_tolerances(
+        domain, specification, FeatureKind.SURFACE
+    )
     for patch in selected_patches:
+        fidelity_tolerance = global_fidelity_tolerance
+        if patch in surface_tolerances:
+            fidelity_tolerance = min(
+                math.inf if fidelity_tolerance is None else fidelity_tolerance,
+                surface_tolerances[patch],
+            )
         surface = domain.patches[patch].surface
         parameter_domain = surface.parameter_domain
         for loop_index, loop in enumerate(domain.patches[patch].loops):
@@ -3078,6 +3295,8 @@ def _pole_sampling(
                     cap_limits.append(specification.maximum_deviation * 0.25)
                 elif domain.tolerance > 0.0:
                     cap_limits.append(domain.tolerance * 0.25)
+                if patch in surface_tolerances:
+                    cap_limits.append(surface_tolerances[patch] * 0.25)
                 cap_limit = min(cap_limits)
                 if cap_limit <= 128.0 * np.finfo(np.float64).eps * max(domain.scale, 1.0):
                     raise _failure(
@@ -3779,16 +3998,12 @@ def _refine_charts(
         )
 
     fidelity_tolerance = _surface_fidelity_tolerance(domain, specification)
-    protected_curve_tolerance: dict[int, float] = {}
-    for feature in specification.protected_features:
-        if feature.feature_kind.value == "curve" and feature.hard:
-            for identifier in np.asarray(
-                feature.scope.entity_ids, dtype=np.int64
-            ).tolist():
-                protected_curve_tolerance[int(identifier)] = min(
-                    protected_curve_tolerance.get(int(identifier), math.inf),
-                    feature.maximum_deviation,
-                )
+    protected_curve_tolerance = _hard_feature_tolerances(
+        domain, specification, FeatureKind.CURVE
+    )
+    protected_surface_tolerance = _hard_feature_tolerances(
+        domain, specification, FeatureKind.SURFACE
+    )
 
     # Trim-edge chord bounds change only when a round splits a trim edge, and each
     # curve interval is bounded once. Unchanged cells keep their exact UV corners
@@ -3847,6 +4062,11 @@ def _refine_charts(
         for chart, curve_bounds in zip(charts, curve_bounds_by_chart, strict=True):
             count = len(chart.triangles)
             local_parameters = chart_parameters[offset : offset + count]
+            if chart.patch in protected_surface_tolerance:
+                deviation_targets[offset : offset + count] = np.minimum(
+                    deviation_targets[offset : offset + count],
+                    protected_surface_tolerance[chart.patch],
+                )
             deviations[offset : offset + count], normal_values = _cached_cell_bounds(
                 preparation,
                 chart,
@@ -3880,9 +4100,9 @@ def _refine_charts(
                 )
                 if limits:
                     feature_tolerance = min(limits)
-                    if fidelity_tolerance is not None:
-                        feature_tolerance = min(fidelity_tolerance, feature_tolerance)
-                    deviation_targets[offset + row] = feature_tolerance
+                    deviation_targets[offset + row] = min(
+                        float(deviation_targets[offset + row]), feature_tolerance
+                    )
             offset += count
         if np.any(~np.isfinite(deviations)):
             failed = np.flatnonzero(~np.isfinite(deviations))
@@ -4654,11 +4874,18 @@ def _organization(
         for value in associations
         if value.target_entity_set_id == mesh.entity_set(1).entity_set_id
     )
+    cell_association = next(
+        value
+        for value in associations
+        if value.target_entity_set_id == mesh.entity_set(2).entity_set_id
+    )
     for feature in specification.protected_features:
-        source_dimension = 1 if feature.feature_kind.value == "curve" else 0
-        association = edge_association if source_dimension == 1 else vertex_association
+        source_dimension = _feature_dimension(feature.feature_kind)
+        association = (vertex_association, edge_association, cell_association)[
+            source_dimension
+        ]
         source_keys = {
-            _source_key_for_scope(domain, source_dimension, int(identifier))[0]
+            _source_key_for_scope(domain, source_dimension, int(identifier))
             for identifier in np.asarray(
                 feature.scope.entity_ids, dtype=np.int64
             ).tolist()
@@ -4666,7 +4893,13 @@ def _organization(
         rows = np.asarray(
             [
                 row
-                for row, source_key in enumerate(association.source_entity_ids)
+                for row, source_key in enumerate(
+                    zip(
+                        association.source_entity_ids,
+                        association.source_occurrence_paths,
+                        strict=True,
+                    )
+                )
                 if source_key in source_keys
             ],
             dtype=np.int64,
@@ -4691,6 +4924,7 @@ def _organization(
 
 def _compliance(
     specification: SurfaceMeshingSpec,
+    domain: domain_owner.MeshingDomain,
     schedule: NativeSurfaceSchedule,
     refined: _RefinedSurface,
     sizes: np.ndarray,
@@ -4754,6 +4988,29 @@ def _compliance(
         achieved.append(("quality_target_degrees", refined.minimum_angle))
         if specification.quality_target.hard and refined.minimum_angle < target_angle:
             issues.append("physical triangle angle misses the hard quality target")
+    scope_ids, _ = _scope_banks(domain)
+    patch_rows = _scope_rows(scope_ids, 2)
+    for feature in specification.protected_features:
+        if feature.feature_kind is not FeatureKind.SURFACE:
+            continue
+        selected_rows = np.asarray(
+            [
+                patch_rows[int(identifier)]
+                for identifier in np.asarray(feature.scope.entity_ids)
+            ],
+            dtype=np.int64,
+        )
+        selected_cells = np.isin(refined.triangle_patches, selected_rows)
+        bound = float(
+            np.max(refined.triangle_deviation_bounds[selected_cells], initial=0.0)
+        )
+        key = f"feature:{feature.feature_id}:maximum_deviation"
+        requested.append((key, feature.maximum_deviation))
+        achieved.append((key, bound))
+        if feature.hard and bound > feature.maximum_deviation:
+            issues.append(
+                f"protected surface feature {feature.feature_id} exceeds its fidelity bound"
+            )
     return MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(issues),
@@ -5319,6 +5576,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         )
         compliance = _compliance(
             self.specification,
+            domain,
             self.schedule,
             refined,
             self.size_values,
@@ -5348,23 +5606,41 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             if not feature.hard:
                 continue
             feature_ids = np.asarray(feature.scope.entity_ids, dtype=np.int64)
-            if feature.feature_kind.value == "curve":
-                feature_query = _domain_curve_source_query(domain, feature_ids)
-                feature_witness = _surface_curve_chart_witness(
-                    mesh, geometry, domain, feature_query, construction
-                )
-            elif feature.feature_kind.value == "corner":
-                feature_query = self.boundary_source
-                feature_witness = _surface_point_witness(
-                    mesh,
-                    geometry,
-                    domain,
-                    feature_query,
-                    feature_ids,
-                    refined,
-                )
-            else:
-                continue
+            match feature.feature_kind:
+                case FeatureKind.CURVE:
+                    feature_query = _domain_curve_source_query(domain, feature_ids)
+                    feature_witness = _surface_curve_chart_witness(
+                        mesh, geometry, domain, feature_query, construction
+                    )
+                case FeatureKind.CORNER:
+                    feature_query = self.boundary_source
+                    feature_witness = _surface_point_witness(
+                        mesh,
+                        geometry,
+                        domain,
+                        feature_query,
+                        feature_ids,
+                        refined,
+                    )
+                case FeatureKind.SURFACE:
+                    patch_lookup = _scope_rows(self.scope_ids, 2)
+                    feature_query = domain_boundary_owner.MeshingDomainBoundarySource(
+                        domain,
+                        tuple(
+                            sorted(
+                                patch_lookup[int(identifier)]
+                                for identifier in feature_ids
+                            )
+                        ),
+                    )
+                    feature_witness = surface_source.chart_witness
+                case FeatureKind.MATERIAL_INTERFACE:
+                    raise _failure(
+                        "material-interface feature constraints are not admitted",
+                        category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    )
+                case _:
+                    assert_never(feature.feature_kind)
             scoped_fidelity.append(
                 (feature_query, feature_witness, feature.maximum_deviation)
             )

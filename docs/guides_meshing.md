@@ -337,6 +337,15 @@ shared by every selected trim use. Mapped interval boxes bound both physical
 chord deviation and edge length; those bounds, rather than a finite witness
 sample, drive trim refinement and remain in the construction evidence.
 
+Surface protected features select exact source face occurrences. Hard features
+refine and certify each selected patch against its own deviation tolerance;
+soft features report the achieved bound without imposing that refinement.
+Scoped fidelity retains and validates the complete target-cell chart witness
+before selecting proof rows, and requires a complete partition of each selected
+patch. Exact rational spline corner evaluations avoid interval-rounding inflation;
+zero deviation is certified only when the target correspondence and all other
+continuous bounds actually establish it.
+
 Sphere and cone pole trims use their authored collapsed-edge corner as one mesh
 vertex. The provider places a regular chart ring from continuous surface-box
 bounds, removes chart triangles that collapse onto the pole edge, and retains

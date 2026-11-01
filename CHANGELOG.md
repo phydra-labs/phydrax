@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Scoped native surface fidelity validates the full target witness before
+  filtering selected source occurrences, and uses exact rational spline corner
+  bounds rather than widened numerical point boxes. Surface feature tolerances
+  are applied per selected patch, with hard and soft obligations distinguished.
 - Finite-element and finite-volume field queries now bind compiled geometry
   through the same content identity; default finite-volume simplex location uses
   the supported block's cell count.

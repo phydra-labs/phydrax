@@ -32,7 +32,10 @@ from ..discretization._coordinate_enclosure import (
     scale,
     subtract,
 )
-from ..discretization._exact_algebraic_geometry import coefficient_endpoint
+from ..discretization._exact_algebraic_geometry import (
+    coefficient_endpoint,
+    coefficient_interval,
+)
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._curve_boundary import ParametricCurveBoundarySource, SegmentChartCurve
 from ._domain_boundary import MeshingDomainBoundarySource
@@ -67,10 +70,9 @@ def _exact_rational_surface_point_bounds(
         (u_lower, u_upper), (v_lower, v_upper) = span.parameter_bounds
         if not (u_lower <= u <= u_upper and v_lower <= v <= v_upper):
             continue
-        enclosure = span.enclose(((u, u), (v, v)))
-        if not enclosure.positive_denominator:
-            return None
-        enclosures.append(enclosure.value_bounds)
+        enclosures.append(
+            tuple(coefficient_interval(value) for value in span.evaluate_exact(chart))
+        )
     if not enclosures:
         return None
     return tuple(
@@ -712,11 +714,12 @@ def certify_parametric_curve_chart(
                     )
             except (ArithmeticError, FloatingPointError, TypeError, ValueError):
                 lower, upper = Fraction(0), math.inf
-            row_upper = max(row_upper, upper)
             if not math.isfinite(float(upper)):
+                row_upper = math.inf
                 row_unresolved = True
                 break
             if upper <= limit:
+                row_upper = max(row_upper, upper)
                 continue
             if lower > limit:
                 row_unresolved = True
@@ -1149,25 +1152,22 @@ def certify_domain_surface_charts(
                     upper = np.empty_like(lower)
                     for local_row, row in enumerate(rows):
                         for corner, point in enumerate(charts[row]):
-                            u_interval = _fraction_float_interval(point[0])
-                            v_interval = _fraction_float_interval(point[1])
-                            parameter_box = _outward_surface_parameter_box(
-                                surface,
-                                (u_interval[0], v_interval[0]),
-                                (u_interval[1], v_interval[1]),
+                            point_bounds = _exact_rational_surface_point_bounds(
+                                spans, point
                             )
-                            point_bounds = preparation.surface_box(surface, parameter_box)
-                            if (
-                                point_bounds.shape != (2, 3)
-                                or np.any(~np.isfinite(point_bounds))
-                                or np.any(point_bounds[0] > point_bounds[1])
-                            ):
+                            if point_bounds is None or len(point_bounds) != 3:
                                 raise ValueError(
                                     "Exact span source corner has no finite ordered point box."
                                 )
                             target_row = 3 * local_row + corner
-                            lower[target_row] = point_bounds[0]
-                            upper[target_row] = point_bounds[1]
+                            lower[target_row] = tuple(
+                                fraction_endpoint(bound[0], upper=False)
+                                for bound in point_bounds
+                            )
+                            upper[target_row] = tuple(
+                                fraction_endpoint(bound[1], upper=True)
+                                for bound in point_bounds
+                            )
                     patch_bounds[patch] = interpolation
                     source_point_intervals[patch] = (lower, upper)
                     continue
