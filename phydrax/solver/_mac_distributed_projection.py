@@ -15,6 +15,7 @@ from jax.sharding import PartitionSpec
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._owned_programs import run_owned_program
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume._incompressible import FaceVelocity
@@ -267,6 +268,80 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
         else:
             inverse = self.topology.distribute_pressure(inverse_momentum_diagonal)
 
+        outputs = run_owned_program(
+            self,
+            "project",
+            MACDistributedProjectionPlan._project_program,
+            incoming.velocity,
+            incoming.pressure,
+            inverse,
+            step,
+        )
+        (
+            velocity,
+            pressure,
+            pressure_increment,
+            divergence_before,
+            divergence_after,
+            pressure_residual,
+            compatible_rhs,
+            face_inverse,
+            iterations,
+            residual_norm,
+            rhs_norm,
+            divergence_norm,
+            compatibility_defect,
+            gauge_defect,
+            adjoint_defect,
+            all_finite,
+            rank_agreement,
+            linear_converged,
+            committed,
+        ) = outputs
+        result_state = MACDistributedState(
+            pressure,
+            velocity,
+            self.topology.plan.topology_id,
+            self.topology.plan.layout_id,
+        )
+        return MACDistributedProjectionResult(
+            state=result_state,
+            velocity=velocity,
+            pressure=pressure,
+            pressure_increment=pressure_increment,
+            divergence_before=divergence_before,
+            divergence_after=divergence_after,
+            pressure_residual=pressure_residual,
+            compatible_rhs=compatible_rhs,
+            face_inverse_momentum=face_inverse,
+            iterations=iterations,
+            residual_norm=residual_norm,
+            rhs_norm=rhs_norm,
+            divergence_norm=divergence_norm,
+            compatibility_defect=compatibility_defect,
+            gauge_defect=gauge_defect,
+            pressure_action_adjoint_defect=adjoint_defect,
+            all_finite=all_finite,
+            rank_agreement=rank_agreement,
+            linear_converged=linear_converged,
+            converged=committed,
+            committed=committed,
+            topology_id=self.topology.plan.topology_id,
+            projection_plan_id=self.plan_id,
+            collective_adapter_id=self.collectives.adapter_id,
+            lifecycle="atomic-global-commit-or-rollback",
+            result_contract_id=self.result_contract_id,
+        )
+
+    def _project_program(
+        self,
+        incoming_velocity: FaceVelocity,
+        incoming_pressure_value: Array,
+        inverse: Array,
+        step: Array,
+        /,
+    ) -> _LocalProjection:
+        dtype = self.topology.operators.pressure_space.dtype
         stencils = self.topology.local_stencils
         collectives = self.collectives
         relative_tolerance = self.relative_tolerance
@@ -552,7 +627,7 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
             )
 
         scalar_spec = PartitionSpec()
-        outputs = jax.shard_map(
+        return jax.shard_map(
             local_project,
             mesh=self.topology.plan.mesh,
             in_specs=(
@@ -585,67 +660,12 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
                 scalar_spec,
             ),
         )(
-            incoming.velocity,
-            incoming.pressure,
+            incoming_velocity,
+            incoming_pressure_value,
             inverse,
             self.topology.cell_volumes,
             self.topology.face_measures,
             self.topology.face_distances,
-        )
-        (
-            velocity,
-            pressure,
-            pressure_increment,
-            divergence_before,
-            divergence_after,
-            pressure_residual,
-            compatible_rhs,
-            face_inverse,
-            iterations,
-            residual_norm,
-            rhs_norm,
-            divergence_norm,
-            compatibility_defect,
-            gauge_defect,
-            adjoint_defect,
-            all_finite,
-            rank_agreement,
-            linear_converged,
-            committed,
-        ) = outputs
-        result_state = MACDistributedState(
-            pressure,
-            velocity,
-            self.topology.plan.topology_id,
-            self.topology.plan.layout_id,
-        )
-        return MACDistributedProjectionResult(
-            state=result_state,
-            velocity=velocity,
-            pressure=pressure,
-            pressure_increment=pressure_increment,
-            divergence_before=divergence_before,
-            divergence_after=divergence_after,
-            pressure_residual=pressure_residual,
-            compatible_rhs=compatible_rhs,
-            face_inverse_momentum=face_inverse,
-            iterations=iterations,
-            residual_norm=residual_norm,
-            rhs_norm=rhs_norm,
-            divergence_norm=divergence_norm,
-            compatibility_defect=compatibility_defect,
-            gauge_defect=gauge_defect,
-            pressure_action_adjoint_defect=adjoint_defect,
-            all_finite=all_finite,
-            rank_agreement=rank_agreement,
-            linear_converged=linear_converged,
-            converged=committed,
-            committed=committed,
-            topology_id=self.topology.plan.topology_id,
-            projection_plan_id=self.plan_id,
-            collective_adapter_id=self.collectives.adapter_id,
-            lifecycle="atomic-global-commit-or-rollback",
-            result_contract_id=self.result_contract_id,
         )
 
 

@@ -921,7 +921,10 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
         local_rank=partition,
     )
     parts_by_name = {part.name: part for part in assembly.parts}
-    views = {name: part.carrier for name, part in parts_by_name.items()}
+    views: dict[str, OwnerLocalCellGeometry] = {}
+    for name, part in parts_by_name.items():
+        assert isinstance(part.carrier, OwnerLocalCellGeometry)
+        views[name] = part.carrier
     empty_rank_flags = np.asarray(
         multihost_utils.process_allgather(
             np.asarray(
@@ -929,9 +932,9 @@ def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose(
                     int(
                         partition == 2
                         and not any(
-                            np.asarray(part.carrier.cell_ids).size
-                            or np.asarray(part.carrier.vertex_ids).size
-                            for part in local_parts
+                            np.asarray(view.cell_ids).size
+                            or np.asarray(view.vertex_ids).size
+                            for view in views.values()
                         )
                     ),
                 ),

@@ -13,6 +13,7 @@ from jax.experimental import multihost_utils
 
 import phydrax as phx
 from phydrax._execution_runtime import ExecutionGroup, ExecutionGroupSpec
+from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization._periodic_topology import _entity_vertex_rows
 from phydrax.discretization._view_support import OwnerLocalCellGeometry
@@ -63,6 +64,7 @@ def _square_mesh(count: int, /) -> MeshPart:
 
 
 def _serial_tables(part: MeshPart, /) -> dict[str, Any]:
+    assert isinstance(part.carrier, phx.meshing.CellMeshingResult)
     mesh = part.carrier.mesh
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     cells = vertex_ids[np.asarray(mesh.blocks[0].vertices, dtype=np.int64)]
@@ -182,6 +184,7 @@ def test_owner_local_cell_shards_partition_cells_with_exact_face_halos() -> None
     rank = jax.process_index()
     part = _square_mesh(4)
     serial = _serial_tables(part)
+    assert isinstance(part.carrier, phx.meshing.CellMeshingResult)
     cell_ids = np.asarray(part.carrier.mesh.blocks[0].global_ids, dtype=np.int64)
     centroids = np.mean(
         serial["coordinates"][np.asarray(part.carrier.mesh.blocks[0].vertices)], axis=1
@@ -215,7 +218,7 @@ def test_owner_local_cell_shards_partition_cells_with_exact_face_halos() -> None
         multihost_utils.process_allgather(
             np.frombuffer(
                 bytes.fromhex(
-                    phx.canonical_fingerprint(
+                    canonical_fingerprint(
                         (
                             view.source_topology_id,
                             view.source_geometry_id,
@@ -223,8 +226,6 @@ def test_owner_local_cell_shards_partition_cells_with_exact_face_halos() -> None
                             view.distribution_id,
                         )
                     )
-                    if hasattr(phx, "canonical_fingerprint")
-                    else view.source_topology_id
                 ),
                 dtype=np.uint8,
             )
@@ -238,6 +239,7 @@ def test_owner_local_cell_shard_admits_a_zero_resident_owner() -> None:
     rank = jax.process_index()
     part = _square_mesh(3)
     serial = _serial_tables(part)
+    assert isinstance(part.carrier, phx.meshing.CellMeshingResult)
     cell_ids = np.asarray(part.carrier.mesh.blocks[0].global_ids, dtype=np.int64)
     centroids = np.mean(
         serial["coordinates"][np.asarray(part.carrier.mesh.blocks[0].vertices)], axis=1
@@ -272,3 +274,35 @@ def test_owner_local_cell_shard_admits_a_zero_resident_owner() -> None:
     view = _view(assembly)
     owner_of = dict(zip(cell_ids.tolist(), owners.tolist(), strict=True))
     _check_view(view, serial, owner_of, rank)
+    from phydrax.discretization.finite_volume._side_trace import (
+        finite_volume_field_space_id,
+    )
+
+    geometry = phx.discretization.UnstructuredFiniteVolumePlan.from_owner_local_geometry(
+        view, field_name="empty-owner-field"
+    ).prepare()
+    assert geometry.cell_count == view.cell_ids.size
+    if rank == 2:
+        assert geometry.mesh is None
+        assert geometry.state_shape == (0, 1)
+        assert geometry.face_blocks == ()
+        with pytest.raises(ValueError, match="published cell field"):
+            finite_volume_field_space_id(geometry)
+        with pytest.raises(ValueError, match="discrete support"):
+            geometry.integration_domain("cell")
+        with pytest.raises(TypeError, match="CellMesh"):
+            phx.discretization.prepare_unstructured_conservative_remap(
+                geometry, geometry, provenance="empty-owner-refusal"
+            )
+        with pytest.raises(ValueError, match="resident cell topology"):
+            phx.graph.facet_adjacency(geometry)
+    else:
+        assert geometry.cell_space is not None
+        assert finite_volume_field_space_id(geometry) == canonical_fingerprint(
+            {
+                "kind": "finite-volume-field-space",
+                "discretization": geometry.prepared_id,
+                "field": geometry.cell_space.name,
+                "components": list(geometry.component_names),
+            }
+        )

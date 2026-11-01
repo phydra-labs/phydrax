@@ -177,6 +177,8 @@ class NativeImplicitBoundaryQueryArchiveRecipe(NamedTuple):
     source_id: str
     source_revision: str
     frame_id: str
+    authoring_profile: AnalyticImplicitProfileArchiveRecipe | None
+    expected_query_id: str
 
 
 class NativePlcSourceArchiveRecipe(NamedTuple):
@@ -1022,11 +1024,21 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             query_recipe = _source_query_archive_recipe(value.query)
             if type(query_recipe) is not AdaptiveImplicitBoundarySourceArchiveRecipe:
                 raise TypeError("Native implicit query lost its adaptive source recipe.")
+            profile_recipe: AnalyticImplicitProfileArchiveRecipe | None = None
+            if value.authoring_profile is not None:
+                recipe = _source_query_archive_recipe(value.authoring_profile)
+                if type(recipe) is not AnalyticImplicitProfileArchiveRecipe:
+                    raise TypeError(
+                        "Native implicit query lost its exact authoring-profile recipe."
+                    )
+                profile_recipe = recipe
             return NativeImplicitBoundaryQueryArchiveRecipe(
                 query_recipe,
                 value.source_id,
                 value.source_revision,
                 value.frame_id,
+                profile_recipe,
+                value.query_id,
             )
     if isinstance(value, SourceBoundaryQuery):
         raise TypeError(

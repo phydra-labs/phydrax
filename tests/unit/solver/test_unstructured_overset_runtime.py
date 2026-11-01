@@ -1402,6 +1402,7 @@ def test_native_whole_slab_layer_body_overset_on_background_conserves() -> None:
     )
     receptor = MeshPart("slab", phx.meshing.certify_cell_mesh(slab_mesh, contract))
     slab_faces = np.asarray(slab_mesh.entity_set(2).entity_ids, dtype=np.int64)
+    assert isinstance(slab_mesh.connectivity, phx.discretization.PolyhedralConnectivity)
     slab_boundary = np.asarray(slab_mesh.connectivity.boundary_faces, dtype=np.bool_)
     connectivity = prepare_overset_connectivity(
         MeshAssembly((donor, receptor)),
@@ -1454,10 +1455,15 @@ def test_native_whole_slab_layer_body_overset_on_background_conserves() -> None:
     boundary_face_of = {
         int(owners[face]): int(face) for face in np.flatnonzero(neighbors < 0)[::-1]
     }
-    fringe = np.asarray([int(row) in boundary_face_of for row in slab_rows])
+    fringe = np.asarray(
+        [int(row) in boundary_face_of for row in slab_rows], dtype=np.bool_
+    )
     receptors = slab_rows[fringe]
-    routes = [np.arange(csr[index], csr[index + 1]) for index in np.flatnonzero(fringe)]
-    counts = np.asarray([route.size for route in routes])
+    routes = [
+        np.arange(csr[index], csr[index + 1], dtype=np.int64)
+        for index in np.flatnonzero(fringe)
+    ]
+    counts = np.asarray([route.size for route in routes], dtype=np.int64)
     selected = np.concatenate(routes)
     donor_rows = np.asarray(
         [
@@ -1504,6 +1510,9 @@ def test_native_whole_slab_layer_body_overset_on_background_conserves() -> None:
         ),
         coupling=phx.discretization.UnstructuredFiniteVolumeCouplingPlan(overset=overset),
     ).dynamics
+    assert isinstance(
+        dynamics, phx.discretization.PreparedUnstructuredFiniteVolumeDynamics
+    )
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
         dynamics,
         phx.discretization.FluxPositivityPlan(),
@@ -1631,6 +1640,9 @@ def test_owner_local_composite_fv_layout_lowers_and_conserves_each_part() -> Non
             phx.discretization.RusanovFluxPlan(),
         ),
     ).dynamics
+    assert isinstance(
+        dynamics, phx.discretization.PreparedUnstructuredFiniteVolumeDynamics
+    )
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
         dynamics,
         phx.discretization.FluxPositivityPlan(),
@@ -3801,10 +3813,15 @@ def _finite_volume_archive_build_context(
     target_transfer = prepare_overset_field_transfer(
         target_candidate, local_reconstructions, context.field_name
     )
+    target_views: dict[str, OwnerLocalCellGeometry] = {}
+    for part in target_candidate.assembly.parts:
+        if not isinstance(part.carrier, OwnerLocalCellGeometry):
+            raise TypeError("Target overset search requires owner-local geometry.")
+        target_views[part.name] = part.carrier
     target_connectivity = target_transfer.prepare_owner_local_exchange(
         coefficient_ids,
         execution_group,
-        {part.name: part.carrier for part in target_candidate.assembly.parts},
+        target_views,
     ).connectivity
     target_view = target_connectivity.assembly.part(receptor_name).carrier
     if not isinstance(target_view, OwnerLocalCellGeometry):

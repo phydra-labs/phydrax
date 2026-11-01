@@ -511,7 +511,12 @@ def _source_deviation(value: float | None, /) -> float | None:
 
 
 class MeshQualityTarget(StrictModule, NonTrainableState):
-    """Requested simplex corner angle in radians, with explicit hard/soft semantics."""
+    """Requested minimum physical corner angle in radians.
+
+    Supported surface routes measure simplex corner angles or structured
+    coordinate-map corner tangents, with explicit hard/soft semantics. This
+    target does not bound interior map distortion or volume dihedral angles.
+    """
 
     minimum_angle: float = eqx.field(static=True)
     hard: bool = eqx.field(static=True)

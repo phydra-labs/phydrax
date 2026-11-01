@@ -31,7 +31,6 @@ EnforcementGateMethod: TypeAlias = Literal[
 ]
 
 _GLOBAL_GATE_CALIBRATION = 1.15
-_GLOBAL_GATE_BOUNDARY_SLOPE = 4.0 * _GLOBAL_GATE_CALIBRATION
 
 
 GeometryTransitionKind: TypeAlias = Literal[
@@ -158,21 +157,6 @@ def _make_global_enforcement_gate(
         return jnp.where(coordinate >= 0.0, interior, exterior)
 
     return jax.jit(gate)
-
-
-def _make_global_boundary_ansatz_factor(
-    distance: Callable[[Array], Array],
-    *,
-    scale: Array | float,
-) -> Callable[[Array], Array]:
-    r"""Build a dimensional global gate with outward unit boundary derivative."""
-    gate = _make_global_enforcement_gate(distance, scale=scale)
-    coefficient = -jnp.asarray(scale, dtype=jnp.float64) / _GLOBAL_GATE_BOUNDARY_SLOPE
-
-    def factor(points: Array) -> Array:
-        return coefficient * gate(points)
-
-    return jax.jit(factor)
 
 
 class _PointDim(Dim):

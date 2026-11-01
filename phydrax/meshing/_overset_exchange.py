@@ -20,6 +20,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_fingerprint
 from .._interpolation import GatherStencil
+from .._owned_programs import run_owned_program
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._distributed_field import DistributedHaloPlan
@@ -631,59 +632,10 @@ def _local_donor_candidates(
     return best, candidate_parts, blocked
 
 
-def _collective_candidate_winners(
-    connectivity: OversetConnectivity,
-    best: Mapping[int, tuple[Any, ...]],
-    query_count: int,
-    partition_index: int,
-    devices: tuple[jax.Device, ...],
-    axis_name: str,
-    /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    specs = connectivity.specs
-    part_order = {
-        name: index for index, name in enumerate(connectivity.assembly.global_part_names)
-    }
-    priority_values = sorted({spec.priority for spec in specs}, reverse=True)
-    priority_order = {value: index for index, value in enumerate(priority_values)}
-    found = np.zeros((query_count,), dtype=np.bool_)
-    measure = np.full((query_count,), np.inf, dtype=np.float64)
-    priority = np.full((query_count,), np.iinfo(np.int32).max, dtype=np.int32)
-    part = np.full((query_count,), np.iinfo(np.int32).max, dtype=np.int32)
-    cell = np.full((query_count,), np.iinfo(np.int64).max, dtype=np.int64)
-    rank = np.full((query_count,), np.iinfo(np.int32).max, dtype=np.int32)
-    residual = np.full((query_count,), np.inf, dtype=np.float64)
-    spec_by_name = {spec.part_name: spec for spec in specs}
-    for query_index, candidate in best.items():
-        _, donor_name, cell_id = candidate[:3]
-        spec = spec_by_name[donor_name]
-        found[query_index] = True
-        priority[query_index] = priority_order[spec.priority]
-        part[query_index] = part_order[donor_name]
-        cell[query_index] = cell_id
-        rank[query_index] = partition_index
-        measure[query_index] = float(
-            candidate[0][0]
-            if connectivity.policy.donor_priority == "finest-donor"
-            else candidate[0][1]
-        )
-        residual[query_index] = float(candidate[6])
-    local_arrays = tuple(
-        jnp.asarray(value)
-        for value in (found, measure, priority, part, cell, rank, residual)
-    )
-    mesh = Mesh(np.asarray(devices, dtype=object), (axis_name,))
-    spec = PartitionSpec(axis_name)
-    distributed = tuple(
-        jax.make_array_from_process_local_data(
-            NamedSharding(mesh, spec),
-            value[None, :],
-            global_shape=(len(devices), query_count),
-        )
-        for value in local_arrays
-    )
-    finest = connectivity.policy.donor_priority == "finest-donor"
-
+@eqx.filter_jit
+def _candidate_winner_program(
+    distributed: tuple[Array, ...], mesh: Mesh, axis_name: str, finest: bool, /
+) -> tuple[Array, ...]:
     def reduce(
         local_found: Array,
         local_measure: Array,
@@ -748,16 +700,97 @@ def _collective_candidate_winners(
             best_residual,
         )
 
-    result = jax.shard_map(
+    spec = PartitionSpec(axis_name)
+    return jax.shard_map(
         reduce,
         mesh=mesh,
-        in_specs=(spec, spec, spec, spec, spec, spec, spec),
+        in_specs=(spec,) * 7,
         out_specs=(PartitionSpec(),) * 6,
         check_vma=False,
     )(*distributed)
+
+
+def _collective_candidate_winners(
+    connectivity: OversetConnectivity,
+    best: Mapping[int, tuple[Any, ...]],
+    query_count: int,
+    partition_index: int,
+    devices: tuple[jax.Device, ...],
+    axis_name: str,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    specs = connectivity.specs
+    part_order = {
+        name: index for index, name in enumerate(connectivity.assembly.global_part_names)
+    }
+    priority_values = sorted({spec.priority for spec in specs}, reverse=True)
+    priority_order = {value: index for index, value in enumerate(priority_values)}
+    found = np.zeros((query_count,), dtype=np.bool_)
+    measure = np.full((query_count,), np.inf, dtype=np.float64)
+    priority = np.full((query_count,), np.iinfo(np.int32).max, dtype=np.int32)
+    part = np.full((query_count,), np.iinfo(np.int32).max, dtype=np.int32)
+    cell = np.full((query_count,), np.iinfo(np.int64).max, dtype=np.int64)
+    rank = np.full((query_count,), np.iinfo(np.int32).max, dtype=np.int32)
+    residual = np.full((query_count,), np.inf, dtype=np.float64)
+    spec_by_name = {spec.part_name: spec for spec in specs}
+    for query_index, candidate in best.items():
+        _, donor_name, cell_id = candidate[:3]
+        spec = spec_by_name[donor_name]
+        found[query_index] = True
+        priority[query_index] = priority_order[spec.priority]
+        part[query_index] = part_order[donor_name]
+        cell[query_index] = cell_id
+        rank[query_index] = partition_index
+        measure[query_index] = float(
+            candidate[0][0]
+            if connectivity.policy.donor_priority == "finest-donor"
+            else candidate[0][1]
+        )
+        residual[query_index] = float(candidate[6])
+    local_arrays = tuple(
+        jnp.asarray(value)
+        for value in (found, measure, priority, part, cell, rank, residual)
+    )
+    mesh = Mesh(np.asarray(devices, dtype=object), (axis_name,))
+    spec = PartitionSpec(axis_name)
+    distributed = tuple(
+        jax.make_array_from_process_local_data(
+            NamedSharding(mesh, spec),
+            value[None, :],
+            global_shape=(len(devices), query_count),
+        )
+        for value in local_arrays
+    )
+    result = _candidate_winner_program(
+        distributed,
+        mesh,
+        axis_name,
+        connectivity.policy.donor_priority == "finest-donor",
+    )
     return tuple(
         np.asarray(jax.device_get(value.addressable_shards[0].data)) for value in result
     )
+
+
+@eqx.filter_jit
+def _candidate_count_program(
+    candidates: Array, blocked: Array, mesh: Mesh, axis_name: str, /
+) -> tuple[Array, Array]:
+    def reduce(
+        local_presence: Array, local_blocked_values: Array, /
+    ) -> tuple[Array, Array]:
+        presence = jax.lax.psum(local_presence[0], axis_name)
+        blocked_ = jax.lax.psum(local_blocked_values[0], axis_name) > 0
+        return presence > 0, blocked_
+
+    spec = PartitionSpec(axis_name)
+    return jax.shard_map(
+        reduce,
+        mesh=mesh,
+        in_specs=(spec, spec),
+        out_specs=(PartitionSpec(), PartitionSpec()),
+        check_vma=False,
+    )(candidates, blocked)
 
 
 def _collective_candidate_counts(
@@ -793,20 +826,9 @@ def _collective_candidate_counts(
         global_shape=(len(devices), query_count),
     )
 
-    def reduce(
-        local_presence: Array, local_blocked_values: Array, /
-    ) -> tuple[Array, Array]:
-        presence = jax.lax.psum(local_presence[0], axis_name)
-        blocked_ = jax.lax.psum(local_blocked_values[0], axis_name) > 0
-        return presence > 0, blocked_
-
-    result = jax.shard_map(
-        reduce,
-        mesh=mesh,
-        in_specs=(spec, spec),
-        out_specs=(PartitionSpec(), PartitionSpec()),
-        check_vma=False,
-    )(distributed_candidates, distributed_blocked)
+    result = _candidate_count_program(
+        distributed_candidates, distributed_blocked, mesh, axis_name
+    )
     presence = np.asarray(jax.device_get(result[0].addressable_shards[0].data))
     blocked_result = np.asarray(jax.device_get(result[1].addressable_shards[0].data))
     return np.sum(presence, axis=-1, dtype=np.int32), blocked_result.astype(np.bool_)
@@ -1409,6 +1431,38 @@ def _validate_local_donor_search(
             )
 
 
+@eqx.filter_jit
+def _flag_sum_program(values: Array, mesh: Mesh, axis_name: str, /) -> Array:
+    def reduce(local_values: Array, /) -> Array:
+        return jax.lax.psum(local_values, axis_name=axis_name)
+
+    return jax.shard_map(
+        reduce,
+        mesh=mesh,
+        in_specs=PartitionSpec(axis_name),
+        out_specs=PartitionSpec(axis_name),
+        check_vma=False,
+    )(values)
+
+
+def _metadata_agree_local(local_values: Array, /) -> Array:
+    local_digest = local_values[0]
+    lower = jax.lax.pmin(local_digest, axis_name="overset_metadata")
+    upper = jax.lax.pmax(local_digest, axis_name="overset_metadata")
+    return jnp.asarray((jnp.all(lower == upper),), dtype=jnp.bool_)
+
+
+@eqx.filter_jit
+def _metadata_agreement_program(values: Array, mesh: Mesh, /) -> Array:
+    return jax.shard_map(
+        _metadata_agree_local,
+        mesh=mesh,
+        in_specs=PartitionSpec("overset_metadata"),
+        out_specs=PartitionSpec("overset_metadata"),
+        check_vma=False,
+    )(values)
+
+
 def _synchronize_owner_search_failure(
     failed: bool, devices: tuple[jax.Device, ...], axis_name: str, /
 ) -> bool:
@@ -1419,16 +1473,7 @@ def _synchronize_owner_search_failure(
         sharding, local, global_shape=(len(devices),)
     )
 
-    def reduce(local_values: Array, /) -> Array:
-        return jax.lax.psum(local_values, axis_name=axis_name)
-
-    result = jax.shard_map(
-        reduce,
-        mesh=mesh,
-        in_specs=PartitionSpec(axis_name),
-        out_specs=PartitionSpec(axis_name),
-        check_vma=False,
-    )(distributed)
+    result = _flag_sum_program(distributed, mesh, axis_name)
     return int(np.asarray(jax.device_get(result.addressable_shards[0].data))[0]) != 0
 
 
@@ -1444,19 +1489,7 @@ def _owner_metadata_mismatch(
         global_shape=(len(devices), digest.size),
     )
 
-    def agree(local_values: Array, /) -> Array:
-        local_digest = local_values[0]
-        lower = jax.lax.pmin(local_digest, axis_name="overset_metadata")
-        upper = jax.lax.pmax(local_digest, axis_name="overset_metadata")
-        return jnp.asarray((jnp.all(lower == upper),), dtype=jnp.bool_)
-
-    result = jax.shard_map(
-        agree,
-        mesh=mesh,
-        in_specs=PartitionSpec("overset_metadata"),
-        out_specs=PartitionSpec("overset_metadata"),
-        check_vma=False,
-    )(distributed)
+    result = _metadata_agreement_program(distributed, mesh)
     agreed = bool(np.asarray(jax.device_get(result.addressable_shards[0].data))[0])
     return not agreed
 
@@ -2885,7 +2918,25 @@ def owner_local_overset_action(
     transpose: bool,
     /,
 ) -> Array:
-    """Sparse forward or exact transpose action over an owner-local halo exchange."""
+    """Sparse forward or exact transpose action over an owner-local halo exchange.
+
+    Each direction runs as one compiled program owned by ``exchange``.
+    """
+    return run_owned_program(
+        exchange,
+        "transpose-action" if transpose else "action",
+        _overset_action_program,
+        values,
+        bool(transpose),
+    )
+
+
+def _overset_action_program(
+    exchange: PreparedOwnerLocalOversetExchange,
+    values: Array,
+    transpose: bool,
+    /,
+) -> Array:
     axis = exchange.axis_name
     mesh = Mesh(np.asarray(exchange.devices, dtype=object), (axis,))
     spec = PartitionSpec(axis)

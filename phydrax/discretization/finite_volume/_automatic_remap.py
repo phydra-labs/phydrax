@@ -135,7 +135,10 @@ def prepare_unstructured_conservative_remap(
     policy_ = CommonRefinementPolicy() if policy is None else policy
     if not isinstance(policy_, CommonRefinementPolicy):
         raise TypeError("policy must be a CommonRefinementPolicy.")
-    refinement = prepare_common_refinement(source.mesh, target.mesh, policy=policy_)
+    source_mesh, target_mesh = source.mesh, target.mesh
+    if source_mesh is None or target_mesh is None:
+        raise TypeError("Common refinement requires source and target CellMesh objects.")
+    refinement = prepare_common_refinement(source_mesh, target_mesh, policy=policy_)
     if not refinement.succeeded:
         return PreparedUnstructuredConservativeRemap(
             refinement,

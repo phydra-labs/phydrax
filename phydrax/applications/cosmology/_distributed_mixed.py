@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from math import gcd, prod
 from typing import Any, Literal, TypeAlias
 
@@ -14,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.sharding import NamedSharding, PartitionSpec
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from ..._execution_plan import ExecutionPlan, PlacementKind
 from ..._fingerprint import canonical_fingerprint
@@ -51,6 +52,34 @@ DistributedMixedPreparationStatus: TypeAlias = Literal[
     "checkpoint-incomplete",
     "missing-distributed-primitives",
 ]
+
+
+@partial(jax.jit, static_argnames=("mesh", "spec", "axis_name", "reduction", "axes"))
+def _global_collective(
+    values: Array,
+    *,
+    mesh: Mesh,
+    spec: PartitionSpec,
+    axis_name: str,
+    reduction: Literal["sum", "max", "min"],
+    axes: tuple[int, ...] | None,
+) -> Array:
+    """One stable compiled shard reduction per mesh, layout and reduction."""
+
+    def local(value: Array) -> Array:
+        match reduction:
+            case "sum":
+                return jax.lax.psum(jnp.sum(value, axis=axes), axis_name)
+            case "max":
+                return jax.lax.pmax(jnp.max(value, axis=axes), axis_name)
+            case "min":
+                return jax.lax.pmin(value, axis_name)
+            case _:
+                raise ValueError(f"Unknown shard reduction {reduction!r}.")
+
+    return jax.shard_map(
+        local, mesh=mesh, in_specs=spec, out_specs=PartitionSpec(), check_vma=False
+    )(values)
 
 
 class DistributedMixedPlacementEvidence(StrictModule, NonTrainableState):
@@ -866,39 +895,39 @@ class PreparedDistributedMixedExecution(StrictModule):
         )
 
     def _global_reduce(self, values: Array, /) -> Array:
-        array = jax.device_put(jnp.asarray(values), self._field_sharding_for(values.ndim))
-        axes = tuple(range(self.spatial_rank))
-        local = lambda value: jax.lax.psum(jnp.sum(value, axis=axes), self.axis_name)
-        return jax.shard_map(
-            local,
+        sharding = self._field_sharding_for(values.ndim)
+        return _global_collective(
+            jax.device_put(jnp.asarray(values), sharding),
             mesh=self.plan.spectral.topology.mesh,
-            in_specs=self._field_sharding_for(values.ndim).spec,
-            out_specs=PartitionSpec(),
-            check_vma=False,
-        )(array)
+            spec=sharding.spec,
+            axis_name=self.axis_name,
+            reduction="sum",
+            axes=tuple(range(self.spatial_rank)),
+        )
 
     def _global_max(self, values: Array, sharding: NamedSharding, /) -> Array:
-        placed = jax.device_put(jnp.asarray(values), sharding)
-        return jax.shard_map(
-            lambda local: jax.lax.pmax(jnp.max(local), self.axis_name),
+        return _global_collective(
+            jax.device_put(jnp.asarray(values), sharding),
             mesh=self.plan.spectral.topology.mesh,
-            in_specs=sharding.spec,
-            out_specs=PartitionSpec(),
-            check_vma=False,
-        )(placed)
+            spec=sharding.spec,
+            axis_name=self.axis_name,
+            reduction="max",
+            axes=None,
+        )
 
     def _global_success(self, value: Array, /) -> Array:
         placed = jax.device_put(
             jnp.asarray(value, dtype=jnp.int32), self.replicated_sharding
         )
         return (
-            jax.shard_map(
-                lambda local: jax.lax.pmin(local, self.axis_name),
+            _global_collective(
+                placed,
                 mesh=self.plan.spectral.topology.mesh,
-                in_specs=PartitionSpec(),
-                out_specs=PartitionSpec(),
-                check_vma=False,
-            )(placed)
+                spec=PartitionSpec(),
+                axis_name=self.axis_name,
+                reduction="min",
+                axes=None,
+            )
             == 1
         )
 

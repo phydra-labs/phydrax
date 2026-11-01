@@ -84,6 +84,7 @@ from ._cad import (
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_assembly_identifier_losses,
+    cad_export_pole_identity_losses,
     cad_import_stage_losses,
     CadExportPolicy,
     CadExportResult,
@@ -3644,6 +3645,9 @@ def write_iges(
         ),
         extra_losses=(
             *writer.surface_losses,
+            *cad_export_pole_identity_losses(
+                writer.surface_carriers, "IGES", "undeclared"
+            ),
             *writer.approximation_losses,
             *(() if model.geometry is None else _iges_line_pcurve_losses(model.geometry)),
             *_iges_physical_tag_losses(model),

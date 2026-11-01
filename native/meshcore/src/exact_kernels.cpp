@@ -1,12 +1,9 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // Batched exact and filtered kernels of Bernstein and box-pair proofs.
 //
-// Interval kernels repeat the host reference's binary64 operation sequence in
-// round-to-nearest with gradual underflow, so their outputs are bit-identical.
-// Exact kernels use checked 256-bit integers and refuse an item, never clamp
-// it, when a value leaves that range. Items are split into fixed chunks by
-// index and write only their own slots, so every parallelism gives identical
-// bytes.
+// Interval kernels enclose each endpoint operation before extrema reduction.
+// Exact kernels use checked wide integers and refuse, never clamp, values
+// outside the selected word range. Disjoint fixed chunks are deterministic.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -161,37 +158,22 @@ void interval_product(double a_lo, double a_hi, double b_lo, double b_hi, double
                       double& upper) noexcept {
   const double left[4] = {a_lo, a_lo, a_hi, a_hi};
   const double right[4] = {b_lo, b_hi, b_lo, b_hi};
-  double products[4];
-  bool exact[4];
-  bool invalid = false;
+  double low = std::numeric_limits<double>::infinity();
+  double high = -std::numeric_limits<double>::infinity();
   for (int pair = 0; pair < 4; ++pair) {
     const double l = left[pair];
     const double r = right[pair];
     const bool zero_unbounded = (l == 0.0 && std::isinf(r)) || (std::isinf(l) && r == 0.0);
-    products[pair] = zero_unbounded ? 0.0 : l * r;
-    invalid = invalid || std::isnan(products[pair]);
-    exact[pair] = zero_unbounded || product_is_exact(l, r, products[pair]);
+    const double product = zero_unbounded ? 0.0 : l * r;
+    if (std::isnan(product)) {
+      lower = -std::numeric_limits<double>::infinity();
+      upper = std::numeric_limits<double>::infinity();
+      return;
+    }
+    const bool exact = zero_unbounded || product_is_exact(l, r, product);
+    low = ieee_minimum(low, exact ? product : next_down(product));
+    high = ieee_maximum(high, exact ? product : next_up(product));
   }
-  double low = products[0];
-  double high = products[0];
-  for (int pair = 1; pair < 4; ++pair) {
-    low = ieee_minimum(low, products[pair]);
-    high = ieee_maximum(high, products[pair]);
-  }
-  bool low_exact = false;
-  bool high_exact = false;
-  for (int pair = 0; pair < 4; ++pair) {
-    low_exact = low_exact || (exact[pair] && products[pair] == low);
-    high_exact = high_exact || (exact[pair] && products[pair] == high);
-  }
-  low_exact = low_exact && !invalid;
-  high_exact = high_exact && !invalid;
-  if (invalid) {
-    low = -std::numeric_limits<double>::infinity();
-    high = std::numeric_limits<double>::infinity();
-  }
-  if (!low_exact) low = next_down(low);
-  if (!high_exact) high = next_up(high);
   const bool first_nonnegative = a_lo >= 0.0;
   const bool first_nonpositive = a_hi <= 0.0;
   const bool second_nonnegative = b_lo >= 0.0;
@@ -221,8 +203,8 @@ void round_out_inexact(double low, double high, bool low_exact, bool high_exact,
   const bool invalid = std::isnan(low) || std::isnan(high);
   const double widened_low = next_down(invalid ? -std::numeric_limits<double>::infinity() : low);
   const double widened_high = next_up(invalid ? std::numeric_limits<double>::infinity() : high);
-  lower = low_exact ? low : widened_low;
-  upper = high_exact ? high : widened_high;
+  lower = low_exact && !invalid ? low : widened_low;
+  upper = high_exact && !invalid ? high : widened_high;
 }
 
 // ------------------------------------------------------ exact combinatorics
@@ -290,23 +272,29 @@ bool word_limbs_valid(int32_t limbs) noexcept {
   return limbs == 4 || limbs == 8 || limbs == 16 || limbs == 32 || limbs == 64;
 }
 
+int64_t composition_count(int32_t total, int32_t parts);
+
 // Compositions of `total` into `parts` nonnegative parts, first part descending
 // (the order of `_compositions` in the host reference), flattened row-major.
 std::vector<int32_t> compositions(int32_t total, int32_t parts) {
+  const int64_t rows = composition_count(total, parts);
+  if (rows < 0 || !phx::mc::addressable(rows, parts, sizeof(int32_t))) {
+    throw std::length_error("composition table is not addressable");
+  }
   std::vector<int32_t> out;
+  out.reserve(static_cast<std::size_t>(rows) * static_cast<std::size_t>(parts));
   std::vector<int32_t> current(static_cast<std::size_t>(parts), 0);
-  const auto recurse = [&](auto&& self, int32_t slot, int32_t remaining) -> void {
-    if (slot == parts - 1) {
-      current[static_cast<std::size_t>(slot)] = remaining;
-      out.insert(out.end(), current.begin(), current.end());
-      return;
-    }
-    for (int32_t value = remaining; value >= 0; --value) {
-      current[static_cast<std::size_t>(slot)] = value;
-      self(self, slot + 1, remaining - value);
-    }
-  };
-  recurse(recurse, 0, total);
+  current[0] = total;
+  while (true) {
+    out.insert(out.end(), current.begin(), current.end());
+    int32_t slot = parts - 2;
+    while (slot >= 0 && current[static_cast<std::size_t>(slot)] == 0) --slot;
+    if (slot < 0) break;
+    const int32_t remaining = current.back();
+    current.back() = 0;
+    --current[static_cast<std::size_t>(slot)];
+    current[static_cast<std::size_t>(slot + 1)] = remaining + 1;
+  }
   return out;
 }
 
@@ -414,10 +402,10 @@ class WeightTable final {
         std::uint64_t line_lcm = 1;
         totals_.assign(terms_, 0);
         for (std::size_t term = 0; term < terms_; ++term) {
-          const int32_t total = exponent(term, 0) + exponent(term, 1);
+          const int64_t total = int64_t{exponent(term, 0)} + exponent(term, 1);
           if (total > triangle || exponent(term, 2) > line) return PHX_MC_INVALID_INPUT;
-          totals_[term] = total;
-          tmax = std::max(tmax, total);
+          totals_[term] = static_cast<int32_t>(total);
+          tmax = std::max(tmax, totals_[term]);
           std::uint64_t value = 0;
           if (!binomial(line, exponent(term, 2), value) || !lcm_u64(line_lcm, value, line_lcm)) {
             return PHX_MC_RANGE_ERROR;
@@ -624,6 +612,9 @@ int32_t box_controls(const ControlsCall& call, int64_t item, std::vector<Word>& 
     }
     if (!checked_mul_u64(total_denominator, lcm, total_denominator)) return PHX_MC_RANGE_ERROR;
     // weights[b * n + a] for used a <= b.
+    if (!phx::mc::addressable(static_cast<int64_t>(n), static_cast<int64_t>(n), Word::kBytes)) {
+      return PHX_MC_RANGE_ERROR;
+    }
     std::vector<Word> weights(n * n);
     for (std::size_t b = 0; b < n; ++b) {
       for (std::size_t a = 0; a <= b; ++a) {
@@ -901,6 +892,8 @@ struct phx_mc_bvh_pair_stream {
   std::size_t node_block;
   int32_t parallelism;
 
+  int64_t required_capacity = 0;
+  int32_t failure = PHX_MC_OK;
   std::vector<std::pair<std::vector<int64_t>, std::vector<int64_t>>> pending;
   bool active = false;
   std::vector<int64_t> nodes_first;
@@ -1030,9 +1023,10 @@ struct phx_mc_bvh_pair_stream {
       if (active) {
         if (leaf_offset < leaves_first.size()) {
           const std::size_t begin = leaf_offset;
-          const std::size_t end = std::min(leaves_first.size(), begin + leaf_pair_block);
+          const std::size_t end = begin + std::min(leaves_first.size() - begin, leaf_pair_block);
+          const bool produced = test_chunk(begin, end);
           leaf_offset = end;
-          if (test_chunk(begin, end)) return true;
+          if (produced) return true;
           continue;
         }
         descend();
@@ -1071,7 +1065,7 @@ struct phx_mc_bvh_pair_stream {
 
 namespace {
 
-bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) noexcept {
+bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
   if (tree == nullptr || tree->node_count < 1 || tree->leaf_count < 0 || tree->leaf_width < 1 ||
       tree->item_count < 0 || tree->node_min == nullptr || tree->node_max == nullptr ||
       tree->node_size == nullptr || tree->left == nullptr || tree->right == nullptr ||
@@ -1088,6 +1082,24 @@ bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) noexcept {
     if (leaf < 0 && (tree->left[node] < 0 || tree->left[node] >= tree->node_count ||
                      tree->right[node] < 0 || tree->right[node] >= tree->node_count)) {
       return false;
+    }
+  }
+  // A rooted tree has exactly one incoming edge per reachable non-root node.
+  // Mark on discovery: this rejects cycles and shared children without recursion.
+  std::vector<uint8_t> seen(static_cast<std::size_t>(tree->node_count), 0);
+  std::vector<int64_t> pending{0};
+  seen[0] = 1;
+  while (!pending.empty()) {
+    const int64_t node = pending.back();
+    pending.pop_back();
+    if (tree->leaf[node] >= 0) {
+      if (tree->left[node] != -1 || tree->right[node] != -1) return false;
+      continue;
+    }
+    for (const int64_t child : {tree->left[node], tree->right[node]}) {
+      if (seen[static_cast<std::size_t>(child)]) return false;
+      seen[static_cast<std::size_t>(child)] = 1;
+      pending.push_back(child);
     }
   }
   const int64_t entries = tree->leaf_count * tree->leaf_width;
@@ -1107,8 +1119,11 @@ int32_t phx_mc_interval_bernstein_restrict(int64_t count, int32_t degree, int64_
                                            double* out_lower, double* out_upper,
                                            int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    int64_t row_entries = 0;
     if (count < 0 || degree < 0 || width < 1 || parallelism < 1 ||
-        !phx::mc::addressable(count, (int64_t{degree} + 1) * width, sizeof(double)) ||
+        __builtin_mul_overflow(int64_t{degree} + 1, width, &row_entries) ||
+        !phx::mc::addressable(1, row_entries, sizeof(double)) ||
+        !phx::mc::addressable(count, row_entries, sizeof(double)) ||
         !phx::mc::addressable(count, 4, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -1116,7 +1131,7 @@ int32_t phx_mc_interval_bernstein_restrict(int64_t count, int32_t degree, int64_
                       sides == nullptr || out_lower == nullptr || out_upper == nullptr)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    const std::size_t entries = (static_cast<std::size_t>(degree) + 1) * static_cast<std::size_t>(width);
+    const std::size_t entries = static_cast<std::size_t>(row_entries);
     return phx::mc::parallel_for(
         static_cast<std::size_t>(count), request(parallelism),
         [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
@@ -1184,7 +1199,7 @@ int32_t phx_mc_interval_sum(int64_t count, const double* first_lower, const doub
       double out_high = 0.0;
       round_out_inexact(low, high, sum_is_exact(a_lo, b_lo, low), sum_is_exact(a_hi, b_hi, high),
                         out_low, out_high);
-      if (!subtract) {
+      if (!subtract && !std::isnan(low) && !std::isnan(high)) {
         // A sum of sign-fixed operands keeps that sign across outward rounding.
         if (a_lo >= 0.0 && b_lo >= 0.0) out_low = ieee_maximum(out_low, 0.0);
         if (a_hi <= 0.0 && b_hi <= 0.0) out_high = ieee_minimum(out_high, 0.0);
@@ -1220,8 +1235,13 @@ int32_t phx_mc_bernstein_controls(int64_t count, int32_t domain, int32_t dimensi
       default:
         return PHX_MC_INVALID_ARGUMENT;
     }
-    if (count < 0 || dimension < 1 || parallelism < 1 || term_offsets == nullptr ||
-        control_offsets == nullptr || !phx::mc::addressable(count, degree_width, sizeof(int32_t))) {
+    if (count < 0 || dimension < 1 ||
+        (domain == PHX_MC_BERNSTEIN_SIMPLEX && dimension == std::numeric_limits<int32_t>::max()) ||
+        parallelism < 1 || term_offsets == nullptr || control_offsets == nullptr ||
+        !phx::mc::addressable(count, degree_width, sizeof(int32_t)) ||
+        !phx::mc::addressable(count, 2, sizeof(int64_t)) ||
+        count == std::numeric_limits<int64_t>::max() ||
+        !phx::mc::addressable(count + 1, 1, sizeof(int64_t))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (count > 0 && (degrees == nullptr || denominators == nullptr || extremes == nullptr ||
@@ -1272,8 +1292,14 @@ int32_t phx_mc_simplex_bernstein_blossoms(int64_t count, int32_t parts, const in
   return phx::mc::guarded([&]() -> int32_t {
     if (!word_limbs_valid(word_limbs)) return PHX_MC_INVALID_ARGUMENT;
     const int64_t word_bytes = int64_t{8} * word_limbs;
+    int64_t corner_bytes = 0;
     if (count < 0 || parts < 1 || parallelism < 1 || control_offsets == nullptr ||
-        !phx::mc::addressable(count, int64_t{parts} * parts * word_bytes, 1)) {
+        __builtin_mul_overflow(int64_t{parts} * parts, word_bytes, &corner_bytes) ||
+        !phx::mc::addressable(1, corner_bytes, 1) ||
+        !phx::mc::addressable(count, corner_bytes, 1) ||
+        !phx::mc::addressable(count, 2, sizeof(int64_t)) ||
+        count == std::numeric_limits<int64_t>::max() ||
+        !phx::mc::addressable(count + 1, 1, sizeof(int64_t))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (count > 0 && (degrees == nullptr || corners == nullptr || extremes == nullptr ||
@@ -1339,11 +1365,16 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
   return phx::mc::guarded([&]() -> int32_t {
     if (!word_limbs_valid(word_limbs)) return PHX_MC_INVALID_ARGUMENT;
     const int64_t word_bytes = int64_t{8} * word_limbs;
+    int64_t net_words_checked = 0;
+    int64_t net_bytes = 0;
     if (count < 0 || control_count < 1 || slot_count < 2 || components < 1 || parallelism < 1 ||
         first < 0 || second < 0 || first >= slot_count || second >= slot_count ||
         first == second || indices == nullptr || exponent == nullptr ||
         !phx::mc::addressable(control_count, slot_count, sizeof(int32_t)) ||
-        !phx::mc::addressable(count, control_count * components * word_bytes, 1)) {
+        __builtin_mul_overflow(control_count, int64_t{components}, &net_words_checked) ||
+        __builtin_mul_overflow(net_words_checked, word_bytes, &net_bytes) ||
+        !phx::mc::addressable(1, net_bytes, 1) ||
+        !phx::mc::addressable(count, net_bytes, 1)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (count > 0 && (nets == nullptr || left == nullptr || right == nullptr ||
@@ -1364,12 +1395,19 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
     std::vector<BisectLine> lines;
     int32_t maximum = 0;
     for (auto& [rest, rows] : grouped) {
-      const int32_t total = indices[rows[0] * slot_count + first] + indices[rows[0] * slot_count + second];
-      if (static_cast<int64_t>(rows.size()) != int64_t{total} + 1) return PHX_MC_INVALID_INPUT;
+      const int64_t wide_total = int64_t{indices[rows[0] * slot_count + first]} +
+                                 indices[rows[0] * slot_count + second];
+      if (wide_total > std::numeric_limits<int32_t>::max() ||
+          static_cast<int64_t>(rows.size()) != wide_total + 1) return PHX_MC_INVALID_INPUT;
+      const int32_t total = static_cast<int32_t>(wide_total);
+      const int64_t size = wide_total + 1;
+      if (!phx::mc::addressable(size * (size + 1) / 2, word_bytes, 1)) {
+        return PHX_MC_INVALID_ARGUMENT;
+      }
       BisectLine line{total, std::vector<int64_t>(rows.size(), -1)};
       for (const int64_t row : rows) {
         const int32_t along = indices[row * slot_count + second];
-        if (indices[row * slot_count + first] + along != total ||
+        if (int64_t{indices[row * slot_count + first]} + along != wide_total ||
             line.rows[static_cast<std::size_t>(along)] != -1) {
           return PHX_MC_INVALID_INPUT;
         }
@@ -1380,7 +1418,7 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
     }
     *exponent = maximum;
     const std::size_t row_words = static_cast<std::size_t>(components);
-    const std::size_t net_words = static_cast<std::size_t>(control_count) * row_words;
+    const std::size_t net_words = static_cast<std::size_t>(net_words_checked);
     return with_word(word_limbs, [&](auto tag) -> int32_t {
       using Word = decltype(tag);
       return phx::mc::parallel_for(
@@ -1498,6 +1536,12 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
         !tree_valid(second, dimension)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    int64_t per_leaf = 0;
+    if (__builtin_mul_overflow(first->leaf_width, second->leaf_width, &per_leaf) ||
+        !phx::mc::addressable(1, per_leaf, sizeof(int64_t)) ||
+        !phx::mc::addressable(node_block, 2, sizeof(int64_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
     auto created = std::make_unique<phx_mc_bvh_pair_stream>();
     created->first = *first;
     created->second = *second;
@@ -1506,7 +1550,11 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
     created->absolute_tolerance = absolute_tolerance;
     created->relative_tolerance = relative_tolerance;
     created->leaf_pair_block = static_cast<std::size_t>(
-        std::max<int64_t>(1, item_block / (first->leaf_width * second->leaf_width)));
+        std::max<int64_t>(1, item_block / per_leaf));
+    created->required_capacity = static_cast<int64_t>(created->leaf_pair_block) * per_leaf;
+    if (!phx::mc::addressable(1, created->required_capacity, sizeof(int64_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
     created->node_block = static_cast<std::size_t>(node_block);
     created->parallelism = parallelism;
     {
@@ -1522,13 +1570,17 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
 int32_t phx_mc_bvh_pair_stream_next(phx_mc_bvh_pair_stream* stream, int64_t pair_capacity,
                                     int64_t block_capacity, int64_t* first_items,
                                     int64_t* second_items, int64_t* block_ends, int64_t* blocks) {
-  return phx::mc::guarded([&]() -> int32_t {
+  bool advancing = false;
+  const int32_t status = phx::mc::guarded([&]() -> int32_t {
     if (stream == nullptr || blocks == nullptr || block_capacity < 1 || first_items == nullptr ||
         second_items == nullptr || block_ends == nullptr ||
-        pair_capacity < static_cast<int64_t>(stream->leaf_pair_block) *
-                            stream->first.leaf_width * stream->second.leaf_width) {
+        !phx::mc::addressable(pair_capacity, 1, sizeof(int64_t)) ||
+        !phx::mc::addressable(block_capacity, 1, sizeof(int64_t)) ||
+        pair_capacity < stream->required_capacity) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    if (stream->failure != PHX_MC_OK) return stream->failure;
+    advancing = true;
     *blocks = 0;
     int64_t used = 0;
     while (*blocks < block_capacity) {
@@ -1537,7 +1589,7 @@ int32_t phx_mc_bvh_pair_stream_next(phx_mc_bvh_pair_stream* stream, int64_t pair
         stream->has_yield = true;
       }
       const int64_t size = static_cast<int64_t>(stream->yield_first.size());
-      if (used + size > pair_capacity) break;
+      if (size > pair_capacity - used) break;
       std::copy(stream->yield_first.begin(), stream->yield_first.end(), first_items + used);
       std::copy(stream->yield_second.begin(), stream->yield_second.end(), second_items + used);
       used += size;
@@ -1546,6 +1598,12 @@ int32_t phx_mc_bvh_pair_stream_next(phx_mc_bvh_pair_stream* stream, int64_t pair
     }
     return PHX_MC_OK;
   });
+  // Traversal scratch may already have changed when an allocation throws.
+  // Never allow a subsequent call to silently complete a truncated traversal.
+  if (advancing && status != PHX_MC_OK) {
+    stream->failure = status;
+  }
+  return status;
 }
 
 void phx_mc_bvh_pair_stream_free(phx_mc_bvh_pair_stream* stream) { delete stream; }

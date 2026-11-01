@@ -81,6 +81,7 @@ from ._cad import (
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_assembly_identifier_losses,
+    cad_export_pole_identity_losses,
     cad_import_stage_losses,
     CadCodecInvariantError,
     CadExportPolicy,
@@ -842,6 +843,7 @@ class _Decoder:
         self.entity_units: dict[int, _Units] = {}
         self.children: dict[int, tuple[int, ...]] = {}
         self.curve_trims: dict[int, tuple[tuple[float, float], bool]] = {}
+        self.conic_carriers: dict[int, int] = {}
         self.source_uncertainties: dict[int, float] = {}
         self.raw_source_uncertainties: dict[str, float] = {}
         self.source_uncertainty_units: dict[int, float] = {}
@@ -1733,6 +1735,23 @@ class _Decoder:
                 instance.label,
                 parameter_range=parameter_range,
             )
+            if isinstance(curve, (CircleCurve, EllipseCurve)):
+                # TRIMMED_CURVEs retain the identity of their referenced basis,
+                # not merely its coincident coefficients. Traversal is safe
+                # here because _curve already validated this reference chain.
+                definition = self._get(curve_reference)
+                while self._simple(definition).name == "TRIMMED_CURVE":
+                    definition = self._get(self._params(definition, 6)[1])
+                previous = self.conic_carriers.get(definition.id)
+                if previous is None:
+                    self.conic_carriers[definition.id] = stage.edge_curves[index]
+                else:
+                    if not eqx.tree_equal(stage.curves[previous], curve):
+                        raise ValueError(
+                            "One STEP conic definition must retain its units and placement."
+                        )
+                    stage.curves.pop()
+                    stage.edge_curves[index] = previous
         except CadInterchangeError:
             raise
         except ValueError as error:
@@ -3835,6 +3854,7 @@ class _Writer:
         for coedge, edge in enumerate(geometry.coedge_edges):
             uses.setdefault(edge, []).append(coedge)
         edges: dict[int, int] = {}
+        conic_carriers: dict[int, int] = {}
         for edge, curve_index in enumerate(geometry.edge_curves):
             if curve_index == -1:
                 continue
@@ -3853,7 +3873,12 @@ class _Writer:
                     label,
                     "STEP requires an explicit curve after intersection substitution.",
                 )
-            curve = self.curve(explicit_carrier(carrier_curve), label)
+            if isinstance(carrier_curve, (CircleCurve, EllipseCurve)):
+                if curve_index not in conic_carriers:
+                    conic_carriers[curve_index] = self.curve(carrier_curve, label)
+                curve = conic_carriers[curve_index]
+            else:
+                curve = self.curve(explicit_carrier(carrier_curve), label)
             first, last = ranges[edge]
             curve = self.add(
                 f"TRIMMED_CURVE('',#{curve},(PARAMETER_VALUE({_real(first)})),"
@@ -4318,6 +4343,7 @@ def write_step(
             *approximation_losses,
             *writer.assembly_losses,
             *writer.surface_losses,
+            *cad_export_pole_identity_losses(surface_carriers, "STEP", "undeclared"),
             *cad_export_assembly_identifier_losses(geometry.assembly_graph, "STEP"),
         ),
     )

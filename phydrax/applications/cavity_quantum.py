@@ -1085,7 +1085,6 @@ class HcurlCapabilityStatus(IntEnum):
 
     SUPPORTED = 0
     ADAPTATION_TRANSACTION_REQUIRED = 2
-    HCURL_TRANSFER_REQUIRED = 3
     RESOURCE_LIMIT_EXCEEDED = 4
     UNSUPPORTED_MESH = 5
 
@@ -1120,8 +1119,9 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
     """Capability gate over the existing tetrahedral FEM/AMR substrate.
 
     The trimmed tetrahedral form family supports every positive polynomial order.
-    Adaptive transfer is admitted only when a finite-element topology transaction
-    supplies an explicit form-field transfer, not an automatic P1 vertex transfer.
+    Adaptive transfer requires a finite-element topology transaction. Its nested
+    form transfer validates the accepted field layout and exact reference or
+    geometry-transition evidence when committing the adaptation.
     """
 
     mesh: CellMesh
@@ -1188,15 +1188,6 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             assembly = True
             adaptation = False
             reason = "adaptive H(curl) requires an explicit finite-element topology transaction"
-        elif (
-            require_adaptation
-            and transaction is not None
-            and transaction.field_transfer is None
-        ):
-            status = HcurlCapabilityStatus.HCURL_TRANSFER_REQUIRED
-            assembly = True
-            adaptation = False
-            reason = "automatic P1 vertex transfer is not an H(curl) edge transfer"
         else:
             status = HcurlCapabilityStatus.SUPPORTED
             assembly = True

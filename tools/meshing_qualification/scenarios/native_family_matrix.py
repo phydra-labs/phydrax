@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import product
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from phydrax._fingerprint import canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import (
     CellBlock,
@@ -39,10 +38,6 @@ from phydrax.geometry._meshing_domain import (
     PatchCurveUse,
 )
 from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
-from phydrax.geometry._source_boundary_records import (
-    SourceBoundaryDistance,
-    SourceBoundarySamples,
-)
 from phydrax.geometry.brep import CircleCurve, LineCurve, PlanePatch
 from phydrax.geometry.simplicial import PlanarMeshRegion
 from phydrax.meshing._contracts import (
@@ -222,70 +217,6 @@ def _rectangle(name: str, left: float, right: float, resolution: int) -> Transfi
     )
 
 
-class _SquareBoundaryQuery:
-    source_id: str
-    source_revision: str
-    ambient_dimension: int
-
-    def __init__(self, source_id: str, source_revision: str, /) -> None:
-        self.source_id = source_id
-        self.source_revision = source_revision
-        self.ambient_dimension = 2
-
-    def boundary_distance(self, points: np.ndarray, /) -> SourceBoundaryDistance:
-        coordinates = np.asarray(points, dtype=np.float64)
-        if coordinates.ndim != 2 or coordinates.shape[1] != 2:
-            raise ValueError(
-                "Square boundary queries require an (N, 2) coordinate array."
-            )
-        boundaries = (
-            np.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=np.float64),
-            np.asarray(((1.0, 0.0), (1.0, 1.0)), dtype=np.float64),
-            np.asarray(((1.0, 1.0), (0.0, 1.0)), dtype=np.float64),
-            np.asarray(((0.0, 1.0), (0.0, 0.0)), dtype=np.float64),
-        )
-        distances = np.full((coordinates.shape[0],), np.inf, dtype=np.float64)
-        for edge in boundaries:
-            direction = edge[1] - edge[0]
-            parameter = np.clip(
-                ((coordinates - edge[0]) @ direction) / np.dot(direction, direction),
-                0.0,
-                1.0,
-            )
-            closest = edge[0] + parameter[:, None] * direction
-            distances = np.minimum(
-                distances, np.linalg.norm(coordinates - closest, axis=-1)
-            )
-        return SourceBoundaryDistance(distances, distances, "certified")
-
-    def boundary_cover(self, maximum_radius: float, /) -> SourceBoundarySamples:
-        if isinstance(maximum_radius, (bool, np.bool_)):
-            raise TypeError("maximum_radius must be a positive physical length.")
-        requested = float(maximum_radius)
-        if not np.isfinite(requested) or requested <= 0.0:
-            raise ValueError("maximum_radius must be finite and positive.")
-        intervals = max(1, math.ceil(1.0 / (2.0 * requested)))
-        radius = float(np.nextafter(0.5 / intervals, np.inf))
-        while radius > requested:
-            intervals += 1
-            radius = float(np.nextafter(0.5 / intervals, np.inf))
-        parameter = np.arange(intervals, dtype=np.float64) / intervals
-        points = np.concatenate(
-            (
-                np.column_stack((parameter, np.zeros_like(parameter))),
-                np.column_stack((np.ones_like(parameter), parameter)),
-                np.column_stack((1.0 - parameter, np.ones_like(parameter))),
-                np.column_stack((np.zeros_like(parameter), 1.0 - parameter)),
-            ),
-            axis=0,
-        )
-        return SourceBoundarySamples(
-            points,
-            np.full((points.shape[0],), radius, dtype=np.float64),
-            np.zeros((points.shape[0],), dtype=np.float64),
-            "certified",
-            complete=True,
-        )
 
 
 def _pwl_owner(domain: PiecewiseLinearDomain) -> Any:
@@ -826,14 +757,37 @@ def _structured_square(resolution: int, multiblock: bool) -> _FamilyInput:
         blocks = (_rectangle("square", 0.0, 1.0, resolution),)
         interfaces = ()
         fixture = "NativeStructuredSource:single-transfinite-block"
-    curves = (
-        LineCurve((0.0, 0.0), (0.0, 1.0)),
-        LineCurve((1.0, 0.0), (0.0, 1.0)),
-        LineCurve((0.0, 0.0), (1.0, 0.0)),
-        LineCurve((0.0, 1.0), (1.0, 0.0)),
+    domain = PiecewiseLinearDomain(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        np.asarray(((0, 1), (1, 2), (2, 3), (3, 0)), dtype=np.int64),
+        np.tile(np.asarray((0, -1), dtype=np.int64), (4, 1)),
+        ("square",),
+        source_id=source_id,
     )
-    revision = str(array_tree_fingerprint(curves)["sha256"])
-    boundary = _SquareBoundaryQuery(source_id, revision)
+    revision = domain.source_revision
+    interface_faces = {
+        face
+        for interface in interfaces
+        for face in (
+            (interface.first_block, interface.first_face),
+            (interface.second_block, interface.second_face),
+        )
+    }
+    boundaries = tuple(
+        cast(TransfiniteCurveControl, control)
+        for block in blocks
+        for face, control in enumerate(block.boundaries)
+        if (block.name, face) not in interface_faces
+    )
+    boundary = ParametricCurveBoundarySource(
+        tuple(control.curve for control in boundaries),
+        tuple(control.parameter_range for control in boundaries),
+        source_id=source_id,
+        source_revision=revision,
+        curve_entity_ids=tuple(control.source_id for control in boundaries),
+        occurrence_paths=((),) * len(boundaries),
+        chart_ids=tuple(control.source_id for control in boundaries),
+    )
     source = NativeStructuredSource(
         blocks,
         interfaces,
@@ -841,6 +795,7 @@ def _structured_square(resolution: int, multiblock: bool) -> _FamilyInput:
         revision,
         fidelity_source=boundary,
         maximum_deviation=0.08,
+        domain=domain,
     )
     embedding = phx.geometry.PlanarEmbedding(
         (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)

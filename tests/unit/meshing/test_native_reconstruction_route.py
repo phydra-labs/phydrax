@@ -310,7 +310,9 @@ def test_reconstruction_chart_witness_revalidates_persistent_triangle_keys() -> 
     witness.require_current(construction.mesh, construction.geometry, fidelity_source)
 
 
-def test_reconstructed_query_prepares_its_domain_cover_once(monkeypatch) -> None:
+def test_reconstructed_query_prepares_its_domain_cover_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from phydrax.geometry import _domain_boundary
     from phydrax.geometry._source_fidelity import _reconstructed_domain_query
 
@@ -330,7 +332,7 @@ def test_reconstructed_query_prepares_its_domain_cover_once(monkeypatch) -> None
     assert query.domain_cover.restriction_ids == expected.restriction_ids
 
     # Validation reuses the prepared query: no domain chart cover is recomputed.
-    def refuse(self, /):
+    def refuse(self: MeshingDomainBoundarySource, /) -> None:
         raise AssertionError("the prepared domain cover was recomputed")
 
     monkeypatch.setattr(
@@ -548,7 +550,8 @@ def test_reconstructed_domain_evaluates_patches_in_one_stacked_call() -> None:
     charts = rng.random((97, 2))
     charts[::5] = (1.0, 0.0)
     values = domain.evaluate(rows, charts)
-    for row, (patch, chart) in enumerate(zip(rows, charts, strict=True)):
+    for row, patch in enumerate(rows):
+        chart = charts[row]
         single = np.asarray(
             domain.patches[int(patch)].surface.evaluate(jnp.asarray(chart[None, :]))
         )[0]
