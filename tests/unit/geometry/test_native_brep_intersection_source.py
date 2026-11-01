@@ -1037,3 +1037,14 @@ def test_mapped_source_lift_does_not_promote_near_period_bounds_to_full_scope() 
     assert not exact_source_lift(
         curve, PeriodicPCurve(chart, patch, (1, 0)), region, 0.0, 1.0
     )
+
+
+@pytest.mark.parametrize("index", (0, -1))
+def test_terminal_trim_subdivision_replaces_the_selected_piece(index: int) -> None:
+    from phydrax.geometry._atlas import _SegmentEnclosures, _split_terminal_piece
+
+    segment = CurveTrimSegment(LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0)
+    pieces = [(0.0, 1.0, np.asarray(((0.0, 0.0), (1.0, 0.0))))]
+    query = np.asarray(((2.0, 2.0), (3.0, 3.0)))
+    assert _split_terminal_piece(_SegmentEnclosures(segment), pieces, query, index)
+    assert [(first, last) for first, last, _ in pieces] == [(0.0, 0.5), (0.5, 1.0)]
