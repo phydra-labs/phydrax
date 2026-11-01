@@ -2295,7 +2295,20 @@ the score by `(pi - turn) / (pi - allowed)`, so the quality pass removes it.
 Without this factor a folded cluster of well-shaped envelope triangles scores
 full, and two boundary triangles meeting at turn `t` bound every tetrahedron on
 their edge to a dihedral angle of at most `pi - t`. Cones are computed only for
-edges turning beyond the cheap lower bound of both cones' half-angles.
+edges turning beyond the cheap lower bound of both cones' half-angles or closing
+a convex wedge sharper than the minimum angle.
+
+Near the source's medial axis an offset's cones open up and carry no
+information, so the source-relative factor admits any turn there. The score
+therefore also holds every convex edge (seen from the enclosed solid) to a
+solid wedge `pi - turn` of at least the minimum angle, scoring
+`(pi - turn) / minimum_angle` below it, unless the two cones force the sharper
+wedge (the angle between their axes minus both half-angles is at least
+`pi - minimum_angle`). On torus:1 a partial relocation had folded a valence-3
+envelope vertex into a fin closing a 1.6 degree convex wedge inside the inner
+offset tube (minor radius about `h`): every tetrahedron on that edge was bounded
+to a 1.6 degree dihedral angle, and the volume stages kept 5 slivers that no
+volume operation could improve while the envelope faces stay protected.
 
 A quality edit for one triangle tries, in order: a split of an over-long longest
 edge, flips of its edges, a collapse of its shortest edge, relocation of each

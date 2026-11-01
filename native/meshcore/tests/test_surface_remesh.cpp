@@ -284,10 +284,118 @@ void sphere_band_quality() {
   }
 }
 
+// Admits every triangle inside the ball of radius 1 + width and projects onto
+// the unit sphere. Its cones are open, or (tight) hold exactly the
+// triangle's own normal within `half` radians.
+class BallBand final : public TriangleAdmission {
+ public:
+  BallBand(double band, bool tight_cones) : width(band), tight(tight_cones) {}
+  AdmissionKind kind() const override { return AdmissionKind::kOffsetBand; }
+  VertexEvidence evaluate(const Point& p) const override {
+    const double radius = std::hypot(p[0], p[1], p[2]);
+    return {radius, radius};
+  }
+  bool admits(const Point&, const Point&, const Point&,
+              const std::array<VertexEvidence, 3>& evidence) const override {
+    for (const VertexEvidence& corner : evidence)
+      if (!(corner.upper <= 1 + width)) return false;
+    return true;
+  }
+  Point project(const Point& p) const override {
+    const double radius = std::hypot(p[0], p[1], p[2]);
+    return {p[0] / radius, p[1] / radius, p[2] / radius};
+  }
+  NormalCone normal_cone(const Point& a, const Point& b, const Point& c,
+                         const std::array<VertexEvidence, 3>&) const override {
+    if (!tight) return NormalCone{};
+    return NormalCone{normal({a, b, c}, {0, 1, 2}), half};
+  }
+  double normal_cone_floor(const Point&, const Point&, const Point&,
+                           const std::array<VertexEvidence, 3>&) const override {
+    return tight ? half : NormalCone{}.half_angle;
+  }
+  double width;
+  bool tight;
+  double half = 1.0e-3;
+};
+
+// Smallest solid wedge in degrees over the convex edges of a closed surface
+// with outward normals (pi minus the turn where the neighbor's far corner lies
+// below the triangle's plane).
+double minimum_convex_wedge(const std::vector<Point>& points,
+                            const std::vector<Triangle>& triangles) {
+  std::map<std::pair<int64_t, int64_t>, size_t> directed;
+  for (size_t row = 0; row < triangles.size(); ++row)
+    for (int k = 0; k < 3; ++k) directed[{triangles[row][k], triangles[row][(k + 1) % 3]}] = row;
+  double wedge = 180;
+  for (const auto& [edge, row] : directed) {
+    const auto other = directed.find({edge.second, edge.first});
+    if (other == directed.end()) continue;
+    const Triangle& t = triangles[row];
+    const Triangle& s = triangles[other->second];
+    int64_t far = s[0];
+    for (int64_t v : s)
+      if (v != edge.first && v != edge.second) far = v;
+    const Point n = normal(points, t);
+    const Point m = normal(points, s);
+    const Point& p = points[static_cast<size_t>(edge.first)];
+    const Point& q = points[static_cast<size_t>(far)];
+    if (n[0] * (q[0] - p[0]) + n[1] * (q[1] - p[1]) + n[2] * (q[2] - p[2]) >= 0) continue;
+    const double cosine = std::clamp(n[0] * m[0] + n[1] * m[1] + n[2] * m[2], -1.0, 1.0);
+    wedge = std::min(wedge, 180 - std::acos(cosine) * 180.0 / std::acos(-1.0));
+  }
+  return wedge;
+}
+
+// An octahedron flattened to a knife-edge lens: its eight right isosceles
+// faces (45 degree minimum angle, edges within the size target) score full
+// on shape and size, and its rim closes a 1.6 degree convex solid wedge,
+// which bounds every tetrahedron on a rim edge to a 1.6 degree dihedral
+// angle. With open cones (the torus:1 envelope near its source's medial axis,
+// where a partial relocation folded a valence-3 vertex into such a fin) the
+// source-relative factor admits the turn, so the wedge alone must lower the
+// score: the apexes move to their projections and every wedge opens to the
+// octahedron's 109 degrees. Cones forcing the knife edge keep it.
+void knife_edge_lens() {
+  const double height = 0.01;
+  const std::vector<Point> input{{1, 0, 0},  {0, 1, 0},       {-1, 0, 0},
+                                 {0, -1, 0}, {0, 0, height}, {0, 0, -height}};
+  const std::vector<Triangle> triangles{{0, 1, 4}, {1, 2, 4}, {2, 3, 4}, {3, 0, 4},
+                                        {1, 0, 5}, {2, 1, 5}, {3, 2, 5}, {0, 3, 5}};
+  PHX_CHECK(minimum_convex_wedge(input, triangles) < 2);
+  {
+    const BallBand admission(0.01, false);
+    std::vector<Point> points = input;
+    std::vector<Triangle> remeshed = triangles;
+    RemeshCounters counters;
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {1.2, 30},
+                                             counters) == PHX_MC_OK);
+    PHX_CHECK(counters.unmet == 0);
+    PHX_CHECK(minimum_convex_wedge(points, remeshed) >= 30);
+    for (const Point& p : points) PHX_CHECK(std::hypot(p[0], p[1], p[2]) <= 1.01);
+  }
+  const BallBand admission(0.01, true);
+  std::vector<Point> points = input;
+  std::vector<Triangle> remeshed = triangles;
+  RemeshCounters counters;
+  PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {1.2, 30}, counters) ==
+            PHX_MC_OK);
+  PHX_CHECK(counters.unmet == 0);
+  PHX_CHECK(counters.relocations == 0 && counters.splits == 0 && counters.flips == 0 &&
+            counters.collapses == 0);
+  PHX_CHECK(minimum_convex_wedge(points, remeshed) < 2);
+  const NormalCone up{{0, 0, 1}, 0.1}, side{{1, 0, 0}, 0.1};
+  PHX_CHECK(phx::mc::remesh::forced_turn(up, up) == 0);
+  PHX_CHECK(std::abs(phx::mc::remesh::forced_turn(up, side) - (std::acos(-1.0) / 2 - 0.2)) <
+            1e-12);
+  PHX_CHECK(phx::mc::remesh::forced_turn(NormalCone{}, side) == 0);
+}
+
 }  // namespace
 
 int main() {
   folded_cluster();
   sphere_band_quality();
+  knife_edge_lens();
   return phx::mc::test::finish("test_surface_remesh");
 }
