@@ -93,9 +93,12 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
         _restore_dataclass,
         model_archive_projection,
         model_archive_root_projection,
+        model_structure_matches_recipe,
+        model_structure_recipe,
         restore_row_record_recipes,
     )
     from phydrax.geometry._source_fidelity_certificate import SourceFidelityCertificate
+    from phydrax.meshing._model_codec import _register_model_archive_types
 
     fields = {field.name: None for field in dataclasses.fields(SourceFidelityCertificate)}
     fields.update(
@@ -103,6 +106,7 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
         source_patch_ids=(0,) * 4096,
         source_occurrence_paths=((),) * 4096,
     )
+    _register_model_archive_types()
     certificate = _restore_dataclass(SourceFidelityCertificate, fields)
     root = model_archive_root_projection(certificate)
     assert isinstance(root.source_cell_global_ids, ExactTensorArchiveRecipe)
@@ -118,6 +122,14 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
         restore_row_record_recipes(nested)[0].source_cell_global_ids
         == fields["source_cell_global_ids"]
     )
+    recipe = model_structure_recipe(certificate)
+    assert model_structure_matches_recipe(certificate, recipe)
+    for name in recipe["fields"]:
+        changed = {
+            **recipe,
+            "fields": {**recipe["fields"], name: {"kind": "literal", "value": "changed"}},
+        }
+        assert not model_structure_matches_recipe(certificate, changed)
 
 
 def test_nested_reference_exact_bank_uses_column_recipe() -> None:

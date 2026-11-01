@@ -37,6 +37,7 @@ from .._model._structure import (
     MeshingDomainBoundarySourceArchiveRecipe,
     model_archive_root_projection,
     model_from_array_recipe,
+    model_structure_matches_recipe,
     model_structure_recipe,
     NativeImplicitBoundaryQueryArchiveRecipe,
     NativeMappedHexSourceArchiveRecipe,
@@ -1915,12 +1916,13 @@ def read_model_artifact(
             raise ValueError("Restored model fields differ from the exact recipe.")
         raw = restore_row_record_recipes(raw)
         rebuilt = restore(raw)
+        del raw
         if type(rebuilt) is not expected_type:
             raise TypeError(
                 "The owning reconstruction function returned a different model type."
             )
         validate_tree(rebuilt)
-        if model_structure_recipe(rebuilt) != recipe:
+        if not model_structure_matches_recipe(rebuilt, recipe):
             raise ValueError(
                 "The owning constructor graph did not reproduce the model recipe."
             )

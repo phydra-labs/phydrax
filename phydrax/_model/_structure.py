@@ -1408,6 +1408,41 @@ def model_archive_root_projection(value: Any, /) -> Any:
     return _restore_dataclass(type(value), fields)
 
 
+def model_structure_matches_recipe(value: Any, recipe: Mapping[str, Any], /) -> bool:
+    """Compare a fidelity root one projected field at a time, without retaining copies."""
+    if (
+        type(value).__module__ != "phydrax.geometry._source_fidelity_certificate"
+        or type(value).__name__ != "SourceFidelityCertificate"
+    ):
+        return model_structure_recipe(value) == recipe
+    from ..meshing._archive_layer_columns import (
+        _COLUMNS,
+        _encode_column,
+        is_layer_archive_record,
+    )
+
+    if not is_layer_archive_record(value):
+        return False
+    names = tuple(field.name for field in dataclasses.fields(value))
+    fields = recipe.get("fields")
+    if (
+        recipe.get("kind") != "dataclass"
+        or recipe.get("type") != artifact_value_id(type(value))
+        or not isinstance(fields, dict)
+        or set(fields) != set(names)
+    ):
+        return False
+    columns = _COLUMNS["SourceFidelityCertificate"]
+    for name in names:
+        field = object.__getattribute__(value, name)
+        if name in columns:
+            field = _encode_column(field, columns[name])
+        projected = model_archive_projection(field)
+        if model_structure_recipe(projected, path=f"model.{name}") != fields[name]:
+            return False
+    return True
+
+
 def _row_record_archive_recipe(value: Any, /) -> object | None:
     """Project records with one static value per mesh entity to column recipes."""
     module, name = type(value).__module__, type(value).__name__
