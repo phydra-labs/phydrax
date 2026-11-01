@@ -625,7 +625,7 @@ def _polynomial_curve_spans(
         return None
     nets = []
     reached = Fraction.from_float(first)
-    for span in pcurve.rational_spans():
+    for span in pcurve.prepare_spans().spans:
         lower, upper = span.parameter_bounds
         if upper <= reached or lower >= Fraction.from_float(last):
             continue
@@ -740,7 +740,7 @@ def _exact_spline_flux(
     high = tuple(Fraction.from_float(float(value)) for value in bounds[1])
     total = Fraction(0)
     covered = Fraction(0)
-    for span in patch.rational_spans():
+    for span in patch.prepare_spans().spans:
         box = span.parameter_bounds
         if any(
             box[axis][1] <= low[axis] or box[axis][0] >= high[axis] for axis in (0, 1)
