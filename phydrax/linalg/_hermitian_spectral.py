@@ -612,6 +612,7 @@ __all__ = [
     "hermitian_spectral_map",
 ]
 
+
 class HermitianFunctionEnclosure(NamedTuple):
     """Rational symmetric matrix and an operator-norm error radius."""
 
@@ -630,7 +631,9 @@ class _HermitianSpectralEnclosure(NamedTuple):
 def fraction_sqrt_interval(value: Fraction, /) -> tuple[Fraction, Fraction]:
     """Return rational square-root endpoints verified by exact squaring."""
     if value < 0:
-        raise ValueError(f"fraction_sqrt_interval.value must be nonnegative; got {value!r}")
+        raise ValueError(
+            f"fraction_sqrt_interval.value must be nonnegative; got {value!r}"
+        )
     if value == 0:
         return Fraction(0), Fraction(0)
     numerator = math.isqrt(value.numerator)
@@ -655,12 +658,22 @@ def fraction_sqrt_interval(value: Fraction, /) -> tuple[Fraction, Fraction]:
         raise ValueError(
             f"fraction_sqrt_interval.value has no finite nonzero binary64 square-root estimate; got {central!r}"
         )
+    # Endpoint squares compare as integers: with ``x = p / q`` (``q`` a power
+    # of two) and ``value = a / b``, ``x**2 <= value`` iff ``p*p*b <= a*q*q``.
     lower = upper = central
-    while Fraction(lower) ** 2 > value:
-        lower = float(np.nextafter(lower, -math.inf))
-    while Fraction(upper) ** 2 < value:
-        upper = float(np.nextafter(upper, math.inf))
+    while _square_sign(lower, value) > 0:
+        lower = math.nextafter(lower, -math.inf)
+    while _square_sign(upper, value) < 0:
+        upper = math.nextafter(upper, math.inf)
     return Fraction(lower), Fraction(upper)
+
+
+def _square_sign(endpoint: float, value: Fraction, /) -> int:
+    """Sign of ``endpoint**2 - value`` in exact integer arithmetic."""
+    numerator, denominator = endpoint.as_integer_ratio()
+    left = numerator * numerator * value.denominator
+    right = value.numerator * denominator * denominator
+    return (left > right) - (left < right)
 
 
 def _exact_matrix_product(
@@ -678,9 +691,7 @@ def _exact_matrix_product(
     )
 
 
-def matrix_norm_enclosure(
-    matrix: tuple[tuple[Fraction, ...], ...], /
-) -> Fraction:
+def matrix_norm_enclosure(matrix: tuple[tuple[Fraction, ...], ...], /) -> Fraction:
     """Bound the spectral norm by the outward-enclosed Frobenius norm."""
     squared = sum((value * value for row in matrix for value in row), Fraction(0))
     return fraction_sqrt_interval(squared)[1]
@@ -737,8 +748,7 @@ def _source_spectral_enclosure(
     )
     transpose = tuple(zip(*vectors, strict=True))
     identity = tuple(
-        tuple(Fraction(int(i == j)) for j in range(dimension))
-        for i in range(dimension)
+        tuple(Fraction(int(i == j)) for j in range(dimension)) for i in range(dimension)
     )
     gram = _exact_matrix_product(transpose, vectors)
     orthogonality = matrix_norm_enclosure(
@@ -752,9 +762,7 @@ def _source_spectral_enclosure(
             "_source_spectral_enclosure.eigenvectors do not admit a certified polar factor."
         )
     vector_norm = fraction_sqrt_interval(1 + orthogonality)[1]
-    polar_error = orthogonality / (
-        1 + fraction_sqrt_interval(1 - orthogonality)[0]
-    )
+    polar_error = orthogonality / (1 + fraction_sqrt_interval(1 - orthogonality)[0])
     reconstruction = _exact_matrix_product(
         tuple(
             tuple(vectors[i][j] * values[j] for j in range(dimension))
@@ -769,7 +777,9 @@ def _source_spectral_enclosure(
         )
     )
     residual += max(abs(value) for value in values) * polar_error * (vector_norm + 1)
-    return _HermitianSpectralEnclosure(values, vectors, vector_norm, polar_error, residual)
+    return _HermitianSpectralEnclosure(
+        values, vectors, vector_norm, polar_error, residual
+    )
 
 
 def _scalar_exp_enclosure(value: Fraction, /) -> tuple[Fraction, Fraction]:
@@ -793,7 +803,9 @@ def _real_symmetric_binary64(values: ArrayLike, name: str, /) -> np.ndarray:
         raise TypeError(f"{name} must be real-valued.")
     source = np.asarray(values)
     if source.ndim != 2 or source.shape[0] != source.shape[1] or source.shape[0] == 0:
-        raise ValueError(f"{name} must be a nonempty square matrix; got shape {source.shape}.")
+        raise ValueError(
+            f"{name} must be a nonempty square matrix; got shape {source.shape}."
+        )
     matrix = np.asarray(source, dtype=np.float64)
     if (
         not np.all(np.isfinite(matrix))
@@ -806,9 +818,7 @@ def _real_symmetric_binary64(values: ArrayLike, name: str, /) -> np.ndarray:
     return matrix
 
 
-def hermitian_log_enclosure(
-    values: ArrayLike, /
-) -> HermitianFunctionEnclosure:
+def hermitian_log_enclosure(values: ArrayLike, /) -> HermitianFunctionEnclosure:
     """Enclose log of a real symmetric positive-definite binary64 matrix.
 
     The returned rational matrix is an approximation. Its operator-norm error
