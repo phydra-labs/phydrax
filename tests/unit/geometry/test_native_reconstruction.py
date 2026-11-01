@@ -223,3 +223,70 @@ def test_triangle_charts_bind_shared_corners_exactly() -> None:
     )
     assert revised is not domain
     assert revised.source_revision == "revision-2"
+
+
+def test_triangle_complex_domain_host_evaluation_and_currentness() -> None:
+    import copy
+
+    import equinox as eqx
+    import jax.numpy as jnp
+
+    from phydrax.geometry.reconstruction._core import (
+        _ReconstructedTrianglePatch,
+        _triangle_complex_meshing_domain,
+    )
+
+    vertices = np.asarray(
+        (
+            (0.1, -0.17805949718576636, 0.7),
+            (0.3, 0.2, -0.06075031604080055),
+            (-0.2, 0.4, 0.1),
+            (0.05, 0.1, 0.9),
+        ),
+        dtype=np.float64,
+    )
+    faces = np.asarray(((0, 2, 1), (0, 1, 3), (1, 2, 3), (0, 3, 2)), dtype=np.int64)
+    edges = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64)
+    domain = _triangle_complex_meshing_domain(
+        vertices,
+        faces,
+        edges,
+        "host-evaluation-tetrahedron",
+        "revision-1",
+        "binding-1",
+        tuple(np.arange(count, dtype=np.int64) for count in (4, 6, 4)),
+        0,
+        ("reconstructed_vertex", "reconstructed_edge", "reconstructed_triangle"),
+        None,
+    )
+
+    # Host (stacked) chart evaluation is bit-identical to each chart's evaluate.
+    generator = np.random.default_rng(7)
+    rows = generator.integers(0, faces.shape[0], 64)
+    charts = generator.random((64, 2)) * 0.5
+    expected = np.stack(
+        [
+            np.asarray(domain.patches[int(row)].surface.evaluate(jnp.asarray(chart)))
+            for row, chart in zip(rows, charts, strict=True)
+        ]
+    )
+    np.testing.assert_array_equal(domain.evaluate(rows, charts), expected)
+    # Host trim endpoints are bit-identical to the p-curve's own evaluation.
+    for patch in domain.patches:
+        for use in patch.loops[0]:
+            parameters = (use.first, use.last) if use.sense > 0 else (use.last, use.first)
+            np.testing.assert_array_equal(
+                use.traversal_endpoints(),
+                np.asarray(use.pcurve.evaluate(jnp.asarray(parameters))),
+            )
+
+    domain.require_current("host-evaluation-tetrahedron", "revision-1")
+    copy.deepcopy(domain).require_current()
+    # A pytree rebuild is a different object: its content is fingerprinted again.
+    surface = domain.patches[1].surface
+    assert isinstance(surface, _ReconstructedTrianglePatch)
+    stale = eqx.tree_at(
+        lambda value: value.patches[1].surface.corners, domain, surface.corners + 1.0e-3
+    )
+    with pytest.raises(ValueError, match="content changed"):
+        stale.require_current()
