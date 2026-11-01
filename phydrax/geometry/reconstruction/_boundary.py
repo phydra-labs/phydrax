@@ -31,7 +31,7 @@ from ._sheet import AuthoredTriangleSheet
 
 if TYPE_CHECKING:
     from .._domain_boundary import MeshingDomainBoundarySource
-    from .._meshing_domain import MeshingDomain
+    from .._meshing_domain import MeshingDomain, ValidatedMeshingDomain
 
 
 _ExactPoint = tuple[Fraction, Fraction, Fraction]
@@ -348,6 +348,7 @@ def _prove_domain_query(
     source: ReconstructedGeometrySource | AuthoredTriangleSheet,
     vertices: np.ndarray,
     faces: np.ndarray,
+    validated: ValidatedMeshingDomain | None,
     /,
 ) -> tuple[MeshingDomainBoundarySource, SourceBoundaryChartCover] | str:
     """The whole-domain boundary query of the source's persistent MeshingDomain.
@@ -355,7 +356,8 @@ def _prove_domain_query(
     Proves that the domain carries the source's identity, facet IDs and corners
     and that its exact chart cover is the query's physical triangles (the
     query's own chart cover, ``vertices[faces]``, is complete and exact);
-    returns the refusal otherwise.
+    returns the refusal otherwise. ``validated`` is the caller's validation of
+    a domain; it spares the content fingerprint only for that very object.
     """
     from .._domain_boundary import MeshingDomainBoundarySource
 
@@ -365,7 +367,9 @@ def _prove_domain_query(
     if not domain_binds_source(domain, source, vertices):
         return "Reconstructed MeshingDomain changes persistent source vertex/facet IDs."
     try:
-        query = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
+        query = MeshingDomainBoundarySource(
+            domain, tuple(range(len(domain.patches))), validated=validated
+        )
     except ValueError as error:
         return str(error)
     domain_cover = query.boundary_chart_cover()
@@ -414,7 +418,11 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
     domain_refusal: str | None = eqx.field(static=True, repr=False)
 
     def __init__(
-        self, source: ReconstructedGeometrySource | AuthoredTriangleSheet, /
+        self,
+        source: ReconstructedGeometrySource | AuthoredTriangleSheet,
+        /,
+        *,
+        validated: ValidatedMeshingDomain | None = None,
     ) -> None:
         vertices, faces = reconstructed_triangle_arrays(source)
         triangles = tuple(
@@ -438,7 +446,7 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
         self._triangles = triangles
         self._nodes = nodes
         self._root_index = root
-        prepared = _prove_domain_query(source, vertices, faces)
+        prepared = _prove_domain_query(source, vertices, faces, validated)
         if isinstance(prepared, str):
             self.domain_query = None
             self.domain_cover = None

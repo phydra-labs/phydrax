@@ -1042,7 +1042,14 @@ def prepare_native_reconstruction(
             stage="source_inspection",
         )
     query = ReconstructedTriangleBoundarySource(source)
-    domain_query = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
+    # The query just validated this domain object; its whole-domain query reuses that.
+    domain_query = MeshingDomainBoundarySource(
+        domain,
+        tuple(range(len(domain.patches))),
+        validated=None
+        if query.domain_query is None
+        else query.domain_query.validated_domain,
+    )
     return _PreparedReconstructionRoute(
         source,
         region,

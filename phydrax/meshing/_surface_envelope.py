@@ -104,7 +104,8 @@ def _original_domain_query(
     """The whole-domain boundary query of the original's current meshing domain.
 
     `prepared` (the retained original query's whole-domain query) is returned
-    when it was built over this very domain, which is checked current once.
+    when it was built over this very domain, whose retained validation spares
+    the content fingerprint.
     """
     domain = source.meshing_domain
     if domain is None:
@@ -114,7 +115,9 @@ def _original_domain_query(
             stage="source_inspection",
         )
     if prepared is not None and prepared.domain is domain:
-        domain.require_current(source.source_id, source.source_revision)
+        domain.require_current(
+            source.source_id, source.source_revision, validated=prepared.validated_domain
+        )
         return prepared
     if domain.source_id != source.source_id:
         raise ValueError("MeshingDomain source_id changed.")
@@ -556,7 +559,9 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         id_banks = plc_source.scope_entity_id_banks
         key_banks = plc_source.scope_entity_key_banks
         set_ids = plc_source.scope_entity_set_ids
-        original_query = ReconstructedTriangleBoundarySource(fresh_original)
+        original_query = ReconstructedTriangleBoundarySource(
+            fresh_original, validated=original_domain_query.validated_domain
+        )
         self.plc_source = plc_source
         self.original = fresh_original
         self.original_boundary_query = original_query
