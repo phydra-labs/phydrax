@@ -567,7 +567,14 @@ which equals the minimum-norm least-squares solution only without preconditionin
 Every native Krylov primal loop (PCG, MINRES, LSMR, FGMRES and the witness
 solves) is a `lax.while_loop` bounded by `max_steps` that exits on the first
 step where every right-hand-side column has stopped, so execution cost follows
-the steps taken rather than `max_steps`.
+the steps taken rather than `max_steps`. Without a declared `max_steps`, the
+other loops keep a dimension-derived bound (`n`; `10 n` for BiCGStab).
+Restarted `GMRES`/`FGMRES` have no `n`-step termination once `restart < n`, so
+their default is no step cap: they run until the true residual is decided —
+converged, stagnant at binary64 resolution for `stagnation_iterations` steps
+(`STAGNATION`), broken down, or nonfinite. Algorithmic differentiation
+(`DifferentiationPolicy("algorithmic")`) needs a static trip count and keeps
+the `n`-step default.
 
 Rank is separate evidence owned by the native SVD lifecycle.
 `certify_rectangular_rank(A, svd.SVDSolvePolicy(...), key=...)` runs one native
