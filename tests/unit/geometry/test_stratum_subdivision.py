@@ -19,6 +19,8 @@ from phydrax.geometry._embedding_cells import EmbeddingCell
 from phydrax.geometry._global_embedding import _stratum_residuals
 from phydrax.geometry._mapped_embedding import (
     _float_search_preconditioner,
+    _singular_control_hull,
+    monotone_preconditioner,
     prove_mapped_cell_injective,
 )
 from phydrax.geometry._stratum_subdivision import (
@@ -231,3 +233,46 @@ def test_preconditioner_search_stops_when_cuts_fall_below_lp_feasibility(
     # treat it as not found), never a positivity claim.
     assert proposal is None
     assert programs > 1
+
+
+def _exact_controls(*matrices) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+    return tuple(
+        tuple(tuple(Fraction(value) for value in row) for row in matrix)
+        for matrix in matrices
+    )
+
+
+def _floats(controls) -> np.ndarray:
+    return np.asarray(
+        [[[float(value) for value in row] for row in matrix] for matrix in controls]
+    )
+
+
+def test_singular_control_hull_refutes_preconditioners_without_programs(
+    monkeypatch,
+) -> None:
+    # det(I) = det(R) = 1, yet (I + R) / 2 = diag(0, 0, 1) is singular: no M
+    # keeps every convex combination nonsingular, so none makes sym(M C) definite.
+    controls = _exact_controls(
+        ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        ((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
+        ((1, Fraction(1, 2), 0), (0, 1, 0), (0, 0, 1)),
+    )
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the exact refutation must precede the programs")
+
+    monkeypatch.setattr(scipy.optimize, "linprog", refuse)
+    assert _singular_control_hull(controls, _floats(controls))
+    assert monotone_preconditioner(controls) is None
+
+
+def test_singular_control_hull_leaves_feasible_controls_to_the_search() -> None:
+    controls = _exact_controls(
+        ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        ((1, Fraction(1, 2), 0), (0, 1, 0), (0, 0, 1)),
+        ((2, 0, 0), (Fraction(-1, 3), 1, 0), (0, 0, Fraction(1, 2))),
+    )
+    assert not _singular_control_hull(controls, _floats(controls))
+    found = monotone_preconditioner(controls)
+    assert found is not None
