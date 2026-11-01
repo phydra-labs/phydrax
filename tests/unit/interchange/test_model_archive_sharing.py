@@ -96,6 +96,46 @@ def _read(path: Path, /) -> Composition:
     )
 
 
+def test_pack_and_restore_reuse_one_validated_descriptor_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._model import _structure
+    from phydrax.meshing._model_codec import _register_model_archive_types
+
+    _register_model_archive_types()
+    value = _composition(_mesh())
+    recipe = _structure.model_structure_recipe(value)
+    original = _structure._descriptor_tree
+    calls = 0
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(_structure, "_descriptor_tree", counted)
+    arrays = _structure.pack_model_array_tree(value, recipe, prefix="model/leaves")
+    assert calls == 1
+    restored = _structure.model_from_array_recipe(
+        recipe, arrays, prefix="model/leaves", validate=False
+    )
+    assert calls == 2
+    assert restored.entries[0].value.mesh_id == value.entries[0].value.mesh_id
+
+
+def test_new_model_recipe_is_not_copied_for_sharing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.meshing import _model_codec
+
+    def forbidden(value: Any) -> Any:
+        raise AssertionError("Fresh model recipes must not be expanded again.")
+
+    monkeypatch.setattr(_model_codec, "_unaliased_recipe", forbidden)
+    path = write_model_artifact(tmp_path / "fresh.phx", _composition(_mesh()), limits=None)
+    assert _read(path).entries[0].value.mesh_id == _mesh().mesh_id
+
+
 def test_equal_subtrees_are_archived_once_independent_of_aliasing(
     tmp_path: Path,
 ) -> None:

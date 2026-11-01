@@ -2597,11 +2597,21 @@ def model_recipe_array_inventory(
 ) -> tuple[ModelRecipeArray, ...]:
     """Return the exact dynamic array inventory without allocating arrays."""
 
-    if not isinstance(prefix, str) or not prefix:
-        raise ValueError("Recipe array prefix must be non-empty.")
     path_leaves, _ = jax.tree_util.tree_flatten_with_path(
         _descriptor_tree(recipe, limits)
     )
+    return _model_recipe_array_inventory_from_leaves(recipe, path_leaves, prefix)
+
+
+def _model_recipe_array_inventory_from_leaves(
+    recipe: Mapping[str, Any],
+    path_leaves: list[tuple[Any, Any]],
+    prefix: str,
+    /,
+) -> tuple[ModelRecipeArray, ...]:
+    """Inventory already-validated descriptor leaves without rebuilding the tree."""
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError("Recipe array prefix must be non-empty.")
     inventory: list[ModelRecipeArray] = []
     for tree_index, (path, leaf) in enumerate(path_leaves):
         if not isinstance(leaf, _RecipeArrayDescriptor):
@@ -2660,7 +2670,9 @@ def pack_model_array_tree(
         value_leaves
     ):
         raise TypeError("Value PyTree does not match its model structure recipe.")
-    inventory = model_recipe_array_inventory(recipe, prefix=prefix, limits=limits)
+    inventory = _model_recipe_array_inventory_from_leaves(
+        recipe, descriptor_leaves, prefix
+    )
     arrays: dict[str, np.ndarray] = {}
     for entry in inventory:
         expected_path, descriptor = descriptor_leaves[entry.tree_index]
@@ -2702,7 +2714,7 @@ def model_from_array_recipe(
 
     descriptor_tree = _descriptor_tree(recipe, limits)
     path_leaves, definition = jax.tree_util.tree_flatten_with_path(descriptor_tree)
-    inventory = model_recipe_array_inventory(recipe, prefix=prefix, limits=limits)
+    inventory = _model_recipe_array_inventory_from_leaves(recipe, path_leaves, prefix)
     if set(arrays) != {entry.name for entry in inventory}:
         raise ValueError("Model recipe arrays do not match its exact leaf inventory.")
     admitted: dict[str, np.ndarray] = {}
