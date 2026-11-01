@@ -9,8 +9,9 @@
 - Native rational tensor-surface quadrilaterals retain exact source controls,
   elevated extraction, affine knot-span restrictions, and source chart identities.
   Whole-cell rational injectivity and common-root contact are proved with exact
-  denominator and projection controls. Mapped audit measures retain certified
-  integration errors instead of substituting corner-carrier area.
+  denominator and projection controls. Hard size bounds use physical mapped-edge
+  enclosures and hard surface angles use mapped corner tangents. Mapped audit
+  measures retain their certified errors and exactness status.
 - Scoped native surface fidelity validates the full target witness before
   filtering selected source occurrences, and uses exact rational spline corner
   bounds rather than widened numerical point boxes. Surface feature tolerances

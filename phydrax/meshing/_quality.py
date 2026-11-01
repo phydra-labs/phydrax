@@ -58,7 +58,7 @@ class CellQualityEvaluation(StrictModule):
     centroid-fan triangle normals and its vector-area normal.
     Audits of higher-order or nonvertex coordinate elements replace
     corner-carrier measures with certified physical measures and retain their
-    absolute error bounds and geometry ID.
+    absolute error bounds, exactness status, and geometry ID.
     """
 
     cell_global_ids: Array
@@ -80,6 +80,7 @@ class CellQualityEvaluation(StrictModule):
     evaluation_id: str = eqx.field(static=True)
     measure_absolute_errors: Array | None = None
     measure_geometry_id: str | None = eqx.field(static=True, default=None)
+    measure_exact: bool | None = eqx.field(static=True, default=None)
 
 
 def _nan_extreme(values: np.ndarray, reducer: Any, /) -> float:
@@ -127,6 +128,13 @@ class CellQualityReport(StrictModule, NonTrainableState):
             evaluation.measure_geometry_id is None
         ):
             raise ValueError("Mapped quality measures require their geometry identity.")
+        if (evaluation.measure_geometry_id is None) != (
+            evaluation.measure_exact is None
+        ) or (
+            evaluation.measure_exact is not None
+            and type(evaluation.measure_exact) is not bool
+        ):
+            raise ValueError("Mapped quality measures require their exactness status.")
         if (
             errors.shape != measures.shape
             or np.any(errors < 0.0)
@@ -153,6 +161,11 @@ class CellQualityReport(StrictModule, NonTrainableState):
             {
                 "kind": "cell-quality-report",
                 "evaluation": evaluation.evaluation_id,
+                **(
+                    {"measure_exact": evaluation.measure_exact}
+                    if evaluation.measure_exact is not None
+                    else {}
+                ),
                 "fields": [
                     array_tree_fingerprint(value)
                     for value in (
@@ -1113,6 +1126,7 @@ def _with_certified_mapped_measures(
             "geometry": geometry_id,
             "values": array_tree_fingerprint(measures.values),
             "absolute_errors": array_tree_fingerprint(measures.absolute_errors),
+            "exact": measures.exact,
         }
     )
     return replace(
@@ -1120,6 +1134,7 @@ def _with_certified_mapped_measures(
         measures=jnp.asarray(measures.values),
         measure_absolute_errors=jnp.asarray(measures.absolute_errors),
         measure_geometry_id=geometry_id,
+        measure_exact=measures.exact,
         evaluation_id=identifier,
     )
 

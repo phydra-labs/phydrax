@@ -1,11 +1,15 @@
 import math
+from dataclasses import replace
 from fractions import Fraction
 
 import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.discretization._cell_geometry import elevate_spline_extraction
+from phydrax.discretization._cell_geometry import (
+    elevate_spline_extraction,
+    SplineCellGeometryElement,
+)
 from phydrax.discretization._cell_geometry_validity import (
     cell_geometry_id,
     certify_cell_geometry_validity,
@@ -26,14 +30,34 @@ from phydrax.geometry._meshing_domain import (
     MeshingSurfacePatch,
     PatchCurveUse,
 )
-from phydrax.geometry._surface_source_support import prepare_surface_source_root_atlas
-from phydrax.geometry.brep import LineCurve
-from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+from phydrax.geometry._surface_source_support import (
+    _SplineSurfaceCoordinateMap,
+    prepare_surface_source_root_atlas,
+)
+from phydrax.geometry.brep import BSplineSurfacePatch, LineCurve
+from phydrax.meshing._contracts import (
+    MeshingFailure,
+    MeshingFailureCategory,
+    MeshQualityTarget,
+    SurfaceMeshingSpec,
+)
 from phydrax.meshing._quality import (
     _with_certified_mapped_measures,
+    CellQualityReport,
     evaluate_cell_quality,
 )
+from phydrax.meshing._sizing import (
+    SizeCompliancePolicy,
+    SizeControlStrength,
+    UniformSizeControl,
+)
+from phydrax.meshing.providers import NativeMeshingProvider
 from phydrax.meshing.providers._native_surface import prepare_native_surface
+from phydrax.meshing.providers._native_surface_quad import (
+    _mapped_corner_minimum_angle,
+    _mapped_size_compliance,
+    _require_mapped_quality,
+)
 from tools.meshing_qualification.scenarios.native_family_matrix import (
     _CONTRACT,
     _quarter_extrusion,
@@ -49,6 +73,7 @@ def test_exact_tensor_extraction_elevation_retains_source_map() -> None:
         domain, (0,), SpatialCoordinateContract.si()
     )
     source_map = atlas.geometry.source_map
+    assert isinstance(source_map, _SplineSurfaceCoordinateMap)
     expected_owner = (
         domain.source_id,
         domain.source_revision,
@@ -60,6 +85,7 @@ def test_exact_tensor_extraction_elevation_retains_source_map() -> None:
     )
     elements, routes, _ = atlas.geometry.resolve(atlas.mesh)
     root = elements[0]
+    assert isinstance(root, SplineCellGeometryElement)
     elevated = elevate_spline_extraction(root, (3, 3))
     controls = atlas.geometry.source_coordinates()
     local = tuple(controls[int(index)] for index in np.asarray(routes[0])[0])
@@ -103,18 +129,20 @@ def test_rational_jacobian_clearing_requires_nonvanishing_denominator() -> None:
 
 def test_quad_cells_retain_injective_common_root_charts() -> None:
     case = _quarter_surface_case(4)
+    assert isinstance(case.specification, SurfaceMeshingSpec)
     prepared = prepare_native_surface(
         case.source, case.specification, case.options, _CONTRACT
     )
     construction = prepared.execute()
     cells = prepare_embedding_cells(construction.mesh, construction.geometry)
     roots = _retained_root_charts(construction.mesh, construction.geometry, cells)
-    assert all(root is not None for root in roots), sum(root is None for root in roots)
-    assert all(root.injective for root in roots)
+    retained = tuple(root for root in roots if root is not None)
+    assert len(retained) == len(roots)
+    assert all(root.injective for root in retained)
     for i, first in enumerate(cells):
         for j, second in enumerate(cells[i + 1 :], i + 1):
             if set(first.vertex_ids) & set(second.vertex_ids):
-                assert _root_chart_contact(roots[i], roots[j]) == "declared", (i, j)
+                assert _root_chart_contact(retained[i], retained[j]) == "declared", (i, j)
 
 
 def test_mapped_quality_reports_certified_physical_area() -> None:
@@ -128,9 +156,14 @@ def test_mapped_quality_reports_certified_physical_area() -> None:
     )
     assert quality.measure_geometry_id == cell_geometry_id(atlas.geometry)
     assert quality.measure_absolute_errors is not None
+    assert quality.measure_exact is False
     error = float(np.asarray(quality.measure_absolute_errors)[0])
     value = float(np.asarray(quality.measures)[0])
     assert abs(value - math.pi / 2) <= error + 1e-15
+    assert (
+        CellQualityReport(quality).report_id
+        != CellQualityReport(replace(quality, measure_exact=True)).report_id
+    )
 
 
 def test_original_exact_quarter_quad_family_gate() -> None:
@@ -159,3 +192,97 @@ def test_tensor_quad_refuses_partial_rectangle_trim() -> None:
     with pytest.raises(MeshingFailure) as error:
         prepared.execute()
     assert error.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
+
+
+def test_hard_scoped_minimum_size_is_enforced() -> None:
+    case = _quarter_surface_case(4)
+    assert isinstance(case.specification, SurfaceMeshingSpec)
+    control = UniformSizeControl(
+        case.specification.scope,
+        0.7,
+        minimum_size=0.65,
+        maximum_size=1.0,
+        strength=SizeControlStrength.HARD,
+    )
+    specification = SurfaceMeshingSpec(
+        case.specification.target,
+        case.specification.scope,
+        size_controls=(control,),
+        protected_features=case.specification.protected_features,
+        size_compliance=SizeCompliancePolicy(
+            relative_tolerance=0.05, target_statistics=("p50",)
+        ),
+        quality_target=case.specification.quality_target,
+    )
+    construction = prepare_native_surface(
+        case.source, specification, case.options, _CONTRACT
+    ).execute()
+    assert f"{control.control_id}:minimum_size" in construction.compliance.issues
+    assert not construction.compliance.passed
+    assert f"{control.control_id}:maximum_size" not in construction.compliance.issues
+    allowed = UniformSizeControl(
+        case.specification.scope,
+        0.7,
+        minimum_size=0.01,
+        maximum_size=1.0,
+        strength=SizeControlStrength.HARD,
+    )
+    allowed_specification = SurfaceMeshingSpec(
+        case.specification.target,
+        case.specification.scope,
+        size_controls=(allowed,),
+        size_compliance=SizeCompliancePolicy(
+            relative_tolerance=0.95, target_statistics=("p50",)
+        ),
+    )
+    allowed_prepared = prepare_native_surface(
+        case.source, allowed_specification, case.options, _CONTRACT
+    )
+    _, _, allowed_issues = _mapped_size_compliance(
+        allowed_prepared, construction.mesh, construction.geometry
+    )
+    assert not allowed_issues
+    with pytest.raises(MeshingFailure):
+        NativeMeshingProvider(case.options).plan(
+            case.source, specification, coordinate_contract=_CONTRACT
+        ).execute()
+
+
+def test_hard_quad_quality_uses_mapped_tangents_not_chords() -> None:
+    original = _quarter_extrusion()
+    surface = original.patches[0].surface
+    assert isinstance(surface, BSplineSurfacePatch)
+    controls = np.array(surface.control_points, dtype=np.float64, copy=True)
+    controls[:, :, 0] += np.asarray((0.0, 0.0, 4.0))
+    warped = BSplineSurfacePatch(
+        controls,
+        surface.weights,
+        surface.u_knots,
+        surface.v_knots,
+        surface.u_degree,
+        surface.v_degree,
+    )
+    domain = MeshingDomain(
+        (MeshingSurfacePatch(warped, original.patches[0].loops),),
+        original.curves,
+        4,
+        source_id="warped-quality-source",
+        source_revision="r1",
+    )
+    atlas = prepare_surface_source_root_atlas(
+        domain, (0,), SpatialCoordinateContract.si()
+    )
+    tangent_angle = _mapped_corner_minimum_angle(atlas.mesh, atlas.geometry)
+    chord_angle = float(
+        np.min(np.asarray(evaluate_cell_quality(atlas.mesh).minimum_angle))
+    )
+    assert tangent_angle < chord_angle
+    threshold = (tangent_angle + chord_angle) / 2.0
+    assert 0.0 < threshold < math.pi / 3.0
+    with pytest.raises(MeshingFailure) as error:
+        _require_mapped_quality(
+            atlas.mesh,
+            atlas.geometry,
+            MeshQualityTarget(minimum_angle=threshold, hard=True),
+        )
+    assert error.value.category is MeshingFailureCategory.COMPLIANCE_FAILED

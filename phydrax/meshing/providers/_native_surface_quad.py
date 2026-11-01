@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -15,19 +16,35 @@ from ...discretization._cell_geometry import (
     CellGeometrySpec,
     elevate_spline_extraction,
     PerCellRestrictedCellGeometryElement,
+    ScalarCoordinateElement,
     SplineCellGeometryElement,
 )
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._cell_mesh import CellBlock, CellMesh
 from ...discretization._coordinate_enclosure import (
+    add,
+    axes,
+    compose_expression,
+    constant,
     coordinate_map_expressions,
     evaluate_expression,
+    RationalPolynomial,
     rounded_point,
+    scale,
+)
+from ...discretization._exact_algebraic_geometry import coefficient_payload, ExactScalar
+from ...discretization._mapped_geometry_measure import (
+    _cancel_coordinate_factors,
+    _coordinate_jacobian,
+    _gram_density,
+    _integrate_embedded_measure,
 )
 from ...discretization._nested_reference_types import (
+    ExactReferenceChartExpression,
     freeze_reference_chart_arguments,
     ReferenceCellMapWitnesses,
 )
+from ...discretization._reference_cell import reference_cell_topology
 from ...discretization._surface_chart_records import (
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
@@ -43,15 +60,15 @@ from ...geometry._surface_source_support import (
 from ...geometry.brep._patches import BSplineSurfacePatch, LineCurve
 from .._association import GeometryAssociation, GeometryAssociationKind
 from .._certification_schedule import MeshCertificationSchedule
-from .._contracts import MeshingFailureCategory
+from .._contracts import MeshingFailureCategory, MeshQualityTarget
 from .._controls import FeatureKind
 from .._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
     NativeMeshOrganization,
 )
-from .._quality import evaluate_cell_quality
 from .._result import MeshingComplianceReport
+from .._sizing import SizeControlStrength, UniformSizeControl
 from ._native_surface_association import _source_metadata, _surface_edges
 
 
@@ -66,18 +83,256 @@ def _exact_line_endpoints(
     use: PatchCurveUse, /
 ) -> tuple[_ChartPoint, _ChartPoint] | None:
     curve = use.pcurve
-    if not isinstance(curve, LineCurve) or any(
-        not isinstance(value, Fraction)
-        for value in (*curve.origin_exact, *curve.direction_exact)
+    if not isinstance(curve, LineCurve):
+        return None
+    a, b = curve.origin_exact
+    c, d = curve.direction_exact
+    if not (
+        isinstance(a, Fraction)
+        and isinstance(b, Fraction)
+        and isinstance(c, Fraction)
+        and isinstance(d, Fraction)
     ):
         return None
-    return tuple(
-        tuple(
-            a + Fraction.from_float(float(t)) * b
-            for a, b in zip(curve.origin_exact, curve.direction_exact, strict=True)
+    first = Fraction.from_float(use.first)
+    last = Fraction.from_float(use.last)
+    return ((a + first * c, b + first * d), (a + last * c, b + last * d))
+
+
+def _mapped_corner_minimum_angle(mesh: CellMesh, geometry: CellGeometrySpec, /) -> float:
+    """Measure physical corner angles from the retained coordinate-map tangents."""
+    elements, routes, coordinates = geometry.resolve(mesh)
+    control_values = np.asarray(coordinates, dtype=np.float64)
+    minimum = math.inf
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        if not isinstance(element, ScalarCoordinateElement):
+            raise TypeError("Surface quality requires scalar coordinate geometry.")
+        topology = reference_cell_topology(block.cell_kind)
+        vertices = np.asarray(topology.vertices, dtype=np.float64)
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            _, gradients = element.tabulate_cells(np.arange(block.cell_count), vertices)
+            derivative_rows = np.asarray(gradients)
+        else:
+            _, gradients = element.tabulate(vertices)
+            derivative_rows = np.broadcast_to(
+                np.asarray(gradients), (block.cell_count, *np.asarray(gradients).shape)
+            )
+        jacobians = np.einsum(
+            "cvjd,cjk->cvkd", derivative_rows, control_values[np.asarray(route)]
         )
-        for t in (use.first, use.last)
+        for corner, vertex in enumerate(vertices):
+            neighbors = [
+                second if first == corner else first
+                for first, second in topology.entities[1]
+                if corner in (first, second)
+            ]
+            if len(neighbors) != 2:
+                raise ValueError("Surface corner quality requires two incident edges.")
+            directions = vertices[neighbors] - vertex
+            tangents = np.einsum("ckd,ed->cek", jacobians[:, corner], directions)
+            lengths = np.linalg.norm(tangents, axis=-1)
+            if not np.all(np.isfinite(lengths)) or np.any(lengths <= 0.0):
+                raise ValueError(
+                    "Surface corner quality requires finite nonzero tangents."
+                )
+            cosine = np.sum(tangents[:, 0] * tangents[:, 1], axis=-1) / np.prod(
+                lengths, axis=-1
+            )
+            minimum = min(minimum, float(np.min(np.arccos(np.clip(cosine, -1.0, 1.0)))))
+    if not math.isfinite(minimum):
+        raise ValueError("Surface corner quality requires nonempty coordinate geometry.")
+    return minimum
+
+
+def _require_mapped_quality(
+    mesh: CellMesh, geometry: CellGeometrySpec, target: MeshQualityTarget | None, /
+) -> float:
+    from . import _native_surface as owner
+
+    minimum = _mapped_corner_minimum_angle(mesh, geometry)
+    if target is not None and target.hard and minimum < target.minimum_angle:
+        raise owner._failure(
+            "quadrilateral mesh misses the hard minimum-angle target",
+            category=MeshingFailureCategory.COMPLIANCE_FAILED,
+        )
+    return minimum
+
+
+def _mapped_edge_lengths(
+    prepared: _PreparedNativeSurface, mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Enclose physical edge lengths on the proved exact source-root maps."""
+    atlas = prepared.roots.spline_root_atlas
+    if atlas is None:
+        raise ValueError("Mapped tensor edges require the retained spline root atlas.")
+    support = PreparedSurfaceSourceSupport(
+        prepared.domain, atlas, atlas.root_parameters, prepared.boundary_source
     )
+    support.prove_native_restrictions(mesh, geometry)
+    root_elements, root_routes, _ = atlas.geometry.resolve(atlas.mesh)
+    coefficients = atlas.geometry.source_coordinates()
+    root_maps = {}
+    for block, element, route in zip(
+        atlas.mesh.blocks, root_elements, root_routes, strict=True
+    ):
+        if not isinstance(element, SplineCellGeometryElement):
+            raise TypeError("Mapped tensor edges require a spline root element.")
+        root_maps[int(block.global_ids[0])] = coordinate_map_expressions(
+            element,
+            tuple(coefficients[int(index)] for index in np.asarray(route)[0]),
+            cell_row=0,
+        )
+    elements, _, _ = geometry.resolve(mesh)
+    parameter = axes(1)[0]
+    edges: dict[tuple[int, int], tuple[float, float]] = {}
+    integrals: dict[tuple[object, ...], tuple[float, float, bool]] = {}
+
+    def polynomial_key(
+        polynomial: Mapping[tuple[int, ...], ExactScalar], /
+    ) -> tuple[object, ...]:
+        return tuple(
+            (exponent, coefficient_payload(value))
+            for exponent, value in sorted(polynomial.items())
+        )
+
+    for block, element in zip(mesh.blocks, elements, strict=True):
+        if not isinstance(element, PerCellRestrictedCellGeometryElement):
+            raise TypeError("Mapped tensor edges require exact per-cell restrictions.")
+        topology = reference_cell_topology(block.cell_kind)
+        vertices = tuple(
+            tuple(Fraction.from_float(float(value)) for value in point)
+            for point in topology.vertices
+        )
+        for row, cell_vertices in enumerate(np.asarray(block.vertices)):
+            coordinates = root_maps[int(element.source_cell_ids[row])]
+            root_chart = element.chart_arguments(row)
+            for first, last in topology.entities[1]:
+                first_vertex, last_vertex = (
+                    int(cell_vertices[first]),
+                    int(cell_vertices[last]),
+                )
+                edge = (min(first_vertex, last_vertex), max(first_vertex, last_vertex))
+                if edge in edges:
+                    continue
+                arguments = tuple(
+                    add(
+                        constant(vertices[first][axis], 1),
+                        scale(parameter, vertices[last][axis] - vertices[first][axis]),
+                    )
+                    for axis in range(topology.dimension)
+                )
+                root_arguments = tuple(
+                    compose_expression(value, arguments) for value in root_chart
+                )
+                curve = tuple(
+                    compose_expression(value, root_arguments) for value in coordinates
+                )
+                density = _cancel_coordinate_factors(
+                    _gram_density(_coordinate_jacobian(curve, 1), 1), curve, 1
+                )
+                if isinstance(density, RationalPolynomial):
+                    key = (
+                        "rational",
+                        polynomial_key(density.numerator),
+                        polynomial_key(density.denominator),
+                    )
+                else:
+                    key = ("polynomial", polynomial_key(density))
+                result = integrals.get(key)
+                if result is None:
+                    result = _integrate_embedded_measure(
+                        density, "interval", Fraction(1, 10**12)
+                    )
+                    integrals[key] = result
+                length, error, _ = result
+                if not math.isfinite(length) or length <= error or error < 0.0:
+                    raise ValueError(
+                        "Mapped edge length has no positive finite enclosure."
+                    )
+                edges[edge] = (length, error)
+    ordered = sorted(edges)
+    return (
+        np.asarray(ordered, dtype=np.int64),
+        np.asarray([edges[edge][0] for edge in ordered], dtype=np.float64),
+        np.asarray([edges[edge][1] for edge in ordered], dtype=np.float64),
+    )
+
+
+def _exact_quantile(values: list[Fraction], probability: Fraction, /) -> Fraction:
+    ordered = sorted(values)
+    position = probability * (len(ordered) - 1)
+    lower = position.numerator // position.denominator
+    fraction = position - lower
+    return (
+        ordered[lower]
+        if not fraction
+        else (ordered[lower] * (1 - fraction) + ordered[lower + 1] * fraction)
+    )
+
+
+def _mapped_size_compliance(
+    prepared: _PreparedNativeSurface, mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> tuple[list[tuple[str, float]], list[tuple[str, float]], list[str]]:
+    """Check each active size control against mapped-edge length enclosures."""
+    _, lengths, errors = _mapped_edge_lengths(prepared, mesh, geometry)
+    lower = [
+        Fraction.from_float(float(length)) - Fraction.from_float(float(error))
+        for length, error in zip(lengths, errors, strict=True)
+    ]
+    upper = [
+        Fraction.from_float(float(length)) + Fraction.from_float(float(error))
+        for length, error in zip(lengths, errors, strict=True)
+    ]
+    requested: list[tuple[str, float]] = []
+    achieved: list[tuple[str, float]] = [
+        ("physical_edge_length_minimum", float(np.min(lengths))),
+        ("physical_edge_length_maximum", float(np.max(lengths))),
+        ("physical_edge_length_integration_error", float(np.max(errors))),
+    ]
+    issues: list[str] = []
+    policy = prepared.specification.size_compliance
+    patch_id = int(prepared.scope_ids[2][prepared.selected_patches[0]])
+    for control in prepared.specification.size_controls:
+        if not isinstance(control, UniformSizeControl):
+            raise TypeError("Tensor surface sizing requires uniform size controls.")
+        if patch_id not in np.asarray(control.scope.entity_ids, dtype=np.int64):
+            continue
+        tolerance = Fraction.from_float(policy.absolute_tolerance) + (
+            Fraction.from_float(policy.relative_tolerance)
+            * Fraction.from_float(control.target_size)
+        )
+        target = Fraction.from_float(control.target_size)
+        for statistic in policy.target_statistics:
+            probability = Fraction(1, 2) if statistic == "p50" else Fraction(19, 20)
+            name = f"{control.control_id}:{statistic}"
+            requested.append((name, control.target_size))
+            achieved.append((name, float(np.quantile(lengths, float(probability)))))
+            if control.strength is SizeControlStrength.HARD and (
+                _exact_quantile(lower, probability) < target - tolerance
+                or _exact_quantile(upper, probability) > target + tolerance
+            ):
+                issues.append(name)
+        if control.minimum_size is not None:
+            name = f"{control.control_id}:minimum_size"
+            requested.append((name, control.minimum_size))
+            achieved.append(
+                (f"{control.control_id}:minimum_edge", float(np.min(lengths)))
+            )
+            if control.strength is SizeControlStrength.HARD and min(lower) < (
+                Fraction.from_float(control.minimum_size) - tolerance
+            ):
+                issues.append(name)
+        if control.maximum_size is not None:
+            name = f"{control.control_id}:maximum_size"
+            requested.append((name, control.maximum_size))
+            achieved.append(
+                (f"{control.control_id}:maximum_edge", float(np.max(lengths)))
+            )
+            if control.strength is SizeControlStrength.HARD and max(upper) > (
+                Fraction.from_float(control.maximum_size) + tolerance
+            ):
+                issues.append(name)
+    return requested, achieved, issues
 
 
 def execute_tensor_quads(
@@ -109,11 +364,7 @@ def execute_tensor_quads(
     patch = selected[0]
     surface = domain.patches[patch].surface
     loops = domain.patches[patch].loops
-    if (
-        len(loops) != 1
-        or len(loops[0]) != 4
-        or any(not isinstance(use, PatchCurveUse) for use in loops[0])
-    ):
+    if len(loops) != 1 or len(loops[0]) != 4:
         raise owner._failure(
             "exact tensor quadrilaterals require one rectangular linear trim",
             category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
@@ -125,8 +376,13 @@ def execute_tensor_quads(
     high_v = max(corner[1] for chart in root_bounds for corner in chart)
     corners = ((low_u, low_v), (high_u, low_v), (high_u, high_v), (low_u, high_v))
     sides = {frozenset((corners[i], corners[(i + 1) % 4])) for i in range(4)}
-    uses = []
+    uses: list[_TrimUse] = []
     for use in loops[0]:
+        if not isinstance(use, PatchCurveUse):
+            raise owner._failure(
+                "exact tensor quadrilaterals require linear curve trims",
+                category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            )
         endpoints = _exact_line_endpoints(use)
         if endpoints is None or frozenset(endpoints) not in sides:
             raise owner._failure(
@@ -271,7 +527,7 @@ def execute_tensor_quads(
         u0, v0 = bounds[0]
         u1, v1 = bounds[2]
         cell_vertices = []
-        chart_arguments = []
+        chart_arguments: list[tuple[ExactReferenceChartExpression, ...]] = []
         reference_corners = []
         for i in range(n):
             for j in range(n):
@@ -429,37 +685,21 @@ def execute_tensor_quads(
         associations=associations,
         surface_source=source_charts,
     )
-    quality = evaluate_cell_quality(mesh)
-    minimum_angle = float(np.min(np.asarray(quality.minimum_angle, dtype=np.float64)))
-    if not math.isfinite(minimum_angle):
-        raise owner._failure(
-            "quadrilateral quality evaluation is unresolved",
-            category=MeshingFailureCategory.COMPLIANCE_FAILED,
-        )
-    if (
-        specification.quality_target is not None
-        and specification.quality_target.hard
-        and minimum_angle < specification.quality_target.minimum_angle
-    ):
-        raise owner._failure(
-            "quadrilateral mesh misses the hard minimum-angle target",
-            category=MeshingFailureCategory.COMPLIANCE_FAILED,
-        )
+    minimum_angle = _require_mapped_quality(mesh, geometry, specification.quality_target)
     requested = [
         ("maximum_edge_length", limit),
         ("minimum_angle_degrees", prepared.schedule.quality_angle_degrees),
     ]
-    mesh_edges = _surface_edges(mesh)
-    edge_lengths = np.linalg.norm(
-        np.asarray(mesh.coordinates)[mesh_edges[:, 1]]
-        - np.asarray(mesh.coordinates)[mesh_edges[:, 0]],
-        axis=1,
+    size_requested, size_achieved, size_issues = _mapped_size_compliance(
+        prepared, mesh, geometry
     )
+    requested.extend(size_requested)
     achieved = [
-        ("maximum_edge_length", float(np.max(edge_lengths))),
+        ("maximum_edge_length", dict(size_achieved)["physical_edge_length_maximum"]),
         ("maximum_deviation", 0.0),
         ("minimum_angle_degrees", math.degrees(minimum_angle)),
     ]
+    achieved.extend(size_achieved)
     if specification.maximum_deviation is not None:
         requested.append(("maximum_deviation", specification.maximum_deviation))
     if specification.quality_target is not None:
@@ -477,6 +717,7 @@ def execute_tensor_quads(
         achieved.append((f"feature:{feature.feature_id}:maximum_deviation", 0.0))
     compliance = MeshingComplianceReport(
         specification.specification_id,
+        issues=tuple(size_issues),
         requested=tuple(requested),
         achieved=tuple(achieved),
     )

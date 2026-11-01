@@ -369,6 +369,10 @@ Bernstein controls. It then clears the Jacobian by a proved-positive common
 factor and verifies projected symmetric-Jacobian principal minors on the whole
 cell. Embedded projections may combine ambient axes; their exact coefficients
 and denominator controls are retained in the proof witness.
+Hard scoped uniform-size bounds and target statistics are checked against
+certified physical mapped-edge length enclosures with the declared compliance
+tolerances. Hard surface minimum-angle targets use the mapped edge tangents at
+each cell corner, not chords between rounded mesh vertices.
 
 Sphere and cone pole trims use their authored collapsed-edge corner as one mesh
 vertex. The provider places a regular chart ring from continuous surface-box
@@ -422,9 +426,9 @@ These corner-quality measurements do not replace whole-cell validity, embedding,
 or source-fidelity certification.
 For higher-order or nonvertex coordinate elements, accepted audit quality retains
 per-cell physical measures from certified exact-map integration, including
-absolute integration error bounds and the bound geometry identity. Corner
-shape and angle quality remain sampled diagnostics; a chordal carrier area is
-not substituted for the curved physical measure.
+absolute integration error bounds, exactness status, and the bound geometry
+identity. Corner shape and angle quality remain sampled diagnostics; a chordal
+carrier area is not substituted for the curved physical measure.
 
 For ambient-two-dimensional blocks, `NativeStructuredSource.domain` must retain
 the independently authored `PiecewiseLinearDomain`. Canonical acceptance uses

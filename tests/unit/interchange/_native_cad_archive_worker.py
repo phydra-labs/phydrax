@@ -4769,10 +4769,23 @@ def _write_exact_tensor_quad_fidelity(directory: Path, /) -> None:
     write_model_artifact(
         directory / "exact-tensor-quad-fidelity.phx", certificate, limits=None
     )
-    print(json.dumps({"certificate_id": certificate.certificate_id}))
+    write_model_artifact(
+        directory / "exact-tensor-quad-quality.phx",
+        result.quality.evaluation,
+        limits=None,
+    )
+    print(
+        json.dumps(
+            {
+                "certificate_id": certificate.certificate_id,
+                "quality_id": result.quality.report_id,
+                "measure_exact": result.quality.evaluation.measure_exact,
+            }
+        )
+    )
 
 
-def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, str], /) -> None:
+def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, object], /) -> None:
     def rebuild(value: object) -> SourceFidelityCertificate:
         if type(value) is not SourceFidelityCertificate:
             raise TypeError("Cold exact tensor root must be SourceFidelityCertificate.")
@@ -4792,7 +4805,47 @@ def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, str], /) ->
         raise ValueError("Cold exact tensor certificate identity changed.")
     if certificate.mesh_to_source_upper != 0.0 or certificate.source_to_mesh_upper != 0.0:
         raise ValueError("Cold exact tensor fidelity did not reproduce zero deviation.")
-    print(json.dumps({"certificate_id": certificate.certificate_id}))
+    from phydrax.meshing._quality import (
+        _with_certified_mapped_measures,
+        CellQualityEvaluation,
+        CellQualityReport,
+        evaluate_cell_quality,
+    )
+
+    def rebuild_quality(value: object) -> CellQualityEvaluation:
+        if type(value) is not CellQualityEvaluation:
+            raise TypeError("Cold mapped quality lost its evaluation owner.")
+        mesh = certificate.binding.mesh
+        geometry = certificate.binding.geometry
+        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+        rebuilt = _with_certified_mapped_measures(
+            evaluate_cell_quality(mesh), mesh, geometry, validity
+        )
+        if rebuilt.evaluation_id != value.evaluation_id:
+            raise ValueError("Cold mapped quality changed its exact integration inputs.")
+        return rebuilt
+
+    evaluation = read_model_artifact(
+        path.with_name("exact-tensor-quad-quality.phx"),
+        expected_type=CellQualityEvaluation,
+        restore=rebuild_quality,
+        limits=None,
+    )
+    quality = CellQualityReport(evaluation)
+    if (
+        quality.report_id != expected["quality_id"]
+        or quality.evaluation.measure_exact is not expected["measure_exact"]
+    ):
+        raise ValueError("Cold mapped quality changed its identity or exactness status.")
+    print(
+        json.dumps(
+            {
+                "certificate_id": certificate.certificate_id,
+                "quality_id": quality.report_id,
+                "measure_exact": quality.evaluation.measure_exact,
+            }
+        )
+    )
 
 
 def _rebuild_surface_source_root_atlas(value: object, /) -> SurfaceSourceRootAtlas:
