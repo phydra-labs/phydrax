@@ -364,8 +364,10 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         if isinstance(source, MeshingDomainBoundarySource) and isinstance(
             self.source, MeshingDomainBoundarySource
         ):
+            # The query keeps its domain validation: no fingerprint for its own domain.
+            source.require_current()
             same_source = (
-                source.domain.content_domain_id() == self.domain_id
+                source.domain.domain_id == self.domain_id
                 and source.patches == self.source.patches
                 and source.source_id == self.source_id
                 and source.source_revision == self.source_revision

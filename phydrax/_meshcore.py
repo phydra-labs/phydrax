@@ -888,6 +888,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I32, _I64, _P, _P, _P, _P, _P, _P, _I32),
     ),
+    "phx_mc_interval_multiply": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_interval_sum": (_I32, (_I64, _P, _P, _P, _P, _I32, _P, _P)),
     "phx_mc_bernstein_controls": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),

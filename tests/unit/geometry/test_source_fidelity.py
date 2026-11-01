@@ -1,4 +1,5 @@
 from fractions import Fraction
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -1933,37 +1934,55 @@ def test_source_fidelity_uses_exact_normal_offset_surface_coefficients() -> None
 
 
 def test_chart_overlap_candidates_agree_on_host_and_bvh_broad_phases(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from phydrax.geometry import _source_fidelity
+    from phydrax.geometry import _planar_primitives, _source_fidelity
 
     rng = np.random.default_rng(7)
 
-    def triangles(count: int, /):
+    type Point = tuple[Fraction, Fraction]
+
+    def point(values: Any, /) -> Point:
+        return (Fraction(int(values[0]), 16), Fraction(int(values[1]), 16))
+
+    def triangles(count: int, /) -> tuple[tuple[Point, Point, Point], ...]:
         corners = rng.integers(-40, 40, size=(count, 3, 2))
         return tuple(
-            tuple((Fraction(int(x), 16), Fraction(int(y), 16)) for x, y in triangle)
+            (point(triangle[0]), point(triangle[1]), point(triangle[2]))
             for triangle in corners
         )
 
     first, second = triangles(60), triangles(45)
-    first_boxes = _source_fidelity._triangle_chart_boxes(first)
-    second_boxes = _source_fidelity._triangle_chart_boxes(second)
-    pairs = _source_fidelity._triangle_overlap_candidate_pairs
+    first_boxes = _planar_primitives.polygon_boxes(first)
+    second_boxes = _planar_primitives.polygon_boxes(second)
+    pairs = _planar_primitives.box_overlap_pairs
 
-    def both(*arguments, self_pairs: bool):
+    def both(
+        *arguments: Any, self_pairs: bool
+    ) -> tuple[list[tuple[int, ...]], list[tuple[int, ...]]]:
         host = pairs(*arguments, self_pairs=self_pairs)
         with monkeypatch.context() as patch:
-            patch.setattr(_source_fidelity, "_DENSE_CHART_PAIRS", 0)
+            patch.setattr(_planar_primitives, "_DENSE_BOX_PAIRS", 0)
             tree = pairs(*arguments, self_pairs=self_pairs)
-        return host, tree
+        return [tuple(row) for row in host.tolist()], [
+            tuple(row) for row in tree.tolist()
+        ]
 
-    host, tree = both(first, first, first_boxes, first_boxes, self_pairs=True)
+    host, tree = both(len(first), len(first), first_boxes, first_boxes, self_pairs=True)
     assert host and host == tree and all(left < right for left, right in host)
-    host, tree = both(first, second, first_boxes, second_boxes, self_pairs=False)
+    host, tree = both(
+        len(first), len(second), first_boxes, second_boxes, self_pairs=False
+    )
     assert host and host == tree
-    # Every pair with a positive-area overlap has meeting closed boxes.
+    # Every pair with a positive-area overlap has meeting closed boxes, and the
+    # binary64 separation screen agrees with the exact edge-line test.
     candidates = set(host)
+    decisions = _planar_primitives.triangle_pair_separation(
+        first, second, np.asarray(host, dtype=np.int64)
+    )
+    for (left, right), decision in zip(host, decisions.tolist(), strict=True):
+        separated = _planar_primitives.interiors_separated(first[left], second[right])
+        assert decision == -1 or (decision == 1) == separated
     for left in range(len(first)):
         for right in range(len(second)):
             if _source_fidelity._intersection_area(first[left], second[right]) > 0:
