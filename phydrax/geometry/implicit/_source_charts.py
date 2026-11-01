@@ -3664,6 +3664,44 @@ def _prepare_root_charts(
     )
 
 
+# Rows per eager point-field block; blocks pad to power-of-two row buckets.
+_POINT_FIELD_BLOCK = 1024
+_MINIMUM_POINT_BUCKET = 8
+
+
+def _field_values_and_gradients(
+    geometry: CompiledGeometry, points: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Boundary-field values and gradients of concrete host points, per block.
+
+    Each row is the single-point eager evaluation ``boundary_field(state,
+    p[None])[0]`` and its gradient, vmapped over bounded blocks of rows that
+    are padded with copies of their last row to a power-of-two bucket, so the
+    eager primitives see a bounded set of shapes.
+    """
+
+    def scalar(value: jax.Array, /) -> jax.Array:
+        return geometry.kernel.boundary_field(geometry.state, value[None, :])[0]
+
+    values = jax.vmap(scalar)
+    gradients = jax.vmap(jax.grad(scalar))
+    count = points.shape[0]
+    field = np.empty((count,), dtype=np.float64)
+    gradient = np.empty((count, 3), dtype=np.float64)
+    for start in range(0, count, _POINT_FIELD_BLOCK):
+        block = points[start : start + _POINT_FIELD_BLOCK]
+        rows = block.shape[0]
+        bucket = max(_MINIMUM_POINT_BUCKET, 1 << (rows - 1).bit_length())
+        padded = jnp.asarray(
+            np.concatenate((block, np.repeat(block[-1:], bucket - rows, axis=0)))
+        )
+        field[start : start + rows] = np.asarray(values(padded), dtype=np.float64)[:rows]
+        gradient[start : start + rows] = np.asarray(
+            gradients(padded), dtype=np.float64
+        ).reshape((bucket, -1))[:rows]
+    return field, gradient
+
+
 def _doubling_steps(start: float, maximum_step: float, /) -> list[float]:
     """The coordinate-spacing doubling sequence inside a normal tube; never empty."""
     steps = [start]
@@ -3702,10 +3740,6 @@ def _lift_points(
             "Implicit root-chart point evaluation requires a bound source frame."
         )
     geometry = surface.geometry
-    scalar = lambda value: geometry.kernel.boundary_field(geometry.state, value[None, :])[
-        0
-    ]
-    gradient_function = jax.grad(scalar)
     unique_rows: dict[bytes, int] = {}
     points: list[np.ndarray] = []
     widest: list[float] = []
@@ -3720,20 +3754,13 @@ def _lift_points(
         else:
             widest[unique] = max(widest[unique], maximum_step)
         request_rows.append(unique)
-    gradients: list[np.ndarray] = []
-    for point in points:
-        field_value = float(np.asarray(scalar(jnp.asarray(point)), dtype=np.float64))
-        gradient = np.asarray(gradient_function(jnp.asarray(point)), dtype=np.float64)
-        if (
-            gradient.shape != (3,)
-            or not np.all(np.isfinite(gradient))
-            or not math.isfinite(field_value)
-        ):
-            raise ValueError(
-                "Implicit root-chart point has a nonfinite field or gradient."
-            )
-        gradients.append(gradient)
     stacked = np.stack(points)
+    field_values, gradient_rows = _field_values_and_gradients(geometry, stacked)
+    if gradient_rows.shape != (stacked.shape[0], 3) or not (
+        np.all(np.isfinite(gradient_rows)) and np.all(np.isfinite(field_values))
+    ):
+        raise ValueError("Implicit root-chart point has a nonfinite field or gradient.")
+    gradients = list(gradient_rows)
     boxes = bounds.boxes(stacked, stacked)
     for gradient_lower, gradient_upper in zip(
         boxes.gradient_lower, boxes.gradient_upper, strict=True

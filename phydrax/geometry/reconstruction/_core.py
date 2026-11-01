@@ -424,14 +424,14 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
         cls,
         surfaces: Sequence[AbstractSurfacePatch],
         owners: np.ndarray,
-        parameters: Array,
+        parameters: np.ndarray,
         /,
-    ) -> Array:
-        """``surfaces[owners[row]].evaluate(parameters[row])`` for every row.
+    ) -> np.ndarray:
+        """``surfaces[owners[row]].evaluate(parameters[row])`` for every row, on the host.
 
-        The corners are gathered on the host and the barycentric combination
-        runs with exactly `evaluate`'s operations, so every coordinate is
-        bit-identical to the per-patch evaluation.
+        The barycentric combination runs in NumPy with exactly `evaluate`'s
+        correctly rounded operations in the same order (eager evaluation fuses
+        nothing), so every coordinate is bit-identical to the per-patch evaluation.
         """
         stacked = []
         for surface in surfaces:
@@ -440,8 +440,8 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
                     "Stacked evaluation requires reconstructed triangle charts."
                 )
             stacked.append(np.asarray(surface.corners, dtype=np.float64))
-        corners = jnp.asarray(np.stack(stacked)[np.asarray(owners, dtype=np.int64)])
-        values = jnp.asarray(parameters, dtype=jnp.float64)
+        corners = np.stack(stacked)[np.asarray(owners, dtype=np.int64)]
+        values = np.asarray(parameters, dtype=np.float64)
         first = values[..., 0, None]
         second = values[..., 1, None]
         return (
@@ -634,17 +634,24 @@ def _triangle_complex_meshing_domain(
     curves = tuple(
         MeshingDomainCurve(int(first), int(last)) for first, last in edges.tolist()
     )
+    # Every trim is one of the few unit-triangle sides; each side's immutable
+    # p-curve is built once and shared by all of its uses.
+    lines: dict[tuple[float, ...], LineCurve] = {}
+
+    def side(uv_first: np.ndarray, uv_last: np.ndarray, /) -> LineCurve:
+        key = (*uv_first.tolist(), *uv_last.tolist())
+        line = lines.get(key)
+        if line is None:
+            line = lines[key] = LineCurve(uv_first, uv_last - uv_first)
+        return line
+
     patches = tuple(
         MeshingSurfacePatch(
             _ReconstructedTrianglePatch(vertices[face]),
             (
                 tuple(
                     PatchCurveUse(
-                        edge_row,
-                        LineCurve(uv_first, uv_last - uv_first),
-                        0.0,
-                        1.0,
-                        sense=sense,
+                        edge_row, side(uv_first, uv_last), 0.0, 1.0, sense=sense
                     )
                     for edge_row, uv_first, uv_last, sense in face_uses
                 ),

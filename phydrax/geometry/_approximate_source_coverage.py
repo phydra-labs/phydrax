@@ -26,6 +26,11 @@ from ..discretization._cell_mesh import CellMesh
 from ._domain_coverage import PiecewiseLinearDomain
 from ._global_embedding import GlobalEmbeddingCertificate
 from ._meshing_domain import MeshingDomain
+from ._planar_primitives import (
+    box_overlap_pairs,
+    polygon_boxes,
+    triangle_pair_separation,
+)
 from ._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryQuery
 from ._source_fidelity_certificate import SourceFidelityCertificate
 from .implicit._adaptive_discovery import (
@@ -500,22 +505,26 @@ def _boxes_overlap(first: _Box2, second: _Box2, /) -> bool:
     )
 
 
-def _overlapping_box_pairs(boxes: tuple[_Box2, ...], /) -> list[tuple[int, int]]:
-    """Index pairs ``i < j`` of boxes sharing positive area (sweep over ``x_min``)."""
-    order = sorted(range(len(boxes)), key=lambda index: boxes[index][0])
-    pairs: list[tuple[int, int]] = []
-    active: list[int] = []
-    for index in order:
-        box = boxes[index]
-        active = [other for other in active if boxes[other][1] > box[0]]
-        pairs.extend(
-            (min(index, other), max(index, other))
-            for other in active
-            if _boxes_overlap(box, boxes[other])
-        )
-        active.append(index)
-    pairs.sort()
-    return pairs
+def _possibly_overlapping_pairs(
+    first: tuple[_Triangle2, ...],
+    second: tuple[_Triangle2, ...],
+    self_pairs: bool,
+    /,
+) -> list[tuple[int, int]]:
+    """Row pairs (``i < j`` for self pairs) whose exact overlap may be positive.
+
+    Pairs with disjoint closed binary64 boxes, or whose interiors the interval
+    screen of the exact edge-line test separates, meet in area zero.
+    """
+    pairs = box_overlap_pairs(
+        len(first),
+        len(second),
+        polygon_boxes(first),
+        polygon_boxes(second),
+        self_pairs=self_pairs,
+    )
+    decisions = triangle_pair_separation(first, second, pairs)
+    return [(left, right) for left, right in pairs[decisions != 1].tolist()]
 
 
 def _volume_face_owners(
@@ -1441,8 +1450,13 @@ def _cad_chart_partition(
             )
         declared_boxes = tuple(_triangle_box(triangle) for triangle in declared)
         target_boxes = tuple(_triangle_box(triangle) for triangle in target)
+        # Exact areas only for pairs the binary64 box and edge-line screens leave
+        # possibly overlapping; every other pair has zero intersection area.
+        declared_rows: list[list[int]] = [[] for _ in target]
+        for first, value in _possibly_overlapping_pairs(target, declared, False):
+            declared_rows[first].append(value)
         covered = Fraction(0)
-        for first, box in zip(target, target_boxes, strict=True):
+        for first, box, rows in zip(target, target_boxes, declared_rows, strict=True):
             area = abs(_area2(first))
             if area == 0:
                 raise SourceCoverageUnavailable(
@@ -1450,9 +1464,9 @@ def _cad_chart_partition(
                 )
             inside = sum(
                 (
-                    _intersection_area(first, value)
-                    for value, value_box in zip(declared, declared_boxes, strict=True)
-                    if _boxes_overlap(box, value_box)
+                    _intersection_area(first, declared[row])
+                    for row in rows
+                    if _boxes_overlap(box, declared_boxes[row])
                 ),
                 Fraction(0),
             )
@@ -1462,8 +1476,10 @@ def _cad_chart_partition(
                     status="violated",
                 )
             covered += inside
-        for index, other in _overlapping_box_pairs(target_boxes):
-            if _intersection_area(target[index], target[other]) > 0:
+        for index, other in _possibly_overlapping_pairs(target, target, True):
+            if _boxes_overlap(target_boxes[index], target_boxes[other]) and (
+                _intersection_area(target[index], target[other]) > 0
+            ):
                 raise SourceCoverageUnavailable(
                     f"CAD target charts overlap on patch {patch}.", status="violated"
                 )

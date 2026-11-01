@@ -1304,6 +1304,16 @@ def _norm_upper(vector: np.ndarray) -> float:
     return float(np.nextafter(value, np.inf))
 
 
+def _norm_upper_rows(vectors: np.ndarray, /) -> np.ndarray:
+    """`_norm_upper` of every row: the same widening, ``math.hypot`` and rounding."""
+    raw = np.abs(np.asarray(vectors, dtype=np.float64))
+    widened = np.nextafter(raw, np.inf).tolist()
+    norms = np.nextafter(
+        np.asarray([math.hypot(*row) for row in widened], dtype=np.float64), np.inf
+    )
+    return np.where(np.any(raw, axis=1), norms, 0.0)
+
+
 def _grid_coordinate_fraction(
     index: int, level: int, lower: float, upper: float
 ) -> Fraction:
@@ -1574,10 +1584,7 @@ def _root_on_edges(
 
     while np.any(active):
         rows = np.flatnonzero(active)
-        half_lengths = np.asarray(
-            [_norm_upper(0.5 * (high[row] - low[row])) for row in rows],
-            dtype=np.float64,
-        )
+        half_lengths = _norm_upper_rows(0.5 * (high[rows] - low[rows]))
         complete = half_lengths <= tolerance
         completed_rows = rows[complete]
         if completed_rows.size:
@@ -1730,10 +1737,13 @@ def _triangulate_polygon(
     first_axis = reference / reference_length
     second_axis = np.cross(normal, first_axis)
     planar = np.stack((centered @ first_axis, centered @ second_axis), axis=1)
+    # Python binary64 rows: the same IEEE operations as NumPy scalars, without
+    # a fancy-indexed array per predicate.
+    rows = planar.tolist()
 
     def orient(first: int, second: int, third: int, /) -> float:
-        a, b, c = planar[[first, second, third]]
-        return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+        a, b, c = rows[first], rows[second], rows[third]
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
     signed_area_twice = sum(
         planar[index, 0] * planar[(index + 1) % len(cycle), 1]
