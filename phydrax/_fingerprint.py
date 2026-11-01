@@ -176,9 +176,12 @@ def array_tree_signature(tree: PyTree[Any], /) -> list[dict[str, Any]]:
 
 def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
     """Return a content-sensitive, JSON-compatible fingerprint for an array tree."""
-    records = _array_records(tree)
     digest = hashlib.sha256()
-    for path, value in records:
+    signature = []
+    for path, value in _array_records(tree):
+        signature.append(
+            {"path": path, "shape": list(value.shape), "dtype": value.dtype.str}
+        )
         # Legacy ascontiguousarray promoted scalar leaves to a length-one axis.
         shape = value.shape if value.ndim else (1,)
         metadata = canonical_json(
@@ -194,14 +197,7 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
         for chunk in iter_array_bytes(value):
             digest.update(chunk)
     return {
-        "signature": [
-            {
-                "path": path,
-                "shape": list(value.shape),
-                "dtype": value.dtype.str,
-            }
-            for path, value in records
-        ],
+        "signature": signature,
         "sha256": digest.hexdigest(),
     }
 
@@ -321,21 +317,27 @@ def canonical_mapping(value: Mapping[str, Any], /) -> dict[str, Any]:
     return normalized
 
 
-def _array_records(tree: PyTree[Any], /) -> list[tuple[str, np.ndarray]]:
-    records: list[tuple[str, np.ndarray]] = []
-    for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
+def _array_records(tree: PyTree[Any], /) -> Iterator[tuple[str, np.ndarray]]:
+    """Traverse keyed leaves without retaining the complete flattened path bank."""
+    def walk(node: Any, path: tuple[Any, ...], /) -> Iterator[tuple[str, np.ndarray]]:
+        if jax.tree_util.is_tree_node(type(node)):
+            children, _ = jax.tree_util.flatten_one_level_with_keys(node)
+            for key, child in children:
+                yield from walk(child, (*path, key))
+            return
         try:
-            value = np.asarray(leaf)
+            value = np.asarray(node)
         except (TypeError, ValueError):
-            continue
+            return
         if value.dtype.hasobject:
-            if isinstance(leaf, np.ndarray):
+            if isinstance(node, np.ndarray):
                 raise TypeError(
                     f"Array leaf {jax.tree_util.keystr(path) or '<root>'} has object dtype and cannot be fingerprinted."
                 )
-            continue
-        records.append((jax.tree_util.keystr(path) or "<root>", value))
-    return records
+            return
+        yield jax.tree_util.keystr(path) or "<root>", value
+
+    yield from walk(tree, ())
 
 
 __all__ = [

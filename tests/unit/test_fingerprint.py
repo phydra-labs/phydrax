@@ -5,6 +5,7 @@ import enum
 import hashlib
 import json
 import types
+from fractions import Fraction
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -105,6 +106,21 @@ def test_array_fingerprint_matches_legacy(dtype: np.dtype, layout: str) -> None:
         case "empty":
             value = value[:0]
     assert array_tree_fingerprint({"array": value}) == _legacy({"array": value})
+
+
+def test_array_fingerprint_streams_nested_exact_reference_leaves() -> None:
+    record = collections.namedtuple("ReferenceRows", ("coordinates", "ids"))
+    tree = {
+        "reference": record(
+            tuple(((Fraction(index, 7), Fraction(1, 3)),) for index in range(2048)),
+            np.arange(2048, dtype=np.int64),
+        ),
+        "empty": None,
+    }
+    assert array_tree_fingerprint(tree) == _legacy(tree)
+    _, streamed_peak = host_allocation_peak(lambda: array_tree_fingerprint(tree))
+    _, legacy_peak = host_allocation_peak(lambda: _legacy(tree))
+    assert streamed_peak < legacy_peak
 
 
 def test_array_fingerprint_preserves_nan_bits() -> None:
