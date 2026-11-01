@@ -290,3 +290,38 @@ def test_triangle_complex_domain_host_evaluation_and_currentness() -> None:
     )
     with pytest.raises(ValueError, match="content changed"):
         stale.require_current()
+
+
+def test_triangle_trim_partition_matches_constrained_triangulation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fractions import Fraction
+
+    from phydrax.geometry import _domain_boundary as boundary
+
+    zero, one = Fraction(0), Fraction(1)
+    triangles = (
+        ((zero, zero), (one, zero), (zero, one)),
+        ((one, zero), (zero, one), (zero, zero)),
+        (
+            (Fraction(3, 4), Fraction(-1, 8)),
+            (Fraction(5, 2), one),
+            (-one, Fraction(9, 16)),
+        ),
+    )
+    segments = ((0, 1), (1, 2), (2, 0))
+
+    def partitions() -> list[object]:
+        return [
+            (
+                boundary._exact_trim_triangles(points, segments, (points,)),
+                boundary._cover_chord_triangles(0, points, segments, (points,)),
+            )
+            for points in triangles
+        ]
+
+    screened = partitions()
+    # Without the triangle screen every trim goes through the native
+    # constrained triangulation; the exact partitions are the same tuples.
+    monkeypatch.setattr(boundary, "_is_positive_trim_triangle", lambda *_: False)
+    assert partitions() == screened == [((points,), (points,)) for points in triangles]

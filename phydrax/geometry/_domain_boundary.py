@@ -318,6 +318,29 @@ def _patch_chart_polygon(
     return tuple(points), tuple(segments), tuple(loops)
 
 
+def _is_positive_trim_triangle(
+    uv_points: tuple[_Point2, ...],
+    segments: tuple[tuple[int, int], ...],
+    loops: tuple[tuple[_Point2, ...], ...],
+    /,
+) -> bool:
+    """Whether the trim is one counterclockwise binary64 triangle.
+
+    A triangle is the only triangulation of itself without new vertices. With
+    binary64-exact corners the constrained triangulation sees the same
+    counterclockwise triangle and returns its vertices in input order, so the
+    exact result needs no native call.
+    """
+    return (
+        len(loops) == 1
+        and len(uv_points) == 3
+        and loops[0] == uv_points
+        and segments == ((0, 1), (1, 2), (2, 0))
+        and all(Fraction(float(value)) == value for point in uv_points for value in point)
+        and _cross2(uv_points[0], uv_points[1], uv_points[2]) > 0
+    )
+
+
 def _exact_trim_triangles(
     uv_points: tuple[_Point2, ...],
     segments: tuple[tuple[int, int], ...],
@@ -329,6 +352,8 @@ def _exact_trim_triangles(
         _signed_area2(loop) >= 0 for loop in loops[1:]
     ):
         raise ValueError("Source trim loops do not have the required orientation.")
+    if _is_positive_trim_triangle(uv_points, segments, loops):
+        return ((uv_points[0], uv_points[1], uv_points[2]),)
     hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
     points = np.asarray(
         [[float(value) for value in point] for point in uv_points],
@@ -998,6 +1023,8 @@ def _cover_chord_triangles(
             (patch,),
             detail="Source trim loops must be outer counterclockwise and holes clockwise.",
         )
+    if _is_positive_trim_triangle(uv_points, segments, loops):
+        return ((uv_points[0], uv_points[1], uv_points[2]),)
     hole_seeds = tuple(_hole_seed(loop) for loop in loops[1:])
     points = np.asarray(
         [[float(value) for value in point] for point in uv_points],
