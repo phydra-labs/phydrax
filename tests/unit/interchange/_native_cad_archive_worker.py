@@ -5487,8 +5487,8 @@ def _rebuild_continuation_value(
     if type(value) is AdaptiveImplicitSurfaceArchiveRecipe:
         return _rebuild_adaptive_implicit_source(value)[1]
     if isinstance(value, AdaptiveImplicitBoundarySourceArchiveRecipe):
-        surface_recipe = _rebuild_as(value.surface, AdaptiveImplicitSurfaceArchiveRecipe)
-        surface = _rebuild_adaptive_implicit_source(surface_recipe)[1]
+        # The stored surface recipe rebuilds (and revalidates) as its surface.
+        surface = _rebuild_as(value.surface, AdaptiveImplicitSurface)
         query = AdaptiveImplicitBoundarySource(surface, frame_id=value.frame_id or None)
         if (
             query.source_id != value.expected_source_id
