@@ -1271,6 +1271,257 @@ def test_native_overset_continuous_ale_rebind_preserves_gcl_and_next_step() -> N
     assert int(np.asarray(continued.runtime_state.output_cursor)) == 6
 
 
+_SWEPT_CELL_FACES = {
+    "prism": ((0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)),
+    "hexahedron": (
+        (0, 3, 2, 1),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ),
+}
+
+
+def _square_quads(lower: float, upper: float, count: int, /) -> tuple[Any, Any]:
+    stations = np.linspace(lower, upper, count + 1)
+    points = np.asarray([(x, y) for y in stations for x in stations])
+    quads = [
+        (
+            row * (count + 1) + column,
+            row * (count + 1) + column + 1,
+            (row + 1) * (count + 1) + column + 1,
+            (row + 1) * (count + 1) + column,
+        )
+        for row in range(count)
+        for column in range(count)
+    ]
+    return points, np.asarray(quads, dtype=np.int64)
+
+
+def _swept_polyhedra(mesh: Any, coordinates: Any, vertex_shift: int, /) -> list[Any]:
+    """Swept cells as outward planar-faced polyhedra (straight extrusion faces)."""
+    cells = []
+    for block in mesh.blocks:
+        for cell in np.asarray(block.vertices, dtype=np.int64):
+            centroid = coordinates[cell].mean(axis=0)
+            faces = []
+            for template in _SWEPT_CELL_FACES[block.cell_kind]:
+                loop = cell[list(template)]
+                points = coordinates[loop]
+                normal = np.sum(np.cross(points, np.roll(points, -1, axis=0)), axis=0)
+                if float(np.dot(normal, points.mean(axis=0) - centroid)) < 0.0:
+                    loop = loop[::-1]
+                faces.append(tuple(int(vertex) + vertex_shift for vertex in loop))
+            cells.append(tuple(faces))
+    return cells
+
+
+def test_native_whole_slab_layer_body_overset_on_background_conserves() -> None:
+    """A natively swept graded prism slab is overset on a swept hex background.
+
+    The whole slab is the layer domain (no core fill). Its fringe cells take
+    donor fluxes from the background cells they overlap (exact common
+    refinement volumes), and every accepted step closes the conservation
+    ledger: content change equals the ledger net, the overset routes only
+    move content between cells, and the physical boundary is the only
+    exchange with the outside.
+    """
+    from phydrax.meshing._controls import LayerSchedule
+    from phydrax.meshing._sweep import generate_sweep, SweepControl, SweepMapKind
+
+    points, quads = _square_quads(0.0, 1.0, 4)
+    background = generate_sweep(
+        CellMesh(points, (CellBlock("quads", "quadrilateral", quads),)),
+        SweepControl(SweepMapKind.EXTRUSION, LayerSchedule((0.25,) * 4), "background"),
+    )
+    body_points, body_quads = _square_quads(0.25, 0.75, 2)
+    thicknesses = (0.08, 0.10, 0.12)
+    body = generate_sweep(
+        CellMesh.from_triangles(
+            body_points,
+            np.concatenate((body_quads[:, (0, 1, 2)], body_quads[:, (0, 2, 3)])),
+        ),
+        SweepControl(SweepMapKind.EXTRUSION, LayerSchedule(thicknesses), "body-layers"),
+    )
+    assert {block.cell_kind for block in background.mesh.blocks} == {"hexahedron"}
+    assert {block.cell_kind for block in body.mesh.blocks} == {"prism"}
+    np.testing.assert_allclose(
+        body.stations, np.concatenate(((0.0,), np.cumsum(thicknesses))), atol=1e-15
+    )
+    background_points = np.asarray(background.mesh.coordinates, dtype=np.float64)
+    # Lift the slab off the background's wall so its whole boundary is fringe.
+    slab_points = np.asarray(body.mesh.coordinates, dtype=np.float64) + (0.0, 0.0, 0.25)
+    background_cells = _swept_polyhedra(background.mesh, background_points, 0)
+    slab_cells = _swept_polyhedra(body.mesh, slab_points, 0)
+    background_ids = 100 + np.arange(len(background_cells))
+    slab_ids = 500 + np.arange(len(slab_cells))
+    background_vertex_ids = 1000 + np.arange(background_points.shape[0])
+    slab_vertex_ids = 5000 + np.arange(slab_points.shape[0])
+    background_mesh = CellMesh.from_polyhedra(
+        background_points,
+        background_cells,
+        vertex_global_ids=background_vertex_ids,
+        cell_global_ids=background_ids,
+    )
+    slab_mesh = CellMesh.from_polyhedra(
+        slab_points,
+        slab_cells,
+        vertex_global_ids=slab_vertex_ids,
+        cell_global_ids=slab_ids,
+    )
+    contract = phx.SpatialCoordinateContract.si()
+    donor = MeshPart(
+        "background", phx.meshing.certify_cell_mesh(background_mesh, contract)
+    )
+    receptor = MeshPart("slab", phx.meshing.certify_cell_mesh(slab_mesh, contract))
+    slab_faces = np.asarray(slab_mesh.entity_set(2).entity_ids, dtype=np.int64)
+    slab_boundary = np.asarray(slab_mesh.connectivity.boundary_faces, dtype=np.bool_)
+    connectivity = prepare_overset_connectivity(
+        MeshAssembly((donor, receptor)),
+        (
+            OversetPartSpec("background"),
+            OversetPartSpec(
+                "slab", boundary=receptor.scope(2, slab_faces[slab_boundary])
+            ),
+        ),
+        policy=OversetPolicy(fringe_layers=1),
+    )
+    assert connectivity.complete
+    refinement = prepare_common_refinement(
+        background_mesh,
+        slab_mesh,
+        policy=CommonRefinementPolicy(coverage=CommonRefinementCoverage.TARGET),
+    )
+    assert refinement.status is CommonRefinementStatus.SUCCESS
+
+    # One single-device FV layout holds both parts as disjoint components.
+    system = phx.equations.EulerSystem(3)
+    composite = CellMesh.from_polyhedra(
+        np.concatenate((background_points, slab_points)),
+        background_cells
+        + _swept_polyhedra(body.mesh, slab_points, background_points.shape[0]),
+        vertex_global_ids=np.concatenate((background_vertex_ids, slab_vertex_ids)),
+        cell_global_ids=np.concatenate((background_ids, slab_ids)),
+    )
+    geometry = phx.discretization.UnstructuredFiniteVolumePlan.from_cell_mesh(
+        composite, component_names=system.component_names
+    ).prepare()
+    row_of = {int(i): row for row, i in enumerate(np.asarray(geometry.cell_global_ids))}
+    slab_rows = np.asarray([row_of[int(i)] for i in slab_ids], dtype=np.int32)
+    # Each slab prism is a right prism over its profile triangle (area 1/32).
+    slab_volumes = np.asarray(geometry.cell_volumes)[slab_rows]
+    np.testing.assert_allclose(
+        np.sort(slab_volumes),
+        np.sort(np.repeat(np.asarray(thicknesses) / 32.0, 8)),
+        rtol=0.0,
+        atol=1e-16,
+    )
+    csr = np.asarray(refinement.target_offsets, dtype=np.int64)
+    np.testing.assert_allclose(
+        np.add.reduceat(np.asarray(refinement.volumes), csr[:-1]),
+        slab_volumes,
+        rtol=1e-12,
+    )
+    owners = np.asarray(geometry.owner_cells)
+    neighbors = np.asarray(geometry.neighbor_cells)
+    boundary_face_of = {
+        int(owners[face]): int(face) for face in np.flatnonzero(neighbors < 0)[::-1]
+    }
+    fringe = np.asarray([int(row) in boundary_face_of for row in slab_rows])
+    receptors = slab_rows[fringe]
+    routes = [np.arange(csr[index], csr[index + 1]) for index in np.flatnonzero(fringe)]
+    counts = np.asarray([route.size for route in routes])
+    selected = np.concatenate(routes)
+    donor_rows = np.asarray(
+        [
+            row_of[int(background_ids[cell])]
+            for cell in np.asarray(refinement.source_cells)[selected]
+        ],
+        dtype=np.int32,
+    )
+    face_ids = np.asarray([boundary_face_of[int(row)] for row in receptors], np.int32)
+    face_points = np.asarray(geometry.face_quadrature_points)[face_ids]
+    normals = (
+        np.asarray(geometry.area_vectors)[face_ids]
+        / np.asarray(geometry.face_measures)[face_ids, None]
+    )
+    overset = phx.discretization.UnstructuredOversetPlan(
+        geometry,
+        geometry,
+        receptors,
+        np.concatenate(((0,), np.cumsum(counts))),
+        donor_rows,
+        np.asarray(refinement.volumes)[selected],
+        native_connectivity_id=connectivity.connectivity_id,
+        receptor_face_ids=face_ids,
+        receptor_face_points=face_points,
+        receptor_face_normals=np.broadcast_to(normals[:, None, :], face_points.shape),
+        # Triangle faces pad their quadrature with a zero-weight point.
+        receptor_face_measures=np.asarray(geometry.face_quadrature_weights)[face_ids],
+        receptor_face_cells=receptors,
+        receptor_route_faces=np.repeat(np.arange(receptors.size, dtype=np.int32), counts),
+    )
+    boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
+        geometry.boundary_patch_names,
+        {
+            name: phx.discretization.ExtrapolationBoundary()
+            for name in geometry.boundary_patch_names
+        },
+    )
+    dynamics = phx.equations.compile_conservation_problem(
+        phx.equations.ConservationProblemIR("slab-overset", "state", system, boundaries),
+        geometry,
+        phx.discretization.UnstructuredFiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+        ),
+        coupling=phx.discretization.UnstructuredFiniteVolumeCouplingPlan(overset=overset),
+    ).dynamics
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
+        phx.solver.FiniteVolumeStepPolicy(maximum_retries=2),
+    )
+    centers = np.asarray(geometry.cell_centers)
+    primitive = np.zeros(geometry.state_shape)
+    primitive[:, 0] = 1.0 + 0.2 * centers[:, 2]
+    primitive[:, 2] = 0.1
+    primitive[:, 4] = 1.0
+    state = runtime.initialize_state(
+        system.primitive_to_conserved(jnp.asarray(primitive)), 0.0, 1.0e-3
+    )
+    for _ in range(3):
+        before = np.asarray(state.content_state.volume_integral())
+        result = runtime.advance(state)
+        assert bool(np.asarray(result.accepted))
+        state = result.runtime_state
+        change = np.asarray(state.content_state.volume_integral()) - before
+        source, outward, net = (
+            np.asarray(value)
+            for value in result.accepted_flux_integrals.conservation_sums()
+        )
+        np.testing.assert_array_equal(source, 0.0)
+        np.testing.assert_allclose(net, -outward, rtol=0.0, atol=1e-18)
+        np.testing.assert_allclose(change, net, rtol=0.0, atol=1e-14)
+        overset_blocks = [
+            block
+            for block in result.accepted_flux_integrals.blocks
+            if block.block_kind == "overset-correction"
+        ]
+        assert len(overset_blocks) == 1
+        block = overset_blocks[0]
+        route_flux = np.asarray(block.flux_integral)
+        assert route_flux.shape == (selected.size, system.component_count)
+        assert float(np.max(np.abs(route_flux[:, 0]))) > 0.0
+        np.testing.assert_array_equal(np.asarray(block.owner_cells), donor_rows)
+        scattered = np.zeros(geometry.state_shape)
+        np.add.at(scattered, np.asarray(block.owner_cells), -route_flux)
+        np.add.at(scattered, np.asarray(block.neighbor_cells), route_flux)
+        np.testing.assert_allclose(scattered.sum(axis=0), 0.0, atol=1e-16)
+
+
 def test_owner_local_composite_fv_layout_lowers_and_conserves_each_part() -> None:
     """Two owner-local periodic parts compile as one disjoint FV layout and advance."""
     from phydrax._execution_resources import ExecutionGroupSpec

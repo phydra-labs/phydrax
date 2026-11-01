@@ -141,7 +141,7 @@ def test_mesh_motion_routes_scenario_1() -> None:
     assert _certified(points, triangles, result.displacement)
 
 
-class _GaussianMonitor(eqx.Module):
+class _GaussianMonitor(D.AbstractMeshMonitor):
     amplitude: jax.Array
 
     def __call__(self, points: Any) -> Any:
@@ -181,6 +181,39 @@ def test_mmpde_concentrates_vertices_toward_the_monitor_peak() -> None:
     np.testing.assert_allclose(gradient, finite_difference, rtol=1.0e-4)
 
 
+def test_repeated_mmpde_solves_reuse_one_compiled_program() -> None:
+    """Eager solves compile once per extension; new monitor values reuse it."""
+
+    points, triangles, boundary = _square(6)
+    fixed = np.zeros_like(points[boundary])
+    extension = _extension(points, triangles, boundary, Route.MMPDE)
+    extension.extend(fixed, monitor=_GaussianMonitor(jnp.asarray(1.0)))
+    compiles: list[str] = []
+
+    def listener(event: str, duration_secs: float, **kwargs: str | int) -> None:
+        del duration_secs, kwargs
+        if event == "/jax/core/compile/backend_compile_duration":
+            compiles.append(event)
+
+    jax.monitoring.register_event_duration_secs_listener(listener)
+    try:
+        results = [
+            extension.extend(fixed, monitor=_GaussianMonitor(jnp.asarray(amplitude)))
+            for amplitude in (2.0, 5.0, 10.0)
+        ]
+    finally:
+        jax.monitoring.unregister_event_duration_listener(listener)
+    assert compiles == []
+    traced = eqx.filter_jit(extension.extend)(
+        fixed, monitor=_GaussianMonitor(jnp.asarray(10.0))
+    )
+    assert all(bool(result.successful) for result in results)
+    np.testing.assert_allclose(
+        results[-1].displacement, traced.displacement, rtol=0.0, atol=1.0e-12
+    )
+    assert not np.allclose(results[0].displacement, results[1].displacement)
+
+
 def test_winslow_boundary_derivative_matches_finite_differences() -> None:
     points, triangles, boundary = _square(4)
     edge = points[boundary]
@@ -205,7 +238,6 @@ def test_mesh_motion_routes_scenario_2() -> None:
         _extension(points, triangles, boundary, Route.PRESCRIBED)
     harmonic = _extension(points, triangles, boundary, Route.HARMONIC)
     with pytest.raises(ValueError, match="monitor"):
-        # ty: ignore[invalid-argument-type]
         harmonic.extend(np.zeros_like(points[boundary]), monitor=_GaussianMonitor(1.0))
     mmpde = _extension(points, triangles, boundary, Route.MMPDE)
     with pytest.raises(ValueError, match="monitor"):

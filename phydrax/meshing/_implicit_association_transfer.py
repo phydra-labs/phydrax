@@ -371,6 +371,8 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         source: CellMeshingResult,
         lineage: MeshLineage,
         classes: tuple[AssociationEntityClasses, ...],
+        target: CellMesh,
+        target_classes: tuple[AssociationEntityClasses, ...],
         /,
     ) -> None:
         record = lineage.entity_lineage(0)
@@ -382,12 +384,21 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         kept_ids = np.asarray(record.target_global_ids, dtype=np.int64)[collapsed]
         removed_rows = entity_rows(source.mesh, 0, removed_ids)
         kept_rows = entity_rows(source.mesh, 0, kept_ids)
-        if np.any(removed_rows < 0) or np.any(kept_rows < 0):
+        kept_target_rows = entity_rows(target, 0, kept_ids)
+        if np.any(removed_rows < 0) or np.any(kept_target_rows < 0):
             raise ValueError(
-                "Implicit vertex-collapse lineage must name source vertices."
+                "Implicit vertex-collapse lineage must name a source vertex and a target vertex."
             )
+        # A vertex may collapse into one born during adaptation (a split point); the
+        # born vertex's stratum is its target classification.
+        retained = kept_rows >= 0
         dimensions = classes[0].dimensions
-        legal = dimensions[removed_rows] >= dimensions[kept_rows]
+        kept_dimensions = np.where(
+            retained,
+            dimensions[np.maximum(kept_rows, 0)],
+            target_classes[0].dimensions[kept_target_rows],
+        )
+        legal = dimensions[removed_rows] >= kept_dimensions
         associations = tuple(
             value
             for value in source.associations
@@ -395,11 +406,13 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             and (value.source_id, value.source_revision) == self.source_namespaces[0]
             and target_dimension(source.mesh, value) == 0
         )
-        if associations:
+        if associations and np.any(retained):
+            # One implicit namespace retains one entity per stratum, so only kept
+            # source vertices carry an occurrence path to compare.
             association = associations[0]
-            removed_assoc_rows = association.target_rows(removed_ids)
-            kept_assoc_rows = association.target_rows(kept_ids)
-            legal &= np.asarray(
+            removed_assoc_rows = association.target_rows(removed_ids[retained])
+            kept_assoc_rows = association.target_rows(kept_ids[retained])
+            legal[retained] &= np.asarray(
                 [
                     association.source_occurrence_paths[int(first)]
                     == association.source_occurrence_paths[int(second)]
@@ -457,7 +470,6 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             raise TypeError("vertex_stencil must be VertexInterpolationStencil or None.")
         namespace = self.source_namespaces[0]
         source_classes = self.classes(source)
-        self._check_collapses(source, lineage, source_classes)
         source_tables = {
             target_dimension(source.mesh, association): association
             for association in source.associations
@@ -470,6 +482,7 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             for role in association.source_roles
         )
         target_classes = self._classes_for_mesh(target, has_surface_source)
+        self._check_collapses(source, lineage, source_classes, target, target_classes)
         source_keys: dict[GeometrySourceEntityRole, tuple[str, tuple[str, ...]]] = {}
         for association in source_tables.values():
             for entity_id, role, path in zip(

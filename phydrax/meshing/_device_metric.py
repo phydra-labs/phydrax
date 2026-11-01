@@ -4288,7 +4288,8 @@ def _install_periodic_tables(
         periodic_vertex_winding=jnp.asarray(tables.vertex_winding, dtype=jnp.int64),
         periodic_edge_winding=jnp.asarray(tables.edge_winding, dtype=jnp.int64),
     )
-    cursors = work.cursors
+    # The refreshed state is host-fetched; its cursors may be a NumPy array.
+    cursors = jnp.asarray(work.cursors)
     if tables.next_quotient_vertex >= 0:
         cursors = cursors.at[_NEXT_QUOTIENT_VERTEX].set(tables.next_quotient_vertex)
     work = work._replace(cursors=cursors)

@@ -330,6 +330,15 @@ class _PeriodicContext(NamedTuple):
     vertex_windings: np.ndarray
 
 
+def _orbit_groups(keys: np.ndarray, rows: np.ndarray, /) -> list[np.ndarray]:
+    """``rows`` grouped by ``keys[rows]``: ascending keys, input order within a group."""
+    if rows.size == 0:
+        return []
+    ordered = rows[np.argsort(keys[rows], kind="stable")]
+    starts = np.flatnonzero(np.diff(keys[ordered]) != 0) + 1
+    return np.split(ordered, starts)
+
+
 def _exact_periodic_point(
     isometry: tuple[tuple[Fraction, ...], ...], point: np.ndarray, /
 ) -> np.ndarray:
@@ -3031,21 +3040,30 @@ def _proposal_metric(
     state: _State, topology: _Topology, vertex: Any, target: Any, /
 ) -> Any:
     """Log-Euclidean P1 metric at each proposal inside the current vertex ball."""
-    return _scored_proposal_metric(state, topology, vertex, target)[0]
+    cells, weights, _ = _proposal_locations(state, topology, vertex, target)
+    return _located_metric(state, cells, weights)
 
 
-def _scored_proposal_metric(
+def _proposal_locations(
     state: _State, topology: _Topology, vertex: Any, target: Any, /
-) -> Any:
-    """Proposal metrics and the best minimum barycentric weight of each target."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Best ball cell, its barycentric weights, and their minimum for each target.
+
+    A target lies in its vertex ball exactly when its score is nonnegative; a
+    degenerate binary64 ball cell yields a non-finite score.
+    """
     owner, position = _expand(topology.ball_offsets, vertex)
     cell = topology.ball_cells[position]
     weights = _barycentric(state.points[state.cells[cell]], target[owner])
     score = np.min(weights, axis=1)
     order = np.lexsort((cell, -score, owner))
     first = order[np.searchsorted(owner[order], np.arange(vertex.size))]
-    samples = state.metric[state.cells[cell[first]]]
-    return _interpolate_metrics(samples, _normalized(weights[first])), score[first]
+    return cell[first], weights[first], score[first]
+
+
+def _located_metric(state: _State, cells: np.ndarray, weights: np.ndarray, /) -> Any:
+    """Log-Euclidean P1 metric at located points of ``cells``."""
+    return _interpolate_metrics(state.metric[state.cells[cells]], _normalized(weights))
 
 
 def _periodic_orbit_pull(
@@ -3167,33 +3185,38 @@ def _proposal_checks(
     return status, quality
 
 
-def _relocation_round_nonperiodic(
+class _Backtracked(NamedTuple):
+    """Accepted relocation of each proposal at its largest admissible scale."""
+
+    success: np.ndarray
+    target: np.ndarray
+    metric: np.ndarray
+    stencil_sources: np.ndarray
+    stencil_weights: np.ndarray
+    stencil_valid: np.ndarray
+    stencil_exact: list[ExactSourceRow]
+    rejected: np.ndarray
+    ball_owner: np.ndarray
+    ball_position: np.ndarray
+
+
+def _backtracked_relocations(
     state: _State,
     topology: _Topology,
-    counts: _Counts,
-    done: np.ndarray,
+    vertices: np.ndarray,
+    displacement: np.ndarray,
     mode: PredicateMode,
     source: _Source,
+    edge_orbits: np.ndarray | None,
     /,
-) -> tuple[_State, _Counts, int, np.ndarray]:
-    """Backtrack each nonperiodic spring proposal to representability."""
-    valence = np.diff(topology.ball_offsets)
-    movable = (
-        (valence > 0)
-        & ~done
-        & ((topology.kind == _INTERIOR) | ((topology.kind == _CURVE) & topology.straight))
-    )
-    vertices = np.flatnonzero(movable)
-    displacement, badness = _relocation_targets(state, topology, vertices)
-    active = np.any(displacement != 0.0, axis=1)
-    vertices, displacement, badness = (
-        vertices[active],
-        displacement[active],
-        badness[active],
-    )
-    if vertices.size == 0:
-        return state, counts, 0, done
+) -> _Backtracked:
+    """Backtrack each single-vertex spring proposal to representability.
 
+    Every proposal halves its step through ``_RELOCATION_SCALE_LANES`` scales per
+    batch until a scale keeps all ball orientations valid and raises the star's
+    minimum quality, or keeps it while strictly improving the edge deviations
+    (counted once per edge orbit when ``edge_orbits`` is given).
+    """
     ball_owner, ball_position = _expand(topology.ball_offsets, vertices)
     before = _group_minimum(
         topology.quality[topology.ball_cells[ball_position]],
@@ -3259,7 +3282,7 @@ def _relocation_round_nonperiodic(
                 target_bank[lanes, columns],
                 metric_bank[lanes, columns],
                 np.arange(lanes.size, dtype=np.int64),
-                None,
+                edge_orbits,
             )
         improving_bank = (
             active_bank & (quality_gain | deviation_bank) & (status_bank == _OK)
@@ -3333,6 +3356,60 @@ def _relocation_round_nonperiodic(
         rejected_invalid,
         _INVALID,
         np.where(rejected_uncertain, _UNCERTAIN, _OK),
+    )
+    return _Backtracked(
+        success,
+        target_best,
+        metric_best,
+        stencil_sources_best,
+        stencil_weights_best,
+        stencil_valid_best,
+        source_stencil_exact_best,
+        rejected,
+        ball_owner,
+        ball_position,
+    )
+
+
+def _relocation_round_nonperiodic(
+    state: _State,
+    topology: _Topology,
+    counts: _Counts,
+    done: np.ndarray,
+    mode: PredicateMode,
+    source: _Source,
+    /,
+) -> tuple[_State, _Counts, int, np.ndarray]:
+    """Backtrack each nonperiodic spring proposal to representability."""
+    valence = np.diff(topology.ball_offsets)
+    movable = (
+        (valence > 0)
+        & ~done
+        & ((topology.kind == _INTERIOR) | ((topology.kind == _CURVE) & topology.straight))
+    )
+    vertices = np.flatnonzero(movable)
+    displacement, badness = _relocation_targets(state, topology, vertices)
+    active = np.any(displacement != 0.0, axis=1)
+    vertices, displacement, badness = (
+        vertices[active],
+        displacement[active],
+        badness[active],
+    )
+    if vertices.size == 0:
+        return state, counts, 0, done
+    (
+        success,
+        target_best,
+        metric_best,
+        stencil_sources_best,
+        stencil_weights_best,
+        stencil_valid_best,
+        source_stencil_exact_best,
+        rejected,
+        ball_owner,
+        ball_position,
+    ) = _backtracked_relocations(
+        state, topology, vertices, displacement, mode, source, None
     )
     counts = _tally(counts, rejected[~success])
     winners = np.flatnonzero(success)
@@ -3447,7 +3524,63 @@ def _relocation_round_periodic(
     rejected: list[int] = []
     candidates: list[dict[str, Any]] = []
     orbits = np.asarray(periodic_context.vertex_orbits, dtype=np.int64)
-    for orbit in np.unique(orbits[vertices]):
+    # A vertex that is its orbit's only lifted member, with the identity deck
+    # element and no stabilizer, relocates exactly like a planar vertex; those
+    # proposals backtrack together in scale lanes.
+    orbit_ids, orbit_counts = np.unique(orbits, return_counts=True)
+    orbit_sizes = dict(zip(orbit_ids.tolist(), orbit_counts.tolist(), strict=True))
+    dimension = state.points.shape[1]
+    identity = tuple(
+        tuple(Fraction(int(row == column)) for column in range(dimension + 1))
+        for row in range(dimension + 1)
+    )
+    single = np.asarray(
+        [
+            orbit_sizes[int(orbits[vertex])] == 1
+            and not periodic_context.vertex_stabilizers[vertex]
+            and periodic_context.vertex_exact_isometries[vertex] == identity
+            for vertex in vertices.tolist()
+        ],
+        dtype=np.bool_,
+    )
+    if np.any(single):
+        single_vertices = vertices[single]
+        relocation = _backtracked_relocations(
+            state,
+            topology,
+            single_vertices,
+            displacement[single],
+            mode,
+            source,
+            periodic_context.edge_orbits,
+        )
+        rejected.extend(relocation.rejected[~relocation.success].tolist())
+        single_badness = badness[single]
+        for row in np.flatnonzero(relocation.success).tolist():
+            vertex = int(single_vertices[row])
+            cells = topology.ball_cells[
+                topology.ball_offsets[vertex] : topology.ball_offsets[vertex + 1]
+            ]
+            candidates.append(
+                {
+                    "vertices": np.asarray((vertex,), dtype=np.int64),
+                    "target": relocation.target[row : row + 1].copy(),
+                    "metric": relocation.metric[row : row + 1].copy(),
+                    "source_stencils": (
+                        relocation.stencil_sources[row : row + 1],
+                        relocation.stencil_weights[row : row + 1],
+                        relocation.stencil_valid[row : row + 1],
+                        np.ones((1,), dtype=np.bool_),
+                        (relocation.stencil_exact[row],),
+                    ),
+                    "cavity": frozenset(int(cell) for cell in cells.tolist()),
+                    "quotient_id": int(
+                        periodic_context.vertex_quotient_ids[int(orbits[vertex])]
+                    ),
+                    "badness": float(single_badness[row]),
+                }
+            )
+    for orbit in np.unique(orbits[vertices[~single]]):
         members = np.flatnonzero(orbits == orbit)
         if not members.size or any(
             int(vertex) not in position_by_vertex for vertex in members
@@ -3509,16 +3642,27 @@ def _relocation_round_periodic(
                 ]
             )
             if seam_orbit:
-                member_metrics, scores = _scored_proposal_metric(
+                # Only a member whose target lies in its own translated ball locates
+                # the proposal; the deepest such member supplies the metric. No
+                # admissible member means the step leaves the quotient ball.
+                cells, weights, scores = _proposal_locations(
                     state, topology, members, target
                 )
-                best = int(np.argmax(scores))
+                admissible = np.isfinite(scores) & (scores >= 0.0)
+                if not np.any(admissible):
+                    had_invalid = True
+                    scale *= 0.5
+                    continue
+                best = int(np.argmax(np.where(admissible, scores, -np.inf)))
+                member_metric = _located_metric(
+                    state, cells[best : best + 1], weights[best : best + 1]
+                )[0]
                 dimension = state.points.shape[1]
                 linear = np.asarray(
                     periodic_context.vertex_exact_isometries[int(members[best])],
                     dtype=np.float64,
                 )[:dimension, :dimension]
-                pulled = linear.T @ member_metrics[best] @ linear
+                pulled = linear.T @ member_metric @ linear
                 representative_metric = 0.5 * (pulled + pulled.T)
             else:
                 representative_metric = _proposal_metric(
@@ -3598,7 +3742,6 @@ def _relocation_round_periodic(
                     "source_stencils": source_stencils,
                     "cavity": cavity,
                     "quotient_id": int(periodic_context.vertex_quotient_ids[int(orbit)]),
-                    "gain": float(np.min(after) - np.min(before)),
                     "badness": float(badness[representative_position]),
                 }
                 break
@@ -3737,20 +3880,47 @@ def _periodic_topology(
     )
 
 
+@final
+class _StateTopologies:
+    """Topology and periodic context of the most recent state.
+
+    A round that applies nothing returns its input state object, so the next
+    phase, the relocation sweep, and the pass loop reuse that state's topology
+    and exact periodic context instead of re-staging the same edit.
+    """
+
+    def __init__(self, mesh: CellMesh, source: _Source, mode: PredicateMode, /) -> None:
+        self._mesh = mesh
+        self._source = source
+        self._mode = mode
+        self._state: _State | None = None
+        self._value: tuple[_Topology, _PeriodicContext | None] | None = None
+
+    def __call__(self, state: _State, /) -> tuple[_Topology, _PeriodicContext | None]:
+        if self._value is None or state is not self._state:
+            self._value = _periodic_topology(
+                self._mesh,
+                self._source,
+                state,
+                _topology(state, self._mode),
+                self._mode,
+            )
+            self._state = state
+        return self._value
+
+
 def _run_phase(
     state: _State,
     counts: _Counts,
     phase: Any,
     mode: PredicateMode,
-    periodic_mesh: CellMesh,
+    topologies: _StateTopologies,
     source: _Source,
     /,
 ) -> Any:
     total = 0
     while True:
-        topology, periodic_context = _periodic_topology(
-            periodic_mesh, source, state, _topology(state, mode), mode
-        )
+        topology, periodic_context = topologies(state)
         state, counts, count = phase(
             state, topology, counts, mode, periodic_context, source
         )
@@ -3765,30 +3935,41 @@ def _run_pass(
     mode: PredicateMode,
     topology_operations: bool,
     relocation: bool,
-    periodic_mesh: CellMesh,
+    topologies: _StateTopologies,
     source: _Source,
     /,
-) -> tuple[_State, _Counts, int]:
-    applied = 0
+) -> tuple[_State, _Counts, int, int]:
+    """One pass: exhausted split/collapse/flip phases, then one relocation sweep.
+
+    Returns the topology operations and the relocations applied separately.
+    """
+    reconnected = 0
     if topology_operations:
         for phase in (_split_round, _collapse_round, _flip_round):
             state, counts, count = _run_phase(
-                state, counts, phase, mode, periodic_mesh, source
+                state, counts, phase, mode, topologies, source
             )
-            applied += count
+            reconnected += count
+    relocated = 0
     if relocation:
         done = np.zeros((state.points.shape[0],), dtype=np.bool_)
         while True:
-            topology, periodic_context = _periodic_topology(
-                periodic_mesh, source, state, _topology(state, mode), mode
-            )
+            topology, periodic_context = topologies(state)
             state, counts, count, done = _relocation_round(
                 state, topology, counts, done, mode, periodic_context, source
             )
-            applied += count
+            relocated += count
             if count == 0:
                 break
-    return state, counts, applied
+    return state, counts, reconnected, relocated
+
+
+def _out_of_range(topology: _Topology, /) -> np.ndarray:
+    """Measured edges outside the unit band, by edge row."""
+    lengths = topology.lengths
+    unprotected = ~topology.edge_protected
+    measured = unprotected if np.any(unprotected) else np.ones_like(unprotected)
+    return measured & ((lengths < _LOWER) | (lengths > _UPPER))
 
 
 # ------------------------------------------------------------------ assembly
@@ -4270,14 +4451,17 @@ def _periodic_state_context(
         for row in range(mesh.ambient_dimension + 1)
     )
     vertex_exact_isometries = [identity] * state.points.shape[0]
+    # Rows acted on by the zero winding: their exact action is the identity, so
+    # their orbit checks reduce to binary64 equality with the root.
+    vertex_identity = np.ones((state.points.shape[0],), dtype=np.bool_)
     state_vertex_windings = np.zeros(
         (state.points.shape[0], vertex_windings.shape[1]), dtype=np.int64
     )
     vertex_stabilizers: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = [
         ()
     ] * state.points.shape[0]
-    for orbit in np.unique(vertex_orbits[order]):
-        state_rows = np.flatnonzero(vertex_orbits == orbit)
+    for state_rows in _orbit_groups(vertex_orbits, np.flatnonzero(vertex_orbits >= 0)):
+        orbit = int(vertex_orbits[state_rows[0]])
         target_rows = row_of[state_rows]
         representative_target_row = int(vertex_representatives[orbit])
         representative_winding = vertex_windings[representative_target_row]
@@ -4288,19 +4472,30 @@ def _periodic_state_context(
         for state_row, target_row in zip(state_rows, target_rows, strict=True):
             state_vertex_windings[state_row] = vertex_windings[target_row]
             winding = vertex_windings[target_row] - representative_winding
-            exact_isometry = exact_periodic_element(bound_periodic.cell, winding)
-            vertex_exact_isometries[state_row] = exact_isometry
-            if not np.array_equal(
-                state.points[state_row],
-                _exact_periodic_point(exact_isometry, representative_point),
-            ):
+            if np.any(winding):
+                exact_isometry = exact_periodic_element(bound_periodic.cell, winding)
+                vertex_exact_isometries[state_row] = exact_isometry
+                vertex_identity[state_row] = False
+                point_matches = np.array_equal(
+                    state.points[state_row],
+                    _exact_periodic_point(exact_isometry, representative_point),
+                )
+                metric_matches = np.array_equal(
+                    state.metric[state_row],
+                    _exact_periodic_metric(exact_isometry, representative_metric),
+                )
+            else:
+                point_matches = np.array_equal(
+                    state.points[state_row], representative_point
+                )
+                metric_matches = np.array_equal(
+                    state.metric[state_row], representative_metric
+                )
+            if not point_matches:
                 raise ValueError(
                     "Periodic vertex coordinates must match their exact orbit action."
                 )
-            if not np.array_equal(
-                state.metric[state_row],
-                _exact_periodic_metric(exact_isometry, representative_metric),
-            ):
+            if not metric_matches:
                 raise ValueError(
                     "Metric tensors must transform exactly over vertex orbits."
                 )
@@ -4346,8 +4541,8 @@ def _periodic_state_context(
     edge_representative_rows = np.full((edge_representatives.size,), -1, dtype=np.int64)
     # Evaluate each periodic scalar on its exact canonical lift; coordinate and
     # tensor orbit consistency is independently checked above.
-    for orbit in np.unique(edge_orbits):
-        rows = np.flatnonzero(edge_orbits == orbit)
+    for rows in _orbit_groups(edge_orbits, np.arange(edge_orbits.size)):
+        orbit = int(edge_orbits[rows[0]])
         if (
             np.unique(topology.edge_class[rows]).size != 1
             or np.unique(topology.edge_protected[rows]).size != 1
@@ -4362,9 +4557,11 @@ def _periodic_state_context(
         representative_winding = edge_windings[representative_target_row]
         for edge_row in rows:
             target_row = int(edge_target_rows[edge_row])
-            isometry = exact_periodic_element(
-                bound_periodic.cell,
-                edge_windings[target_row] - representative_winding,
+            winding = edge_windings[target_row] - representative_winding
+            isometry = (
+                exact_periodic_element(bound_periodic.cell, winding)
+                if np.any(winding)
+                else None
             )
             member_vertices = edge_canonical_vertices[edge_row]
             # Only root-relative lifts are bit-consistent on non-dyadic
@@ -4374,20 +4571,32 @@ def _periodic_state_context(
                 representative_vertices, member_vertices, strict=True
             ):
                 root_row = int(representative_state_rows[member_vertex])
-                composite = _multiply(
-                    isometry, vertex_exact_isometries[representative_vertex]
-                )
-                if (
-                    root_row != int(representative_state_rows[representative_vertex])
-                    or not np.array_equal(
+                if root_row != int(representative_state_rows[representative_vertex]):
+                    raise ValueError(
+                        "Periodic edge geometry must respect its exact orbit action."
+                    )
+                if isometry is None and vertex_identity[representative_vertex]:
+                    consistent = np.array_equal(
+                        state.points[member_vertex], state.points[root_row]
+                    ) and np.array_equal(
+                        state.metric[member_vertex], state.metric[root_row]
+                    )
+                else:
+                    composite = (
+                        vertex_exact_isometries[representative_vertex]
+                        if isometry is None
+                        else _multiply(
+                            isometry, vertex_exact_isometries[representative_vertex]
+                        )
+                    )
+                    consistent = np.array_equal(
                         state.points[member_vertex],
                         _exact_periodic_point(composite, state.points[root_row]),
-                    )
-                    or not np.array_equal(
+                    ) and np.array_equal(
                         state.metric[member_vertex],
                         _exact_periodic_metric(composite, state.metric[root_row]),
                     )
-                ):
+                if not consistent:
                     raise ValueError(
                         "Periodic edge geometry must respect its exact orbit action."
                     )
@@ -4399,8 +4608,8 @@ def _periodic_state_context(
     )
     cell_representatives = np.asarray(cell_map.representative_lifted_rows, dtype=np.int64)
     cell_quality = _quality(edge_lengths[topology.cell_edges])
-    for orbit in np.unique(cell_orbits):
-        rows = np.flatnonzero(cell_orbits == orbit)
+    for rows in _orbit_groups(cell_orbits, np.arange(cell_orbits.size)):
+        orbit = int(cell_orbits[rows[0]])
         if (
             np.unique(state.cell_block[rows]).size != 1
             or np.unique(state.cell_region[rows]).size != 1
@@ -4410,9 +4619,7 @@ def _periodic_state_context(
         if representative_row < 0:
             raise ValueError("Periodic cell orbit has no state representative.")
         cell_quality[rows] = cell_quality[representative_row]
-    active_vertices = np.flatnonzero(vertex_orbits >= 0)
-    for orbit in np.unique(vertex_orbits[active_vertices]):
-        rows = active_vertices[vertex_orbits[active_vertices] == orbit]
+    for rows in _orbit_groups(vertex_orbits, np.flatnonzero(vertex_orbits >= 0)):
         if np.unique(state.fixed[rows]).size != 1:
             raise ValueError("Periodic fixed-vertex controls must agree over each orbit.")
     return _PeriodicContext(
@@ -4612,6 +4819,11 @@ def execute_local_metric_adaptation(
 
     No candidate or pass quota truncates the finite staged work. Every accepted
     split/collapse/flip phase exhausts its current candidates before proceeding.
+    A full pass applies nothing when it reconnects nothing and either relocates
+    nothing or, with topology operations, its relocation sweep leaves the
+    out-of-range edge set unchanged: split and collapse candidates are exactly
+    those edges, so further sweeps only polish shape quality by ever smaller
+    accepted steps.
     Periodic sources group split, collapse, flip, and relocation proposals by
     quotient orbit, execute complete lifted groups, and validate the exact target
     stencil and lineage before returning an immutable candidate edit.
@@ -4647,10 +4859,8 @@ def execute_local_metric_adaptation(
         _boolean_array(fixed_vertices, vertex_count, "fixed_vertices"),
         predicate_mode,
     )
-    topology = _topology(state, predicate_mode)
-    topology, periodic_context = _periodic_topology(
-        mesh, source, state, topology, predicate_mode
-    )
+    topologies = _StateTopologies(mesh, source, predicate_mode)
+    topology, periodic_context = topologies(state)
     _validate_classification(state, topology, periodic_context)
     counts = _Counts()
     passes = 0
@@ -4661,20 +4871,23 @@ def execute_local_metric_adaptation(
     while not _unit(topology) or periodic_topology_pending:
         periodic_topology_pending = False
         passes += 1
-        state, counts, applied = _run_pass(
+        outside = _out_of_range(topology)
+        state, counts, reconnected, relocated = _run_pass(
             state,
             counts,
             predicate_mode,
             topology_operations,
             relocation,
-            mesh,
+            topologies,
             source,
         )
-        topology = _topology(state, predicate_mode)
-        topology, periodic_context = _periodic_topology(
-            mesh, source, state, topology, predicate_mode
-        )
-        if applied != 0:
+        topology, periodic_context = topologies(state)
+        if reconnected != 0 or (
+            relocated != 0
+            and not (
+                topology_operations and np.array_equal(outside, _out_of_range(topology))
+            )
+        ):
             continue
         stalled = True
         if not topology_operations or _unit(topology):
@@ -4683,23 +4896,17 @@ def execute_local_metric_adaptation(
         if escaped_from is not None and potential >= escaped_from[3]:
             # The last escape did not lower the stall potential: return its stall.
             state, counts, passes, _ = escaped_from
-            topology = _topology(state, predicate_mode)
-            topology, periodic_context = _periodic_topology(
-                mesh, source, state, topology, predicate_mode
-            )
+            topology, periodic_context = topologies(state)
             break
         stall = (state, counts, passes, potential)
         state, counts, escaped = _run_phase(
-            state, counts, _escape_collapse_round, predicate_mode, mesh, source
+            state, counts, _escape_collapse_round, predicate_mode, topologies, source
         )
         if escaped == 0:
             break
         stalled = False
         escaped_from = stall
-        topology = _topology(state, predicate_mode)
-        topology, periodic_context = _periodic_topology(
-            mesh, source, state, topology, predicate_mode
-        )
+        topology, periodic_context = topologies(state)
     stalled_edges = (
         _stall_findings(state, topology, periodic_context, source, predicate_mode)
         if stalled and topology_operations

@@ -8,11 +8,12 @@ All component axes follow the exterior owner's lexicographic blade convention.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from fractions import Fraction
 from functools import lru_cache
 from hashlib import sha256
 from itertools import combinations, product
-from math import comb, factorial, prod
+from math import comb, factorial, lcm, prod
 from typing import final, Literal, NamedTuple
 
 import equinox as eqx
@@ -47,29 +48,48 @@ type _HostArray = npt.NDArray[np.float64]
 type _ExactCoefficientBank = tuple[tuple[tuple[Fraction, ...], ...], ...]
 type _ExactMomentBank = tuple[tuple[tuple[Fraction, ...], ...], ...]
 type _ExactMatrix = tuple[tuple[Fraction, ...], ...]
+# One shared exact zero keeps large sparse banks to one pointer per zero entry.
+_EXACT_ZERO = Fraction(0)
 
 
 @lru_cache(maxsize=128)
 def _exact_data_digest(value: object, /) -> str:
+    """SHA-256 of a tagged, length-prefixed encoding of nested Fraction tuples."""
     digest = sha256()
+    update = digest.update
+    # Banks share Fraction objects and repeat few values: encode each value once
+    # and remember it per object (every object stays alive inside ``value``).
+    by_value: dict[tuple[int, int], bytes] = {}
+    by_object: dict[int, bytes] = {}
+
+    def encode(item: Fraction, /) -> bytes:
+        key = (item.numerator, item.denominator)
+        cached = by_value.get(key)
+        if cached is None:
+            parts = [b"F"]
+            for integer in key:
+                magnitude = abs(integer)
+                length = max(1, (magnitude.bit_length() + 7) // 8)
+                parts.append(b"-" if integer < 0 else b"+")
+                parts.append(length.to_bytes(8, "big"))
+                parts.append(magnitude.to_bytes(length, "big"))
+            cached = by_value[key] = b"".join(parts)
+        by_object[id(item)] = cached
+        return cached
 
     def feed(item: object, /) -> None:
         if isinstance(item, Fraction):
-            digest.update(b"F")
-            for integer in (item.numerator, item.denominator):
-                magnitude = abs(integer)
-                length = max(1, (magnitude.bit_length() + 7) // 8)
-                digest.update(b"-" if integer < 0 else b"+")
-                digest.update(length.to_bytes(8, "big"))
-                digest.update(magnitude.to_bytes(length, "big"))
+            update(by_object.get(id(item)) or encode(item))
             return
-        if isinstance(item, tuple):
-            digest.update(b"T")
-            digest.update(len(item).to_bytes(8, "big"))
-            for child in item:
+        if not isinstance(item, tuple):
+            raise TypeError("Exact basis fingerprints require tuples of Fractions.")
+        update(b"T")
+        update(len(item).to_bytes(8, "big"))
+        for child in item:
+            if type(child) is Fraction:
+                update(by_object.get(id(child)) or encode(child))
+            else:
                 feed(child)
-            return
-        raise TypeError("Exact basis fingerprints require tuples of Fractions.")
 
     feed(value)
     return digest.hexdigest()
@@ -275,21 +295,15 @@ def _exact_dual_coefficients(
         )
     ):
         raise ValueError("Exact polynomial generators and moment functionals disagree.")
-    pairing = [
-        [
-            sum(
-                (
-                    moments[dof][monomial][component]
-                    * generators[monomial][component][generator]
-                    for monomial in range(len(generators))
-                    for component in range(len(generators[monomial]))
-                ),
-                Fraction(0),
-            )
-            for generator in range(generator_count)
-        ]
-        for dof in range(dof_count)
-    ]
+    component_count = len(generators[0])
+    # pairing[dof][generator] = moments[dof] . generators[:, :, generator]
+    pairing = _exact_moment_product(
+        _integer_moment_rows(moments),
+        _integer_term_columns(
+            tuple(row for components in generators for row in components),
+            generator_count,
+        ),
+    )
     inverse = solve_exact(
         pairing,
         [
@@ -297,22 +311,14 @@ def _exact_dual_coefficients(
             for row in range(dof_count)
         ],
     )
+    # coefficients[monomial][component] = generators[monomial][component] @ inverse
+    coefficients = _exact_moment_product(
+        _integer_rows(tuple(row for components in generators for row in components)),
+        _integer_term_columns(inverse, dof_count),
+    )
     return tuple(
-        tuple(
-            tuple(
-                sum(
-                    (
-                        generators[monomial][component][generator]
-                        * inverse[generator][dof]
-                        for generator in range(generator_count)
-                    ),
-                    Fraction(0),
-                )
-                for dof in range(dof_count)
-            )
-            for component in range(len(generators[monomial]))
-        )
-        for monomial in range(len(generators))
+        coefficients[start : start + component_count]
+        for start in range(0, len(coefficients), component_count)
     )
 
 
@@ -439,14 +445,15 @@ def _exact_tensor_coefficients(
                     prod(
                         (
                             (one if axis in component_blade else zero)[index[axis]].get(
-                                (exponent[axis],), Fraction(0)
+                                (exponent[axis],), _EXACT_ZERO
                             )
                             for axis in range(n)
                         ),
                         start=Fraction(1),
                     )
+                    or _EXACT_ZERO
                     if component_blade == label_blade
-                    else Fraction(0)
+                    else _EXACT_ZERO
                 )
                 for _, index, label_blade in labels
             )
@@ -474,13 +481,14 @@ def _exact_tensor_generators(
                         (
                             (one_candidates if axis in blade else zero_candidates)[
                                 index[axis]
-                            ].get((exponent[axis],), Fraction(0))
+                            ].get((exponent[axis],), _EXACT_ZERO)
                             for axis in range(n)
                         ),
                         start=Fraction(1),
                     )
+                    or _EXACT_ZERO
                     if blade == label_blade
-                    else Fraction(0)
+                    else _EXACT_ZERO
                 )
                 for _, index, label_blade in labels
             )
@@ -848,7 +856,7 @@ def _exact_tensor_functional_moments(
                 )
             row.append(
                 tuple(
-                    integral if column == component else Fraction(0)
+                    (integral or _EXACT_ZERO) if column == component else _EXACT_ZERO
                     for column in range(len(blades))
                 )
             )
@@ -1217,77 +1225,210 @@ def _exact_form_pullback_matrix(
     return tuple(tuple(sign * value for value in row) for row in matrix)
 
 
-def _exact_substitute_polynomial(
-    polynomial: _ExactPolynomial,
-    origin: tuple[Fraction, ...],
-    jacobian: _ExactMatrix,
-    /,
-) -> _ExactPolynomial:
+type _IntegerMomentRows = tuple[tuple[int, tuple[tuple[int, int], ...]], ...]
+# Per-DOF scales and, per ``component * dof_count + dof``, nonzero integer
+# coefficients ``(monomial, numerator)`` over that DOF's scale.
+type _IntegerCoefficientColumns = tuple[
+    tuple[int, ...], tuple[tuple[tuple[int, int], ...], ...]
+]
+# Per-column scales and, per ``monomial * component_count + component``,
+# nonzero integer entries ``(column, numerator)`` over that column's scale.
+type _IntegerTermColumns = tuple[tuple[int, ...], tuple[tuple[tuple[int, int], ...], ...]]
 
-    result: _ExactPolynomial = {}
-    for exponent, coefficient in polynomial.items():
-        _exact_add_scaled(
-            result,
-            _exact_substitute_monomial(exponent, origin, jacobian),
-            coefficient,
+
+def _integer_coefficient_columns(
+    coefficients: _ExactCoefficientBank, /
+) -> _IntegerCoefficientColumns:
+    """Each DOF's basis coefficients as integers over their denominator LCM."""
+    component_count = len(coefficients[0])
+    dof_count = len(coefficients[0][0])
+    terms: list[list[tuple[int, Fraction]]] = [
+        [] for _ in range(component_count * dof_count)
+    ]
+    scales = [1] * dof_count
+    for monomial, components in enumerate(coefficients):
+        for component, dofs in enumerate(components):
+            offset = component * dof_count
+            for dof, value in enumerate(dofs):
+                if value:
+                    terms[offset + dof].append((monomial, value))
+                    scales[dof] = lcm(scales[dof], value.denominator)
+    return tuple(scales), tuple(
+        tuple(
+            (monomial, value.numerator * (scales[index % dof_count] // value.denominator))
+            for monomial, value in entries
         )
-    return result
+        for index, entries in enumerate(terms)
+    )
 
 
-def _exact_substitute_coefficients(
+def _integer_rows(rows: Iterable[Sequence[Fraction]], /) -> _IntegerMomentRows:
+    """Nonzero entries of each row as integers over the row's denominator LCM."""
+    result = []
+    for row in rows:
+        terms = tuple((index, value) for index, value in enumerate(row) if value)
+        scale = lcm(1, *(value.denominator for _, value in terms))
+        result.append(
+            (
+                scale,
+                tuple(
+                    (index, value.numerator * (scale // value.denominator))
+                    for index, value in terms
+                ),
+            )
+        )
+    return tuple(result)
+
+
+def _integer_moment_rows(functional_moments: _ExactMomentBank, /) -> _IntegerMomentRows:
+    """Moment rows with terms flattened as ``monomial * component_count + component``."""
+    return _integer_rows(
+        tuple(value for components in moments for value in components)
+        for moments in functional_moments
+    )
+
+
+def _integer_term_columns(
+    rows: Sequence[Sequence[Fraction]], column_count: int, /
+) -> _IntegerTermColumns:
+    """Rows' nonzero entries as integers over each column's denominator LCM."""
+    scales = [1] * column_count
+    nonzero = []
+    for row in rows:
+        entries = tuple((column, value) for column, value in enumerate(row) if value)
+        for column, value in entries:
+            scales[column] = lcm(scales[column], value.denominator)
+        nonzero.append(entries)
+    return tuple(scales), tuple(
+        tuple(
+            (column, value.numerator * (scales[column] // value.denominator))
+            for column, value in entries
+        )
+        for entries in nonzero
+    )
+
+
+def _substituted_term_columns(
     exponents: tuple[tuple[int, ...], ...],
-    coefficients: _ExactCoefficientBank,
+    columns: _IntegerCoefficientColumns,
     origin: tuple[Fraction, ...],
     jacobian: _ExactMatrix,
     pullback: _ExactMatrix,
     /,
-) -> _ExactCoefficientBank:
-    component_count = len(coefficients[0])
-    dof_count = len(coefficients[0][0])
-    source_polynomials = [
-        [
-            {
-                exponent: coefficients[monomial][component][dof]
-                for monomial, exponent in enumerate(exponents)
-                if coefficients[monomial][component][dof]
-            }
-            for dof in range(dof_count)
-        ]
-        for component in range(component_count)
-    ]
-    transformed_polynomials: list[list[_ExactPolynomial]] = [
-        [{} for _ in range(dof_count)] for _ in range(component_count)
-    ]
-    for target_component in range(component_count):
-        for source_component in range(component_count):
-            scale = pullback[target_component][source_component]
-            if not scale:
-                continue
-            for dof in range(dof_count):
-                _exact_add_scaled(
-                    transformed_polynomials[target_component][dof],
-                    _exact_substitute_polynomial(
-                        source_polynomials[source_component][dof],
-                        origin,
-                        jacobian,
-                    ),
-                    scale,
-                )
+) -> _IntegerTermColumns:
+    """Exact pullback of every basis polynomial under ``x -> origin + J x``.
+
+    Each canonical monomial is substituted once and kept as an integer row over
+    its denominator LCM. Each DOF then accumulates integers over one common
+    scale: its coefficient scale times the pullback and substitution LCMs.
+    """
+    monomial_count = len(exponents)
+    component_count = len(pullback)
+    dof_scales, source = columns
+    dof_count = len(dof_scales)
     positions = {exponent: index for index, exponent in enumerate(exponents)}
-    result = [
-        [[Fraction(0) for _ in range(dof_count)] for _ in range(component_count)]
-        for _ in exponents
+    images: list[tuple[int, tuple[tuple[int, int], ...]]] = []
+    for exponent in exponents:
+        image = _exact_substitute_monomial(exponent, origin, jacobian)
+        scale = lcm(1, *(value.denominator for value in image.values()))
+        # Images leaving the canonical space get indices past it; they must cancel.
+        images.append(
+            (
+                scale,
+                tuple(
+                    (
+                        positions.setdefault(target, len(positions)),
+                        value.numerator * (scale // value.denominator),
+                    )
+                    for target, value in image.items()
+                ),
+            )
+        )
+    width = len(positions)
+    image_scale = lcm(1, *(scale for scale, _ in images))
+    image_factors = tuple((image_scale // scale, entries) for scale, entries in images)
+    pullback_scale = lcm(1, *(value.denominator for row in pullback for value in row))
+    mixing = tuple(
+        tuple(
+            (
+                source_component * dof_count,
+                value.numerator * (pullback_scale // value.denominator),
+            )
+            for source_component, value in enumerate(pullback[target])
+            if value
+        )
+        for target in range(component_count)
+    )
+    term_columns: list[list[tuple[int, int]]] = [
+        [] for _ in range(monomial_count * component_count)
     ]
-    for component, polynomials in enumerate(transformed_polynomials):
-        for dof, polynomial in enumerate(polynomials):
-            for exponent, value in polynomial.items():
-                monomial = positions.get(exponent)
-                if monomial is None:
+    for dof in range(dof_count):
+        for target, sources in enumerate(mixing):
+            accumulated = [0] * width
+            for offset, weight in sources:
+                for monomial, coefficient in source[offset + dof]:
+                    factor, entries = image_factors[monomial]
+                    factor *= weight * coefficient
+                    for index, entry in entries:
+                        accumulated[index] += factor * entry
+            for index, total in enumerate(accumulated):
+                if not total:
+                    continue
+                if index >= monomial_count:
                     raise ValueError(
                         "Exact form permutation left the canonical monomial space."
                     )
-                result[monomial][component][dof] = value
-    return tuple(tuple(tuple(dofs) for dofs in components) for components in result)
+                term_columns[index * component_count + target].append((dof, total))
+    common = pullback_scale * image_scale
+    return tuple(common * scale for scale in dof_scales), tuple(
+        tuple(entries) for entries in term_columns
+    )
+
+
+def _exact_moment_product(
+    moment_rows: _IntegerMomentRows, columns: _IntegerTermColumns, /
+) -> _ExactMatrix:
+    """Exact ``moments[row] . transformed[:, :, column]`` over nonzero terms.
+
+    Rows and columns are integers over their scales, so each entry is one
+    integer accumulation whose normalized quotient equals the rational sum.
+    """
+    column_scales, term_columns = columns
+    dof_count = len(column_scales)
+    rows: list[tuple[Fraction, ...]] = []
+    for row_scale, row_terms in moment_rows:
+        accumulated = [0] * dof_count
+        for index, weight in row_terms:
+            for column, entry in term_columns[index]:
+                accumulated[column] += weight * entry
+        rows.append(
+            tuple(
+                Fraction(total, row_scale * column_scales[column])
+                if total
+                else _EXACT_ZERO
+                for column, total in enumerate(accumulated)
+            )
+        )
+    return tuple(rows)
+
+
+def _exact_moment_permutation(
+    dimension: int,
+    form_degree: int,
+    family: FormElementFamily,
+    twist: FormTwist,
+    exponents: tuple[tuple[int, ...], ...],
+    columns: _IntegerCoefficientColumns,
+    moment_rows: _IntegerMomentRows,
+    vertices: tuple[int, ...],
+    /,
+) -> _ExactMatrix:
+    origin, jacobian = _exact_vertex_permutation_affine(dimension, family, vertices)
+    pullback = _exact_form_pullback_matrix(dimension, form_degree, jacobian, twist)
+    return _exact_moment_product(
+        moment_rows,
+        _substituted_term_columns(exponents, columns, origin, jacobian, pullback),
+    )
 
 
 @lru_cache(maxsize=128)
@@ -1302,27 +1443,15 @@ def _exact_form_permutation_matrix(
     vertices: tuple[int, ...],
     /,
 ) -> _ExactMatrix:
-    origin, jacobian = _exact_vertex_permutation_affine(dimension, family, vertices)
-    pullback = _exact_form_pullback_matrix(dimension, form_degree, jacobian, twist)
-    transformed = _exact_substitute_coefficients(
-        exponents, coefficients, origin, jacobian, pullback
-    )
-    dof_count = len(functional_moments)
-    component_count = comb(dimension, form_degree)
-    return tuple(
-        tuple(
-            sum(
-                (
-                    functional_moments[row][monomial][component]
-                    * transformed[monomial][component][column]
-                    for monomial in range(len(exponents))
-                    for component in range(component_count)
-                ),
-                Fraction(0),
-            )
-            for column in range(dof_count)
-        )
-        for row in range(dof_count)
+    return _exact_moment_permutation(
+        dimension,
+        form_degree,
+        family,
+        twist,
+        exponents,
+        _integer_coefficient_columns(coefficients),
+        _integer_moment_rows(functional_moments),
+        vertices,
     )
 
 
@@ -1338,15 +1467,17 @@ def _exact_form_orientation_actions(
     vertices: tuple[tuple[int, ...], ...],
     /,
 ) -> tuple[_ExactMatrix, ...]:
+    columns = _integer_coefficient_columns(coefficients)
+    moment_rows = _integer_moment_rows(functional_moments)
     return tuple(
-        _exact_form_permutation_matrix(
+        _exact_moment_permutation(
             dimension,
             form_degree,
             family,
             twist,
             exponents,
-            coefficients,
-            functional_moments,
+            columns,
+            moment_rows,
             permutation,
         )
         for permutation in vertices
@@ -1704,16 +1835,28 @@ class FormBasis(StrictModule):
             np.isfinite(functional_moments)
         ):
             raise ValueError("Exact form basis has no finite binary64 projection.")
+        # Banks share Fraction objects and repeat few values; project each value
+        # once and remember it per object (the banks keep every object alive).
+        projection_errors: dict[tuple[int, int], Fraction] = {}
+        object_errors: dict[int, Fraction] = {}
+
+        def projection_error(value: Fraction, /) -> Fraction:
+            error = object_errors.get(id(value))
+            if error is None:
+                key = (value.numerator, value.denominator)
+                error = projection_errors.get(key)
+                if error is None:
+                    error = projection_errors[key] = abs(Fraction(float(value)) - value)
+                object_errors[id(value)] = error
+            return error
+
         coefficient_projection_errors = tuple(
-            tuple(
-                tuple(abs(Fraction(float(value)) - value) for value in dofs)
-                for dofs in components
-            )
+            tuple(tuple(projection_error(value) for value in dofs) for dofs in components)
             for components in exact_coefficients
         )
         functional_moment_projection_errors = tuple(
             tuple(
-                tuple(abs(Fraction(float(value)) - value) for value in components)
+                tuple(projection_error(value) for value in components)
                 for components in monomials
             )
             for monomials in exact_functional_moments

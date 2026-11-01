@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil, floor, pi, sqrt, tau
@@ -1953,36 +1953,78 @@ def _project_face(
     return _Hit(2, face, candidate, uv, lower, upper, status, normal, tangents, path)
 
 
-def _unit(vector: tuple[float, float, float], /) -> np.ndarray:
-    values = np.asarray(vector, dtype=np.float64)
-    return values / np.linalg.norm(values)
-
-
-# Fixed irrational-ratio ray directions for containment parity; a ray meeting a
-# trim edge or a face tangentially is replaced by the next one.
-_CONTAINMENT_RAY_DIRECTIONS = (
-    _unit((1.0, sqrt(2.0), sqrt(3.0))),
-    _unit((-sqrt(3.0), 1.0, sqrt(2.0))),
-    _unit((sqrt(2.0), -sqrt(3.0), 1.0)),
-    _unit((1.0, sqrt(5.0), -sqrt(7.0))),
+# Cranley-Patterson shift of the Sobol points: 40-bit dyadic images of
+# sqrt(2) - 1, sqrt(3) - 1 and sqrt(5) - 2 keep the early directions off the
+# axis-aligned and diagonal directions of typical CAD sources.
+_CONTAINMENT_RAY_SHIFT = tuple(
+    Fraction(round(value * 2**40), 2**40)
+    for value in (sqrt(2.0) - 1.0, sqrt(3.0) - 1.0, sqrt(5.0) - 2.0)
 )
 
 
-def _ray_cylinder_crossings(
-    model: BRepModel,
-    face: int,
-    ray_origin: tuple[Fraction, Fraction, Fraction],
-    ray_direction: tuple[Fraction, Fraction, Fraction],
-    /,
-) -> int | None:
-    """Count transversal crossings of an exact ray with a trimmed cylinder face.
+def _containment_ray_directions() -> Iterator[tuple[Fraction, Fraction, Fraction]]:
+    """Yield an unbounded deterministic sequence of exact dyadic ray directions.
 
-    The ray meets the infinite cylinder where ``A t^2 + B t + C = 0`` with
-    exact rational coefficients; the discriminant and the signs of both roots
-    are decided exactly. Each positive root is then classified against the
-    face trim, and a tangent ray, a ray starting on the cylinder or a crossing
-    on a trim boundary refuses.
+    Direction ``n`` is the shifted three-dimensional Sobol point ``n`` (primitive
+    polynomials ``1``, ``x + 1``, ``x^2 + x + 1``) mapped from the unit cube to
+    ``[-1, 1)^3``. The Sobol points are dense in the cube, the shift modulo one is
+    a homeomorphism of the torus and radial projection maps a dense cube subset
+    onto a dense subset of the sphere, so the sequence enters every open set of
+    directions. Every coordinate is dyadic with at most ``40 + log2(n + 1)``
+    fraction bits.
     """
+    numbers: tuple[list[int], list[int], list[int]] = ([], [], [])
+    index = 0
+    while True:
+        length = index.bit_length()
+        while len(numbers[0]) < length:
+            count = len(numbers[0])
+            numbers[0].append(1)
+            second, third = numbers[1], numbers[2]
+            second.append(1 if count == 0 else (2 * second[-1]) ^ second[-1])
+            third.append(
+                (1, 3)[count]
+                if count < 2
+                else (2 * third[-1]) ^ (4 * third[-2]) ^ third[-2]
+            )
+        components: list[Fraction] = []
+        for direction_numbers, shift in zip(numbers, _CONTAINMENT_RAY_SHIFT, strict=True):
+            value = 0
+            for bit in range(length):
+                if index >> bit & 1:
+                    value ^= direction_numbers[bit] << (length - bit - 1)
+            point = Fraction(value, 1 << length) + shift
+            point -= floor(point)
+            components.append(2 * point - 1)
+        index += 1
+        if any(components):
+            yield components[0], components[1], components[2]
+
+
+@dataclass(frozen=True, slots=True)
+class _ExactCylinder:
+    origin: tuple[Fraction, Fraction, Fraction]
+    first: tuple[Fraction, Fraction, Fraction]
+    second: tuple[Fraction, Fraction, Fraction]
+    axis: tuple[Fraction, Fraction, Fraction]
+    axis_squared: Fraction
+    radius: Fraction
+    period: float
+    middle: float
+
+
+# A containment ray carrier: an exact cylinder, or a plane frame with its normal.
+type _RayCarrier = tuple[
+    int, _ExactCylinder | tuple[_AffineProjectionFrame, tuple[ExactScalar, ...]]
+]
+
+
+def _rational_dot(left: Sequence[Fraction], right: Sequence[Fraction], /) -> Fraction:
+    return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
+
+
+def _exact_cylinder(model: BRepModel, face: int, /) -> _ExactCylinder | None:
+    """Exact rational frame of a periodic cylinder face, or ``None``."""
     patch = model.patches[face]
     if not isinstance(patch, CylinderPatch):
         return None
@@ -1997,68 +2039,149 @@ def _ray_cylinder_crossings(
     ) or not isinstance(patch.radius_exact, Fraction):
         return None
     origin, first, second, axis = (
-        cast(tuple[Fraction, ...], vector) for vector in vectors
+        cast(tuple[Fraction, Fraction, Fraction], tuple(vector)) for vector in vectors
     )
     radius = patch.radius_exact
-
-    def dot(left: tuple[Fraction, ...], right: tuple[Fraction, ...], /) -> Fraction:
-        return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
-
-    axis_squared = dot(axis, axis)
+    axis_squared = _rational_dot(axis, axis)
+    period = patch.periods[0]
     if (
-        radius <= 0
+        period is None
+        or radius <= 0
         or axis_squared == 0
-        or dot(first, first) != 1
-        or dot(second, second) != 1
-        or dot(first, second) != 0
-        or dot(first, axis) != 0
-        or dot(second, axis) != 0
+        or _rational_dot(first, first) != 1
+        or _rational_dot(second, second) != 1
+        or _rational_dot(first, second) != 0
+        or _rational_dot(first, axis) != 0
+        or _rational_dot(second, axis) != 0
     ):
         return None
-    relative = tuple(ray_origin[index] - origin[index] for index in range(3))
-    position = (dot(relative, first), dot(relative, second))
-    rate = (dot(ray_direction, first), dot(ray_direction, second))
-    quadratic = rate[0] * rate[0] + rate[1] * rate[1]
-    linear = 2 * (position[0] * rate[0] + position[1] * rate[1])
-    constant = position[0] * position[0] + position[1] * position[1] - radius * radius
-    if quadratic == 0:
-        # A ray parallel to the axis never crosses unless it lies on the wall.
-        return None if constant == 0 else 0
-    if constant == 0:
-        return None
-    discriminant = linear * linear - 4 * quadratic * constant
-    if discriminant < 0:
-        return 0
-    if discriminant == 0:
-        return None
-    # With A > 0: t+ > 0 iff B < 0 or C < 0, and t- > 0 iff B < 0 and C > 0.
-    roots: list[int] = []
-    if linear < 0 or constant < 0:
-        roots.append(1)
-    if linear < 0 and constant > 0:
-        roots.append(-1)
-    if not roots:
-        return 0
     bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
-    period = patch.periods[0]
-    if period is None:
+    return _ExactCylinder(
+        origin,
+        first,
+        second,
+        axis,
+        axis_squared,
+        radius,
+        float(period),
+        0.5 * (float(bounds[0, 0]) + float(bounds[1, 0])),
+    )
+
+
+def _cylinder_trim(
+    model: BRepModel,
+    face: int,
+    cylinder: _ExactCylinder,
+    x: float,
+    y: float,
+    height: float,
+    /,
+) -> int | None:
+    """Trim state of the cylinder point with frame coordinates ``(x, y, height)``."""
+    angle = float(np.arctan2(y, x))
+    angle += round((cylinder.middle - angle) / cylinder.period) * cylinder.period
+    uv = np.asarray((angle, height), dtype=np.float64)
+    if not np.all(np.isfinite(uv)):
         return None
-    root_discriminant = sqrt(float(discriminant))
-    crossings = 0
-    for sign in roots:
-        parameter = (-float(linear) + sign * root_discriminant) / (2.0 * float(quadratic))
-        x = float(position[0]) + parameter * float(rate[0])
-        y = float(position[1]) + parameter * float(rate[1])
-        height = (
-            float(dot(relative, axis)) + parameter * float(dot(ray_direction, axis))
-        ) / float(axis_squared)
-        angle = float(np.arctan2(y, x))
-        middle = 0.5 * (float(bounds[0, 0]) + float(bounds[1, 0]))
-        angle += round((middle - angle) / float(period)) * float(period)
-        uv = np.asarray((angle, height), dtype=np.float64)
-        if not np.all(np.isfinite(uv)):
+    return _trim_classification(model, face, uv)
+
+
+def _cylinder_frame_point(
+    cylinder: _ExactCylinder, point: tuple[Fraction, Fraction, Fraction], /
+) -> tuple[tuple[Fraction, Fraction, Fraction], Fraction, Fraction, Fraction]:
+    """Relative vector, both radial frame coordinates and the radial excess."""
+    relative = (
+        point[0] - cylinder.origin[0],
+        point[1] - cylinder.origin[1],
+        point[2] - cylinder.origin[2],
+    )
+    x = _rational_dot(relative, cylinder.first)
+    y = _rational_dot(relative, cylinder.second)
+    return relative, x, y, x * x + y * y - cylinder.radius * cylinder.radius
+
+
+def _cylinder_contains_origin(
+    model: BRepModel,
+    face: int,
+    cylinder: _ExactCylinder,
+    ray_origin: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> bool:
+    """Whether the ray origin lies on (or float-undecidably near) the trimmed face."""
+    relative, x, y, constant = _cylinder_frame_point(cylinder, ray_origin)
+    if constant != 0:
+        return False
+    height = float(_rational_dot(relative, cylinder.axis) / cylinder.axis_squared)
+    return _cylinder_trim(model, face, cylinder, float(x), float(y), height) != 0
+
+
+def _ray_cylinder_crossings(
+    model: BRepModel,
+    face: int,
+    cylinder: _ExactCylinder,
+    ray_origin: tuple[Fraction, Fraction, Fraction],
+    ray_direction: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> int | None:
+    """Count transversal crossings of an exact ray with a trimmed cylinder face.
+
+    The ray meets the infinite cylinder where ``A t^2 + B t + C = 0`` with
+    exact rational coefficients; the discriminant and the signs of both roots
+    are decided exactly. Each positive root is then classified against the
+    face trim. A tangent ray, a ray along the wall or a crossing on (or
+    float-undecidably near) a trim boundary is not generic and returns
+    ``None``. The origin is off the trimmed face (`_cylinder_contains_origin`),
+    so a root ``t = 0`` is not a crossing.
+    """
+    relative, x, y, constant = _cylinder_frame_point(cylinder, ray_origin)
+    rate = (
+        _rational_dot(ray_direction, cylinder.first),
+        _rational_dot(ray_direction, cylinder.second),
+    )
+    quadratic = rate[0] * rate[0] + rate[1] * rate[1]
+    linear = 2 * (x * rate[0] + y * rate[1])
+    if quadratic == 0:
+        # A ray parallel to the axis never crosses unless it runs along the wall.
+        return None if constant == 0 else 0
+    parameters: list[float] = []
+    if constant == 0:
+        # The origin lies on the cylinder outside the face: the only other root
+        # is t = -B / A, a tangent ray when B = 0.
+        if linear == 0:
             return None
-        trim = _trim_classification(model, face, uv)
+        if linear < 0:
+            parameters.append(float(-linear / quadratic))
+    else:
+        discriminant = linear * linear - 4 * quadratic * constant
+        if discriminant < 0:
+            return 0
+        if discriminant == 0:
+            return None
+        # With A > 0: t+ > 0 iff B < 0 or C < 0, and t- > 0 iff B < 0 and C > 0.
+        root_discriminant = sqrt(float(discriminant))
+        for sign, positive in (
+            (1, linear < 0 or constant < 0),
+            (-1, linear < 0 and constant > 0),
+        ):
+            if positive:
+                parameters.append(
+                    (-float(linear) + sign * root_discriminant) / (2.0 * float(quadratic))
+                )
+    axial = (
+        _rational_dot(relative, cylinder.axis),
+        _rational_dot(ray_direction, cylinder.axis),
+    )
+    crossings = 0
+    for parameter in parameters:
+        trim = _cylinder_trim(
+            model,
+            face,
+            cylinder,
+            float(x) + parameter * float(rate[0]),
+            float(y) + parameter * float(rate[1]),
+            (float(axial[0]) + parameter * float(axial[1]))
+            / float(cylinder.axis_squared),
+        )
         if trim is None or trim < 0:
             return None
         crossings += trim
@@ -3454,20 +3577,63 @@ class NativeBRepProjection(AbstractBRepProjection):
     def _contains_solid(self, point: np.ndarray, solid: int, /) -> bool | None:
         """Exact ray-parity containment; ``None`` on the boundary or unsupported faces.
 
-        A ray is decisive only when it crosses every face transversally away from
-        trim boundaries. A non-generic ray (tangent, through a trim edge, along a
-        plane) is retried along the next fixed direction; a point on the solid
-        boundary is undecided along every direction.
+        Unsupported carriers or trims and a ray origin on (or float-undecidably
+        near) a trimmed face refuse before any ray is cast. Otherwise rays follow
+        the unbounded dense direction sequence `_containment_ray_directions` until
+        one crosses every face transversally away from trim boundaries. For a
+        point off the boundary the non-generic directions (tangent, through a
+        trim edge, inside a face plane) form a closed nowhere-dense set, so the
+        dense sequence reaches a decisive direction after finitely many rays.
         """
         profile = _closed_revolution_profile(self.model, solid)
         if profile is not None:
             return _revolution_profile_contains(profile, point)
         from .._rational import rational_vector
 
-        faces = self.model.topology.solid_faces[solid]
-        for face in faces:
+        carriers = self._ray_carriers(solid)
+        if carriers is None:
+            return None
+        origin_values = rational_vector(np.asarray(point, dtype=np.float64))
+        ray_origin = (origin_values[0], origin_values[1], origin_values[2])
+        for face, carrier in carriers:
+            if isinstance(carrier, _ExactCylinder):
+                if _cylinder_contains_origin(self.model, face, carrier, ray_origin):
+                    return None
+                continue
+            frame, _ = carrier
+            projected = _project_affine_frame_exact(frame, ray_origin)
+            if projected is None:
+                return None
+            if projected[2] == 0:
+                uv = np.asarray(tuple(float(value) for value in projected[0]))
+                if (
+                    not np.all(np.isfinite(uv))
+                    or _trim_classification(self.model, face, uv) != 0
+                ):
+                    return None
+        for direction in _containment_ray_directions():
+            parity = self._ray_parity(carriers, ray_origin, direction)
+            if parity is not None:
+                return bool(parity)
+        raise AssertionError("the containment ray sequence is unbounded")
+
+    def _ray_carriers(self, solid: int, /) -> tuple[_RayCarrier, ...] | None:
+        """Exact ray carriers of every solid face, or ``None`` when unsupported."""
+        from .._rational import rational_cross
+
+        # A chart point beyond every trim curve: trims whose classification
+        # refuses even there are structurally unsupported, not near-boundary.
+        far = np.full((2,), 2.0**256, dtype=np.float64)
+        carriers: list[_RayCarrier] = []
+        for face in self.model.topology.solid_faces[solid]:
             patch = self.model.patches[face]
+            if _trim_classification(self.model, face, far) is None:
+                return None
             if isinstance(patch, CylinderPatch):
+                cylinder = _exact_cylinder(self.model, face)
+                if cylinder is None:
+                    return None
+                carriers.append((face, cylinder))
                 continue
             if not (
                 isinstance(patch, PlanePatch)
@@ -3480,51 +3646,32 @@ class NativeBRepProjection(AbstractBRepProjection):
             frame = self.affine_projection_frames[face]
             if frame is None or frame.factorization is None:
                 return None
-        origin_values = rational_vector(np.asarray(point, dtype=np.float64))
-        ray_origin = (origin_values[0], origin_values[1], origin_values[2])
-        for direction in _CONTAINMENT_RAY_DIRECTIONS:
-            direction_values = rational_vector(direction)
-            parity = self._ray_parity(
-                faces,
-                ray_origin,
-                (direction_values[0], direction_values[1], direction_values[2]),
-            )
-            if parity is not None:
-                return bool(parity)
-        return None
+            carriers.append((face, (frame, rational_cross(frame.first, frame.second))))
+        return tuple(carriers)
 
     def _ray_parity(
         self,
-        faces: Sequence[int],
+        carriers: Sequence[_RayCarrier],
         ray_origin: tuple[Fraction, Fraction, Fraction],
         ray_direction: tuple[Fraction, Fraction, Fraction],
         /,
     ) -> int | None:
-        """Crossing parity of one exact ray, or ``None`` when it is not generic."""
-        from .._rational import rational_cross
+        """Crossing parity of one exact ray, or ``None`` when it is not generic.
 
+        The ray origin lies off every trimmed face (checked by `_contains_solid`).
+        """
         crossings = 0
-        for face in faces:
-            patch = self.model.patches[face]
-            if isinstance(patch, CylinderPatch):
+        for face, carrier in carriers:
+            if isinstance(carrier, _ExactCylinder):
                 cylinder_crossings = _ray_cylinder_crossings(
-                    self.model, face, ray_origin, ray_direction
+                    self.model, face, carrier, ray_origin, ray_direction
                 )
                 if cylinder_crossings is None:
                     return None
                 crossings += cylinder_crossings
                 continue
-            frame = self.affine_projection_frames[face]
-            if frame is None or frame.factorization is None:
-                return None
-            normal = rational_cross(frame.first, frame.second)
-            denominator = sum(
-                (
-                    value * component
-                    for value, component in zip(normal, ray_direction, strict=True)
-                ),
-                Fraction(0),
-            )
+            frame, normal = carrier
+            denominator = _exact_dot(normal, ray_direction)
             numerator = sum(
                 (
                     value * (origin - query)
@@ -3540,7 +3687,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                     return None
                 continue
             ray_parameter = numerator / denominator
-            if ray_parameter < 0:
+            if ray_parameter <= 0:
+                # Behind the origin, or the origin in the plane outside the face:
+                # the ray leaves the plane at once.
                 continue
             intersection = (
                 ray_origin[0] + ray_parameter * ray_direction[0],
@@ -3556,12 +3705,6 @@ class NativeBRepProjection(AbstractBRepProjection):
             trim = _trim_classification(self.model, face, uv)
             if trim is None or trim < 0:
                 return None
-            if ray_parameter == 0:
-                # The origin lies in the face plane: on the face it is a boundary
-                # point; outside the trim the ray leaves the plane at once.
-                if trim:
-                    return None
-                continue
             crossings += trim
         return crossings % 2
 
