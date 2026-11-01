@@ -14,7 +14,9 @@ instance numbering and shortest-round-trip real literals.
 Canonicalization (documented, stable under repeated round trips): placements
 are written as ``(location, axis, ref_direction)`` so a reread frame's second
 axis is ``axis x ref_direction``; plane faces use orthonormal frames (their
-p-curves are mapped exactly); lines are ``point + t * magnitude * unit
+p-curves are mapped exactly; a clockwise conic p-curve is written as the
+counterclockwise STEP conic it traverses backward, and the reader restores the
+edge's sense from the lifted axes); lines are ``point + t * magnitude * unit
 direction``; pole (degenerate) edges are not STEP entities and are re-created
 after the regular edges. 2D and 3D offset curves retain their basis
 parameterization, with STEP's signed distance mapped to native right-normal
@@ -1743,7 +1745,11 @@ class _Decoder:
         return edge
 
     def _loop(
-        self, reference: Any, surface: int, factors: tuple[float, float]
+        self,
+        reference: Any,
+        surface: int,
+        patch: AbstractSurfacePatch,
+        factors: tuple[float, float],
     ) -> list[StagedCoedge] | int:
         instance = self._get(reference)
         self._enter(instance)
@@ -1787,6 +1793,11 @@ class _Decoder:
                         oriented,
                         f"The supplied p-curve parameterization cannot be retained: {error}",
                     ) from error
+                if isinstance(patch, PlanePatch):
+                    stage = self._stage()
+                    pcurve = _edge_sense_plane_conic(
+                        pcurve, patch, stage.curves[stage.edge_curves[edge.index]]
+                    )
             sense = (1 if orientation else -1) * edge.flip
             coedges.append(
                 StagedCoedge(
@@ -1919,7 +1930,7 @@ class _Decoder:
                     "unsupported-entity", bound, f"Bound entity {name} is not supported."
                 )
             _, loop_, orientation_ = self._params(bound, 3)
-            loop = self._loop(loop_, surface_.id, factors)
+            loop = self._loop(loop_, surface_.id, patch, factors)
             forward = self._bool(orientation_, bound)
             if isinstance(loop, int):
                 boundary_vertices.append(loop)
@@ -3261,14 +3272,14 @@ def _mapped_pcurve(curve: AbstractCurve, matrix: np.ndarray, /) -> AbstractCurve
                 curve.knots,
                 curve.degree,
             )
-        case CircleCurve() if _is_rotation(matrix):
+        case CircleCurve() if _is_orthogonal(matrix):
             return CircleCurve(
                 matrix @ np.asarray(curve.center),
                 matrix @ np.asarray(curve.first_axis),
                 matrix @ np.asarray(curve.second_axis),
                 curve.radius,
             )
-        case EllipseCurve() if _is_rotation(matrix):
+        case EllipseCurve() if _is_orthogonal(matrix):
             return EllipseCurve(
                 matrix @ np.asarray(curve.center),
                 matrix @ np.asarray(curve.first_axis),
@@ -3288,11 +3299,63 @@ def _step_conic(curve: AbstractCurve, /) -> bool:
     return bool(np.max(np.abs(second - np.asarray((-first[1], first[0])))) <= 1.0e-12)
 
 
-def _is_rotation(matrix: np.ndarray, /) -> bool:
-    return bool(
-        np.allclose(matrix.T @ matrix, np.eye(2), rtol=0.0, atol=1.0e-15)
-        and np.linalg.det(matrix) > 0.0
+def _is_orthogonal(matrix: np.ndarray, /) -> bool:
+    """Rotations and reflections map a conic's angle parameterization exactly."""
+    return bool(np.allclose(matrix.T @ matrix, np.eye(2), rtol=0.0, atol=1.0e-15))
+
+
+def _reversed_conic(curve: CircleCurve | EllipseCurve, /) -> CircleCurve | EllipseCurve:
+    """The same conic traversed backward: ``reversed(-t) == curve(t)`` exactly."""
+    second_exact = tuple(-value for value in curve.second_axis_exact)
+    if isinstance(curve, CircleCurve):
+        return CircleCurve(
+            curve.center,
+            curve.first_axis,
+            -curve.second_axis,
+            curve.radius,
+            center_exact=curve.center_exact,
+            first_axis_exact=curve.first_axis_exact,
+            second_axis_exact=second_exact,
+            radius_exact=curve.radius_exact,
+        )
+    return EllipseCurve(
+        curve.center,
+        curve.first_axis,
+        -curve.second_axis,
+        curve.first_radius,
+        curve.second_radius,
+        center_exact=curve.center_exact,
+        first_axis_exact=curve.first_axis_exact,
+        second_axis_exact=second_exact,
+        first_radius_exact=curve.first_radius_exact,
+        second_radius_exact=curve.second_radius_exact,
     )
+
+
+def _edge_sense_plane_conic(
+    pcurve: AbstractCurve, patch: PlanePatch, carrier: AbstractCurve, /
+) -> AbstractCurve:
+    """A plane's conic p-curve parameterized along its edge carrier.
+
+    STEP conics turn counterclockwise, so an edge running clockwise in the
+    plane's parameters traverses its conic p-curve backward (``s = -t``). The
+    lifted p-curve then shares the carrier's first axis and opposes its second;
+    that p-curve is reversed onto the edge parameter. Any other relation is
+    kept as supplied for the face-gap certificate to judge.
+    """
+    carrier = explicit_carrier(carrier)
+    if not isinstance(pcurve, (CircleCurve, EllipseCurve)) or not isinstance(
+        carrier, (CircleCurve, EllipseCurve)
+    ):
+        return pcurve
+    jacobian = np.column_stack(
+        (np.asarray(patch.first_axis), np.asarray(patch.second_axis))
+    )
+    first = (jacobian @ np.asarray(pcurve.first_axis)) @ np.asarray(carrier.first_axis)
+    second = (jacobian @ np.asarray(pcurve.second_axis)) @ np.asarray(carrier.second_axis)
+    if first > 0.0 and second < 0.0:
+        return _reversed_conic(pcurve)
+    return pcurve
 
 
 class _WrittenShells(StrictModule):
@@ -3566,11 +3629,19 @@ class _Writer:
     ) -> int:
         """PCURVE of a coedge, or the plane itself when no STEP p-curve exists.
 
-        A curve on a plane is recovered exactly by the reader from its 3D
-        carrier, so a clockwise conic p-curve (not a STEP parameterization) is
-        written as the bare surface reference; elsewhere it is refused.
+        A clockwise conic on a plane has no STEP parameterization; it is written
+        as the counterclockwise conic it traverses backward, whose sense the
+        reader restores from the edge carrier. Any other unrepresentable curve on
+        a plane is written as the bare surface reference (the reader recovers it
+        exactly from its 3D carrier); elsewhere it is refused.
         """
         mapped = _mapped_pcurve(curve, matrix)
+        if (
+            planar
+            and isinstance(mapped, (CircleCurve, EllipseCurve))
+            and not _step_conic(mapped)
+        ):
+            mapped = _reversed_conic(mapped)
         if mapped is None or not _step_conic(mapped):
             if planar:
                 return surface

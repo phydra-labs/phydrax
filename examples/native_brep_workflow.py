@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from phydrax._physical import SpatialCoordinateContract
+from phydrax import SpatialCoordinateContract
 from phydrax.geometry.brep import (
     brep_extrusion,
     BRepModel,
@@ -23,7 +23,7 @@ from phydrax.meshing import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
-from phydrax.meshing.providers._native_schedules import NativeSurfaceSchedule
+from phydrax.meshing.providers import NativeSurfaceSchedule
 
 
 DEFAULT_VOLUME_SIZE = 0.35

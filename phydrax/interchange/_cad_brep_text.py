@@ -104,6 +104,7 @@ from ..units._unit import UnitDefinition
 from ._cad import (
     _cad_export_gap_surfaces,
     _certified_cad_export_tolerances,
+    _written_upper_bound,
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_physical_tag_losses,
@@ -2756,6 +2757,7 @@ class _Writer:
     surface_losses: tuple[AdapterLoss, ...] = ()
     surface_carriers: tuple[AbstractSurfacePatch, ...] = ()
     approximation_losses: tuple[AdapterLoss, ...] = ()
+    tolerances: CadExportTolerances | None = None
 
     def provenance(self) -> tuple[tuple[str, str], ...]:
         """Return native inventory mappings to emitted declarations and references."""
@@ -3003,11 +3005,12 @@ class _Writer:
             text, factor = _surface_record(patch, f"face:{face}")
             self.surfaces.append(text)
             surface_factors.append(factor)
-        tolerances = _certified_cad_export_tolerances(
-            self.model, _cad_export_gap_surfaces(self.surface_carriers)
-        )
+        if self.tolerances is None:
+            self.tolerances = _certified_cad_export_tolerances(
+                self.model, _cad_export_gap_surfaces(self.surface_carriers)
+            )
         return _PreparedCarriers(
-            geometry, tuple(normalized), tuple(surface_factors), tolerances
+            geometry, tuple(normalized), tuple(surface_factors), self.tolerances
         )
 
     def _encode_lower_entities(
@@ -3240,6 +3243,72 @@ class _Writer:
         return "\n".join(parts).encode("ascii")
 
 
+def _reread_tolerances(
+    model: BRepModel, writer: _Writer, data: bytes, /
+) -> CadExportTolerances:
+    """Entity tolerances covering the gaps certified on the reread text.
+
+    The reader rebuilds carriers from decimal literals through OCCT parameter
+    maps, so its certified gaps can exceed the source's. Each tolerance is the
+    outward-rounded maximum of the source gap and every reread gap of the same
+    TShape (a shared TShape rereads once per placed use).
+    """
+    contract = model.coordinate_contract
+    reread = decode_brep_text_bytes(
+        data,
+        CadImportPolicy(contract, pcurve_fit=None),
+        source_length_unit=contract.length_unit,
+    )
+    evidence = reread.tolerance_evidence
+    if evidence is None:
+        raise RuntimeError("BRep text import must carry tolerance evidence; got None")
+    certified = {
+        (entity.kind, entity.index): bound
+        for entity, bound in zip(
+            evidence.entities, evidence.certified_bounds, strict=True
+        )
+    }
+    by_tshape: dict[str, float | None] = {}
+    for label, external in reread.provenance:
+        kind, _, index = label.partition(":")
+        if kind not in _NATIVE_TSHAPE_KINDS:
+            continue
+        tshape = external.split(" ", 1)[0]
+        bound = certified.get((kind, int(index)))
+        previous = by_tshape.get(tshape, 0.0)
+        by_tshape[tshape] = (
+            None if bound is None or previous is None else max(previous, bound)
+        )
+    source = writer.tolerances
+    if source is None:
+        raise RuntimeError("BRep text writer must hold its source tolerances.")
+    written = dict(writer.provenance())
+    rows: list[tuple[float, ...]] = []
+    for kind, bounds in (
+        ("vertex", source.vertex_bounds),
+        ("edge", source.edge_bounds),
+        ("face", source.face_bounds),
+    ):
+        row: list[float] = []
+        for index, bound in enumerate(bounds):
+            tshape = written[f"{kind}:{index}"].split(" ", 1)[0]
+            reread_bound = by_tshape.get(tshape)
+            if reread_bound is None:
+                raise refuse(
+                    "inexact-export",
+                    f"{kind}:{index}",
+                    f"CadExportTolerances.{kind}_bounds must have certified gap evidence on the reread text; got none for {tshape}",
+                )
+            row.append(_written_upper_bound(max(bound, reread_bound)))
+        rows.append(tuple(row))
+    return CadExportTolerances(
+        vertex_bounds=rows[0],
+        edge_bounds=rows[1],
+        face_bounds=rows[2],
+        uncertainty=max((value for row in rows for value in row), default=0.0),
+    )
+
+
 def _has_rational_radical_carrier_value(value: object, /) -> bool:
     pending = [value]
     seen: set[int] = set()
@@ -3305,11 +3374,22 @@ def write_brep_text(
     Surface and curve parameter maps preserve p-curves. Assembly definitions
     and uses remain a graph in memory and are serialized without occurrence
     expansion. Unsupported placement matrices or carrier structure are refused.
+    Entity tolerances are certified gaps rounded outward: the larger of the
+    source's and those certified when the written text is reread.
     """
     policy_ = CadExportPolicy() if policy is None else policy
     version_ = parse(version, BRepTextVersion, "version")
-    writer = _Writer(model, version_, policy_)
     try:
+        draft = _Writer(model, version_, policy_)
+        drafted = draft.encode()
+        # Tolerances do not enter carrier decoding, so the final text rereads to
+        # the same carriers and gaps as the draft.
+        writer = _Writer(
+            model,
+            version_,
+            policy_,
+            tolerances=_reread_tolerances(model, draft, drafted),
+        )
         data = writer.encode()
     except CadInterchangeError as error:
         if error.refusal.chain:
@@ -3342,7 +3422,7 @@ def write_brep_text(
         format_name=_FORMAT,
         qualifiers={
             "profile": f"cascade-topology-{version_}",
-            "entity-tolerance-evidence": "certified-brep-gaps; outward decimal rounding",
+            "entity-tolerance-evidence": "certified-brep-gaps of source and reread carriers; outward decimal rounding",
         },
         target_id=digest,
         stage="adapter",

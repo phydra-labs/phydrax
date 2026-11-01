@@ -159,7 +159,9 @@ def _require_geometric_losslessness(
     A declared loss is admitted only for ignored non-geometric STEP entities and
     for source tolerance declarations the native model cannot carry as its own
     limit; the latter are bounded below by requiring every certified edge/p-curve
-    gap to lie within the file's declared tolerance.
+    gap to lie within the file's declared tolerance. Pole (degenerate) coedges a
+    format cannot carry (STEP) are re-created by the reader from exact
+    source-period evidence; every other coedge must honor a supplied p-curve.
     """
     report = imported.report
     status = report.status.name
@@ -835,7 +837,7 @@ def _source_volume_oracle(
         raise RuntimeError(
             f"{case} source volume oracle requires one solid; got {model.topology.num_solids}."
         )
-    measured = brep_mass_properties(model, subdivisions=8)
+    measured = brep_mass_properties(model, relative_tolerance=_VOLUME_RELATIVE_TOLERANCE)
     if measured.status != ("certified",):
         raise RuntimeError(
             f"{case} exact B-Rep volume query failed: status={measured.status!r}, reasons={measured.reasons!r}."

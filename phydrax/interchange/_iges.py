@@ -82,6 +82,7 @@ from ..geometry.brep._patches import (
 from ..typing import checked, ConvertibleToArray
 from ._cad import (
     build_cad_export_report,
+    build_cad_import_tolerance_evidence,
     cad_export_assembly_identifier_losses,
     cad_import_stage_losses,
     CadExportPolicy,
@@ -2397,6 +2398,9 @@ def _import(resource: CadResource, policy: CadImportPolicy, /) -> CadImportResul
         coverage=stage.coverage(dict(resolver.counts)),
         provenance=tuple(stage.provenance),
         entity_metadata=None,
+        # IGES declares no gap tolerance (G19 is coordinate discernibility), so
+        # the evidence is the model's certified gaps against its own limit.
+        tolerance_evidence=build_cad_import_tolerance_evidence(model, ()),
     )
 
 

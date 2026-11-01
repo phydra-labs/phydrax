@@ -444,7 +444,7 @@ def _planar_square_source() -> BRepModel:
     return decode_step_bytes(_STEP_SQUARE, _POLICY).model
 
 
-def _native_bspline_model() -> BRepModel:
+def _native_bspline_model(*, ordinal_pole_ids: bool = False) -> BRepModel:
     source = _planar_square_source()
     geometry = source.geometry
     assert geometry is not None
@@ -477,6 +477,7 @@ def _native_bspline_model() -> BRepModel:
         exact_weights=tuple(tuple(Fraction(1) for _ in range(3)) for _ in range(3)),
         exact_u_knots=knots,
         exact_v_knots=knots,
+        control_point_ids=np.arange(9).reshape(3, 3) if ordinal_pole_ids else None,
     )
     return BRepModel(
         geometry=geometry,
@@ -880,6 +881,103 @@ def test_step_offset_curves_use_native_signed_distance_and_round_trip(
     assert _sorted_vertices(brep_restored.model) == _sorted_vertices(imported.model)
 
 
+# A planar annulus: the outer circle turns counterclockwise in the plane's
+# parameters and the hole's circle (axis -z) clockwise, so one plane carries
+# conic p-curves of both senses.
+_STEP_ANNULUS = b"""ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('independent planar annulus fixture'),'2;1');
+FILE_NAME('annulus.step','1970-01-01T00:00:00',(''),(''),'fixture','native-test','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));
+ENDSEC;
+DATA;
+#1=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#2)) GLOBAL_UNIT_ASSIGNED_CONTEXT((#3,#4,#5)) REPRESENTATION_CONTEXT('',''));
+#2=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-9),#3,'distance_accuracy_value','accuracy');
+#3=(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.));
+#4=(PLANE_ANGLE_UNIT() NAMED_UNIT(*) SI_UNIT($,.RADIAN.));
+#5=(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT());
+#6=DIRECTION('',(0.,0.,1.));
+#7=DIRECTION('',(1.,0.,0.));
+#10=DIRECTION('',(0.,0.,-1.));
+#20=CARTESIAN_POINT('',(0.,0.,0.));
+#21=CARTESIAN_POINT('',(2.,0.,0.));
+#22=CARTESIAN_POINT('',(1.,0.,0.));
+#8=AXIS2_PLACEMENT_3D('',#20,#6,#7);
+#9=PLANE('',#8);
+#11=AXIS2_PLACEMENT_3D('',#20,#10,#7);
+#30=CIRCLE('',#8,2.);
+#31=CIRCLE('',#11,1.);
+#42=VERTEX_POINT('',#21);
+#43=VERTEX_POINT('',#22);
+#46=EDGE_CURVE('',#42,#42,#30,.T.);
+#47=EDGE_CURVE('',#43,#43,#31,.T.);
+#60=ORIENTED_EDGE('',*,*,#46,.T.);
+#61=ORIENTED_EDGE('',*,*,#47,.T.);
+#70=EDGE_LOOP('',(#60));
+#71=EDGE_LOOP('',(#61));
+#72=FACE_OUTER_BOUND('',#70,.T.);
+#73=FACE_BOUND('',#71,.T.);
+#74=ADVANCED_FACE('',(#72,#73),#9,.T.);
+#75=OPEN_SHELL('',(#74));
+#76=SHELL_BASED_SURFACE_MODEL('',(#75));
+#77=SHAPE_REPRESENTATION('',(#76),#1);
+ENDSEC;
+END-ISO-10303-21;
+"""
+
+
+def _plane_conic_turns(model: BRepModel) -> list[int]:
+    geometry = model.geometry
+    assert geometry is not None
+    turns: list[int] = []
+    for face, loops in enumerate(geometry.face_loops):
+        assert isinstance(model.patches[face], PlanePatch)
+        for loop in loops:
+            for coedge in loop:
+                curve = geometry.pcurves[coedge]
+                assert isinstance(curve, CircleCurve)
+                first = np.asarray(curve.first_axis)
+                second = np.asarray(curve.second_axis)
+                turns.append(int(np.sign(first[0] * second[1] - first[1] * second[0])))
+    return sorted(turns)
+
+
+@pytest.mark.parametrize("format_name", ("step", "iges", "brep"))
+def test_plane_conic_pcurves_of_both_senses_round_trip_within_certified_gaps(
+    format_name: str, tmp_path: Path
+) -> None:
+    policy = CadImportPolicy(_COORDINATES, pcurve_fit=None)
+    source = decode_step_bytes(_STEP_ANNULUS, policy)
+    assert _plane_conic_turns(source.model) == [-1, 1]
+    path = tmp_path / f"annulus.{format_name}"
+    match format_name:
+        case "step":
+            write_step(source.model, path)
+            restored = read_step(path, policy, trusted_root=tmp_path)
+        case "iges":
+            write_iges(source.model, path)
+            restored = read_iges(path, policy, trusted_root=tmp_path)
+        case _:
+            write_brep_text(source.model, path)
+            restored = read_brep_text(
+                path, policy, trusted_root=tmp_path, source_length_unit=METER
+            )
+    geometry = restored.model.geometry
+    assert geometry is not None
+    assert restored.coverage.pcurves_from_file == len(geometry.coedge_edges) == 2
+    assert _plane_conic_turns(restored.model) == [-1, 1]
+    evidence = restored.tolerance_evidence
+    assert evidence is not None
+    for entity, certified, declared in zip(
+        evidence.entities, evidence.certified_bounds, evidence.source_bounds, strict=True
+    ):
+        if entity.kind == "edge":
+            assert certified is not None
+        if certified is not None:
+            limit = evidence.declared_limit if declared is None else declared
+            assert certified <= limit, (entity, certified, limit)
+
+
 def test_cad_stage_retains_proved_face_gaps_and_refuses_tighter_requirement() -> None:
     source = decode_step_bytes(_STEP_SQUARE, _POLICY).model
     geometry = source.geometry
@@ -1171,7 +1269,12 @@ def test_exact_bspline_surface_round_trips_through_native_codecs(
         brep_path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
     assert brep_export.report.valid
-    _assert_geometry_preserved(model, brep_restored.model, allow_physical_tag_loss=True)
+    # BRep text declares each pole's identity as its record ordinal.
+    _assert_geometry_preserved(
+        _native_bspline_model(ordinal_pole_ids=True),
+        brep_restored.model,
+        allow_physical_tag_loss=True,
+    )
     assert any(loss.path == "face:0.physical-tag" for loss in brep_export.report.losses)
 
 
