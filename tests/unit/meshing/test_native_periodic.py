@@ -244,7 +244,7 @@ def test_native_periodic_route_adapts_skew_winding_orbits_to_size(
         failure,
         mesh,
         outcome,
-        ((0.6631, "collapse=hysteresis+hysteresis;flip=invalid"),),
+        ((0.6532, "collapse=hysteresis+hysteresis;flip=invalid"),),
     )
     vertex_map = periodic_entity_orbit_map(target, 0)
     assert vertex_map.quotient_entity_ids.size > source_orbits.point_ids.size
@@ -311,33 +311,42 @@ def test_native_periodic_route_binds_constraints_and_materials_by_quotient_ids(
         periodic_constraints=(periodic_constraint,),
         region_controls=region_controls,
     )
-    # Two short birth edges remain: each collapse either creates an edge above
-    # the split threshold (hysteresis) or would remove a curve vertex off its
-    # curve (inadmissible), and neither flip is valid/improving. The route
-    # reports this stall instead of publishing the unmet candidate.
-    stalled_mesh, outcome, failure = _stalled_periodic_adaptation(
-        monkeypatch,
-        lambda: prepare_native_periodic(
-            source,
-            specification,
-            NativeMeshingOptions("periodic_delaunay"),
-            phx.SpatialCoordinateContract.si(),
-        ).execute(),
-    )
-    target = _assert_honest_stall(
-        failure,
-        stalled_mesh,
-        outcome,
-        (
-            (0.6156, "collapse=hysteresis+inadmissible;flip=invalid"),
-            (0.7057, "collapse=hysteresis+inadmissible;flip=not-improving"),
-        ),
-    )
+    # The regular passes stall on two short birth edges (each collapse creates
+    # an edge above the split threshold or removes a curve vertex off its
+    # curve); the stall escape collapses them, the next splits repair the long
+    # edges, and the route meets the unit-edge criterion.
+    calls: list[tuple[CellMesh, LocalMetricOutcome]] = []
 
-    # Materials follow the quotient cells through the stalled candidate's lineage:
-    # both codes survive and every target cell orbit carries one material.
+    def recorded(
+        mesh: CellMesh, metric: np.ndarray, /, **controls: Any
+    ) -> LocalMetricOutcome:
+        outcome = execute_local_metric_adaptation(mesh, metric, **controls)
+        calls.append((mesh, outcome))
+        return outcome
+
+    monkeypatch.setattr(native_periodic, "execute_local_metric_adaptation", recorded)
+    prepare_native_periodic(
+        source,
+        specification,
+        NativeMeshingOptions("periodic_delaunay"),
+        phx.SpatialCoordinateContract.si(),
+    ).execute()
+    assert len(calls) == 1
+    adapted_mesh, outcome = calls[0]
+    evidence = outcome.evidence
+    assert evidence.converged and not evidence.stalled and not evidence.stalled_edges
+    assert evidence.collapses > 0 and evidence.splits > 0
+    target = stage_periodic_topology_edit(adapted_mesh, outcome.edit)
+    assert target is not None
+    topology = target.periodic_topology
+    assert topology is not None
+    topology.require_lifted(target.topology, target.lifted_topology_id, target.blocks)
+    topology.require_coordinates(target.coordinates)
+
+    # Materials follow the quotient cells through the adapted lineage: both
+    # codes survive and every target cell orbit carries one material.
     values = native_periodic._target_cell_regions(
-        stalled_mesh, target, outcome.edit, block_regions
+        adapted_mesh, target, outcome.edit, block_regions
     )
     assert np.unique(values).size == 2
     target_cells = periodic_entity_orbit_map(target, target.topological_dimension)

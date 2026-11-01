@@ -342,6 +342,23 @@ def _reference_bernstein_domain(cell_kind: str, /) -> tuple[BernsteinDomain, int
     raise ValueError(f"Reference-chart enclosure does not support {cell_kind!r} cells.")
 
 
+def _vertex_chart_is_multilinear(target_kind: str, /) -> bool:
+    """Whether whole-cell inclusion of a canonical vertex chart is its corner inclusion.
+
+    On simplex, box and prism targets the vertex-family chart has degree at most
+    one per Bernstein factor, and every source-domain inequality is affine in the
+    source coordinates. The composed inequality is then multilinear, so its
+    least-degree Bernstein controls are exactly its values at the target corners:
+    the Bernstein inclusion proof holds if and only if every corner image lies in
+    the source cell. Pyramid charts are rational and keep the full proof.
+    """
+    return (
+        target_kind
+        in ("interval", "triangle", "quadrilateral", "tetrahedron", "hexahedron", "prism")
+        or target_kind.startswith("simplex:")
+        or target_kind.startswith("tensor:")
+    )
+
 
 def _reference_bernstein_expression(
     expression: ExactReferenceChartExpression, target_kind: str, /
@@ -722,7 +739,9 @@ def exact_reference_cell_vertices(
         witnesses.source_cell_kind,
         result,
     )
-    if witnesses.source_reference_chart_arguments is None:
+    if witnesses.source_reference_chart_arguments is None and not (
+        _vertex_chart_is_multilinear(witnesses.target_cell_kind)
+    ):
         from ._nested_reference import _chart_from_corners
 
         for cell_index, corners in enumerate(result):

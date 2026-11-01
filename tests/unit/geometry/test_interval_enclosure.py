@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from dataclasses import replace
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -6,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._interpolation import bspline_jet_stencil
 from phydrax._meshcore import load_meshcore
 from phydrax.geometry import Superquadric
 from phydrax.geometry._interval_enclosure import (
@@ -779,3 +782,77 @@ def test_interval_scan_unrolls_carry_and_stacked_outputs(reverse: bool) -> None:
     values = np.asarray(jax.vmap(function)(jnp.asarray(grid)), dtype=np.float64)
     assert np.all(bounds[0][0] <= values.min(axis=0))
     assert np.all(bounds[1][0] >= values.max(axis=0))
+
+
+_JET_KNOTS = jnp.asarray((0.0, 0.0, 0.0, 0.3, 0.6, 1.0, 1.0, 1.0))
+_JET_COEFFICIENTS = jnp.asarray((0.0, 1.0, -0.5, 2.0, 0.7))
+
+
+def _quadratic_spline(
+    bounds: Literal["clip", "extrapolate"],
+) -> Callable[[jax.Array], jax.Array]:
+    def value(point: jax.Array) -> jax.Array:
+        stencil = bspline_jet_stencil(
+            _JET_KNOTS, point[0], degree=2, maximum_order=0, bounds=bounds
+        )
+        return jnp.sum(stencil.jets[0] * _JET_COEFFICIENTS[stencil.indices])
+
+    return value
+
+
+def _sampled_range(
+    function: Callable[[jax.Array], jax.Array], first: float, last: float
+) -> tuple[float, float]:
+    samples = jnp.linspace(first, last, 257)[:, None]
+    values = np.asarray(jax.vmap(function)(samples), dtype=np.float64)
+    return float(values.min()), float(values.max())
+
+
+def test_interval_bspline_jets_enclose_each_span_in_bernstein_form() -> None:
+    value = _quadratic_spline("clip")
+    derivatives = {
+        "value": value,
+        "first": jax.jacfwd(value),
+        "second": jax.jacfwd(jax.jacfwd(value)),
+    }
+    boxes = ((0.1, 0.2), (0.4, 0.55), (0.25, 0.35), (0.0, 1.0), (0.3, 0.3))
+    lower = np.asarray([[box[0]] for box in boxes], dtype=np.float64)
+    upper = np.asarray([[box[1]] for box in boxes], dtype=np.float64)
+    for name, function in derivatives.items():
+        prepared = prepare_interval_function(
+            lambda point, function=function: jnp.reshape(function(point), (1,)),
+            1,
+            batch_capacity=len(boxes),
+        )
+        bounds = prepared.evaluate(lower, upper)
+        assert np.all(np.isfinite(bounds[0])) and np.all(np.isfinite(bounds[1]))
+        for row, (first, last) in enumerate(boxes):
+            low, high = _sampled_range(function, first, last)
+            assert bounds[0][row, 0] <= low and high <= bounds[1][row, 0]
+            inside_span = last <= 0.3 or (first >= 0.3 and last <= 0.6)
+            if name == "second" and inside_span:
+                # Inside one span every quadratic basis function has a
+                # constant second derivative; its Bernstein range is exact,
+                # so the enclosure is the sampled value up to rounding.
+                np.testing.assert_allclose(
+                    (bounds[0][row, 0], bounds[1][row, 0]),
+                    (low, high),
+                    rtol=1e-12,
+                    atol=1e-12,
+                )
+
+
+def test_interval_bspline_piece_jets_extrapolate_their_span_polynomial() -> None:
+    function = jax.jacfwd(jax.jacfwd(_quadratic_spline("extrapolate")))
+    prepared = prepare_interval_function(
+        lambda point: jnp.reshape(function(point), (1,)), 1, batch_capacity=2
+    )
+    lower = np.asarray(((1.0,), (-0.4,)), dtype=np.float64)
+    upper = np.asarray(((1.4,), (-0.1,)), dtype=np.float64)
+    bounds = prepared.evaluate(lower, upper)
+    for row in range(2):
+        low, high = _sampled_range(function, lower[row, 0], upper[row, 0])
+        assert bounds[0][row, 0] <= low and high <= bounds[1][row, 0]
+        np.testing.assert_allclose(
+            (bounds[0][row, 0], bounds[1][row, 0]), (low, high), rtol=1e-12
+        )

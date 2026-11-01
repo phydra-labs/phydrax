@@ -353,19 +353,7 @@ def _device_split_phase(
                 exact_predicates_resolved,
                 host_barriers,
             )
-        changed, status = _try_split_batch(state, list(plan.groups), counters, blocked)
-        if status is not None:
-            return _DeviceSplitPhase(
-                applied + changed,
-                status,
-                False,
-                evaluated_edges,
-                long_edge_candidates,
-                independent_split_candidates,
-                candidate_edge_keys,
-                exact_predicates_resolved,
-                host_barriers,
-            )
+        changed = _try_split_batch(state, list(plan.groups), counters, blocked)
         applied += changed
         if changed:
             blocked.clear()
@@ -461,38 +449,17 @@ def _execute_device_tetra_metric_route(
                 None,
             )
         applied += split.applied
-        if split.status is not None:
-            status = split.status
-            total_applied += applied
-            break
-        count, stop = _collapse_phase(state, counters)
-        applied += count
-        if stop is not None:
-            status = stop
-            total_applied += applied
-            break
+        applied += _collapse_phase(state, counters)
         for kind, name in (
             (TetMeshEditKind.FLIP23, "flips23"),
             (TetMeshEditKind.FLIP32, "flips32"),
             (TetMeshEditKind.RECONNECT, "ring_reconnections"),
         ):
-            count, stop = _replacement_phase(
+            applied += _replacement_phase(
                 state, kind, name, counters, PredicateMode.EXACT
             )
-            applied += count
-            if stop is not None:
-                status = stop
-                break
-        if status is TetraMetricStatus.NUMERICAL_STOP:
-            total_applied += applied
-            break
         if prepared.policy.relocation:
-            count, stop = _relocation_phase(state, counters, PredicateMode.EXACT)
-            applied += count
-            if stop is not None:
-                status = stop
-                total_applied += applied
-                break
+            applied += _relocation_phase(state, counters, PredicateMode.EXACT)
         total_applied += applied
         if applied == 0:
             status = TetraMetricStatus.STALLED

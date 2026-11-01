@@ -47,6 +47,7 @@ class Remesher {
   const TriangleAdmission& predicate;
   const RemeshTargets& targets;
   double h = 0;
+  double solid_side = 1;  // +1 when the normals point away from the enclosed solid
   std::vector<V> points;
   std::vector<VertexEvidence> evidence;  // certified admission evidence per vertex
   std::vector<F> triangles;
@@ -146,7 +147,8 @@ class Remesher {
   // fold factor (see surface_remesh.hpp); a degenerate normal on either side
   // leaves the edge to the degenerate triangle's own score. A turn within the
   // two cone floors is within the cones' separation, so cones are computed
-  // only for edges turning beyond the floors.
+  // only for edges turning beyond the floors or closing a convex wedge
+  // sharper than the minimum angle.
   uint32_t score(const Ref& self, Staged& staged, const std::vector<int64_t>& removed) {
     const F t = triangle(self, staged);
     const double value = shape_size(points[static_cast<size_t>(t[0])],
@@ -154,19 +156,40 @@ class Remesher {
                                     points[static_cast<size_t>(t[2])]);
     if (!(value > 0)) return 0;
     const V own = normal(t);
+    const double wedge_target = targets.minimum_angle_degrees * kPi / 180;
     double fold = 1;
     for (int k = 0; k < 3; ++k) {
       const auto neighbor = across(t[k], t[(k + 1) % 3], staged, removed);
       if (!neighbor) continue;
-      const V other = normal(triangle(*neighbor, staged));
+      const F& other_triangle = triangle(*neighbor, staged);
+      const V other = normal(other_triangle);
       if (!(length(other) > 0)) continue;
       const double turn = std::atan2(length(cross(own, other)), dot(own.data(), other.data()));
+      // The neighbor's far corner below t's plane, seen from the solid side,
+      // makes the edge convex: the solid wedge there is pi - turn.
+      int64_t far = other_triangle[0];
+      for (int64_t v : other_triangle)
+        if (v != t[k] && v != t[(k + 1) % 3]) far = v;
+      const double height = solid_side * dot(own.data(),
+                                             difference(points[static_cast<size_t>(far)],
+                                                        points[static_cast<size_t>(t[k])])
+                                                 .data());
+      const bool sharp_convex = height < 0 && kPi - turn < wedge_target;
       // The slack absorbs the rounding of the angle evaluations.
-      if (turn <= cone_floor(self, staged) + cone_floor(*neighbor, staged) + kTurnSlack) continue;
+      if (!sharp_convex &&
+          turn <= cone_floor(self, staged) + cone_floor(*neighbor, staged) + kTurnSlack)
+        continue;
       const NormalCone first = cone(self, staged);
-      const double allowed = cone_separation(first, cone(*neighbor, staged));
-      if (!(allowed < kPi)) continue;
-      if (turn > allowed + kTurnSlack) fold = std::min(fold, (kPi - turn) / (kPi - allowed));
+      const NormalCone& second = cone(*neighbor, staged);
+      const double allowed = cone_separation(first, second);
+      if (allowed < kPi && turn > allowed + kTurnSlack)
+        fold = std::min(fold, (kPi - turn) / (kPi - allowed));
+      if (!sharp_convex) continue;
+      // Admitted normals lie in their cones, so every admitted pair turns by
+      // at least the cones' forced turn. A source forcing a wedge sharper
+      // than the minimum angle keeps it; otherwise the wedge is held to it.
+      if (forced_turn(first, second) < kPi - wedge_target)
+        fold = std::min(fold, (kPi - turn) / wedge_target);
     }
     return quantize(value * std::max(fold, 0.0));
   }
@@ -724,6 +747,16 @@ class Remesher {
     evidence.resize(points.size());
     for (size_t v = 0; v < points.size(); ++v) evidence[v] = predicate.evaluate(points[v]);
     star.assign(points.size(), {});
+    // Edits keep the orientation and the embedding, so the sign of the
+    // enclosed volume, and with it the solid side, is that of the input.
+    double volume = 0;
+    for (const F& t : input_triangles) {
+      const V& a = points[static_cast<size_t>(t[0])];
+      volume += dot(a.data(), cross(difference(points[static_cast<size_t>(t[1])], a),
+                                    difference(points[static_cast<size_t>(t[2])], a))
+                                  .data());
+    }
+    solid_side = volume < 0 ? -1 : 1;
     for (const F& t : input_triangles) add_triangle(t, floor_of(t), std::nullopt);
     for (size_t id = 0; id < triangles.size(); ++id) rescore(static_cast<int64_t>(id));
     improve_worst_first();
@@ -767,6 +800,17 @@ double cone_separation(const NormalCone& first, const NormalCone& second) {
   const double between = std::atan2(length(cross(first.axis, second.axis)),
                                     dot(first.axis.data(), second.axis.data()));
   return std::min(kPi, between + std::max(first.half_angle, 0.0) +
+                           std::max(second.half_angle, 0.0));
+}
+
+double forced_turn(const NormalCone& first, const NormalCone& second) {
+  const double first_length = length(first.axis), second_length = length(second.axis);
+  if (!(first.half_angle < kPi) || !(second.half_angle < kPi) || !(first_length > 0) ||
+      !(second_length > 0) || !std::isfinite(first_length) || !std::isfinite(second_length))
+    return 0;
+  const double between = std::atan2(length(cross(first.axis, second.axis)),
+                                    dot(first.axis.data(), second.axis.data()));
+  return std::max(0.0, between - std::max(first.half_angle, 0.0) -
                            std::max(second.half_angle, 0.0));
 }
 

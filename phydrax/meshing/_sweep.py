@@ -71,8 +71,6 @@ class SweepControl(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(kind, SweepMapKind):
             raise TypeError("kind must be a SweepMapKind.")
-        if not isinstance(schedule, LayerSchedule):
-            raise TypeError("schedule must be a LayerSchedule.")
         if not isinstance(map_id, str) or not map_id.strip():
             raise ValueError("map_id must be nonempty.")
         if not isinstance(closed, bool):
@@ -282,7 +280,6 @@ def mapped_stations(points: np.ndarray, control: SweepControl, /) -> tuple[np.nd
     return mapped, stations
 
 
-@checked
 def column_connectivity(rows: np.ndarray, layers: int, stride: int, closed: bool, /) -> np.ndarray:
     """Extrude oriented triangle/quad rows into prism/hexahedron rows."""
     source_rows = np.asarray(rows)
@@ -358,10 +355,6 @@ def construct_sweep(
     root_correspondence: CellGeometryRestrictionSource | None = None,
 ) -> SweepConstruction:
     """Carry the complete profile coordinate map through swept cells."""
-    if not isinstance(profile, CellMesh):
-        raise TypeError("profile must be a CellMesh.")
-    if not isinstance(control, SweepControl):
-        raise TypeError("control must be a SweepControl.")
     if profile.topological_dimension != 2 or profile.ambient_dimension not in (2, 3):
         raise ValueError("A sweep profile must be a two-dimensional mesh embedded in 2D or 3D.")
     if not isinstance(name, str) or not name.strip():

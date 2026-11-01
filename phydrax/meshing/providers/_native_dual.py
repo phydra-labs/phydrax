@@ -24,7 +24,11 @@ from ...discretization._cell_complex import (
 )
 from ...discretization._cell_geometry import ScalarCoordinateElement
 from ...discretization._cell_geometry_validity import cell_geometry_id
-from ...discretization._cell_locator import CellLocationStatus
+from ...discretization._cell_locator import (
+    CellInverseRefusal,
+    CellLocationRefusalError,
+    CellLocationStatus,
+)
 from ...discretization._cell_mesh import SimplicialConnectivity
 from ...discretization._coordinate_enclosure import (
     add,
@@ -1966,9 +1970,6 @@ def _reference_face_coordinates(
 
 type _ReferencePoint = tuple[Fraction, ...]
 
-# Largest per-axis refinement of one twisted quadrilateral face piece bank.
-_MAXIMUM_FACE_SUBDIVISIONS = 64
-
 
 def _bilinear_point(
     corners: tuple[_ReferencePoint, ...], a: Fraction, b: Fraction, /
@@ -2081,15 +2082,11 @@ def _bilinear_face_subdivisions(
             "Twisted restricted boundary faces require a positive fidelity tolerance."
         )
     bound = Fraction.from_float(float(tolerance))
+    # The bound is monotone in ``subdivisions``, so doubling ends at the smallest
+    # dyadic refinement the twist, Lipschitz bound and tolerance require.
     subdivisions = 1
     while lipschitz_squared * twist_squared > 4 * subdivisions**4 * bound * bound:
         subdivisions *= 2
-        if subdivisions > _MAXIMUM_FACE_SUBDIVISIONS:
-            raise ValueError(
-                "A twisted restricted boundary face needs more than "
-                f"{_MAXIMUM_FACE_SUBDIVISIONS} subdivisions per axis to meet its "
-                "fidelity tolerance."
-            )
     return subdivisions
 
 
@@ -2520,6 +2517,10 @@ def _restricted_certification(
         cell_regions=np.asarray(cell_regions, dtype=np.int64),
         fidelity_witness=fidelity_witness,
         scoped_fidelity=tuple(scoped),
+        # The scaffold's exact PLC source points address scaffold vertices and
+        # exact source-point coverage needs affine simplices; a derived mesh
+        # certifies coverage on its own carriers.
+        source_coverage_witness=None,
     )
 
 
@@ -2743,6 +2744,8 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
             maximum_normal_deviation=specification.maximum_normal_deviation,
             scoped_fidelity=scoped_fidelity,
             feature_source=source,
+            # Scaffold source points address scaffold vertices, not quad vertices.
+            source_coverage_witness=None,
         )
         return NativeMeshConstruction(
             extraction.mesh,
@@ -3750,7 +3753,7 @@ def _validate_mapped_region_seeds(
         )
         for block_index in range(len(blocks))
     )
-    for seed in specification.region_seeds:
+    for seed_index, seed in enumerate(specification.region_seeds):
         expected_region = seed.region_name
         domain.region_ids.index(expected_region)
         located_cell_keys: set[tuple[str, str, int, tuple[str, ...], str]] = set()
@@ -3773,8 +3776,21 @@ def _validate_mapped_region_seeds(
                 or not complete
                 or (status == int(CellLocationStatus.LOCATED) and not successful)
             ):
-                raise ValueError(
-                    "Mapped region-seed admission requires a complete resolved source-map inverse."
+                raise CellLocationRefusalError(
+                    "Mapped region-seed admission requires a complete resolved "
+                    f"source-map inverse; seed {seed_index} in block {block_index} "
+                    "was refused. Refusal points index region seeds.",
+                    tuple(
+                        CellInverseRefusal(
+                            seed_index,
+                            refusal.cell,
+                            refusal.reason,
+                            refusal.lower,
+                            refusal.upper,
+                            refusal.witness,
+                        )
+                        for refusal in result.inverse_refusals
+                    ),
                 )
             if status == int(CellLocationStatus.OUTSIDE):
                 continue

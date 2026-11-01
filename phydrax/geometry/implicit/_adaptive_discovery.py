@@ -2053,10 +2053,6 @@ def _discover_adaptive_implicit_surface_once(
     are witnessed or their diameter reaches the requested root tolerance.
     Singular and otherwise unresolved leaves remain explicit.
     """
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("geometry must be a CompiledGeometry.")
-    if not isinstance(policy, AdaptiveImplicitSurfacePolicy):
-        raise TypeError("policy must be an AdaptiveImplicitSurfacePolicy.")
     if not isinstance(source_id, str) or not source_id:
         raise ValueError("source_id must be a non-empty string.")
     if geometry.ambient_dimension != 3 or geometry.kind is not GeometryKind.REGION:

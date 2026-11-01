@@ -188,12 +188,8 @@ def lineage_association_rows(
     coarsened into them and agree up to their parameter intervals and points;
     the caller owns the merged parameterization.
     """
-    if not isinstance(association, GeometryAssociation):
-        raise TypeError("association must be GeometryAssociation.")
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
         raise TypeError("source and target must be CellMesh values.")
-    if not isinstance(lineage, MeshLineage):
-        raise TypeError("lineage must be MeshLineage.")
     if association.target_entity_set_id != source.entity_set(dimension).entity_set_id:
         raise ValueError(
             "Association lineage table targets the wrong source entity dimension."

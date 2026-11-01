@@ -10,7 +10,7 @@ import heapq
 import math
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import final
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -27,6 +27,11 @@ from .._source_boundary_records import (
 from ..simplicial._regions import MeshRegion
 from ._core import ReconstructedGeometrySource
 from ._sheet import AuthoredTriangleSheet
+
+
+if TYPE_CHECKING:
+    from .._domain_boundary import MeshingDomainBoundarySource
+    from .._meshing_domain import MeshingDomain
 
 
 _ExactPoint = tuple[Fraction, Fraction, Fraction]
@@ -99,8 +104,10 @@ def _box_distance_squared(
 ) -> Fraction:
     squared = Fraction(0)
     for coordinate, first, last in zip(point, lower, upper, strict=True):
-        difference = first - coordinate if coordinate < first else (
-            coordinate - last if coordinate > last else Fraction(0)
+        difference = (
+            first - coordinate
+            if coordinate < first
+            else (coordinate - last if coordinate > last else Fraction(0))
         )
         squared += difference * difference
     return squared
@@ -113,9 +120,7 @@ def _nearest_triangle_distance_squared(
     root: int,
     /,
 ) -> Fraction:
-    pending = [
-        (_box_distance_squared(point, nodes[root].lower, nodes[root].upper), root)
-    ]
+    pending = [(_box_distance_squared(point, nodes[root].lower, nodes[root].upper), root)]
     nearest: Fraction | None = None
     while pending:
         bound, index = heapq.heappop(pending)
@@ -136,9 +141,7 @@ def _nearest_triangle_distance_squared(
             if child is None:
                 continue
             child_node = nodes[child]
-            child_bound = _box_distance_squared(
-                point, child_node.lower, child_node.upper
-            )
+            child_bound = _box_distance_squared(point, child_node.lower, child_node.upper)
             if nearest is None or child_bound < nearest:
                 heapq.heappush(pending, (child_bound, child))
     if nearest is None:
@@ -224,11 +227,7 @@ def _point_triangle_distance_squared(
     second_weight = (
         dot_first_first * dot_offset_second - dot_first_second * dot_offset_first
     ) / denominator
-    if (
-        first_weight >= 0
-        and second_weight >= 0
-        and first_weight + second_weight <= 1
-    ):
+    if first_weight >= 0 and second_weight >= 0 and first_weight + second_weight <= 1:
         normal = _cross(edge_first, edge_second)
         signed = _dot(offset, normal)
         return signed**2 / _dot(normal, normal)
@@ -289,6 +288,103 @@ def _outward_float(value: Fraction, /) -> float:
     return result
 
 
+def reconstructed_triangle_arrays(
+    source: ReconstructedGeometrySource | AuthoredTriangleSheet, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """The vertex and face arrays a reconstructed triangle query is built over."""
+    if isinstance(source, AuthoredTriangleSheet):
+        return (
+            np.asarray(source.repaired_vertices, dtype=np.float64),
+            np.asarray(source.repaired_triangles, dtype=np.int64),
+        )
+    if isinstance(source, ReconstructedGeometrySource):
+        region = source.source
+        if not isinstance(region, MeshRegion):
+            raise TypeError("Reconstructed triangle boundaries require a MeshRegion.")
+        return (
+            np.asarray(region.vertices, dtype=np.float64),
+            np.asarray(region.faces, dtype=np.int64),
+        )
+    raise TypeError(
+        "source must be a ReconstructedGeometrySource or AuthoredTriangleSheet."
+    )
+
+
+def domain_binds_source(
+    domain: MeshingDomain,
+    source: ReconstructedGeometrySource | AuthoredTriangleSheet,
+    vertices: np.ndarray,
+    /,
+) -> bool:
+    """Whether `domain` carries the source's identity, facet IDs and corners."""
+    return (
+        domain.source_id == source.source_id
+        and domain.source_revision == source.source_revision
+        and np.array_equal(
+            np.asarray(domain.source_indices[2], dtype=np.int64),
+            np.asarray(source.persistent_facet_ids, dtype=np.int64),
+        )
+        and np.array_equal(np.asarray(domain.corner_points), vertices)
+    )
+
+
+def _chart_cover_triangle_keys(
+    values: np.ndarray, /
+) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+    return tuple(
+        sorted(
+            tuple(
+                sorted(
+                    tuple(Fraction.from_float(float(value)) for value in point)
+                    for point in triangle
+                )
+            )
+            for triangle in values
+        )
+    )
+
+
+def _prove_domain_query(
+    source: ReconstructedGeometrySource | AuthoredTriangleSheet,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    /,
+) -> tuple[MeshingDomainBoundarySource, SourceBoundaryChartCover] | str:
+    """The whole-domain boundary query of the source's persistent MeshingDomain.
+
+    Proves that the domain carries the source's identity, facet IDs and corners
+    and that its exact chart cover is the query's physical triangles (the
+    query's own chart cover, ``vertices[faces]``, is complete and exact);
+    returns the refusal otherwise.
+    """
+    from .._domain_boundary import MeshingDomainBoundarySource
+
+    domain = source.meshing_domain
+    if domain is None:
+        return "Reconstructed source has no authoritative persistent MeshingDomain."
+    if not domain_binds_source(domain, source, vertices):
+        return "Reconstructed MeshingDomain changes persistent source vertex/facet IDs."
+    try:
+        query = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
+    except ValueError as error:
+        return str(error)
+    domain_cover = query.boundary_chart_cover()
+    if (
+        not domain_cover.complete
+        or domain_cover.semantics != "certified"
+        or np.any(domain_cover.deviation_bounds != 0.0)
+    ):
+        return "Reconstructed source charts lack complete exact physical coverage."
+    if _chart_cover_triangle_keys(vertices[faces]) != _chart_cover_triangle_keys(
+        domain_cover.simplices
+    ):
+        return (
+            "Reconstructed query and persistent source domain cover different "
+            "physical triangles."
+        )
+    return query, domain_cover
+
+
 @final
 class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
     """Exact continuous query over a reconstructed or authored triangle complex.
@@ -297,6 +393,14 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
     bitwise-identical point set of the authored triangles (welding, duplicate
     removal, and orientation never move a point), so distances are exact
     distances to the authored sheet.
+
+    Construction also prepares the whole-domain boundary query of the source's
+    persistent MeshingDomain once (``domain_query``) and its exact chart cover
+    (``domain_cover``), with the proof that this cover is the query's physical
+    triangles, or records why it cannot (``domain_refusal``). Source-fidelity
+    validation reuses them after checking that the source still reproduces
+    these triangles and still retains a domain of that content, instead of
+    recomputing the domain's chart cover.
     """
 
     source: ReconstructedGeometrySource | AuthoredTriangleSheet = eqx.field(repr=False)
@@ -305,19 +409,14 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
     _triangles: tuple[_ExactTriangle, ...] = eqx.field(repr=False)
     _nodes: tuple[_TriangleBVHNode, ...] = eqx.field(repr=False)
     _root_index: int = eqx.field(repr=False)
+    domain_query: MeshingDomainBoundarySource | None = eqx.field(repr=False)
+    domain_cover: SourceBoundaryChartCover | None = eqx.field(repr=False)
+    domain_refusal: str | None = eqx.field(static=True, repr=False)
 
-    def __init__(self, source: ReconstructedGeometrySource | AuthoredTriangleSheet, /) -> None:
-        if isinstance(source, AuthoredTriangleSheet):
-            vertices = np.asarray(source.repaired_vertices, dtype=np.float64)
-            faces = np.asarray(source.repaired_triangles, dtype=np.int64)
-        elif isinstance(source, ReconstructedGeometrySource):
-            region = source.source
-            if not isinstance(region, MeshRegion):
-                raise TypeError("Reconstructed triangle boundaries require a MeshRegion.")
-            vertices = np.asarray(region.vertices, dtype=np.float64)
-            faces = np.asarray(region.faces, dtype=np.int64)
-        else:
-            raise TypeError("source must be a ReconstructedGeometrySource or AuthoredTriangleSheet.")
+    def __init__(
+        self, source: ReconstructedGeometrySource | AuthoredTriangleSheet, /
+    ) -> None:
+        vertices, faces = reconstructed_triangle_arrays(source)
         triangles = tuple(
             (
                 _point(vertices[int(face[0])]),
@@ -339,6 +438,14 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
         self._triangles = triangles
         self._nodes = nodes
         self._root_index = root
+        prepared = _prove_domain_query(source, vertices, faces)
+        if isinstance(prepared, str):
+            self.domain_query = None
+            self.domain_cover = None
+            self.domain_refusal = prepared
+        else:
+            self.domain_query, self.domain_cover = prepared
+            self.domain_refusal = None
 
     @property
     def source_id(self) -> str:
@@ -354,11 +461,7 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
 
     def boundary_distance(self, points: ArrayLike, /) -> SourceBoundaryDistance:
         values = np.asarray(points, dtype=np.float64)
-        if (
-            values.ndim != 2
-            or values.shape[1] != 3
-            or not np.all(np.isfinite(values))
-        ):
+        if values.ndim != 2 or values.shape[1] != 3 or not np.all(np.isfinite(values)):
             raise ValueError("Boundary query points must be a finite (N, 3) array.")
         lower = np.empty((values.shape[0],), dtype=np.float64)
         upper = np.empty_like(lower)
@@ -379,7 +482,9 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
             raise TypeError("maximum_radius must be a positive finite physical distance.")
         radius_limit = finite_real_scalar(maximum_radius, "maximum_radius")
         if radius_limit <= 0.0:
-            raise ValueError("maximum_radius must be a positive finite physical distance.")
+            raise ValueError(
+                "maximum_radius must be a positive finite physical distance."
+            )
         radius_squared = Fraction.from_float(radius_limit) ** 2
         points: list[np.ndarray] = []
         covering_radii: list[float] = []
@@ -436,9 +541,7 @@ class ReconstructedTriangleBoundarySource(StrictModule, NonTrainableState):
                 )
                 pending.extend(reversed(children))
         return SourceBoundarySamples(
-            np.asarray(points, dtype=np.float64).reshape(
-                (-1, self.ambient_dimension)
-            ),
+            np.asarray(points, dtype=np.float64).reshape((-1, self.ambient_dimension)),
             np.asarray(covering_radii, dtype=np.float64),
             np.asarray(point_errors, dtype=np.float64),
             "certified",

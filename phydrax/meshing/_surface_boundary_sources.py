@@ -566,7 +566,6 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
                 "SurfaceSubdivisionBoundarySource.source must retain its exact root occurrence identity."
             )
 
-    @checked
     def boundary_chart_cover(
         self,
         /,
@@ -862,7 +861,6 @@ class SurfaceChartBoundarySource(StrictModule, NonTrainableState):
     ) -> boundary_records_owner.SourceBoundarySamples:
         return self.root.boundary_cover(maximum_radius)
 
-    @checked
     def boundary_chart_cover(
         self,
         /,

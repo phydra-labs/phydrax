@@ -9,7 +9,7 @@ import math
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from fractions import Fraction
-from typing import cast, final, Literal, TYPE_CHECKING
+from typing import cast, final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -64,6 +64,25 @@ type _ExactChartInput = Sequence[
     ]
 ]
 type _MeshingChartInput = ConvertibleToArray | _ExactChartInput
+
+
+@runtime_checkable
+class StackedSurfaceEvaluation(Protocol):
+    """A surface class that evaluates a stack of its instances in one call.
+
+    ``evaluate_stacked(surfaces, owners, parameters)`` returns, for every row,
+    ``surfaces[owners[row]].evaluate(parameters[row])`` with exactly the same
+    arithmetic, so batching never changes a coordinate.
+    """
+
+    @classmethod
+    def evaluate_stacked(
+        cls,
+        surfaces: Sequence[AbstractSurfacePatch],
+        owners: np.ndarray,
+        parameters: Array,
+        /,
+    ) -> Array: ...
 
 
 def _outward_surface_parameter_box(
@@ -608,6 +627,40 @@ def _placed_rational_surface_span(
     )
 
 
+_PLACED_SPAN_CAPACITY = 64
+_PLACED_SPANS: dict[
+    int,
+    tuple[
+        tuple[RationalBSplineSurfaceSpan, ...],
+        BRepAffinePlacement,
+        tuple[RationalBSplineSurfaceSpan, ...],
+    ],
+] = {}
+
+
+def _placed_rational_surface_spans(
+    source_spans: tuple[RationalBSplineSurfaceSpan, ...],
+    placement: BRepAffinePlacement,
+    /,
+) -> tuple[RationalBSplineSurfaceSpan, ...]:
+    """Place one source span bank once and keep the placed bank with it.
+
+    The entry holds the source bank itself, so its identity key cannot be
+    reused by another bank while cached; placed spans keep their prepared
+    interval nets across consumers.
+    """
+    cached = _PLACED_SPANS.get(id(source_spans))
+    if cached is not None and cached[0] is source_spans and cached[1] == placement:
+        return cached[2]
+    placed = tuple(
+        _placed_rational_surface_span(span, placement) for span in source_spans
+    )
+    if len(_PLACED_SPANS) >= _PLACED_SPAN_CAPACITY:
+        del _PLACED_SPANS[next(iter(_PLACED_SPANS))]
+    _PLACED_SPANS[id(source_spans)] = (source_spans, placement, placed)
+    return placed
+
+
 def _exact_rational_surface_spans(
     surface: AbstractSurfacePatch, /
 ) -> tuple[RationalBSplineSurfaceSpan, ...] | None:
@@ -615,10 +668,7 @@ def _exact_rational_surface_spans(
         source_spans = _exact_rational_surface_spans(surface.source)
         if source_spans is None:
             return None
-        return tuple(
-            _placed_rational_surface_span(span, surface.placement)
-            for span in source_spans
-        )
+        return _placed_rational_surface_spans(source_spans, surface.placement)
     if isinstance(surface, BSplineSurfacePatch):
         return surface.rational_spans()
     from .brep._tspline import TSplineSurfacePatch
@@ -2084,8 +2134,6 @@ class MeshingDomain(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_brep(cls, model: BRepModel, /) -> MeshingDomain:
-        if not isinstance(model, BRepModel):
-            raise TypeError("MeshingDomain.from_brep requires a BRepModel.")
         geometry = model.geometry
         occurrences = tuple(geometry.assembly_graph.iter_occurrences())
         if occurrences:
@@ -2930,12 +2978,41 @@ class MeshingDomain(StrictModule, NonTrainableState):
         return rows, points
 
     def evaluate(self, patches: ArrayLike, charts: ArrayLike, /) -> np.ndarray:
+        """Physical points of (patch, chart) pairs.
+
+        Patches whose surface class defines ``evaluate_stacked(surfaces, owners,
+        parameters)`` (the same arithmetic as ``evaluate``, row by row, over a
+        stack of surfaces of that class) are evaluated in one call per class;
+        every other patch is evaluated on its own.
+        """
         rows, charts_ = self._batch(patches, charts)
         result = np.empty((rows.size, 3), dtype=np.float64)
-        for patch in np.unique(rows):
-            selected = rows == patch
+        order = np.argsort(rows, kind="stable")
+        unique, starts = np.unique(rows[order], return_index=True)
+        stops = np.append(starts[1:], rows.size)
+        stacked: dict[type[StackedSurfaceEvaluation], list[int]] = {}
+        for index, patch in enumerate(unique.tolist()):
+            surface = self.patches[patch].surface
+            if isinstance(surface, StackedSurfaceEvaluation):
+                stacked.setdefault(type(surface), []).append(index)
+                continue
+            selected = order[starts[index] : stops[index]]
             result[selected] = np.asarray(
-                self.patches[int(patch)].surface.evaluate(jnp.asarray(charts_[selected])),
+                surface.evaluate(jnp.asarray(charts_[selected])), dtype=np.float64
+            )
+        for kind, members in stacked.items():
+            selected = np.concatenate(
+                [order[starts[index] : stops[index]] for index in members]
+            )
+            owners = np.repeat(
+                np.arange(len(members), dtype=np.int64),
+                [int(stops[index] - starts[index]) for index in members],
+            )
+            surfaces = tuple(
+                self.patches[int(unique[index])].surface for index in members
+            )
+            result[selected] = np.asarray(
+                kind.evaluate_stacked(surfaces, owners, jnp.asarray(charts_[selected])),
                 dtype=np.float64,
             )
         return result

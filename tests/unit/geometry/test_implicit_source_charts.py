@@ -4,10 +4,13 @@
 
 from collections.abc import Sequence
 from fractions import Fraction
+from typing import final, NoReturn
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
 from phydrax._physical import SpatialCoordinateContract
@@ -24,6 +27,16 @@ from phydrax.discretization.fem._reference import (
     FiniteElementSpec,
     lagrange_reference_node_data,
 )
+from phydrax.geometry._capabilities import GeometryCapability
+from phydrax.geometry._certificate import (
+    DistanceSemantics,
+    FieldCertificate,
+    FieldRegularity,
+    SignReliability,
+    ZeroSetAccuracy,
+)
+from phydrax.geometry._contracts import CompiledGeometry, GeometryKernel, GeometryKind
+from phydrax.geometry._sampling import RejectionSamplingPlan
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
@@ -37,6 +50,8 @@ from phydrax.geometry._source_fidelity import (
     validate_source_fidelity_witness,
 )
 from phydrax.geometry._source_identity import source_entity_id
+from phydrax.geometry._validity import GeometryValidityEvidence, unrestricted_validity
+from phydrax.geometry.design._schema import _ParameterCollector, DesignState
 from phydrax.geometry.implicit import (
     _adaptive_discovery as adaptive_discovery,
     _source_charts as source_charts,
@@ -58,7 +73,7 @@ from phydrax.geometry.implicit._source_charts import (
     prepare_adaptive_implicit_root_charts,
 )
 from phydrax.meshing._curving import _straight_geometry
-from phydrax.typing import ConvertibleToArray, Identifier
+from phydrax.typing import ConvertibleToArray, Identifier, PRNGKey
 from phydrax.units import METER
 
 
@@ -625,6 +640,182 @@ def test_adaptive_implicit_on_surface_p2_sphere_charts_certify_in_bounded_rounds
     assert all(item.status == "certified" for item in chart_map.chart_evidence)
     assert all(item.chart_injectivity_margin > 0.0 for item in chart_map.chart_evidence)
     assert rounds <= 4
+
+
+# The slab field c - 1/(1 + x0) saturates: its normal-line slope decays like
+# 1/(1 + t)^2, so the root x0 = 1/c - 1 lies far beyond every bracket estimated
+# from the slope near the face.
+_SATURATING_LEVEL = 1.0e-12
+
+
+@final
+class _SaturatingSlabKernel(GeometryKernel):
+    """Smooth level-set slab ``{x0 <= 1/c - 1}`` of ``c - 1/(1 + x0)`` on ``x0 > -1``."""
+
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        del state
+        return unrestricted_validity(contract_id="saturating-slab")
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    @property
+    def intrinsic_dimension(self) -> int:
+        return 3
+
+    @property
+    def kind(self) -> GeometryKind:
+        return GeometryKind.REGION
+
+    @property
+    def capabilities(self) -> frozenset[GeometryCapability]:
+        return frozenset({GeometryCapability.REGION_QUERY})
+
+    @property
+    def field_certificate(self) -> FieldCertificate:
+        return FieldCertificate(
+            zero_set_accuracy=ZeroSetAccuracy.EXACT,
+            sign_reliability=SignReliability.RELIABLE,
+            distance_semantics=DistanceSemantics.LEVEL_SET,
+            regularity=FieldRegularity.SMOOTH,
+            safe_step_factor=None,
+            validity_region="first coordinate greater than -1",
+            parameter_differentiable=False,
+            provenance=("saturating_slab_level_set",),
+        )
+
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
+        del state
+        return _SATURATING_LEVEL - 1.0 / (1.0 + points[..., 0])
+
+    def contains(self, state: DesignState, points: Array, /) -> Array:
+        return self.boundary_field(state, points) <= 0.0
+
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
+        del state
+        return jnp.broadcast_to(jnp.asarray((1.0, 0.0, 0.0)), points.shape)
+
+    def bounds(self, state: DesignState, /) -> Array:
+        del state
+        return jnp.asarray(
+            (
+                (-1.0, -jnp.inf, -jnp.inf),
+                (1.0 / _SATURATING_LEVEL - 1.0, jnp.inf, jnp.inf),
+            )
+        )
+
+    def measure(self, state: DesignState, /) -> NoReturn:
+        del state
+        raise NotImplementedError("The saturating slab has no finite measure.")
+
+    def boundary_measure(self, state: DesignState, /) -> NoReturn:
+        del state
+        raise NotImplementedError("The saturating slab has no finite boundary measure.")
+
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> NoReturn:
+        del state, num_points, key, plan
+        raise NotImplementedError("The saturating slab advertises region queries only.")
+
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> NoReturn:
+        del state, num_points, key
+        raise NotImplementedError("The saturating slab advertises region queries only.")
+
+    def boundary_atlas(self, state: DesignState, /) -> NoReturn:
+        del state
+        raise NotImplementedError("The saturating slab advertises region queries only.")
+
+
+def test_implicit_root_bracket_widens_until_a_far_normal_root_is_signed() -> None:
+    _, state = _ParameterCollector().finish()
+    geometry = CompiledGeometry(_SaturatingSlabKernel(), state)
+    surface = discover_adaptive_implicit_surface(
+        geometry,
+        domain=np.asarray(((-0.5, -1.0, -1.0), (1.0e23, 1.0, 1.0))),
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.25, root_tolerance=1.0e-8
+        ),
+        source_id="saturating-slab",
+    )
+    # A flat piece on x0 = 0, where f = c - 1 and grad f = e0: the normal-line
+    # parameter is x0 itself and the root sits at t* = 1/c - 1 = 1e12.
+    width = Fraction(1, 64)
+    face = source_charts._enclose_face(
+        (
+            {(0, 0): Fraction(0)},
+            {(0, 0): Fraction(0), (1, 0): width},
+            {(0, 0): Fraction(0), (0, 1): width},
+        )
+    )
+    hessian = source_charts._prepare_hessian(geometry)
+    steps = source_charts._face_piece_steps(
+        surface, face, source_charts._STANDARD_TRIANGLE, 1, (0, 1, 2), None, None
+    )
+    request = next(steps)
+    bracket_ends: list[float] = []
+    while True:
+        # Every bracket round queries the tube, its two endpoint boxes and the
+        # two shifted piece centres; the first request is the piece itself.
+        if len(request.field) == 5:
+            bracket_ends.append(float(request.field[2][1][0]))
+        (result,) = source_charts._evaluate_box_requests(
+            surface.volume.bounds, hessian, [request]
+        )
+        try:
+            request = steps.send(result)
+        except StopIteration as stop:
+            proof, detail, _ = stop.value
+            break
+    assert proof is not None, detail
+    root = 1.0 / _SATURATING_LEVEL - 1.0
+    assert proof.root_parameters[0] <= root <= proof.root_parameters[1]
+    # Each widening jumps to the monotone sign point of the decayed slope, yet
+    # five are needed; four doublings of the first bracket stop 2e10x short.
+    widenings = len(bracket_ends) - 1
+    assert widenings >= 5
+    assert bracket_ends[-2] < root < bracket_ends[-1]
+    assert 2.0**4 * bracket_ends[0] < root
+
+
+def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces() -> None:
+    surface, source, _contract, mesh, geometry, witness = _adaptive_source()
+    charts = prepare_adaptive_implicit_root_charts(
+        mesh, geometry, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
+    )
+    faces = charts._faces
+    tolerance = 0.05
+
+    lower, upper = source_charts._source_to_mesh_bounds(
+        surface, source_charts._face_maps(faces), tolerance
+    )
+    assert 0.0 <= lower <= upper <= tolerance
+
+    # Without the faces on the x > 0 side, the zero set there lies about one
+    # superquadric radius from every face, so a zero-containing box refutes it.
+    kept = [
+        face
+        for face in faces
+        if source_charts._enclosed_box(
+            face.face_enclosure, source_charts._STANDARD_TRIANGLE
+        )[1][0]
+        < 0.0
+    ]
+    assert 0 < len(kept) < len(faces)
+    lower, upper = source_charts._source_to_mesh_bounds(
+        surface, source_charts._face_maps(kept), tolerance
+    )
+    assert lower > tolerance
+    assert upper == np.inf
 
 
 def test_adaptive_implicit_fidelity_retains_scoped_target_extent() -> None:

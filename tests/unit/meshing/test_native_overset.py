@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Any
 
 import jax
@@ -206,6 +207,7 @@ def test_mapped_locator_reports_complete_multiple_inverse_roots_as_ambiguous() -
         ((0.1, 0.3), (0.1, 0.6)),
         atol=1.0e-8,
     )
+    assert result.inverse_refusals == ()
 
 
 def test_mapped_locator_keeps_tangent_root_finitely_unresolved() -> None:
@@ -233,6 +235,19 @@ def test_mapped_locator_keeps_tangent_root_finitely_unresolved() -> None:
     assert np.asarray(result.status).tolist() == [
         int(phx.discretization.CellLocationStatus.INVERSE_MAP_EXHAUSTED)
     ]
+    (refusal,) = result.inverse_refusals
+    assert (refusal.point, refusal.cell, refusal.reason) == (
+        0,
+        0,
+        "singular-tolerance-root",
+    )
+    # The witness segment brackets the fold through the tangent root.
+    assert len(refusal.witness) == 2
+    np.testing.assert_allclose(
+        np.asarray(refusal.witness, dtype=np.float64),
+        ((0.2, 0.45), (0.2, 0.45)),
+        atol=1.0e-6,
+    )
 
 
 def test_mapped_locator_refuses_rootless_tolerance_band_finitely() -> None:
@@ -260,6 +275,182 @@ def test_mapped_locator_refuses_rootless_tolerance_band_finitely() -> None:
     assert result.candidates_complete.tolist() == [False, True]
     np.testing.assert_allclose(
         np.asarray(result.reference_coordinates)[1], (0.5, 0.2), atol=1.0e-10
+    )
+    (refusal,) = result.inverse_refusals
+    assert (refusal.point, refusal.cell, refusal.reason) == (
+        0,
+        0,
+        "rootless-tolerance-root",
+    )
+    (witness,) = refusal.witness
+    np.testing.assert_allclose(
+        np.asarray(witness, dtype=np.float64), (0.5, 0.0), atol=1.0e-9
+    )
+
+
+def test_cell_inverse_refusal_is_static_validated_box_evidence() -> None:
+    refusal = phx.discretization.CellInverseRefusal(
+        0,
+        1,
+        "parameter-resolution",
+        (Fraction(0),),
+        (Fraction(1),),
+        ((Fraction(1, 2),),),
+    )
+
+    assert jax.tree.leaves(refusal) == []
+    with pytest.raises(ValueError, match="reason"):
+        phx.discretization.CellInverseRefusal(
+            0,
+            1,
+            "converged",  # ty: ignore[invalid-argument-type]
+            (Fraction(0),),
+            (Fraction(1),),
+            (),
+        )
+    with pytest.raises(ValueError, match="ordered box"):
+        phx.discretization.CellInverseRefusal(
+            0,
+            1,
+            "parameter-resolution",
+            (Fraction(0),),
+            (Fraction(1),),
+            ((Fraction(2),),),
+        )
+
+
+def test_overset_receptor_evidence_carries_donor_inverse_refusals() -> None:
+    # The quadratic donor is a 1e-5-thin triangle; receptor vertex 0 lies just below
+    # its edge, within the residual tolerance but with no exact preimage.
+    corners = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0e-5)), dtype=np.float64)
+    nodes = np.concatenate(
+        (corners, 0.5 * (corners[[0, 1, 0]] + corners[[1, 2, 2]])), axis=0
+    )
+    donor_mesh = phx.discretization.CellMesh.from_triangles(
+        corners, np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    donor = MeshPart(
+        "donor",
+        phx.meshing.certify_cell_mesh(
+            donor_mesh,
+            phx.SpatialCoordinateContract.si(),
+            geometry=phx.discretization.CellGeometrySpec(
+                {"triangles": phx.discretization.lagrange_element("triangle", 2)},
+                {"triangles": np.arange(6, dtype=np.int64)[None, :]},
+                nodes,
+            ),
+        ),
+    )
+    receptor = _part(
+        "receptor",
+        ((0.5, -2.0e-15), (0.6, 2.0e-6), (0.55, 4.0e-6)),
+        ((0, 1, 2),),
+    )
+
+    connectivity = prepare_overset_connectivity(
+        MeshAssembly((donor, receptor)),
+        (
+            OversetPartSpec("donor"),
+            OversetPartSpec("receptor", boundary=_boundary_facets(receptor)),
+        ),
+        policy=OversetPolicy(fringe_layers=1),
+    )
+
+    evidence = next(
+        item for item in connectivity.receptors if item.part_name == "receptor"
+    )
+    assert np.asarray(evidence.status).tolist() == [
+        int(phx.meshing.CouplingSearchStatus.UNRESOLVED),
+        int(phx.meshing.CouplingSearchStatus.FOUND),
+        int(phx.meshing.CouplingSearchStatus.FOUND),
+    ]
+    (refusal,) = evidence.donor_refusals
+    assert (refusal.donor_part, refusal.donor_block) == ("donor", "triangles")
+    assert (refusal.refusal.point, refusal.refusal.cell, refusal.refusal.reason) == (
+        0,
+        0,
+        "rootless-tolerance-root",
+    )
+
+
+def test_owner_local_fv_donor_request_refuses_an_undecided_inverse_map() -> None:
+    """A donor owner refuses a request whose point has no decided preimage.
+
+    The owner-local FV overset serves donor-cell requests by locating the
+    requester's point in the requested cell. On the 1e-5-thin quadratic donor
+    the point just below its edge has an undecided exact inverse; the owner
+    refuses with the locator's box evidence re-indexed to the request row
+    instead of reading the incomplete candidate list as "not contained".
+    """
+    from phydrax.discretization._cell_geometry import CellGeometrySpec
+    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+    from phydrax.meshing._curving import _exact_coordinate_bank_source_map
+    from phydrax.meshing._overset_finite_volume import _bits, _serve_requests
+    from tests.unit.meshing.test_owner_local_conservative_remap import (
+        _curved_distributed_owner_view,
+    )
+
+    if jax.process_count() != 1:
+        pytest.skip("The single donor owner runs outside a process group.")
+    corners = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0e-5)), dtype=np.float64)
+    nodes = np.concatenate(
+        (corners, 0.5 * (corners[[0, 1, 0]] + corners[[1, 2, 2]])), axis=0
+    )
+    mesh = phx.discretization.CellMesh.from_triangles(
+        corners, np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    contract = phx.SpatialCoordinateContract.si()
+    elements = {"triangles": phx.discretization.lagrange_element("triangle", 2)}
+    routes = {"triangles": np.arange(6, dtype=np.int32)[None, :]}
+    bank_geometry = CellGeometrySpec(elements, routes, nodes)
+    bank = MeshPart(
+        "thin-bank", phx.meshing.certify_cell_mesh(mesh, contract, geometry=bank_geometry)
+    )
+    source_map = _exact_coordinate_bank_source_map(
+        mesh,
+        bank.name,
+        bank.part_id,
+        ("thin-donor-coordinate-bank", bank.part_id, cell_geometry_id(bank_geometry)),
+        tuple(tuple(Fraction.from_float(float(value)) for value in row) for row in nodes),
+        nodes,
+    )
+    result = phx.meshing.certify_cell_mesh(
+        mesh,
+        contract,
+        geometry=CellGeometrySpec(
+            elements, routes, nodes, source_map=source_map, source_mesh=mesh
+        ),
+    )
+    device = jax.local_devices()[0]
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "thin-donor-owner",
+            (jax.process_index(),),
+            ((device.process_index, device.id),),
+            mesh_axes=(("thin_donor_owner", 1),),
+        ),
+        (device,),
+    )
+    view = _curved_distributed_owner_view(
+        "thin-donor",
+        result,
+        np.zeros((1,), dtype=np.int32),
+        group,
+        0,
+        source_map,
+        mesh.mesh_id,
+    )
+    cell_id = int(np.asarray(view.cell_ids)[0])
+    request = {"cell": cell_id, "point": _bits(np.asarray((0.5, -2.0e-15)))}
+
+    with pytest.raises(phx.discretization.CellLocationRefusalError) as refused:
+        _serve_requests(view, {}, {cell_id: ("triangle", corners)}, [request], 0)
+
+    (refusal,) = refused.value.inverse_refusals
+    assert (refusal.point, refusal.cell, refusal.reason) == (
+        0,
+        0,
+        "rootless-tolerance-root",
     )
 
 

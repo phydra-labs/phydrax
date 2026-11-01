@@ -41,7 +41,7 @@ from ..discretization._periodic_exact import (
 from ..discretization._periodic_topology import (
     _canonical_unordered_form,
     _entity_vertex_rows,
-    _interleaved_key,
+    _interleaved_keys,
     _orientation_orders,
     PeriodicMeshTopology,
 )
@@ -155,10 +155,7 @@ class PeriodicMeshConstruction(StrictModule, NonTrainableState):
             raise TypeError(
                 "A periodic construction requires a CellMesh with PeriodicMeshTopology."
             )
-        mesh.periodic_topology.require_lifted(
-            mesh.topology, mesh.topology_id, mesh.blocks
-        )
-        mesh.periodic_topology.require_coordinates(mesh.coordinates)
+        # CellMesh construction validated this (descriptor, lifted mesh) binding.
         if geometry is not None:
             if not isinstance(geometry, CellGeometrySpec):
                 raise TypeError("geometry must be a CellGeometrySpec when supplied.")
@@ -830,8 +827,6 @@ def _entity_layout(mesh: CellMesh, degree: int, /) -> _PeriodicEntityLayout:
     topology = mesh.periodic_topology
     if topology is None:
         raise ValueError("Periodic entity layout requires periodic mesh topology.")
-    topology.require_lifted(mesh.topology, mesh.lifted_topology_id, mesh.blocks)
-    topology.require_coordinates(mesh.coordinates)
     if isinstance(degree, bool) or not 0 <= degree <= mesh.topological_dimension:
         raise ValueError("Entity degree is outside the mesh topology.")
     lifted_offsets = np.asarray(topology.lifted_offsets, dtype=np.int64)
@@ -901,27 +896,30 @@ class PeriodicEntityOrbitMap(StrictModule, NonTrainableState):
         signs = np.asarray(orientation_signs, dtype=np.int32)
         shifts = np.asarray(winding_shifts, dtype=np.int64)
         corners = tuple(np.asarray(row, dtype=np.int32) for row in corner_permutations)
+        sizes = np.asarray([row.size for row in corners], dtype=np.int64)
+        corner_values = (
+            np.concatenate(corners).astype(np.int32, copy=False)
+            if corners and all(row.ndim == 1 for row in corners)
+            else np.zeros((0,), dtype=np.int32)
+        )
+        # A row is a permutation iff its entries lie in [0, size) and are distinct.
+        owners = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
+        entries = corner_values.astype(np.int64)
+        width = int(np.max(sizes, initial=0))
         if (
             signs.shape != layout.orbit_rows.shape
             or shifts.ndim != 2
             or shifts.shape[0] != layout.orbit_rows.size
             or len(corners) != layout.orbit_rows.size
             or np.any(np.abs(signs) != 1)
-            or any(
-                row.ndim != 1
-                or row.size == 0
-                or not np.array_equal(np.sort(row), np.arange(row.size, dtype=np.int32))
-                for row in corners
-            )
+            or any(row.ndim != 1 for row in corners)
+            or np.any(sizes == 0)
+            or np.any((entries < 0) | (entries >= sizes[owners]))
+            or np.unique(owners * width + entries).size != entries.size
         ):
             raise ValueError("Periodic entity actions must match the lifted entity set.")
         corner_offsets = np.zeros((len(corners) + 1,), dtype=np.int64)
-        np.cumsum([row.size for row in corners], out=corner_offsets[1:])
-        corner_values = (
-            np.concatenate(corners).astype(np.int32, copy=False)
-            if corners
-            else np.zeros((0,), dtype=np.int32)
-        )
+        np.cumsum(sizes, out=corner_offsets[1:])
         self.degree = int(degree)
         self.lifted_entity_ids = jnp.asarray(
             mesh.entity_set(self.degree).entity_ids, dtype=jnp.int64
@@ -1045,22 +1043,19 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
         for block in mesh.blocks
         for identifier in np.asarray(block.global_ids, dtype=np.int64)
     }
-    corner_rows: list[np.ndarray] = []
+    top = degree == mesh.topological_dimension
+    corner_rows: list[np.ndarray | None] = [None] * len(entity_vertices)
+    groups: dict[tuple[int, bool], list[int]] = {}
     for row, vertex_row in enumerate(entity_vertices):
-        vertices = np.asarray(vertex_row, dtype=np.int64)
-        identifiers = root_ids[vertices]
-        exponents = vertex_shifts[vertices]
-        fixed_entities = fixed[vertices]
-        quotient_row = quotient_lower + int(layout.orbit_rows[row])
-        expected = key_values[key_offsets[quotient_row] : key_offsets[quotient_row + 1]]
-        cell_kind = (
-            cell_kind_by_id[int(entity_ids[row])]
-            if degree == mesh.topological_dimension
-            else ""
-        )
-        if degree == mesh.topological_dimension and cell_kind == "polyhedron":
+        cell_kind = cell_kind_by_id[int(entity_ids[row])] if top else ""
+        if top and cell_kind == "polyhedron":
+            vertices = np.asarray(vertex_row, dtype=np.int64)
+            quotient_row = quotient_lower + int(layout.orbit_rows[row])
+            expected = key_values[
+                key_offsets[quotient_row] : key_offsets[quotient_row + 1]
+            ]
             key, _, permutation = _canonical_unordered_form(
-                identifiers, exponents, fixed_entities, orders
+                root_ids[vertices], vertex_shifts[vertices], fixed[vertices], orders
             )
             if not np.array_equal(np.asarray(key, dtype=np.int64), expected):
                 raise ValueError(
@@ -1070,29 +1065,47 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
                 raise ValueError(
                     "Periodic polyhedron orientation must preserve its lifted cell orientation."
                 )
-        else:
-            simplex = degree == mesh.topological_dimension and cell_kind.startswith(
-                ("simplex:", "triangle", "tetrahedron")
+            corner_rows[row] = np.asarray(permutation, dtype=np.int32)
+            continue
+        simplex = top and cell_kind.startswith(("simplex:", "triangle", "tetrahedron"))
+        groups.setdefault((len(vertex_row), simplex), []).append(row)
+    for (arity, simplex), group in groups.items():
+        rows = np.asarray(group, dtype=np.int64)
+        vertices = np.asarray([entity_vertices[row] for row in group], dtype=np.int64)
+        quotient_rows = quotient_lower + layout.orbit_rows[rows]
+        starts = key_offsets[quotient_rows]
+        width = arity * (orders.size + 1)
+        if np.any(key_offsets[quotient_rows + 1] - starts != width):
+            raise ValueError("Periodic entity has no canonical corner permutation.")
+        expected = key_values[starts[:, None] + np.arange(width)]
+        identifiers = root_ids[vertices]
+        exponents = vertex_shifts[vertices]
+        fixed_entities = fixed[vertices]
+        variants = _orientation_orders(arity, simplex=simplex)
+        found = np.full((rows.size,), -1, dtype=np.int64)
+        for index, (order, orientation) in enumerate(variants):
+            # Same moving-vertex anchor convention as the quotient keys.
+            candidate, _ = _interleaved_keys(
+                identifiers, exponents, fixed_entities, order, orders
             )
-            permutation = None
-            for order, orientation in _orientation_orders(vertices.size, simplex=simplex):
-                # Same moving-vertex anchor convention as the quotient keys.
-                candidate, _ = _interleaved_key(
-                    identifiers, exponents, fixed_entities, order, orders
+            hit = (found < 0) & np.all(candidate == expected, axis=1)
+            if np.any(hit & (stored_signs[rows] != orientation)):
+                raise ValueError(
+                    "Periodic corner permutation has an inconsistent orientation."
                 )
-                if np.array_equal(np.asarray(candidate, dtype=np.int64), expected):
-                    permutation_rows = np.asarray(order, dtype=np.int64)
-                    if int(orientation) != int(stored_signs[row]):
-                        raise ValueError(
-                            "Periodic corner permutation has an inconsistent orientation."
-                        )
-                    permutation = permutation_rows.astype(np.int32)
-                    break
-            if permutation is None:
-                raise ValueError("Periodic entity has no canonical corner permutation.")
-        corner_rows.append(np.asarray(permutation, dtype=np.int32))
+            found[hit] = index
+        if np.any(found < 0):
+            raise ValueError("Periodic entity has no canonical corner permutation.")
+        permutations = np.asarray([order for order, _ in variants], dtype=np.int32)
+        for row, permutation in zip(group, permutations[found], strict=True):
+            corner_rows[row] = permutation
     return PeriodicEntityOrbitMap(
-        mesh, degree, layout, stored_signs, shifts, tuple(corner_rows)
+        mesh,
+        degree,
+        layout,
+        stored_signs,
+        shifts,
+        tuple(row for row in corner_rows if row is not None),
     )
 
 
@@ -1754,6 +1767,12 @@ def periodic_topology_after_edit(
     ``exact_coordinate_source`` is the target's exact vertex bank when new
     vertices are canonical roundings of exact quotient-chart translates rather
     than translates of their rounded roots.
+
+    A quotient entity that continues one source quotient entity (some lifted
+    member keeps its vertex ID, sorted vertex IDs, or cell ID) keeps its
+    quotient ID; removed quotient IDs are retired, and new quotient entities
+    take consecutive IDs from :func:`periodic_next_entity_ids` in canonical
+    quotient order.
     """
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
         raise TypeError(
@@ -1762,10 +1781,6 @@ def periodic_topology_after_edit(
     source_topology = source.periodic_topology
     if source_topology is None:
         return None
-    source_topology.require_lifted(
-        source.topology, source.lifted_topology_id, source.blocks
-    )
-    source_topology.require_coordinates(source.coordinates)
     if target.periodic_topology is not None:
         raise ValueError(
             "target must be an unbound lifted mesh before periodic rebinding."
@@ -1956,22 +1971,61 @@ def periodic_topology_after_edit(
         target_shifts[rows] = reduce_periodic_exponents(
             anchors[rows] - anchors[representative], orders
         )
-    allocator = {}
-    for degree, next_id in enumerate(source_topology.allocator_next_ids):
-        if next_id >= 0:
-            target_entity_ids = np.asarray(
-                target.entity_set(degree).entity_ids, dtype=np.int64
-            )
-            allocator[degree] = max(
-                int(next_id), int(np.max(target_entity_ids, initial=-1)) + 1
-            )
+    # A target entity continues the source entity with its identity key (vertex
+    # ID, sorted vertex IDs, or cell ID); its quotient keeps that quotient ID.
+    # Every other quotient entity is new and draws a fresh allocator ID.
+    from ._topology_edit import entity_keys, key_rows
+
+    source_next = periodic_next_entity_ids(source)
+    ancestry: dict[int, np.ndarray] = {}
+    allocator: dict[int, int] = {}
+    for degree in range(source.topological_dimension + 1):
+        layout = _entity_layout(source, degree)
+        source_quotient_ids = layout.entity_ids[layout.orbit_rows]
+        rows = key_rows(entity_keys(source, degree), entity_keys(target, degree))
+        ancestry[degree] = np.where(
+            rows >= 0, source_quotient_ids[np.maximum(rows, 0)], -1
+        )
+        target_entity_ids = np.asarray(
+            target.entity_set(degree).entity_ids, dtype=np.int64
+        )
+        allocator[degree] = max(
+            source_next[degree], int(np.max(target_entity_ids, initial=-1)) + 1
+        )
     return PeriodicMeshTopology(
         target,
         source_topology.cell,
         target_representatives,
         target_shifts,
-        entity_allocator_next_ids=allocator or None,
+        entity_allocator_next_ids=allocator,
+        quotient_id_ancestry=ancestry,
         exact_coordinate_source=exact_coordinate_source,
+    )
+
+
+def periodic_next_entity_ids(mesh: CellMesh, /) -> tuple[int, ...]:
+    """First identifier per degree not yet issued in this periodic lineage.
+
+    It exceeds the topology's allocator and every current lifted and quotient
+    entity ID, so a new lifted or quotient entity drawn from it never reuses
+    the identity of an entity an earlier edit retired.
+    """
+    topology = mesh.periodic_topology
+    if topology is None:
+        raise ValueError("Periodic entity allocation requires periodic topology.")
+    return tuple(
+        max(
+            int(topology.allocator_next_ids[degree]),
+            int(np.max(np.asarray(mesh.entity_set(degree).entity_ids), initial=-1)) + 1,
+            int(
+                np.max(
+                    np.asarray(topology.quotient.entity_sets[degree].entity_ids),
+                    initial=-1,
+                )
+            )
+            + 1,
+        )
+        for degree in range(mesh.topological_dimension + 1)
     )
 
 
@@ -2079,12 +2133,6 @@ class PeriodicCellEditCandidate(StrictModule, NonTrainableState):
         topology = self.target.periodic_topology
         if topology is None:
             raise ValueError("Periodic edit target lost its quotient descriptor.")
-        topology.require_lifted(
-            self.target.topology,
-            self.target.lifted_topology_id,
-            self.target.blocks,
-        )
-        topology.require_coordinates(self.target.coordinates)
         return self.target
 
     def rollback(self, source: CellMesh, /) -> CellMesh:
@@ -2219,12 +2267,6 @@ def stage_periodic_refinement_candidate(
         numeric_version=target.numeric_version,
         periodic_topology=descriptor,
     )
-    descriptor.require_lifted(
-        bound_target.topology,
-        bound_target.lifted_topology_id,
-        bound_target.blocks,
-    )
-    descriptor.require_coordinates(bound_target.coordinates)
     if bound_target.lifted_topology_id != target.lifted_topology_id:
         raise ValueError(
             "Periodic rebinding changed the staged lifted topology identity."
@@ -2276,6 +2318,7 @@ def stage_periodic_topology_edit(
         return None
     from ._lineage import VertexInterpolationStencil
     from ._topology_edit import (
+        _target_entity_ids,
         CellTopologyEdit,
         entity_keys,
         key_rows,
@@ -2306,10 +2349,24 @@ def stage_periodic_topology_edit(
         raise ValueError(
             "Periodic topology edits require a full-dimensional triangle or tetrahedron target."
         )
+    probe = CellMesh(
+        edit.coordinates,
+        blocks,
+        vertex_global_ids=edit.vertex_global_ids,
+    )
+    # Intermediate lifted entities keep their source IDs by vertex identity and
+    # new ones draw fresh lineage IDs, so a retired lifted ID never returns.
+    first_new_ids = periodic_next_entity_ids(source)
     target = CellMesh(
         edit.coordinates,
         blocks,
         vertex_global_ids=edit.vertex_global_ids,
+        entity_global_ids={
+            degree: _target_entity_ids(
+                source, probe, degree, (), first_new_id=first_new_ids[degree]
+            )
+            for degree in range(1, source.topological_dimension)
+        },
     )
     stencil = VertexInterpolationStencil(
         source.entity_set(0).entity_set_id,
@@ -2345,8 +2402,6 @@ def stage_periodic_topology_edit(
         numeric_version=target.numeric_version,
         periodic_topology=descriptor,
     )
-    descriptor.require_lifted(bound.topology, bound.lifted_topology_id, bound.blocks)
-    descriptor.require_coordinates(bound.coordinates)
     if bound.lifted_topology_id != target.lifted_topology_id:
         raise ValueError("Periodic edit rebinding changed the lifted target identity.")
 
@@ -2556,8 +2611,6 @@ def _periodic_topology_after_reorder(
         raise ValueError(
             "Periodic canonicalization target must be an unbound lifted mesh."
         )
-    source_topology.require_lifted(source.topology, source.topology_id, source.blocks)
-    source_topology.require_coordinates(source.coordinates)
 
     source_vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
     target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
@@ -2658,8 +2711,6 @@ def periodic_delaunay_mesh(
     initial_margin: float = 1.0,
 ) -> PeriodicMeshConstruction:
     """Construct a real periodic quotient Delaunay mesh with the native kernel."""
-    if not isinstance(source, PeriodicPointOrbits):
-        raise TypeError("source must be PeriodicPointOrbits.")
     if np.asarray(source.point_ids).size == 0:
         raise ValueError("Global periodic Delaunay requires at least one authored point.")
     dimension = source.ambient_dimension

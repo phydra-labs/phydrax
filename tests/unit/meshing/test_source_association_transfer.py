@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from phydrax import SpatialCoordinateContract
-from phydrax.discretization import CellMesh
+from phydrax.discretization import CellBlock, CellMesh
 from phydrax.geometry import Sphere
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
@@ -21,18 +21,22 @@ from phydrax.meshing._adaptation import (
     prepare_mesh_adaptation,
 )
 from phydrax.meshing._association import (
+    AssociationEntityClasses,
+    AssociationPropagationError,
     GeometryAssociation,
     GeometryAssociationKind,
     GeometrySourceEntityRole,
 )
 from phydrax.meshing._association_composition import ComposedAssociationTransfer
-from phydrax.meshing._association_routes import target_dimension
+from phydrax.meshing._association_routes import boundary_mask, target_dimension
 from phydrax.meshing._bisection import BisectionCompatibility, BisectionHierarchy
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
     SurfaceMeshingSpec,
+    VolumeFillStrategy,
+    VolumeMeshingSpec,
 )
 from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
 from phydrax.meshing._lineage import (
@@ -48,7 +52,11 @@ from phydrax.meshing._mapped_reference_association import (
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._surface_association_transfer import SurfaceAssociationTransfer
+from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.meshing.providers._native import NativeMeshingProvider
+from phydrax.meshing.providers._native_implicit import (
+    normalize_analytic_implicit_source,
+)
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_schedules import (
     NativeCurveSchedule,
@@ -237,6 +245,52 @@ def test_implicit_sphere_association_survives_bisection_split_and_collapse() -> 
     )
 
 
+def test_implicit_collapse_into_born_vertex_follows_its_target_stratum() -> None:
+    profile = _profile()
+    source = _implicit_surface_result(profile)
+    transfer = ImplicitAssociationTransfer(profile)
+    source_points = np.asarray(source.mesh.coordinates, dtype=np.float64)
+    source_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    born = int(np.max(source_ids)) + 1
+    # A source vertex collapses into a vertex born during adaptation (a split point).
+    target = CellMesh(
+        np.stack(
+            (
+                0.5 * (source_points[0] + source_points[1]),
+                source_points[1],
+                source_points[2],
+            )
+        ),
+        (CellBlock("surface", "triangle", np.asarray([[0, 1, 2]], dtype=np.int64)),),
+        vertex_global_ids=np.asarray([born, source_ids[1], source_ids[2]]),
+    )
+    record = EntityLineage(
+        0,
+        source.mesh.entity_set(0).entity_set_id,
+        target.entity_set(0).entity_set_id,
+        source_ids[:1],
+        np.asarray([born], dtype=np.int64),
+        np.asarray([EntityLineageKind.COLLAPSED_INTO], dtype=np.int32),
+    )
+    lineage = MeshLineage(source.mesh.topology_id, target.topology_id, (record,))
+    source_classes = transfer.classes(source)
+    surface_classes = AssociationEntityClasses(
+        np.full((3,), 2, dtype=np.int64),
+        np.zeros((3,), dtype=np.int64),
+        np.ones((3,), dtype=np.bool_),
+        np.ones((3,), dtype=np.int64),
+    )
+    # The born vertex lies on the zero set, so the collapse keeps stratum closure.
+    transfer._check_collapses(source, lineage, source_classes, target, (surface_classes,))
+    # A zero-set vertex collapsing into a born region-interior vertex leaves its
+    # stratum and stays refused.
+    region_classes = surface_classes._replace(dimensions=np.full((3,), 3, dtype=np.int64))
+    with pytest.raises(AssociationPropagationError):
+        transfer._check_collapses(
+            source, lineage, source_classes, target, (region_classes,)
+        )
+
+
 def _curve_rows(result: CellMeshingResult) -> dict[int, tuple[object, ...]]:
     return {
         int(identifier): (
@@ -419,3 +473,73 @@ def test_mapped_reference_root_association_and_composed_namespaces() -> None:
         all(role is GeometrySourceEntityRole.REGION for role in value.source_roles)
         for value in implicit_associations
     )
+
+
+def _outward_boundary_triangles(volume: CellMesh, surface: CellMesh) -> bool:
+    """Whether the surface is the volume boundary with normals leaving the origin."""
+
+    corners = np.asarray(surface.coordinates)[
+        np.concatenate([np.asarray(block.vertices) for block in surface.blocks])
+    ]
+    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    outward = np.sum(normals * np.mean(corners, axis=1), axis=1) > 0.0
+    boundary = np.count_nonzero(boundary_mask(volume, 2))
+    return corners.shape[0] == boundary and bool(np.all(outward))
+
+
+def test_implicit_volume_boundary_remap_orients_triangles_outward() -> None:
+    profile = _profile("association-ball")
+    policy = AdaptiveImplicitSurfacePolicy(
+        relative_cell_diameter=0.2,
+        root_tolerance=1.0e-8,
+    )
+    namespace = normalize_analytic_implicit_source(profile, policy, _CONTRACT)
+    scope = MeshingScope(
+        namespace.source_id,
+        namespace.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        namespace.scope_entity_set_id(2),
+        namespace.scope_entity_ids(2),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=0.8,
+    )
+    options = NativeMeshingOptions(
+        "implicit_adaptive_tetrahedral",
+        implicit_policy=policy,
+        volume_schedule=NativeVolumeSchedule(),
+    )
+    source = (
+        NativeMeshingProvider(options)
+        .plan(namespace, specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    certification = source.certification
+    if certification is None:
+        raise AssertionError("Native implicit volume must retain source certification.")
+    authority = certification.inputs.feature_source
+    if not isinstance(authority, NativeImplicitSource):
+        raise AssertionError("Native implicit volume must retain its implicit source.")
+    transfer = ImplicitAssociationTransfer(authority)
+    lineage, _ = _identity_lineage(source.mesh)
+    # The native volume carries simplicial incidence; the copy carries
+    # vertex-sorted tetrahedral face rows. Both remap to outward triangles.
+    mesh = source.mesh
+    copy = CellMesh.from_tetrahedra(
+        np.asarray(mesh.coordinates),
+        np.concatenate([np.asarray(block.vertices) for block in mesh.blocks]),
+        vertex_global_ids=np.asarray(mesh.vertex_global_ids),
+        cell_global_ids=np.concatenate(
+            [np.asarray(block.global_ids) for block in mesh.blocks]
+        ),
+        numeric_version=mesh.numeric_version,
+    )
+    for target in (copy, mesh):
+        model = transfer.remap_boundary(source, lineage, target)
+        assert model is not None
+        assert _outward_boundary_triangles(target, model.mesh)

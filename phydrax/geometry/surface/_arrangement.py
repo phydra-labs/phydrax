@@ -34,7 +34,7 @@ from ..._meshcore import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import checked, parse
+from ...typing import parse
 
 
 SurfaceArrangementStatus: TypeAlias = Literal[
@@ -720,7 +720,6 @@ def _arrange(
     return arrangement, classification
 
 
-@checked
 def arrange_triangle_surfaces(
     first_vertices: ArrayLike,
     first_triangles: ArrayLike,

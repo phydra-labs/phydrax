@@ -18,9 +18,16 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..discretization import CellBlock, CellMesh, PolyhedralConnectivity
+from ..discretization import (
+    CellBlock,
+    CellMesh,
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from ..discretization._cell_complex import polyhedral_connectivity
 from ..discretization._cell_mesh import PolyhedralBlock, SimplicialConnectivity
+from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._nested_reference_types import (
     exact_reference_vertices,
     NestedReferenceWitnesses,
@@ -36,6 +43,7 @@ from ..discretization._reference_cell import (
     facet_orientation_between,
     reference_cell_topology,
 )
+from ..discretization._triangular import TriangleConnectivity
 from ._lineage import (
     EntityLineage,
     EntityLineageKind,
@@ -245,30 +253,32 @@ def source_family_blocks(
 
 def _face_rows(connectivity: object, dimension: int) -> tuple[np.ndarray, ...]:
     """Return each intermediate entity's ordered vertex row."""
-    if isinstance(connectivity, SimplicialConnectivity):
-        if not 0 < dimension < connectivity.dimension:
+    match connectivity, dimension:
+        case SimplicialConnectivity(), _ if 0 < dimension < connectivity.dimension:
+            rows = np.asarray(connectivity.entities[dimension], dtype=np.int64)
+        case (
+            (
+                PolygonalConnectivity()
+                | TriangleConnectivity()
+                | TetrahedralConnectivity()
+                | HexahedralConnectivity()
+                | PolyhedralConnectivity()
+            ),
+            1,
+        ):
+            rows = np.asarray(connectivity.edges, dtype=np.int64)
+        case PolyhedralConnectivity(), 2:
+            offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+            values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+            return tuple(
+                values[offsets[index] : offsets[index + 1]]
+                for index in range(offsets.size - 1)
+            )
+        case TetrahedralConnectivity() | HexahedralConnectivity(), 2:
+            rows = np.asarray(connectivity.faces, dtype=np.int64)
+        case _:
             raise ValueError(f"Vertex rows of dimension {dimension} are unavailable.")
-        return tuple(np.asarray(connectivity.entities[dimension], dtype=np.int64))
-    if dimension == 1:
-        edges = getattr(connectivity, "edges", None)
-        if edges is None:
-            raise ValueError("Edge connectivity is unavailable.")
-        return tuple(np.asarray(row, dtype=np.int64) for row in np.asarray(edges))
-    if dimension != 2:
-        raise ValueError(f"Vertex rows of dimension {dimension} are unavailable.")
-    offsets = getattr(connectivity, "face_vertex_offsets", None)
-    values = getattr(connectivity, "face_vertex_values", None)
-    if offsets is not None and values is not None:
-        offsets_ = np.asarray(offsets, dtype=np.int64)
-        values_ = np.asarray(values, dtype=np.int64)
-        return tuple(
-            values_[offsets_[index] : offsets_[index + 1]]
-            for index in range(offsets_.size - 1)
-        )
-    faces = getattr(connectivity, "faces", None)
-    if faces is None:
-        raise ValueError("Face connectivity is unavailable.")
-    return tuple(np.asarray(row, dtype=np.int64) for row in np.asarray(faces))
+    return tuple(rows)
 
 
 def _padded_keys(
@@ -909,8 +919,14 @@ def _target_entity_ids(
     dimension: int,
     prescribed: tuple[PrescribedEntityIds, ...],
     /,
+    *,
+    first_new_id: int = 0,
 ) -> np.ndarray:
-    """Preserve IDs by identity key and allocate only genuinely new entities."""
+    """Preserve IDs by identity key and allocate only genuinely new entities.
+
+    New IDs start above every source and restored ID and at ``first_new_id``,
+    the lineage allocator of a periodic source.
+    """
 
     source_keys = entity_keys(source, dimension)
     source_ids = np.asarray(source.entity_set(dimension).entity_ids, dtype=np.int64)
@@ -944,7 +960,10 @@ def _target_entity_ids(
     identifiers[restoring] = restored[matched[restoring]]
     new = np.flatnonzero(identifiers < 0)
     order = np.lexsort(target_keys[new].T[::-1])
-    start = int(max(np.max(source_ids, initial=-1), np.max(restored, initial=-1))) + 1
+    start = max(
+        int(max(np.max(source_ids, initial=-1), np.max(restored, initial=-1))) + 1,
+        int(first_new_id),
+    )
     identifiers[new[order]] = np.arange(start, start + new.size, dtype=np.int64)
     return identifiers
 
@@ -1278,8 +1297,19 @@ def assemble_topology_edit(
                 f"Topology edit block {block.name!r} has a mismatched source family."
             )
     probe = _build_mesh(source, edit, numeric_version, None)
+    first_new_ids = (0,) * (dimension + 1)
+    if source.periodic_topology is not None:
+        from ._periodic import periodic_next_entity_ids
+
+        first_new_ids = periodic_next_entity_ids(source)
     entity_ids = {
-        degree: _target_entity_ids(source, probe, degree, edit.prescribed_entity_ids)
+        degree: _target_entity_ids(
+            source,
+            probe,
+            degree,
+            edit.prescribed_entity_ids,
+            first_new_id=first_new_ids[degree],
+        )
         for degree in range(1, dimension)
     }
     target = _build_mesh(source, edit, numeric_version, entity_ids or None)

@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
@@ -28,6 +29,7 @@ from .._cell_complex import (
 )
 from .._motion_validity import MotionValidityPlan, MotionValidityPolicy
 from ..fem._geometry_motion import (
+    _TimeBoundMeshMonitor,
     FiniteElementMeshMotionPolicy,
     FiniteElementMeshMotionRoute,
     FiniteElementMotionExtension,
@@ -58,6 +60,20 @@ _ALE_VALIDITY = MotionValidityPolicy(
     minimum_relative_jacobian=0.0,
     maximum_displacement_fraction=None,
 )
+
+
+def _flat_face_area_vectors(face_points: Array, /) -> Array:
+    """Unoriented area vectors of edges ``(f, 2, 2)`` or triangles ``(f, 3, 3)``.
+
+    A polynomial in the vertex coordinates with no validity checks, so swept
+    volumes stay defined on any interpolated (even folded) configuration.
+    """
+    if face_points.shape[-1] == 2:
+        edge = face_points[:, 1] - face_points[:, 0]
+        return jnp.stack((edge[:, 1], -edge[:, 0]), axis=-1)
+    return 0.5 * jnp.cross(
+        face_points[:, 1] - face_points[:, 0], face_points[:, 2] - face_points[:, 0]
+    )
 
 
 def _boundary_patches(plan: UnstructuredFiniteVolumePlan, /) -> Any:
@@ -124,6 +140,7 @@ class _InstantaneousALEGeometry(StrictModule, NonTrainableState):
     quadrature_points: Array
     quadrature_weights: Array
     quadrature_grid_normal_velocity: Array
+    kinematic_quadrature_grid_normal_velocity: Array
     face_mesh_volume_rate: Array
     cell_mesh_volume_rate: Array
     coordinate_valid: Array
@@ -162,8 +179,17 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
     every reference vertex. Any other route prescribes only the boundary:
     ``motion`` then receives the boundary reference vertices, and the interior
     follows the shared :class:`FiniteElementMotionExtension` route (``monitor(time,
-    points, args)`` drives ``MMPDE``). Mesh velocity is the exact time JVP of the
-    realized vertices in both cases, so the discrete GCL holds by construction.
+    points, args)`` drives ``MMPDE``).
+
+    The discrete GCL holds for any vertex trajectory: each SSPRK stage's face
+    volume rates are exact swept volumes between the realized start, end and
+    midpoint positions, combined so the stage volume recurrence reproduces the
+    coordinate volumes of the stage positions at rounding (``v1 = V(t + dt)``,
+    ``v2 = V(t + dt / 2)``, ``vnew = V(t + dt)`` from ``vn = V(t)``). The flux
+    grid velocity is the instantaneous JVP velocity shifted per face to that
+    swept rate; the instantaneous velocity remains the kinematic witness that
+    moving walls follow their provider. Routed positions are consumed as
+    solved, so the extension's solve tolerance does not enter the GCL.
 
     On an owner-local periodic plan (joined seam faces) the geometry is
     evaluated on the lifted topology faces and reduced to the joined FV faces.
@@ -189,6 +215,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
     face_topology_ids: Array | None
     seam_vertex_pairs: tuple[Array, Array, Array] | None
     face_vertices: Array
+    face_area_signs: Array
     face_quadrature_vertex_weights: Array
     face_layout: FiniteVolumeStageFaceLayout
     mapping_id: str = eqx.field(static=True)
@@ -361,7 +388,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 "metric_rule": "coordinate-polytopes-with-owner-oriented-faces",
                 "velocity_rule": "jax-jvp-of-vertex-motion",
                 "motion_route": route_id,
-                "face_rate_rule": "quadrature-integral-of-grid-normal-velocity",
+                "face_rate_rule": "ssprk33-stage-swept-volumes-of-realized-positions",
             }
         )
 
@@ -384,6 +411,27 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         self.face_topology_ids = face_topology_ids
         self.seam_vertex_pairs = seam_vertex_pairs
         self.face_vertices = face_vertices
+        # Owner orientation of each FV face relative to its vertex-order area
+        # vector, fixed by the reference geometry (connectivity is fixed).
+        base_areas = evaluate_unstructured_fv_geometry(
+            jnp.asarray(base_plan.vertices),
+            base_plan.triangles,
+            base_plan.quadrilaterals,
+            base_plan.tetrahedra,
+            connectivity,
+            geometry_owner_cells,
+            geometry_owner_signs,
+        )[3]
+        if face_topology_ids is not None:
+            base_areas = base_areas[face_topology_ids]
+        orientation = jnp.sum(
+            base_areas
+            * _flat_face_area_vectors(jnp.asarray(base_plan.vertices)[face_vertices]),
+            axis=-1,
+        )
+        self.face_area_signs = jnp.where(orientation >= 0.0, 1.0, -1.0).astype(
+            base_plan.vertices.dtype
+        )
         self.face_quadrature_vertex_weights = quadrature_vertex_weights
         self.face_layout = face_layout
         self.mapping_id = mapping_id
@@ -483,10 +531,8 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         monitor = (
             None
             if self.monitor is None
-            # ty: ignore[call-non-callable]
-            else lambda points: self.monitor(time, points, args)
+            else _TimeBoundMeshMonitor(self.monitor, time, args)
         )
-        # ty: ignore[invalid-argument-type]
         routed = extension.extend(boundary - boundary_reference, monitor=monitor)
         return reference + routed.displacement, routed.successful
 
@@ -530,6 +576,101 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             jnp.abs(velocity[twin] - velocity[kept]) <= 1.0e-9 * velocity_scale
         )
 
+    def _coordinate_geometry(self, points: Array, /) -> tuple[Array, ...]:
+        """Coordinate polytope geometry of ``points`` on the FV face rows."""
+
+        values = evaluate_unstructured_fv_geometry(
+            points,
+            self.base_plan.triangles,
+            self.base_plan.quadrilaterals,
+            self.base_plan.tetrahedra,
+            self.connectivity,
+            self.geometry_owner_cells,
+            self.geometry_owner_signs,
+        )
+        if self.face_topology_ids is None:
+            return values
+        # Cell measures close over every lifted face; FV faces are the owner
+        # sides of the joined seams.
+        faces = self.face_topology_ids
+        return (
+            values[0],
+            values[1],
+            *(value[faces] for value in values[2:5]),
+            values[5],
+            *(value[faces] for value in values[6:]),
+        )
+
+    def _swept_face_volumes(self, start: Array, end: Array, /) -> Array:
+        """Exact owner-oriented volume each FV face sweeps from ``start`` to ``end``.
+
+        Vertices move on straight lines ``x(s) = start + s (end - start)``. A
+        flat face's area vector is a degree ``d - 1`` polynomial in ``s`` and
+        its vertex displacements are constant, so midpoint (2-D) or two-point
+        Gauss-Legendre (3-D) quadrature in ``s`` integrates the face flux
+        exactly. The faces of a cell then sum to its coordinate volume change
+        at rounding for any vertex trajectory: the discrete GCL holds on the
+        positions the scheme uses, whatever produced them.
+        """
+
+        displacement = end - start
+        face_displacement = jnp.mean(displacement[self.face_vertices], axis=1)
+        if start.shape[1] == 3:
+            offset = 0.5 / np.sqrt(3.0)
+            abscissae = (0.5 - offset, 0.5 + offset)
+        else:
+            abscissae = (0.5,)
+        weight = 1.0 / len(abscissae)
+        swept = jnp.zeros(face_displacement.shape[:1], dtype=displacement.dtype)
+        for abscissa in abscissae:
+            area_vectors = self.face_area_signs[:, None] * _flat_face_area_vectors(
+                (start + abscissa * displacement)[self.face_vertices]
+            )
+            swept = swept + weight * jnp.sum(area_vectors * face_displacement, axis=-1)
+        return swept
+
+    def _cell_rates(self, face_rates: Array, cell_count: int, /) -> Array:
+        """Owner-plus, neighbor-minus scatter of FV face volume rates."""
+
+        neighbor_active = self.neighbor_cells >= 0
+        safe_neighbors = jnp.where(neighbor_active, self.neighbor_cells, 0)
+        rates = jnp.zeros((cell_count,), dtype=face_rates.dtype)
+        rates = rates.at[self.owner_cells].add(face_rates)
+        return rates.at[safe_neighbors].add(jnp.where(neighbor_active, -face_rates, 0.0))
+
+    def _time_tangent_scale(self, time: Array, args: Any, /) -> Array:
+        """Time tangent that makes a routed velocity solve O(1).
+
+        The extension solves for displacement normalized by its largest
+        boundary entry ``s``, so the velocity tangent's right-hand side is the
+        boundary velocity over ``s``. Scaling the tangent by ``s / max|v|``
+        keeps that right-hand side O(1) and the derivative solves inside their
+        solver's absolute floor at any motion size.
+        """
+
+        extension = self.interior_motion
+        if extension is None:
+            return jnp.ones_like(time)
+        boundary_reference = extension.reference_coordinates[extension.boundary_indices]
+        boundary, boundary_velocity = jax.jvp(
+            lambda value: jnp.asarray(self.motion(value, boundary_reference, args)),
+            (time,),
+            (jnp.ones_like(time),),
+        )
+        displacement_scale = jnp.max(jnp.abs(boundary - boundary_reference))
+        velocity_scale = jnp.max(jnp.abs(boundary_velocity))
+        solve_scale = jnp.where(
+            displacement_scale > 0.0, displacement_scale, jnp.ones_like(time)
+        )
+        finite = jnp.isfinite(solve_scale) & jnp.isfinite(velocity_scale)
+        return jax.lax.stop_gradient(
+            jnp.where(
+                finite & (velocity_scale > 0.0),
+                solve_scale / jnp.where(velocity_scale > 0.0, velocity_scale, 1.0),
+                jnp.ones_like(time),
+            )
+        )
+
     def _instantaneous_geometry(
         self,
         time: Array,
@@ -539,12 +680,14 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         def evaluate_vertices(value: Any) -> Any:
             return self._vertices(value, args)
 
-        vertices, vertex_velocity, route_successful = jax.jvp(
+        tangent_scale = self._time_tangent_scale(time, args)
+        vertices, scaled_velocity, route_successful = jax.jvp(
             evaluate_vertices,
             (time,),
-            (jnp.ones_like(time),),
+            (tangent_scale,),
             has_aux=True,
         )
+        vertex_velocity = scaled_velocity / tangent_scale
         if vertices.shape != self.base_plan.vertices.shape:
             raise ValueError("Fixed-connectivity motion must preserve vertex shape.")
         if vertex_velocity.shape != self.base_plan.vertices.shape:
@@ -559,27 +702,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         )
 
         def evaluate_geometry(points: Any) -> Any:
-            values = evaluate_unstructured_fv_geometry(
-                points,
-                self.base_plan.triangles,
-                self.base_plan.quadrilaterals,
-                self.base_plan.tetrahedra,
-                self.connectivity,
-                self.geometry_owner_cells,
-                self.geometry_owner_signs,
-            )
-            if self.face_topology_ids is None:
-                return values
-            # Cell measures close over every lifted face; FV faces are the
-            # owner sides of the joined seams.
-            faces = self.face_topology_ids
-            return (
-                values[0],
-                values[1],
-                *(value[faces] for value in values[2:5]),
-                values[5],
-                *(value[faces] for value in values[6:]),
-            )
+            return self._coordinate_geometry(points)
 
         fallback_vertices = jnp.asarray(self.base_plan.vertices, dtype=vertices.dtype)
         geometry_values = jax.lax.cond(
@@ -624,15 +747,11 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             quadrature_weights,
             quadrature_grid_normal_velocity,
         )
-        cell_mesh_volume_rate = jnp.zeros_like(cell_volumes)
-        cell_mesh_volume_rate = cell_mesh_volume_rate.at[self.owner_cells].add(
-            face_mesh_volume_rate
+        cell_mesh_volume_rate = self._cell_rates(
+            face_mesh_volume_rate, cell_volumes.shape[0]
         )
         neighbor_active = self.neighbor_cells >= 0
         safe_neighbors = jnp.where(neighbor_active, self.neighbor_cells, 0)
-        cell_mesh_volume_rate = cell_mesh_volume_rate.at[safe_neighbors].add(
-            jnp.where(neighbor_active, -face_mesh_volume_rate, 0.0)
-        )
         face_closure_reference = jnp.zeros_like(cell_volumes)
         face_closure_reference = face_closure_reference.at[self.owner_cells].add(
             face_measures
@@ -653,9 +772,51 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             quadrature_points=quadrature_points,
             quadrature_weights=quadrature_weights,
             quadrature_grid_normal_velocity=quadrature_grid_normal_velocity,
+            kinematic_quadrature_grid_normal_velocity=quadrature_grid_normal_velocity,
             face_mesh_volume_rate=face_mesh_volume_rate,
             cell_mesh_volume_rate=cell_mesh_volume_rate,
             coordinate_valid=coordinate_valid,
+        )
+
+    def _with_stage_face_rates(
+        self, geometry: _InstantaneousALEGeometry, face_rates: Array, /
+    ) -> _InstantaneousALEGeometry:
+        """Bind one SSPRK stage's swept face volume rates to its geometry.
+
+        The flux grid-normal velocity is the instantaneous one shifted uniformly
+        over each face so its quadrature integral is the swept rate; the
+        instantaneous velocity stays the kinematic witness of moving walls.
+        """
+
+        weights = geometry.quadrature_weights
+        total = jnp.sum(weights, axis=1)
+        safe_total = jnp.where(total > 0.0, total, jnp.ones_like(total))
+        shift = jnp.where(
+            total > 0.0, (face_rates - geometry.face_mesh_volume_rate) / safe_total, 0.0
+        )
+        return _InstantaneousALEGeometry(
+            vertices=geometry.vertices,
+            vertex_velocity=geometry.vertex_velocity,
+            cell_volumes=geometry.cell_volumes,
+            cell_centers=geometry.cell_centers,
+            face_centers=geometry.face_centers,
+            area_vectors=geometry.area_vectors,
+            face_measures=geometry.face_measures,
+            face_closure=geometry.face_closure,
+            face_closure_reference=geometry.face_closure_reference,
+            quadrature_points=geometry.quadrature_points,
+            quadrature_weights=weights,
+            quadrature_grid_normal_velocity=(
+                geometry.quadrature_grid_normal_velocity + shift[:, None]
+            ),
+            kinematic_quadrature_grid_normal_velocity=(
+                geometry.kinematic_quadrature_grid_normal_velocity
+            ),
+            face_mesh_volume_rate=face_rates,
+            cell_mesh_volume_rate=self._cell_rates(
+                face_rates, geometry.cell_volumes.shape[0]
+            ),
+            coordinate_valid=geometry.coordinate_valid,
         )
 
     def _evidence(
@@ -757,7 +918,10 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             face_measures=geometry.face_measures,
             quadrature_points=geometry.quadrature_points,
             quadrature_weights=geometry.quadrature_weights,
-            quadrature_grid_normal_velocity=(geometry.quadrature_grid_normal_velocity),
+            quadrature_grid_normal_velocity=geometry.quadrature_grid_normal_velocity,
+            quadrature_kinematic_grid_normal_velocity=(
+                geometry.kinematic_quadrature_grid_normal_velocity
+            ),
         )
         return FiniteVolumeStageMetrics(
             topology_epoch_id=topology_epoch_id,
@@ -816,9 +980,32 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             )
         if prior_volumes.dtype.kind not in "fiu":
             raise ValueError("prior_effective_cell_volumes must have real numeric dtype.")
-        time_value = jnp.asarray(time_value, dtype=dtype)
-        step = jnp.asarray(step, dtype=dtype)
-        prior_volumes = jnp.asarray(prior_volumes, dtype=dtype)
+        return run_owned_program(
+            self,
+            "ssprk33-step",
+            FixedConnectivityMotionPlan._ssprk33_step,
+            jnp.asarray(time_value, dtype=dtype),
+            jnp.asarray(step, dtype=dtype),
+            topology_epoch_id,
+            jnp.asarray(start_geometry_version),
+            jnp.asarray(start_evidence_version),
+            args,
+            jnp.asarray(prior_volumes, dtype=dtype),
+        )
+
+    def _ssprk33_step(
+        self,
+        time_value: Array,
+        step: Array,
+        topology_epoch_id: str,
+        start_geometry_version: Array,
+        start_evidence_version: Array,
+        args: Any,
+        prior_volumes: Array,
+        /,
+    ) -> UnstructuredALEStepGeometry:
+        """Stage geometry of validated step inputs, one owned program per plan."""
+
         prior_volumes = eqx.error_if(
             prior_volumes,
             jnp.any(~jnp.isfinite(prior_volumes) | (prior_volumes <= 0.0)),
@@ -847,9 +1034,26 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         end_time = time_value + step
         midpoint_time = time_value + 0.5 * step
 
-        geometry_1 = self._instantaneous_geometry(time_value, args)
-        geometry_2 = self._instantaneous_geometry(end_time, args)
-        geometry_3 = self._instantaneous_geometry(midpoint_time, args)
+        start_geometry = self._instantaneous_geometry(time_value, args)
+        end_geometry = self._instantaneous_geometry(end_time, args)
+        midpoint_geometry = self._instantaneous_geometry(midpoint_time, args)
+        # Stage face rates are swept volumes between the realized stage
+        # positions, chosen so the SSPRK volume recurrence reproduces the
+        # coordinate volumes of the end and midpoint positions exactly:
+        # v1 = V(1), v2 = V(1/2), vnew = V(1) whenever vn = V(0).
+        swept_end = self._swept_face_volumes(
+            start_geometry.vertices, end_geometry.vertices
+        )
+        swept_midpoint = self._swept_face_volumes(
+            start_geometry.vertices, midpoint_geometry.vertices
+        )
+        geometry_1 = self._with_stage_face_rates(start_geometry, swept_end / step)
+        geometry_2 = self._with_stage_face_rates(
+            end_geometry, (4.0 * swept_midpoint - swept_end) / step
+        )
+        geometry_3 = self._with_stage_face_rates(
+            midpoint_geometry, (1.5 * swept_end - swept_midpoint) / step
+        )
         vn = prior_volumes
         v1_raw = vn + step * geometry_1.cell_mesh_volume_rate
         v2_right_hand_side = 0.75 * vn + 0.25 * (
@@ -898,12 +1102,12 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             evidence_version=evidence_version + 2,
         )
         accepted_evidence = self._evidence(
-            geometry_2,
+            end_geometry,
             vnew_raw,
-            geometry_2.cell_volumes,
+            end_geometry.cell_volumes,
             vnew_raw,
             vnew_right_hand_side,
-            geometry_2.coordinate_valid & jnp.all(vnew_valid),
+            end_geometry.coordinate_valid & jnp.all(vnew_valid),
             expected_order=4,
             evidence_version=evidence_version + 3,
         )
@@ -933,7 +1137,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             geometry_version=geometry_version + 2,
         )
         accepted_geometry = self._stage_metrics(
-            geometry_2,
+            end_geometry,
             vnew,
             accepted_evidence,
             time=end_time,

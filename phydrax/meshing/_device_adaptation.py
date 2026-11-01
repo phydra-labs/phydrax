@@ -95,6 +95,7 @@ from ._bisection import (
     _prepared_source,
     _Records,
     _Refinement,
+    _refinement_ends,
     _resolved_stencil,
     _resubdivided,
     _reverse_supports,
@@ -301,9 +302,9 @@ def _vertices(start: _Start, source: _Source, request: Any, /) -> Any:
     parents = np.full((total, 2), -1, dtype=np.int64)
     records = start.records
     parents[records.vertices, 0] = records.tuples[:, 0]
-    parents[records.vertices, 1] = records.tuples[
-        np.arange(records.tags.size), records.tags
-    ]
+    parents[records.vertices, 1] = _refinement_ends(
+        records.tuples, records.tags, dimension
+    )
     protected = np.zeros((total,), dtype=np.bool_)
     protected[:count] = request.protected_vertices
     return {

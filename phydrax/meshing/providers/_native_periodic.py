@@ -9916,16 +9916,10 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
         coordinate_contract: SpatialCoordinateContract,
         /,
     ) -> None:
-        if not isinstance(source, NativePeriodicSource):
-            raise TypeError("source must be NativePeriodicSource.")
         if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
             raise TypeError(
                 "specification must be SurfaceMeshingSpec or VolumeMeshingSpec."
             )
-        if not isinstance(options, NativeMeshingOptions):
-            raise TypeError("options must be NativeMeshingOptions.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         self.source = source
         self.specification = specification
         self.options = options
@@ -10923,8 +10917,6 @@ def prepare_native_periodic(
     coordinate_contract: SpatialCoordinateContract,
     /,
 ) -> PreparedNativePeriodic:
-    if not isinstance(source, NativePeriodicSource):
-        raise TypeError("source must be NativePeriodicSource.")
     source.validate_restored()
     if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
         raise TypeError("specification must be SurfaceMeshingSpec or VolumeMeshingSpec.")
@@ -10933,8 +10925,6 @@ def prepare_native_periodic(
         "periodic_power",
     ):
         raise ValueError("options must select periodic_delaunay or periodic_power.")
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
     dimension = source.ambient_dimension
     owner_local = source.point_owner_ranks is not None
     if (
