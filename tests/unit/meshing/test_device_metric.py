@@ -662,6 +662,14 @@ def test_host_optimal_collapse_searches_between_seed_parameters(
         )
         assert exact_x == expected
         assert result.point[0, 0] == float(expected)
+        stale_points = state.points.copy()
+        stale_points[0, 0] += 0.001
+        stale = state._replace(points=stale_points)
+        stale_topology = local_metric._topology(stale, PredicateMode.EXACT)
+        refused = local_metric._optimal_collapse_search(
+            stale, stale_topology, PredicateMode.EXACT, None, source, short
+        )
+        assert refused.reason == ("unresolved",)
     else:
         assert result.reason == ("long",)
 

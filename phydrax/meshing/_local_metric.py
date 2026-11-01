@@ -3180,7 +3180,7 @@ def _optimal_box_geometry(
     lower: Fraction,
     upper: Fraction,
     /,
-) -> Literal["excluded", "inside", "unresolved"]:
+) -> Literal["excluded", "inside", "unresolved", "stale"]:
     """Prove affine star orientation and curve collinearity over a segment."""
     cells = np.unique(
         np.concatenate(
@@ -3195,11 +3195,18 @@ def _optimal_box_geometry(
         )
     )
     rows = state.cells[cells]
-    rows = rows[~(np.any(rows == kept, axis=1) & np.any(rows == removed, axis=1))]
     vertices = np.unique(np.concatenate((rows.reshape(-1), [kept, removed, target])))
+    rows = rows[~(np.any(rows == kept, axis=1) & np.any(rows == removed, axis=1))]
     exact = _exact_source_segment_points(
         state, source, vertices, vertices, np.zeros(vertices.size, dtype=np.float64)
     )
+    if any(
+        any(
+            float(value) != state.points[vertex, axis] for axis, value in enumerate(point)
+        )
+        for vertex, point in zip(vertices.tolist(), exact, strict=True)
+    ):
+        return "stale"
     coordinates = dict(zip(vertices.tolist(), exact, strict=True))
     first, last = coordinates[kept], coordinates[target]
     points = tuple(
@@ -3371,6 +3378,8 @@ def _optimal_remainder(
                 lower,
                 upper,
             )
+            if geometry == "stale":
+                return None
             if geometry == "excluded":
                 continue
             band = _optimal_box_band(
