@@ -77,7 +77,7 @@ _FIXTURE_PROVENANCE = {
         "fixture_sha256": "dc3c43488e9bd0702fa50ff1140ff7c1d1cc64ada29bc27002ad919b85becbae",
         "license": "LicenseRef-PHYDRA-Proprietary",
         "origin": "PHYDRA native meshing qualification corpus; independently authored analytic quadric coordinates in meters",
-        "input": "Intersection of z-axis cylinder (R=1, H=2.4, base=(0,0,-1.2)) and x-axis cylinder (r=0.6, H=3, base=(-1.5,0,0)); one genus-one quartic solid",
+        "input": "Intersection of z-axis cylinder (R=1, H=2.4, base=(0,0,-1.2)) and x-axis cylinder (r=0.6, H=3, base=(-1.5,0,0)); one convex quartic solid",
     },
     "external-routine": {
         "record_id": "f6ca1aac3f6626ad1253906e43861e6096aa0775e93e824e31e243c9490f9c0f",
@@ -315,8 +315,10 @@ def _topology_oracle(model: phx.geometry.brep.BRepModel, case: str) -> dict[str,
         )
     expected_euler = {
         "planar-box": 2,
-        "quadric-routine": 0,
-        "quadric-larger": 0,
+        # The intersection of these two full-dimensional convex cylinders is
+        # a convex solid, so its closed boundary is topologically a sphere.
+        "quadric-routine": 2,
+        "quadric-larger": 2,
         "external-routine": 0,
     }.get(case)
     actual_euler = record["boundary_euler_characteristic"]
@@ -544,7 +546,7 @@ def _quadric_case(
                 },
             ],
             "expected_solids": 1,
-            "expected_boundary_euler_characteristic": 0,
+            "expected_boundary_euler_characteristic": 2,
         },
         boolean_record,
     )

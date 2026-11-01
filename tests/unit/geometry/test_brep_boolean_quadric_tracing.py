@@ -123,3 +123,17 @@ def test_boss_cut_by_its_own_cap_traces_trimmed_quadric_branches(
         capture_output=True,
         text=True,
     )
+
+
+def test_iges_convex_cylinder_intersection_has_spherical_boundary(tmp_path: Path) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import (
+        _quadric_case,
+        _topology_oracle,
+    )
+
+    model, volume, source, boolean = _quadric_case("iges", tmp_path)
+    assert boolean["operation"] == "intersection"
+    assert volume > 0.0
+    assert source["expected_boundary_euler_characteristic"] == 2
+    assert _topology_oracle(model, "quadric-routine")["passed"] is True
+    assert _topology_oracle(model, "quadric-larger")["passed"] is True
