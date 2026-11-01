@@ -48,6 +48,7 @@ from .._model._structure import (
     PreparedSphereChartDeformationArchiveRecipe,
     PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
+    restore_row_record_recipes,
     share_model_archive_recipe,
     SparseCoordinateOperatorArchiveRecipe,
     SphereMaterialCellAtlasArchiveRecipe,
@@ -1803,9 +1804,11 @@ def read_model_artifact(
             prefix=_MODEL_ARRAYS,
             limits=limits,
             validate=False,
+            restore_rows=False,
         )
         if type(raw) is not expected_type or model_structure_recipe(raw) != recipe:
             raise ValueError("Restored model fields differ from the exact recipe.")
+        raw = restore_row_record_recipes(raw)
         rebuilt = restore(raw)
         if type(rebuilt) is not expected_type:
             raise TypeError(

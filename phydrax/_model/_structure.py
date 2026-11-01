@@ -2738,6 +2738,7 @@ def model_from_array_recipe(
     prefix: str,
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     validate: bool = True,
+    restore_rows: bool = True,
 ) -> Any:
     """Restore an exact array inventory, optionally deferring owner validation."""
 
@@ -2768,9 +2769,10 @@ def model_from_array_recipe(
             restored[entry.tree_index] = jnp.asarray(payload)
         else:
             restored[entry.tree_index] = np.array(payload, copy=True, order="C")
-    # Column-archived row records are value records: their owning constructors
-    # rebuild them here and must reproduce the stored identities.
-    model = restore_row_record_recipes(jax.tree_util.tree_unflatten(definition, restored))
+    model = jax.tree_util.tree_unflatten(definition, restored)
+    if restore_rows:
+        # Scientific authority is still delegated to the owning callback.
+        model = restore_row_record_recipes(model)
     # Other owner recipes may occupy fields whose live values have a different
     # type; the scientific restore callback reconstructs and validates those.
     if validate:
