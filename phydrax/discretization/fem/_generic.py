@@ -2788,6 +2788,10 @@ def _degree_aware_reference_rule(
     raise ValueError("Unsupported finite-element cell kind.")
 
 
+# (cell, point) rows whose mapped basis gradients are formed at once.
+_MAPPED_GRADIENT_ROW_BUDGET = 1 << 13
+
+
 def _evaluate_coordinate_map(
     coordinate_element: ScalarCoordinateElement,
     coordinate_routes: ArrayLike,
@@ -2997,10 +3001,22 @@ def _prepare_block_geometry(
                 values_ = element.tabulate(reference[None])[0][0]
                 return map_reference_values(values_, element.value_spec, jacobian_)
 
-            mapped_gradient = jax.vmap(
+            # Forward-mode gradients of every basis function at every (cell,
+            # point) row materialize per-row Jacobian products, so cells are
+            # processed in chunks of at most _MAPPED_GRADIENT_ROW_BUDGET rows.
+            mapped = jax.vmap(
                 jax.vmap(jax.jacfwd(mapped_reference, argnums=0), in_axes=(0, None)),
                 in_axes=(None, 0),
-            )(reference_points, coordinates_[routes_])
+            )
+            cell_coordinates = coordinates_[routes_]
+            chunk = max(1, _MAPPED_GRADIENT_ROW_BUDGET // reference_points.shape[0])
+            parts = [
+                mapped(reference_points, cell_coordinates[start : start + chunk])
+                for start in range(0, cell_coordinates.shape[0], chunk)
+            ]
+            mapped_gradient = (
+                parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
+            )
         physical_gradients = mapped_gradient
     physical_weights = precision_policy.accumulation(
         measure_factor * reference_weights[None, :]

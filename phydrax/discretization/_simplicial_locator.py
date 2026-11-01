@@ -32,7 +32,7 @@ from .fem._cell_map import PreparedFiniteElementCellMap
 # (reference points, converged, first converged iteration, ever-valid geometry)
 _NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
 # Rows (point x candidate x seed) Newton-resolved at once by a locator.
-_RESOLVE_ROW_BUDGET = 1 << 16
+_RESOLVE_ROW_BUDGET = 1 << 14
 
 
 @final
@@ -291,7 +291,8 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         )
         chunk = max(1, _RESOLVE_ROW_BUDGET // (candidate_capacity * seed_count))
         parts = [
-            self._resolve_candidates(
+            _compiled_resolve_candidates(
+                self,
                 values[start : start + chunk],
                 candidates[start : start + chunk],
                 candidate_valid[start : start + chunk],
@@ -622,6 +623,14 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             tied,
             self.locator_id,
         )
+
+
+# One compiled Newton resolution per locator structure and chunk shape. Eager
+# execution would compile and retain a fresh loop executable (with its row
+# operands) on every call.
+_compiled_resolve_candidates = eqx.filter_jit(
+    PreparedSimplicialCellLocator._resolve_candidates
+)
 
 
 def _vertex_star_routes(cells: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:

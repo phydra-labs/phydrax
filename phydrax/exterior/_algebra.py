@@ -372,18 +372,41 @@ def form_to_vector(form: ArrayLike, value_spec: FormValueSpec, /) -> Array:
             )
 
 
+# Elements of one small-solve product temporary (rows x n x n x right-hand
+# sides): mapping solves of many cells and points with many right-hand sides are
+# split into row chunks of at most this size, so their working set is bounded
+# whatever the batch. Each row is solved independently, so chunking does not
+# change any value.
+_SMALL_SOLVE_ELEMENT_BUDGET = 1 << 21
+
+
 def _solve_mapping(matrix: Array, rhs: Array, /) -> Array:
     """Apply the owning native solve without numeric-derived static identities."""
     matrix, rhs = _promote_factors(matrix, rhs)
     dtype = matrix.dtype
     n = matrix.shape[-1]
     if n <= 4:
-        result = solve_small_linear(SmallLinearSolvePlan(n), matrix, rhs)
-        return jnp.where(
-            result.successful[..., None, None],
-            result.value,
-            jnp.asarray(jnp.nan, dtype=result.value.dtype),
-        )
+        plan = SmallLinearSolvePlan(n)
+        batch = rhs.shape[:-2]
+        matrix = jnp.broadcast_to(matrix, (*batch, n, n))
+        rows = prod(batch)
+        chunk = max(1, _SMALL_SOLVE_ELEMENT_BUDGET // (n * n * max(rhs.shape[-1], 1)))
+        flat_matrix = matrix.reshape((rows, n, n))
+        flat_rhs = rhs.reshape((rows, n, rhs.shape[-1]))
+        parts = []
+        for start in range(0, rows, chunk):
+            result = solve_small_linear(
+                plan, flat_matrix[start : start + chunk], flat_rhs[start : start + chunk]
+            )
+            parts.append(
+                jnp.where(
+                    result.successful[..., None, None],
+                    result.value,
+                    jnp.asarray(jnp.nan, dtype=result.value.dtype),
+                )
+            )
+        value = parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
+        return value.reshape(rhs.shape)
     space = ArraySpace(
         (n,), dtype=dtype, space_id=f"exterior_reference_coefficients:{n}:{dtype}"
     )
