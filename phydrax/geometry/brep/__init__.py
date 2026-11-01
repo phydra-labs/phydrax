@@ -42,7 +42,9 @@ _DEFERRED_EXPORTS = {
     "BRepImportReport": "._model",
     "BRepModel": "._model",
     "BRepNormalRange": "._normal_range",
+    "BRepNormalSingularity": "._normal_range",
     "BRepNormalStatus": "._normal_range",
+    "BRepNormalUnresolvedReason": "._normal_range",
     "brep_normal_ranges": "._normal_range",
     "BRepMassMeasureStatus": "._measure",
     "BRepMassProperties": "._measure",
@@ -142,11 +144,11 @@ if TYPE_CHECKING:
     from .._planar_embedding import PlanarEmbedding as PlanarEmbedding
     from ._assembly import (
         BRepAffinePlacement as BRepAffinePlacement,
-        BRepPlacementEvidence as BRepPlacementEvidence,
         BRepAssemblyDefinition as BRepAssemblyDefinition,
         BRepAssemblyGraph as BRepAssemblyGraph,
         BRepAssemblyOccurrence as BRepAssemblyOccurrence,
         BRepAssemblyUse as BRepAssemblyUse,
+        BRepPlacementEvidence as BRepPlacementEvidence,
     )
     from ._boolean import boolean_brep as boolean_brep
     from ._boolean_core import (
@@ -207,11 +209,6 @@ if TYPE_CHECKING:
         BRepMassMeasureStatus as BRepMassMeasureStatus,
         BRepMassProperties as BRepMassProperties,
     )
-    from ._normal_range import (
-        BRepNormalRange as BRepNormalRange,
-        BRepNormalStatus as BRepNormalStatus,
-        brep_normal_ranges as brep_normal_ranges,
-    )
     from ._model import (
         BRepAssemblyContainer as BRepAssemblyContainer,
         BRepBoundaryMap as BRepBoundaryMap,
@@ -222,6 +219,13 @@ if TYPE_CHECKING:
         BRepQualifiedIncidence as BRepQualifiedIncidence,
         BRepTessellation as BRepTessellation,
         BRepTopology as BRepTopology,
+    )
+    from ._normal_range import (
+        brep_normal_ranges as brep_normal_ranges,
+        BRepNormalRange as BRepNormalRange,
+        BRepNormalSingularity as BRepNormalSingularity,
+        BRepNormalStatus as BRepNormalStatus,
+        BRepNormalUnresolvedReason as BRepNormalUnresolvedReason,
     )
     from ._offset_result import BRepOffsetResult as BRepOffsetResult
     from ._partition import (
@@ -252,12 +256,12 @@ if TYPE_CHECKING:
         ExtrusionSurface as ExtrusionSurface,
         HyperbolaCurve as HyperbolaCurve,
         LineCurve as LineCurve,
-        OffsetSurface as OffsetSurface,
         OffsetCurve as OffsetCurve,
-        RuledSurface as RuledSurface,
+        OffsetSurface as OffsetSurface,
         ParabolaCurve as ParabolaCurve,
         PlanePatch as PlanePatch,
         RevolutionSurface as RevolutionSurface,
+        RuledSurface as RuledSurface,
         SpherePatch as SpherePatch,
         surface_differential as surface_differential,
         surface_jacobian as surface_jacobian,

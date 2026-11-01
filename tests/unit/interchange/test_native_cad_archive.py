@@ -4631,9 +4631,8 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
     assert expected["source_query_id"]
     assert expected["deformation_id"]
 
-    # The worker writes and reads this Composition without archive limits.
     manifest, arrays = read_model_archive(
-        tmp_path / "surface-chart-boundary-query.phx", limits=None
+        tmp_path / "surface-chart-boundary-query.phx", limits=MODEL_ARCHIVE_LIMITS
     )
 
     def find_query_recipe(node: object) -> dict[str, Any] | None:
@@ -4664,7 +4663,7 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
         corrupt_directory / "surface-chart-boundary-query.phx",
         manifest=manifest,
         arrays=arrays,
-        limits=None,
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     refused = subprocess.run(
         [

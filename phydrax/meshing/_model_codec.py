@@ -33,7 +33,7 @@ from .._model._structure import (
     MappedReferenceBoundarySourceArchiveRecipe,
     MeshingDomainArchiveRecipe,
     MeshingDomainBoundarySourceArchiveRecipe,
-    model_archive_projection,
+    model_archive_root_projection,
     model_from_array_recipe,
     model_structure_recipe,
     NativeImplicitBoundaryQueryArchiveRecipe,
@@ -45,6 +45,7 @@ from .._model._structure import (
     PeriodicFiniteElementTransferArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
+    PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
     share_model_archive_recipe,
     SparseCoordinateOperatorArchiveRecipe,
@@ -77,7 +78,12 @@ MODEL_ARCHIVE_LIMITS = ArrayArchiveLimits(max_manifest_nesting=64, max_members=4
 
 def _register_model_archive_types() -> None:
     """Register built-in scientific models supported by the generic recipe codec."""
-    from .._archive_columns import StaticColumnArchiveRecipe, TextColumnArchiveRecipe
+    from .._archive_columns import (
+        ExactTensorArchiveRecipe,
+        IntegerRowsArchiveRecipe,
+        StaticColumnArchiveRecipe,
+        TextColumnArchiveRecipe,
+    )
     from .._geometry_predicates import PredicateMode
     from .._identity import SemanticProvenance
     from .._model._artifacts import register_artifact_value
@@ -149,6 +155,7 @@ def _register_model_archive_types() -> None:
         PreparedSurfaceChartOccurrence,
         PreparedSurfaceChartPiece,
         SurfaceChartWitness,
+        SurfaceChartWitnessArchiveRecipe,
         SurfaceRootMeshCellBinding,
     )
     from ..discretization._tensor_entities import StructuredAxis, TensorEntityLayout
@@ -505,6 +512,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", ParametricCurveBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", ReconstructedTriangleBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SurfaceSourceChartsArchiveRecipe),
+        ("phydrax.model.archive", PreparedSurfaceSourceSupportArchiveRecipe),
         ("phydrax.model.archive", SurfaceChartBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SurfaceSubdivisionBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SphereMaterialCellAtlasArchiveRecipe),
@@ -597,6 +605,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", NestedReferenceWitnesses),
         ("phydrax.discretization", ReferenceCellMapWitnesses),
         ("phydrax.discretization", SurfaceChartWitness),
+        ("phydrax.discretization", SurfaceChartWitnessArchiveRecipe),
         ("phydrax.discretization", PreparedSurfaceChartDeformation),
         ("phydrax.discretization", PreparedSurfaceChartPiece),
         ("phydrax.discretization", PreparedSurfaceChartOccurrence),
@@ -725,6 +734,8 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry", MeshEmbeddingWitnessArchiveRecipe),
         ("phydrax.model.archive", StaticColumnArchiveRecipe),
         ("phydrax.model.archive", TextColumnArchiveRecipe),
+        ("phydrax.model.archive", IntegerRowsArchiveRecipe),
+        ("phydrax.model.archive", ExactTensorArchiveRecipe),
         ("phydrax.geometry", PreparedCommonRefinement),
         ("phydrax.geometry", EulerianVolumeOverlapChain),
         ("phydrax.geometry", EulerianVolumeOverlapMap),
@@ -1621,7 +1632,7 @@ def write_model_artifact(
     """Write one exact registered Strict dataclass and its dynamic array bank."""
     _register_model_archive_types()
     _require_model_type(type(model))
-    archive_model = model_archive_projection(model)
+    archive_model = model_archive_root_projection(model)
     validate_tree(archive_model)
     recipe = model_structure_recipe(archive_model)
     if recipe.get("kind") != "dataclass" or recipe.get("type") != artifact_value_id(
