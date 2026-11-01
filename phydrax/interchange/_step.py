@@ -36,7 +36,7 @@ import mmap
 import os
 import re
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import partial
 from pathlib import Path
@@ -787,7 +787,7 @@ def _unit(vector: np.ndarray, label: str, /) -> np.ndarray:
 
 
 def _reverse(loop: list[StagedCoedge], /) -> list[StagedCoedge]:
-    return [StagedCoedge(c.edge, -c.sense, c.pcurve, c.label) for c in reversed(loop)]
+    return [replace(c, sense=-c.sense) for c in reversed(loop)]
 
 
 def _composes_without_rounding(
@@ -1799,7 +1799,15 @@ class _Decoder:
                         pcurve, patch, stage.curves[stage.edge_curves[edge.index]]
                     )
             sense = (1 if orientation else -1) * edge.flip
-            coedges.append(StagedCoedge(edge.index, sense, pcurve, oriented.label))
+            coedges.append(
+                StagedCoedge(
+                    edge.index,
+                    sense,
+                    pcurve,
+                    oriented.label,
+                    origin="absent" if pcurve is None else "file",
+                )
+            )
             self._leave()
         self._leave()
         if not coedges and not self.repair_policy.add_missing_seams:
@@ -3012,8 +3020,9 @@ def _import_report(
         "carried-uncertainty": (
             "absent" if uncertainty is None else format(uncertainty, ".17g")
         ),
-        "p-curves-honored": str(stage.pcurves_honored),
-        "p-curves-recovered-exact": str(stage.pcurves_exact),
+        "p-curves-from-file": str(stage.pcurve_origins.count("file")),
+        "p-curves-recovered-exact": str(stage.pcurve_origins.count("recovered")),
+        "p-curves-absent": str(stage.pcurve_origins.count("absent")),
         "coverage-consumed": json.dumps(consumed, separators=(",", ":")),
         "coverage-ignored-by-design": json.dumps(ignored, separators=(",", ":")),
         "source-uncertainties": json.dumps(

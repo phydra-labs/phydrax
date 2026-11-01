@@ -345,18 +345,19 @@ def _continued_ids(
         raise ValueError(
             f"entity_allocator_next_ids[{degree}] must exceed every continued quotient ID."
         )
-    order = np.argsort(orbit, kind="stable")
-    bounds = np.searchsorted(orbit[order], np.arange(count + 1))
+    # (quotient row, continued ID) pairs; a row with exactly one continued ID
+    # claims it, and an ID claimed by exactly one row is kept.
+    continued = values >= 0
+    pairs = np.unique(
+        np.stack((orbit[continued].astype(np.int64), values[continued]), axis=1), axis=0
+    )
+    rows, starts, sizes = np.unique(pairs[:, 0], return_index=True, return_counts=True)
+    claimants = rows[sizes == 1]
+    claimed = pairs[starts[sizes == 1], 1]
+    identifiers, claim_counts = np.unique(claimed, return_counts=True)
+    sole = np.isin(claimed, identifiers[claim_counts == 1])
     ids = np.full((count,), -1, dtype=np.int64)
-    claims: dict[int, list[int]] = {}
-    for quotient_row in range(count):
-        members = values[order[bounds[quotient_row] : bounds[quotient_row + 1]]]
-        continued = np.unique(members[members >= 0])
-        if continued.size == 1:
-            claims.setdefault(int(continued[0]), []).append(quotient_row)
-    for identifier, rows in claims.items():
-        if len(rows) == 1:
-            ids[rows[0]] = identifier
+    ids[claimants[sole]] = claimed[sole]
     fresh = np.flatnonzero(ids < 0)
     ids[fresh] = np.arange(next_id, next_id + fresh.size, dtype=np.int64)
     return ids, next_id + int(fresh.size)
@@ -377,24 +378,40 @@ def _quotient_incidence(
         raw_upper = np.asarray(relation.target_indices, dtype=np.int64)
         valid = np.asarray(relation.valid, dtype=np.bool_)
         signs = np.asarray(source.signs, dtype=np.float64)
-        upper_representatives = representative_by_degree[degree]
+        upper_representatives = np.asarray(
+            representative_by_degree[degree], dtype=np.int64
+        )
         lower_orbits = orbit_by_degree[degree - 1]
         lower_orientation = orientation_by_degree[degree - 1]
         upper_orientation = orientation_by_degree[degree]
-        source_rows: list[int] = []
-        target_rows: list[int] = []
-        coefficients: list[float] = []
-        for quotient_upper, lifted_upper in enumerate(upper_representatives):
-            selected = valid & (raw_upper == lifted_upper)
-            for route in np.flatnonzero(selected):
-                lower = int(raw_lower[route])
-                source_rows.append(int(lower_orbits[lower]))
-                target_rows.append(quotient_upper)
-                coefficients.append(
-                    float(signs[route])
-                    * int(lower_orientation[lower])
-                    * int(upper_orientation[lifted_upper])
+        # Each lifted upper entity represents at most one quotient entity; routes
+        # follow quotient order, then ascending route row.
+        routes = np.flatnonzero(valid)
+        quotient_of = np.full(
+            (
+                max(
+                    int(np.max(raw_upper[routes], initial=-1)),
+                    int(np.max(upper_representatives, initial=-1)),
                 )
+                + 1,
+            ),
+            -1,
+            dtype=np.int64,
+        )
+        quotient_of[upper_representatives] = np.arange(
+            upper_representatives.size, dtype=np.int64
+        )
+        routes = routes[quotient_of[raw_upper[routes]] >= 0]
+        routes = routes[np.argsort(quotient_of[raw_upper[routes]], kind="stable")]
+        lower = raw_lower[routes]
+        lifted_upper = raw_upper[routes]
+        source_rows = lower_orbits[lower]
+        target_rows = quotient_of[lifted_upper]
+        coefficients = (
+            signs[routes]
+            * lower_orientation[lower].astype(np.float64)
+            * upper_orientation[lifted_upper].astype(np.float64)
+        )
         edge_relation = EdgeRelation(
             np.asarray(source_rows, dtype=np.int32),
             np.asarray(target_rows, dtype=np.int32),
@@ -449,12 +466,10 @@ def _corner_shifts(
     for block in mesh.blocks:
         vertices = np.asarray(block.vertices, dtype=np.int64)
         valid = np.asarray(block.vertex_valid, dtype=np.bool_)
-        for row_index in range(vertices.shape[0]):
-            row = vertices[row_index, :]
-            mask = valid[row_index, :]
-            active = row[mask]
-            corner = shifts[active]
-            rows.append(reduce_periodic_exponents(corner - corner[0], orders))
+        # Each cell's valid corners, row-major, relative to its first valid corner.
+        first = vertices[np.arange(vertices.shape[0]), np.argmax(valid, axis=1)]
+        relative = shifts[vertices] - shifts[first][:, None, :]
+        rows.append(reduce_periodic_exponents(relative[valid], orders))
     return (
         np.concatenate(rows, axis=0)
         if rows

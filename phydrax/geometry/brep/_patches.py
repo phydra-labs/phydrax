@@ -5511,7 +5511,7 @@ def bspline_surface_derivative_bounds(
     component_bounds: list[list[list[tuple[Fraction, Fraction]]]] = [
         [[], []] for _ in range(3)
     ]
-    for span, restrictions in zip(spans.spans, spans.restrictions, strict=True):
+    for span in spans.spans:
         span_bounds = span.parameter_bounds
         restricted = tuple(
             (
@@ -5522,7 +5522,7 @@ def bspline_surface_derivative_bounds(
         )
         if any(lower > upper for lower, upper in restricted):
             continue
-        enclosure = span.enclose(restricted, restrictions=restrictions)
+        enclosure = span.enclose(restricted)
         if not enclosure.positive_denominator:
             raise ValueError(
                 "A rational B-spline span denominator is not strictly positive."
@@ -5545,7 +5545,36 @@ def bspline_surface_derivative_bounds(
     return lower, upper
 
 
-_MINIMUM_QUERY_BUCKET = 8
+_QUERY_BUCKETS = (8, 64, 512, 4096)
+
+
+def bucketed_query_rows(
+    function: Callable[[Array], Array], rows: Array | np.ndarray, /
+) -> np.ndarray:
+    """Evaluate ``function`` on concrete query rows at a fixed set of batch shapes.
+
+    Every distinct batch shape compiles its own executable (several megabytes
+    for a spline jet program), and refinement queries vary in size every
+    round. Rows are padded on the host with copies of the last row to the next
+    bucket of `_QUERY_BUCKETS`; longer queries run in chunks of the largest
+    bucket. A row-wise ``function`` therefore compiles at most one executable
+    per bucket, independent of the query sizes a computation issues. Inputs
+    reach the device by transfer, which compiles nothing.
+    """
+    host = np.asarray(rows)
+    count = host.shape[0]
+    if count == 0:
+        return np.asarray(function(jax.device_put(host)))
+    chunk = _QUERY_BUCKETS[-1]
+    pieces = []
+    for start in range(0, count, chunk):
+        block = host[start : start + chunk]
+        size = block.shape[0]
+        bucket = next(value for value in _QUERY_BUCKETS if value >= size)
+        if bucket != size:
+            block = np.concatenate((block, np.repeat(block[-1:], bucket - size, axis=0)))
+        pieces.append(np.asarray(function(jax.device_put(block)))[:size])
+    return pieces[0] if len(pieces) == 1 else np.concatenate(pieces)
 
 
 def _bucketed_rows(
@@ -5554,22 +5583,16 @@ def _bucketed_rows(
     operands: tuple[Array, ...],
     /,
 ) -> Array:
-    """Evaluate concrete query rows at a power-of-two padded batch size.
+    """Evaluate concrete query rows through `bucketed_query_rows`.
 
-    Each distinct batch shape compiles its own executable, and refinement
-    queries vary in size every round; padding with copies of the last row on
-    the host bounds the compiled shapes to one per octave. Traced rows or
-    operands keep their shape, so enclosing programs see no padding operations.
+    Traced rows or operands keep their shape, so enclosing programs see no
+    padding operations.
     """
-    count = rows.shape[0]
-    if count == 0 or any(isinstance(value, Tracer) for value in (rows, *operands)):
+    if rows.shape[0] == 0 or any(
+        isinstance(value, Tracer) for value in (rows, *operands)
+    ):
         return function(rows)
-    bucket = max(_MINIMUM_QUERY_BUCKET, 1 << (count - 1).bit_length())
-    if bucket == count:
-        return function(rows)
-    host = np.asarray(rows)
-    padded = np.concatenate((host, np.repeat(host[-1:], bucket - count, axis=0)))
-    return jnp.asarray(np.asarray(function(jnp.asarray(padded)))[:count])
+    return jax.device_put(bucketed_query_rows(function, rows))
 
 
 def _bspline_surface_point(
@@ -5952,6 +5975,22 @@ def surface_differential(patch: AbstractSurfacePatch, parameters: Array, /) -> A
         parameters_.reshape((-1, 2))
     )
     return values.reshape((*leading, 3, 2))
+
+
+def surface_differential_rows(
+    patch: AbstractSurfacePatch, parameters: np.ndarray, /
+) -> np.ndarray:
+    """Host method: `surface_differential` at concrete UV rows, bucketed shapes.
+
+    Queries reach the compiled Jacobian programs only at the shapes of
+    `bucketed_query_rows`, so a computation issuing many differently sized
+    queries compiles a bounded set of executables.
+    """
+    host = np.asarray(parameters, dtype=np.float64)
+    values = bucketed_query_rows(
+        jax.vmap(jax.jacfwd(patch.evaluate)), host.reshape((-1, 2))
+    )
+    return values.reshape((*host.shape[:-1], 3, 2))
 
 
 def surface_jacobian(patch: AbstractSurfacePatch, parameters: Array, /) -> Array:

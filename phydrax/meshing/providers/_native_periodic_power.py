@@ -2047,8 +2047,12 @@ def _owner_local_periodic_power_candidate(
         source_manifest_id,
         axis_name,
     )
+    # The exact power context is authored over this sorted support bank (owned
+    # and remote support sites); `weights` and image owners index its rows, not
+    # the rank-local authored `domain`.
+    support_domain = PeriodicPointOrbits(domain.cell, points, point_ids)
     source = NativePeriodicSource(
-        PeriodicPointOrbits(domain.cell, points, point_ids),
+        support_domain,
         source.source_id,
         source.source_revision,
         site_weights=weights if weights_present else None,
@@ -2205,7 +2209,7 @@ def _owner_local_periodic_power_candidate(
                 ),
             )
             context = ExactPeriodicPowerSourceContext(
-                domain,
+                support_domain,
                 weights,
                 image_owners,
                 image_windings,

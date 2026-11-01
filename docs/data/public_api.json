@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "3bf5944749117b923fde6cdc907b031548524ca8608c40a8c39fce69f6f4efa0",
+  "manifest_id": "18a73bdc65c0af1f94578c9613ba1c50dbf4c4b762e16e232262aa87ed196f48",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -23323,6 +23323,7 @@
       "phydrax.geometry.BRepImportReport",
       "phydrax.geometry.BRepMassMeasureStatus",
       "phydrax.geometry.BRepMassProperties",
+      "phydrax.geometry.BRepMeasureRefusal",
       "phydrax.geometry.BRepModel",
       "phydrax.geometry.BRepNormalRange",
       "phydrax.geometry.BRepNormalStatus",
@@ -23825,6 +23826,7 @@
       "phydrax.geometry.brep.BRepImportReport",
       "phydrax.geometry.brep.BRepMassMeasureStatus",
       "phydrax.geometry.brep.BRepMassProperties",
+      "phydrax.geometry.brep.BRepMeasureRefusal",
       "phydrax.geometry.brep.BRepModel",
       "phydrax.geometry.brep.BRepNormalRange",
       "phydrax.geometry.brep.BRepNormalStatus",

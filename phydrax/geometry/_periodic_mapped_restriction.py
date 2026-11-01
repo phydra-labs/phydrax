@@ -873,6 +873,11 @@ class PeriodicMappedRestrictionEvidence(StrictModule, NonTrainableState):
     ) -> PeriodicMappedRestrictionEvidence:
         if type(value) is not cls:
             raise TypeError("value must be PeriodicMappedRestrictionEvidence.")
+        # Stored identities are not proof authority: renew the target validity
+        # proof here; the source validity is renewed with its stored embedding.
+        value.validity.revalidate(
+            value.transition.target_geometry, mesh=value.transition.target_mesh
+        )
         rebuilt = cls(
             value.transition,
             value.source_validity,

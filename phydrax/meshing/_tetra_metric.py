@@ -57,6 +57,18 @@ _IMPROVEMENT = 1.0e-6
 # A metric split point is the metric midpoint rounded to the dyadic grid
 # 2**-bits of its edge: 5 bits place it within 1/64 of the edge length.
 _SPLIT_PARAMETER_BITS = 5
+# Band violations |log(l / band edge)| are compared in quanta of 2**-10: far
+# below the band's log half-width log(sqrt(2)) ~ 0.35, so an edge entering
+# the band is always progress, while moves changing no violation by a quantum
+# are not progress (they would otherwise smooth without bound).
+_VIOLATION_QUANTUM = 2.0**-10
+# A relocation tries steps 2**-k of its pull for k = 0, ..., bits: the same
+# positional resolution as a split point.
+_RELOCATION_STEP_BITS = _SPLIT_PARAMETER_BITS
+# kMetricDeterminantFloor of native quality improvement (improve3d.hpp): below
+# this relative determinant |det E| / max_v prod |e| a cell's binary64 metric
+# determinant det(E^T E) is not certainly positive. No edit creates such a cell.
+_DETERMINANT_FLOOR = 2.0**-22
 _TETRA_EDGE_CORNERS = tuple(combinations(range(4), 2))
 _TETRA_FACE_CORNERS = ((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2))
 _TETRA_EDGES = np.asarray(_TETRA_EDGE_CORNERS, dtype=np.int32)
@@ -93,6 +105,31 @@ class TetraMetricStatus(StrEnum):
     NUMERICAL_STOP = "numerical_stop"
 
 
+class TetraMetricUnmetKind(StrEnum):
+    """Why an out-of-band edge remains when adaptation stops.
+
+    ``SOURCE_BOUNDARY``: a short edge whose collapse the source boundary forbids
+    in both directions (each endpoint fixed, protected, pinned at a source
+    corner, or carried by a source triangle/edge that does not hold the other
+    endpoint). ``UNREPRESENTABLE``: a long edge refused a split because no
+    short dyadic point of it has a consistent binary64 realization.
+    ``UNIMPROVED``: an admissible operation exists, but none strictly decreased
+    the termination objective within the determinant floor and exact checks.
+    """
+
+    SOURCE_BOUNDARY = "source_boundary"
+    UNREPRESENTABLE = "unrepresentable"
+    UNIMPROVED = "unimproved"
+
+
+class TetraMetricUnmetEdge(NamedTuple):
+    """Witness of one out-of-band edge: its target vertex IDs and metric length."""
+
+    kind: TetraMetricUnmetKind
+    vertex_ids: tuple[int, int]
+    metric_length: float
+
+
 class TetraMetricEvidence(StrictModule, NonTrainableState):
     """Actual native operation counts and final SPD-metric measurements."""
 
@@ -114,6 +151,10 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
     maximum_metric_length: float = eqx.field(static=True)
     minimum_metric_quality: float = eqx.field(static=True)
     maximum_region_volume_error: float = eqx.field(static=True)
+    source_boundary_edges: int = eqx.field(static=True)
+    unrepresentable_edges: int = eqx.field(static=True)
+    unimproved_edges: int = eqx.field(static=True)
+    unmet_edges: tuple[TetraMetricUnmetEdge, ...] = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -137,6 +178,7 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
         maximum_metric_length: float,
         minimum_metric_quality: float,
         maximum_region_volume_error: float,
+        unmet_edges: tuple[TetraMetricUnmetEdge, ...],
     ) -> None:
         if not isinstance(status, TetraMetricStatus):
             raise TypeError("status must be TetraMetricStatus.")
@@ -173,6 +215,16 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
             raise ValueError("Tetra metric measurements must be finite and nonnegative.")
         if out_of_range_edges > measured_edges:
             raise ValueError("out_of_range_edges cannot exceed measured_edges.")
+        unmet = tuple(unmet_edges)
+        if any(
+            not isinstance(edge, TetraMetricUnmetEdge)
+            or not isinstance(edge.kind, TetraMetricUnmetKind)
+            for edge in unmet
+        ):
+            raise TypeError("unmet_edges must hold TetraMetricUnmetEdge records.")
+        if len(unmet) != out_of_range_edges:
+            raise ValueError("Every out-of-range edge needs exactly one unmet record.")
+        kinds = [edge.kind for edge in unmet]
         self.status = status
         self.passes = passes
         self.splits = splits
@@ -191,6 +243,10 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
         self.maximum_metric_length = maximum_metric_length
         self.minimum_metric_quality = minimum_metric_quality
         self.maximum_region_volume_error = maximum_region_volume_error
+        self.source_boundary_edges = kinds.count(TetraMetricUnmetKind.SOURCE_BOUNDARY)
+        self.unrepresentable_edges = kinds.count(TetraMetricUnmetKind.UNREPRESENTABLE)
+        self.unimproved_edges = kinds.count(TetraMetricUnmetKind.UNIMPROVED)
+        self.unmet_edges = unmet
         from .._fingerprint import canonical_fingerprint
 
         self.evidence_id = canonical_fingerprint(
@@ -199,6 +255,10 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
                 "status": status.value,
                 "counts": counts,
                 "measurements": values,
+                "unmet": tuple(
+                    (edge.kind.value, edge.vertex_ids, edge.metric_length)
+                    for edge in unmet
+                ),
             }
         )
 
@@ -281,6 +341,10 @@ class _NativeState:
     # Source vertex IDs carrying each facet group row and segment group row.
     source_face_vertices: dict[int, frozenset[int]]
     source_segment_vertices: dict[int, frozenset[int]]
+    # Source-vertex sets of source triangles on a declared exact plane.
+    declared_source_faces: frozenset[frozenset[int]]
+    # Source triangles (source vertex IDs) of each planar facet group row.
+    source_group_triangles: dict[int, tuple[tuple[int, int, int], ...]]
     next_native_vertex: int
     next_native_cell: int
     next_native_facet: int
@@ -324,16 +388,21 @@ def _metric_lengths(
     return np.where(nearly_equal, 0.5 * (first + second), logarithmic)
 
 
-def _band_violations(
-    lengths: np.ndarray, /
-) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """Max-first long and short distances ``|log(l / band edge)|`` outside the band."""
+def _band_violations(lengths: np.ndarray, /) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Max-first quantized long and short distances ``|log(l / band edge)|``.
+
+    Each violation is counted in quanta ``_VIOLATION_QUANTUM`` rounded up, so
+    any violation is at least one quantum and an in-band edge is none.
+    """
     values = np.asarray(lengths, dtype=np.float64).reshape((-1,))
-    long = np.log(values[values > _UPPER] / _UPPER)
-    short = np.log(_LOWER / values[values < _LOWER])
+
+    def quanta(violation: np.ndarray) -> tuple[int, ...]:
+        counts = np.maximum(np.ceil(violation / _VIOLATION_QUANTUM), 1.0)
+        return tuple(sorted((int(value) for value in counts.tolist()), reverse=True))
+
     return (
-        tuple(sorted(long.tolist(), reverse=True)),
-        tuple(sorted(short.tolist(), reverse=True)),
+        quanta(np.log(values[values > _UPPER] / _UPPER)),
+        quanta(np.log(_LOWER / values[values < _LOWER])),
     )
 
 
@@ -342,15 +411,17 @@ def _objective_decreases(
 ) -> bool:
     """Whether a local edit strictly decreases the termination objective.
 
-    The objective is lexicographic: the multiset of long-edge violations, then
-    of short-edge violations, each in max-first order (compare violations
-    sorted descending; fewer is smaller), then the cell-quality multiset in
-    min-first order. ``removed`` and ``added`` are the metric lengths of the
+    The objective is lexicographic: the multiset of quantized long violations,
+    then of short violations (``_band_violations``), each in max-first order
+    (compare violations sorted descending; a proper prefix is smaller), then
+    the cell quality. ``removed`` and ``added`` are the metric lengths of the
     measured edges the edit deletes or creates (or whose length it changes),
     and ``quality_gain`` states that the edit replaces cells whose minimum
-    quality ``q`` only by cells better than ``q + _IMPROVEMENT``. The max-first
-    order is compatible with multiset union, so a local decrease is a global
-    one.
+    quality ``q`` only by cells better than ``q + _IMPROVEMENT``. Each
+    component is a multiset order on a total order, compatible with multiset
+    union, so a local decrease is a global one; the quantized violations take
+    finitely many values and a mesh has finitely many binary64 states, so
+    strictly decreasing edits terminate.
     """
     removed_long, removed_short = _band_violations(removed)
     added_long, added_short = _band_violations(added)
@@ -397,6 +468,40 @@ def _tetra_quality(
         12.0 * np.power(3.0 * metric_volume, 2.0 / 3.0) / denominator,
         0.0,
     )
+
+
+def _relative_determinants(corners: np.ndarray, /) -> np.ndarray:
+    """Native ``relative_determinant``: ``|det E|`` over the largest product of
+    the three edge lengths at a vertex, for ``(n, 4, 3)`` cell corners."""
+    values = np.asarray(corners, dtype=np.float64).reshape((-1, 4, 3))
+    determinants = np.abs(np.linalg.det(values[:, 1:] - values[:, :1]))
+    lengths = np.linalg.norm(values[:, :, None, :] - values[:, None, :, :], axis=-1)
+    lengths[:, np.arange(4), np.arange(4)] = 1.0
+    products = np.max(np.prod(lengths, axis=2), axis=1)
+    return np.where(
+        np.isfinite(determinants) & np.isfinite(products) & (products > 0.0),
+        determinants / np.where(products > 0.0, products, 1.0),
+        0.0,
+    )
+
+
+def _clears_determinant_floor(corners: np.ndarray, /) -> bool:
+    """Whether every created cell clears the improvement determinant floor."""
+    return bool(np.all(_relative_determinants(corners) > _DETERMINANT_FLOOR))
+
+
+def _floor_oriented(corners: np.ndarray, /) -> bool:
+    """Whether cells are positively oriented above the determinant floor.
+
+    A relative determinant above ``_DETERMINANT_FLOOR`` (2^-22) exceeds the
+    binary64 error bound of the evaluated determinant (a small multiple of
+    ``2^-53`` times the Hadamard bound, itself at most the largest vertex edge
+    product) by orders of magnitude, so the float sign is the exact orientation.
+    """
+    values = np.asarray(corners, dtype=np.float64).reshape((-1, 4, 3))
+    return bool(
+        np.all(np.linalg.det(values[:, 1:] - values[:, :1]) > 0.0)
+    ) and _clears_determinant_floor(values)
 
 
 def _metric_midpoint(
@@ -621,9 +726,16 @@ def _ring_triangulation(
                 if left_score == -np.inf or right_score == -np.inf:
                     continue
                 a, b, c = ring[first], ring[pivot], ring[last]
-                ids = np.asarray(((edge[0], a, b, c), (edge[1], a, c, b)), dtype=np.int64)
-                oriented = _oriented_tetrahedra(points, topology, ids, mode)
-                if oriented is None:
+                # Created cells must clear the determinant floor, which also
+                # certifies their binary64 orientation (``_floor_oriented``).
+                oriented = np.asarray(
+                    [
+                        [topology.vertex_row[vertex] for vertex in cell]
+                        for cell in ((edge[0], a, b, c), (edge[1], a, c, b))
+                    ],
+                    dtype=np.int64,
+                )
+                if not _floor_oriented(points[oriented]):
                     continue
                 quality = _tetra_quality(points, metrics, oriented)
                 if not np.all(np.isfinite(quality)) or np.any(quality <= 0.0):
@@ -821,6 +933,30 @@ def _source_tetra_inverse(
     return tuple(sorted(records, key=lambda row: row[0]))
 
 
+def _locate_source_weights(
+    point: tuple[Fraction, Fraction, Fraction],
+    source_records: tuple[
+        tuple[
+            int, tuple[int, ...], tuple[tuple[Fraction, ...], ...], tuple[Fraction, ...]
+        ],
+        ...,
+    ],
+    /,
+) -> tuple[int, tuple[int, ...], tuple[Fraction, ...]] | None:
+    """First source cell (by ID) containing an exact point, with its exact
+    barycentric weights in the cell's vertex order."""
+    for cell_id, vertices, inverse, origin in source_records:
+        delta = tuple(point[axis] - origin[axis] for axis in range(3))
+        tail = tuple(
+            sum((inverse[row][axis] * delta[axis] for axis in range(3)), Fraction(0))
+            for row in range(3)
+        )
+        weights = (Fraction(1) - sum(tail, Fraction(0)), *tail)
+        if all(weight >= 0 for weight in weights):
+            return cell_id, vertices, weights
+    return None
+
+
 def _locate_source_stencil(
     point: np.ndarray,
     source_records: tuple[
@@ -832,16 +968,65 @@ def _locate_source_stencil(
     /,
 ) -> tuple[int, dict[int, Fraction]] | None:
     query = tuple(Fraction(float(value)) for value in point)
-    for cell_id, vertices, inverse, origin in source_records:
-        delta = tuple(query[axis] - origin[axis] for axis in range(3))
-        tail = tuple(
-            sum((inverse[row][axis] * delta[axis] for axis in range(3)), Fraction(0))
-            for row in range(3)
+    located = _locate_source_weights((query[0], query[1], query[2]), source_records)
+    if located is None:
+        return None
+    cell_id, vertices, weights = located
+    return cell_id, _fraction_stencil(vertices, weights)
+
+
+def _quantized_weights(
+    weights: tuple[Fraction, ...], bits: int, /
+) -> tuple[Fraction, ...]:
+    """Nonnegative weights rounded to the dyadic grid ``2**-bits``.
+
+    The partial sums are rounded (monotone, the last one exactly 1), so the
+    quantized weights are nonnegative, sum exactly to one, and each is a binary64
+    value for ``bits <= 53``: the point stays in the entity spanned by the support.
+    """
+    scale = 1 << bits
+    result: list[Fraction] = []
+    previous = 0
+    running = Fraction(0)
+    for weight in weights[:-1]:
+        running += weight
+        current = min(max(round(running * scale), previous), scale)
+        result.append(Fraction(current - previous, scale))
+        previous = current
+    result.append(Fraction(scale - previous, scale))
+    return tuple(result)
+
+
+def _entity_weights(
+    corners: tuple[tuple[Fraction, ...], ...],
+    point: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> tuple[Fraction, ...] | None:
+    """Exact barycentric weights of the orthogonal projection of ``point`` onto
+    a source edge (two corners) or triangle (three); ``None`` outside it."""
+    origin = corners[0]
+    axes = [[corner[axis] - origin[axis] for axis in range(3)] for corner in corners[1:]]
+    offset = [point[axis] - origin[axis] for axis in range(3)]
+
+    def dot(first: list[Fraction], second: list[Fraction]) -> Fraction:
+        return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+    gram = [[dot(first, second) for second in axes] for first in axes]
+    right = [dot(axis, offset) for axis in axes]
+    if len(axes) == 1:
+        if gram[0][0] == 0:
+            return None
+        tail = (right[0] / gram[0][0],)
+    else:
+        determinant = gram[0][0] * gram[1][1] - gram[0][1] * gram[1][0]
+        if determinant == 0:
+            return None
+        tail = (
+            (right[0] * gram[1][1] - right[1] * gram[0][1]) / determinant,
+            (right[1] * gram[0][0] - right[0] * gram[1][0]) / determinant,
         )
-        weights = (Fraction(1) - sum(tail, Fraction(0)), *tail)
-        if all(weight >= 0 for weight in weights):
-            return cell_id, _fraction_stencil(vertices, weights)
-    return None
+    weights = (Fraction(1) - sum(tail, Fraction(0)), *tail)
+    return weights if all(weight >= 0 for weight in weights) else None
 
 
 def _fresh_ids(first: int, count: int, name: str, /) -> np.ndarray:
@@ -875,6 +1060,81 @@ def _relation_records(
         np.asarray([row[1] for row in records], dtype=np.int64).reshape((-1, width)),
         np.asarray([int(row[2]) for row in records], dtype=np.int32),
     )
+
+
+def _coplanar_face_groups(
+    points: np.ndarray,
+    faces: np.ndarray,
+    sides: list[tuple[Any, ...]],
+    segments: set[tuple[int, int]],
+    /,
+) -> np.ndarray:
+    """Planar source facet label (a representative row) of each source triangle.
+
+    Two triangles sharing an edge join when the edge is no source segment and
+    is used exactly by them in opposite directions (a consistently oriented
+    manifold), their sides agree (incident cell count, regions, facet class),
+    and the fourth vertex is exactly coplanar (exact rational orientation).
+    """
+    parent = list(range(faces.shape[0]))
+
+    def find(row: int) -> int:
+        while parent[row] != row:
+            parent[row] = parent[parent[row]]
+            row = parent[row]
+        return row
+
+    uses: dict[tuple[int, int], list[tuple[int, tuple[int, int]]]] = defaultdict(list)
+    rows = np.asarray(faces, dtype=np.int64).tolist()
+    for row, face in enumerate(rows):
+        for corner in range(3):
+            first, second = int(face[corner]), int(face[(corner + 1) % 3])
+            uses[_edge_key((first, second))].append((row, (first, second)))
+
+    def exact(vertex: int) -> list[Fraction]:
+        return [Fraction(float(value)) for value in points[vertex]]
+
+    for key, incident in uses.items():
+        if len(incident) != 2 or key in segments:
+            continue
+        (first_row, first_use), (second_row, second_use) = incident
+        if first_use != second_use[::-1] or sides[first_row] != sides[second_row]:
+            continue
+        origin, first, second = (exact(vertex) for vertex in rows[first_row])
+        apex = exact(next(v for v in rows[second_row] if v not in key))
+        u = [first[axis] - origin[axis] for axis in range(3)]
+        v = [second[axis] - origin[axis] for axis in range(3)]
+        w = [apex[axis] - origin[axis] for axis in range(3)]
+        volume = (
+            u[0] * (v[1] * w[2] - v[2] * w[1])
+            - u[1] * (v[0] * w[2] - v[2] * w[0])
+            + u[2] * (v[0] * w[1] - v[1] * w[0])
+        )
+        if volume == 0:
+            parent[find(first_row)] = find(second_row)
+    return np.asarray([find(row) for row in range(faces.shape[0])], dtype=np.int64)
+
+
+def _declared_face_planes(points: np.ndarray, faces: np.ndarray, /) -> np.ndarray:
+    """``(F, 3, 3)`` exact planes (origin, two axes) of source triangles.
+
+    A triangle ``abc`` declares ``(a, b - a, c - a)`` when both axes are exact
+    binary64 differences; otherwise its row is NaN (undeclared). The plane is
+    then exactly the triangle's plane and a point ``a + s (b - a) + t (c - a)``
+    has source weights ``(1 - s - t, s, t)``.
+    """
+    planes = np.full((faces.shape[0], 3, 3), np.nan, dtype=np.float64)
+    for row, face in enumerate(np.asarray(faces, dtype=np.int64).tolist()):
+        origin, first, second = (points[int(vertex)] for vertex in face)
+        axes = (first - origin, second - origin)
+        if all(
+            Fraction(float(axis[k]))
+            == Fraction(float(end[k])) - Fraction(float(origin[k]))
+            for axis, end in zip(axes, (first, second), strict=True)
+            for k in range(3)
+        ):
+            planes[row] = (origin, axes[0], axes[1])
+    return planes
 
 
 def _cell_volume(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
@@ -1128,7 +1388,9 @@ def _prepare_native_state(
         for local_face, face in enumerate(_TETRA_FACES):
             key = _face_key(int(vertices[index]) for index in face)
             incidence[key].append((cell_row, local_face))
-    constrained_faces: list[tuple[int, tuple[int, int, int], np.ndarray]] = []
+    constrained_faces: list[
+        tuple[int, tuple[int, int, int], np.ndarray, tuple[Any, ...]]
+    ] = []
     for key, incident in incidence.items():
         incident_regions = {int(regions[row]) for row, _ in incident}
         if (
@@ -1145,18 +1407,19 @@ def _prepare_native_state(
             face_vertices = source_cells[row, _TETRA_FACES[local_face]].astype(
                 np.int32, copy=True
             )
-            constrained_faces.append((face_id, key, face_vertices))
+            sides = (
+                len(incident),
+                tuple(sorted(incident_regions)),
+                face_class_by_key.get(key, 0),
+            )
+            constrained_faces.append((face_id, key, face_vertices, sides))
     constrained_faces.sort(key=lambda item: item[0])
     source_faces = np.asarray(
-        [row for _, _, row in constrained_faces], dtype=np.int32
+        [row for _, _, row, _ in constrained_faces], dtype=np.int32
     ).reshape((-1, 3))
-    source_face_ids = np.asarray(
-        [identifier for identifier, _, _ in constrained_faces], dtype=np.int64
+    source_face_row_ids = np.asarray(
+        [identifier for identifier, *_ in constrained_faces], dtype=np.int64
     )
-    face_groups = np.arange(source_face_ids.size, dtype=np.int32)
-    source_face_group_rows = {
-        int(identifier): row for row, identifier in enumerate(source_face_ids.tolist())
-    }
 
     vertex_row_by_id = {
         int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
@@ -1178,8 +1441,43 @@ def _prepare_native_state(
         dtype=np.int32,
     ).reshape((-1, 2))
     segment_groups = np.arange(source_segment_ids.size, dtype=np.int32)
+    # Off a periodic lift, exactly coplanar source triangles joined across
+    # non-segment edges form one planar source facet (one group): boundary
+    # vertices then move and collapse across the facet's internal diagonals.
+    # Lifted periodic seams keep one group per triangle.
+    row_groups = (
+        _coplanar_face_groups(
+            points,
+            source_faces,
+            [sides for *_, sides in constrained_faces],
+            {_edge_key(row) for row in source_segments.tolist()},
+        )
+        if periodic_state is None
+        else np.arange(source_face_row_ids.size, dtype=np.int64)
+    )
+    group_first_rows = {
+        int(group): int(np.flatnonzero(row_groups == group)[0])
+        for group in np.unique(row_groups).tolist()
+    }
+    source_face_ids = np.asarray(
+        sorted(source_face_row_ids[row] for row in group_first_rows.values()),
+        dtype=np.int64,
+    )
+    face_groups = np.searchsorted(
+        source_face_ids,
+        [source_face_row_ids[group_first_rows[int(group)]] for group in row_groups],
+    ).astype(np.int32)
+    source_face_group_rows = {
+        int(identifier): row for row, identifier in enumerate(source_face_ids.tolist())
+    }
+    source_group_triangles: dict[int, tuple[tuple[int, int, int], ...]] = defaultdict(
+        tuple
+    )
+    for row, (_, key, _, _) in enumerate(constrained_faces):
+        source_group_triangles[int(face_groups[row])] += (key,)
     source_face_vertices = {
-        row: frozenset(key) for row, (_, key, _) in enumerate(constrained_faces)
+        group: frozenset(vertex for triangle in triangles for vertex in triangle)
+        for group, triangles in source_group_triangles.items()
     }
     source_segment_vertices = {
         row: frozenset(key) for row, key in enumerate(source_segment_keys)
@@ -1187,11 +1485,24 @@ def _prepare_native_state(
     source_segment_group_rows = {
         int(identifier): row for row, identifier in enumerate(source_segment_ids.tolist())
     }
+    # Off a periodic lift each facet declares the exact plane of its first
+    # triangle (origin a, axes b - a and c - a) when those axes are binary64,
+    # so the native admits a carrier rounding a point of the plane
+    # (declared-plane rounding-box admission).
+    row_planes = _declared_face_planes(points, source_faces)
+    face_planes = np.full((source_faces.shape[0], 3, 3), np.nan, dtype=np.float64)
+    if periodic_state is None:
+        for row in range(source_faces.shape[0]):
+            face_planes[row] = row_planes[group_first_rows[int(row_groups[row])]]
+    declared_source_faces = frozenset(
+        frozenset(constrained_faces[row][1])
+        for row in np.flatnonzero(~np.isnan(face_planes[:, 0, 0])).tolist()
+    )
     source_complex = TetMeshSourceComplex(
         points=points,
         faces=source_faces,
         face_group_rows=face_groups,
-        face_tolerances=np.zeros((source_face_ids.size,), dtype=np.float64),
+        face_tolerances=np.zeros((source_faces.shape[0],), dtype=np.float64),
         segments=source_segments,
         segment_group_rows=segment_groups,
         segment_tolerances=np.zeros((source_segment_ids.size,), dtype=np.float64),
@@ -1200,7 +1511,7 @@ def _prepare_native_state(
         witness_parameters=np.zeros((vertex_ids.size, 2), dtype=np.float64),
         face_ids=source_face_ids,
         segment_ids=source_segment_ids,
-        face_planes=np.full((source_faces.shape[0], 3, 3), np.nan, dtype=np.float64),
+        face_planes=face_planes,
         face_plane_tolerances=np.zeros((source_faces.shape[0],), dtype=np.float64),
     )
 
@@ -1232,7 +1543,7 @@ def _prepare_native_state(
         source_cells.astype(np.int32),
         regions,
         source_faces,
-        source_face_ids,
+        source_face_ids[face_groups],
         source_segments,
         source_segment_ids,
         boundary_policy=PlcBoundaryPolicy.CONFORMING,
@@ -1240,7 +1551,7 @@ def _prepare_native_state(
         protected_vertices=np.asarray(fixed, dtype=np.int8),
         vertex_ids=vertex_ids,
         cell_ids=source_cell_ids,
-        facet_ids=source_face_ids,
+        facet_ids=source_face_row_ids,
         segment_ids=source_segment_ids,
         source=source_complex,
         source_id=source_identity[0],
@@ -1334,6 +1645,8 @@ def _prepare_native_state(
         source_segment_group_rows=source_segment_group_rows,
         source_face_vertices=source_face_vertices,
         source_segment_vertices=source_segment_vertices,
+        declared_source_faces=declared_source_faces,
+        source_group_triangles=dict(source_group_triangles),
         next_native_vertex=int(np.max(native_vertex_ids)) + 1,
         next_native_cell=int(np.max(native_cell_ids)) + 1,
         next_native_facet=(
@@ -2822,8 +3135,8 @@ def _try_split_batch(
     """Apply disjoint split orbits; refused orbits are blocked and counted.
 
     A split replaces its long edge by halves and medians to the edge ring; it
-    is proposed only when that strictly decreases the long-violation multiset
-    (``_objective_decreases``), which longest-first ordering makes the rule.
+    is proposed only when that strictly decreases the violation multiset
+    (``_objective_decreases``) and its cells clear the determinant floor.
     """
     topology = _topology(state.snapshot)
     points, metrics, lengths = _metric_edge_table(state, topology)
@@ -2841,13 +3154,14 @@ def _try_split_batch(
             _count_rejection(None, counters, 1)
             continue
         removed = np.asarray([length_by_edge[edge] for edge in group])
-        added = np.concatenate(
-            [
-                _split_edge_lengths(state, topology, points, metrics, edge, value)
-                for edge, value in zip(group, values, strict=True)
-            ]
-        )
-        if not _objective_decreases(removed, added, False):
+        effects = [
+            _split_effects(state, topology, points, metrics, edge, value)
+            for edge, value in zip(group, values, strict=True)
+        ]
+        added = np.concatenate([lengths for lengths, _ in effects])
+        if not all(clears for _, clears in effects) or not _objective_decreases(
+            removed, added, False
+        ):
             blocked.update(group)
             continue
         parameters.update(zip(group, values, strict=True))
@@ -2855,7 +3169,7 @@ def _try_split_batch(
     return _apply_split_groups(state, representable, parameters, counters, blocked)
 
 
-def _split_edge_lengths(
+def _split_effects(
     state: _NativeState,
     topology: _TetTopology,
     points: np.ndarray,
@@ -2863,8 +3177,9 @@ def _split_edge_lengths(
     edge: tuple[int, int],
     parameter: Fraction,
     /,
-) -> np.ndarray:
-    """Metric lengths of the halves and ring medians a split would create."""
+) -> tuple[np.ndarray, bool]:
+    """Metric lengths of the halves and ring medians a split would create, and
+    whether its cells clear the determinant floor."""
     stencil = _split_stencil(
         state.vertex_stencils[edge[0]], state.vertex_stencils[edge[1]], parameter
     )
@@ -2884,7 +3199,22 @@ def _split_edge_lengths(
     extended_metrics = np.concatenate((metrics[rows], metric[None]), axis=0)
     middle = len(others)
     pairs = np.asarray([[index, middle] for index in range(middle)], dtype=np.int64)
-    return _metric_lengths(extended_points, extended_metrics, pairs)
+    local = {vertex: index for index, vertex in enumerate(others)}
+    created = np.asarray(
+        [
+            [
+                middle if int(vertex) == endpoint else local[int(vertex)]
+                for vertex in topology.cell_vertex_ids[row]
+            ]
+            for row in topology.edge_cells[edge]
+            for endpoint in edge
+        ],
+        dtype=np.int64,
+    ).reshape((-1, 4))
+    return (
+        _metric_lengths(extended_points, extended_metrics, pairs),
+        _clears_determinant_floor(extended_points[created]),
+    )
 
 
 def _apply_split_groups(
@@ -3001,8 +3331,9 @@ def _carrier_entity(
 ) -> frozenset[int] | None:
     """Source vertices spanning the smallest source entity under a boundary vertex.
 
-    ``None`` marks an interior vertex. A boundary vertex lies on the source
-    facet (three vertices) or source edge (two) shared by every incident
+    ``None`` marks an interior vertex. A boundary vertex lies on the planar
+    source facet (its triangles' vertices), on the curve shared by two facets
+    or on a source segment (their common vertices) carrying every incident
     constrained facet and segment; with fewer than two it is pinned.
     """
     entity: frozenset[int] | None = None
@@ -3013,6 +3344,41 @@ def _carrier_entity(
         carried = state.source_segment_vertices[records.segments[key][1]]
         entity = carried if entity is None else entity & carried
     return entity
+
+
+def _carrier_simplices(
+    state: _NativeState, records: _BoundaryRecords, vertex: int, /
+) -> tuple[tuple[int, ...], ...] | None:
+    """Source simplices a boundary vertex may move in (``None``: interior).
+
+    A vertex on one source segment moves along it; on one planar facet, within
+    its source triangles; on the curve shared by two facets, along the source
+    edges common to both; otherwise (a corner) nowhere (empty).
+    """
+    facets = {records.facets[key][1] for key in records.vertex_facets.get(vertex, ())}
+    segments = {
+        records.segments[key][1] for key in records.vertex_segments.get(vertex, ())
+    }
+    if not facets and not segments:
+        return None
+    if segments:
+        if len(segments) != 1:
+            return ()
+        return (tuple(sorted(state.source_segment_vertices[next(iter(segments))])),)
+    triangles = [state.source_group_triangles[group] for group in sorted(facets)]
+    if len(triangles) == 1:
+        return triangles[0]
+    if len(triangles) != 2:
+        return ()
+
+    def edges(group: tuple[tuple[int, int, int], ...]) -> set[tuple[int, int]]:
+        return {
+            _edge_key((triangle[corner], triangle[(corner + 1) % 3]))
+            for triangle in group
+            for corner in range(3)
+        }
+
+    return tuple(sorted(edges(triangles[0]) & edges(triangles[1])))
 
 
 def _collapse_proposal(
@@ -3052,6 +3418,48 @@ def _collapse_proposal(
     )
 
 
+def _source_permits_collapse(
+    state: _NativeState,
+    topology: _TetTopology,
+    records: _BoundaryRecords,
+    removed: int,
+    kept: int,
+    /,
+) -> bool:
+    """Whether the source boundary lets ``removed`` collapse into ``kept``.
+
+    The removed vertex is neither fixed nor protected, carries no protected
+    facet or segment, and is interior or carried by a source triangle or edge
+    holding the kept vertex (a constrained segment collapses only along
+    itself); periodic lifts collapse only interior vertices.
+    """
+    removed_row = topology.vertex_row[removed]
+    if removed in state.fixed_vertices or bool(
+        np.asarray(state.snapshot.protected_vertices)[removed_row]
+    ):
+        return False
+    entity = _carrier_entity(state, records, removed)
+    if state.target_mesh.periodic_topology is not None and (
+        entity is not None or _carrier_entity(state, records, kept) is not None
+    ):
+        # Lifted periodic seams are constrained facets: their orbit copies
+        # collapse only through interior vertices.
+        return False
+    if entity is not None and (
+        len(entity) < 2 or not set(state.vertex_stencils[kept]) <= entity
+    ):
+        return False
+    if records.vertex_segments.get(removed) and (
+        _edge_key((removed, kept)) not in records.segments
+    ):
+        return False
+    return not any(
+        records.facets[key][4] for key in records.vertex_facets.get(removed, ())
+    ) and not any(
+        records.segments[key][3] for key in records.vertex_segments.get(removed, ())
+    )
+
+
 def _directed_collapse(
     state: _NativeState,
     topology: _TetTopology,
@@ -3062,25 +3470,9 @@ def _directed_collapse(
     /,
 ) -> dict[str, Any] | None:
     snapshot = state.snapshot
-    removed_row = topology.vertex_row[removed]
-    if removed in state.fixed_vertices or bool(
-        np.asarray(snapshot.protected_vertices)[removed_row]
-    ):
-        return None
-    entity = _carrier_entity(state, records, removed)
-    if state.target_mesh.periodic_topology is not None and (
-        entity is not None or _carrier_entity(state, records, kept) is not None
-    ):
-        # Lifted periodic seams are constrained facets: their orbit copies
-        # collapse only through interior vertices.
-        return None
-    if entity is not None and (
-        len(entity) < 2 or not set(state.vertex_stencils[kept]) <= entity
-    ):
+    if not _source_permits_collapse(state, topology, records, removed, kept):
         return None
     edge = _edge_key((removed, kept))
-    if records.vertex_segments.get(removed) and edge not in records.segments:
-        return None
     removed_rows = topology.vertex_cells[removed]
     kept_rows = topology.vertex_cells[kept]
     cavity_rows = tuple(sorted(set(removed_rows) | set(kept_rows)))
@@ -3174,18 +3566,11 @@ def _directed_collapse(
         ],
     )
     after_quality = _tetra_quality(points, metrics, oriented_rows)
-    if not np.all(np.isfinite(after_quality)) or np.any(after_quality <= 0.0):
-        return None
-    roundoff = (
-        64.0
-        * np.finfo(np.float64).eps
-        * max(
-            float(np.max(before_quality, initial=0.0)),
-            float(np.max(after_quality, initial=0.0)),
-            1.0,
-        )
-    )
-    if float(np.min(after_quality)) + roundoff < float(np.min(before_quality)):
+    if (
+        not np.all(np.isfinite(after_quality))
+        or np.any(after_quality <= 0.0)
+        or not _clears_determinant_floor(points[oriented_rows])
+    ):
         return None
 
     removed_edges = [
@@ -3800,6 +4185,7 @@ def _replacement_candidates(
             or after.size == 0
             or not np.all(np.isfinite(after))
             or np.any(after <= 0.0)
+            or not _clears_determinant_floor(points[oriented])
         ):
             return
         old_edges = cell_edges(before_rows)
@@ -4149,16 +4535,103 @@ def _replacement_phase(
             blocked.clear()
 
 
+def _quantized_relocation(
+    state: _NativeState,
+    simplices: tuple[tuple[int, ...], ...] | None,
+    target: np.ndarray,
+    current: np.ndarray,
+    /,
+) -> tuple[dict[int, Fraction], np.ndarray] | None:
+    """Dyadic source stencil and binary64 carrier of one relocation target.
+
+    The target's exact weights (in the source cell containing it, or of its
+    orthogonal projection into the first of the vertex's carrier simplices,
+    source triangles or edges, containing it) are rounded to the coarsest
+    dyadic grid ``2**-bits`` that resolves the move and whose point is closer
+    to the exact goal than the current point is; the stencil weights are then
+    binary64 and the carrier is the rounded exact image. An interior carrier
+    may round; a carrier in a source triangle must be exact or lie on a
+    declared exact plane (the native rounding-box admission); a carrier on a
+    source edge must be exact. ``None``: the target leaves the carrier, or no
+    representable point makes progress.
+    """
+    coordinates = np.asarray(state.source_mesh.coordinates, dtype=np.float64)
+    rows = state.source_vertex_rows
+    query = tuple(Fraction(float(value)) for value in target)
+    exact_query = (query[0], query[1], query[2])
+    located: tuple[tuple[int, ...], tuple[Fraction, ...]] | None = None
+    if simplices is None:
+        cell = _locate_source_weights(exact_query, state.source_records)
+        if cell is not None:
+            located = cell[1], cell[2]
+    else:
+        for simplex in simplices:
+            simplex_weights = _entity_weights(
+                tuple(
+                    tuple(Fraction(float(value)) for value in coordinates[rows[vertex]])
+                    for vertex in simplex
+                ),
+                exact_query,
+            )
+            if simplex_weights is not None:
+                located = simplex, simplex_weights
+                break
+    if located is None:
+        return None
+    vertices, weights = located
+    goal = np.asarray(
+        [
+            float(value)
+            for value in _stencil_image(state, _fraction_stencil(vertices, weights))
+        ]
+    )
+    distance = float(np.sum((goal - current) ** 2))
+    corners = coordinates[[rows[vertex] for vertex in vertices]]
+    span = float(np.max(np.ptp(corners, axis=0)))
+    if not distance > 0.0 or not span > 0.0:
+        return None
+    # A grid coarser than the move cannot resolve it; start where it can.
+    first = min(max(int(np.floor(np.log2(span / np.sqrt(distance)))), 1), 53)
+    for bits in range(first, 54):
+        stencil = _fraction_stencil(vertices, _quantized_weights(weights, bits))
+        image = _stencil_image(state, stencil)
+        carrier = np.asarray([float(value) for value in image], dtype=np.float64)
+        if not float(np.sum((carrier - goal) ** 2)) < distance:
+            continue
+        if simplices is not None and any(Fraction(float(v)) != v for v in image):
+            if (
+                len(vertices) == 2
+                or frozenset(vertices) not in state.declared_source_faces
+            ):
+                return None
+        return stencil, carrier
+    return None
+
+
 def _relocation_proposals(
     state: _NativeState,
-    blocked: set[int],
-    mode: PredicateMode,
-    counters: dict[str, int],
+    cache: dict[int, dict[str, Any] | None],
     /,
 ) -> list[tuple[dict[str, Any], ...]]:
+    """Objective-decreasing vertex moves to quantized source points.
+
+    A vertex is pulled toward unit metric length along its edges; steps
+    ``2**-k`` of the pull (``k <= _RELOCATION_STEP_BITS``) are quantized by
+    ``_quantized_relocation``. Interior vertices move in their source cell,
+    boundary vertices within the source triangle or edge carrying them (pinned
+    at source corners); a periodic lift moves interior vertices only. A move is
+    proposed when its star stays positively oriented above the determinant
+    floor (``_floor_oriented``) and strictly decreases the termination
+    objective. ``cache`` holds each vertex's proposal (or ``None``, also after a
+    native refusal) while its closed star is unchanged; the caller evicts the
+    closed stars of moved vertices.
+    """
     snapshot = state.snapshot
     topology = _topology(snapshot)
     points, metrics, _ = _metric_edge_table(state, topology)
+    _, protected_edges = _current_edge_controls(state, topology)
+    records = _boundary_records(state)
+    periodic = state.target_mesh.periodic_topology is not None
     vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
     dimensions = np.asarray(snapshot.vertex_dimensions, dtype=np.int8)
     protected_vertices = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
@@ -4168,138 +4641,161 @@ def _relocation_proposals(
     current_vertex_rows = {
         int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
     }
-    candidates: list[dict[str, Any]] = []
-    source_vertex_rows = {
-        int(identifier): row
-        for row, identifier in enumerate(state.source_vertex_ids.tolist())
-    }
-    for vertex in sorted(
-        topology.vertex_cells, key=lambda value: state.vertex_target_ids[value]
-    ):
-        if (
-            vertex in blocked
-            or vertex in state.fixed_vertices
-            or dimensions[topology.vertex_row[vertex]] != 3
-            or protected_vertices[topology.vertex_row[vertex]]
-        ):
-            continue
+    source_coordinates = np.asarray(state.source_mesh.coordinates, dtype=np.float64)
+
+    def propose(vertex: int) -> dict[str, Any] | None:
+        row = topology.vertex_row[vertex]
+        if vertex in state.fixed_vertices or protected_vertices[row]:
+            return None
+        simplices = _carrier_simplices(state, records, vertex)
+        if (periodic or simplices is None) and dimensions[row] != 3:
+            return None
+        if simplices is not None and (periodic or not simplices):
+            return None
         star = topology.vertex_cells[vertex]
         if not star:
-            continue
-        star_ids = tuple(int(current_cell_ids[row]) for row in star)
-        star_blocks = {state.cell_blocks[cell_id] for cell_id in star_ids}
-        star_regions = {int(regions[row]) for row in star}
-        if len(star_blocks) != 1 or len(star_regions) != 1:
-            continue
-        # A valid new position lies in the kernel of the star, hence in a star
-        # cell; the exact inverse is formed only for the star.
+            return None
         star_rows = np.asarray(star, dtype=np.int64)
-        current_records = _source_tetra_inverse(
-            points, cells[star_rows], vertex_ids, current_cell_ids[star_rows]
-        )
+        star_ids = tuple(int(current_cell_ids[cell]) for cell in star)
+        star_blocks = {state.cell_blocks[cell_id] for cell_id in star_ids}
+        star_regions = {int(regions[cell]) for cell in star}
+        if len(star_blocks) != 1 or len(star_regions) != 1:
+            return None
         neighbors = sorted(
             {
                 int(other)
-                for row in star
-                for other in topology.cell_vertex_ids[row]
+                for cell in star
+                for other in topology.cell_vertex_ids[cell]
                 if int(other) != vertex
             }
         )
-        if not neighbors:
-            continue
-        center_row = topology.vertex_row[vertex]
-        neighbor_rows = np.asarray(
-            [topology.vertex_row[neighbor] for neighbor in neighbors], dtype=np.int64
+        # Star-local arrays: row 0 is the moving vertex.
+        local_rows = np.asarray(
+            [row, *(topology.vertex_row[neighbor] for neighbor in neighbors)],
+            dtype=np.int64,
         )
-        edge_rows = np.column_stack(
+        local_index = {
+            int(global_row): index for index, global_row in enumerate(local_rows)
+        }
+        local_cells = np.asarray(
+            [[local_index[int(value)] for value in cell] for cell in cells[star_rows]],
+            dtype=np.int64,
+        ).reshape((-1, 4))
+        local_points = points[local_rows]
+        local_metrics = metrics[local_rows]
+        spokes = np.column_stack(
             (
-                np.full((len(neighbors),), center_row, dtype=np.int64),
-                neighbor_rows,
+                np.zeros((len(neighbors),), dtype=np.int64),
+                np.arange(1, len(neighbors) + 1, dtype=np.int64),
             )
         )
-        lengths = _metric_lengths(points, metrics, edge_rows)
-        delta = points[neighbor_rows] - points[center_row]
-        pull = (1.0 - 1.0 / lengths)[:, None] * delta
-        displacement = np.mean(pull, axis=0)
-        if not np.any(displacement != 0.0):
-            continue
-        badness = float(np.max(np.maximum(lengths, 1.0 / lengths), initial=0.0))
-        before = _tetra_quality(points, metrics, cells[np.asarray(star, dtype=np.int64)])
-        before_quality = float(np.min(before, initial=np.inf))
-        scale = 1.0
-        accepted = None
-        while True:
-            target = points[center_row] + scale * displacement
-            if np.array_equal(target, points[center_row]):
-                break
-            located = _locate_source_stencil(target, state.source_records)
-            if located is not None:
-                _, stencil = located
-                try:
-                    _binary64_ancestry(stencil)
-                except FloatingPointError:
-                    pass
-                else:
-                    carrier = _source_stencil_point(
-                        np.asarray(state.source_mesh.coordinates, dtype=np.float64),
-                        source_vertex_rows,
-                        stencil,
-                    )
-                    current_located = _locate_source_stencil(carrier, current_records)
-                    if current_located is None:
-                        scale *= 0.5
-                        continue
-                    _, current_stencil = current_located
-                    try:
-                        _binary64_ancestry(current_stencil)
-                        current_carrier = _source_stencil_point(
-                            points, current_vertex_rows, current_stencil
-                        )
-                    except FloatingPointError:
-                        scale *= 0.5
-                        continue
-                    if not np.array_equal(current_carrier, carrier):
-                        scale *= 0.5
-                        continue
-                    moved_points = points.copy()
-                    moved_points[center_row] = carrier
-                    orientation = _tetra_orientation(
-                        moved_points,
-                        cells[np.asarray(star, dtype=np.int64)],
-                        mode,
-                    )
-                    if np.all(orientation == 1):
-                        moved_metric = _source_metric_from_stencil(
-                            state.source_metric, source_vertex_rows, stencil
-                        )
-                        moved_metrics = metrics.copy()
-                        moved_metrics[center_row] = moved_metric
-                        after = _tetra_quality(
-                            moved_points,
-                            moved_metrics,
-                            cells[np.asarray(star, dtype=np.int64)],
-                        )
-                        after_quality = float(np.min(after, initial=np.inf))
-                        if after_quality > before_quality + _IMPROVEMENT:
-                            accepted = {
-                                "vertex": int(vertex),
-                                "point": carrier,
-                                "metric": moved_metric,
-                                "stencil": stencil,
-                                "current_stencil": current_stencil,
-                                "star_cell_ids": star_ids,
-                                "cavity": frozenset(star_ids),
-                                "gain": after_quality - before_quality,
-                                "badness": badness,
-                                "block": next(iter(star_blocks)),
-                                "region": next(iter(star_regions)),
-                            }
-                            break
-            scale *= 0.5
-        if accepted is None:
-            counters["rejected_invalid"] += 1
-            continue
-        candidates.append(accepted)
+        measured = np.asarray(
+            [not protected_edges[_edge_key((vertex, other))] for other in neighbors],
+            dtype=np.bool_,
+        )
+        lengths = _metric_lengths(local_points, local_metrics, spokes)
+        pull = np.mean(
+            (1.0 - 1.0 / lengths)[:, None] * (local_points[1:] - local_points[0]),
+            axis=0,
+        )
+        if not np.any(pull != 0.0):
+            return None
+        before = _tetra_quality(local_points, local_metrics, local_cells)
+        # The carrier simplices are coplanar (one facet) or collinear (one
+        # curve or segment): the first spans their affine hull.
+        corners = (
+            None
+            if simplices is None
+            else source_coordinates[[state.source_vertex_rows[v] for v in simplices[0]]]
+        )
+
+        def evaluate(
+            point: np.ndarray, metric: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray] | None:
+            # Star quality and spoke lengths of a move that keeps the star
+            # oriented above the determinant floor, never lowers its minimum
+            # quality (a relocation smooths), and strictly decreases the
+            # objective.
+            moved_points = local_points.copy()
+            moved_points[0] = point
+            if not _floor_oriented(moved_points[local_cells]):
+                return None
+            moved_metrics = local_metrics.copy()
+            moved_metrics[0] = metric
+            after = _tetra_quality(moved_points, moved_metrics, local_cells)
+            moved_lengths = _metric_lengths(moved_points, moved_metrics, spokes)
+            if float(np.min(after)) < float(np.min(before)) or not _objective_decreases(
+                lengths[measured],
+                moved_lengths[measured],
+                float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT,
+            ):
+                return None
+            return after, moved_lengths
+
+        for step in range(_RELOCATION_STEP_BITS + 1):
+            goal = points[row] + np.ldexp(pull, -step)
+            if corners is not None:
+                span = (corners[1:] - corners[0]).T
+                coefficients = np.linalg.lstsq(span, goal - corners[0], rcond=None)[0]
+                goal = corners[0] + span @ coefficients
+            # Float screen with the current vertex metric; the quantized
+            # carrier and its interpolated metric are then checked in full.
+            if evaluate(goal, local_metrics[0]) is None:
+                continue
+            quantized = _quantized_relocation(state, simplices, goal, points[row])
+            if quantized is None:
+                continue
+            stencil, carrier = quantized
+            if np.array_equal(carrier, points[row]) or any(
+                np.array_equal(carrier, other) for other in local_points[1:]
+            ):
+                continue
+            moved_metric = _source_metric_from_stencil(
+                state.source_metric, state.source_vertex_rows, stencil
+            )
+            evaluated = evaluate(carrier, moved_metric)
+            if evaluated is None:
+                continue
+            after, _ = evaluated
+            current_stencil = None
+            if periodic:
+                # A periodic lift also needs the binary64 stencil of the carrier
+                # in the current star, reproducing it exactly.
+                current_stencil = _current_star_stencil(
+                    points,
+                    cells[star_rows],
+                    vertex_ids,
+                    current_cell_ids[star_rows],
+                    current_vertex_rows,
+                    carrier,
+                )
+                if current_stencil is None:
+                    continue
+            return {
+                "vertex": int(vertex),
+                "point": carrier,
+                "metric": moved_metric,
+                "stencil": stencil,
+                "current_stencil": current_stencil,
+                "star_cell_ids": star_ids,
+                "star_vertices": frozenset((vertex, *neighbors)),
+                "cavity": frozenset(star_ids),
+                "gain": float(np.min(after) - np.min(before)),
+                "badness": float(np.max(np.maximum(lengths, 1.0 / lengths))),
+                "block": next(iter(star_blocks)),
+                "region": next(iter(star_regions)),
+            }
+        return None
+
+    candidates: list[dict[str, Any]] = []
+    for vertex in sorted(
+        topology.vertex_cells, key=lambda value: state.vertex_target_ids[value]
+    ):
+        if vertex not in cache:
+            cache[vertex] = propose(vertex)
+        proposal = cache[vertex]
+        if proposal is not None:
+            candidates.append(proposal)
     by_vertex = {int(candidate["vertex"]): candidate for candidate in candidates}
     grouped = []
     for vertices in _periodic_vertex_orbit_groups(state):
@@ -4321,6 +4817,31 @@ def _relocation_proposals(
             ),
         ),
     )
+
+
+def _current_star_stencil(
+    points: np.ndarray,
+    star_cells: np.ndarray,
+    vertex_ids: np.ndarray,
+    star_cell_ids: np.ndarray,
+    vertex_rows: dict[int, int],
+    carrier: np.ndarray,
+    /,
+) -> dict[int, Fraction] | None:
+    """Binary64 barycentric stencil of a carrier in the current star that
+    reproduces it exactly, else ``None``."""
+    located = _locate_source_stencil(
+        carrier, _source_tetra_inverse(points, star_cells, vertex_ids, star_cell_ids)
+    )
+    if located is None:
+        return None
+    _, stencil = located
+    try:
+        _binary64_ancestry(stencil)
+        realized = _source_stencil_point(points, vertex_rows, stencil)
+    except FloatingPointError:
+        return None
+    return stencil if np.array_equal(realized, carrier) else None
 
 
 def _relocation_edit(
@@ -4410,42 +4931,47 @@ def _apply_relocation_partition(
     state: _NativeState,
     candidate_groups: list[tuple[dict[str, Any], ...]],
     counters: dict[str, int],
-    blocked: set[int],
+    cache: dict[int, dict[str, Any] | None],
     /,
-) -> int:
+) -> list[dict[str, Any]]:
+    """Apply disjoint relocation orbits; refused orbits are counted and their
+    vertices cached as having no proposal. Returns the applied proposals."""
     proposals = [proposal for group in candidate_groups for proposal in group]
-    count = len(proposals)
     try:
         status: TetMeshEditStatus | None = _apply_relocation_batch(state, proposals)
     except FloatingPointError:
         status = None
     if status is TetMeshEditStatus.APPLIED:
-        counters["relocations"] += count
-        return count
+        counters["relocations"] += len(proposals)
+        return proposals
     if status is not None:
         _raise_fatal_edit_status(status, "relocation")
     if len(candidate_groups) > 1:
         middle = len(candidate_groups) // 2
         return _apply_relocation_partition(
-            state, candidate_groups[:middle], counters, blocked
-        ) + _apply_relocation_partition(
-            state, candidate_groups[middle:], counters, blocked
-        )
-    blocked.update(int(proposal["vertex"]) for proposal in candidate_groups[0])
-    _count_rejection(status, counters, count)
-    return 0
+            state, candidate_groups[:middle], counters, cache
+        ) + _apply_relocation_partition(state, candidate_groups[middle:], counters, cache)
+    for proposal in candidate_groups[0]:
+        cache[int(proposal["vertex"])] = None
+    _count_rejection(status, counters, len(proposals))
+    return []
 
 
 def _relocation_phase(
     state: _NativeState,
     counters: dict[str, int],
-    mode: PredicateMode,
     /,
 ) -> int:
+    """Relocate until no vertex has an applicable objective-decreasing move.
+
+    Every pass either applies a move (a strict objective decrease) or caches a
+    refused proposal as none, so the phase terminates; a moved vertex evicts the
+    cached proposals of its closed star.
+    """
     applied = 0
-    blocked: set[int] = set()
+    cache: dict[int, dict[str, Any] | None] = {}
     while True:
-        candidates = _relocation_proposals(state, blocked, mode, counters)
+        candidates = _relocation_proposals(state, cache)
         if not candidates:
             return applied
         selected = _disjoint_candidates(
@@ -4465,10 +4991,11 @@ def _relocation_phase(
                 for orbit in candidates
             ]
         )
-        changed = _apply_relocation_partition(state, selected, counters, blocked)
-        applied += changed
-        if changed:
-            blocked.clear()
+        moved = _apply_relocation_partition(state, selected, counters, cache)
+        applied += len(moved)
+        for proposal in moved:
+            for vertex in proposal["star_vertices"]:
+                cache.pop(int(vertex), None)
 
 
 def _native_metric_measurements(
@@ -4510,6 +5037,37 @@ def _unit_metric_status(state: _NativeState, /) -> tuple[bool, int, float, float
     )
 
 
+def _unmet_edges(
+    state: _NativeState,
+    edge_keys: tuple[tuple[int, int], ...],
+    lengths: np.ndarray,
+    /,
+) -> tuple[TetraMetricUnmetEdge, ...]:
+    """Typed witnesses of the given out-of-band edges (``TetraMetricUnmetKind``)."""
+    topology = _topology(state.snapshot)
+    records = _boundary_records(state)
+    unmet = []
+    for edge, length in zip(edge_keys, lengths.tolist(), strict=True):
+        if length > _UPPER:
+            kind = (
+                TetraMetricUnmetKind.UNREPRESENTABLE
+                if edge in state.unrepresentable_edges
+                else TetraMetricUnmetKind.UNIMPROVED
+            )
+        elif any(
+            _source_permits_collapse(state, topology, records, removed, kept)
+            for removed, kept in (edge, edge[::-1])
+        ):
+            kind = TetraMetricUnmetKind.UNIMPROVED
+        else:
+            kind = TetraMetricUnmetKind.SOURCE_BOUNDARY
+        first, second = (state.vertex_target_ids[vertex] for vertex in edge)
+        unmet.append(
+            TetraMetricUnmetEdge(kind, (min(first, second), max(first, second)), length)
+        )
+    return tuple(sorted(unmet, key=lambda row: (row.kind.value, row.vertex_ids)))
+
+
 def _tetra_evidence(
     state: _NativeState,
     counters: dict[str, int],
@@ -4517,7 +5075,9 @@ def _tetra_evidence(
     status: TetraMetricStatus,
     /,
 ) -> TetraMetricEvidence:
-    _, lengths, protected, qualities, _, volume_error = _native_metric_measurements(state)
+    edge_keys, lengths, protected, qualities, _, volume_error = (
+        _native_metric_measurements(state)
+    )
     measured = ~protected
     if not np.any(measured):
         measured = np.ones(protected.shape, dtype=np.bool_)
@@ -4528,6 +5088,7 @@ def _tetra_evidence(
     if not np.isfinite(volume_error):
         status = TetraMetricStatus.NUMERICAL_STOP
         volume_error = np.finfo(np.float64).max
+    outside = np.flatnonzero(measured)[~inside]
     return TetraMetricEvidence(
         status=status,
         passes=int(passes),
@@ -4547,6 +5108,9 @@ def _tetra_evidence(
         maximum_metric_length=float(np.max(values)),
         minimum_metric_quality=float(np.min(qualities)),
         maximum_region_volume_error=float(volume_error),
+        unmet_edges=_unmet_edges(
+            state, tuple(edge_keys[row] for row in outside.tolist()), lengths[outside]
+        ),
     )
 
 
@@ -4616,7 +5180,7 @@ def execute_tetra_metric_adaptation(
             ):
                 applied += _replacement_phase(state, kind, name, counters, predicate_mode)
         if relocation:
-            applied += _relocation_phase(state, counters, predicate_mode)
+            applied += _relocation_phase(state, counters)
         if applied == 0:
             status = TetraMetricStatus.STALLED
             break
@@ -4844,5 +5408,7 @@ __all__ = [
     "TetraMetricEvidence",
     "TetraMetricOutcome",
     "TetraMetricStatus",
+    "TetraMetricUnmetEdge",
+    "TetraMetricUnmetKind",
     "execute_tetra_metric_adaptation",
 ]

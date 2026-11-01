@@ -550,9 +550,18 @@ def add_cylinder_seam(
     source = LineCurve((0.0, 0.0), (0.0, 1.0))
     for edge in (bottom, top):
         stage.native_phase(edge, patch, 0)
+    # The file supplies none of these p-curves; the repair constructs them.
     return [
-        StagedCoedge(bottom, 1, LineCurve((0.0, lower), (1.0, 0.0)), label),
-        StagedCoedge(seam, 1, PeriodicPCurve(source, patch, (1, 0)), label),
-        StagedCoedge(top, -1, LineCurve((0.0, upper), (1.0, 0.0)), label),
-        StagedCoedge(seam, -1, PeriodicPCurve(source, patch, (0, 0)), label),
+        StagedCoedge(
+            bottom, 1, LineCurve((0.0, lower), (1.0, 0.0)), label, origin="absent"
+        ),
+        StagedCoedge(
+            seam, 1, PeriodicPCurve(source, patch, (1, 0)), label, origin="absent"
+        ),
+        StagedCoedge(
+            top, -1, LineCurve((0.0, upper), (1.0, 0.0)), label, origin="absent"
+        ),
+        StagedCoedge(
+            seam, -1, PeriodicPCurve(source, patch, (0, 0)), label, origin="absent"
+        ),
     ]

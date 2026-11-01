@@ -48,6 +48,7 @@ _DEFERRED_EXPORTS = {
     "brep_normal_ranges": "._normal_range",
     "BRepMassMeasureStatus": "._measure",
     "BRepMassProperties": "._measure",
+    "BRepMeasureRefusal": "._measure",
     "brep_mass_properties": "._measure",
     "BRepOffsetResult": "._offset_result",
     "BRepParameterGeometry": "._differentiable",
@@ -208,6 +209,7 @@ if TYPE_CHECKING:
         brep_mass_properties as brep_mass_properties,
         BRepMassMeasureStatus as BRepMassMeasureStatus,
         BRepMassProperties as BRepMassProperties,
+        BRepMeasureRefusal as BRepMeasureRefusal,
     )
     from ._model import (
         BRepAssemblyContainer as BRepAssemblyContainer,

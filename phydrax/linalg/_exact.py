@@ -858,18 +858,26 @@ def factor_exact_sparse[T: ExactField](
     /,
     *,
     row_ids: Sequence[int] | None = None,
+    ordered: bool = False,
 ) -> ExactSparseRankFactorization[T]:
     """Factor a sparse exact matrix into canonical pivot rows and a nullspace basis.
 
     Deterministic Markowitz scores, row/column degrees, canonical column
     indices, and stable row IDs select pivots. Forward elimination preserves
     sparse structure; `nullspace_basis` back-substitutes from pivot rows.
+    `ordered=True` selects the leftmost nonzero column at each step, so pivot
+    columns and the nullspace basis equal those of the reduced row echelon form.
     """
     columns = _sparse_column_count(column_count)
     row_count = len(matrix)
     identifiers = _sparse_row_identifiers(row_count, row_ids)
     rows, _, pivot_rows, pivot_columns = _exact_sparse_elimination(
-        matrix, columns, identifiers, None, eliminate_above=False, markowitz=True
+        matrix,
+        columns,
+        identifiers,
+        None,
+        eliminate_above=False,
+        markowitz=not ordered,
     )
     evidence = ExactLinearSolveEvidence(
         row_count,

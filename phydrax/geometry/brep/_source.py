@@ -6,8 +6,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
-from math import fsum
+from math import fsum, isfinite
+from numbers import Real
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -16,6 +18,7 @@ from jax import Array
 from jax.core import Tracer
 from jax.typing import DTypeLike
 
+from ..._mass import EstimatedMass, ExactMass, known_mass_value, Mass
 from ..._physical import SpatialCoordinateContract
 from ...typing import checked
 from .._atlas import BoundaryAtlas
@@ -40,6 +43,7 @@ from .._sampling import (
     SamplingResult,
 )
 from ..design._schema import _ParameterCollector, DesignState
+from ._measure import brep_mass_properties, BRepMeasureRefusal
 from ._model import BRepImportReport, BRepModel
 from ._patches import (
     ExactLineCurve,
@@ -231,26 +235,6 @@ def _face_area(model: BRepModel, face: int, /) -> float:
     return float(np.linalg.norm(area_vector))
 
 
-def _polyhedral_measure(model: BRepModel, /) -> float:
-    topology = model.topology
-    volumes = []
-    for faces, face_signs in zip(
-        topology.solid_faces, topology.solid_face_orientations, strict=True
-    ):
-        volume_terms = []
-        for face, solid_sign in zip(faces, face_signs, strict=True):
-            sign = solid_sign * float(model.orientation[face])
-            for polygon in _face_polygon_vertices(model, face):
-                for index in range(1, polygon.shape[0] - 1):
-                    volume_terms.append(
-                        sign
-                        * float(polygon[0] @ np.cross(polygon[index], polygon[index + 1]))
-                        / 6.0
-                    )
-        volumes.append(abs(fsum(volume_terms)))
-    return fsum(volumes)
-
-
 def _source_bounds(model: BRepModel, /) -> np.ndarray:
     points = np.asarray(model.geometry.vertex_points, dtype=np.float64)
     if points.size == 0:
@@ -283,19 +267,37 @@ def _source_bounds(model: BRepModel, /) -> np.ndarray:
 
 
 class BRepSource(GeometrySource):
-    """Spatial source whose queries evaluate native CAD carriers, never triangles."""
+    """Spatial source whose queries evaluate native CAD carriers, never triangles.
+
+    ``measure_relative_tolerance`` is the requested certified half-width of the
+    interior measure relative to its lower bound.
+    """
 
     model: BRepModel
+    measure_relative_tolerance: float = eqx.field(static=True)
 
     @checked
-    def __init__(self, model: BRepModel) -> None:
+    def __init__(
+        self, model: BRepModel, *, measure_relative_tolerance: float = 1e-4
+    ) -> None:
         _require_closed_solid(model)
+        if isinstance(measure_relative_tolerance, bool) or not isinstance(
+            measure_relative_tolerance, Real
+        ):
+            raise TypeError("measure_relative_tolerance must be a real number.")
+        if not (
+            isfinite(measure_relative_tolerance) and measure_relative_tolerance > 0.0
+        ):
+            raise ValueError("measure_relative_tolerance must be finite and positive.")
         self.model = model
+        self.measure_relative_tolerance = float(measure_relative_tolerance)
 
     @classmethod
     @checked
     def from_stored_fields(cls: type[BRepSource], value: BRepSource, /) -> BRepSource:
-        return cls(value.model)
+        return cls(
+            value.model, measure_relative_tolerance=value.measure_relative_tolerance
+        )
 
     @property
     def report(self) -> BRepImportReport:
@@ -318,7 +320,11 @@ class BRepSource(GeometrySource):
         policy = BRepProjectionPolicy(
             classifier_tolerance=256.0 * float(np.finfo(np.float64).eps) * scale
         )
-        return _BRepKernel(self.model, prepare_brep_projection(self.model, policy=policy))
+        return _BRepKernel(
+            self.model,
+            prepare_brep_projection(self.model, policy=policy),
+            self.measure_relative_tolerance,
+        )
 
 
 class _BRepKernel(GeometryKernel):
@@ -326,13 +332,20 @@ class _BRepKernel(GeometryKernel):
 
     model: BRepModel
     projection: NativeBRepProjection
+    measure_relative_tolerance: float = eqx.field(static=True)
 
     @checked
-    def __init__(self, model: BRepModel, projection: NativeBRepProjection) -> None:
+    def __init__(
+        self,
+        model: BRepModel,
+        projection: NativeBRepProjection,
+        measure_relative_tolerance: float,
+    ) -> None:
         if projection.source_revision != model.source_revision:
             raise ValueError("The prepared projection must match the source revision.")
         self.model = model
         self.projection = projection
+        self.measure_relative_tolerance = measure_relative_tolerance
 
     @property
     def ambient_dimension(self) -> int:
@@ -357,11 +370,16 @@ class _BRepKernel(GeometryKernel):
         }
         if all(
             _affine_planar_face(self.model, face)
+            or (domain is not None and not domain.numeric_only)
+            for face, domain in enumerate(self.model.trim_domains)
+        ):
+            capabilities.add(GeometryCapability.INTERIOR_MEASURE)
+        if all(
+            _affine_planar_face(self.model, face)
             for face in range(len(self.model.patches))
         ):
             capabilities.update(
                 {
-                    GeometryCapability.INTERIOR_MEASURE,
                     GeometryCapability.BOUNDARY_MEASURE,
                     GeometryCapability.INTERIOR_SAMPLING,
                 }
@@ -582,16 +600,54 @@ class _BRepKernel(GeometryKernel):
         del state
         return jnp.asarray(_source_bounds(self.model), dtype=jnp.float64)
 
-    def measure(self, state: DesignState, /) -> Array:
+    def interior_mass(self, state: DesignState, /) -> Mass:
+        """Certified divergence-theorem enclosure of the source solids' volume.
+
+        Exact rational volumes give `ExactMass`; otherwise the midpoint is an
+        `EstimatedMass` whose uncertainty is the certified half-width. A refused
+        occurrence raises `BRepMeasureRefusal` carrying every occurrence's
+        status, reason, and reached enclosure.
+        """
         del state
-        if not all(
-            _affine_planar_face(self.model, face)
-            for face in range(len(self.model.patches))
-        ):
-            raise NotImplementedError(
-                "Native B-Rep measure is unresolved for curved source faces."
+        properties = brep_mass_properties(
+            self.model, relative_tolerance=self.measure_relative_tolerance
+        )
+        refused = tuple(
+            index
+            for index, status in enumerate(properties.status)
+            if status != "certified"
+        )
+        bounds = np.asarray(properties.reached_enclosures, dtype=np.float64)
+        lower = float(np.nextafter(fsum(bounds[:, 0].tolist()), -np.inf))
+        upper = float(np.nextafter(fsum(bounds[:, 1].tolist()), np.inf))
+        if refused:
+            raise BRepMeasureRefusal(
+                properties.status[refused[0]],
+                "; ".join(
+                    f"occurrence {'/'.join(properties.occurrence_paths[index])}: "
+                    f"{properties.reasons[index]}"
+                    for index in refused
+                ),
+                enclosure=(lower, upper),
+                properties=properties,
             )
-        return jnp.asarray(_polyhedral_measure(self.model), dtype=jnp.float64)
+        if all(properties.exact):
+            return ExactMass(
+                jnp.asarray(
+                    fsum(np.asarray(properties.volume).tolist()), dtype=jnp.float64
+                )
+            )
+        return EstimatedMass(
+            jnp.asarray(lower * 0.5 + upper * 0.5, dtype=jnp.float64),
+            jnp.asarray(np.nextafter((upper - lower) * 0.5, np.inf), dtype=jnp.float64),
+            evaluations=sum(properties.evaluations),
+            provenance="native_brep_divergence_enclosure",
+        )
+
+    def measure(self, state: DesignState, /) -> Array:
+        return known_mass_value(
+            self.interior_mass(state), operation="Native B-Rep measure"
+        )
 
     def boundary_measure(self, state: DesignState, /) -> Array:
         del state
