@@ -1381,6 +1381,12 @@ def _curving_target_result(
             if renewed_inputs is not None:
                 inputs, validated_witnesses = renewed_inputs
             audit_policy = source_result.certification.audit_policy
+        # The in-hand proofs are reused only when they answer the same premises.
+        reuse = (
+            audit_policy is not None
+            and audit_policy.validity_policy.policy_id
+            == embedding.validity.policy.policy_id
+        )
         result = certify_cell_mesh(
             mesh,
             source_result.coordinate_contract,
@@ -1398,12 +1404,8 @@ def _curving_target_result(
             region_boundary_evidence=source_result.region_boundary_evidence,
             planar_embedding=source_result.planar_embedding,
             layer_curving_evidence=layer_curving_evidence,
-            # The in-hand proof is reused only when it answers the same premises.
-            embedding=embedding
-            if audit_policy is not None
-            and audit_policy.validity_policy.policy_id
-            == embedding.validity.policy.policy_id
-            else None,
+            embedding=embedding if reuse else None,
+            validity=embedding.validity if reuse else None,
         )
         if prior_transition is not None:
             material_chain = _extend_prior_volume_material_chain(
@@ -1463,11 +1465,15 @@ def _local_evidence(
     blocks: tuple[_BlockDistortion, ...],
     policy: HighOrderCurvingPolicy,
     /,
+    *,
+    parent: CellValidityCertificate | None = None,
 ) -> _LocalEvidence:
     coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
     _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
     scaled, distortion = _sampled_quality(blocks, coordinates)
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity)
+    validity = certify_cell_geometry_validity(
+        geometry, mesh=mesh, policy=policy.validity, parent=parent
+    )
     return _LocalEvidence(residuals, scaled, distortion, validity)
 
 
@@ -1810,7 +1816,16 @@ def curve_cell_mesh(
 
     def record(round_: int, values: np.ndarray, admissible: bool, /) -> None:
         geometry = candidate_geometry(values)
-        local = _local_evidence(mesh, geometry, classes, projection, blocks, policy)
+        # Cells the relaxation left exactly unchanged keep the previous proof.
+        local = _local_evidence(
+            mesh,
+            geometry,
+            classes,
+            projection,
+            blocks,
+            policy,
+            parent=candidates[-1][3].validity if candidates else None,
+        )
         candidates.append((round_, values, geometry, local, admissible))
 
     record(0, coordinates, True)

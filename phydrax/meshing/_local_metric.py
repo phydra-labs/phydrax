@@ -273,6 +273,7 @@ class _State(NamedTuple):
 
 class _Source(NamedTuple):
     points: np.ndarray
+    exact_points: tuple[tuple[Fraction, ...], ...]
     vertex_ids: np.ndarray
     cells: np.ndarray
     cell_tree: Any
@@ -941,8 +942,25 @@ def _initial_state(
     /,
     pole_groups: np.ndarray | None = None,
     metric_field: Any = None,
+    exact_source_points: tuple[tuple[Fraction, ...], ...] | None = None,
 ) -> tuple[_State, _Source]:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
+    if exact_source_points is None:
+        exact_source_points = tuple(
+            tuple(Fraction(float(value)) for value in point) for point in points
+        )
+    elif (
+        len(exact_source_points) != points.shape[0]
+        or any(len(point) != points.shape[1] for point in exact_source_points)
+        or any(
+            not isinstance(value, Fraction)
+            for point in exact_source_points
+            for value in point
+        )
+    ):
+        raise TypeError("Exact source points must be a mesh-aligned rational bank.")
+    if not np.array_equal(np.asarray(exact_source_points, dtype=np.float64), points):
+        raise ValueError("Source coordinates must canonically round their exact points.")
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     cells = np.concatenate(
         [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
@@ -1053,6 +1071,7 @@ def _initial_state(
     cell_upper = np.max(triangles, axis=1)
     source = _Source(
         points=points,
+        exact_points=exact_source_points,
         vertex_ids=vertex_ids,
         cells=cells,
         cell_ids=cell_ids,
@@ -1479,6 +1498,37 @@ def _cavity_sides(topology: _Topology, edges: np.ndarray, /) -> Any:
     return op, cell, local
 
 
+def _exact_source_segment_points(
+    state: _State,
+    source: _Source,
+    first: np.ndarray,
+    second: np.ndarray,
+    parameters: np.ndarray,
+    /,
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Interpolate source-authoritative endpoints at binary64 segment parameters."""
+    source_points = dict(zip(source.vertex_ids.tolist(), source.exact_points, strict=True))
+    endpoints = {}
+    for vertex in sorted(set(first.tolist()) | set(second.tolist())):
+        stencil = state.source_stencil_exact[vertex]
+        if not stencil:
+            raise ValueError("A segment endpoint lost its exact source point.")
+        endpoints[vertex] = tuple(
+            sum(
+                (weight * source_points[identifier][axis] for identifier, weight in stencil),
+                Fraction(0),
+            )
+            for axis in range(state.points.shape[1])
+        )
+    return tuple(
+        tuple(
+            a + Fraction(float(parameter)) * (b - a)
+            for a, b in zip(endpoints[int(start)], endpoints[int(end)], strict=True)
+        )
+        for start, end, parameter in zip(first, second, parameters, strict=True)
+    )
+
+
 def _split_round(
     state: _State,
     topology: _Topology,
@@ -1525,6 +1575,13 @@ def _split_round(
     middle = state.points[first] + t[:, None] * (
         state.points[second] - state.points[first]
     )
+    exact_middle: tuple[tuple[Fraction, ...], ...] | None = None
+    if periodic_context is None:
+        # The authored edge parameter and the endpoints' source rows define
+        # the point. Its rounded carrier need not lie on the binary64 source
+        # edge (some such edges have no representable interior point at all).
+        exact_middle = _exact_source_segment_points(state, source, first, second, t)
+        middle = np.asarray(exact_middle, dtype=np.float64)
     split_root = np.arange(candidates.size, dtype=np.int64)
     if periodic_context is not None:
         # Every member of a split orbit is the exact deck image of the midpoint
@@ -1675,6 +1732,9 @@ def _split_round(
             middle[chosen],
             mode,
             stencil_width=state.source_stencil_weights.shape[1],
+            exact_points=None
+            if exact_middle is None
+            else tuple(exact_middle[index] for index in chosen),
         )
     )
     if not np.all(split_supported):
@@ -4348,10 +4408,7 @@ def _exact_cell_barycentric(
     source: _Source, cell: int, query: tuple[Fraction, ...], /
 ) -> tuple[Fraction, ...]:
     vertices = _locator(source)[0][cell]
-    corners = [
-        tuple(Fraction(float(value)) for value in source.points[int(vertex)].tolist())
-        for vertex in vertices.tolist()
-    ]
+    corners = [source.exact_points[int(vertex)] for vertex in vertices.tolist()]
     origin = corners[0]
     matrix = [
         [corners[column + 1][axis] - origin[axis] for column in range(2)]
@@ -4428,6 +4485,7 @@ def _located_stencil_bank(
     *,
     allow_invalid_rows: bool = False,
     stencil_width: int = 3,
+    exact_points: tuple[tuple[Fraction, ...], ...] | None = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -4443,13 +4501,33 @@ def _located_stencil_bank(
     width = max(3, int(stencil_width))
     for row, located_cell in enumerate(cells.tolist()):
         cell = int(located_cell)
+        query = (
+            tuple(Fraction(float(value)) for value in points[row].tolist())
+            if exact_points is None
+            else exact_points[row]
+        )
         barycentric: tuple[Fraction, ...] | None = None
         if cell >= 0:
-            barycentric = _exact_cell_barycentric(
-                source,
-                cell,
-                tuple(Fraction(float(value)) for value in points[row].tolist()),
+            barycentric = _exact_cell_barycentric(source, cell, query)
+        if source.periodic_cell is None and (
+            barycentric is None or any(weight < 0 for weight in barycentric)
+        ):
+            # Canonical rounding is monotone, so an exact point in a source
+            # triangle lies inside its rounded-corner AABB. Search all such
+            # cells exactly; never clip a negative barycentric coefficient.
+            candidates = np.flatnonzero(
+                np.all(points[row] >= source.cell_lower, axis=1)
+                & np.all(points[row] <= source.cell_upper, axis=1)
             )
+            identifiers = _locator(source)[1]
+            for candidate in candidates[
+                np.argsort(identifiers[candidates], kind="stable")
+            ]:
+                weights = _exact_cell_barycentric(source, int(candidate), query)
+                if all(weight >= 0 for weight in weights):
+                    cell, barycentric = int(candidate), weights
+                    outside[row] = False
+                    break
         if barycentric is None or any(weight < 0 for weight in barycentric):
             image = _periodic_image_location(source, points[row], mode)
             if image is None:
@@ -4566,9 +4644,7 @@ def _stencil(
             if position >= source_ids.size or source_ids[position] != source_id:
                 raise ValueError("Exact source row references an unavailable vertex.")
             source_row = int(source_order[position])
-            coordinate = tuple(
-                Fraction(float(value)) for value in source.points[source_row]
-            )
+            coordinate = source.exact_points[source_row]
             for axis, value in enumerate(coordinate):
                 reproduced[axis] += exact_weight * value
             projection = float(exact_weight)
@@ -4580,7 +4656,12 @@ def _stencil(
             weights[row, column] = projection
             valid[row, column] = True
             exact_weights[row][column] = exact_weight
-        if tuple(reproduced) != target and (
+        image = tuple(reproduced)
+        if source.periodic_cell is None:
+            # The exact point, not its carrier, is the geometry authority.
+            # Downstream exact coordinate maps retain this source-stencil image.
+            image = tuple(Fraction(float(value)) for value in image)
+        if image != target and (
             source.periodic_cell is None
             or not any(
                 _exact_periodic_image(
@@ -5184,6 +5265,7 @@ def execute_local_metric_adaptation(
     relocation: bool,
     collapsed_groups: np.ndarray | None = None,
     metric_field: Any = None,
+    exact_source_points: tuple[tuple[Fraction, ...], ...] | None = None,
 ) -> LocalMetricOutcome:
     """Adapt a planar triangle mesh until it meets the unit-mesh criterion or stalls.
 
@@ -5228,6 +5310,14 @@ def execute_local_metric_adaptation(
     location, replacing log-Euclidean interpolation of the vertex metrics; a
     singular chart such as a sphere pole needs it, because its pulled-back
     metric is not log-Euclidean linear in the chart.
+
+    ``exact_source_points`` retains rational affine source coordinates across
+    epochs; mesh coordinates must be their canonical binary64 roundings.
+    Nonperiodic splits author an exact edge point from the split parameter and
+    endpoint source stencils, then round its carrier once. Published exact
+    stencils define the target geometry even when no binary64 point lies on
+    the source edge. The receiving adaptation owner must retain that exact
+    geometry rather than reinterpret its rounded carrier as a source point.
     """
     values = _validate_mesh(mesh, metric)
     _validate_controls(predicate_mode, topology_operations, relocation)
@@ -5263,6 +5353,7 @@ def execute_local_metric_adaptation(
         predicate_mode,
         groups,
         metric_field,
+        exact_source_points,
     )
     topologies = _StateTopologies(mesh, source, predicate_mode)
     topology, periodic_context = topologies(state)

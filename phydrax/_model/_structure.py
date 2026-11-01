@@ -1342,7 +1342,26 @@ def model_archive_root_projection(value: Any, /) -> Any:
     Row-record column recipes replace nested records only. An archive root must
     stay its registered dataclass, so a row-record root projects its fields.
     """
-    if (type(value).__module__, type(value).__name__) not in _ROW_RECORD_TYPES:
+    from ..meshing._archive_layer_columns import (
+        is_layer_archive_record,
+        layer_record_archive_recipe,
+    )
+
+    if (
+        type(value).__module__ == "phydrax.geometry._source_fidelity_certificate"
+        and type(value).__name__ == "SourceFidelityCertificate"
+    ):
+        row = layer_record_archive_recipe(value)
+        if row is None:
+            raise TypeError("Source fidelity archive root must use its canonical type.")
+        fields = {
+            name: model_archive_projection(field) for name, field in row.fields.items()
+        }
+        return _restore_dataclass(type(value), fields)
+
+    if (type(value).__module__, type(value).__name__) not in _ROW_RECORD_TYPES and not (
+        dataclasses.is_dataclass(value) and is_layer_archive_record(value)
+    ):
         return model_archive_projection(value)
     fields = {
         field.name: model_archive_projection(object.__getattribute__(value, field.name))
@@ -1359,6 +1378,11 @@ def model_archive_root_projection(value: Any, /) -> Any:
 def _row_record_archive_recipe(value: Any, /) -> object | None:
     """Project records with one static value per mesh entity to column recipes."""
     module, name = type(value).__module__, type(value).__name__
+    from ..meshing._archive_layer_columns import layer_record_archive_recipe
+
+    layer_recipe = layer_record_archive_recipe(value)
+    if layer_recipe is not None:
+        return layer_recipe
     if module == "phydrax.meshing._association" and name == "GeometryAssociation":
         from ..meshing._association import (
             GeometryAssociation,
@@ -1406,10 +1430,12 @@ def _row_record_recipe_types() -> frozenset[type]:
     from ..geometry._embedding_state import MeshEmbeddingWitnessArchiveRecipe
     from ..geometry.surface._contracts import SurfaceMetadataArchiveRecipe
     from ..meshing._association import GeometryAssociationArchiveRecipe
+    from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
 
     return frozenset(
         {
             GeometryAssociationArchiveRecipe,
+            LayerRecordArchiveRecipe,
             MeshEmbeddingWitnessArchiveRecipe,
             SurfaceChartWitnessArchiveRecipe,
             SurfaceMetadataArchiveRecipe,
@@ -1433,7 +1459,8 @@ def restore_row_record_recipes(value: Any, /) -> Any:
             return memo[identity]
         node_type = type(node)
         if node_type in recipe_types:
-            result = node.restore()
+            fields = tuple(visit(item) for item in node)
+            result = node_type(*fields).restore()
         elif (
             node is None
             or isinstance(
@@ -1484,7 +1511,19 @@ def restore_row_record_recipes(value: Any, /) -> Any:
         memo[identity] = result
         return result
 
-    return visit(value)
+    result = visit(value)
+    if (
+        type(result).__module__ == "phydrax.geometry._source_fidelity_certificate"
+        and type(result).__name__ == "SourceFidelityCertificate"
+    ):
+        from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
+
+        fields = {
+            field.name: object.__getattribute__(result, field.name)
+            for field in dataclasses.fields(result)
+        }
+        return LayerRecordArchiveRecipe(type(result).__name__, fields).restore()
+    return result
 
 
 def model_archive_projection(value: Any, /) -> Any:
@@ -2584,12 +2623,24 @@ def model_recipe_array_inventory(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> tuple[ModelRecipeArray, ...]:
     """Return the exact dynamic array inventory without allocating arrays."""
-
     if not isinstance(prefix, str) or not prefix:
         raise ValueError("Recipe array prefix must be non-empty.")
+
     path_leaves, _ = jax.tree_util.tree_flatten_with_path(
         _descriptor_tree(recipe, limits)
     )
+    return _model_recipe_array_inventory_from_leaves(recipe, path_leaves, prefix)
+
+
+def _model_recipe_array_inventory_from_leaves(
+    recipe: Mapping[str, Any],
+    path_leaves: list[tuple[Any, Any]],
+    prefix: str,
+    /,
+) -> tuple[ModelRecipeArray, ...]:
+    """Inventory already-validated descriptor leaves without rebuilding the tree."""
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError("Recipe array prefix must be non-empty.")
     inventory: list[ModelRecipeArray] = []
     for tree_index, (path, leaf) in enumerate(path_leaves):
         if not isinstance(leaf, _RecipeArrayDescriptor):
@@ -2648,7 +2699,9 @@ def pack_model_array_tree(
         value_leaves
     ):
         raise TypeError("Value PyTree does not match its model structure recipe.")
-    inventory = model_recipe_array_inventory(recipe, prefix=prefix, limits=limits)
+    inventory = _model_recipe_array_inventory_from_leaves(
+        recipe, descriptor_leaves, prefix
+    )
     arrays: dict[str, np.ndarray] = {}
     for entry in inventory:
         expected_path, descriptor = descriptor_leaves[entry.tree_index]
@@ -2690,7 +2743,7 @@ def model_from_array_recipe(
 
     descriptor_tree = _descriptor_tree(recipe, limits)
     path_leaves, definition = jax.tree_util.tree_flatten_with_path(descriptor_tree)
-    inventory = model_recipe_array_inventory(recipe, prefix=prefix, limits=limits)
+    inventory = _model_recipe_array_inventory_from_leaves(recipe, path_leaves, prefix)
     if set(arrays) != {entry.name for entry in inventory}:
         raise ValueError("Model recipe arrays do not match its exact leaf inventory.")
     admitted: dict[str, np.ndarray] = {}

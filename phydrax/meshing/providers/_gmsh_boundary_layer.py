@@ -116,6 +116,7 @@ class _Boundary:
     source_wall: CellMesh
     wall_association: GeometryAssociation | None
 
+
 def _domain_inward(
     points: np.ndarray, triangles: np.ndarray, /
 ) -> tuple[np.ndarray, float]:
@@ -472,6 +473,7 @@ def _layer_cell_banks(
         {kind: np.concatenate(values) for kind, values in column_rows.items()},
     )
 
+
 def _padded(triangles: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return (
         np.pad(triangles, ((0, 0), (0, 1)), constant_values=-1),
@@ -630,7 +632,7 @@ def _provider_layers(
         np.empty((0, 3)),
         np.empty((0, 3), dtype=np.int64),
     )
-    bad, hits = _certify_cells(points, cells, [], environment, BoundaryLayerPolicy())
+    bad, hits, _ = _certify_cells(points, cells, [], environment, BoundaryLayerPolicy())
     if np.any(bad["prism"]):
         vertices = prisms[bad["prism"]][:, :3].reshape(-1)
         vertices = vertices[vertices < count]
@@ -737,9 +739,7 @@ def _merged_mesh(
         )
         lower, upper = offsets[kind]
         layer_kind_values = (
-            layered.layer_index_by_kind.get(
-                kind, np.empty((0,), dtype=np.int32)
-            )
+            layered.layer_index_by_kind.get(kind, np.empty((0,), dtype=np.int32))
             if layered.layer_index_by_kind is not None
             else layered.layer_index[lower:upper]
         )
@@ -766,9 +766,7 @@ def _merged_mesh(
         CellMesh(layered.points, tuple(blocks), numeric_version=numeric_version)
     )
     columns = (
-        None
-        if layered.column_index_by_kind is None
-        else np.concatenate(column_values)
+        None if layered.column_index_by_kind is None else np.concatenate(column_values)
     )
     return mesh, np.concatenate(zone_of), np.concatenate(layer_values), columns
 

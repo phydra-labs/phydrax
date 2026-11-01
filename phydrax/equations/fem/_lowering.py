@@ -43,6 +43,8 @@ from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
 if TYPE_CHECKING:
+    from jax import Array
+
     from ...discretization._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
     from ...discretization.fem import FiniteElementSpec, IntegrationDomain
     from ...discretization.fem._precision import FiniteElementPrecisionPolicy
@@ -453,6 +455,66 @@ def _facet_permutations(
         ).astype(np.int32)
         return owner, neighbor
     return np.ones((count,), dtype=np.int32), np.ones((count,), dtype=np.int32)
+
+
+def _hexahedral_point_routes(
+    connectivity: HexahedralConnectivity,
+    reference: PreparedFiniteElementReference | None,
+    cells: np.ndarray,
+) -> tuple[Array, ...]:
+    """Prepare quadrature permutations while topology and rules are concrete."""
+    if reference is None:
+        return ()
+    routes_by_width = {}
+    result = []
+    for facet in reference.facets:
+        points = np.asarray(facet.points)
+        normal = np.asarray(facet.normals[0])
+        axes = tuple(axis for axis in range(points.shape[1]) if abs(normal[axis]) < 0.5)
+        if len(axes) != 2:
+            raise ValueError("Hexahedral facet must have two tangential axes.")
+        widths = tuple(
+            np.unique(np.round(points[:, axis], decimals=14)).size for axis in axes
+        )
+        if widths not in routes_by_width:
+            routes_by_width[widths] = jnp.asarray(
+                connectivity.cell_face_permutations(*widths)[np.maximum(cells, 0)]
+            )
+        result.append(routes_by_width[widths])
+    return tuple(result)
+
+
+def _coordinate_workset_tabulations(
+    discretization: FiniteElementDiscretization,
+    block_index: int,
+    cells: np.ndarray,
+    reference: PreparedFiniteElementReference | None,
+    domain_kind: str,
+) -> tuple[tuple[Array, Array], ...]:
+    """Tabulate fixed coordinate charts before entering compiled execution."""
+    from ...discretization._cell_geometry import (
+        coordinate_tabulation,
+        PerCellRestrictedCellGeometryElement,
+        ScalarCoordinateElement,
+    )
+
+    if reference is None:
+        return ()
+    element = discretization.coordinate_elements[block_index]
+    if not isinstance(element, ScalarCoordinateElement):
+        raise TypeError("Finite-element geometry requires a scalar coordinate chart.")
+    points = (
+        (reference.volume_rule.points,)
+        if domain_kind == "cell"
+        else tuple(facet.points for facet in reference.facets)
+    )
+    if isinstance(element, PerCellRestrictedCellGeometryElement):
+        offset = sum(
+            block.cell_count for block in discretization.mesh.blocks[:block_index]
+        )
+        rows = cells - offset
+        return tuple(element.tabulate_cells(rows, point) for point in points)
+    return tuple(coordinate_tabulation(element, point) for point in points)
 
 
 def compile_workset_program(
@@ -871,6 +933,36 @@ def compile_workset_program(
                     owner_permutations=owner_permutations,
                     neighbor_permutations=neighbor_permutations,
                     neighbor_trace_permutations=neighbor_trace_permutations,
+                    owner_point_permutations=(
+                        _hexahedral_point_routes(
+                            mesh.connectivity, reference, owner_cells
+                        )
+                        if domain.kind != "cell"
+                        and isinstance(mesh.connectivity, HexahedralConnectivity)
+                        else ()
+                    ),
+                    neighbor_point_permutations=(
+                        _hexahedral_point_routes(
+                            mesh.connectivity, neighbor_reference, neighbor_cells
+                        )
+                        if domain.kind == "interior_facet"
+                        and isinstance(mesh.connectivity, HexahedralConnectivity)
+                        else ()
+                    ),
+                    coordinate_tabulations=_coordinate_workset_tabulations(
+                        discretization, block_index, owner_cells, reference, domain.kind
+                    ),
+                    neighbor_coordinate_tabulations=(
+                        _coordinate_workset_tabulations(
+                            discretization,
+                            neighbor_block_index,
+                            neighbor_cells,
+                            neighbor_reference,
+                            domain.kind,
+                        )
+                        if neighbor_block_index is not None
+                        else ()
+                    ),
                 )
             )
     return WorksetProgram(ir, worksets)

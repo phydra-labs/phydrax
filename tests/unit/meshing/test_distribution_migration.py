@@ -899,3 +899,63 @@ def test_publication_lowering_preserves_field_roles_and_present_halos() -> None:
     np.testing.assert_array_equal(lowered.fields[0].entity_ids, (3, 5))
     np.testing.assert_array_equal(lowered.fields[0].values, ((30, 31), (50, 51)))
     np.testing.assert_array_equal(lowered.fields[0].owned, (True, False))
+
+
+def test_owner_local_migration_registered_archive_rebuilds_canonical_forest(
+    tmp_path: Path,
+) -> None:
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_archive,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_archive,
+        write_model_artifact,
+    )
+
+    _, state, _ = _mesh_state()
+    forest = extract_simplex_forest(state)
+    original = OwnerLocalMigrationState(
+        forest,
+        cell_payloads={"temperature": np.asarray(forest.cell_ids, np.float64) + 0.25},
+        vertex_payloads={"history": np.asarray(forest.vertex_ids, np.int64)[:, None]},
+    )
+    path = write_model_artifact(
+        tmp_path / "migration.phx", original, limits=MODEL_ARCHIVE_LIMITS
+    )
+    restored = read_model_artifact(
+        path,
+        expected_type=OwnerLocalMigrationState,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.state_id == original.state_id
+    assert restored.forest.forest_id == forest.forest_id
+    assert restored.forest.next_cell_id == forest.next_cell_id
+    assert restored.forest.next_vertex_id == forest.next_vertex_id
+    for (_, actual), (_, expected) in zip(
+        restored.forest.cell_fields, forest.cell_fields, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    for (_, actual), (_, expected) in zip(
+        restored.cell_payloads, original.cell_payloads, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    manifest, arrays = read_model_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+    manifest["model_recipe"]["fields"]["forest"]["fields"]["forest_id"]["value"] = (
+        "0" * 64
+    )
+    changed = write_model_archive(
+        tmp_path / "changed.phx",
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            changed,
+            expected_type=OwnerLocalMigrationState,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )

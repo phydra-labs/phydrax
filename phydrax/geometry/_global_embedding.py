@@ -1195,7 +1195,7 @@ def _planar_faced_chart_cell(
                 return None
     except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
         return None
-    return replace(chart, coordinates=())
+    return replace(chart, coordinate_expressions=())
 
 
 def _inverse_affine_arguments(
@@ -1482,7 +1482,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             raise TypeError(
                 "Global embedding requires CellMesh and CellGeometrySpec inputs."
             )
-        if not isinstance(validity, CellValidityCertificate):
+        if type(validity) is not CellValidityCertificate:
             raise TypeError("validity must be a CellValidityCertificate.")
         validity.require_current(geometry, mesh=mesh)
         junctions = _junction_ids(mesh, junction_vertices)
@@ -1794,7 +1794,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         content identity equals the bound one, a consumer may reuse this
         in-hand certificate instead of recomputing it; nothing is looked up.
         """
-        if not isinstance(validity, CellValidityCertificate):
+        if type(validity) is not CellValidityCertificate:
             raise TypeError("validity must be CellValidityCertificate.")
         self.require_current(mesh, geometry, validity=validity)
         if self.binding.junction_vertices != _junction_ids(mesh, junction_vertices):
@@ -1815,13 +1815,17 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         cls, value: GlobalEmbeddingCertificate, /
     ) -> GlobalEmbeddingCertificate:
         """Restore by recomputing local validity and every global proof obligation."""
-        if not isinstance(value, cls):
+        if type(value) is not cls:
             raise TypeError(
                 "Stored global embedding must be a GlobalEmbeddingCertificate."
             )
         value.binding.require(value.binding.mesh, value.binding.geometry)
         # Stored identities are not proof authority: renew the local proof.
         value.validity.revalidate(value.binding.geometry, mesh=value.binding.mesh)
+        if value.nested_restriction_premise is not None:
+            premise = value.nested_restriction_premise
+            cls.from_stored_fields(premise.source_embedding)
+            type(premise.transition).from_stored_fields(premise.transition)
         if value.periodic_affine_degree is not None:
             PeriodicAffineTorusDegreeEvidence.from_stored_fields(
                 value.periodic_affine_degree
@@ -1845,6 +1849,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         )
         if (
             rebuilt.certificate_id != value.certificate_id
+            or rebuilt.nested_restriction != value.nested_restriction
             or (
                 None
                 if rebuilt.periodic_affine_degree is None
@@ -4532,7 +4537,7 @@ def _straight_planar_polygon(
                 return None
         if prove_mapped_cell_injective(cell) is None:
             return None
-        polygon = replace(cell, coordinates=())
+        polygon = replace(cell, coordinate_expressions=())
         return polygon, _cell_simplices(polygon)
     except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
         return None
@@ -4845,7 +4850,9 @@ def _nonperiodic_contacts(
                         "glued-face-monotone-map"
                         if glued_face_monotone(first_cell, second_cell, shared)
                         else "glued-facet-monotone-map"
-                        if glued_facet_monotone(first_cell, second_cell, shared)
+                        if glued_facet_monotone(
+                            first_cell, second_cell, shared, subdivision_cache
+                        )
                         else None
                     )
                     if glued is not None:

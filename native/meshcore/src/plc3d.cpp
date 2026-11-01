@@ -1016,6 +1016,7 @@ struct PlcPlanarPolygon {
   int orientation;
   std::vector<int32_t> source_triangles;
   std::vector<std::vector<int32_t>> boundary_loops;
+  bool recovered = false;
 };
 
 struct PlcEdgePoint {
@@ -1734,15 +1735,16 @@ class PlcRecoveryBuilder {
   int32_t recover_planar_polygons() {
     planar_source_faces_.clear();
     if (planar_polygons_.empty()) return PHX_MC_OK;
-    std::vector<Triple> planar_keys;
-    for (const auto& [key, source] : source_faces_) {
-      const std::int32_t polygon =
-          candidate_.input_polygons[static_cast<std::size_t>(source.source_triangle)];
-      if (planar_polygon_index_[static_cast<std::size_t>(polygon)] >= 0) planar_keys.push_back(key);
-    }
-    for (const Triple& key : planar_keys) source_faces_.erase(key);
     TetrahedralComplex& complex = triangulation_->complex();
-    for (const PlcPlanarPolygon& polygon : planar_polygons_) {
+    struct PlanarFace {
+      Triple oriented;
+      int32_t owner;
+      int slot;
+    };
+    std::vector<PlanarFace> covered;
+    std::vector<Triple> replaced;
+    for (PlcPlanarPolygon& polygon : planar_polygons_) {
+      covered.clear();
       const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
       Expansion polygon_area;
       for (std::int32_t source_triangle : polygon.source_triangles) {
@@ -1756,7 +1758,10 @@ class PlcRecoveryBuilder {
         }
       }
       Expansion mesh_area;
-      std::size_t covered = 0;
+      // A planar source need not already be a surface of the unconstrained
+      // tetrahedralization (in particular an internal material interface).
+      // Stage the alternate triangulation; retain its authored subfaces for
+      // exact facet recovery until complete coverage has been established.
       for (std::size_t row = 0; row < complex.tets.size(); ++row) {
         const int32_t cell = static_cast<int32_t>(row);
         const Tetrahedron& tet = complex.tets[row];
@@ -1792,19 +1797,35 @@ class PlcRecoveryBuilder {
             projected(oriented[(corner + 1) % 3], polygon.axis, 1.0, second);
             mesh_area = mesh_area + first[0] * second[1] - first[1] * second[0];
           }
-          if (!planar_source_faces_.emplace(
-                  key, PlcSourceFace{oriented, polygon.facet, polygon.source_triangle})) {
-            return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
-                        kPlcFacet, polygon.facet);
-          }
-          complex.set_facet_constraint(owner, owner_slot, polygon.facet);
-          ++covered;
+          covered.push_back({oriented, owner, owner_slot});
         }
       }
-      if (covered == 0 || (mesh_area - polygon_area).sign() != 0) {
+      if (covered.empty() || (mesh_area - polygon_area).sign() != 0) {
+        if (!polygon.recovered) continue;
         return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable,
                     kPlcFacet, polygon.facet);
       }
+      replaced.clear();
+      const int32_t group = planar_polygon_index_[static_cast<std::size_t>(
+          candidate_.input_polygons[static_cast<std::size_t>(polygon.source_triangle)])];
+      for (const auto& [key, source] : source_faces_) {
+        const int32_t source_polygon =
+            candidate_.input_polygons[static_cast<std::size_t>(source.source_triangle)];
+        if (planar_polygon_index_[static_cast<std::size_t>(source_polygon)] == group) {
+          replaced.push_back(key);
+        }
+      }
+      for (const Triple& key : replaced) source_faces_.erase(key);
+      for (const PlanarFace& face : covered) {
+        if (!planar_source_faces_.emplace(
+                sorted_triple(face.oriented.data()),
+                PlcSourceFace{face.oriented, polygon.facet, polygon.source_triangle})) {
+          return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
+                      kPlcFacet, polygon.facet);
+        }
+        complex.set_facet_constraint(face.owner, face.slot, polygon.facet);
+      }
+      polygon.recovered = true;
     }
     return PHX_MC_OK;
   }

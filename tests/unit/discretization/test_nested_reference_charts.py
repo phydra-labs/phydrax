@@ -1,6 +1,8 @@
 from fractions import Fraction
 from typing import cast
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -47,16 +49,55 @@ from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 
 
+def test_grouped_composed_tabulation_preserves_rows_and_jacobians() -> None:
+    from phydrax.discretization._coordinate_enclosure import axes, scale
+
+    denominator: Polynomial = {(0, 0): Fraction(1), (1, 0): Fraction(1, 2)}
+    source = RationalComposedCellGeometryElement(
+        lagrange_element("triangle", 2),
+        "triangle",
+        tuple(RationalPolynomial(axis, denominator) for axis in axes(2)),
+    )
+    identity = axes(2)
+    half = tuple(scale(axis, Fraction(1, 2)) for axis in identity)
+    element = PerCellRestrictedCellGeometryElement(
+        source, "triangle", (10, 11), (5, 5), (identity, half)
+    )
+    rows = (1, 0, 1)
+    points = jnp.asarray(((0.2, 0.3), (0.1, 0.15)))
+    values, gradients = jax.jit(lambda x: element.tabulate_cells(rows, x))(points)
+    for position, row in enumerate(rows):
+        reference = element.tabulate_cell(row, points)
+        np.testing.assert_allclose(values[position], reference[0], rtol=0.0, atol=2e-14)
+        np.testing.assert_allclose(
+            gradients[position], reference[1], rtol=0.0, atol=2e-14
+        )
+    for point_index, point in enumerate(points):
+        derivative = jax.jacfwd(lambda x: element.tabulate_cells(rows, x[None])[0][:, 0])(
+            point
+        )
+        np.testing.assert_allclose(
+            gradients[:, point_index], derivative, rtol=2e-13, atol=2e-14
+        )
+    empty_values, empty_gradients = element.tabulate_cells((), points)
+    assert empty_values.shape == (0, 2, source.local_dof_count)
+    assert empty_gradients.shape == (0, 2, source.local_dof_count, 2)
+
+
 _BASE_VERTICES = np.asarray(
     ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
     dtype=np.float64,
 )
-_BOUNDARY_FACETS = np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64)
+_BOUNDARY_FACETS = np.asarray(
+    ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64
+)
 
 
 def _mapped_domain(*, split: bool = False) -> MappedReferenceDomain:
     if split:
-        root_points = np.concatenate((_BASE_VERTICES, np.asarray(((0.5, 0.0, 0.0),))), axis=0)
+        root_points = np.concatenate(
+            (_BASE_VERTICES, np.asarray(((0.5, 0.0, 0.0),))), axis=0
+        )
         root_cells = np.asarray(((0, 4, 2, 3), (4, 1, 2, 3)), dtype=np.int32)
         root_ids = np.asarray((71, 72), dtype=np.int64)
         occurrences = (("assembly", "left-root"), ("assembly", "right-root"))
@@ -200,7 +241,10 @@ def test_exact_reference_subcell_composes_through_curved_physical_root() -> None
         np.asarray((control.source_cell_id,), dtype=np.int64),
         ((reference_point,),),
     )[0][0]
-    assert tuple(evaluate_expression(expression, target_point) for expression in physical) == expected
+    assert (
+        tuple(evaluate_expression(expression, target_point) for expression in physical)
+        == expected
+    )
     assert root_element.degree == 2
 
 
@@ -215,9 +259,7 @@ def test_simplex_three_alias_uses_canonical_tetra_reference_topology() -> None:
         ),
         dtype=np.float64,
     )
-    mesh, geometry = _target(
-        child_points, cell_id=907, cell_kind="simplex:3"
-    )
+    mesh, geometry = _target(child_points, cell_id=907, cell_kind="simplex:3")
 
     (control,) = exact_reference_chart_controls(
         domain, mesh, geometry, np.asarray((0,), dtype=np.int64)
@@ -294,9 +336,12 @@ def test_exact_pyramid_target_chart_uses_pyramid_domain_inclusion_proof() -> Non
         source_witness.source_reference_vertices,
         source_witness.source_reference_exact_vertices,
     )
-    assert nested_cell_reference_maps(corner_only_witness)[0].evaluate(
-        (Fraction(1, 2), Fraction(1, 2), Fraction(1))
-    ) == control.source_reference_vertices[-1]
+    assert (
+        nested_cell_reference_maps(corner_only_witness)[0].evaluate(
+            (Fraction(1, 2), Fraction(1, 2), Fraction(1))
+        )
+        == control.source_reference_vertices[-1]
+    )
 
     pyramid_identity: tuple[Polynomial, ...] = (
         {(1, 0, 0): Fraction(1)},
@@ -314,6 +359,7 @@ def test_exact_pyramid_target_chart_uses_pyramid_domain_inclusion_proof() -> Non
     assert not reference_chart_arguments_contain_source_cell(
         "pyramid", "pyramid", outside_pyramid
     )
+
 
 def test_pyramid_chart_requires_only_a_unique_c0_apex_image() -> None:
     denominator: Polynomial = {
@@ -344,13 +390,9 @@ def test_pyramid_chart_requires_only_a_unique_c0_apex_image() -> None:
         for point in target_corners
     )
     assert all(
-        isinstance(value, Fraction)
-        for point in evaluated_corners
-        for value in point
+        isinstance(value, Fraction) for point in evaluated_corners for value in point
     )
-    source_corners = cast(
-        tuple[tuple[Fraction, ...], ...], evaluated_corners
-    )
+    source_corners = cast(tuple[tuple[Fraction, ...], ...], evaluated_corners)
     witness = ReferenceCellMapWitnesses(
         np.asarray((19,), dtype=np.int64),
         np.asarray((29,), dtype=np.int64),
@@ -487,7 +529,6 @@ def test_rational_degree_one_reference_chart_retains_exact_controls() -> None:
     validate_reference_cell_map_witnesses(control.witness)
 
 
-
 def test_rational_reference_witness_roundtrips_and_reproves_whole_cell() -> None:
     corners = (
         (Fraction(0), Fraction(0), Fraction(0)),
@@ -575,13 +616,11 @@ def test_rational_reference_witness_roundtrips_and_reproves_whole_cell() -> None
     cold_map = cold.block_parent_reference_maps["mapped"]
     assert cold_map is not None
     validate_reference_cell_map_witnesses(cold_map)
-    assert (
-        reference_chart_arguments_identity(cold_map.source_reference_chart_arguments)
-        == reference_chart_arguments_identity(witness.source_reference_chart_arguments)
-    )
-    assert (
-        nested_cell_reference_maps(cold_map)[0].evaluate(point)
-        == chart.evaluate(point)
+    assert reference_chart_arguments_identity(
+        cold_map.source_reference_chart_arguments
+    ) == reference_chart_arguments_identity(witness.source_reference_chart_arguments)
+    assert nested_cell_reference_maps(cold_map)[0].evaluate(point) == chart.evaluate(
+        point
     )
 
     alternative = CellGeometryRestrictionSource(
@@ -710,9 +749,8 @@ def test_per_cell_restriction_retains_and_evaluates_rational_chart() -> None:
         (extrapolated_chart,),
     )
     assert isinstance(extrapolated.chart_arguments(0)[0], dict)
-    assert (
-        evaluate_expression(extrapolated.chart_arguments(0)[0], point)
-        == Fraction(9, 4)
+    assert evaluate_expression(extrapolated.chart_arguments(0)[0], point) == Fraction(
+        9, 4
     )
 
     singular_denominator: Polynomial = {
@@ -818,9 +856,10 @@ def test_coarsening_composes_exact_child_root_charts_to_one_parent_chart() -> No
     assert parent_map.target_cell_ids.tolist() == [0]
     assert parent_map.source_cell_ids.tolist() == [71]
     assert exact_reference_cell_vertices(parent_map) == (parent_corners,)
-    assert nested_cell_reference_maps(parent_map)[0].evaluate(
-        (Fraction(1, 4),) * 3
-    ) == (Fraction(1, 4),) * 3
+    assert (
+        nested_cell_reference_maps(parent_map)[0].evaluate((Fraction(1, 4),) * 3)
+        == (Fraction(1, 4),) * 3
+    )
 
     split_roots = ReferenceCellMapWitnesses(
         fine_to_root.target_cell_ids,
@@ -929,11 +968,15 @@ def test_shared_boundary_has_ambiguous_boundary_owner_but_unique_cell_interior()
     ),
     ids=("crossing-roots", "outside-roots"),
 )
-def test_crossing_or_outside_target_cell_is_refused(points: tuple[tuple[float, ...], ...]) -> None:
+def test_crossing_or_outside_target_cell_is_refused(
+    points: tuple[tuple[float, ...], ...],
+) -> None:
     domain = _mapped_domain(split=True)
     mesh, geometry = _target(np.asarray(points, dtype=np.float64), cell_id=905)
 
-    with pytest.raises(ValueError, match="outside or crosses every exact mapped reference root"):
+    with pytest.raises(
+        ValueError, match="outside or crosses every exact mapped reference root"
+    ):
         exact_reference_chart_controls(
             domain, mesh, geometry, np.asarray((0,), dtype=np.int64)
         )

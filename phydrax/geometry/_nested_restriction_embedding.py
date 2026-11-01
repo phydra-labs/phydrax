@@ -219,11 +219,12 @@ def certify_nested_restriction_embedding(
     mapped: dict[int, tuple[int, tuple[tuple[Fraction, ...], ...]]] = {}
     # The transition proved the target maps equal the source maps through
     # these groups: its reference maps, or else its nested refinement maps.
-    groups = (
-        _reference_map_groups(transition.reference_map)
-        if transition.reference_map is not None
-        else _nested_reference_groups(transition.refinement, source_mesh, mesh)
-    )
+    if transition.reference_map is not None:
+        groups = _reference_map_groups(transition.reference_map)
+    elif transition.refinement is not None:
+        groups = _nested_reference_groups(transition.refinement, source_mesh, mesh)
+    else:
+        return None
     for group in groups:
         if (
             group.target_cell_kind != kind

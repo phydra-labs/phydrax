@@ -32,18 +32,29 @@ def _polyhedron(
         vertex_indices=tuple(range(len(vertex_ids))),
         vertex_ids=vertex_ids,
         reference_vertices=(),
-        coordinates=(),
+        coordinate_expressions=(),
         corner_images=images,
         affine_offset=None,
         affine_matrix=None,
-        image_lower=tuple(float(min(point[axis] for point in images)) for axis in range(3)),
-        image_upper=tuple(float(max(point[axis] for point in images)) for axis in range(3)),
-        facet_routes=tuple(tuple(row[identifier] for identifier in face) for face in faces),
+        image_lower=tuple(
+            float(min(point[axis] for point in images)) for axis in range(3)
+        ),
+        image_upper=tuple(
+            float(max(point[axis] for point in images)) for axis in range(3)
+        ),
+        facet_routes=tuple(
+            tuple(row[identifier] for identifier in face) for face in faces
+        ),
     )
 
 
 # Unit square z = 1 at ids 1..4, split into two triangles along 1-3.
-_INTERFACE = {1: _point(0, 0, 1), 2: _point(1, 0, 1), 3: _point(1, 1, 1), 4: _point(0, 1, 1)}
+_INTERFACE = {
+    1: _point(0, 0, 1),
+    2: _point(1, 0, 1),
+    3: _point(1, 1, 1),
+    4: _point(0, 1, 1),
+}
 _BOTTOM_APEX = {5: _point(0, 0, 0)}
 _TOP_APEX = {6: _point(0, 0, 2)}
 
