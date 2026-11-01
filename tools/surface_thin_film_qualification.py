@@ -301,7 +301,7 @@ def _factor_storage(prepared: Any) -> dict[str, int | float]:
     plan = prepared.solver.factorization
     arrays = {id(x): x for x in jax.tree.leaves(plan) if isinstance(x, jax.Array)}
     stored = sum(leaf.size * leaf.dtype.itemsize for leaf in arrays.values())
-    nonzeros = plan.factor_indices.size
+    nonzeros = plan.factor_size
     return {
         "unknowns": plan.shape[0],
         "factor_nonzeros": nonzeros,

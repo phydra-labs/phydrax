@@ -127,6 +127,104 @@ void interval_restrict_item(std::size_t degree, std::size_t width, const double*
   }
 }
 
+// ------------------------------------------------------ interval product
+
+constexpr double kVeltkampSplitter = 134217729.0;
+constexpr double kSplitMagnitudeLimit = 0x1p996;
+constexpr double kProductMagnitudeFloor = 0x1p-969;
+
+// Whether binary64 `product = first * second` is error free (Dekker
+// TwoProduct inside its exact window, or an exact zero factor), in the host
+// reference's operation order.
+bool product_is_exact(double first, double second, double product) noexcept {
+  const double first_scaled = kVeltkampSplitter * first;
+  const double first_high = first_scaled - (first_scaled - first);
+  const double first_low = first - first_high;
+  const double second_scaled = kVeltkampSplitter * second;
+  const double second_high = second_scaled - (second_scaled - second);
+  const double second_low = second - second_high;
+  const double error = ((first_high * second_high - product) + first_high * second_low +
+                        first_low * second_high) +
+                       first_low * second_low;
+  const bool window = std::isfinite(product) && std::fabs(first) < kSplitMagnitudeLimit &&
+                      std::fabs(second) < kSplitMagnitudeLimit &&
+                      std::fabs(product) >= kProductMagnitudeFloor;
+  const bool zero_factor = (first == 0.0 && std::isfinite(second)) ||
+                           (second == 0.0 && std::isfinite(first));
+  return zero_factor || (window && error == 0.0);
+}
+
+// Set-based interval product of [a_lo, a_hi] * [b_lo, b_hi]: a zero endpoint
+// times an unbounded one contributes 0, endpoints round outward only when
+// their binary64 product was inexact, and sign-determined results keep their sign.
+void interval_product(double a_lo, double a_hi, double b_lo, double b_hi, double& lower,
+                      double& upper) noexcept {
+  const double left[4] = {a_lo, a_lo, a_hi, a_hi};
+  const double right[4] = {b_lo, b_hi, b_lo, b_hi};
+  double products[4];
+  bool exact[4];
+  bool invalid = false;
+  for (int pair = 0; pair < 4; ++pair) {
+    const double l = left[pair];
+    const double r = right[pair];
+    const bool zero_unbounded = (l == 0.0 && std::isinf(r)) || (std::isinf(l) && r == 0.0);
+    products[pair] = zero_unbounded ? 0.0 : l * r;
+    invalid = invalid || std::isnan(products[pair]);
+    exact[pair] = zero_unbounded || product_is_exact(l, r, products[pair]);
+  }
+  double low = products[0];
+  double high = products[0];
+  for (int pair = 1; pair < 4; ++pair) {
+    low = ieee_minimum(low, products[pair]);
+    high = ieee_maximum(high, products[pair]);
+  }
+  bool low_exact = false;
+  bool high_exact = false;
+  for (int pair = 0; pair < 4; ++pair) {
+    low_exact = low_exact || (exact[pair] && products[pair] == low);
+    high_exact = high_exact || (exact[pair] && products[pair] == high);
+  }
+  low_exact = low_exact && !invalid;
+  high_exact = high_exact && !invalid;
+  if (invalid) {
+    low = -std::numeric_limits<double>::infinity();
+    high = std::numeric_limits<double>::infinity();
+  }
+  if (!low_exact) low = next_down(low);
+  if (!high_exact) high = next_up(high);
+  const bool first_nonnegative = a_lo >= 0.0;
+  const bool first_nonpositive = a_hi <= 0.0;
+  const bool second_nonnegative = b_lo >= 0.0;
+  const bool second_nonpositive = b_hi <= 0.0;
+  if ((first_nonnegative && second_nonnegative) || (first_nonpositive && second_nonpositive)) {
+    low = ieee_maximum(low, 0.0);
+  }
+  if ((first_nonnegative && second_nonpositive) || (first_nonpositive && second_nonnegative)) {
+    high = ieee_minimum(high, 0.0);
+  }
+  lower = low;
+  upper = high;
+}
+
+// Whether binary64 `total = first + second` is error free (TwoSum), as the host
+// reference computes it.
+bool sum_is_exact(double first, double second, double total) noexcept {
+  const double partner = total - first;
+  const double error = (first - (total - partner)) + (second - partner);
+  return std::isfinite(total) && error == 0.0;
+}
+
+// Outward rounding of the inexact endpoints of [low, high]; a NaN endpoint
+// makes the widened interval the whole line.
+void round_out_inexact(double low, double high, bool low_exact, bool high_exact,
+                       double& lower, double& upper) noexcept {
+  const bool invalid = std::isnan(low) || std::isnan(high);
+  const double widened_low = next_down(invalid ? -std::numeric_limits<double>::infinity() : low);
+  const double widened_high = next_up(invalid ? std::numeric_limits<double>::infinity() : high);
+  lower = low_exact ? low : widened_low;
+  upper = high_exact ? high : widened_high;
+}
+
 // ------------------------------------------------------ exact combinatorics
 
 bool checked_mul_u64(std::uint64_t a, std::uint64_t b, std::uint64_t& out) noexcept {
@@ -1034,6 +1132,67 @@ int32_t phx_mc_interval_bernstein_restrict(int64_t count, int32_t degree, int64_
           }
           return PHX_MC_OK;
         });
+  });
+}
+
+int32_t phx_mc_interval_multiply(int64_t count, const double* first_lower,
+                                 const double* first_upper, const double* second_lower,
+                                 const double* second_upper, double* lower, double* upper) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (count < 0 || !phx::mc::addressable(count, 1, sizeof(double))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    if (count > 0 && (first_lower == nullptr || first_upper == nullptr ||
+                      second_lower == nullptr || second_upper == nullptr || lower == nullptr ||
+                      upper == nullptr)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    for (int64_t index = 0; index < count; ++index) {
+      interval_product(first_lower[index], first_upper[index], second_lower[index],
+                       second_upper[index], lower[index], upper[index]);
+    }
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_interval_sum(int64_t count, const double* first_lower, const double* first_upper,
+                            const double* second_lower, const double* second_upper,
+                            int32_t subtract, double* lower, double* upper) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (count < 0 || (subtract != 0 && subtract != 1) ||
+        !phx::mc::addressable(count, 1, sizeof(double))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    if (count > 0 && (first_lower == nullptr || first_upper == nullptr ||
+                      second_lower == nullptr || second_upper == nullptr || lower == nullptr ||
+                      upper == nullptr)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    for (int64_t index = 0; index < count; ++index) {
+      const double a_lo = first_lower[index];
+      const double a_hi = first_upper[index];
+      // Subtraction adds the negated, swapped second interval.
+      const double b_lo = subtract ? -second_upper[index] : second_lower[index];
+      const double b_hi = subtract ? -second_lower[index] : second_upper[index];
+      const double low = subtract ? a_lo - second_upper[index] : a_lo + b_lo;
+      const double high = subtract ? a_hi - second_lower[index] : a_hi + b_hi;
+      double out_low = 0.0;
+      double out_high = 0.0;
+      round_out_inexact(low, high, sum_is_exact(a_lo, b_lo, low), sum_is_exact(a_hi, b_hi, high),
+                        out_low, out_high);
+      if (!subtract) {
+        // A sum of sign-fixed operands keeps that sign across outward rounding.
+        if (a_lo >= 0.0 && b_lo >= 0.0) out_low = ieee_maximum(out_low, 0.0);
+        if (a_hi <= 0.0 && b_hi <= 0.0) out_high = ieee_minimum(out_high, 0.0);
+      }
+      lower[index] = out_low;
+      upper[index] = out_high;
+    }
+    return PHX_MC_OK;
   });
 }
 

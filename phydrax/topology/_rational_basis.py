@@ -15,6 +15,7 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg._exact import factor_exact_sparse
 from ._complex import CellComplexPair, CellSubcomplex, compact_boundary
 from ._resources import TopologyResourceError, TopologyResourcePolicy
 
@@ -133,51 +134,22 @@ def _dense_boundary(
     return matrix
 
 
-def _rref(matrix: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
-    values = np.asarray(matrix, dtype=object).copy()
-    row = 0
-    pivots = []
-    for column in range(values.shape[1]):
-        pivot = next(
-            (index for index in range(row, values.shape[0]) if values[index, column]),
-            None,
-        )
-        if pivot is None:
-            continue
-        values[[row, pivot]] = values[[pivot, row]]
-        values[row] = [value / values[row, column] for value in values[row]]
-        for other in range(values.shape[0]):
-            if other != row and values[other, column]:
-                factor = values[other, column]
-                values[other] = [
-                    left - factor * right
-                    for left, right in zip(values[other], values[row], strict=True)
-                ]
-        pivots.append(column)
-        row += 1
-        if row == values.shape[0]:
-            break
-    return values, tuple(pivots)
+def _sparse_rows(rows: Sequence[Sequence[Fraction]], /) -> list[dict[int, Fraction]]:
+    return [{column: value for column, value in enumerate(row) if value} for row in rows]
 
 
 def _nullspace(matrix: np.ndarray) -> tuple[tuple[Fraction, ...], ...]:
-    rref, pivots = _rref(matrix)
-    free = [column for column in range(matrix.shape[1]) if column not in pivots]
-    vectors = []
-    for column in free:
-        vector = [Fraction(0)] * matrix.shape[1]
-        vector[column] = Fraction(1)
-        for row, pivot in enumerate(pivots):
-            vector[pivot] = -rref[row, column]
-        vectors.append(tuple(vector))
-    return tuple(vectors)
+    """Leftmost-pivot (reduced row echelon) nullspace basis, by increasing free column."""
+    return factor_exact_sparse(
+        _sparse_rows(matrix.tolist()), matrix.shape[1], ordered=True
+    ).nullspace_basis()
 
 
 def _rank(columns: Sequence[tuple[Fraction, ...]]) -> int:
     if not columns:
         return 0
-    matrix = np.asarray(columns, dtype=object).T
-    return len(_rref(matrix)[1])
+    rows = list(zip(*columns, strict=True))
+    return factor_exact_sparse(_sparse_rows(rows), len(columns)).evidence.rank
 
 
 def compute_rational_homology_basis(

@@ -78,11 +78,12 @@ type _MeshingChartInput = ConvertibleToArray | _ExactChartInput
 
 @runtime_checkable
 class StackedSurfaceEvaluation(Protocol):
-    """A surface class that evaluates a stack of its instances in one call.
+    """A surface class that evaluates a stack of its concrete instances on the host.
 
     ``evaluate_stacked(surfaces, owners, parameters)`` returns, for every row,
-    ``surfaces[owners[row]].evaluate(parameters[row])`` with exactly the same
-    arithmetic, so batching never changes a coordinate.
+    ``surfaces[owners[row]].evaluate(parameters[row])`` as binary64 NumPy points,
+    computed with exactly the same correctly rounded operations, so batching never
+    changes a coordinate.
     """
 
     @classmethod
@@ -90,9 +91,142 @@ class StackedSurfaceEvaluation(Protocol):
         cls,
         surfaces: Sequence[AbstractSurfacePatch],
         owners: np.ndarray,
-        parameters: Array,
+        parameters: np.ndarray,
         /,
-    ) -> Array: ...
+    ) -> np.ndarray: ...
+
+
+def _pcurve_points(pcurve: AbstractCurve, parameters: np.ndarray, /) -> np.ndarray:
+    """``pcurve.evaluate(parameters)`` as binary64 host chart points.
+
+    An affine `LineCurve` evaluates ``origin + t * direction`` in NumPy: the same
+    two correctly rounded operations in its own dtype, so the points are bit for
+    bit those of its eager evaluation without one device dispatch per use.
+    """
+    from .brep._patches import LineCurve
+
+    if type(pcurve) is LineCurve:
+        origin = np.asarray(pcurve.origin)
+        direction = np.asarray(pcurve.direction)
+        values = np.asarray(parameters, dtype=origin.dtype)
+        return np.asarray(
+            origin + values[..., None] * direction, dtype=np.float64
+        ).reshape((-1, 2))
+    return np.asarray(pcurve.evaluate(jnp.asarray(parameters)), dtype=np.float64).reshape(
+        (-1, 2)
+    )
+
+
+def _surface_endpoint_images(
+    patches: Sequence[MeshingSurfacePatch],
+    rows: Sequence[int],
+    charts: np.ndarray,
+    /,
+) -> list[np.ndarray]:
+    """Physical points ``patches[rows[i]].surface.evaluate(charts[i])``, in row order.
+
+    Stacked surface classes evaluate all their rows in one host call per class;
+    every other surface evaluates each point on its own, exactly as before.
+    """
+    points: list[np.ndarray] = [np.empty((0,), dtype=np.float64)] * len(rows)
+    stacked_kinds: dict[type, bool] = {}
+    stacked: dict[type, list[int]] = {}
+    for index, patch_index in enumerate(rows):
+        surface = patches[patch_index].surface
+        kind = type(surface)
+        is_stacked = stacked_kinds.get(kind)
+        if is_stacked is None:
+            is_stacked = stacked_kinds[kind] = isinstance(
+                surface, StackedSurfaceEvaluation
+            )
+        if is_stacked:
+            stacked.setdefault(kind, []).append(index)
+            continue
+        points[index] = np.asarray(
+            surface.evaluate(jnp.asarray(charts[index])), dtype=np.float64
+        )
+    for kind, members in stacked.items():
+        selected = np.asarray(members, dtype=np.int64)
+        owned, owners = np.unique(
+            np.asarray(rows, dtype=np.int64)[selected], return_inverse=True
+        )
+        values = np.asarray(
+            cast(type[StackedSurfaceEvaluation], kind).evaluate_stacked(
+                tuple(patches[patch].surface for patch in owned.tolist()),
+                owners,
+                charts[selected],
+            ),
+            dtype=np.float64,
+        )
+        for position, index in enumerate(members):
+            points[index] = np.asarray(values[position])
+    return points
+
+
+def _immutable_leaf(value: object, /) -> bool:
+    """Whether a concrete pytree leaf can no longer change its content."""
+    if isinstance(value, jax.Array):
+        return True
+    if isinstance(value, np.ndarray):
+        base: object = value
+        while isinstance(base, np.ndarray):
+            if base.flags.writeable:
+                return False
+            base = base.base
+        return base is None or isinstance(base, (bytes, jax.Array))
+    return isinstance(value, (str, bytes, int, float, complex, Fraction, np.generic))
+
+
+_VALIDATION_TOKEN = object()
+
+
+@final
+class ValidatedMeshingDomain:
+    """A MeshingDomain whose content was fingerprinted against its ``domain_id``.
+
+    Only :meth:`MeshingDomain.require_current` creates it. It records the exact
+    domain object it fingerprinted. When every content leaf of that object is
+    immutable, handing it on together with that same object proves the content
+    current without fingerprinting it again; any other object (a copy, a
+    pytree rebuild, a restore) is fingerprinted again. Copying or pickling the
+    record validates its domain again.
+    """
+
+    __slots__ = ("domain", "reusable")
+
+    def __init__(
+        self, domain: MeshingDomain, reusable: bool, /, *, token: object
+    ) -> None:
+        if token is not _VALIDATION_TOKEN:
+            raise TypeError(
+                "Validated meshing domains are created only by MeshingDomain.require_current."
+            )
+        self.domain = domain
+        self.reusable = reusable
+
+    def binds(self, domain: MeshingDomain, /) -> bool:
+        """Whether this validation proves exactly this immutable domain object current."""
+        return self.reusable and self.domain is domain
+
+    # Static-field equality of holders: two validations of equal content are
+    # interchangeable as metadata; `binds` alone decides reuse, by identity.
+    def __eq__(self, other: object, /) -> bool:
+        return (
+            isinstance(other, ValidatedMeshingDomain)
+            and self.domain.domain_id == other.domain.domain_id
+        )
+
+    def __hash__(self) -> int:
+        return hash(self.domain.domain_id)
+
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[[MeshingDomain], ValidatedMeshingDomain], tuple[MeshingDomain]]:
+        return _revalidate_meshing_domain, (self.domain,)
+
+
+def _revalidate_meshing_domain(domain: MeshingDomain, /) -> ValidatedMeshingDomain:
+    return domain.require_current()
 
 
 def _outward_surface_parameter_box(
@@ -187,9 +321,7 @@ class PatchCurveUse(StrictModule, NonTrainableState):
 
     def charts(self, parameters: ConvertibleToArray, /) -> np.ndarray:
         values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
-        return np.asarray(
-            self.pcurve.evaluate(jnp.asarray(values)), dtype=np.float64
-        ).reshape((-1, 2))
+        return _pcurve_points(self.pcurve, values)
 
     def traversal_endpoints(self) -> np.ndarray:
         parameters = (
@@ -269,9 +401,7 @@ class PatchPoleUse(StrictModule, NonTrainableState):
         parameters = (
             (self.first, self.last) if self.sense > 0 else (self.last, self.first)
         )
-        return np.asarray(
-            self.pcurve.evaluate(jnp.asarray(parameters)), dtype=np.float64
-        ).reshape((-1, 2))
+        return _pcurve_points(self.pcurve, np.asarray(parameters, dtype=np.float64))
 
 
 def use_endpoints(use: PatchBoundaryUse, /) -> np.ndarray:
@@ -2021,18 +2151,23 @@ class MeshingDomain(StrictModule, NonTrainableState):
         owners: list[tuple[int, int, int]] = [(-1, -1, -1) for _ in curves_]
         endpoint_images: list[list[tuple[int, np.ndarray]]] = [[] for _ in range(corners)]
         chart_curves: list[tuple[int, int, int, PatchCurveUse]] = []
+        image_corners: list[int] = []
+        image_patches: list[int] = []
+        image_charts: list[np.ndarray] = []
         for patch_index, patch in enumerate(patches_):
             for loop_index, loop in enumerate(patch.loops):
+                # Each use's traversal endpoints are evaluated once; the next
+                # use's start closes this use's end.
+                loop_endpoints = tuple(use_endpoints(use) for use in loop)
                 for use_index, use in enumerate(loop):
-                    uv_endpoints = use_endpoints(use)
+                    uv_endpoints = loop_endpoints[use_index]
                     if uv_endpoints.shape != (2, 2) or not np.all(
                         np.isfinite(uv_endpoints)
                     ):
                         raise ValueError(
                             "MeshingDomain trim endpoints must be finite UV points."
                         )
-                    next_use = loop[(use_index + 1) % len(loop)]
-                    next_start = use_endpoints(next_use)[0]
+                    next_start = loop_endpoints[(use_index + 1) % len(loop)][0]
                     if (
                         not isinstance(brep_authority, BRepModel)
                         and float(np.linalg.norm(uv_endpoints[1] - next_start))
@@ -2042,34 +2177,34 @@ class MeshingDomain(StrictModule, NonTrainableState):
                             "MeshingDomain trim loop uses do not connect in source parameter space."
                         )
                     if isinstance(use, PatchPoleUse):
-                        for uv in uv_endpoints:
-                            point = np.asarray(
-                                patch.surface.evaluate(jnp.asarray(uv)), dtype=np.float64
+                        image_corners.extend((use.corner, use.corner))
+                    else:
+                        if use.curve >= len(curves_):
+                            raise ValueError(
+                                "PatchCurveUse references an absent domain curve."
                             )
-                            endpoint_images[use.corner].append((patch_index, point))
-                        continue
-                    if use.curve >= len(curves_):
-                        raise ValueError(
-                            "PatchCurveUse references an absent domain curve."
+                        if owners[use.curve] == (-1, -1, -1):
+                            owners[use.curve] = (patch_index, loop_index, use_index)
+                            chart_curves.append((use.curve, patch_index, loop_index, use))
+                        source_curve = curves_[use.curve]
+                        image_corners.extend(
+                            (source_curve.start, source_curve.end)
+                            if use.sense > 0
+                            else (source_curve.end, source_curve.start)
                         )
-                    if owners[use.curve] == (-1, -1, -1):
-                        owners[use.curve] = (patch_index, loop_index, use_index)
-                        chart_curves.append((use.curve, patch_index, loop_index, use))
-                    source_curve = curves_[use.curve]
-                    physical_start = (
-                        source_curve.start if use.sense > 0 else source_curve.end
-                    )
-                    physical_end = (
-                        source_curve.end if use.sense > 0 else source_curve.start
-                    )
-                    for corner, uv in (
-                        (physical_start, uv_endpoints[0]),
-                        (physical_end, uv_endpoints[1]),
-                    ):
-                        point = np.asarray(
-                            patch.surface.evaluate(jnp.asarray(uv)), dtype=np.float64
-                        )
-                        endpoint_images[corner].append((patch_index, point))
+                    image_patches.extend((patch_index, patch_index))
+                    image_charts.extend((uv_endpoints[0], uv_endpoints[1]))
+        for corner, patch_index, point in zip(
+            image_corners,
+            image_patches,
+            _surface_endpoint_images(
+                patches_,
+                image_patches,
+                np.asarray(image_charts, dtype=np.float64).reshape((-1, 2)),
+            ),
+            strict=True,
+        ):
+            endpoint_images[corner].append((patch_index, point))
         for region in regions_:
             if any(patch >= len(patches_) for patch, _ in region.boundary):
                 raise ValueError(
@@ -2215,14 +2350,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 authority_id,
                 tolerance_,
             )
-        patch_regions = tuple(
-            tuple(
-                index
-                for index, region in enumerate(regions_)
-                if any(patch == patch_index for patch, _ in region.boundary)
-            )
-            for patch_index in range(len(patches_))
-        )
+        region_rows: list[list[int]] = [[] for _ in patches_]
+        for index, region in enumerate(regions_):
+            for patch in {patch for patch, _ in region.boundary}:
+                region_rows[patch].append(index)
+        patch_regions = tuple(tuple(rows) for rows in region_rows)
         regular_curves = tuple(chart_curves)
         curve_map = DomainCurveMap(
             tuple(patches_[patch].surface for _, patch, _, _ in regular_curves),
@@ -2448,8 +2580,19 @@ class MeshingDomain(StrictModule, NonTrainableState):
         )
 
     def require_current(
-        self, source_id: str | None = None, source_revision: str | None = None, /
-    ) -> None:
+        self,
+        source_id: str | None = None,
+        source_revision: str | None = None,
+        /,
+        *,
+        validated: ValidatedMeshingDomain | None = None,
+    ) -> ValidatedMeshingDomain:
+        """Refuse a changed source binding, a stale BRep authority, or drifted content.
+
+        Returns the validation of this exact object. ``validated``, made by an
+        earlier call for this very object, is returned without fingerprinting the
+        content again; any other object is fingerprinted against ``domain_id``.
+        """
         if source_id is not None and source_id != self.source_id:
             raise ValueError("MeshingDomain source_id changed.")
         if source_revision is not None and source_revision != self.source_revision:
@@ -2457,8 +2600,29 @@ class MeshingDomain(StrictModule, NonTrainableState):
         authority = self.brep_authority
         if authority is not None:
             authority.require_current()
+        if validated is not None and validated.binds(self):
+            return validated
         if self.content_domain_id() != self.domain_id:
             raise ValueError("MeshingDomain content changed after construction.")
+        return ValidatedMeshingDomain(
+            self,
+            all(
+                map(
+                    _immutable_leaf,
+                    jax.tree_util.tree_leaves(
+                        (
+                            self.patches,
+                            self.curves,
+                            self.regions,
+                            self.corner_points,
+                            self.scope_entity_id_banks,
+                            self.scope_entity_key_banks,
+                        )
+                    ),
+                )
+            ),
+            token=_VALIDATION_TOKEN,
+        )
 
     @property
     def corner_count(self) -> int:
@@ -3153,7 +3317,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 self.patches[int(unique[index])].surface for index in members
             )
             result[selected] = np.asarray(
-                kind.evaluate_stacked(surfaces, owners, jnp.asarray(charts_[selected])),
+                kind.evaluate_stacked(surfaces, owners, charts_[selected]),
                 dtype=np.float64,
             )
         return result
@@ -3703,4 +3867,5 @@ __all__ = [
     "PatchBoundaryUse",
     "SourcePreparation",
     "use_endpoints",
+    "ValidatedMeshingDomain",
 ]

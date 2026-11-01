@@ -21,10 +21,12 @@ from ._coordinate_enclosure import (
 from ._exact_algebraic_geometry import RadicalElement
 
 
-type ExactReferenceChartExpression = Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial
-type ExactReferenceChartArgumentBank = tuple[
-    tuple[ExactReferenceChartExpression, ...], ...
-] | None
+type ExactReferenceChartExpression = (
+    Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial
+)
+type ExactReferenceChartArgumentBank = (
+    tuple[tuple[ExactReferenceChartExpression, ...], ...] | None
+)
 
 
 class NestedReferenceWitnesses(NamedTuple):
@@ -41,9 +43,10 @@ class NestedReferenceWitnesses(NamedTuple):
     coarse_cell_ids: np.ndarray
     fine_reference_vertices: np.ndarray
     fine_reference_homogeneous: np.ndarray | None = None
-    fine_reference_exact_vertices: (
-        tuple[tuple[tuple[Fraction, ...], ...], ...] | None
-    ) = None
+    fine_reference_exact_vertices: tuple[tuple[tuple[Fraction, ...], ...], ...] | None = (
+        None
+    )
+
 
 def validate_nested_reference_witnesses(
     witnesses: NestedReferenceWitnesses,
@@ -70,7 +73,9 @@ def validate_nested_reference_witnesses(
         or not np.all(np.isfinite(points))
         or (dimension is not None and points.shape[2] != dimension)
     ):
-        raise ValueError("Nested reference witnesses must contain aligned finite simplex rows.")
+        raise ValueError(
+            "Nested reference witnesses must contain aligned finite simplex rows."
+        )
     exact = witnesses.fine_reference_exact_vertices
     if exact is not None:
         if (
@@ -88,17 +93,25 @@ def validate_nested_reference_witnesses(
                 for cell in exact
             )
         ):
-            raise ValueError("Exact nested reference rows must be immutable Fraction tuples.")
+            raise ValueError(
+                "Exact nested reference rows must be immutable Fraction tuples."
+            )
         for cell, vertices in enumerate(exact):
             for vertex, coordinates in enumerate(vertices):
                 barycentric = (Fraction(1) - sum(coordinates), *coordinates)
                 if any(value < 0 for value in barycentric):
-                    raise ValueError("Exact nested reference corners must lie in the parent simplex.")
-                rounded = np.asarray([float(value) for value in coordinates], dtype=np.float64)
+                    raise ValueError(
+                        "Exact nested reference corners must lie in the parent simplex."
+                    )
+                rounded = np.asarray(
+                    [float(value) for value in coordinates], dtype=np.float64
+                )
                 if not np.array_equal(
                     rounded.view(np.uint64), points[cell, vertex].view(np.uint64)
                 ):
-                    raise ValueError("Binary64 reference corners must round from their exact bank.")
+                    raise ValueError(
+                        "Binary64 reference corners must round from their exact bank."
+                    )
     homogeneous = witnesses.fine_reference_homogeneous
     if homogeneous is None:
         return
@@ -108,7 +121,9 @@ def validate_nested_reference_witnesses(
     ):
         raise ValueError("Homogeneous reference rows must align with simplex corners.")
     if np.any(bank < 0.0):
-        raise ValueError("Nested homogeneous barycentric coordinates must be nonnegative.")
+        raise ValueError(
+            "Nested homogeneous barycentric coordinates must be nonnegative."
+        )
     for cell in range(fine.size):
         for vertex in range(points.shape[1]):
             row = tuple(Fraction(float(value)) for value in bank[cell, vertex])
@@ -116,11 +131,15 @@ def validate_nested_reference_witnesses(
             if not total:
                 continue
             coordinates = tuple(value / total for value in row[1:])
-            rounded = np.asarray([float(value) for value in coordinates], dtype=np.float64)
+            rounded = np.asarray(
+                [float(value) for value in coordinates], dtype=np.float64
+            )
             if not np.array_equal(
                 rounded.view(np.uint64), points[cell, vertex].view(np.uint64)
             ):
-                raise ValueError("Stored reference corners must be the rounded homogeneous map.")
+                raise ValueError(
+                    "Stored reference corners must be the rounded homogeneous map."
+                )
             if exact is not None and coordinates != exact[cell][vertex]:
                 raise ValueError("Homogeneous and exact nested reference banks disagree.")
 
@@ -147,7 +166,9 @@ def exact_reference_vertices(
                 if total:
                     vertices.append(tuple(value / total for value in row[1:]))
                     continue
-            vertices.append(tuple(Fraction(float(value)) for value in points[cell, vertex]))
+            vertices.append(
+                tuple(Fraction(float(value)) for value in points[cell, vertex])
+            )
         result.append(tuple(vertices))
     return tuple(result)
 
@@ -172,12 +193,28 @@ class ReferenceCellMapWitnesses(NamedTuple):
     source_reference_chart_arguments: ExactReferenceChartArgumentBank = None
 
 
+def _fractions_sum_at_most_one(point: tuple[Fraction, ...], /) -> bool:
+    """Exact ``sum(point) <= 1`` on integer numerators and denominators."""
+    numerator, denominator = 0, 1
+    for value in point:
+        numerator = numerator * value.denominator + value.numerator * denominator
+        denominator *= value.denominator
+    return numerator <= denominator
+
+
 def _reference_cell_contains(kind: str, point: tuple[Fraction, ...], /) -> bool:
     from ._reference_cell import reference_cell_topology
 
     dimension = reference_cell_topology(kind).dimension
     if len(point) != dimension:
         return False
+    if (kind in ("triangle", "tetrahedron") or kind.startswith("simplex:")) and all(
+        type(value) is Fraction for value in point
+    ):
+        # Fraction denominators are positive: signs are the numerators' signs.
+        return all(value.numerator >= 0 for value in point) and (
+            _fractions_sum_at_most_one(point)
+        )
     if kind.startswith("simplex:"):
         return all(value >= 0 for value in point) and sum(point) <= 1
     if kind.startswith("tensor:"):
@@ -206,7 +243,6 @@ def _reference_cell_contains(kind: str, point: tuple[Fraction, ...], /) -> bool:
             return False
 
 
-
 def _exact_reference_scalar(value: object, /) -> ExactScalar:
     if isinstance(value, (Fraction, RadicalElement)):
         return value
@@ -230,7 +266,9 @@ def _freeze_reference_polynomial(
             or int(power) < 0
             for power in raw_exponent
         ):
-            raise ValueError("Reference-chart polynomial exponents must be nonnegative integer tuples.")
+            raise ValueError(
+                "Reference-chart polynomial exponents must be nonnegative integer tuples."
+            )
         exponent = tuple(int(power) for power in raw_exponent)
         coefficient = _exact_reference_scalar(raw_coefficient)
         if coefficient:
@@ -311,17 +349,15 @@ def reference_chart_arguments_identity(
     )
 
 
-def _reference_expression_dimension(expression: ExactReferenceChartExpression, /) -> int | None:
+def _reference_expression_dimension(
+    expression: ExactReferenceChartExpression, /
+) -> int | None:
     banks = (
         (expression.numerator, expression.denominator)
         if isinstance(expression, RationalPolynomial)
         else (expression,)
     )
-    dimensions = {
-        len(exponent)
-        for bank in banks
-        for exponent in bank
-    }
+    dimensions = {len(exponent) for bank in banks for exponent in bank}
     if len(dimensions) > 1:
         raise ValueError("Reference-chart monomials must share one target dimension.")
     return None if not dimensions else next(iter(dimensions))
@@ -337,7 +373,9 @@ def _reference_bernstein_domain(cell_kind: str, /) -> tuple[BernsteinDomain, int
         return "prism", dimension
     if cell_kind == "pyramid":
         return "box", dimension
-    if cell_kind in ("interval", "quadrilateral", "hexahedron") or cell_kind.startswith("tensor:"):
+    if cell_kind in ("interval", "quadrilateral", "hexahedron") or cell_kind.startswith(
+        "tensor:"
+    ):
         return "box", dimension
     raise ValueError(f"Reference-chart enclosure does not support {cell_kind!r} cells.")
 
@@ -381,7 +419,9 @@ def _reference_domain_inequalities(
         for value in arguments:
             total = add(total, value)
         return (*arguments, add(one, scale(total, -1)))
-    if cell_kind in ("interval", "quadrilateral", "hexahedron") or cell_kind.startswith("tensor:"):
+    if cell_kind in ("interval", "quadrilateral", "hexahedron") or cell_kind.startswith(
+        "tensor:"
+    ):
         return tuple(
             expression
             for value in arguments
@@ -426,9 +466,9 @@ def _rational_denominator_nonzero(
         return True
     controls = bernstein_coefficients(transformed.denominator, domain, dimension)
     return bool(controls) and (
-        all(value > 0 for value in controls)
-        or all(value < 0 for value in controls)
+        all(value > 0 for value in controls) or all(value < 0 for value in controls)
     )
+
 
 def reference_chart_arguments_have_nonvanishing_denominators(
     target_kind: str,
@@ -444,7 +484,9 @@ def reference_chart_arguments_have_nonvanishing_denominators(
     for expression in arguments:
         expression_dimension = _reference_expression_dimension(expression)
         if expression_dimension is not None and expression_dimension != target_dimension:
-            raise ValueError("Reference-chart expressions must use target-local coordinates.")
+            raise ValueError(
+                "Reference-chart expressions must use target-local coordinates."
+            )
         if isinstance(expression, RationalPolynomial):
             banks = (expression.numerator, expression.denominator)
         elif isinstance(expression, Mapping):
@@ -475,9 +517,9 @@ def reference_chart_arguments_have_nonvanishing_denominators(
                 raise TypeError(
                     "Reference-chart coefficients must be rational or exact algebraic values."
                 )
-        if isinstance(expression, RationalPolynomial) and not _rational_denominator_nonzero(
-            expression, target_kind
-        ):
+        if isinstance(
+            expression, RationalPolynomial
+        ) and not _rational_denominator_nonzero(expression, target_kind):
             return False
     return True
 
@@ -503,9 +545,7 @@ def _evaluate_reference_chart_arguments_at_point(
             values.append(normalization.apex_value)
         return tuple(values)
     try:
-        return tuple(
-            evaluate_expression(expression, point) for expression in arguments
-        )
+        return tuple(evaluate_expression(expression, point) for expression in arguments)
     except ZeroDivisionError as error:
         raise ValueError(
             "Reference-chart evaluation encountered a rational pole."
@@ -532,9 +572,7 @@ def evaluate_reference_chart_arguments(
         raise ValueError(
             "A rational reference-chart denominator is not proved nonzero over its target cell."
         )
-    return _evaluate_reference_chart_arguments_at_point(
-        target_kind, arguments, point
-    )
+    return _evaluate_reference_chart_arguments_at_point(target_kind, arguments, point)
 
 
 def _reference_expression_nonnegative(
@@ -567,7 +605,9 @@ def reference_chart_arguments_contain_source_cell(
     target_dimension = reference_cell_topology(target_kind).dimension
     source_dimension = reference_cell_topology(source_kind).dimension
     if not isinstance(arguments, tuple) or len(arguments) != source_dimension:
-        raise ValueError("Reference-chart arguments must match the source reference dimension.")
+        raise ValueError(
+            "Reference-chart arguments must match the source reference dimension."
+        )
     if not reference_chart_arguments_have_nonvanishing_denominators(
         target_kind, arguments
     ):
@@ -583,8 +623,7 @@ def reference_chart_arguments_contain_source_cell(
         source_kind, arguments, target_dimension
     )
     return all(
-        _reference_expression_nonnegative(value, target_kind)
-        for value in inequalities
+        _reference_expression_nonnegative(value, target_kind) for value in inequalities
     )
 
 
@@ -606,11 +645,7 @@ def reference_cell_strictly_contains(
     if kind == "pyramid":
         x, y, z = point
         half_z = z * Fraction(1, 2)
-        return (
-            0 < z < 1
-            and half_z < x < 1 - half_z
-            and half_z < y < 1 - half_z
-        )
+        return 0 < z < 1 and half_z < x < 1 - half_z and half_z < y < 1 - half_z
     return False
 
 
@@ -628,20 +663,28 @@ def _validate_reference_chart_argument_rows(
     target_topology = reference_cell_topology(target_kind)
     source_dimension = reference_cell_topology(source_kind).dimension
     if not isinstance(arguments, tuple) or len(arguments) != len(exact_vertices):
-        raise ValueError("Exact chart argument rows must align with reference-cell witnesses.")
+        raise ValueError(
+            "Exact chart argument rows must align with reference-cell witnesses."
+        )
     target_points = tuple(
         tuple(Fraction(float(value)) for value in point)
         for point in target_topology.vertices
     )
-    for cell_index, (row, corners) in enumerate(zip(arguments, exact_vertices, strict=True)):
+    for cell_index, (row, corners) in enumerate(
+        zip(arguments, exact_vertices, strict=True)
+    ):
         if not isinstance(row, tuple) or len(row) != source_dimension:
-            raise ValueError("Each exact chart row must map into its source reference dimension.")
+            raise ValueError(
+                "Each exact chart row must map into its source reference dimension."
+            )
         for expression in row:
             if not (
                 isinstance(expression, RationalPolynomial)
                 or isinstance(expression, MappingProxyType)
             ):
-                raise TypeError("Exact chart rows must use immutable polynomial or rational expressions.")
+                raise TypeError(
+                    "Exact chart rows must use immutable polynomial or rational expressions."
+                )
         if not reference_chart_arguments_contain_source_cell(
             target_kind, source_kind, row
         ):
@@ -649,19 +692,18 @@ def _validate_reference_chart_argument_rows(
                 f"Exact chart row {cell_index} does not prove whole-cell inclusion in its source reference cell."
             )
         evaluated = tuple(
-            _evaluate_reference_chart_arguments_at_point(
-                target_kind, row, point
-            )
+            _evaluate_reference_chart_arguments_at_point(target_kind, row, point)
             for point in target_points
         )
-        if any(
-            not isinstance(value, Fraction)
-            for point in evaluated
-            for value in point
-        ) or evaluated != corners:
+        if (
+            any(not isinstance(value, Fraction) for point in evaluated for value in point)
+            or evaluated != corners
+        ):
             raise ValueError(
                 f"Exact chart row {cell_index} does not reproduce its retained rational reference corners."
             )
+
+
 def exact_reference_cell_vertices(
     witnesses: ReferenceCellMapWitnesses, /
 ) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
@@ -676,7 +718,9 @@ def exact_reference_cell_vertices(
         target_topology = reference_cell_topology(witnesses.target_cell_kind)
         source_topology = reference_cell_topology(witnesses.source_cell_kind)
     except (TypeError, ValueError) as error:
-        raise ValueError("Reference-cell witnesses need supported fixed cell kinds.") from error
+        raise ValueError(
+            "Reference-cell witnesses need supported fixed cell kinds."
+        ) from error
     if (
         target.ndim != 1
         or source.shape != target.shape
@@ -685,21 +729,21 @@ def exact_reference_cell_vertices(
         or np.any(target < 0)
         or np.any(source < 0)
         or np.unique(target).size != target.size
-        or points.shape != (
+        or points.shape
+        != (
             target.size,
             len(target_topology.vertices),
             source_topology.dimension,
         )
         or not np.all(np.isfinite(points))
     ):
-        raise ValueError("Reference-cell map witnesses must align cell IDs and target corners.")
+        raise ValueError(
+            "Reference-cell map witnesses must align cell IDs and target corners."
+        )
     exact = witnesses.source_reference_exact_vertices
     if exact is None:
         result = tuple(
-            tuple(
-                tuple(Fraction(float(value)) for value in point)
-                for point in cell
-            )
+            tuple(tuple(Fraction(float(value)) for value in point) for point in cell)
             for cell in points
         )
     else:
@@ -718,21 +762,29 @@ def exact_reference_cell_vertices(
                 for cell in exact
             )
         ):
-            raise ValueError("Exact reference-cell maps must be immutable Fraction tuples.")
+            raise ValueError(
+                "Exact reference-cell maps must be immutable Fraction tuples."
+            )
         result = exact
-        for cell, vertices in enumerate(result):
-            for corner, point in enumerate(vertices):
-                rounded = np.asarray([float(value) for value in point], dtype=np.float64)
-                if not np.array_equal(
-                    rounded.view(np.uint64), points[cell, corner].view(np.uint64)
-                ):
-                    raise ValueError("Reference-cell execution corners must round from their exact bank.")
+        rounded = np.fromiter(
+            (float(value) for cell in result for point in cell for value in point),
+            dtype=np.float64,
+            count=points.size,
+        ).reshape(points.shape)
+        if not np.array_equal(
+            rounded.view(np.uint64), np.ascontiguousarray(points).view(np.uint64)
+        ):
+            raise ValueError(
+                "Reference-cell execution corners must round from their exact bank."
+            )
     if any(
         not _reference_cell_contains(witnesses.source_cell_kind, point)
         for cell in result
         for point in cell
     ):
-        raise ValueError("Target reference corners must lie in their source reference cell.")
+        raise ValueError(
+            "Target reference corners must lie in their source reference cell."
+        )
     _validate_reference_chart_argument_rows(
         witnesses.source_reference_chart_arguments,
         witnesses.target_cell_kind,

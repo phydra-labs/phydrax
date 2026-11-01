@@ -1460,6 +1460,112 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         return mapped[self.coordinate_owners]
 
 
+@final
+class _StoredGradientTable(StrictModule):
+    """Gradients already formed together with the block's points and measure."""
+
+    values: Array
+
+    def __call__(self) -> Array:
+        return self.values
+
+
+@final
+class _InverseJacobianGradientTable(StrictModule):
+    """Identity-mapped gradients ``J^+T grad`` from per-point inverse Jacobians."""
+
+    inverse_jacobian: Array
+    reference_gradients: Array
+
+    def __call__(self) -> Array:
+        # Formed from the (pseudo-)inverse Jacobian rather than J times the
+        # inverse metric: the metric is conditioned like r^-2, the Jacobian
+        # like r^-1.
+        return ein.contract(
+            "cqid,qki->cqkd", self.inverse_jacobian, self.reference_gradients
+        )
+
+
+@final
+class _MappedGradientTable(StrictModule):
+    """Reference derivatives of mapped (non-identity) basis values per cell and point.
+
+    Only consumers that integrate or evaluate gradients form this table: it
+    holds every basis function's mapped derivative at every quadrature point
+    of every cell, the largest geometry table of form elements.
+    """
+
+    element: FiniteElementSpec
+    geometry_element: FiniteElementSpec | ScalarCoordinateElement
+    routes: Array
+    coordinates: Array
+    reference_points: Array
+
+    def __call__(self) -> Array:
+        return run_owned_program(
+            self, "mapped-basis-gradients", _MappedGradientTable._evaluate
+        )
+
+    def _evaluate(self) -> Array:
+        element = self.element
+        geometry_element = self.geometry_element
+        reference_points = self.reference_points
+        if isinstance(geometry_element, PerCellRestrictedCellGeometryElement):
+            mapped_gradients = []
+            for cell_row in range(self.routes.shape[0]):
+                cell_coordinates = self.coordinates[self.routes[cell_row]]
+
+                def restricted_reference(
+                    reference: Array,
+                    cell_row: int = cell_row,
+                    nodes: Array = cell_coordinates,
+                ) -> Array:
+                    _, geometry_gradients = coordinate_tabulation(
+                        geometry_element, reference[None], cell_row=cell_row
+                    )
+                    jacobian = nodes.T @ geometry_gradients[0]
+                    values = element.tabulate(reference[None])[0][0]
+                    return map_reference_values(values, element.value_spec, jacobian)
+
+                mapped_gradients.append(
+                    _row_chunked_map(
+                        jax.vmap(jax.jacfwd(restricted_reference)), reference_points
+                    )
+                )
+            return jnp.stack(mapped_gradients, axis=0)
+
+        def mapped_reference(reference: Array, cell_coordinates: Array, /) -> Array:
+            gradients = geometry_element.tabulate(reference[None])[1][0]
+            jacobian = cell_coordinates.T @ gradients
+            values = element.tabulate(reference[None])[0][0]
+            return map_reference_values(values, element.value_spec, jacobian)
+
+        # Forward-mode gradients of every basis function at every (cell, point)
+        # row are formed for a bounded number of rows at a time.
+        cell_coordinates = self.coordinates[self.routes]
+        point_count = reference_points.shape[0]
+        row_cells = jnp.repeat(
+            jnp.arange(cell_coordinates.shape[0], dtype=jnp.int32), point_count
+        )
+        row_points = jnp.tile(
+            jnp.arange(point_count, dtype=jnp.int32), cell_coordinates.shape[0]
+        )
+        mapped = jax.vmap(jax.jacfwd(mapped_reference, argnums=0))
+
+        def mapped_rows(cells: Array, points: Array, /) -> Array:
+            return mapped(reference_points[points], cell_coordinates[cells])
+
+        gradients = _row_chunked_map(mapped_rows, row_cells, row_points)
+        return gradients.reshape(
+            (cell_coordinates.shape[0], point_count, *gradients.shape[1:])
+        )
+
+
+type _BlockGradientTable = (
+    _StoredGradientTable | _InverseJacobianGradientTable | _MappedGradientTable
+)
+
+
 class FiniteElementBlockGeometry(StrictModule, NonTrainableState):
     block_name: str = eqx.field(static=True)
     reference_points: Array
@@ -1467,10 +1573,15 @@ class FiniteElementBlockGeometry(StrictModule, NonTrainableState):
     basis_values: Array
     reference_gradients: Array
     physical_points: Array
-    physical_gradients: Array
+    gradient_table: _BlockGradientTable
     physical_weights: Array
     measure: Array
     coordinate_measure: CoordinateMeasurePlan | None = None
+
+    @property
+    def physical_gradients(self) -> Array:
+        """Physical basis gradients, formed from ``gradient_table`` when read."""
+        return self.gradient_table()
 
 
 class FiniteElementRuntimeData(StrictModule, NonTrainableState):
@@ -3164,6 +3275,7 @@ def _prepare_block_geometry(
                 precision_policy=precision_policy,
             )
         )
+        gradient_table: _BlockGradientTable = _StoredGradientTable(physical_gradients)
     else:
         (
             physical_points,
@@ -3188,11 +3300,8 @@ def _prepare_block_geometry(
             ),
         )
         if identity_mapped:
-            # Physical gradients are J^+T grad = J (J^T J)^-1 grad, formed from
-            # the (pseudo-)inverse Jacobian rather than J times the inverse
-            # metric: the metric is conditioned like r^-2, the Jacobian like r^-1.
-            physical_gradients = ein.contract(
-                "cqid,qki->cqkd", inverse_jacobian, reference_gradients
+            gradient_table = _InverseJacobianGradientTable(
+                inverse_jacobian, reference_gradients
             )
         else:
             physical_basis = map_reference_values(
@@ -3206,57 +3315,13 @@ def _prepare_block_geometry(
     if identity_mapped:
         physical_basis = basis_values
     else:
-        routes_ = block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
-        coordinates_ = (
-            mesh.coordinates if coordinates is None else jnp.asarray(coordinates)
+        gradient_table = _MappedGradientTable(
+            element,
+            geometry_element,
+            jnp.asarray(routes),
+            jnp.asarray(coordinate_values),
+            reference_points,
         )
-        if isinstance(geometry_element, PerCellRestrictedCellGeometryElement):
-            mapped_gradients = []
-            for cell_row in range(block.cell_count):
-                cell_coordinates = coordinates_[routes_[cell_row]]
-
-                def mapped_reference(reference: Array, /) -> Array:
-                    _, geometry_gradients = coordinate_tabulation(
-                        geometry_element, reference[None], cell_row=cell_row
-                    )
-                    jacobian_ = cell_coordinates.T @ geometry_gradients[0]
-                    values_ = element.tabulate(reference[None])[0][0]
-                    return map_reference_values(values_, element.value_spec, jacobian_)
-
-                mapped_gradients.append(
-                    _row_chunked_map(
-                        jax.vmap(jax.jacfwd(mapped_reference)), reference_points
-                    )
-                )
-            mapped_gradient = jnp.stack(mapped_gradients, axis=0)
-        else:
-
-            def mapped_reference(reference: Array, cell_coordinates: Array, /) -> Array:
-                gradients = geometry_element.tabulate(reference[None])[1][0]
-                jacobian_ = cell_coordinates.T @ gradients
-                values_ = element.tabulate(reference[None])[0][0]
-                return map_reference_values(values_, element.value_spec, jacobian_)
-
-            # Forward-mode gradients of every basis function at every (cell,
-            # point) row are formed for a bounded number of rows at a time.
-            cell_coordinates = coordinates_[routes_]
-            point_count = reference_points.shape[0]
-            row_cells = jnp.repeat(
-                jnp.arange(cell_coordinates.shape[0], dtype=jnp.int32), point_count
-            )
-            row_points = jnp.tile(
-                jnp.arange(point_count, dtype=jnp.int32), cell_coordinates.shape[0]
-            )
-            mapped = jax.vmap(jax.jacfwd(mapped_reference, argnums=0))
-
-            def mapped_rows(cells_: Array, points_: Array, /) -> Array:
-                return mapped(reference_points[points_], cell_coordinates[cells_])
-
-            mapped_gradient = _row_chunked_map(mapped_rows, row_cells, row_points)
-            mapped_gradient = mapped_gradient.reshape(
-                (cell_coordinates.shape[0], point_count, *mapped_gradient.shape[1:])
-            )
-        physical_gradients = mapped_gradient
     physical_weights = precision_policy.accumulation(
         measure_factor * reference_weights[None, :]
     )
@@ -3281,7 +3346,7 @@ def _prepare_block_geometry(
         basis_values=physical_basis,
         reference_gradients=reference_gradients,
         physical_points=physical_points,
-        physical_gradients=physical_gradients,
+        gradient_table=gradient_table,
         physical_weights=physical_weights,
         measure=precision_policy.output(jnp.sum(physical_weights, axis=1)),
         coordinate_measure=coordinate_measure,
@@ -3541,8 +3606,8 @@ def _masked_local_tensors(
         basis_values=policy.evaluation(basis_values),
         reference_gradients=reference_gradients,
         physical_points=physical_points,
-        physical_gradients=ein.contract(
-            "cqid,qki->cqkd", inverse_jacobian, reference_gradients
+        gradient_table=_InverseJacobianGradientTable(
+            inverse_jacobian, reference_gradients
         ),
         physical_weights=physical_weights,
         measure=policy.output(jnp.sum(physical_weights, axis=1)),

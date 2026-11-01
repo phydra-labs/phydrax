@@ -758,6 +758,23 @@ PHX_MC_API int32_t phx_mc_interval_bernstein_restrict(
     int64_t count, int32_t degree, int64_t width, const double* lower, const double* upper,
     const double* parameters, const int32_t* sides, double* out_lower, double* out_upper,
     int32_t parallelism);
+/* Elementwise set-based interval product of count aligned interval pairs: a
+ * zero endpoint times an unbounded one contributes 0, a NaN endpoint product
+ * gives (-inf, inf), an endpoint rounds outward one step only when its binary64
+ * product is not error free (Dekker TwoProduct within its exact window, or an
+ * exact zero factor), and a sign fixed by the operand signs is kept. Serial:
+ * the host interval interpreter calls it once per product of a small batch. */
+PHX_MC_API int32_t phx_mc_interval_multiply(
+    int64_t count, const double* first_lower, const double* first_upper,
+    const double* second_lower, const double* second_upper, double* lower, double* upper);
+/* Elementwise interval sum (subtract = 0) or difference (subtract = 1) of count
+ * aligned interval pairs: an endpoint rounds outward one step only when its
+ * binary64 sum is not error free (TwoSum), a NaN endpoint widens the result to
+ * the whole line, and a sum of sign-fixed operands keeps that sign. */
+PHX_MC_API int32_t phx_mc_interval_sum(
+    int64_t count, const double* first_lower, const double* first_upper,
+    const double* second_lower, const double* second_upper, int32_t subtract, double* lower,
+    double* upper);
 /* Exact Bernstein controls of polynomials sum_t N_t x^{e_t} / Q on a domain.
  * Item i owns terms [term_offsets[i], term_offsets[i + 1]) with exponents
  * (terms, dimension) and numerators (terms) words, degrees (count, degree_width)

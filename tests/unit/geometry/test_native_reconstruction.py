@@ -223,3 +223,170 @@ def test_triangle_charts_bind_shared_corners_exactly() -> None:
     )
     assert revised is not domain
     assert revised.source_revision == "revision-2"
+
+
+def test_triangle_complex_domain_host_evaluation_and_currentness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import copy
+    import pickle
+
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.geometry._meshing_domain import MeshingDomain, ValidatedMeshingDomain
+    from phydrax.geometry.reconstruction._core import (
+        _ReconstructedTrianglePatch,
+        _triangle_complex_meshing_domain,
+    )
+
+    vertices = np.asarray(
+        (
+            (0.1, -0.17805949718576636, 0.7),
+            (0.3, 0.2, -0.06075031604080055),
+            (-0.2, 0.4, 0.1),
+            (0.05, 0.1, 0.9),
+        ),
+        dtype=np.float64,
+    )
+    faces = np.asarray(((0, 2, 1), (0, 1, 3), (1, 2, 3), (0, 3, 2)), dtype=np.int64)
+    edges = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64)
+    domain = _triangle_complex_meshing_domain(
+        vertices,
+        faces,
+        edges,
+        "host-evaluation-tetrahedron",
+        "revision-1",
+        "binding-1",
+        tuple(np.arange(count, dtype=np.int64) for count in (4, 6, 4)),
+        0,
+        ("reconstructed_vertex", "reconstructed_edge", "reconstructed_triangle"),
+        None,
+    )
+
+    # Host (stacked) chart evaluation is bit-identical to each chart's evaluate.
+    generator = np.random.default_rng(7)
+    rows = generator.integers(0, faces.shape[0], 64)
+    charts = generator.random((64, 2)) * 0.5
+    expected = np.stack(
+        [
+            np.asarray(domain.patches[int(row)].surface.evaluate(jnp.asarray(chart)))
+            for row, chart in zip(rows, charts, strict=True)
+        ]
+    )
+    np.testing.assert_array_equal(domain.evaluate(rows, charts), expected)
+    # Host trim endpoints are bit-identical to the p-curve's own evaluation.
+    for patch in domain.patches:
+        for use in patch.loops[0]:
+            parameters = (use.first, use.last) if use.sense > 0 else (use.last, use.first)
+            np.testing.assert_array_equal(
+                use.traversal_endpoints(),
+                np.asarray(use.pcurve.evaluate(jnp.asarray(parameters))),
+            )
+
+    fingerprinted: list[MeshingDomain] = []
+    content_domain_id = MeshingDomain.content_domain_id
+
+    def counted_content_domain_id(self: MeshingDomain) -> str:
+        fingerprinted.append(self)
+        return content_domain_id(self)
+
+    monkeypatch.setattr(MeshingDomain, "content_domain_id", counted_content_domain_id)
+    validated = domain.require_current("host-evaluation-tetrahedron", "revision-1")
+    assert isinstance(validated, ValidatedMeshingDomain)
+    assert validated.binds(domain)
+    assert len(fingerprinted) == 1 and fingerprinted[0] is domain
+    with pytest.raises(TypeError):
+        ValidatedMeshingDomain(domain, True, token=object())
+    # The validation spares the fingerprint for its own domain object, also
+    # through the boundary queries that keep it.
+    assert domain.require_current(validated=validated) is validated
+    query = MeshingDomainBoundarySource(domain, (0, 1, 2, 3), validated=validated)
+    query.require_current()
+    MeshingDomainBoundarySource(
+        domain, (1,), validated=query.validated_domain
+    ).require_current()
+    assert len(fingerprinted) == 1
+    with pytest.raises(ValueError, match="source_revision changed"):
+        domain.require_current(None, "revision-2", validated=validated)
+
+    # Copies, pickles and pytree rebuilds are other objects: fingerprinted again.
+    # Copied and unpickled NumPy leaves are writable, so their validations prove
+    # only their moment.
+    copied = copy.deepcopy(domain)
+    assert not validated.binds(copied)
+    copied_record = copied.require_current(validated=validated)
+    assert copied_record.domain is copied
+    assert not copied_record.binds(copied)
+    assert fingerprinted[-1] is copied
+    restored = pickle.loads(pickle.dumps(validated))
+    assert restored.domain is not domain
+    assert fingerprinted[-1] is restored.domain
+    rebuilt = jax.tree_util.tree_map(lambda leaf: leaf, domain)
+    assert rebuilt is not domain
+    rebuilt_record = rebuilt.require_current(validated=validated)
+    assert rebuilt_record.binds(rebuilt)
+    assert fingerprinted[-1] is rebuilt
+    rebuilt_query = eqx.tree_at(lambda value: value.domain, query, rebuilt)
+    rebuilt_query.require_current()
+    assert len(fingerprinted) == 5
+    assert fingerprinted[-1] is rebuilt_query.domain
+    surface = domain.patches[1].surface
+    assert isinstance(surface, _ReconstructedTrianglePatch)
+    stale = eqx.tree_at(
+        lambda value: value.patches[1].surface.corners, domain, surface.corners + 1.0e-3
+    )
+    with pytest.raises(ValueError, match="content changed"):
+        stale.require_current(validated=validated)
+
+    # Over a writable leaf a validation proves only its moment: an in-place
+    # edit afterwards is fingerprinted and refused.
+    banks = domain.scope_entity_id_banks
+    writable = np.array(banks[2], copy=True)
+    mutable = eqx.tree_at(
+        lambda value: value.scope_entity_id_banks,
+        domain,
+        (*banks[:2], writable, *banks[3:]),
+    )
+    record = mutable.require_current()
+    assert not record.binds(mutable)
+    writable[0] += 1
+    with pytest.raises(ValueError, match="content changed"):
+        mutable.require_current(validated=record)
+
+
+def test_triangle_trim_partition_matches_constrained_triangulation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fractions import Fraction
+
+    from phydrax.geometry import _domain_boundary as boundary
+
+    zero, one = Fraction(0), Fraction(1)
+    triangles = (
+        ((zero, zero), (one, zero), (zero, one)),
+        ((one, zero), (zero, one), (zero, zero)),
+        (
+            (Fraction(3, 4), Fraction(-1, 8)),
+            (Fraction(5, 2), one),
+            (-one, Fraction(9, 16)),
+        ),
+    )
+    segments = ((0, 1), (1, 2), (2, 0))
+
+    def partitions() -> list[object]:
+        return [
+            (
+                boundary._exact_trim_triangles(points, segments, (points,)),
+                boundary._cover_chord_triangles(0, points, segments, (points,)),
+            )
+            for points in triangles
+        ]
+
+    screened = partitions()
+    # Without the triangle screen every trim goes through the native
+    # constrained triangulation; the exact partitions are the same tuples.
+    monkeypatch.setattr(boundary, "_is_positive_trim_triangle", lambda *_: False)
+    assert partitions() == screened == [((points,), (points,)) for points in triangles]

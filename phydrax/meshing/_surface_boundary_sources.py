@@ -175,6 +175,35 @@ def _triangle_side_ids(mesh: cell_mesh_owner.CellMesh) -> np.ndarray:
         ) from error
 
 
+def _root_domain_id(
+    root: domain_boundary_owner.MeshingDomainBoundarySource
+    | SurfaceSubdivisionBoundarySource,
+    /,
+) -> str:
+    """The content identity of a boundary root's domain, checked current.
+
+    The root's domain query keeps its domain validation, so the content is
+    fingerprinted only when that query's domain is not the validated object.
+    """
+    query = root.root if isinstance(root, SurfaceSubdivisionBoundarySource) else root
+    query.require_current()
+    return query.domain.domain_id
+
+
+def _binds_support_domain(
+    root: domain_boundary_owner.MeshingDomainBoundarySource
+    | SurfaceSubdivisionBoundarySource,
+    support: surface_support_owner.PreparedSurfaceSourceSupport,
+    /,
+) -> bool:
+    """Whether the root's current domain has the support domain's current content."""
+    root_id = _root_domain_id(root)
+    domain = support.domain
+    if domain is not root.domain:
+        domain.require_current()
+    return root_id == domain.domain_id
+
+
 def _boundary_occurrence_identity(
     source: domain_boundary_owner.MeshingDomainBoundarySource, /
 ) -> str:
@@ -182,7 +211,7 @@ def _boundary_occurrence_identity(
         {
             "kind": "meshing-domain-boundary-occurrences",
             "source": (source.source_id, source.source_revision),
-            "domain": source.domain.content_domain_id(),
+            "domain": _root_domain_id(source),
             "scope": source.source_scope_id,
             "patches": source.patches,
             "resolution": source.resolution,
@@ -303,6 +332,7 @@ def _subdivide_boundary_occurrences(
         boundary_cell_ids=target_ids.astype(np.int64),
         boundary_patch_ids=patches,
         boundary_occurrences=bank,
+        validated=source.validated_domain,
     )
 
 
@@ -335,6 +365,7 @@ def _boundary_sources_by_patch(
             boundary_occurrences=bank,
             boundary_cell_ids=cell_ids,
             boundary_patch_ids=owners,
+            validated=source.validated_domain,
         )
         output.append((patch, query))
     return tuple(output)
@@ -468,7 +499,7 @@ class SurfaceSubdivisionBoundarySource(StrictModule, NonTrainableState):
         if (
             (root.source_id, root.source_revision)
             != (support.domain.source_id, support.domain.source_revision)
-            or root.domain.content_domain_id() != support.domain.content_domain_id()
+            or not _binds_support_domain(root, support)
             or set(root.patches)
             != set(np.asarray(support.root_patches, dtype=np.int64).tolist())
         ):
@@ -628,7 +659,7 @@ def _validate_surface_chart_boundary_binding(
     if (
         (root.source_id, root.source_revision)
         != (support.domain.source_id, support.domain.source_revision)
-        or root.domain.content_domain_id() != support.domain.content_domain_id()
+        or not _binds_support_domain(root, support)
         or set(root.patches)
         != set(np.asarray(support.root_patches, dtype=np.int64).tolist())
     ):
@@ -663,7 +694,7 @@ def _surface_boundary_root_identity(
             {
                 "kind": "surface-subdivision-boundary-root",
                 "source": (root.source_id, root.source_revision),
-                "domain": root.domain.content_domain_id(),
+                "domain": _root_domain_id(root),
                 "support": root.support.support_id,
                 "root_boundary": _boundary_occurrence_identity(root.root),
                 "lineages": tuple(value.lineage_id for value in root.lineages),
