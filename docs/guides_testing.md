@@ -233,6 +233,19 @@ within a matching environment fingerprint; timing and RSS remain observations.
 The focused tests are `tests/integration/test_audit_memory_patterns.py` and
 `tests/unit/test_benchmark_memory.py`.
 
+### Exact-rational hot-path audit
+
+Run `python tools/audit_fraction_hotpaths.py` to list hand-written `Fraction`
+elimination loops (pivot selection plus row updates) outside
+`phydrax.linalg._exact`, which owns exact solve, inverse, rank, determinant,
+and nullspace. Every finding needs an exact path/symbol/rule row with a
+rationale in `docs/plans/fraction-hotpath-allowlist.tsv`; new, stale,
+duplicate, and unsorted rows fail. Loops over a literal dimension of at most
+four entries are the fixed tiny-system case and are not reported. Polynomial
+and Bernstein work uses integer numerators over one shared denominator, and
+binary64 bounds use integer cross-multiplied directed rounding. The focused
+test is `tests/integration/test_audit_fraction_hotpaths.py`.
+
 ## Performance evidence
 
 `--durations`, collection timing, import timing, process RSS, and JAX compile logs only

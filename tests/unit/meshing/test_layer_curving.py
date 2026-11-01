@@ -490,7 +490,7 @@ def test_mapped_root_layer_builds_and_revalidates_exact_source_evidence() -> Non
         ],
         np.asarray(result.construction.mesh.coordinates),
     )
-    evidence.require_current(result.construction.mesh, result.candidate_geometry)
+    evidence.revalidate(result.construction.mesh, result.candidate_geometry)
 
 
 def test_layer_curving_source_revision_mismatch_rolls_back_unchanged() -> None:
@@ -663,4 +663,4 @@ def test_restricted_layer_transition_replays_full_map_without_node_rows() -> Non
     assert evidence is not None and evidence.source_surface_charts is not None
     assert evidence.projection_trace is None
     assert evidence.chart_witness.mesh_id == result.construction.mesh.mesh_id
-    evidence.require_current(result.construction.mesh, result.construction.geometry)
+    evidence.revalidate(result.construction.mesh, result.construction.geometry)

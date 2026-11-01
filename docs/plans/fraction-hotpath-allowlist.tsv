@@ -1,0 +1,9 @@
+path	symbol	rule	rationale
+phydrax/_numerics/_adaptive_cubature_rules.py	_orbit_weights	fraction-elimination	cold/cached: rectangular Genz-Malik moment system solved once per (dimension, degree) inside the host_table_cache-backed _genz_malik_host_table; the caller needs the exact residual of the non-pivot rows, which the exact owner reports only as a refusal.
+phydrax/algebraic/_exact_integer.py	smith_normal_decomposition	fraction-elimination	integer ring: Smith normal form over Z with floor-quotient unimodular row/column operations; not field elimination and has no rational-owner equivalent.
+phydrax/discretization/fem/_de_rham.py	_exact_affine_simplex_reference_vertex	fraction-elimination	tiny: barycentric solve of one simplex of dimension at most three in ambient dimension at most three, with its own rectangular consistency refusal per declared parent simplex.
+phydrax/geometry/_embedding_cells.py	_solve_affine	fraction-elimination	tiny: (d + 1) x (d + 1) affine fit with d at most three over reference-vertex subsets, with algebraic (radical) image columns that keep their exact scalar types.
+phydrax/geometry/_global_embedding.py	_full_column_rank	fraction-elimination	tiny: rank of an affine chart matrix of dimension at most three whose entries may be radical exact scalars.
+phydrax/geometry/_global_embedding.py	_inverse_affine_arguments	fraction-elimination	tiny: inverse of an affine chart matrix of dimension at most three whose entries may be radical exact scalars.
+phydrax/geometry/_global_embedding.py	_solve_affine_values	fraction-elimination	tiny: affine interpolation through reference corners of dimension at most three, with an exact residual check of every corner.
+phydrax/topology/_reduction.py	rational_rank	fraction-elimination	instrumented: column reduction that records per-operation rational growth statistics and enforces the max_reduction_entries resource policy of the topology API.

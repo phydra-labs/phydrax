@@ -23,7 +23,7 @@ from typing import cast, Literal, overload
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -2403,32 +2403,21 @@ def certify_asts(
     partition = exact_partition
     nonnegative = exact_nonnegative
     checks = (
-        (analysis_suitable, "intersecting T-junction extensions"),
-        (dual_compatible, "incompatible topology-derived knot windows"),
-        (partition, "exact partition-of-unity identity"),
-        (nonnegative, "negative exact Bernstein coefficient"),
-        (linearly_independent, "analysis-suitable independence premises"),
-        (parameter_partition_valid, "invalid exact parameter cell complex"),
-        (active_support_complete, "T-mesh cell has no active basis support"),
-        (extraction_valid, "non-polynomial T-mesh cell"),
-        (trace_continuous, "exact cross-cell C2 trace continuity"),
+        analysis_suitable,
+        dual_compatible,
+        partition,
+        nonnegative,
+        linearly_independent,
+        parameter_partition_valid,
+        active_support_complete,
+        extraction_valid,
+        trace_continuous,
     )
-    failure_reasons = tuple(reason for passed, reason in checks if not passed)
-    payload = {
-        "kind": "asts2d-certificate",
-        "mesh": mesh.mesh_id,
-        "checks": [bool(value) for value, _ in checks],
-        "diagnostics": {
-            "maximum_partition_error": maximum_partition_error,
-            "minimum_sampled_basis_value": minimum_basis_value,
-            "minimum_extraction_rank": minimum_rank,
-            "minimum_rank_margin": minimum_rank_margin,
-            "maximum_extraction_condition": maximum_condition,
-            "local_full_rank_diagnostic": full_rank,
-            "continuity_order": continuity_order,
-        },
-        "tolerance": tolerance_,
-    }
+    failure_reasons = tuple(
+        reason
+        for passed, reason in zip(checks, _ASTS_CHECK_REASONS, strict=True)
+        if not passed
+    )
     return ASTSCertificate(
         mesh.mesh_id,
         analysis_suitable,
@@ -2447,25 +2436,115 @@ def certify_asts(
         maximum_condition,
         tolerance_,
         failure_reasons,
-        canonical_fingerprint(payload),
+        _asts_certificate_id(
+            mesh.mesh_id,
+            checks,
+            maximum_partition_error,
+            minimum_basis_value,
+            minimum_rank,
+            minimum_rank_margin,
+            maximum_condition,
+            full_rank,
+            continuity_order,
+            tolerance_,
+        ),
+    )
+
+
+_ASTS_CHECK_REASONS = (
+    "intersecting T-junction extensions",
+    "incompatible topology-derived knot windows",
+    "exact partition-of-unity identity",
+    "negative exact Bernstein coefficient",
+    "analysis-suitable independence premises",
+    "invalid exact parameter cell complex",
+    "T-mesh cell has no active basis support",
+    "non-polynomial T-mesh cell",
+    "exact cross-cell C2 trace continuity",
+)
+
+
+def _asts_certificate_id(
+    mesh_id: str,
+    checks: Sequence[bool],
+    maximum_partition_error: float | None,
+    minimum_basis_value: float | None,
+    minimum_rank: int | None,
+    minimum_rank_margin: int | None,
+    maximum_condition: float | None,
+    full_rank: bool,
+    continuity_order: int,
+    tolerance: float,
+    /,
+) -> str:
+    """Identity `certify_asts` issues for one proved basis certificate."""
+    return canonical_fingerprint(
+        {
+            "kind": "asts2d-certificate",
+            "mesh": mesh_id,
+            "checks": [bool(value) for value in checks],
+            "diagnostics": {
+                "maximum_partition_error": maximum_partition_error,
+                "minimum_sampled_basis_value": minimum_basis_value,
+                "minimum_extraction_rank": minimum_rank,
+                "minimum_rank_margin": minimum_rank_margin,
+                "maximum_extraction_condition": maximum_condition,
+                "local_full_rank_diagnostic": full_rank,
+                "continuity_order": continuity_order,
+            },
+            "tolerance": tolerance,
+        }
     )
 
 
 def _validated_asts_certificate(
     mesh: TMesh2D, certificate: ASTSCertificate, /
 ) -> ASTSCertificate:
-    """Recompute a retained basis certificate before treating it as evidence."""
+    """Check a retained basis certificate against the identity its proof issued.
+
+    `certify_asts` proves once; its identity binds the mesh content identity,
+    every check and diagnostic, and the tolerance. A certificate whose fields
+    no longer reproduce that identity (an edited copy) is refused; an intact
+    one is the proof for exactly this mesh and is not proved again.
+    """
     if (
         not isinstance(certificate, ASTSCertificate)
         or certificate.mesh_id != mesh.mesh_id
     ):
         raise ValueError("A retained ASTS certificate must match its immutable mesh.")
-    verified = certify_asts(mesh, tolerance=certificate.tolerance)
-    if certificate.qualification_payload() != verified.qualification_payload():
+    reasons = certificate.failure_reasons
+    checks = (
+        certificate.analysis_suitable,
+        certificate.dual_compatible,
+        certificate.partition_of_unity,
+        certificate.nonnegative,
+        certificate.linearly_independent,
+        certificate.parameter_partition_valid,
+        _ASTS_CHECK_REASONS[6] not in reasons,
+        _ASTS_CHECK_REASONS[7] not in reasons,
+        certificate.trace_continuous,
+    )
+    expected_reasons = tuple(
+        reason
+        for passed, reason in zip(checks, _ASTS_CHECK_REASONS, strict=True)
+        if not passed
+    )
+    if reasons != expected_reasons or certificate.certificate_id != _asts_certificate_id(
+        certificate.mesh_id,
+        checks,
+        certificate.maximum_partition_error,
+        certificate.minimum_basis_value,
+        certificate.minimum_extraction_rank,
+        certificate.minimum_rank_margin,
+        certificate.maximum_extraction_condition,
+        certificate.extraction_full_rank,
+        certificate.continuity_order,
+        certificate.tolerance,
+    ):
         raise ValueError(
-            "A retained ASTS certificate does not match recomputed evidence."
+            "A retained ASTS certificate does not match recomputed evidence identity."
         )
-    return verified
+    return certificate
 
 
 def _exact_numeric_rows(
@@ -2869,6 +2948,41 @@ class ASTSTransferPlan(StrictModule, NonTrainableState):
     def route_count(self) -> int:
         return len(self.exact_coefficients)
 
+    def require_current_identity(self, /) -> None:
+        """Refuse a plan whose retained routes no longer reproduce its identity.
+
+        Traced numeric leaves are checked by the concrete call that built them.
+        """
+        rebuilt = ASTSTransferPlan(
+            self.source_mesh_id,
+            self.target_mesh_id,
+            self.source_count,
+            self.target_count,
+            self.route_targets,
+            self.route_sources,
+            self.exact_coefficients,
+        )
+        leaves = (self.target_indices, self.source_indices, self.coefficients)
+        concrete = not any(isinstance(leaf, jax_core.Tracer) for leaf in leaves)
+        if rebuilt.plan_id != self.plan_id or (
+            concrete
+            and not all(
+                np.array_equal(np.asarray(expected), np.asarray(leaf))
+                for expected, leaf in zip(
+                    (
+                        rebuilt.target_indices,
+                        rebuilt.source_indices,
+                        rebuilt.coefficients,
+                    ),
+                    leaves,
+                    strict=True,
+                )
+            )
+        ):
+            raise ValueError(
+                "A retained ASTS transfer plan does not reproduce its exact identity."
+            )
+
     def apply(self, source_coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(source_coefficients)
         if values.shape[0] != self.source_count:
@@ -3238,6 +3352,20 @@ class ASTSTransferPlan(StrictModule, NonTrainableState):
         return target_values / target_scale, target_weights
 
 
+@dataclass(frozen=True, slots=True)
+class _ProvedRefinementInclusion:
+    """Issued only by `analysis_suitable_refinement_closure` after its proof.
+
+    The closure has certified both bases, resolved the exact routes and proved
+    complete local basis inclusion for exactly this plan; the refinement it
+    constructs checks these identities instead of proving them again.
+    """
+
+    source_certificate: ASTSCertificate
+    target_certificate_id: str
+    plan_id: str
+
+
 class ASTSRefinement(StrictModule, NonTrainableState):
     """Atomic local refinement with exact basis and entity lineage evidence."""
 
@@ -3260,6 +3388,8 @@ class ASTSRefinement(StrictModule, NonTrainableState):
         transfer_plan: ASTSTransferPlan,
         certificate: ASTSCertificate,
         /,
+        *,
+        _proved_inclusion: _ProvedRefinementInclusion | None = None,
     ) -> None:
         if transfer_plan.source_mesh_id != source_mesh.mesh_id:
             raise ValueError(
@@ -3267,23 +3397,36 @@ class ASTSRefinement(StrictModule, NonTrainableState):
             )
         if transfer_plan.target_mesh_id != refined_mesh.mesh_id:
             raise ValueError("Transfer target identity does not match the refined mesh.")
-        source_certificate = source_mesh.certify()
+        proof = (
+            _proved_inclusion
+            if isinstance(_proved_inclusion, _ProvedRefinementInclusion)
+            and _proved_inclusion.plan_id == transfer_plan.plan_id
+            and _proved_inclusion.target_certificate_id == certificate.certificate_id
+            else None
+        )
+        proved = proof is not None
+        source_certificate = (
+            source_mesh.certify()
+            if proof is None
+            else _validated_asts_certificate(source_mesh, proof.source_certificate)
+        )
         certificate_ = _validated_asts_certificate(refined_mesh, certificate)
         if not source_certificate.passed or not certificate_.passed:
             raise ValueError("A refinement result requires passing ASTS certificates.")
-        routes = tuple(
-            zip(
-                transfer_plan.route_targets,
-                transfer_plan.route_sources,
-                transfer_plan.exact_coefficients,
-                strict=True,
+        if not proved:
+            routes = tuple(
+                zip(
+                    transfer_plan.route_targets,
+                    transfer_plan.route_sources,
+                    transfer_plan.exact_coefficients,
+                    strict=True,
+                )
             )
-        )
-        if routes != _exact_basis_transfer_routes(source_mesh, refined_mesh):
-            raise ValueError(
-                "A refinement result requires exact source-to-target routes."
-            )
-        _verify_local_basis_inclusion(source_mesh, refined_mesh, routes, certificate_)
+            if routes != _exact_basis_transfer_routes(source_mesh, refined_mesh):
+                raise ValueError(
+                    "A refinement result requires exact source-to-target routes."
+                )
+            _verify_local_basis_inclusion(source_mesh, refined_mesh, routes, certificate_)
         marked = tuple(sorted(int(value) for value in marked_cell_ids))
         closure = tuple(sorted(int(value) for value in closure_cell_ids))
         lineage = tuple(
@@ -4030,6 +4173,11 @@ def analysis_suitable_refinement_closure(
         lineage_events,
         transfer,
         target_certificate,
+        _proved_inclusion=_ProvedRefinementInclusion(
+            source_certificate,
+            target_certificate.certificate_id,
+            transfer.plan_id,
+        ),
     )
 
 

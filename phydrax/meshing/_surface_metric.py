@@ -516,6 +516,52 @@ def _periodic_rows(
 _AZIMUTH_STRETCH_FLOOR = float(np.finfo(np.float64).eps) ** 0.25
 
 
+def _implicit_chart_frames(
+    surface: _ImplicitParameterSurface, parameters: np.ndarray, /
+) -> np.ndarray:
+    """Chart Jacobians ``(n, 3, 2)`` of an analytic implicit surface.
+
+    At a sphere pole, where the exact azimuth column ``R sin(polar) w`` falls
+    below the binary64 floor, the column is ``R * floor * w`` on the pole's
+    tangent plane, aligned with the point's own azimuth.
+    """
+    first, second = parameters[:, 0], parameters[:, 1]
+    radius = float(surface.profile.radius)
+    zero = np.zeros_like(first)
+    if surface.profile.family == "sphere":
+        polar_sine, polar_cosine = np.sin(first), np.cos(first)
+        azimuth_sine, azimuth_cosine = np.sin(second), np.cos(second)
+        polar_axis = np.stack(
+            (polar_cosine * azimuth_cosine, polar_cosine * azimuth_sine, -polar_sine),
+            axis=1,
+        )
+        azimuth_axis = np.stack(
+            (-polar_sine * azimuth_sine, polar_sine * azimuth_cosine, zero), axis=1
+        )
+        frames = radius * np.stack((polar_axis, azimuth_axis), axis=2)
+        floored = np.abs(polar_sine) < _AZIMUTH_STRETCH_FLOOR
+        frames[floored, :, 1] = (radius * _AZIMUTH_STRETCH_FLOOR) * np.stack(
+            (-azimuth_sine, azimuth_cosine, zero), axis=1
+        )[floored]
+        return frames
+    longitude_sine, longitude_cosine = np.sin(first), np.cos(first)
+    latitude_sine, latitude_cosine = np.sin(second), np.cos(second)
+    ring = float(surface.profile.major_radius) + radius * latitude_cosine
+    longitude_axis = np.stack(
+        (-ring * longitude_sine, ring * longitude_cosine, zero), axis=1
+    )
+    ring_rate = -radius * latitude_sine
+    latitude_axis = np.stack(
+        (
+            ring_rate * longitude_cosine,
+            ring_rate * longitude_sine,
+            radius * latitude_cosine,
+        ),
+        axis=1,
+    )
+    return np.stack((longitude_axis, latitude_axis), axis=2)
+
+
 def _pullback_metrics(
     domain: MeshingDomain | _ImplicitMetricDomain,
     patches: np.ndarray,
@@ -528,6 +574,11 @@ def _pullback_metrics(
     for patch in np.unique(patches).tolist():
         rows = np.flatnonzero(patches == patch)
         surface = domain.patches[int(patch)].surface
+        if isinstance(surface, _ImplicitParameterSurface):
+            jacobians = _implicit_chart_frames(surface, chart_values[rows])
+            value = np.swapaxes(jacobians, 1, 2) @ physical[rows] @ jacobians
+            result[rows] = 0.5 * (value + np.swapaxes(value, 1, 2))
+            continue
         differential = jax.jacfwd(surface.evaluate)
         jacobians = np.asarray(
             jax.vmap(differential)(jnp.asarray(chart_values[rows], dtype=jnp.float64)),
@@ -586,26 +637,6 @@ def _pullback_metrics(
                     second_axis = np.cross(axis, first_axis)
                     jacobian = chart_frame @ (
                         2.0 * radial_speed * np.stack((first_axis, second_axis), axis=1)
-                    )
-            elif (
-                isinstance(surface, _ImplicitParameterSurface)
-                and surface.profile.family == "sphere"
-            ):
-                polar, azimuth = (float(value) for value in chart_values[row])
-                if abs(math.sin(polar)) < _AZIMUTH_STRETCH_FLOOR:
-                    # Exact polar derivative; azimuth axis on the pole's tangent
-                    # plane, aligned with this chart point's azimuth.
-                    tangent = np.asarray(
-                        (-math.sin(azimuth), math.cos(azimuth), 0.0), dtype=np.float64
-                    )
-                    jacobian = np.stack(
-                        (
-                            jacobian[:, 0],
-                            float(surface.profile.radius)
-                            * _AZIMUTH_STRETCH_FLOOR
-                            * tangent,
-                        ),
-                        axis=1,
                     )
             value = jacobian.T @ physical[row] @ jacobian
             result[row] = 0.5 * (value + value.T)

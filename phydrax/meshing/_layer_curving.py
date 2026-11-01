@@ -1281,6 +1281,9 @@ def _curve_adaptive_implicit_layer_core(
                 tuple[ExactScalar, ExactScalar, ExactScalar],
             ]
         ] = []
+        pending: list[
+            tuple[int, _SourceFace, int, tuple[ExactScalar, ExactScalar, ExactScalar]]
+        ] = []
         for face in faces:
             element = _face_reference_element(
                 elements[face.target_block_row],
@@ -1299,26 +1302,34 @@ def _curve_adaptive_implicit_layer_core(
                     # vertices are near-roots, not scaffold roots; the final
                     # chart proofs bound every face point, corners included.
                     continue
-                point = root_map.project_target(face.chart_row, reference)
-                previous = assigned.get(geometry_row)
-                if previous is not None and not np.array_equal(
-                    previous.view(np.uint64), point.point.view(np.uint64)
-                ):
-                    raise ValueError(
-                        "Adjacent implicit root charts disagree on a shared geometry node."
-                    )
-                assigned[geometry_row] = np.array(point.point, copy=True)
-                candidate_coordinates[geometry_row] = point.point
-                node_records.append(
-                    (
-                        geometry_row,
-                        face.target_cell_id,
-                        local_dof,
-                        face.chart_row,
-                        face,
-                        reference,
-                    )
+                pending.append((geometry_row, face, local_dof, reference))
+        # One batched lift; each point is exactly its single-point lift.
+        lifted = root_map.project_targets(
+            tuple(face.chart_row for _, face, _, _ in pending),
+            tuple(reference for _, _, _, reference in pending),
+        )
+        for (geometry_row, face, local_dof, reference), point in zip(
+            pending, lifted, strict=True
+        ):
+            previous = assigned.get(geometry_row)
+            if previous is not None and not np.array_equal(
+                previous.view(np.uint64), point.point.view(np.uint64)
+            ):
+                raise ValueError(
+                    "Adjacent implicit root charts disagree on a shared geometry node."
                 )
+            assigned[geometry_row] = np.array(point.point, copy=True)
+            candidate_coordinates[geometry_row] = point.point
+            node_records.append(
+                (
+                    geometry_row,
+                    face.target_cell_id,
+                    local_dof,
+                    face.chart_row,
+                    face,
+                    reference,
+                )
+            )
         if not node_records:
             raise ValueError(
                 "Adaptive implicit charts constrain no high-order layer boundary DOFs."
@@ -1391,8 +1402,13 @@ def _curve_adaptive_implicit_layer_core(
         source_column_ids: list[tuple[int, ...]] = []
         source_column_identities: list[tuple[str, ...]] = []
         source_column_root_vertex_ids: list[tuple[int, ...]] = []
-        for geometry_row, cell_id, local_dof, chart_row, face, reference in node_records:
-            point = final_map.project_target(chart_row, reference)
+        final_points = final_map.project_targets(
+            tuple(record[3] for record in node_records),
+            tuple(record[5] for record in node_records),
+        )
+        for (geometry_row, cell_id, local_dof, chart_row, face, reference), point in zip(
+            node_records, final_points, strict=True
+        ):
             geometry_rows.append(geometry_row)
             target_cells.append(cell_id)
             local_dofs.append(local_dof)
@@ -1541,6 +1557,8 @@ def _curve_adaptive_implicit_layer_core(
             tolerance=fidelity_tolerance,
             maximum_normal_deviation=maximum_normal_deviation,
             witness=witness,
+            # The final root charts were prepared for exactly this request.
+            root_charts=final_map,
         )
     except (ArithmeticError, TypeError, ValueError) as error:
         return _rollback(

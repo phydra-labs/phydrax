@@ -38,7 +38,7 @@ from hashlib import sha256
 from heapq import heapify, heappop, heappush
 from math import isqrt, sqrt
 from numbers import Integral
-from typing import assert_never, final, Literal, TypeAlias
+from typing import assert_never, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -57,6 +57,10 @@ from ..typing import (
 )
 from ._properties import LinearCapabilityError
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
+
+
+if TYPE_CHECKING:
+    import scipy.sparse as sp
 
 
 SparseOrdering: TypeAlias = Literal[
@@ -294,9 +298,10 @@ def _validated_pattern(
         raise ValueError("CSR indptr must be nondecreasing.")
     if np.any(indices < 0) or np.any(indices >= storage.shape[1]):
         raise ValueError("CSR column index is out of range.")
-    for row in range(storage.shape[0]):
-        columns = indices[indptr[row] : indptr[row + 1]]
-        if columns.size > 1 and np.any(columns[1:] <= columns[:-1]):
+    if indices.size > 1:
+        rows = np.repeat(np.arange(storage.shape[0], dtype=np.int64), np.diff(indptr))
+        same_row = rows[1:] == rows[:-1]
+        if np.any(same_row & (indices[1:] <= indices[:-1])):
             raise ValueError("Sparse factorization requires canonical sorted CSR rows.")
     return storage, indices, indptr
 
@@ -606,10 +611,52 @@ def _symmetric_minimum_degree(
     return _minimum_degree_order(graph, degree, postponed, 0)
 
 
-def _symmetric_adjacency(
+@dataclass
+class _Graph:
+    """Sorted off-diagonal CSR adjacency of ``A + Aᵀ``.
+
+    ``local`` is scratch for inducing subgraphs: ``-1`` outside the part
+    being induced, restored after every use.
+    """
+
+    indptr: np.ndarray
+    indices: np.ndarray
+    degree: np.ndarray
+    local: np.ndarray
+
+    def neighbors(self, vertices: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+        """Positions in ``vertices`` and neighbors of every adjacency entry."""
+        counts = self.degree[vertices]
+        ends = np.cumsum(counts)
+        offsets = np.repeat(self.indptr[vertices] - (ends - counts), counts) + np.arange(
+            int(ends[-1]) if ends.size else 0, dtype=np.int64
+        )
+        return np.repeat(np.arange(vertices.size, dtype=np.int64), counts), self.indices[
+            offsets
+        ]
+
+    def induced(self, vertices: np.ndarray, /) -> sp.csr_matrix:
+        """Adjacency of the subgraph induced by ascending ``vertices``, locally."""
+        import scipy.sparse as sp
+
+        size = vertices.size
+        self.local[vertices] = np.arange(size, dtype=np.int64)
+        rows, neighbors = self.neighbors(vertices)
+        columns = self.local[neighbors]
+        self.local[vertices] = -1
+        kept = columns >= 0
+        indptr = np.zeros(size + 1, dtype=np.int64)
+        np.cumsum(np.bincount(rows[kept], minlength=size), out=indptr[1:])
+        return sp.csr_matrix(
+            (np.ones(int(indptr[-1]), dtype=np.int8), columns[kept], indptr),
+            shape=(size, size),
+        )
+
+
+def _symmetric_graph(
     size: int, indices: np.ndarray, indptr: np.ndarray, meter: _WorkMeter, /
-) -> list[list[int]]:
-    """Sorted off-diagonal neighbor lists of ``A + Aᵀ``."""
+) -> _Graph:
+    """Sorted off-diagonal CSR adjacency of ``A + Aᵀ``."""
     meter.add(2 * indices.size + size)
     rows = np.repeat(np.arange(size, dtype=np.int64), np.diff(indptr))
     off_diagonal = rows != indices
@@ -622,11 +669,19 @@ def _symmetric_adjacency(
         )
     )
     sources, targets = np.divmod(keys, size)
-    bounds = np.concatenate(
-        ([0], np.cumsum(np.bincount(sources, minlength=size)))
-    ).tolist()
-    neighbors = targets.tolist()
-    return [neighbors[bounds[vertex] : bounds[vertex + 1]] for vertex in range(size)]
+    degree = np.bincount(sources, minlength=size).astype(np.int64)
+    bounds = np.zeros(size + 1, dtype=np.int64)
+    np.cumsum(degree, out=bounds[1:])
+    return _Graph(bounds, targets, degree, np.full(size, -1, dtype=np.int64))
+
+
+def _adjacency_lists(indptr: np.ndarray, indices: np.ndarray, /) -> list[list[int]]:
+    neighbors = indices.tolist()
+    bounds = indptr.tolist()
+    return [
+        neighbors[bounds[vertex] : bounds[vertex + 1]]
+        for vertex in range(len(bounds) - 1)
+    ]
 
 
 def _reverse_cuthill_mckee(
@@ -645,116 +700,85 @@ def _reverse_cuthill_mckee(
 
 
 def _induced_minimum_degree(
-    vertices: list[int], adjacency: list[list[int]], meter: _WorkMeter, /
-) -> list[int]:
+    vertices: np.ndarray, graph: _Graph, meter: _WorkMeter, /
+) -> np.ndarray:
     """Minimum-degree order of the subgraph induced by ascending ``vertices``."""
-    local = {vertex: position for position, vertex in enumerate(vertices)}
-    induced: list[list[int]] = []
-    for vertex in vertices:
-        meter.add(len(adjacency[vertex]))
-        induced.append(
-            [local[neighbor] for neighbor in adjacency[vertex] if neighbor in local]
-        )
-    return [vertices[position] for position in _symmetric_minimum_degree(induced, meter)]
+    meter.add(int(graph.degree[vertices].sum()))
+    induced = graph.induced(vertices)
+    order = _symmetric_minimum_degree(
+        _adjacency_lists(induced.indptr, induced.indices), meter
+    )
+    return vertices[np.asarray(order, dtype=np.int64)]
 
 
-def _levels(
-    root: int, members: set[int], adjacency: list[list[int]], meter: _WorkMeter, /
-) -> list[list[int]]:
-    """Breadth-first level structure of the subgraph induced by ``members``."""
-    seen = {root}
-    frontier = [root]
-    levels: list[list[int]] = []
-    while frontier:
-        levels.append(frontier)
-        following: list[int] = []
-        for vertex in frontier:
-            meter.add(len(adjacency[vertex]))
-            for neighbor in adjacency[vertex]:
-                if neighbor in members and neighbor not in seen:
-                    seen.add(neighbor)
-                    following.append(neighbor)
-        frontier = following
-    return levels
+def _distances(adjacency: sp.csr_matrix, root: int, /) -> np.ndarray:
+    """Breadth-first levels of every vertex of a connected graph from ``root``."""
+    from scipy.sparse.csgraph import shortest_path
+
+    return shortest_path(
+        adjacency, method="D", directed=True, unweighted=True, indices=root
+    ).astype(np.int64)
 
 
 def _components(
-    vertices: list[int], adjacency: list[list[int]], meter: _WorkMeter, /
-) -> list[list[int]]:
+    vertices: np.ndarray, graph: _Graph, meter: _WorkMeter, /
+) -> list[np.ndarray]:
     """Connected components of the induced subgraph, by smallest vertex."""
-    members = set(vertices)
-    seen: set[int] = set()
-    components: list[list[int]] = []
-    for vertex in vertices:
-        if vertex in seen:
-            continue
-        component = sorted(
-            member
-            for level in _levels(vertex, members, adjacency, meter)
-            for member in level
-        )
-        seen.update(component)
-        components.append(component)
-    return components
+    from scipy.sparse.csgraph import connected_components
+
+    # One traversal reads every member's adjacency once.
+    meter.add(int(graph.degree[vertices].sum()))
+    count, labels = connected_components(graph.induced(vertices), directed=False)
+    if count == 1:
+        return [vertices]
+    _, first = np.unique(labels, return_index=True)
+    rank = np.empty(count, dtype=np.int64)
+    rank[np.argsort(first, kind="stable")] = np.arange(count, dtype=np.int64)
+    ranked = rank[labels]
+    order = np.argsort(ranked, kind="stable")
+    bounds = np.cumsum(np.bincount(ranked, minlength=count))[:-1]
+    return np.split(vertices[order], bounds)
 
 
-def _pseudo_peripheral_levels(
-    vertices: list[int],
-    members: set[int],
-    adjacency: list[list[int]],
-    meter: _WorkMeter,
-    /,
-) -> list[list[int]]:
-    """Level structure from a George–Liu pseudo-peripheral vertex."""
+def _cut_cover(
+    sources: np.ndarray, targets: np.ndarray, meter: _WorkMeter, /
+) -> np.ndarray:
+    """Minimum vertex cover of bipartite cut edges ``(source, target)`` (König).
 
-    def induced_degree(vertex: int, /) -> tuple[int, int]:
-        meter.add(len(adjacency[vertex]))
-        return sum(neighbor in members for neighbor in adjacency[vertex]), vertex
-
-    levels = _levels(min(vertices, key=induced_degree), members, adjacency, meter)
-    while True:
-        candidate = min(levels[-1], key=induced_degree)
-        candidate_levels = _levels(candidate, members, adjacency, meter)
-        if len(candidate_levels) <= len(levels):
-            return levels
-        levels = candidate_levels
-
-
-def _cut_cover(edges: list[tuple[int, int]], meter: _WorkMeter, /) -> set[int]:
-    """Minimum vertex cover of bipartite cut edges ``(first, second)`` (König)."""
+    Returns the ascending cover vertices.
+    """
     import scipy.sparse as sp
     from scipy.sparse.csgraph import maximum_bipartite_matching
 
-    first = sorted({edge[0] for edge in edges})
-    second = sorted({edge[1] for edge in edges})
+    first = np.unique(sources)
+    second = np.unique(targets)
     # Hopcroft–Karp performs O(E √V) work.
     meter.add(
-        len(edges) * (isqrt(len(first) + len(second)) + 1) + len(first) + len(second)
+        sources.size * (isqrt(first.size + second.size) + 1) + first.size + second.size
     )
-    first_index = {vertex: position for position, vertex in enumerate(first)}
-    second_index = {vertex: position for position, vertex in enumerate(second)}
-    rows = np.asarray([first_index[edge[0]] for edge in edges], dtype=np.int64)
-    columns = np.asarray([second_index[edge[1]] for edge in edges], dtype=np.int64)
     bipartite = sp.csr_matrix(
-        (np.ones(rows.size, dtype=np.int8), (rows, columns)),
-        shape=(len(first), len(second)),
+        (
+            np.ones(sources.size, dtype=np.int8),
+            (np.searchsorted(first, sources), np.searchsorted(second, targets)),
+        ),
+        shape=(first.size, second.size),
     )
     bipartite.sort_indices()
     matched_column = maximum_bipartite_matching(bipartite, perm_type="column").tolist()
-    matched_row = [-1] * len(second)
+    matched_row = [-1] * second.size
     for row, column in enumerate(matched_column):
         if column >= 0:
             matched_row[column] = row
     # Z: vertices reachable from unmatched first-side vertices by alternating
     # paths. The cover is (first \ Z) ∪ (second ∩ Z).
     reached_rows = [column < 0 for column in matched_column]
-    reached_columns = [False] * len(second)
+    reached_columns = [False] * second.size
     queue = [row for row, reached in enumerate(reached_rows) if reached]
     bounds = bipartite.indptr.tolist()
-    targets = bipartite.indices.tolist()
+    targets_list = bipartite.indices.tolist()
     while queue:
         row = queue.pop()
-        for column in targets[bounds[row] : bounds[row + 1]]:
+        for column in targets_list[bounds[row] : bounds[row + 1]]:
             if reached_columns[column] or matched_column[row] == column:
                 continue
             reached_columns[column] = True
@@ -762,46 +786,71 @@ def _cut_cover(edges: list[tuple[int, int]], meter: _WorkMeter, /) -> set[int]:
             if partner >= 0 and not reached_rows[partner]:
                 reached_rows[partner] = True
                 queue.append(partner)
-    return {first[row] for row, reached in enumerate(reached_rows) if not reached} | {
-        second[column] for column, reached in enumerate(reached_columns) if reached
-    }
+    return np.sort(
+        np.concatenate(
+            (
+                first[~np.asarray(reached_rows, dtype=bool)],
+                second[np.asarray(reached_columns, dtype=bool)],
+            )
+        )
+    )
 
 
-type _Split = tuple[list[int], list[int], list[int]]
+type _Split = tuple[np.ndarray, np.ndarray, np.ndarray]
 
 
 def _covered_split(
-    first: set[int], second: set[int], adjacency: list[list[int]], meter: _WorkMeter, /
+    first: np.ndarray, second: np.ndarray, graph: _Graph, meter: _WorkMeter, /
 ) -> _Split | None:
-    """Separate a bipartition by covering its cut; refuse an emptied side."""
-    edges: list[tuple[int, int]] = []
-    for vertex in sorted(first):
-        meter.add(len(adjacency[vertex]))
-        edges.extend(
-            (vertex, neighbor) for neighbor in adjacency[vertex] if neighbor in second
-        )
-    separator = _cut_cover(edges, meter)
-    kept_first = sorted(first - separator)
-    kept_second = sorted(second - separator)
-    if not kept_first or not kept_second:
+    """Separate ascending sides by covering their cut; refuse an emptied side."""
+    meter.add(int(graph.degree[first].sum()))
+    graph.local[second] = 1
+    rows, neighbors = graph.neighbors(first)
+    crossing = graph.local[neighbors] == 1
+    graph.local[second] = -1
+    separator = _cut_cover(first[rows[crossing]], neighbors[crossing], meter)
+    kept_first = np.setdiff1d(first, separator, assume_unique=True)
+    kept_second = np.setdiff1d(second, separator, assume_unique=True)
+    if not kept_first.size or not kept_second.size:
         return None
-    return kept_first, kept_second, sorted(separator)
+    return kept_first, kept_second, separator
 
 
 def _level_split(
-    vertices: list[int], adjacency: list[list[int]], meter: _WorkMeter, /
+    vertices: np.ndarray, graph: _Graph, meter: _WorkMeter, /
 ) -> _Split | None:
     """Best covered cut between consecutive BFS levels of a connected part.
 
-    Cuts leaving at least a quarter on each side are candidates (else the most
-    balanced one). The separator-to-smaller-part ratio is minimized; ties keep
-    the shallower cut.
+    Levels grow from a George–Liu pseudo-peripheral vertex: the minimum
+    (induced degree, vertex) start, then repeatedly the minimum of the deepest
+    level while that deepens the structure. Cuts leaving at least a quarter on
+    each side are candidates (else the most balanced one). The
+    separator-to-smaller-part ratio is minimized; ties keep the shallower cut.
     """
-    members = set(vertices)
-    levels = _pseudo_peripheral_levels(vertices, members, adjacency, meter)
-    prefix = np.cumsum([len(level) for level in levels]).tolist()
-    total = len(vertices)
-    cuts = list(range(len(levels) - 1))
+    adjacency = graph.induced(vertices)
+    total = vertices.size
+    induced_degree = np.diff(adjacency.indptr)
+    full_degree = graph.degree[vertices]
+    every = int(full_degree.sum())
+    local = np.arange(total, dtype=np.int64)
+    # Each candidate start reads its adjacency; each traversal reads all.
+    meter.add(every)
+    distances = _distances(adjacency, int(np.lexsort((local, induced_degree))[0]))
+    meter.add(every)
+    while True:
+        depth = int(distances.max())
+        deepest = np.flatnonzero(distances == depth)
+        meter.add(int(full_degree[deepest].sum()))
+        candidate = int(deepest[np.lexsort((deepest, induced_degree[deepest]))[0]])
+        candidate_distances = _distances(adjacency, candidate)
+        meter.add(every)
+        if int(candidate_distances.max()) <= depth:
+            break
+        distances = candidate_distances
+    counts = np.bincount(distances)
+    prefix = np.cumsum(counts).tolist()
+    prefix_degree = np.cumsum(np.bincount(distances, weights=full_degree)).tolist()
+    cuts = list(range(counts.size - 1))
     balanced = [
         cut for cut in cuts if min(prefix[cut], total - prefix[cut]) >= total // 4
     ]
@@ -809,45 +858,65 @@ def _level_split(
         balanced = [
             max(cuts, key=lambda cut: (min(prefix[cut], total - prefix[cut]), -cut))
         ]
-    best: tuple[Fraction, _Split] | None = None
+    # Edges between consecutive levels, grouped by the lower level.
+    rows = np.repeat(local, induced_degree)
+    columns = adjacency.indices.astype(np.int64)
+    rising = distances[columns] == distances[rows] + 1
+    lower = rows[rising]
+    upper = columns[rising]
+    level = distances[lower]
+    order = np.argsort(level, kind="stable")
+    lower, upper, level = lower[order], upper[order], level[order]
+    best: tuple[Fraction, int, np.ndarray] | None = None
     for cut in balanced:
-        below = {vertex for level in levels[: cut + 1] for vertex in level}
-        split = _covered_split(below, members - below, adjacency, meter)
-        if split is None:
+        meter.add(int(prefix_degree[cut]))
+        start, stop = np.searchsorted(level, (cut, cut + 1))
+        separator = _cut_cover(
+            vertices[lower[start:stop]], vertices[upper[start:stop]], meter
+        )
+        separator_levels = distances[np.searchsorted(vertices, separator)]
+        below_separator = int(np.count_nonzero(separator_levels <= cut))
+        kept_first = prefix[cut] - below_separator
+        kept_second = total - prefix[cut] - (separator.size - below_separator)
+        if not kept_first or not kept_second:
             continue
-        score = Fraction(len(split[2]), min(len(split[0]), len(split[1])))
+        score = Fraction(separator.size, min(kept_first, kept_second))
         if best is None or score < best[0]:
-            best = (score, split)
-    return None if best is None else best[1]
+            best = (score, cut, separator)
+    if best is None:
+        return None
+    _, cut, separator = best
+    first = np.setdiff1d(vertices[distances <= cut], separator, assume_unique=True)
+    second = np.setdiff1d(vertices[distances > cut], separator, assume_unique=True)
+    return first, second, separator
 
 
 def _geometric_split(
-    vertices: list[int],
+    vertices: np.ndarray,
     coordinates: np.ndarray,
-    adjacency: list[list[int]],
+    graph: _Graph,
     meter: _WorkMeter,
     /,
 ) -> _Split | None:
     """Covered cut at the median of the widest coordinate axis of a part."""
-    meter.add(len(vertices) * (coordinates.shape[1] + isqrt(len(vertices)) + 1))
-    indices = np.asarray(vertices, dtype=np.int64)
-    points = coordinates[indices]
+    meter.add(vertices.size * (coordinates.shape[1] + isqrt(vertices.size) + 1))
+    points = coordinates[vertices]
     axis = np.argmax(points.max(axis=0) - points.min(axis=0))
     # Stable order: coordinate first, original index second.
-    ranked = indices[np.lexsort((indices, points[:, axis]))].tolist()
-    half = len(ranked) // 2
-    return _covered_split(set(ranked[:half]), set(ranked[half:]), adjacency, meter)
+    ranked = vertices[np.lexsort((vertices, points[:, axis]))]
+    half = ranked.size // 2
+    return _covered_split(np.sort(ranked[:half]), np.sort(ranked[half:]), graph, meter)
 
 
 @dataclass
 class _Dissection:
-    order: list[int]
+    order: list[np.ndarray]
     separator_sizes: list[int]
     leaf_sizes: list[int]
 
 
 def _nested_dissection(
-    adjacency: list[list[int]],
+    graph: _Graph,
     coordinates: np.ndarray | None,
     leaf_capacity: int,
     separator_capacity: int,
@@ -856,38 +925,39 @@ def _nested_dissection(
 ) -> _Dissection:
     """Order parts before their separators; ascending order inside separators."""
     result = _Dissection([], [], [])
+    size = graph.degree.size
     # (emit, vertices): emitted separators are appended; parts are dissected.
-    stack: list[tuple[bool, list[int]]] = (
-        [(False, list(range(len(adjacency))))] if adjacency else []
+    stack: list[tuple[bool, np.ndarray]] = (
+        [(False, np.arange(size, dtype=np.int64))] if size else []
     )
     while stack:
         emit, vertices = stack.pop()
         if emit:
-            result.order.extend(vertices)
+            result.order.append(vertices)
             continue
-        if len(vertices) > leaf_capacity:
-            components = _components(vertices, adjacency, meter)
+        if vertices.size > leaf_capacity:
+            components = _components(vertices, graph, meter)
             if len(components) > 1:
                 stack.extend((False, component) for component in reversed(components))
                 continue
             split = (
-                _level_split(vertices, adjacency, meter)
+                _level_split(vertices, graph, meter)
                 if coordinates is None
-                else _geometric_split(vertices, coordinates, adjacency, meter)
+                else _geometric_split(vertices, coordinates, graph, meter)
             )
             if split is not None:
                 first, second, separator = split
-                if len(separator) > separator_capacity:
+                if separator.size > separator_capacity:
                     raise LinearCapabilityError(
                         "Sparse ordering refused before completion: nested-dissection "
-                        f"separator of {len(separator)} vertices exceeds "
+                        f"separator of {separator.size} vertices exceeds "
                         f"separator_capacity {separator_capacity}."
                     )
-                result.separator_sizes.append(len(separator))
+                result.separator_sizes.append(int(separator.size))
                 stack.extend(((True, separator), (False, second), (False, first)))
                 continue
-        result.leaf_sizes.append(len(vertices))
-        result.order.extend(_induced_minimum_degree(vertices, adjacency, meter))
+        result.leaf_sizes.append(int(vertices.size))
+        result.order.append(_induced_minimum_degree(vertices, graph, meter))
     return result
 
 
@@ -929,9 +999,12 @@ def _order_pattern(
         case "reverse-cuthill-mckee":
             permutation = _reverse_cuthill_mckee(size, indices, indptr, meter)
         case "approximate-minimum-degree":
-            adjacency = _symmetric_adjacency(size, indices, indptr, meter)
+            graph = _symmetric_graph(size, indices, indptr, meter)
             permutation = np.asarray(
-                _symmetric_minimum_degree(adjacency, meter), dtype=np.int64
+                _symmetric_minimum_degree(
+                    _adjacency_lists(graph.indptr, graph.indices), meter
+                ),
+                dtype=np.int64,
             )
         case "nested-dissection":
             leaf_capacity = policy.leaf_capacity
@@ -943,11 +1016,18 @@ def _order_pattern(
             points: np.ndarray | None = None
             if coordinates is not None:
                 points, coordinates_id = _host_coordinates(coordinates, size)
-            adjacency = _symmetric_adjacency(size, indices, indptr, meter)
             dissected = _nested_dissection(
-                adjacency, points, leaf_capacity, separator_capacity, meter
+                _symmetric_graph(size, indices, indptr, meter),
+                points,
+                leaf_capacity,
+                separator_capacity,
+                meter,
             )
-            permutation = np.asarray(dissected.order, dtype=np.int64)
+            permutation = (
+                np.concatenate(dissected.order)
+                if dissected.order
+                else np.zeros(0, dtype=np.int64)
+            )
             dissection = NestedDissectionEvidence(
                 separator_sizes=np.asarray(dissected.separator_sizes, dtype=np.int64),
                 leaf_sizes=np.asarray(dissected.leaf_sizes, dtype=np.int64),

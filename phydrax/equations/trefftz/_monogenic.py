@@ -22,6 +22,7 @@ from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import StructuredDerivativeProvider, TRIAL_SPACE_CERTIFICATE_KEY
+from ...linalg._exact import factor_exact_sparse
 from ...metrix.clifford import (
     basis_blade_product,
     CliffordAlgebraSpec,
@@ -46,46 +47,23 @@ def _monogenic_rank(dimension: int, degree: int, blade_count: int, /) -> int:
 
 
 def _rational_nullspace(matrix: np.ndarray, /) -> np.ndarray:
+    """Leftmost-pivot (reduced row echelon) nullspace basis of an integer matrix."""
     rows, columns = matrix.shape
-    if rows == 0:
-        return np.eye(columns, dtype=np.float64)
-    values = [
-        [Fraction(int(matrix[row, column])) for column in range(columns)]
-        for row in range(rows)
-    ]
-    pivot_columns: list[int] = []
-    pivot_row = 0
-    for column in range(columns):
-        selected = next(
-            (row for row in range(pivot_row, rows) if values[row][column]),
-            None,
-        )
-        if selected is None:
-            continue
-        values[pivot_row], values[selected] = values[selected], values[pivot_row]
-        pivot = values[pivot_row][column]
-        values[pivot_row] = [value / pivot for value in values[pivot_row]]
-        for row in range(rows):
-            if row == pivot_row:
-                continue
-            factor = values[row][column]
-            if factor:
-                values[row] = [
-                    value - factor * source
-                    for value, source in zip(values[row], values[pivot_row])
-                ]
-        pivot_columns.append(column)
-        pivot_row += 1
-        if pivot_row == rows:
-            break
-    free_columns = tuple(
-        column for column in range(columns) if column not in set(pivot_columns)
-    )
-    basis = np.zeros((columns, len(free_columns)), dtype=np.float64)
-    for basis_column, free_column in enumerate(free_columns):
-        basis[free_column, basis_column] = 1.0
-        for row, pivot_column in enumerate(pivot_columns):
-            basis[pivot_column, basis_column] = float(-values[row][free_column])
+    vectors = factor_exact_sparse(
+        [
+            {
+                column: Fraction(int(matrix[row, column]))
+                for column in range(columns)
+                if matrix[row, column]
+            }
+            for row in range(rows)
+        ],
+        columns,
+        ordered=True,
+    ).nullspace_basis()
+    basis = np.zeros((columns, len(vectors)), dtype=np.float64)
+    for basis_column, vector in enumerate(vectors):
+        basis[:, basis_column] = [float(value) for value in vector]
     return basis
 
 
