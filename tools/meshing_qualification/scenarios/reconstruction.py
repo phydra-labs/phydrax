@@ -218,7 +218,6 @@ def _affine_harmonic_solve(
             "method": str(prepared.plan.method),
             "status": int(np.asarray(solve.status)),
             "unknowns": int(operator.operator.source.size),
-            "stored_routes": int(operator.operator.relation.capacity),
         },
     }
 
