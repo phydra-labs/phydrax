@@ -294,7 +294,8 @@ def _split_terminal_piece(
         or not _boxes_disjoint(right, query_box)
     ):
         return False
-    pieces[index : index + 1] = [(first, middle, left), (middle, last, right)]
+    position = index if index >= 0 else len(pieces) + index
+    pieces[position : position + 1] = [(first, middle, left), (middle, last, right)]
     return True
 
 
