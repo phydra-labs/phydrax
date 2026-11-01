@@ -3412,6 +3412,14 @@ def _require_reference_chart_partition(
 ) -> None:
     if not triangles or any(_area2(triangle) == 0 for triangle in triangles):
         raise ValueError("Target reference chart pieces must be nondegenerate triangles.")
+    # Pieces that are exactly the domain's own triangles (equal exact vertex
+    # sets, any orientation) partition it: every caller's domain triangles are
+    # nondegenerate and interior-disjoint.
+    pieces = sorted(tuple(sorted(triangle)) for triangle in triangles)
+    if pieces == sorted(tuple(sorted(triangle)) for triangle in domain) and len(
+        set(pieces)
+    ) == len(pieces):
+        return
     for triangle in triangles:
         covered_area = sum(
             (_intersection_area(triangle, source) for source in domain), Fraction(0)
